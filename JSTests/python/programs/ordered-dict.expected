@@ -1,0 +1,482 @@
+True
+===== making one
+none -> OrderedDict()
+pairs -> OrderedDict({'a': 1, 'b': 2})
+a dict -> OrderedDict({'a': 1, 'b': 2})
+keywords -> OrderedDict({'a': 1, 'b': 2})
+both -> OrderedDict({'a': 3, 'b': 2})
+another -> OrderedDict({'a': 1, 'b': 2, 'c': 3})
+two -> 'TypeError: expected at most 1 argument, got 2'
+three -> 'TypeError: expected at most 1 argument, got 3'
+an int -> "TypeError: 'int' object is not iterable"
+None -> "TypeError: 'NoneType' object is not iterable"
+a str -> 'ValueError: need more than 1 value to unpack'
+strs of two -> OrderedDict({'a': 'b', 'c': 'd'})
+a pair too short -> 'ValueError: need more than 1 value to unpack'
+an empty pair -> 'ValueError: need more than 0 values to unpack'
+a pair too long -> 'ValueError: too many values to unpack (expected 2)'
+not pairs -> "TypeError: 'int' object is not iterable"
+a generator -> OrderedDict({'a': 0, 'b': 1, 'c': 2})
+lists -> OrderedDict({'a': 1})
+sets of two -> 1
+unhashable -> "TypeError: unhashable type: 'list'"
+self by keyword -> OrderedDict({'self': 1})
+other by keyword -> OrderedDict({'other': 1})
+keys and getitem -> OrderedDict({'a': 'A', 'b': 'B'})
+items only -> OrderedDict({'a': 1})
+keys not callable -> "TypeError: 'int' object is not callable"
+keys raises -> 'ZeroDivisionError: division by zero'
+keys gives an int -> "TypeError: 'int' object is not iterable"
+getitem raises -> 'ZeroDivisionError: division by zero'
+a mappingproxy -> OrderedDict({'a': 1})
+a Counter -> OrderedDict({'a': 2, 'b': 1})
+a defaultdict -> OrderedDict({'a': 1})
+__init__ again -> OrderedDict({'a': 5, 'b': 2, 'c': 3, 'z': 1})
+__init__ with two -> 'TypeError: expected at most 1 argument, got 2'
+__new__ alone -> (OrderedDict(), 0, [], 'popitem')
+dict.__new__ -> 'OrderedDict'
+object.__new__ -> 'TypeError: object.__new__(collections.OrderedDict) is not safe, use collections.OrderedDict.__new__()'
+dict.__init__ -> (None, 1, [], dict_keys(['a']))
+===== shown
+OrderedDict() -> ('OrderedDict()', 'OrderedDict()', 0, False, [], [], [], [], [], [], [], [])
+   views -> ('odict_keys([])', 'odict_values([])', 'odict_items([])', 0, 'odict_keys', 'odict_values', 'odict_items', 'odict_iterator', 'odict_iterator', 'odict_iterator')
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) -> ("OrderedDict({'a': 1, 'b': 2, 'c': 3})", "OrderedDict({'a': 1, 'b': 2, 'c': 3})", 3, True, ['a', 'b', 'c'], ['a', 'b', 'c'], [1, 2, 3], [('a', 1), ('b', 2), ('c', 3)], ['c', 'b', 'a'], ['c', 'b', 'a'], [3, 2, 1], [('c', 3), ('b', 2), ('a', 1)])
+   views -> ("odict_keys(['a', 'b', 'c'])", 'odict_values([1, 2, 3])', "odict_items([('a', 1), ('b', 2), ('c', 3)])", 3, 'odict_keys', 'odict_values', 'odict_items', 'odict_iterator', 'odict_iterator', 'odict_iterator')
+OrderedDict({'a': OrderedDict({'b': 1})}) -> ("OrderedDict({'a': OrderedDict({'b': 1})})", "OrderedDict({'a': OrderedDict({'b': 1})})", 1, True, ['a'], ['a'], [OrderedDict({'b': 1})], [('a', OrderedDict({'b': 1}))], ['a'], ['a'], [OrderedDict({'b': 1})], [('a', OrderedDict({'b': 1}))])
+   views -> ("odict_keys(['a'])", "odict_values([OrderedDict({'b': 1})])", "odict_items([('a', OrderedDict({'b': 1}))])", 1, 'odict_keys', 'odict_values', 'odict_items', 'odict_iterator', 'odict_iterator', 'odict_iterator')
+S() -> ('S()', 'S()', 0, False, [], [], [], [], [], [], [], [])
+   views -> ('odict_keys([])', 'odict_values([])', 'odict_items([])', 0, 'odict_keys', 'odict_values', 'odict_items', 'odict_iterator', 'odict_iterator', 'odict_iterator')
+S({'a': 1}) -> ("S({'a': 1})", "S({'a': 1})", 1, True, ['a'], ['a'], [1], [('a', 1)], ['a'], ['a'], [1], [('a', 1)])
+   views -> ("odict_keys(['a'])", 'odict_values([1])', "odict_items([('a', 1)])", 1, 'odict_keys', 'odict_values', 'odict_items', 'odict_iterator', 'odict_iterator', 'odict_iterator')
+OrderedDict({1: 'x', (1, 2): None}) -> ("OrderedDict({1: 'x', (1, 2): None})", "OrderedDict({1: 'x', (1, 2): None})", 2, True, [1, (1, 2)], [1, (1, 2)], ['x', None], [(1, 'x'), ((1, 2), None)], [(1, 2), 1], [(1, 2), 1], [None, 'x'], [((1, 2), None), (1, 'x')])
+   views -> ('odict_keys([1, (1, 2)])', "odict_values(['x', None])", "odict_items([(1, 'x'), ((1, 2), None)])", 2, 'odict_keys', 'odict_values', 'odict_items', 'odict_iterator', 'odict_iterator', 'odict_iterator')
+OrderedDict({'a': [1, 2]}) -> ("OrderedDict({'a': [1, 2]})", "OrderedDict({'a': [1, 2]})", 1, True, ['a'], ['a'], [[1, 2]], [('a', [1, 2])], ['a'], ['a'], [[1, 2]], [('a', [1, 2])])
+   views -> ("odict_keys(['a'])", 'odict_values([[1, 2]])', "odict_items([('a', [1, 2])])", 1, 'odict_keys', 'odict_values', 'odict_items', 'odict_iterator', 'odict_iterator', 'odict_iterator')
+in itself -> "OrderedDict({'a': ...})"
+its values in itself -> "OrderedDict({'a': odict_values([...])})"
+its items in itself -> ("OrderedDict({'a': odict_items([('a', ...)])})", "odict_items([('a', odict_items([('a', ...)]))])")
+a repr that raises -> 'ZeroDivisionError: division by zero'
+the name of a derived class -> ("X({'a': 1})", 'X()')
+===== the order
+set again -> [(None, [('a', 9), ('b', 2), ('c', 3)])]
+delete and set -> [(None, [('b', 2), ('c', 3)]), (None, [('b', 2), ('c', 3), ('a', 9)])]
+move_to_end('a', True) -> [(None, [('b', 2), ('c', 3), ('a', 1)])]
+move_to_end('a', False) -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('a', 0) -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('a', 1) -> [(None, [('b', 2), ('c', 3), ('a', 1)])]
+move_to_end('a', None) -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('a', 'x') -> [(None, [('b', 2), ('c', 3), ('a', 1)])]
+move_to_end('a', []) -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('a', 2) -> [(None, [('b', 2), ('c', 3), ('a', 1)])]
+move_to_end('b', True) -> [(None, [('a', 1), ('c', 3), ('b', 2)])]
+move_to_end('b', False) -> [(None, [('b', 2), ('a', 1), ('c', 3)])]
+move_to_end('b', 0) -> [(None, [('b', 2), ('a', 1), ('c', 3)])]
+move_to_end('b', 1) -> [(None, [('a', 1), ('c', 3), ('b', 2)])]
+move_to_end('b', None) -> [(None, [('b', 2), ('a', 1), ('c', 3)])]
+move_to_end('b', 'x') -> [(None, [('a', 1), ('c', 3), ('b', 2)])]
+move_to_end('b', []) -> [(None, [('b', 2), ('a', 1), ('c', 3)])]
+move_to_end('b', 2) -> [(None, [('a', 1), ('c', 3), ('b', 2)])]
+move_to_end('c', True) -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('c', False) -> [(None, [('c', 3), ('a', 1), ('b', 2)])]
+move_to_end('c', 0) -> [(None, [('c', 3), ('a', 1), ('b', 2)])]
+move_to_end('c', 1) -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('c', None) -> [(None, [('c', 3), ('a', 1), ('b', 2)])]
+move_to_end('c', 'x') -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('c', []) -> [(None, [('c', 3), ('a', 1), ('b', 2)])]
+move_to_end('c', 2) -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('z', True) -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('z', False) -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('z', 0) -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('z', 1) -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('z', None) -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('z', 'x') -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('z', []) -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end('z', 2) -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(5, True) -> [('KeyError: 5', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(5, False) -> [('KeyError: 5', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(5, 0) -> [('KeyError: 5', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(5, 1) -> [('KeyError: 5', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(5, None) -> [('KeyError: 5', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(5, 'x') -> [('KeyError: 5', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(5, []) -> [('KeyError: 5', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(5, 2) -> [('KeyError: 5', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(None, True) -> [('KeyError: ', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(None, False) -> [('KeyError: ', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(None, 0) -> [('KeyError: ', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(None, 1) -> [('KeyError: ', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(None, None) -> [('KeyError: ', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(None, 'x') -> [('KeyError: ', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(None, []) -> [('KeyError: ', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(None, 2) -> [('KeyError: ', [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end([], True) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end([], False) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end([], 0) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end([], 1) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end([], None) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end([], 'x') -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end([], []) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end([], 2) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(('a',), True) -> [("KeyError: 'a'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(('a',), False) -> [("KeyError: 'a'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(('a',), 0) -> [("KeyError: 'a'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(('a',), 1) -> [("KeyError: 'a'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(('a',), None) -> [("KeyError: 'a'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(('a',), 'x') -> [("KeyError: 'a'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(('a',), []) -> [("KeyError: 'a'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end(('a',), 2) -> [("KeyError: 'a'", [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end: default -> [(None, [('b', 2), ('c', 3), ('a', 1)])]
+move_to_end: keywords -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+move_to_end: none -> "TypeError: move_to_end() missing required argument 'key' (pos 1)"
+move_to_end: three -> 'TypeError: move_to_end() takes at most 2 arguments (3 given)'
+move_to_end: unknown -> "TypeError: move_to_end() got an unexpected keyword argument 'first'"
+move_to_end: of nothing -> "KeyError: 'a'"
+move_to_end: last that cannot say -> 'ZeroDivisionError: division by zero'
+move_to_end: of one -> OrderedDict({'a': 1})
+many moves -> [0, 6, 4, 3, 2, 5, 1]
+popitem(True) -> [(('c', 3), [('a', 1), ('b', 2)]), (('b', 2), [('a', 1)]), (('a', 1), []), ("KeyError: 'dictionary is empty'", [])]
+popitem(False) -> [(('a', 1), [('b', 2), ('c', 3)]), (('b', 2), [('c', 3)]), (('c', 3), []), ("KeyError: 'dictionary is empty'", [])]
+popitem(0) -> [(('a', 1), [('b', 2), ('c', 3)]), (('b', 2), [('c', 3)]), (('c', 3), []), ("KeyError: 'dictionary is empty'", [])]
+popitem(1) -> [(('c', 3), [('a', 1), ('b', 2)]), (('b', 2), [('a', 1)]), (('a', 1), []), ("KeyError: 'dictionary is empty'", [])]
+popitem(None) -> [(('a', 1), [('b', 2), ('c', 3)]), (('b', 2), [('c', 3)]), (('c', 3), []), ("KeyError: 'dictionary is empty'", [])]
+popitem('x') -> [(('c', 3), [('a', 1), ('b', 2)]), (('b', 2), [('a', 1)]), (('a', 1), []), ("KeyError: 'dictionary is empty'", [])]
+popitem: keyword -> ('a', 1)
+popitem: two -> 'TypeError: popitem() takes at most 1 argument (2 given)'
+popitem: unknown -> "TypeError: popitem() got an unexpected keyword argument 'first'"
+pop('a',) -> [(1, [('b', 2), ('c', 3)])]
+pop('z',) -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)])]
+pop('z', None) -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+pop('z', 5) -> [(5, [('a', 1), ('b', 2), ('c', 3)])]
+pop('a', 5) -> [(1, [('b', 2), ('c', 3)])]
+pop([],) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+pop([], 5) -> [("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+pop() -> [("TypeError: pop() missing required argument 'key' (pos 1)", [('a', 1), ('b', 2), ('c', 3)])]
+pop('a', 1, 2) -> [('TypeError: pop() takes at most 2 arguments (3 given)', [('a', 1), ('b', 2), ('c', 3)])]
+pop: keywords -> (1, 7, None)
+pop: unknown -> "TypeError: pop() got an unexpected keyword argument 'd'"
+setdefault('a',) -> [(1, [('a', 1), ('b', 2), ('c', 3)])]
+setdefault('z',) -> [(None, [('a', 1), ('b', 2), ('c', 3), ('z', None)])]
+setdefault('z', 5) -> [(5, [('a', 1), ('b', 2), ('c', 3), ('z', 5)])]
+setdefault('a', 5) -> [(1, [('a', 1), ('b', 2), ('c', 3)])]
+setdefault([],) -> [("TypeError: cannot use 'list' as a dict key (unhashable type: 'list')", [('a', 1), ('b', 2), ('c', 3)])]
+setdefault() -> [("TypeError: setdefault() missing required argument 'key' (pos 1)", [('a', 1), ('b', 2), ('c', 3)])]
+setdefault('a', 1, 2) -> [('TypeError: setdefault() takes at most 2 arguments (3 given)', [('a', 1), ('b', 2), ('c', 3)])]
+setdefault: keywords -> [(7, [('a', 1), ('b', 2), ('c', 3), ('z', 7)])]
+clear -> [(None, []), (None, [('q', 1)]), (('q', 1), [])]
+clear: an argument -> 'TypeError: OrderedDict.clear() takes no arguments (1 given)'
+del what is not there -> [("KeyError: 'z'", [('a', 1), ('b', 2), ('c', 3)]), ("TypeError: unhashable type: 'list'", [('a', 1), ('b', 2), ('c', 3)])]
+get, in, len -> (1, None, 5, True, False, 1, 3)
+getitem of what is not there -> "KeyError: 'z'"
+===== update, and |
+update: a dict -> [(None, [('a', 1), ('b', 2), ('c', 9), ('d', 4)])]
+update: pairs -> [(None, [('a', 9), ('b', 2), ('c', 3), ('d', 4)])]
+update: keywords -> [(None, [('a', 9), ('b', 2), ('c', 3), ('d', 4)])]
+update: both -> [(None, [('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5)])]
+update: another -> [(None, [('a', 2), ('b', 2), ('c', 3), ('z', 1)])]
+update: none -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+update: two -> [('TypeError: update() takes at most 1 positional argument (2 given)', [('a', 1), ('b', 2), ('c', 3)])]
+update: an int -> [("TypeError: 'int' object is not iterable", [('a', 1), ('b', 2), ('c', 3)])]
+update: None -> [("TypeError: 'NoneType' object is not iterable", [('a', 1), ('b', 2), ('c', 3)])]
+update: bad pairs -> [('ValueError: too many values to unpack (expected 2)', [('a', 1), ('b', 2), ('c', 3)])]
+update: part way -> [('ValueError: need more than 1 value to unpack', [('a', 1), ('b', 2), ('c', 3), ('x', 1)])]
+update: itself -> [(None, [('a', 1), ('b', 2), ('c', 3)])]
+update: self by keyword -> [(None, [('a', 1), ('b', 2), ('c', 3), ('self', 1)])]
+| {'c': 9, 'd': 4} -> (OrderedDict({'a': 1, 'b': 2, 'c': 9, 'd': 4}), 'OrderedDict')
+   the other way -> (OrderedDict({'c': 3, 'd': 4, 'a': 1, 'b': 2}), 'OrderedDict')
+   |= -> (True, OrderedDict({'a': 1, 'b': 2, 'c': 9, 'd': 4}))
+   S | -> (S({'a': 1, 'c': 9, 'd': 4}), 'S')
+   | S -> (S({'c': 9, 'd': 4, 'a': 1}), 'S')
+| OrderedDict({'d': 4, 'a': 9}) -> (OrderedDict({'a': 9, 'b': 2, 'c': 3, 'd': 4}), 'OrderedDict')
+   the other way -> (OrderedDict({'d': 4, 'a': 1, 'b': 2, 'c': 3}), 'OrderedDict')
+   |= -> (True, OrderedDict({'a': 9, 'b': 2, 'c': 3, 'd': 4}))
+   S | -> (S({'a': 9, 'd': 4}), 'S')
+   | S -> (OrderedDict({'d': 4, 'a': 1}), 'OrderedDict')
+| S({'d': 4}) -> (OrderedDict({'a': 1, 'b': 2, 'c': 3, 'd': 4}), 'OrderedDict')
+   the other way -> (S({'d': 4, 'a': 1, 'b': 2, 'c': 3}), 'S')
+   |= -> (True, OrderedDict({'a': 1, 'b': 2, 'c': 3, 'd': 4}))
+   S | -> (S({'a': 1, 'd': 4}), 'S')
+   | S -> (S({'d': 4, 'a': 1}), 'S')
+| [('d', 4)] -> "TypeError: unsupported operand type(s) for |: 'collections.OrderedDict' and 'list'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'list' and 'collections.OrderedDict'"
+   |= -> (True, OrderedDict({'a': 1, 'b': 2, 'c': 3, 'd': 4}))
+   S | -> "TypeError: unsupported operand type(s) for |: 'S' and 'list'"
+   | S -> "TypeError: unsupported operand type(s) for |: 'list' and 'S'"
+| 5 -> "TypeError: unsupported operand type(s) for |: 'collections.OrderedDict' and 'int'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'int' and 'collections.OrderedDict'"
+   |= -> "TypeError: 'int' object is not iterable"
+   S | -> "TypeError: unsupported operand type(s) for |: 'S' and 'int'"
+   | S -> "TypeError: unsupported operand type(s) for |: 'int' and 'S'"
+| None -> "TypeError: unsupported operand type(s) for |: 'collections.OrderedDict' and 'NoneType'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'NoneType' and 'collections.OrderedDict'"
+   |= -> "TypeError: 'NoneType' object is not iterable"
+   S | -> "TypeError: unsupported operand type(s) for |: 'S' and 'NoneType'"
+   | S -> "TypeError: unsupported operand type(s) for |: 'NoneType' and 'S'"
+| Counter({'d': 2}) -> (OrderedDict({'a': 1, 'b': 2, 'c': 3, 'd': 2}), 'OrderedDict')
+   the other way -> (OrderedDict({'d': 2, 'a': 1, 'b': 2, 'c': 3}), 'OrderedDict')
+   |= -> (True, OrderedDict({'a': 1, 'b': 2, 'c': 3, 'd': 2}))
+   S | -> (S({'a': 1, 'd': 2}), 'S')
+   | S -> (S({'d': 2, 'a': 1}), 'S')
+| mappingproxy({'d': 4}) -> (OrderedDict({'a': 1, 'b': 2, 'c': 3, 'd': 4}), 'OrderedDict')
+   the other way -> (OrderedDict({'d': 4, 'a': 1, 'b': 2, 'c': 3}), 'OrderedDict')
+   |= -> (True, OrderedDict({'a': 1, 'b': 2, 'c': 3, 'd': 4}))
+   S | -> (S({'a': 1, 'd': 4}), 'S')
+   | S -> (S({'d': 4, 'a': 1}), 'S')
+| {'d': 4} -> ({'a': 1, 'b': 2, 'c': 3, 'd': 4}, 'UserDict')
+   the other way -> ({'d': 4, 'a': 1, 'b': 2, 'c': 3}, 'UserDict')
+   |= -> (True, OrderedDict({'a': 1, 'b': 2, 'c': 3, 'd': 4}))
+   S | -> ({'a': 1, 'd': 4}, 'UserDict')
+   | S -> ({'d': 4, 'a': 1}, 'UserDict')
+| {} -> (OrderedDict({'a': 1, 'b': 2, 'c': 3}), 'OrderedDict')
+   the other way -> (OrderedDict({'a': 1, 'b': 2, 'c': 3}), 'OrderedDict')
+   |= -> (True, OrderedDict({'a': 1, 'b': 2, 'c': 3}))
+   S | -> (S({'a': 1}), 'S')
+   | S -> (S({'a': 1}), 'S')
+__or__ itself -> "TypeError: descriptor '__or__' requires a 'collections.OrderedDict' object but received a 'dict'"
+__or__ of neither -> "TypeError: descriptor '__or__' requires a 'collections.OrderedDict' object but received a 'dict'"
+===== copies
+copy of OrderedDict() -> (OrderedDict(), 'OrderedDict', True, False)
+   copy.copy -> (OrderedDict(), 'OrderedDict')
+   deepcopy -> (OrderedDict(), 'OrderedDict')
+   reduce -> ('OrderedDict', (), None, None, 'odict_iterator', [])
+   reduce_ex -> [('OrderedDict', (), None, None, []), ('OrderedDict', (), None, None, []), ('OrderedDict', (), None, None, [])]
+   pickle -> [(True, True, []), (True, True, []), (True, True, []), (True, True, []), (True, True, []), (True, True, [])]
+   pickled -> [b'ccollections\nOrderedDict\np0\n(tRp1\n.', b'\x80\x02ccollections\nOrderedDict\nq\x00)Rq\x01.', b'\x80\x04\x95"\x00\x00\x00\x00\x00\x00\x00\x8c\x0bcollections\x94\x8c\x0bOrderedDict\x94\x93\x94)R\x94.']
+copy of OrderedDict({'a': 1, 'b': 2, 'c': 3}) -> (OrderedDict({'a': 1, 'b': 2, 'c': 3}), 'OrderedDict', True, False)
+   copy.copy -> (OrderedDict({'a': 1, 'b': 2, 'c': 3}), 'OrderedDict')
+   deepcopy -> (OrderedDict({'a': 1, 'b': 2, 'c': 3}), 'OrderedDict')
+   reduce -> ('OrderedDict', (), None, None, 'odict_iterator', [('a', 1), ('b', 2), ('c', 3)])
+   reduce_ex -> [('OrderedDict', (), None, None, [('a', 1), ('b', 2), ('c', 3)]), ('OrderedDict', (), None, None, [('a', 1), ('b', 2), ('c', 3)]), ('OrderedDict', (), None, None, [('a', 1), ('b', 2), ('c', 3)])]
+   pickle -> [(True, True, ['a', 'b', 'c']), (True, True, ['a', 'b', 'c']), (True, True, ['a', 'b', 'c']), (True, True, ['a', 'b', 'c']), (True, True, ['a', 'b', 'c']), (True, True, ['a', 'b', 'c'])]
+   pickled -> [b'ccollections\nOrderedDict\np0\n(tRp1\nVa\np2\nI1\nsVb\np3\nI2\nsVc\np4\nI3\ns.', b'\x80\x02ccollections\nOrderedDict\nq\x00)Rq\x01(X\x01\x00\x00\x00aq\x02K\x01X\x01\x00\x00\x00bq\x03K\x02X\x01\x00\x00\x00cq\x04K\x03u.', b'\x80\x04\x956\x00\x00\x00\x00\x00\x00\x00\x8c\x0bcollections\x94\x8c\x0bOrderedDict\x94\x93\x94)R\x94(\x8c\x01a\x94K\x01\x8c\x01b\x94K\x02\x8c\x01c\x94K\x03u.']
+copy of S({'a': 1, 'b': 2}) -> (S({'a': 1, 'b': 2}), 'S', True, False)
+   copy.copy -> (S({'a': 1, 'b': 2}), 'S')
+   deepcopy -> (S({'a': 1, 'b': 2}), 'S')
+   reduce -> ('S', (), None, None, 'odict_iterator', [('a', 1), ('b', 2)])
+   reduce_ex -> [('S', (), None, None, [('a', 1), ('b', 2)]), ('S', (), None, None, [('a', 1), ('b', 2)]), ('S', (), None, None, [('a', 1), ('b', 2)])]
+   pickle -> [(True, True, ['a', 'b']), (True, True, ['a', 'b']), (True, True, ['a', 'b']), (True, True, ['a', 'b']), (True, True, ['a', 'b']), (True, True, ['a', 'b'])]
+   pickled -> None
+with attributes -> ({'x': 1, 'y': [2]}, {'x': 1, 'y': [2]}, {'x': 1, 'y': [2]}, {'x': 1, 'y': [2]}, {}, True, False)
+moved, and then copied -> (None, OrderedDict({'b': 2, 'c': 3, 'a': 1}), {'b': 2, 'c': 3, 'a': 1}, OrderedDict({'b': 2, 'c': 3, 'a': 1}), OrderedDict({'b': 2, 'c': 3, 'a': 1}), {'b': 2, 'c': 3, 'a': 1}, [('b', 2), ('c', 3), ('a', 1)], '{"b": 2, "c": 3, "a": 1}', ['b', 'c', 'a'], OrderedDict({'b': 2, 'c': 3, 'a': 1}), "OrderedDict({'b': 2, 'c': 3, 'a': 1})")
+copy: an argument -> 'TypeError: OrderedDict.copy() takes no arguments (1 given)'
+copy of a class that wants an argument -> "TypeError: NoArgs.__init__() missing 1 required positional argument: 'required'"
+| of a class that takes one -> 'NoArgs'
+fromkeys('abc',) -> (OrderedDict({'a': None, 'b': None, 'c': None}), 'OrderedDict')
+   of S -> (S({'a': None, 'b': None, 'c': None}), 'S')
+fromkeys('abc', 0) -> (OrderedDict({'a': 0, 'b': 0, 'c': 0}), 'OrderedDict')
+   of S -> (S({'a': 0, 'b': 0, 'c': 0}), 'S')
+fromkeys([],) -> (OrderedDict(), 'OrderedDict')
+   of S -> (S(), 'S')
+fromkeys(5,) -> "TypeError: 'int' object is not iterable"
+   of S -> "TypeError: 'int' object is not iterable"
+fromkeys() -> "TypeError: fromkeys() missing required argument 'iterable' (pos 1)"
+   of S -> "TypeError: fromkeys() missing required argument 'iterable' (pos 1)"
+fromkeys('ab', 1, 2) -> 'TypeError: fromkeys() takes at most 2 arguments (3 given)'
+   of S -> 'TypeError: fromkeys() takes at most 2 arguments (3 given)'
+fromkeys({'x': 1, 'y': 2},) -> (OrderedDict({'x': None, 'y': None}), 'OrderedDict')
+   of S -> (S({'x': None, 'y': None}), 'S')
+fromkeys(OrderedDict({'b': 1, 'a': 2}),) -> (OrderedDict({'b': None, 'a': None}), 'OrderedDict')
+   of S -> (S({'b': None, 'a': None}), 'S')
+fromkeys({3}, None) -> (OrderedDict({3: None}), 'OrderedDict')
+   of S -> (S({3: None}), 'S')
+fromkeys([[]],) -> "TypeError: unhashable type: 'list'"
+   of S -> "TypeError: unhashable type: 'list'"
+fromkeys: keywords -> OrderedDict({'a': 1, 'b': 1})
+fromkeys: unknown -> "TypeError: fromkeys() got an unexpected keyword argument 'v'"
+fromkeys: on an instance -> OrderedDict({'x': None, 'y': None})
+fromkeys: a class that makes something else -> {'a': None, 'b': None}
+fromkeys: a class that makes a list -> 'TypeError: list indices must be integers or slices, not str'
+===== compared
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and OrderedDict({'a': 1, 'b': 2, 'c': 3}) -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and OrderedDict({'c': 3, 'b': 2, 'a': 1}) -> (False, True, False, True, False, True)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and {'a': 1, 'b': 2, 'c': 3} -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'dict'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and {'c': 3, 'b': 2, 'a': 1} -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'dict'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and OrderedDict({'a': 1, 'b': 2}) -> (False, True, False, True, False, True)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and OrderedDict({'a': 1, 'b': 2, 'c': 4}) -> (False, True, False, True, False, True)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+OrderedDict() and OrderedDict() -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+OrderedDict() and {} -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'dict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'dict'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and S({'a': 1, 'b': 2, 'c': 3}) -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'S'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'S'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'S'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'S'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and S({'c': 3, 'b': 2, 'a': 1}) -> (False, True, False, True, False, True)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'S'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'S'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'S'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'S'"
+S({'a': 1}) and S({'a': 1}) -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'S' and 'S'"
+   <= -> "TypeError: '<=' not supported between instances of 'S' and 'S'"
+   > -> "TypeError: '>' not supported between instances of 'S' and 'S'"
+   >= -> "TypeError: '>=' not supported between instances of 'S' and 'S'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and [('a', 1)] -> (False, True, False, True, NotImplemented, NotImplemented)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'list'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'list'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'list'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'list'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and None -> (False, True, False, True, NotImplemented, NotImplemented)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'NoneType'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'NoneType'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'NoneType'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'NoneType'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and 5 -> (False, True, False, True, NotImplemented, NotImplemented)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'int'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'int'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'int'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'int'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and {'a': 1, 'b': 2, 'c': 3} -> (True, False, True, False, NotImplemented, NotImplemented)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'UserDict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'UserDict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'UserDict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'UserDict'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and Counter({'c': 3, 'b': 2, 'a': 1}) -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'Counter'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'Counter'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'Counter'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'Counter'"
+OrderedDict({'a': 1, 'b': 2, 'c': 3}) and mappingproxy(OrderedDict({'a': 1, 'b': 2, 'c': 3})) -> (True, False, True, False, NotImplemented, NotImplemented)
+   < -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   <= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   > -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   >= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+OrderedDict({1: 1, 2: 2}) and OrderedDict({1.0: 1, 2.0: 2}) -> (True, False, True, False, True, False)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+OrderedDict({1: 1, 2: 2}) and OrderedDict({2: 2, 1: 1.0}) -> (False, True, False, True, False, True)
+   < -> "TypeError: '<' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   <= -> "TypeError: '<=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   > -> "TypeError: '>' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+   >= -> "TypeError: '>=' not supported between instances of 'collections.OrderedDict' and 'collections.OrderedDict'"
+the methods -> (NotImplemented, NotImplemented, NotImplemented, NotImplemented)
+hash -> "TypeError: unhashable type: 'collections.OrderedDict'"
+__hash__ -> (None, None)
+===== what is asked of a key
+set -> (None, [('hash', 1)])
+set the same -> (None, [('hash', 1), ('eq', 1, 1), ('eq', 1, 1)])
+set another -> (None, [('hash', 3)])
+get -> (1, [('hash', 1), ('eq', 1, 1)])
+in -> (True, [('hash', 1), ('eq', 1, 1)])
+del -> (None, [('hash', 1), ('eq', 1, 1), ('eq', 1, 1)])
+pop -> (1, [('hash', 1), ('eq', 1, 1), ('eq', 1, 1), ('eq', 1, 1)])
+pop what is not there -> (None, [('hash', 3)])
+popitem -> ((K(2), 2), [])
+popitem first -> ((K(1), 1), [])
+move_to_end -> (None, [('hash', 1), ('eq', 1, 1)])
+move_to_end of the last -> (None, [('hash', 2), ('eq', 2, 2)])
+setdefault there -> (1, [('hash', 1), ('eq', 1, 1)])
+setdefault not there -> (5, [('hash', 3), ('hash', 3)])
+list -> ([K(1), K(2)], [('hash', 1), ('hash', 2)])
+items -> ([(K(1), 1), (K(2), 2)], [('hash', 1), ('hash', 1), ('hash', 2), ('hash', 2)])
+values -> ([1, 2], [('hash', 1), ('hash', 1), ('hash', 2), ('hash', 2)])
+reversed -> ([K(2), K(1)], [('hash', 2), ('hash', 1)])
+copy -> (OrderedDict({K(1): 1, K(2): 2}), [('hash', 1), ('hash', 2)])
+== -> (True, [('eq', 1, 1), ('eq', 2, 2), ('eq', 1, 1), ('eq', 2, 2)])
+repr -> ('OrderedDict({K(1): 1, K(2): 2})', [('hash', 1), ('hash', 2), ('hash', 1), ('hash', 1), ('hash', 2), ('hash', 2)])
+update -> (None, [('hash', 1), ('hash', 1), ('hash', 1), ('eq', 1, 1), ('eq', 1, 1), ('hash', 2), ('hash', 2), ('hash', 2), ('eq', 2, 2), ('eq', 2, 2)])
+dict() -> ({K(1): 1, K(2): 2}, [('hash', 1), ('hash', 2), ('hash', 1), ('hash', 1), ('hash', 2), ('hash', 2)])
+clear -> (None, [])
+fromkeys -> (OrderedDict({K(1): None, K(2): None}), [('hash', 1), ('hash', 1), ('hash', 2), ('hash', 2)])
+len -> (2, [])
+hashes that collide: get -> (3, [('hash', 3), ('eq', 0, 3), ('eq', 1, 3), ('eq', 2, 3), ('eq', 3, 3)])
+hashes that collide: del the second -> ((None, [K(0), K(2), K(3)]), [('hash', 1), ('eq', 0, 1), ('eq', 1, 1), ('eq', 0, 1), ('eq', 1, 1), ('hash', 0), ('hash', 2), ('eq', 0, 2), ('hash', 3), ('eq', 0, 3), ('eq', 2, 3)])
+hashes that collide: del and get -> ((None, 3, [(K(0), 0), (K(2), 2), (K(3), 3)]), [('hash', 1), ('eq', 0, 1), ('eq', 1, 1), ('eq', 0, 1), ('eq', 1, 1), ('hash', 3), ('eq', 0, 3), ('eq', 2, 3), ('eq', 3, 3), ('hash', 0), ('hash', 0), ('hash', 2), ('eq', 0, 2), ('hash', 2), ('eq', 0, 2), ('hash', 3), ('eq', 0, 3), ('eq', 2, 3), ('hash', 3), ('eq', 0, 3), ('eq', 2, 3)])
+hashes that collide: move -> ((None, [K(1), K(2), K(3), K(0)]), [('hash', 0), ('eq', 0, 0), ('hash', 1), ('eq', 0, 1), ('hash', 2), ('eq', 0, 2), ('eq', 1, 2), ('hash', 3), ('eq', 0, 3), ('eq', 1, 3), ('eq', 2, 3), ('hash', 0)])
+hashes that collide: pop -> ((2, [K(0), K(1), K(3)]), [('hash', 2), ('eq', 0, 2), ('eq', 1, 2), ('eq', 2, 2), ('eq', 0, 2), ('eq', 1, 2), ('eq', 2, 2), ('eq', 0, 2), ('eq', 1, 2), ('eq', 2, 2), ('hash', 0), ('hash', 1), ('eq', 0, 1), ('hash', 3), ('eq', 0, 3), ('eq', 1, 3)])
+hashes that collide: list -> ([K(0), K(1), K(2), K(3)], [('hash', 0), ('hash', 1), ('eq', 0, 1), ('hash', 2), ('eq', 0, 2), ('eq', 1, 2), ('hash', 3), ('eq', 0, 3), ('eq', 1, 3), ('eq', 2, 3)])
+a hash that raises: set -> 'ZeroDivisionError: hash'
+a hash that raises: del -> 'ZeroDivisionError: hash'
+a hash that raises: pop -> 'ZeroDivisionError: hash'
+a hash that raises: pop with a default -> 'ZeroDivisionError: hash'
+a hash that raises: move_to_end -> 'ZeroDivisionError: hash'
+a hash that raises: setdefault -> 'ZeroDivisionError: hash'
+a hash that raises: in -> 'ZeroDivisionError: hash'
+a hash that raises: get -> 'ZeroDivisionError: hash'
+      left with 1 1
+an __eq__ that raises: set -> 'ZeroDivisionError: eq'
+      left with 1 1
+an __eq__ that raises: del -> 'ZeroDivisionError: eq'
+      left with 1 1
+an __eq__ that raises: pop -> 'ZeroDivisionError: eq'
+      left with 1 1
+an __eq__ that raises: pop with a default -> 'ZeroDivisionError: eq'
+      left with 1 1
+an __eq__ that raises: move_to_end -> 'ZeroDivisionError: eq'
+      left with 1 1
+an __eq__ that raises: setdefault -> 'ZeroDivisionError: eq'
+      left with 1 1
+an __eq__ that raises: in -> 'ZeroDivisionError: eq'
+===== what is asked of a derived class
+L(pairs) -> (L({'x': 1}), [('set', 'x', 1)])
+L(dict) -> (L({'x': 1}), [('set', 'x', 1)])
+L(keywords) -> (L({'x': 1}), [('set', 'x', 1)])
+L(L) -> (L({'a': 1, 'b': 2}), [('keys',), ('get', 'a'), ('set', 'a', 1), ('get', 'b'), ('set', 'b', 2)])
+OD(L) -> (OrderedDict({'a': 1, 'b': 2}), [('keys',), ('get', 'a'), ('get', 'b')])
+dict(L) -> ({'a': 1, 'b': 2}, [('keys',), ('get', 'a'), ('get', 'b')])
+update(L) -> (None, [('keys',), ('get', 'a'), ('get', 'b')])
+update -> (None, [('set', 'x', 1)])
+setdefault there -> (1, [('in', 'a'), ('get', 'a')])
+setdefault not there -> (5, [('in', 'x'), ('set', 'x', 5)])
+pop -> (1, [])
+pop what is not there -> (None, [])
+popitem -> (('b', 2), [])
+copy -> (L({'a': 1, 'b': 2}), [('get', 'a'), ('set', 'a', 1), ('get', 'b'), ('set', 'b', 2)])
+move_to_end -> (None, [])
+clear -> (None, [])
+repr -> ("L({'a': 1, 'b': 2})", [('keys',), ('get', 'a'), ('get', 'b')])
+== -> (True, [])
+== a dict -> (True, [])
+reduce -> ([('a', 1), ('b', 2)], [('items',)])
+fromkeys -> (L({'x': None}), [('set', 'x', None)])
+| -> (L({'a': 1, 'b': 2, 'x': 1}), [('keys',), ('get', 'a'), ('set', 'a', 1), ('get', 'b'), ('set', 'b', 2), ('set', 'x', 1)])
+r| -> (L({'x': 1, 'a': 1, 'b': 2}), [('set', 'x', 1), ('keys',), ('get', 'a'), ('set', 'a', 1), ('get', 'b'), ('set', 'b', 2)])
+|= -> (L({'a': 1, 'b': 2, 'x': 1}), [('set', 'x', 1)])
+list -> (['a', 'b'], [('iter',)])
+reversed -> (['b', 'a'], [])
+get -> (1, [])
+missing -> ('missing', [('get', 'zz'), ('missing', 'zz')])
+get of what is missing -> (None, [])
+** -> ({'a': 1, 'b': 2}, [('keys',), ('get', 'a'), ('get', 'b')])
+{**} -> ({'a': 1, 'b': 2}, [('keys',), ('get', 'a'), ('get', 'b')])
+json -> ('{"a": 1, "b": 2}', [('items',)])
+copy.copy -> (L({'a': 1, 'b': 2}), [('items',), ('set', 'a', 1), ('set', 'b', 2)])
+pickle -> (L({'a': 1, 'b': 2}), [('items',), ('set', 'a', 1), ('set', 'b', 2)])
+len -> (2, [])
+in -> (True, [('in', 'a')])
+sorted -> (['a', 'b'], [('iter',)])
+keys() -> (['a', 'b'], [])
+items() -> ([('a', 1), ('b', 2)], [])
+values() -> ([1, 2], [])
+done with the first part

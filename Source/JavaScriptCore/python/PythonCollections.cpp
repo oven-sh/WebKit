@@ -1459,6 +1459,7 @@ JSObject* createCollectionsModule(JSGlobalObject* globalObject)
     addFunction(globalObject, module, "_count_elements"_s, collectionsCountElements);
     for (PyType* type : { state.deque.get(), state.defaultDict.get(), state.dequeIterator.get(), state.dequeReverseIterator.get(), state.tupleGetter.get() })
         module->putDirect(vm, Identifier::fromString(vm, type->nameWithoutModule(globalObject)), type);
+    module->putDirect(vm, Identifier::fromString(vm, "OrderedDict"_s), initializeOrderedDict(globalObject));
     return module;
 }
 

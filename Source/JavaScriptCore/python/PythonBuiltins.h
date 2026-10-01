@@ -195,6 +195,7 @@ JSObject* createMarshalModule(JSGlobalObject*);
 JSObject* createErrnoModule(JSGlobalObject*);
 JSObject* createAtExitModule(JSGlobalObject*);
 JSObject* createCollectionsModule(JSGlobalObject*);
+PyType* initializeOrderedDict(JSGlobalObject*); // collections.OrderedDict, which is made the first time
 JSObject* createImpModule(JSGlobalObject*);
 JSObject* createOpcodeModule(JSGlobalObject*);
 JSObject* createRandomModule(JSGlobalObject*);
@@ -276,6 +277,7 @@ JSValue getInstanceDict(JSGlobalObject*, JSValue self);
 JSValue getInstanceDictOrProxy(JSGlobalObject*, JSValue self);
 void setInstanceDict(JSGlobalObject*, JSValue self, JSValue value);
 void setInstanceDictOfSubtype(JSGlobalObject*, JSValue self, JSValue value);
+void setInstanceDictOfBuiltin(JSGlobalObject*, JSValue self, JSValue value); // PyObject_GenericSetDict()
 JSValue getWeakReferences(JSGlobalObject*, JSValue self);
 JSC_DECLARE_HOST_FUNCTION(operatorCompareDigest); // _operator._compare_digest(), and _hashlib.compare_digest()
 JSC_DECLARE_HOST_FUNCTION(sliceIndices);

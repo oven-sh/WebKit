@@ -268,6 +268,20 @@ JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type,
     return { };
 }
 
+JSValue raiseMadeOf(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type, JSValue value)
+{
+    if (!isNone(value) && !isTuple(value))
+        return raise(globalObject, scope, type, value);
+    MarkedArgumentBuffer arguments;
+    if (isTuple(value)) {
+        for (auto& item : asTuple(value)->span())
+            arguments.append(item.get());
+    }
+    JSValue exception = call(globalObject, globalObject->pyRealm()->type(type)->object(), arguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    return raiseObject(globalObject, scope, exception);
+}
+
 JSValue raiseObject(JSGlobalObject* globalObject, ThrowScope& scope, JSValue exception)
 {
     if (exception.isObject())

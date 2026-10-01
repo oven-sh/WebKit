@@ -88,18 +88,6 @@ PyDict* keywordsOf(JSGlobalObject* globalObject, const NativeArguments& args)
 // Whether `dict` in the struct of CPython's is not NULL: there is none until something is put in it or it is asked for.
 bool hasInstanceDictYet(JSValue object) { return asObject(object)->structure()->maxOffset() != invalidOffset; }
 
-// PyObject_GenericSetDict(), which unlike what a class of a program's has does not let it be deleted
-void setDictOfInstance(JSGlobalObject* globalObject, JSValue self, JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (!value) {
-        raiseTypeError(globalObject, scope, "cannot delete __dict__"_s);
-        return;
-    }
-    scope.release();
-    setInstanceDict(globalObject, self, value);
-}
-
 // tp_descr_get of a partial and of what lru_cache makes: like a function, it is a method of what it is got from.
 EncodedJSValue bindLikeFunction(JSGlobalObject* globalObject, ThrowScope& scope, const NativeArguments& args)
 {
@@ -854,7 +842,7 @@ JSObject* createFunctoolsModule(JSGlobalObject* globalObject)
         addMember(globalObject, partial, "keywords"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return stateOf<Partial>(self).keywords.get(); });
         // See what is said of this in PythonOperatorModule.cpp.
         addMember(globalObject, partial, "__vectorcalloffset__"_s, [] (JSGlobalObject*, JSValue) -> JSValue { return jsNumber(0); });
-        addGetSet(globalObject, partial, "__dict__"_s, getInstanceDict, setDictOfInstance);
+        addGetSet(globalObject, partial, "__dict__"_s, getInstanceDict, setInstanceDictOfBuiltin);
 
         PyType* cache = make(state.cacheType, "functools._lru_cache_wrapper"_s);
         addMethods(globalObject, cache, {
@@ -867,7 +855,7 @@ JSObject* createFunctoolsModule(JSGlobalObject* globalObject)
             { "__copy__"_s, cacheCopy, Kind::Method, pack(false), "($self, /, *args)"_s, Arguments::AreNotChecked },
             { "__deepcopy__"_s, cacheCopy, Kind::Method, pack(true), "($self, /, *args)"_s, Arguments::AreNotChecked },
         });
-        addGetSet(globalObject, cache, "__dict__"_s, getInstanceDict, setDictOfInstance);
+        addGetSet(globalObject, cache, "__dict__"_s, getInstanceDict, setInstanceDictOfBuiltin);
 
         PyType* key = make(state.keyType, "functools.KeyWrapper"_s);
         addMethods(globalObject, key, { { "__call__"_s, keyObjectCall, Kind::Wrapper, 0, "K(obj)"_s, Arguments::AreThoseOfTheClass } });

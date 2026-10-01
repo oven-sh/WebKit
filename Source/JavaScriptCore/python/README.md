@@ -1390,6 +1390,27 @@ The six programs `programs/datetime-*.py` are 23,000 lines of what CPython does:
 `fromisoformat()`; what a `tzinfo` can give and what is made of it; classes derived from each; each half hour of the days on which the clocks are changed in ten places, by the clock and by the timestamp; and what each class has in it,
 with what is said when each method is called wrongly.
 
+### `collections.OrderedDict`
+
+`Objects/odictobject.c`, function for function (`PythonOrderedDict.cpp`). `collections` has one written in Python besides and does without, from 2 to 18 times slower.
+
+It is a dict, and beside what a dict has it keeps its keys in a list that is linked both ways, which is the order that it is gone through in. That is not the order of the dict once something has been moved to an end. As in CPython,
+where a key is in the list is found by asking the dict which entry has the key: there is a row of nodes beside the entries, one for one, which is made again when the dict gets something else to keep its entries in
+(`PyHashTable::storage()`).
+
+- **A node is a number**, and what there is to it is at that number in four rows: the keys, in a tuple that no program comes by, and the hash and the nodes on either side, which are nothing to the collector. So nothing is allocated
+  for a key but when the rows grow.
+- **All that is in a cell of its own**, which the dict has under a name that no program can name, as a `defaultdict` has its factory. It has none until something is put in it: `dict.__new__(OrderedDict)` makes one as it makes any dict.
+- **What is done by a method of dict goes behind the back of this**, `dict.__setitem__(od, key, value)`, here as in CPython, and what comes of it is the same so far as it has been tried. That is not far: CPython goes round for ever
+  on `reversed(od)` after `dict.clear(od)`, and so does this, and goes down on `od.popitem()` after `dict.popitem(od)`, which here is a `KeyError`.
+- Its views are derived from those of a dict, so whether something is a `dict_keys` goes by `isInstance()`. They cannot be made by calling them, since they have the `tp_new` of their base, which is none
+  (`PyType::cannotBeInstantiated()`).
+- `KeyError` is raised with `PyErr_SetObject()`, which takes a key that is a tuple for all that the exception is made of: `raiseMadeOf()`. `od.move_to_end(("a",))` says `KeyError: 'a'`.
+- `dict.copy(od)` asks it for its keys, as `PyDict_Copy()` does of any dict whose class is gone through in a way of its own.
+
+`programs/ordered-dict.py` and `programs/ordered-dict-gone-through-and-gone-behind.py`: 1,850 lines, with how often a key is hashed and compared, what is asked of a class derived from it, each way of going through one with 26 things done
+to it meanwhile, and the views with each operator of a set.
+
 ### `_stat`, `_statistics`, `_sysconfig` and `_types`
 
 Each is what a module of the library takes in place of what it has written in Python, if it is there. `_stat` (`PythonStatModule.cpp`) has the system's numbers, where `stat.py` has the usual ones. `_statistics` is one

@@ -639,7 +639,12 @@ bool PyType::cannotBeInstantiated(VM& vm) const
     constexpr unsigned long disallowsInstantiation = 1ul << 7;
     if (m_flagsForPython & disallowsInstantiation)
         return true;
-    return !m_isCPythons && !hasFlag(IsHeapType) && base() && !base()->base() && !getDirect(vm, vm.pythonNames().dunder_new);
+    if (hasFlag(IsHeapType) || !base() || getDirect(vm, vm.pythonNames().dunder_new))
+        return false;
+    if (!m_isCPythons && !base()->base())
+        return true;
+    // It has the tp_new of its base, which may be none: odict_keys, which is derived from dict_keys.
+    return base()->cannotBeInstantiated(vm);
 }
 
 static JSC_DECLARE_HOST_FUNCTION(callType);

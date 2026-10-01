@@ -490,6 +490,13 @@ PYTHON_NATIVE(dictCopy)
 {
     DICT_PROLOGUE("copy");
     PyDict* copy = PyDict::create(globalObject);
+    // PyDict_Copy(): one of a class that is gone through in its own way is asked for its keys, and for what goes with each.
+    if (!isGoneThroughAsDict(globalObject, self)) [[unlikely]] {
+        if (self->size())
+            updateDictFrom(globalObject, copy, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(copy);
+    }
     copy->copyFrom(globalObject, *self);
     return JSValue::encode(copy);
 }

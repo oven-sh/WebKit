@@ -105,6 +105,8 @@ JSObject* createException(JSGlobalObject*, PyType*, JSValue argument);
 JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, const String& message);
 JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, JSValue argument);
 JSValue raise(JSGlobalObject*, ThrowScope&, PyType*, const String& message); // One of a module's own
+// PyErr_SetObject(type, value), of what is no exception. The exception is made as _PyErr_CreateException() makes it: the class is called with nothing if it is None, with what is in it if it is a tuple, and with it otherwise.
+JSValue raiseMadeOf(JSGlobalObject*, ThrowScope&, BuiltinType, JSValue value);
 inline JSValue raiseTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::TypeError, message); }
 inline JSValue raiseValueError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::ValueError, message); }
 JSValue raiseMemoryError(JSGlobalObject*, ThrowScope&);

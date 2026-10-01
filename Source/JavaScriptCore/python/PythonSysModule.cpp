@@ -746,18 +746,7 @@ PYTHON_NATIVE(returnTrue)
 PYTHON_NATIVE(sysExit)
 {
     NATIVE_PROLOGUE();
-    // PyErr_SetObject(), which makes the exception of what it is given as a class is called with it: a tuple is all of what it is called with.
-    JSValue status = args.at(0);
-    if (!status || !isTuple(status))
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemExit, status));
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 0; i < asTuple(status)->length(); ++i)
-        arguments.append(asTuple(status)->at(i));
-    JSValue exception = call(globalObject, realm->typeSystemExit()->object(), arguments);
-    RETURN_IF_EXCEPTION(scope, { });
-    setContext(globalObject, asObject(exception));
-    throwException(globalObject, scope, exception);
-    return { };
+    RELEASE_AND_RETURN(scope, JSValue::encode(raiseMadeOf(globalObject, scope, BuiltinType::SystemExit, args.at(0) ? args.at(0) : jsUndefined())));
 }
 
 PYTHON_NATIVE(sysException)

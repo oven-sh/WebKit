@@ -944,7 +944,7 @@ JSValue getInstanceDictOrProxy(JSGlobalObject* globalObject, JSValue self)
 void setInstanceDict(JSGlobalObject*, JSValue self, JSValue value);
 
 // PyObject_GenericSetDict(), which is what those that are built in have. An instance of a class of a program's can do without one.
-static void setInstanceDictOfBuiltin(JSGlobalObject* globalObject, JSValue self, JSValue value)
+void setInstanceDictOfBuiltin(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (!value) {

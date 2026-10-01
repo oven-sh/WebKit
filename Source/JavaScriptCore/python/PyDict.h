@@ -144,6 +144,8 @@ public:
     void setValueAt(VM& vm, unsigned entry, JSValue value) { m_storage->value(entry).set(vm, m_storage.get(), value); }
     // Changes whenever a key is added or removed.
     unsigned version() const { return m_version; }
+    // What the entries are in, if there have been any. Each stays where it is for as long as this is the same.
+    PyHashStorage* storage() const { return m_storage.get(); }
 
     // With a string that is known to be one, and cannot raise.
     JSValue getString(JSGlobalObject*, const String&);

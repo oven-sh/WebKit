@@ -40,7 +40,8 @@ static PyDict* dictOfView(JSValue view) { return uncheckedDowncast<PyDict>(unche
 
 static bool isView(JSGlobalObject* globalObject, JSValue value, BuiltinType type)
 {
-    return tryNativeObject(value) && typeOf(globalObject, value) == globalObject->pyRealm()->type(type);
+    // PyDictKeys_Check() and the like. Those of an OrderedDict are derived from these.
+    return tryNativeObject(value) && isInstance(globalObject, value, globalObject->pyRealm()->type(type));
 }
 
 // keys() and items() are like sets. values() is not.

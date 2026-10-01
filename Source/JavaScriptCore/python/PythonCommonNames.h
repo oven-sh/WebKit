@@ -63,7 +63,7 @@ namespace Python {
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
     v(weakReferences) v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(closure) v(yieldFrom) v(promise) v(settlement) v(isRunningAsync) v(isClosedAsync) v(frame) v(defaults) v(filename) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
-    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes) v(propertyName) v(isGettersDoc) v(line) v(fieldNames) v(hiddenFields) v(defaultFactory) v(isAskedAsMapping) v(hasHooks) v(finalizer) v(origin) v(groupMessage) v(groupExceptions) v(groupExceptionsRepr) v(taskContext) v(task)
+    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes) v(propertyName) v(isGettersDoc) v(line) v(fieldNames) v(hiddenFields) v(defaultFactory) v(order) v(isAskedAsMapping) v(hasHooks) v(finalizer) v(origin) v(groupMessage) v(groupExceptions) v(groupExceptionsRepr) v(taskContext) v(task)
 
 // The same, for what the built-in exceptions have besides: what it is called here, and the attribute that Python sees it as.
 #define FOR_EACH_PYTHON_EXCEPTION_FIELD(v) \

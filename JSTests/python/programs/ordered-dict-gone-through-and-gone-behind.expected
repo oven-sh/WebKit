@@ -1,0 +1,1374 @@
+===== changed while it is gone through
+iter, set another -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, set the same -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, set what is to come -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, del what has been -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, del what is to come -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, del and set -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, del one and set another -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, move -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, move what is there already -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, move to the front what is there -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, clear -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, clear and fill -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, popitem -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, pop -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, pop what is not there -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, setdefault there -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, setdefault not there -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+iter, update with nothing -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, copy -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, nothing -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, dict.__setitem__ another -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+iter, dict.__setitem__ the same -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+iter, dict.__delitem__ to come -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+iter, dict.clear -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+iter, dict.pop -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+iter, dict.popitem -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed, set another -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, set the same -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, set what is to come -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, del what has been -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, del what is to come -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, del and set -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, del one and set another -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, move -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, move what is there already -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, move to the front what is there -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, clear -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, clear and fill -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, popitem -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, pop -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, pop what is not there -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, setdefault there -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, setdefault not there -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed, update with nothing -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, copy -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, nothing -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, dict.__setitem__ another -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed, dict.__setitem__ the same -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed, dict.__delitem__ to come -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed, dict.clear -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed, dict.pop -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed, dict.popitem -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+keys, set another -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, set the same -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, set what is to come -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, del what has been -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, del what is to come -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, del and set -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, del one and set another -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, move -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, move what is there already -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, move to the front what is there -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, clear -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, clear and fill -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, popitem -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, pop -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, pop what is not there -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, setdefault there -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, setdefault not there -> ['a', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+keys, update with nothing -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, copy -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, nothing -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, dict.__setitem__ another -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+keys, dict.__setitem__ the same -> ['a', 'b', 'c', 'stop', 'stop', 'stop']
+keys, dict.__delitem__ to come -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+keys, dict.clear -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+keys, dict.pop -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+keys, dict.popitem -> ['a', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+values, set another -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, set the same -> [1, 2, 3, 'stop', 'stop', 'stop']
+values, set what is to come -> [1, 9, 3, 'stop', 'stop', 'stop']
+values, del what has been -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, del what is to come -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, del and set -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, del one and set another -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, move -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, move what is there already -> [1, 2, 3, 'stop', 'stop', 'stop']
+values, move to the front what is there -> [1, 2, 3, 'stop', 'stop', 'stop']
+values, clear -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, clear and fill -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, popitem -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, pop -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, pop what is not there -> [1, 2, 3, 'stop', 'stop', 'stop']
+values, setdefault there -> [1, 2, 3, 'stop', 'stop', 'stop']
+values, setdefault not there -> [1, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+values, update with nothing -> [1, 2, 3, 'stop', 'stop', 'stop']
+values, copy -> [1, 2, 3, 'stop', 'stop', 'stop']
+values, nothing -> [1, 2, 3, 'stop', 'stop', 'stop']
+values, dict.__setitem__ another -> [1, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+values, dict.__setitem__ the same -> [1, 9, 3, 'stop', 'stop', 'stop']
+values, dict.__delitem__ to come -> [1, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+values, dict.clear -> [1, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+values, dict.pop -> [1, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+values, dict.popitem -> [1, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+items, set another -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, set the same -> [('a', 1), ('b', 2), ('c', 3), 'stop', 'stop', 'stop']
+items, set what is to come -> [('a', 1), ('b', 9), ('c', 3), 'stop', 'stop', 'stop']
+items, del what has been -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, del what is to come -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, del and set -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, del one and set another -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, move -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, move what is there already -> [('a', 1), ('b', 2), ('c', 3), 'stop', 'stop', 'stop']
+items, move to the front what is there -> [('a', 1), ('b', 2), ('c', 3), 'stop', 'stop', 'stop']
+items, clear -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, clear and fill -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, popitem -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, pop -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, pop what is not there -> [('a', 1), ('b', 2), ('c', 3), 'stop', 'stop', 'stop']
+items, setdefault there -> [('a', 1), ('b', 2), ('c', 3), 'stop', 'stop', 'stop']
+items, setdefault not there -> [('a', 1), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+items, update with nothing -> [('a', 1), ('b', 2), ('c', 3), 'stop', 'stop', 'stop']
+items, copy -> [('a', 1), ('b', 2), ('c', 3), 'stop', 'stop', 'stop']
+items, nothing -> [('a', 1), ('b', 2), ('c', 3), 'stop', 'stop', 'stop']
+items, dict.__setitem__ another -> [('a', 1), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+items, dict.__setitem__ the same -> [('a', 1), ('b', 9), ('c', 3), 'stop', 'stop', 'stop']
+items, dict.__delitem__ to come -> [('a', 1), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+items, dict.clear -> [('a', 1), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+items, dict.pop -> [('a', 1), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+items, dict.popitem -> [('a', 1), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed keys, set another -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, set the same -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, set what is to come -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, del what has been -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, del what is to come -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, del and set -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, del one and set another -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, move -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, move what is there already -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, move to the front what is there -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, clear -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, clear and fill -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, popitem -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, pop -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, pop what is not there -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, setdefault there -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, setdefault not there -> ['c', 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed keys, update with nothing -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, copy -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, nothing -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, dict.__setitem__ another -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed keys, dict.__setitem__ the same -> ['c', 'b', 'a', 'stop', 'stop', 'stop']
+reversed keys, dict.__delitem__ to come -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed keys, dict.clear -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed keys, dict.pop -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed keys, dict.popitem -> ['c', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed values, set another -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, set the same -> [3, 2, 9, 'stop', 'stop', 'stop']
+reversed values, set what is to come -> [3, 9, 1, 'stop', 'stop', 'stop']
+reversed values, del what has been -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, del what is to come -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, del and set -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, del one and set another -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, move -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, move what is there already -> [3, 2, 1, 'stop', 'stop', 'stop']
+reversed values, move to the front what is there -> [3, 2, 1, 'stop', 'stop', 'stop']
+reversed values, clear -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, clear and fill -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, popitem -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, pop -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, pop what is not there -> [3, 2, 1, 'stop', 'stop', 'stop']
+reversed values, setdefault there -> [3, 2, 1, 'stop', 'stop', 'stop']
+reversed values, setdefault not there -> [3, 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed values, update with nothing -> [3, 2, 1, 'stop', 'stop', 'stop']
+reversed values, copy -> [3, 2, 1, 'stop', 'stop', 'stop']
+reversed values, nothing -> [3, 2, 1, 'stop', 'stop', 'stop']
+reversed values, dict.__setitem__ another -> [3, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed values, dict.__setitem__ the same -> [3, 9, 1, 'stop', 'stop', 'stop']
+reversed values, dict.__delitem__ to come -> [3, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed values, dict.clear -> [3, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed values, dict.pop -> [3, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed values, dict.popitem -> [3, 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed items, set another -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, set the same -> [('c', 3), ('b', 2), ('a', 9), 'stop', 'stop', 'stop']
+reversed items, set what is to come -> [('c', 3), ('b', 9), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, del what has been -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, del what is to come -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, del and set -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, del one and set another -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, move -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, move what is there already -> [('c', 3), ('b', 2), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, move to the front what is there -> [('c', 3), ('b', 2), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, clear -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, clear and fill -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, popitem -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, pop -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, pop what is not there -> [('c', 3), ('b', 2), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, setdefault there -> [('c', 3), ('b', 2), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, setdefault not there -> [('c', 3), 'RuntimeError: OrderedDict mutated during iteration', 'stop', 'stop', 'stop', 'stop']
+reversed items, update with nothing -> [('c', 3), ('b', 2), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, copy -> [('c', 3), ('b', 2), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, nothing -> [('c', 3), ('b', 2), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, dict.__setitem__ another -> [('c', 3), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed items, dict.__setitem__ the same -> [('c', 3), ('b', 9), ('a', 1), 'stop', 'stop', 'stop']
+reversed items, dict.__delitem__ to come -> [('c', 3), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed items, dict.clear -> [('c', 3), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed items, dict.pop -> [('c', 3), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+reversed items, dict.popitem -> [('c', 3), 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration', 'RuntimeError: OrderedDict changed size during iteration']
+===== an iterator
+iter -> ('odict_iterator', True, 'a', ['b', 'c'], [], 'no more')
+   of nothing -> ([], 'no more')
+   reduce -> ((<built-in function iter>, (['a', 'b', 'c'],)), 'a', (<built-in function iter>, (['b', 'c'],)), ['b', 'c'], (<built-in function iter>, ([],)))
+   pickle -> [('a', ['b', 'c'], ['b', 'c']), ('a', ['b', 'c'], ['b', 'c']), ('a', ['b', 'c'], ['b', 'c'])]
+   copy -> ('a', 'list_iterator', ['b', 'c'], ['b', 'c'])
+   length hint -> -1
+   reduce after a change -> 'RuntimeError: OrderedDict mutated during iteration'
+reversed -> ('odict_iterator', True, 'c', ['b', 'a'], [], 'no more')
+   of nothing -> ([], 'no more')
+   reduce -> ((<built-in function iter>, (['c', 'b', 'a'],)), 'c', (<built-in function iter>, (['b', 'a'],)), ['b', 'a'], (<built-in function iter>, ([],)))
+   pickle -> [('c', ['b', 'a'], ['b', 'a']), ('c', ['b', 'a'], ['b', 'a']), ('c', ['b', 'a'], ['b', 'a'])]
+   copy -> ('c', 'list_iterator', ['b', 'a'], ['b', 'a'])
+   length hint -> -1
+   reduce after a change -> 'RuntimeError: OrderedDict mutated during iteration'
+keys -> ('odict_iterator', True, 'a', ['b', 'c'], [], 'no more')
+   of nothing -> ([], 'no more')
+   reduce -> ((<built-in function iter>, (['a', 'b', 'c'],)), 'a', (<built-in function iter>, (['b', 'c'],)), ['b', 'c'], (<built-in function iter>, ([],)))
+   pickle -> [('a', ['b', 'c'], ['b', 'c']), ('a', ['b', 'c'], ['b', 'c']), ('a', ['b', 'c'], ['b', 'c'])]
+   copy -> ('a', 'list_iterator', ['b', 'c'], ['b', 'c'])
+   length hint -> -1
+   reduce after a change -> 'RuntimeError: OrderedDict mutated during iteration'
+values -> ('odict_iterator', True, 1, [2, 3], [], 'no more')
+   of nothing -> ([], 'no more')
+   reduce -> ((<built-in function iter>, ([1, 2, 3],)), 1, (<built-in function iter>, ([2, 3],)), [2, 3], (<built-in function iter>, ([],)))
+   pickle -> [(1, [2, 3], [2, 3]), (1, [2, 3], [2, 3]), (1, [2, 3], [2, 3])]
+   copy -> (1, 'list_iterator', [2, 3], [2, 3])
+   length hint -> -1
+   reduce after a change -> 'RuntimeError: OrderedDict mutated during iteration'
+items -> ('odict_iterator', True, ('a', 1), [('b', 2), ('c', 3)], [], 'no more')
+   of nothing -> ([], 'no more')
+   reduce -> ((<built-in function iter>, ([('a', 1), ('b', 2), ('c', 3)],)), ('a', 1), (<built-in function iter>, ([('b', 2), ('c', 3)],)), [('b', 2), ('c', 3)], (<built-in function iter>, ([],)))
+   pickle -> [(('a', 1), [('b', 2), ('c', 3)], [('b', 2), ('c', 3)]), (('a', 1), [('b', 2), ('c', 3)], [('b', 2), ('c', 3)]), (('a', 1), [('b', 2), ('c', 3)], [('b', 2), ('c', 3)])]
+   copy -> (('a', 1), 'list_iterator', [('b', 2), ('c', 3)], [('b', 2), ('c', 3)])
+   length hint -> -1
+   reduce after a change -> 'RuntimeError: OrderedDict mutated during iteration'
+reversed keys -> ('odict_iterator', True, 'c', ['b', 'a'], [], 'no more')
+   of nothing -> ([], 'no more')
+   reduce -> ((<built-in function iter>, (['c', 'b', 'a'],)), 'c', (<built-in function iter>, (['b', 'a'],)), ['b', 'a'], (<built-in function iter>, ([],)))
+   pickle -> [('c', ['b', 'a'], ['b', 'a']), ('c', ['b', 'a'], ['b', 'a']), ('c', ['b', 'a'], ['b', 'a'])]
+   copy -> ('c', 'list_iterator', ['b', 'a'], ['b', 'a'])
+   length hint -> -1
+   reduce after a change -> 'RuntimeError: OrderedDict mutated during iteration'
+reversed values -> ('odict_iterator', True, 3, [2, 1], [], 'no more')
+   of nothing -> ([], 'no more')
+   reduce -> ((<built-in function iter>, ([3, 2, 1],)), 3, (<built-in function iter>, ([2, 1],)), [2, 1], (<built-in function iter>, ([],)))
+   pickle -> [(3, [2, 1], [2, 1]), (3, [2, 1], [2, 1]), (3, [2, 1], [2, 1])]
+   copy -> (3, 'list_iterator', [2, 1], [2, 1])
+   length hint -> -1
+   reduce after a change -> 'RuntimeError: OrderedDict mutated during iteration'
+reversed items -> ('odict_iterator', True, ('c', 3), [('b', 2), ('a', 1)], [], 'no more')
+   of nothing -> ([], 'no more')
+   reduce -> ((<built-in function iter>, ([('c', 3), ('b', 2), ('a', 1)],)), ('c', 3), (<built-in function iter>, ([('b', 2), ('a', 1)],)), [('b', 2), ('a', 1)], (<built-in function iter>, ([],)))
+   pickle -> [(('c', 3), [('b', 2), ('a', 1)], [('b', 2), ('a', 1)]), (('c', 3), [('b', 2), ('a', 1)], [('b', 2), ('a', 1)]), (('c', 3), [('b', 2), ('a', 1)], [('b', 2), ('a', 1)])]
+   copy -> (('c', 3), 'list_iterator', [('b', 2), ('a', 1)], [('b', 2), ('a', 1)])
+   length hint -> -1
+   reduce after a change -> 'RuntimeError: OrderedDict mutated during iteration'
+the class -> (<class 'odict_iterator'>, 'odict_iterator', 'odict_iterator', 'builtins', (<class 'odict_iterator'>, <class 'object'>), ['__doc__', '__iter__', '__next__', '__reduce__'], False, None)
+make one -> "TypeError: cannot create 'odict_iterator' instances"
+derive -> "TypeError: type 'odict_iterator' is not an acceptable base type"
+attribute -> "AttributeError: 'odict_iterator' object has no attribute 'x' and no __dict__ for setting new attributes"
+__next__ of something else -> "TypeError: descriptor '__next__' requires a 'odict_iterator' object but received a 'int'"
+__next__ with an argument -> 'TypeError: expected 0 arguments, got 1'
+keeps the dict -> ['a']
+many at once -> [('a', 'c', 1, ('a', 1)), ('b', 'b', 2, ('b', 2)), ('c', 'a', 3, ('c', 3))]
+a large one -> (4999950000, 4999950000, 100000, 100000, 0, 99999)
+a good deal of coming and going -> (13405, [9994, 9988, 19959, 9973, 9964, 19917, 9949, 9943], [19999, 9999, 19998, 19997, 19995, 19994, 19993, 9996], 143699614, True, [])
+===== the views
+keys -> (<class 'odict_keys'>, 'odict_keys', 'odict_keys', 'builtins', (<class 'odict_keys'>, <class 'dict_keys'>, <class 'object'>), True, ['__doc__', '__iter__', '__reversed__'], False, None, True, True)
+   abc -> (True, False, False, True, True)
+   one -> ("odict_keys(['a', 'b', 'c'])", 3, ['a', 'b', 'c'], ['c', 'b', 'a'], mappingproxy(OrderedDict({'a': 1, 'b': 2, 'c': 3})), 'mappingproxy', 1)
+   make one -> "TypeError: cannot create 'odict_keys' instances"
+   make one of a dict -> "TypeError: cannot create 'odict_keys' instances"
+   derive -> "TypeError: type 'odict_keys' is not an acceptable base type"
+   attribute -> "AttributeError: 'odict_keys' object has no attribute 'x' and no __dict__ for setting new attributes"
+   hash -> "TypeError: unhashable type: 'odict_keys'"
+   pickle -> "TypeError: cannot pickle 'odict_keys' object"
+   copy -> "TypeError: cannot pickle 'odict_keys' object"
+   follows the dict -> (['a', 'b', 'c'], None, None, ['b', 'c', 'z', 'a'], 4)
+   __iter__ of the base -> ('dict_keyiterator', ['a', 'b', 'c'])
+   __reversed__ of the base -> ['c', 'b', 'a']
+   __iter__ on the view of a dict -> "TypeError: descriptor '__iter__' requires a 'odict_keys' object but received a 'dict_keys'"
+values -> (<class 'odict_values'>, 'odict_values', 'odict_values', 'builtins', (<class 'odict_values'>, <class 'dict_values'>, <class 'object'>), True, ['__doc__', '__iter__', '__reversed__'], False, None, True, True)
+   abc -> (False, True, False, False, True)
+   one -> ('odict_values([1, 2, 3])', 3, [1, 2, 3], [3, 2, 1], mappingproxy(OrderedDict({'a': 1, 'b': 2, 'c': 3})), 'mappingproxy', 1)
+   make one -> "TypeError: cannot create 'odict_values' instances"
+   make one of a dict -> "TypeError: cannot create 'odict_values' instances"
+   derive -> "TypeError: type 'odict_values' is not an acceptable base type"
+   attribute -> "AttributeError: 'odict_values' object has no attribute 'x' and no __dict__ for setting new attributes"
+   hash -> True
+   pickle -> "TypeError: cannot pickle 'odict_values' object"
+   copy -> "TypeError: cannot pickle 'odict_values' object"
+   follows the dict -> ([1, 2, 3], None, None, [2, 3, 1, 1], 4)
+   __iter__ of the base -> ('dict_valueiterator', [1, 2, 3])
+   __reversed__ of the base -> [3, 2, 1]
+   __iter__ on the view of a dict -> "TypeError: descriptor '__iter__' requires a 'odict_values' object but received a 'dict_values'"
+items -> (<class 'odict_items'>, 'odict_items', 'odict_items', 'builtins', (<class 'odict_items'>, <class 'dict_items'>, <class 'object'>), True, ['__doc__', '__iter__', '__reversed__'], False, None, True, True)
+   abc -> (False, False, True, True, True)
+   one -> ("odict_items([('a', 1), ('b', 2), ('c', 3)])", 3, [('a', 1), ('b', 2), ('c', 3)], [('c', 3), ('b', 2), ('a', 1)], mappingproxy(OrderedDict({'a': 1, 'b': 2, 'c': 3})), 'mappingproxy', 1)
+   make one -> "TypeError: cannot create 'odict_items' instances"
+   make one of a dict -> "TypeError: cannot create 'odict_items' instances"
+   derive -> "TypeError: type 'odict_items' is not an acceptable base type"
+   attribute -> "AttributeError: 'odict_items' object has no attribute 'x' and no __dict__ for setting new attributes"
+   hash -> "TypeError: unhashable type: 'odict_items'"
+   pickle -> "TypeError: cannot pickle 'odict_items' object"
+   copy -> "TypeError: cannot pickle 'odict_items' object"
+   follows the dict -> ([('a', 1), ('b', 2), ('c', 3)], None, None, [('b', 2), ('c', 3), ('z', 1), ('a', 1)], 4)
+   __iter__ of the base -> ('dict_itemiterator', [('a', 1), ('b', 2), ('c', 3)])
+   __reversed__ of the base -> [('c', 3), ('b', 2), ('a', 1)]
+   __iter__ on the view of a dict -> "TypeError: descriptor '__iter__' requires a 'odict_items' object but received a 'dict_items'"
+the base goes by the dict -> (['a', 'b', 'c'], [('a', 1), ('b', 2), ('c', 3)], [1, 2, 3], ['a', 'b', 'c'], ['c', 'b', 'a'], "{'a': 1, 'b': 2, 'c': 3}", {'b': 2, 'c': 3, 'a': 1}, 'dict', True)
+keys & {'a', 'z'} -> (['a'], 'set')
+   the other way -> (['a'], 'set')
+items & {'a', 'z'} -> ([], 'set')
+   the other way -> ([], 'set')
+values & {'a', 'z'} -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'set' and 'odict_values'"
+keys & {'a'} -> (['a'], 'set')
+   the other way -> (['a'], 'set')
+items & {'a'} -> ([], 'set')
+   the other way -> ([], 'set')
+values & {'a'} -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'set' and 'odict_values'"
+keys & set() -> ([], 'set')
+   the other way -> ([], 'set')
+items & set() -> ([], 'set')
+   the other way -> ([], 'set')
+values & set() -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'set' and 'odict_values'"
+keys & ['a', 'a', 'z'] -> (['a'], 'set')
+   the other way -> (['a'], 'set')
+items & ['a', 'a', 'z'] -> ([], 'set')
+   the other way -> ([], 'set')
+values & ['a', 'a', 'z'] -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'list'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'list' and 'odict_values'"
+keys & 'ab' -> (['a', 'b'], 'set')
+   the other way -> (['a', 'b'], 'set')
+items & 'ab' -> ([], 'set')
+   the other way -> ([], 'set')
+values & 'ab' -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'str'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'str' and 'odict_values'"
+keys & dict_keys(['a']) -> (['a'], 'set')
+   the other way -> (['a'], 'set')
+items & dict_keys(['a']) -> ([], 'set')
+   the other way -> ([], 'set')
+values & dict_keys(['a']) -> ([], 'set')
+   the other way -> ([], 'set')
+keys & odict_keys(['a', 'z']) -> (['a'], 'set')
+   the other way -> (['a'], 'set')
+items & odict_keys(['a', 'z']) -> ([], 'set')
+   the other way -> ([], 'set')
+values & odict_keys(['a', 'z']) -> ([], 'set')
+   the other way -> ([], 'set')
+keys & frozenset({'a'}) -> (['a'], 'set')
+   the other way -> (['a'], 'set')
+items & frozenset({'a'}) -> ([], 'set')
+   the other way -> ([], 'set')
+values & frozenset({'a'}) -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'frozenset'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'frozenset' and 'odict_values'"
+keys & 5 -> "TypeError: 'int' object is not iterable"
+   the other way -> "TypeError: 'int' object is not iterable"
+items & 5 -> "TypeError: 'int' object is not iterable"
+   the other way -> "TypeError: 'int' object is not iterable"
+values & 5 -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'int'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'int' and 'odict_values'"
+keys & None -> "TypeError: 'NoneType' object is not iterable"
+   the other way -> "TypeError: 'NoneType' object is not iterable"
+items & None -> "TypeError: 'NoneType' object is not iterable"
+   the other way -> "TypeError: 'NoneType' object is not iterable"
+values & None -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'NoneType'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'NoneType' and 'odict_values'"
+keys & {('a', 1), ('z', 2)} -> ([], 'set')
+   the other way -> ([], 'set')
+items & {('a', 1), ('z', 2)} -> ([('a', 1)], 'set')
+   the other way -> ([('a', 1)], 'set')
+values & {('a', 1), ('z', 2)} -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'set' and 'odict_values'"
+keys & odict_items([('a', 1)]) -> ([], 'set')
+   the other way -> ([], 'set')
+items & odict_items([('a', 1)]) -> ([('a', 1)], 'set')
+   the other way -> ([('a', 1)], 'set')
+values & odict_items([('a', 1)]) -> ([], 'set')
+   the other way -> ([], 'set')
+keys & dict_items([('a', 1)]) -> ([], 'set')
+   the other way -> ([], 'set')
+items & dict_items([('a', 1)]) -> ([('a', 1)], 'set')
+   the other way -> ([('a', 1)], 'set')
+values & dict_items([('a', 1)]) -> ([], 'set')
+   the other way -> ([], 'set')
+keys & <str_ascii_iterator object at 0x> -> (['a', 'b'], 'set')
+   the other way -> (['a', 'b'], 'set')
+items & <str_ascii_iterator object at 0x> -> ([], 'set')
+   the other way -> ([], 'set')
+values & <str_ascii_iterator object at 0x> -> "TypeError: unsupported operand type(s) for &: 'odict_values' and 'str_ascii_iterator'"
+   the other way -> "TypeError: unsupported operand type(s) for &: 'str_ascii_iterator' and 'odict_values'"
+keys | {'a', 'z'} -> (['a', 'b', 'c', 'z'], 'set')
+   the other way -> (['a', 'b', 'c', 'z'], 'set')
+items | {'a', 'z'} -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values | {'a', 'z'} -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'set' and 'odict_values'"
+keys | {'a'} -> (['a', 'b', 'c'], 'set')
+   the other way -> (['a', 'b', 'c'], 'set')
+items | {'a'} -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values | {'a'} -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'set' and 'odict_values'"
+keys | set() -> (['a', 'b', 'c'], 'set')
+   the other way -> (['a', 'b', 'c'], 'set')
+items | set() -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+values | set() -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'set' and 'odict_values'"
+keys | ['a', 'a', 'z'] -> (['a', 'b', 'c', 'z'], 'set')
+   the other way -> (['a', 'b', 'c', 'z'], 'set')
+items | ['a', 'a', 'z'] -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values | ['a', 'a', 'z'] -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'list'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'list' and 'odict_values'"
+keys | 'ab' -> (['a', 'b', 'c'], 'set')
+   the other way -> (['a', 'b', 'c'], 'set')
+items | 'ab' -> (['a', 'b', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'b', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values | 'ab' -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'str'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'str' and 'odict_values'"
+keys | dict_keys(['a']) -> (['a', 'b', 'c'], 'set')
+   the other way -> (['a', 'b', 'c'], 'set')
+items | dict_keys(['a']) -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values | dict_keys(['a']) -> (['a', 1, 2, 3], 'set')
+   the other way -> (['a', 1, 2, 3], 'set')
+keys | odict_keys(['a', 'z']) -> (['a', 'b', 'c', 'z'], 'set')
+   the other way -> (['a', 'b', 'c', 'z'], 'set')
+items | odict_keys(['a', 'z']) -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values | odict_keys(['a', 'z']) -> (['a', 'z', 1, 2, 3], 'set')
+   the other way -> (['a', 'z', 1, 2, 3], 'set')
+keys | frozenset({'a'}) -> (['a', 'b', 'c'], 'set')
+   the other way -> (['a', 'b', 'c'], 'set')
+items | frozenset({'a'}) -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values | frozenset({'a'}) -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'frozenset'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'frozenset' and 'odict_values'"
+keys | 5 -> "TypeError: 'int' object is not iterable"
+   the other way -> "TypeError: 'int' object is not iterable"
+items | 5 -> "TypeError: 'int' object is not iterable"
+   the other way -> "TypeError: 'int' object is not iterable"
+values | 5 -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'int'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'int' and 'odict_values'"
+keys | None -> "TypeError: 'NoneType' object is not iterable"
+   the other way -> "TypeError: 'NoneType' object is not iterable"
+items | None -> "TypeError: 'NoneType' object is not iterable"
+   the other way -> "TypeError: 'NoneType' object is not iterable"
+values | None -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'NoneType'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'NoneType' and 'odict_values'"
+keys | {('a', 1), ('z', 2)} -> (['a', 'b', 'c', ('a', 1), ('z', 2)], 'set')
+   the other way -> (['a', 'b', 'c', ('a', 1), ('z', 2)], 'set')
+items | {('a', 1), ('z', 2)} -> ([('a', 1), ('b', 2), ('c', 3), ('z', 2)], 'set')
+   the other way -> ([('a', 1), ('b', 2), ('c', 3), ('z', 2)], 'set')
+values | {('a', 1), ('z', 2)} -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'set' and 'odict_values'"
+keys | odict_items([('a', 1)]) -> (['a', 'b', 'c', ('a', 1)], 'set')
+   the other way -> (['a', 'b', 'c', ('a', 1)], 'set')
+items | odict_items([('a', 1)]) -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+values | odict_items([('a', 1)]) -> ([('a', 1), 1, 2, 3], 'set')
+   the other way -> ([('a', 1), 1, 2, 3], 'set')
+keys | dict_items([('a', 1)]) -> (['a', 'b', 'c', ('a', 1)], 'set')
+   the other way -> (['a', 'b', 'c', ('a', 1)], 'set')
+items | dict_items([('a', 1)]) -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+values | dict_items([('a', 1)]) -> ([('a', 1), 1, 2, 3], 'set')
+   the other way -> ([('a', 1), 1, 2, 3], 'set')
+keys | <str_ascii_iterator object at 0x> -> (['a', 'b', 'c'], 'set')
+   the other way -> (['a', 'b', 'c'], 'set')
+items | <str_ascii_iterator object at 0x> -> (['a', 'b', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'b', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values | <str_ascii_iterator object at 0x> -> "TypeError: unsupported operand type(s) for |: 'odict_values' and 'str_ascii_iterator'"
+   the other way -> "TypeError: unsupported operand type(s) for |: 'str_ascii_iterator' and 'odict_values'"
+keys - {'a', 'z'} -> (['b', 'c'], 'set')
+   the other way -> (['z'], 'set')
+items - {'a', 'z'} -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z'], 'set')
+values - {'a', 'z'} -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'set' and 'odict_values'"
+keys - {'a'} -> (['b', 'c'], 'set')
+   the other way -> ([], 'set')
+items - {'a'} -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a'], 'set')
+values - {'a'} -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'set' and 'odict_values'"
+keys - set() -> (['a', 'b', 'c'], 'set')
+   the other way -> ([], 'set')
+items - set() -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> ([], 'set')
+values - set() -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'set' and 'odict_values'"
+keys - ['a', 'a', 'z'] -> (['b', 'c'], 'set')
+   the other way -> (['z'], 'set')
+items - ['a', 'a', 'z'] -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z'], 'set')
+values - ['a', 'a', 'z'] -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'list'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'list' and 'odict_values'"
+keys - 'ab' -> (['c'], 'set')
+   the other way -> ([], 'set')
+items - 'ab' -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'b'], 'set')
+values - 'ab' -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'str'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'str' and 'odict_values'"
+keys - dict_keys(['a']) -> (['b', 'c'], 'set')
+   the other way -> ([], 'set')
+items - dict_keys(['a']) -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a'], 'set')
+values - dict_keys(['a']) -> ([1, 2, 3], 'set')
+   the other way -> (['a'], 'set')
+keys - odict_keys(['a', 'z']) -> (['b', 'c'], 'set')
+   the other way -> (['z'], 'set')
+items - odict_keys(['a', 'z']) -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z'], 'set')
+values - odict_keys(['a', 'z']) -> ([1, 2, 3], 'set')
+   the other way -> (['a', 'z'], 'set')
+keys - frozenset({'a'}) -> (['b', 'c'], 'set')
+   the other way -> ([], 'set')
+items - frozenset({'a'}) -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a'], 'set')
+values - frozenset({'a'}) -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'frozenset'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'frozenset' and 'odict_values'"
+keys - 5 -> "TypeError: 'int' object is not iterable"
+   the other way -> "TypeError: 'int' object is not iterable"
+items - 5 -> "TypeError: 'int' object is not iterable"
+   the other way -> "TypeError: 'int' object is not iterable"
+values - 5 -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'int'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'int' and 'odict_values'"
+keys - None -> "TypeError: 'NoneType' object is not iterable"
+   the other way -> "TypeError: 'NoneType' object is not iterable"
+items - None -> "TypeError: 'NoneType' object is not iterable"
+   the other way -> "TypeError: 'NoneType' object is not iterable"
+values - None -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'NoneType'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'NoneType' and 'odict_values'"
+keys - {('a', 1), ('z', 2)} -> (['a', 'b', 'c'], 'set')
+   the other way -> ([('a', 1), ('z', 2)], 'set')
+items - {('a', 1), ('z', 2)} -> ([('b', 2), ('c', 3)], 'set')
+   the other way -> ([('z', 2)], 'set')
+values - {('a', 1), ('z', 2)} -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'set' and 'odict_values'"
+keys - odict_items([('a', 1)]) -> (['a', 'b', 'c'], 'set')
+   the other way -> ([('a', 1)], 'set')
+items - odict_items([('a', 1)]) -> ([('b', 2), ('c', 3)], 'set')
+   the other way -> ([], 'set')
+values - odict_items([('a', 1)]) -> ([1, 2, 3], 'set')
+   the other way -> ([('a', 1)], 'set')
+keys - dict_items([('a', 1)]) -> (['a', 'b', 'c'], 'set')
+   the other way -> ([('a', 1)], 'set')
+items - dict_items([('a', 1)]) -> ([('b', 2), ('c', 3)], 'set')
+   the other way -> ([], 'set')
+values - dict_items([('a', 1)]) -> ([1, 2, 3], 'set')
+   the other way -> ([('a', 1)], 'set')
+keys - <str_ascii_iterator object at 0x> -> (['c'], 'set')
+   the other way -> ([], 'set')
+items - <str_ascii_iterator object at 0x> -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'b'], 'set')
+values - <str_ascii_iterator object at 0x> -> "TypeError: unsupported operand type(s) for -: 'odict_values' and 'str_ascii_iterator'"
+   the other way -> "TypeError: unsupported operand type(s) for -: 'str_ascii_iterator' and 'odict_values'"
+keys ^ {'a', 'z'} -> (['b', 'c', 'z'], 'set')
+   the other way -> (['b', 'c', 'z'], 'set')
+items ^ {'a', 'z'} -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ {'a', 'z'} -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'set' and 'odict_values'"
+keys ^ {'a'} -> (['b', 'c'], 'set')
+   the other way -> (['b', 'c'], 'set')
+items ^ {'a'} -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ {'a'} -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'set' and 'odict_values'"
+keys ^ set() -> (['a', 'b', 'c'], 'set')
+   the other way -> (['a', 'b', 'c'], 'set')
+items ^ set() -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> ([('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ set() -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'set' and 'odict_values'"
+keys ^ ['a', 'a', 'z'] -> (['b', 'c', 'z'], 'set')
+   the other way -> (['b', 'c', 'z'], 'set')
+items ^ ['a', 'a', 'z'] -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ ['a', 'a', 'z'] -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'list'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'list' and 'odict_values'"
+keys ^ 'ab' -> (['c'], 'set')
+   the other way -> (['c'], 'set')
+items ^ 'ab' -> (['a', 'b', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'b', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ 'ab' -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'str'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'str' and 'odict_values'"
+keys ^ dict_keys(['a']) -> (['b', 'c'], 'set')
+   the other way -> (['b', 'c'], 'set')
+items ^ dict_keys(['a']) -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ dict_keys(['a']) -> (['a', 1, 2, 3], 'set')
+   the other way -> (['a', 1, 2, 3], 'set')
+keys ^ odict_keys(['a', 'z']) -> (['b', 'c', 'z'], 'set')
+   the other way -> (['b', 'c', 'z'], 'set')
+items ^ odict_keys(['a', 'z']) -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'z', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ odict_keys(['a', 'z']) -> (['a', 'z', 1, 2, 3], 'set')
+   the other way -> (['a', 'z', 1, 2, 3], 'set')
+keys ^ frozenset({'a'}) -> (['b', 'c'], 'set')
+   the other way -> (['b', 'c'], 'set')
+items ^ frozenset({'a'}) -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ frozenset({'a'}) -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'frozenset'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'frozenset' and 'odict_values'"
+keys ^ 5 -> "TypeError: 'int' object is not iterable"
+   the other way -> "TypeError: 'int' object is not iterable"
+items ^ 5 -> "TypeError: 'int' object is not iterable"
+   the other way -> "TypeError: 'int' object is not iterable"
+values ^ 5 -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'int'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'int' and 'odict_values'"
+keys ^ None -> "TypeError: 'NoneType' object is not iterable"
+   the other way -> "TypeError: 'NoneType' object is not iterable"
+items ^ None -> "TypeError: 'NoneType' object is not iterable"
+   the other way -> "TypeError: 'NoneType' object is not iterable"
+values ^ None -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'NoneType'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'NoneType' and 'odict_values'"
+keys ^ {('a', 1), ('z', 2)} -> (['a', 'b', 'c', ('a', 1), ('z', 2)], 'set')
+   the other way -> (['a', 'b', 'c', ('a', 1), ('z', 2)], 'set')
+items ^ {('a', 1), ('z', 2)} -> ([('b', 2), ('c', 3), ('z', 2)], 'set')
+   the other way -> ([('b', 2), ('c', 3), ('z', 2)], 'set')
+values ^ {('a', 1), ('z', 2)} -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'set'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'set' and 'odict_values'"
+keys ^ odict_items([('a', 1)]) -> (['a', 'b', 'c', ('a', 1)], 'set')
+   the other way -> (['a', 'b', 'c', ('a', 1)], 'set')
+items ^ odict_items([('a', 1)]) -> ([('b', 2), ('c', 3)], 'set')
+   the other way -> ([('b', 2), ('c', 3)], 'set')
+values ^ odict_items([('a', 1)]) -> ([('a', 1), 1, 2, 3], 'set')
+   the other way -> ([('a', 1), 1, 2, 3], 'set')
+keys ^ dict_items([('a', 1)]) -> (['a', 'b', 'c', ('a', 1)], 'set')
+   the other way -> (['a', 'b', 'c', ('a', 1)], 'set')
+items ^ dict_items([('a', 1)]) -> ([('b', 2), ('c', 3)], 'set')
+   the other way -> ([('b', 2), ('c', 3)], 'set')
+values ^ dict_items([('a', 1)]) -> ([('a', 1), 1, 2, 3], 'set')
+   the other way -> ([('a', 1), 1, 2, 3], 'set')
+keys ^ <str_ascii_iterator object at 0x> -> (['c'], 'set')
+   the other way -> (['c'], 'set')
+items ^ <str_ascii_iterator object at 0x> -> (['a', 'b', ('a', 1), ('b', 2), ('c', 3)], 'set')
+   the other way -> (['a', 'b', ('a', 1), ('b', 2), ('c', 3)], 'set')
+values ^ <str_ascii_iterator object at 0x> -> "TypeError: unsupported operand type(s) for ^: 'odict_values' and 'str_ascii_iterator'"
+   the other way -> "TypeError: unsupported operand type(s) for ^: 'str_ascii_iterator' and 'odict_values'"
+keys == {'a', 'z'} -> False
+   the other way -> False
+items == {'a', 'z'} -> False
+   the other way -> False
+values == {'a', 'z'} -> False
+   the other way -> False
+keys == {'a'} -> False
+   the other way -> False
+items == {'a'} -> False
+   the other way -> False
+values == {'a'} -> False
+   the other way -> False
+keys == set() -> False
+   the other way -> False
+items == set() -> False
+   the other way -> False
+values == set() -> False
+   the other way -> False
+keys == ['a', 'a', 'z'] -> False
+   the other way -> False
+items == ['a', 'a', 'z'] -> False
+   the other way -> False
+values == ['a', 'a', 'z'] -> False
+   the other way -> False
+keys == 'ab' -> False
+   the other way -> False
+items == 'ab' -> False
+   the other way -> False
+values == 'ab' -> False
+   the other way -> False
+keys == dict_keys(['a']) -> False
+   the other way -> False
+items == dict_keys(['a']) -> False
+   the other way -> False
+values == dict_keys(['a']) -> False
+   the other way -> False
+keys == odict_keys(['a', 'z']) -> False
+   the other way -> False
+items == odict_keys(['a', 'z']) -> False
+   the other way -> False
+values == odict_keys(['a', 'z']) -> False
+   the other way -> False
+keys == frozenset({'a'}) -> False
+   the other way -> False
+items == frozenset({'a'}) -> False
+   the other way -> False
+values == frozenset({'a'}) -> False
+   the other way -> False
+keys == 5 -> False
+   the other way -> False
+items == 5 -> False
+   the other way -> False
+values == 5 -> False
+   the other way -> False
+keys == None -> False
+   the other way -> False
+items == None -> False
+   the other way -> False
+values == None -> False
+   the other way -> False
+keys == {('a', 1), ('z', 2)} -> False
+   the other way -> False
+items == {('a', 1), ('z', 2)} -> False
+   the other way -> False
+values == {('a', 1), ('z', 2)} -> False
+   the other way -> False
+keys == odict_items([('a', 1)]) -> False
+   the other way -> False
+items == odict_items([('a', 1)]) -> False
+   the other way -> False
+values == odict_items([('a', 1)]) -> False
+   the other way -> False
+keys == dict_items([('a', 1)]) -> False
+   the other way -> False
+items == dict_items([('a', 1)]) -> False
+   the other way -> False
+values == dict_items([('a', 1)]) -> False
+   the other way -> False
+keys == <str_ascii_iterator object at 0x> -> False
+   the other way -> False
+items == <str_ascii_iterator object at 0x> -> False
+   the other way -> False
+values == <str_ascii_iterator object at 0x> -> False
+   the other way -> False
+keys != {'a', 'z'} -> True
+   the other way -> True
+items != {'a', 'z'} -> True
+   the other way -> True
+values != {'a', 'z'} -> True
+   the other way -> True
+keys != {'a'} -> True
+   the other way -> True
+items != {'a'} -> True
+   the other way -> True
+values != {'a'} -> True
+   the other way -> True
+keys != set() -> True
+   the other way -> True
+items != set() -> True
+   the other way -> True
+values != set() -> True
+   the other way -> True
+keys != ['a', 'a', 'z'] -> True
+   the other way -> True
+items != ['a', 'a', 'z'] -> True
+   the other way -> True
+values != ['a', 'a', 'z'] -> True
+   the other way -> True
+keys != 'ab' -> True
+   the other way -> True
+items != 'ab' -> True
+   the other way -> True
+values != 'ab' -> True
+   the other way -> True
+keys != dict_keys(['a']) -> True
+   the other way -> True
+items != dict_keys(['a']) -> True
+   the other way -> True
+values != dict_keys(['a']) -> True
+   the other way -> True
+keys != odict_keys(['a', 'z']) -> True
+   the other way -> True
+items != odict_keys(['a', 'z']) -> True
+   the other way -> True
+values != odict_keys(['a', 'z']) -> True
+   the other way -> True
+keys != frozenset({'a'}) -> True
+   the other way -> True
+items != frozenset({'a'}) -> True
+   the other way -> True
+values != frozenset({'a'}) -> True
+   the other way -> True
+keys != 5 -> True
+   the other way -> True
+items != 5 -> True
+   the other way -> True
+values != 5 -> True
+   the other way -> True
+keys != None -> True
+   the other way -> True
+items != None -> True
+   the other way -> True
+values != None -> True
+   the other way -> True
+keys != {('a', 1), ('z', 2)} -> True
+   the other way -> True
+items != {('a', 1), ('z', 2)} -> True
+   the other way -> True
+values != {('a', 1), ('z', 2)} -> True
+   the other way -> True
+keys != odict_items([('a', 1)]) -> True
+   the other way -> True
+items != odict_items([('a', 1)]) -> True
+   the other way -> True
+values != odict_items([('a', 1)]) -> True
+   the other way -> True
+keys != dict_items([('a', 1)]) -> True
+   the other way -> True
+items != dict_items([('a', 1)]) -> True
+   the other way -> True
+values != dict_items([('a', 1)]) -> True
+   the other way -> True
+keys != <str_ascii_iterator object at 0x> -> True
+   the other way -> True
+items != <str_ascii_iterator object at 0x> -> True
+   the other way -> True
+values != <str_ascii_iterator object at 0x> -> True
+   the other way -> True
+keys < {'a', 'z'} -> False
+   the other way -> False
+items < {'a', 'z'} -> False
+   the other way -> False
+values < {'a', 'z'} -> "TypeError: '<' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '<' not supported between instances of 'set' and 'odict_values'"
+keys < {'a'} -> False
+   the other way -> True
+items < {'a'} -> False
+   the other way -> False
+values < {'a'} -> "TypeError: '<' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '<' not supported between instances of 'set' and 'odict_values'"
+keys < set() -> False
+   the other way -> True
+items < set() -> False
+   the other way -> True
+values < set() -> "TypeError: '<' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '<' not supported between instances of 'set' and 'odict_values'"
+keys < ['a', 'a', 'z'] -> "TypeError: '<' not supported between instances of 'odict_keys' and 'list'"
+   the other way -> "TypeError: '<' not supported between instances of 'list' and 'odict_keys'"
+items < ['a', 'a', 'z'] -> "TypeError: '<' not supported between instances of 'odict_items' and 'list'"
+   the other way -> "TypeError: '<' not supported between instances of 'list' and 'odict_items'"
+values < ['a', 'a', 'z'] -> "TypeError: '<' not supported between instances of 'odict_values' and 'list'"
+   the other way -> "TypeError: '<' not supported between instances of 'list' and 'odict_values'"
+keys < 'ab' -> "TypeError: '<' not supported between instances of 'odict_keys' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'odict_keys'"
+items < 'ab' -> "TypeError: '<' not supported between instances of 'odict_items' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'odict_items'"
+values < 'ab' -> "TypeError: '<' not supported between instances of 'odict_values' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'odict_values'"
+keys < dict_keys(['a']) -> False
+   the other way -> True
+items < dict_keys(['a']) -> False
+   the other way -> False
+values < dict_keys(['a']) -> "TypeError: '<' not supported between instances of 'odict_values' and 'dict_keys'"
+   the other way -> "TypeError: '<' not supported between instances of 'dict_keys' and 'odict_values'"
+keys < odict_keys(['a', 'z']) -> False
+   the other way -> False
+items < odict_keys(['a', 'z']) -> False
+   the other way -> False
+values < odict_keys(['a', 'z']) -> "TypeError: '<' not supported between instances of 'odict_values' and 'odict_keys'"
+   the other way -> "TypeError: '<' not supported between instances of 'odict_keys' and 'odict_values'"
+keys < frozenset({'a'}) -> False
+   the other way -> True
+items < frozenset({'a'}) -> False
+   the other way -> False
+values < frozenset({'a'}) -> "TypeError: '<' not supported between instances of 'odict_values' and 'frozenset'"
+   the other way -> "TypeError: '<' not supported between instances of 'frozenset' and 'odict_values'"
+keys < 5 -> "TypeError: '<' not supported between instances of 'odict_keys' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'odict_keys'"
+items < 5 -> "TypeError: '<' not supported between instances of 'odict_items' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'odict_items'"
+values < 5 -> "TypeError: '<' not supported between instances of 'odict_values' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'odict_values'"
+keys < None -> "TypeError: '<' not supported between instances of 'odict_keys' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'odict_keys'"
+items < None -> "TypeError: '<' not supported between instances of 'odict_items' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'odict_items'"
+values < None -> "TypeError: '<' not supported between instances of 'odict_values' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'odict_values'"
+keys < {('a', 1), ('z', 2)} -> False
+   the other way -> False
+items < {('a', 1), ('z', 2)} -> False
+   the other way -> False
+values < {('a', 1), ('z', 2)} -> "TypeError: '<' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '<' not supported between instances of 'set' and 'odict_values'"
+keys < odict_items([('a', 1)]) -> False
+   the other way -> False
+items < odict_items([('a', 1)]) -> False
+   the other way -> True
+values < odict_items([('a', 1)]) -> "TypeError: '<' not supported between instances of 'odict_values' and 'odict_items'"
+   the other way -> "TypeError: '<' not supported between instances of 'odict_items' and 'odict_values'"
+keys < dict_items([('a', 1)]) -> False
+   the other way -> False
+items < dict_items([('a', 1)]) -> False
+   the other way -> True
+values < dict_items([('a', 1)]) -> "TypeError: '<' not supported between instances of 'odict_values' and 'dict_items'"
+   the other way -> "TypeError: '<' not supported between instances of 'dict_items' and 'odict_values'"
+keys < <str_ascii_iterator object at 0x> -> "TypeError: '<' not supported between instances of 'odict_keys' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '<' not supported between instances of 'str_ascii_iterator' and 'odict_keys'"
+items < <str_ascii_iterator object at 0x> -> "TypeError: '<' not supported between instances of 'odict_items' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '<' not supported between instances of 'str_ascii_iterator' and 'odict_items'"
+values < <str_ascii_iterator object at 0x> -> "TypeError: '<' not supported between instances of 'odict_values' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '<' not supported between instances of 'str_ascii_iterator' and 'odict_values'"
+keys <= {'a', 'z'} -> False
+   the other way -> False
+items <= {'a', 'z'} -> False
+   the other way -> False
+values <= {'a', 'z'} -> "TypeError: '<=' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '<=' not supported between instances of 'set' and 'odict_values'"
+keys <= {'a'} -> False
+   the other way -> True
+items <= {'a'} -> False
+   the other way -> False
+values <= {'a'} -> "TypeError: '<=' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '<=' not supported between instances of 'set' and 'odict_values'"
+keys <= set() -> False
+   the other way -> True
+items <= set() -> False
+   the other way -> True
+values <= set() -> "TypeError: '<=' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '<=' not supported between instances of 'set' and 'odict_values'"
+keys <= ['a', 'a', 'z'] -> "TypeError: '<=' not supported between instances of 'odict_keys' and 'list'"
+   the other way -> "TypeError: '<=' not supported between instances of 'list' and 'odict_keys'"
+items <= ['a', 'a', 'z'] -> "TypeError: '<=' not supported between instances of 'odict_items' and 'list'"
+   the other way -> "TypeError: '<=' not supported between instances of 'list' and 'odict_items'"
+values <= ['a', 'a', 'z'] -> "TypeError: '<=' not supported between instances of 'odict_values' and 'list'"
+   the other way -> "TypeError: '<=' not supported between instances of 'list' and 'odict_values'"
+keys <= 'ab' -> "TypeError: '<=' not supported between instances of 'odict_keys' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'odict_keys'"
+items <= 'ab' -> "TypeError: '<=' not supported between instances of 'odict_items' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'odict_items'"
+values <= 'ab' -> "TypeError: '<=' not supported between instances of 'odict_values' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'odict_values'"
+keys <= dict_keys(['a']) -> False
+   the other way -> True
+items <= dict_keys(['a']) -> False
+   the other way -> False
+values <= dict_keys(['a']) -> "TypeError: '<=' not supported between instances of 'odict_values' and 'dict_keys'"
+   the other way -> "TypeError: '<=' not supported between instances of 'dict_keys' and 'odict_values'"
+keys <= odict_keys(['a', 'z']) -> False
+   the other way -> False
+items <= odict_keys(['a', 'z']) -> False
+   the other way -> False
+values <= odict_keys(['a', 'z']) -> "TypeError: '<=' not supported between instances of 'odict_values' and 'odict_keys'"
+   the other way -> "TypeError: '<=' not supported between instances of 'odict_keys' and 'odict_values'"
+keys <= frozenset({'a'}) -> False
+   the other way -> True
+items <= frozenset({'a'}) -> False
+   the other way -> False
+values <= frozenset({'a'}) -> "TypeError: '<=' not supported between instances of 'odict_values' and 'frozenset'"
+   the other way -> "TypeError: '<=' not supported between instances of 'frozenset' and 'odict_values'"
+keys <= 5 -> "TypeError: '<=' not supported between instances of 'odict_keys' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'odict_keys'"
+items <= 5 -> "TypeError: '<=' not supported between instances of 'odict_items' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'odict_items'"
+values <= 5 -> "TypeError: '<=' not supported between instances of 'odict_values' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'odict_values'"
+keys <= None -> "TypeError: '<=' not supported between instances of 'odict_keys' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'odict_keys'"
+items <= None -> "TypeError: '<=' not supported between instances of 'odict_items' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'odict_items'"
+values <= None -> "TypeError: '<=' not supported between instances of 'odict_values' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'odict_values'"
+keys <= {('a', 1), ('z', 2)} -> False
+   the other way -> False
+items <= {('a', 1), ('z', 2)} -> False
+   the other way -> False
+values <= {('a', 1), ('z', 2)} -> "TypeError: '<=' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '<=' not supported between instances of 'set' and 'odict_values'"
+keys <= odict_items([('a', 1)]) -> False
+   the other way -> False
+items <= odict_items([('a', 1)]) -> False
+   the other way -> True
+values <= odict_items([('a', 1)]) -> "TypeError: '<=' not supported between instances of 'odict_values' and 'odict_items'"
+   the other way -> "TypeError: '<=' not supported between instances of 'odict_items' and 'odict_values'"
+keys <= dict_items([('a', 1)]) -> False
+   the other way -> False
+items <= dict_items([('a', 1)]) -> False
+   the other way -> True
+values <= dict_items([('a', 1)]) -> "TypeError: '<=' not supported between instances of 'odict_values' and 'dict_items'"
+   the other way -> "TypeError: '<=' not supported between instances of 'dict_items' and 'odict_values'"
+keys <= <str_ascii_iterator object at 0x> -> "TypeError: '<=' not supported between instances of 'odict_keys' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str_ascii_iterator' and 'odict_keys'"
+items <= <str_ascii_iterator object at 0x> -> "TypeError: '<=' not supported between instances of 'odict_items' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str_ascii_iterator' and 'odict_items'"
+values <= <str_ascii_iterator object at 0x> -> "TypeError: '<=' not supported between instances of 'odict_values' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str_ascii_iterator' and 'odict_values'"
+keys > {'a', 'z'} -> False
+   the other way -> False
+items > {'a', 'z'} -> False
+   the other way -> False
+values > {'a', 'z'} -> "TypeError: '>' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '>' not supported between instances of 'set' and 'odict_values'"
+keys > {'a'} -> True
+   the other way -> False
+items > {'a'} -> False
+   the other way -> False
+values > {'a'} -> "TypeError: '>' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '>' not supported between instances of 'set' and 'odict_values'"
+keys > set() -> True
+   the other way -> False
+items > set() -> True
+   the other way -> False
+values > set() -> "TypeError: '>' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '>' not supported between instances of 'set' and 'odict_values'"
+keys > ['a', 'a', 'z'] -> "TypeError: '>' not supported between instances of 'odict_keys' and 'list'"
+   the other way -> "TypeError: '>' not supported between instances of 'list' and 'odict_keys'"
+items > ['a', 'a', 'z'] -> "TypeError: '>' not supported between instances of 'odict_items' and 'list'"
+   the other way -> "TypeError: '>' not supported between instances of 'list' and 'odict_items'"
+values > ['a', 'a', 'z'] -> "TypeError: '>' not supported between instances of 'odict_values' and 'list'"
+   the other way -> "TypeError: '>' not supported between instances of 'list' and 'odict_values'"
+keys > 'ab' -> "TypeError: '>' not supported between instances of 'odict_keys' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'odict_keys'"
+items > 'ab' -> "TypeError: '>' not supported between instances of 'odict_items' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'odict_items'"
+values > 'ab' -> "TypeError: '>' not supported between instances of 'odict_values' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'odict_values'"
+keys > dict_keys(['a']) -> True
+   the other way -> False
+items > dict_keys(['a']) -> False
+   the other way -> False
+values > dict_keys(['a']) -> "TypeError: '>' not supported between instances of 'odict_values' and 'dict_keys'"
+   the other way -> "TypeError: '>' not supported between instances of 'dict_keys' and 'odict_values'"
+keys > odict_keys(['a', 'z']) -> False
+   the other way -> False
+items > odict_keys(['a', 'z']) -> False
+   the other way -> False
+values > odict_keys(['a', 'z']) -> "TypeError: '>' not supported between instances of 'odict_values' and 'odict_keys'"
+   the other way -> "TypeError: '>' not supported between instances of 'odict_keys' and 'odict_values'"
+keys > frozenset({'a'}) -> True
+   the other way -> False
+items > frozenset({'a'}) -> False
+   the other way -> False
+values > frozenset({'a'}) -> "TypeError: '>' not supported between instances of 'odict_values' and 'frozenset'"
+   the other way -> "TypeError: '>' not supported between instances of 'frozenset' and 'odict_values'"
+keys > 5 -> "TypeError: '>' not supported between instances of 'odict_keys' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'odict_keys'"
+items > 5 -> "TypeError: '>' not supported between instances of 'odict_items' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'odict_items'"
+values > 5 -> "TypeError: '>' not supported between instances of 'odict_values' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'odict_values'"
+keys > None -> "TypeError: '>' not supported between instances of 'odict_keys' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'odict_keys'"
+items > None -> "TypeError: '>' not supported between instances of 'odict_items' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'odict_items'"
+values > None -> "TypeError: '>' not supported between instances of 'odict_values' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'odict_values'"
+keys > {('a', 1), ('z', 2)} -> False
+   the other way -> False
+items > {('a', 1), ('z', 2)} -> False
+   the other way -> False
+values > {('a', 1), ('z', 2)} -> "TypeError: '>' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '>' not supported between instances of 'set' and 'odict_values'"
+keys > odict_items([('a', 1)]) -> False
+   the other way -> False
+items > odict_items([('a', 1)]) -> True
+   the other way -> False
+values > odict_items([('a', 1)]) -> "TypeError: '>' not supported between instances of 'odict_values' and 'odict_items'"
+   the other way -> "TypeError: '>' not supported between instances of 'odict_items' and 'odict_values'"
+keys > dict_items([('a', 1)]) -> False
+   the other way -> False
+items > dict_items([('a', 1)]) -> True
+   the other way -> False
+values > dict_items([('a', 1)]) -> "TypeError: '>' not supported between instances of 'odict_values' and 'dict_items'"
+   the other way -> "TypeError: '>' not supported between instances of 'dict_items' and 'odict_values'"
+keys > <str_ascii_iterator object at 0x> -> "TypeError: '>' not supported between instances of 'odict_keys' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '>' not supported between instances of 'str_ascii_iterator' and 'odict_keys'"
+items > <str_ascii_iterator object at 0x> -> "TypeError: '>' not supported between instances of 'odict_items' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '>' not supported between instances of 'str_ascii_iterator' and 'odict_items'"
+values > <str_ascii_iterator object at 0x> -> "TypeError: '>' not supported between instances of 'odict_values' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '>' not supported between instances of 'str_ascii_iterator' and 'odict_values'"
+keys >= {'a', 'z'} -> False
+   the other way -> False
+items >= {'a', 'z'} -> False
+   the other way -> False
+values >= {'a', 'z'} -> "TypeError: '>=' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '>=' not supported between instances of 'set' and 'odict_values'"
+keys >= {'a'} -> True
+   the other way -> False
+items >= {'a'} -> False
+   the other way -> False
+values >= {'a'} -> "TypeError: '>=' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '>=' not supported between instances of 'set' and 'odict_values'"
+keys >= set() -> True
+   the other way -> False
+items >= set() -> True
+   the other way -> False
+values >= set() -> "TypeError: '>=' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '>=' not supported between instances of 'set' and 'odict_values'"
+keys >= ['a', 'a', 'z'] -> "TypeError: '>=' not supported between instances of 'odict_keys' and 'list'"
+   the other way -> "TypeError: '>=' not supported between instances of 'list' and 'odict_keys'"
+items >= ['a', 'a', 'z'] -> "TypeError: '>=' not supported between instances of 'odict_items' and 'list'"
+   the other way -> "TypeError: '>=' not supported between instances of 'list' and 'odict_items'"
+values >= ['a', 'a', 'z'] -> "TypeError: '>=' not supported between instances of 'odict_values' and 'list'"
+   the other way -> "TypeError: '>=' not supported between instances of 'list' and 'odict_values'"
+keys >= 'ab' -> "TypeError: '>=' not supported between instances of 'odict_keys' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'odict_keys'"
+items >= 'ab' -> "TypeError: '>=' not supported between instances of 'odict_items' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'odict_items'"
+values >= 'ab' -> "TypeError: '>=' not supported between instances of 'odict_values' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'odict_values'"
+keys >= dict_keys(['a']) -> True
+   the other way -> False
+items >= dict_keys(['a']) -> False
+   the other way -> False
+values >= dict_keys(['a']) -> "TypeError: '>=' not supported between instances of 'odict_values' and 'dict_keys'"
+   the other way -> "TypeError: '>=' not supported between instances of 'dict_keys' and 'odict_values'"
+keys >= odict_keys(['a', 'z']) -> False
+   the other way -> False
+items >= odict_keys(['a', 'z']) -> False
+   the other way -> False
+values >= odict_keys(['a', 'z']) -> "TypeError: '>=' not supported between instances of 'odict_values' and 'odict_keys'"
+   the other way -> "TypeError: '>=' not supported between instances of 'odict_keys' and 'odict_values'"
+keys >= frozenset({'a'}) -> True
+   the other way -> False
+items >= frozenset({'a'}) -> False
+   the other way -> False
+values >= frozenset({'a'}) -> "TypeError: '>=' not supported between instances of 'odict_values' and 'frozenset'"
+   the other way -> "TypeError: '>=' not supported between instances of 'frozenset' and 'odict_values'"
+keys >= 5 -> "TypeError: '>=' not supported between instances of 'odict_keys' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'odict_keys'"
+items >= 5 -> "TypeError: '>=' not supported between instances of 'odict_items' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'odict_items'"
+values >= 5 -> "TypeError: '>=' not supported between instances of 'odict_values' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'odict_values'"
+keys >= None -> "TypeError: '>=' not supported between instances of 'odict_keys' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'odict_keys'"
+items >= None -> "TypeError: '>=' not supported between instances of 'odict_items' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'odict_items'"
+values >= None -> "TypeError: '>=' not supported between instances of 'odict_values' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'odict_values'"
+keys >= {('a', 1), ('z', 2)} -> False
+   the other way -> False
+items >= {('a', 1), ('z', 2)} -> False
+   the other way -> False
+values >= {('a', 1), ('z', 2)} -> "TypeError: '>=' not supported between instances of 'odict_values' and 'set'"
+   the other way -> "TypeError: '>=' not supported between instances of 'set' and 'odict_values'"
+keys >= odict_items([('a', 1)]) -> False
+   the other way -> False
+items >= odict_items([('a', 1)]) -> True
+   the other way -> False
+values >= odict_items([('a', 1)]) -> "TypeError: '>=' not supported between instances of 'odict_values' and 'odict_items'"
+   the other way -> "TypeError: '>=' not supported between instances of 'odict_items' and 'odict_values'"
+keys >= dict_items([('a', 1)]) -> False
+   the other way -> False
+items >= dict_items([('a', 1)]) -> True
+   the other way -> False
+values >= dict_items([('a', 1)]) -> "TypeError: '>=' not supported between instances of 'odict_values' and 'dict_items'"
+   the other way -> "TypeError: '>=' not supported between instances of 'dict_items' and 'odict_values'"
+keys >= <str_ascii_iterator object at 0x> -> "TypeError: '>=' not supported between instances of 'odict_keys' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str_ascii_iterator' and 'odict_keys'"
+items >= <str_ascii_iterator object at 0x> -> "TypeError: '>=' not supported between instances of 'odict_items' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str_ascii_iterator' and 'odict_items'"
+values >= <str_ascii_iterator object at 0x> -> "TypeError: '>=' not supported between instances of 'odict_values' and 'str_ascii_iterator'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str_ascii_iterator' and 'odict_values'"
+isdisjoint({'a', 'z'}) -> (False, True)
+isdisjoint({'a'}) -> (False, True)
+isdisjoint(set()) -> (True, True)
+isdisjoint(['a', 'a', 'z']) -> (False, True)
+isdisjoint('ab') -> (False, True)
+isdisjoint(dict_keys(['a'])) -> (False, True)
+isdisjoint(odict_keys(['a', 'z'])) -> (False, True)
+isdisjoint(frozenset({'a'})) -> (False, True)
+isdisjoint(5) -> "TypeError: 'int' object is not iterable"
+isdisjoint(None) -> "TypeError: 'NoneType' object is not iterable"
+isdisjoint({('a', 1), ('z', 2)}) -> (True, False)
+isdisjoint(odict_items([('a', 1)])) -> (True, False)
+isdisjoint(dict_items([('a', 1)])) -> (True, False)
+isdisjoint(<str_ascii_iterator object at 0x>) -> (False, True)
+values has none -> "AttributeError: 'odict_values' object has no attribute 'isdisjoint'"
+'a' in -> (True, False, False)
+'z' in -> (False, False, False)
+1 in -> (False, False, True)
+('a', 1) in -> (False, True, False)
+('a', 2) in -> (False, False, False)
+('z', 1) in -> (False, False, False)
+('a',) in -> (False, False, False)
+('a', 1, 2) in -> (False, False, False)
+[] in -> "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"
+([], 1) in -> "TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')"
+('a', []) in -> "TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')"
+None in -> (False, False, False)
+===== behind its back
+dict.__setitem__ another -> [None, ('len', 4), ('list', ['a', 'b', 'c']), ('items', [('a', 1), ('b', 2), ('c', 3)]), ('values', [1, 2, 3]), ('repr', "OrderedDict({'a': 1, 'b': 2, 'c': 3})"), ('dict keys', ['a', 'b', 'c', 'z']), ('copy', OrderedDict({'a': 1, 'b': 2, 'c': 3})), ('==', True)]
+dict.__setitem__ the same -> [None, ('len', 3), ('list', ['a', 'b', 'c']), ('items', [('a', 9), ('b', 2), ('c', 3)]), ('values', [9, 2, 3]), ('repr', "OrderedDict({'a': 9, 'b': 2, 'c': 3})"), ('dict keys', ['a', 'b', 'c']), ('copy', OrderedDict({'a': 9, 'b': 2, 'c': 3})), ('==', True)]
+dict.__delitem__ -> [None, ('len', 2), ('list', "KeyError: 'b'"), ('items', "KeyError: 'b'"), ('values', "KeyError: 'b'"), ('repr', "KeyError: 'b'"), ('dict keys', ['a', 'c']), ('copy', "KeyError: 'b'"), ('==', True)]
+dict.__delitem__ the first -> [None, ('len', 2), ('list', "KeyError: 'a'"), ('items', "KeyError: 'a'"), ('values', "KeyError: 'a'"), ('repr', "KeyError: 'a'"), ('dict keys', ['b', 'c']), ('copy', "KeyError: 'a'"), ('==', True)]
+dict.__delitem__ the last -> [None, ('len', 2), ('list', "KeyError: 'c'"), ('items', "KeyError: 'c'"), ('values', "KeyError: 'c'"), ('repr', "KeyError: 'c'"), ('dict keys', ['a', 'b']), ('copy', "KeyError: 'c'"), ('==', True)]
+dict.pop -> [2, ('len', 2), ('list', "KeyError: 'b'"), ('items', "KeyError: 'b'"), ('values', "KeyError: 'b'"), ('repr', "KeyError: 'b'"), ('dict keys', ['a', 'c']), ('copy', "KeyError: 'b'"), ('==', True)]
+dict.update -> [None, ('len', 4), ('list', ['a', 'b', 'c']), ('items', [('a', 1), ('b', 2), ('c', 3)]), ('values', [1, 2, 3]), ('repr', "OrderedDict({'a': 1, 'b': 2, 'c': 3})"), ('dict keys', ['a', 'b', 'c', 'z']), ('copy', OrderedDict({'a': 1, 'b': 2, 'c': 3})), ('==', True)]
+dict.setdefault -> [1, ('len', 4), ('list', ['a', 'b', 'c']), ('items', [('a', 1), ('b', 2), ('c', 3)]), ('values', [1, 2, 3]), ('repr', "OrderedDict({'a': 1, 'b': 2, 'c': 3})"), ('dict keys', ['a', 'b', 'c', 'z']), ('copy', OrderedDict({'a': 1, 'b': 2, 'c': 3})), ('==', True)]
+dict.__ior__ -> [True, ('len', 4), ('list', ['a', 'b', 'c']), ('items', [('a', 1), ('b', 2), ('c', 3)]), ('values', [1, 2, 3]), ('repr', "OrderedDict({'a': 1, 'b': 2, 'c': 3})"), ('dict keys', ['a', 'b', 'c', 'z']), ('copy', OrderedDict({'a': 1, 'b': 2, 'c': 3})), ('==', True)]
+set behind, then set -> [None, None, ('len', 4), ('list', ['a', 'b', 'c', 'z']), ('items', [('a', 1), ('b', 2), ('c', 3), ('z', 5)]), ('values', [1, 2, 3, 5]), ('repr', "OrderedDict({'a': 1, 'b': 2, 'c': 3, 'z': 5})"), ('dict keys', ['a', 'b', 'c', 'z']), ('copy', OrderedDict({'a': 1, 'b': 2, 'c': 3, 'z': 5})), ('==', True)]
+set behind, then deleted -> [None, None, ('len', 3), ('list', ['a', 'b', 'c']), ('items', [('a', 1), ('b', 2), ('c', 3)]), ('values', [1, 2, 3]), ('repr', "OrderedDict({'a': 1, 'b': 2, 'c': 3})"), ('dict keys', ['a', 'b', 'c']), ('copy', OrderedDict({'a': 1, 'b': 2, 'c': 3})), ('==', True)]
+deleted behind, then deleted -> [None, "KeyError: 'b'", ('len', 2), ('list', "KeyError: 'b'"), ('items', "KeyError: 'b'"), ('values', "KeyError: 'b'"), ('repr', "KeyError: 'b'"), ('dict keys', ['a', 'c']), ('copy', "KeyError: 'b'"), ('==', True)]
+deleted behind, then popped -> [None, "KeyError: 'b'", ('len', 2), ('list', "KeyError: 'b'"), ('items', "KeyError: 'b'"), ('values', "KeyError: 'b'"), ('repr', "KeyError: 'b'"), ('dict keys', ['a', 'c']), ('copy', "KeyError: 'b'"), ('==', True)]
+deleted behind, then popped with a default -> [None, 'default', ('len', 2), ('list', "KeyError: 'b'"), ('items', "KeyError: 'b'"), ('values', "KeyError: 'b'"), ('repr', "KeyError: 'b'"), ('dict keys', ['a', 'c']), ('copy', "KeyError: 'b'"), ('==', True)]
+deleted behind, then moved -> [None, "KeyError: 'b'", ('len', 2), ('list', "KeyError: 'b'"), ('items', "KeyError: 'b'"), ('values', "KeyError: 'b'"), ('repr', "KeyError: 'b'"), ('dict keys', ['a', 'c']), ('copy', "KeyError: 'b'"), ('==', True)]
+cleared behind, then cleared -> [None, None, ('len', 0), ('list', []), ('items', []), ('values', []), ('repr', 'OrderedDict()'), ('dict keys', []), ('copy', OrderedDict()), ('==', True)]
+set behind, many -> [None, ('len', 53), ('list', ['a', 'b', 'c']), ('items', [('a', 1), ('b', 2), ('c', 3)]), ('values', [1, 2, 3]), ('repr', "OrderedDict({'a': 1, 'b': 2, 'c': 3})"), ('dict keys', ['a', 'b', 'c', 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]), ('copy', OrderedDict({'a': 1, 'b': 2, 'c': 3})), ('==', True)]
+set behind, many, then set -> [None, None, ('len', 54), ('list', ['a', 'b', 'c', 'q']), ('items', [('a', 1), ('b', 2), ('c', 3), ('q', 1)]), ('values', [1, 2, 3, 1]), ('repr', "OrderedDict({'a': 1, 'b': 2, 'c': 3, 'q': 1})"), ('dict keys', ['a', 'b', 'c', 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 'q']), ('copy', OrderedDict({'a': 1, 'b': 2, 'c': 3, 'q': 1})), ('==', True)]
+===== as other things take it
+dict() -> {'b': 2, 'c': 3, 'a': 1}
+{**} -> {'b': 2, 'c': 3, 'a': 1}
+f(**) -> [('b', 2), ('c', 3), ('a', 1)]
+list -> ['b', 'c', 'a']
+tuple -> ('b', 'c', 'a')
+sorted -> ['a', 'b', 'c']
+set -> ['a', 'b', 'c']
+enumerate -> [(0, 'b'), (1, 'c'), (2, 'a')]
+zip -> [('b', 2), ('c', 3), ('a', 1)]
+max -> 'c'
+join -> 'bca'
+unpack -> ('b', 'c', 'a')
+star -> ['b', 'c', 'a']
+dict comprehension -> {'b': 2, 'c': 3, 'a': 1}
+update of a dict -> {'b': 2, 'c': 3, 'a': 1}
+dict | -> OrderedDict({'b': 2, 'c': 3, 'a': 1})
+| dict -> OrderedDict({'b': 2, 'c': 3, 'a': 1})
+format_map -> '12'
+format(**) -> '12'
+% -> '12'
+ChainMap -> ['b', 'c', 'a']
+Counter -> [('b', 2), ('c', 3), ('a', 1)]
+type() -> ['b', 'c', 'a']
+mappingproxy -> ['b', 'c', 'a']
+match -> "NameError: name 'match' is not defined"
+isinstance -> (True, True, True, True)
+vars() of what has it for a __dict__ -> "NameError: name 'has_dict' is not defined"
+exec -> "NameError: name 'in_exec' is not defined"
+eval with it for locals -> 3
+SimpleNamespace -> 'namespace(b=2, c=3, a=1)'
+operator.itemgetter -> (1, 3)
+copy of its dict order -> ['b', 'c', 'a']
+pprint -> "OrderedDict({'b': 2, 'c': 3, 'a': 1})"
+reprlib -> "OrderedDict({...': 3, 'a': 1})"
+match -> (1, {'b': 2, 'c': 3}, 'dict')
+as a __dict__ -> (1, 2, 'OrderedDict', True, 2, ['x', 'y'])
+exec -> ('OrderedDict', True, 2, 2)
+===== the class
+the class -> (<class 'collections.OrderedDict'>, 'OrderedDict', 'OrderedDict', 'collections', (<class 'collections.OrderedDict'>, <class 'dict'>, <class 'object'>), 'Dictionary that remembers insertion order', None, 112, 0, 96, 104, '0x', ['__delitem__', '__dict__', '__doc__', '__eq__', '__ge__', '__gt__', '__hash__', '__init__', '__ior__', '__iter__', '__le__', '__lt__', '__ne__', '__or__', '__reduce__', '__repr__', '__reversed__', '__ror__', '__setitem__', '__sizeof__', 'clear', 'copy', 'fromkeys', 'items', 'keys', 'move_to_end', 'pop', 'popitem', 'setdefault', 'update', 'values'])
+   __delitem__ -> ('wrapper_descriptor', 'Delete self[key].', '($self, key, /)', 'OrderedDict.__delitem__')
+   __dict__ -> ('getset_descriptor', None, None, 'OrderedDict.__dict__')
+   __doc__ -> ('str', "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.", None, None)
+   __eq__ -> ('wrapper_descriptor', 'Return self==value.', '($self, value, /)', 'OrderedDict.__eq__')
+   __ge__ -> ('wrapper_descriptor', 'Return self>=value.', '($self, value, /)', 'OrderedDict.__ge__')
+   __gt__ -> ('wrapper_descriptor', 'Return self>value.', '($self, value, /)', 'OrderedDict.__gt__')
+   __hash__ -> ('NoneType', 'The type of the None singleton.', None, None)
+   __init__ -> ('wrapper_descriptor', 'Initialize self.  See help(type(self)) for accurate signature.', '($self, /, *args, **kwargs)', 'OrderedDict.__init__')
+   __ior__ -> ('wrapper_descriptor', 'Return self|=value.', '($self, value, /)', 'OrderedDict.__ior__')
+   __iter__ -> ('wrapper_descriptor', 'Implement iter(self).', '($self, /)', 'OrderedDict.__iter__')
+   __le__ -> ('wrapper_descriptor', 'Return self<=value.', '($self, value, /)', 'OrderedDict.__le__')
+   __lt__ -> ('wrapper_descriptor', 'Return self<value.', '($self, value, /)', 'OrderedDict.__lt__')
+   __ne__ -> ('wrapper_descriptor', 'Return self!=value.', '($self, value, /)', 'OrderedDict.__ne__')
+   __or__ -> ('wrapper_descriptor', 'Return self|value.', '($self, value, /)', 'OrderedDict.__or__')
+   __reduce__ -> ('method_descriptor', 'Return state information for pickling', '($self, /)', 'OrderedDict.__reduce__')
+   __repr__ -> ('wrapper_descriptor', 'Return repr(self).', '($self, /)', 'OrderedDict.__repr__')
+   __reversed__ -> ('method_descriptor', 'od.__reversed__() <==> reversed(od)', '($self, /)', 'OrderedDict.__reversed__')
+   __ror__ -> ('wrapper_descriptor', 'Return value|self.', '($self, value, /)', 'OrderedDict.__ror__')
+   __setitem__ -> ('wrapper_descriptor', 'Set self[key] to value.', '($self, key, value, /)', 'OrderedDict.__setitem__')
+   __sizeof__ -> ('method_descriptor', None, '($self, /)', 'OrderedDict.__sizeof__')
+   clear -> ('method_descriptor', 'Remove all items from ordered dict.', '($self, /)', 'OrderedDict.clear')
+   copy -> ('method_descriptor', 'A shallow copy of ordered dict.', '($self, /)', 'OrderedDict.copy')
+   fromkeys -> ('classmethod_descriptor', 'Create a new ordered dictionary with keys from iterable and values set to value.', '($type, /, iterable, value=None)', 'OrderedDict.fromkeys')
+   items -> ('method_descriptor', None, '($self, /)', 'OrderedDict.items')
+   keys -> ('method_descriptor', None, '($self, /)', 'OrderedDict.keys')
+   move_to_end -> ('method_descriptor', 'Move an existing element to the end (or beginning if last is false).\n\nRaise KeyError if the element does not exist.', '($self, /, key, last=True)', 'OrderedDict.move_to_end')
+   pop -> ('method_descriptor', 'od.pop(key[,default]) -> v, remove specified key and return the corresponding value.\n\nIf the key is not found, return the default if given; otherwise,\nraise a KeyError.', '($self, /, key, default=<unrepresentable>)', 'OrderedDict.pop')
+   popitem -> ('method_descriptor', 'Remove and return a (key, value) pair from the dictionary.\n\nPairs are returned in LIFO order if last is true or FIFO order if\nfalse.', '($self, /, last=True)', 'OrderedDict.popitem')
+   setdefault -> ('method_descriptor', 'Insert key with a value of default if key is not in the dictionary.\n\nReturn the value for key if key is in the dictionary, else default.', '($self, /, key, default=None)', 'OrderedDict.setdefault')
+   update -> ('method_descriptor', None, None, 'OrderedDict.update')
+   values -> ('method_descriptor', None, '($self, /)', 'OrderedDict.values')
+signature -> "ValueError: no signature found for builtin type <class 'collections.OrderedDict'>"
+attributes -> (None, 1, {}, {}, None, {}, ['a', 'b', 'c'])
+__dict__ set -> (None, 1, ['a', 'b', 'c'])
+__dict__ set to an int -> "TypeError: __dict__ must be set to a dictionary, not a 'int'"
+__dict__ deleted -> 'TypeError: cannot delete __dict__'
+weak reference -> True
+generic -> (collections.OrderedDict[str, int], True, 'GenericAlias')
+slots -> (True, X({'a': 1}))
+with another base -> 'TypeError: multiple bases have instance lay-out conflict'
+dict first -> 'TypeError: Cannot create a consistent method resolution order (MRO) for bases dict, OrderedDict'
+__class__ -> (None, 'Y')
+__class__ of a plain one -> 'TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses'
+OD.__setitem__ of a dict -> "TypeError: descriptor '__setitem__' requires a 'collections.OrderedDict' object but received a 'dict'"
+   of nothing -> "TypeError: descriptor '__setitem__' of 'collections.OrderedDict' object needs an argument"
+   too many -> 'TypeError: __setitem__ expected 2 arguments, got 4'
+   a keyword -> 'TypeError: wrapper __setitem__() takes no keyword arguments'
+OD.__delitem__ of a dict -> "TypeError: descriptor '__delitem__' requires a 'collections.OrderedDict' object but received a 'dict'"
+   of nothing -> "TypeError: descriptor '__delitem__' of 'collections.OrderedDict' object needs an argument"
+   too many -> 'TypeError: expected 1 argument, got 4'
+   a keyword -> 'TypeError: wrapper __delitem__() takes no keyword arguments'
+OD.__iter__ of a dict -> "TypeError: descriptor '__iter__' requires a 'collections.OrderedDict' object but received a 'dict'"
+   of nothing -> "TypeError: descriptor '__iter__' of 'collections.OrderedDict' object needs an argument"
+   too many -> 'TypeError: expected 0 arguments, got 4'
+   a keyword -> 'TypeError: wrapper __iter__() takes no keyword arguments'
+OD.__reversed__ of a dict -> "TypeError: descriptor '__reversed__' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.__reversed__() needs an argument'
+   too many -> 'TypeError: OrderedDict.__reversed__() takes no arguments (4 given)'
+   a keyword -> 'TypeError: OrderedDict.__reversed__() takes no keyword arguments'
+OD.__repr__ of a dict -> "TypeError: descriptor '__repr__' requires a 'collections.OrderedDict' object but received a 'dict'"
+   of nothing -> "TypeError: descriptor '__repr__' of 'collections.OrderedDict' object needs an argument"
+   too many -> 'TypeError: expected 0 arguments, got 4'
+   a keyword -> 'TypeError: wrapper __repr__() takes no keyword arguments'
+OD.__eq__ of a dict -> "TypeError: descriptor '__eq__' requires a 'collections.OrderedDict' object but received a 'dict'"
+   of nothing -> "TypeError: descriptor '__eq__' of 'collections.OrderedDict' object needs an argument"
+   too many -> 'TypeError: expected 1 argument, got 4'
+   a keyword -> 'TypeError: wrapper __eq__() takes no keyword arguments'
+OD.__init__ of a dict -> "TypeError: descriptor '__init__' requires a 'collections.OrderedDict' object but received a 'dict'"
+   of nothing -> "TypeError: descriptor '__init__' of 'collections.OrderedDict' object needs an argument"
+   too many -> 'TypeError: expected at most 1 argument, got 4'
+   a keyword -> None
+OD.__reduce__ of a dict -> "TypeError: descriptor '__reduce__' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.__reduce__() needs an argument'
+   too many -> 'TypeError: OrderedDict.__reduce__() takes no arguments (4 given)'
+   a keyword -> 'TypeError: OrderedDict.__reduce__() takes no keyword arguments'
+OD.__sizeof__ of a dict -> "TypeError: descriptor '__sizeof__' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.__sizeof__() needs an argument'
+   too many -> 'TypeError: OrderedDict.__sizeof__() takes no arguments (4 given)'
+   a keyword -> 'TypeError: OrderedDict.__sizeof__() takes no keyword arguments'
+OD.clear of a dict -> "TypeError: descriptor 'clear' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.clear() needs an argument'
+   too many -> 'TypeError: OrderedDict.clear() takes no arguments (4 given)'
+   a keyword -> 'TypeError: OrderedDict.clear() takes no keyword arguments'
+OD.copy of a dict -> "TypeError: descriptor 'copy' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.copy() needs an argument'
+   too many -> 'TypeError: OrderedDict.copy() takes no arguments (4 given)'
+   a keyword -> 'TypeError: OrderedDict.copy() takes no keyword arguments'
+OD.items of a dict -> "TypeError: descriptor 'items' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.items() needs an argument'
+   too many -> 'TypeError: OrderedDict.items() takes no arguments (4 given)'
+   a keyword -> 'TypeError: OrderedDict.items() takes no keyword arguments'
+OD.keys of a dict -> "TypeError: descriptor 'keys' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.keys() needs an argument'
+   too many -> 'TypeError: OrderedDict.keys() takes no arguments (4 given)'
+   a keyword -> 'TypeError: OrderedDict.keys() takes no keyword arguments'
+OD.values of a dict -> "TypeError: descriptor 'values' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.values() needs an argument'
+   too many -> 'TypeError: OrderedDict.values() takes no arguments (4 given)'
+   a keyword -> 'TypeError: OrderedDict.values() takes no keyword arguments'
+OD.move_to_end of a dict -> "TypeError: descriptor 'move_to_end' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.move_to_end() needs an argument'
+   too many -> 'TypeError: move_to_end() takes at most 2 arguments (4 given)'
+   a keyword -> "TypeError: move_to_end() missing required argument 'key' (pos 1)"
+OD.pop of a dict -> "TypeError: descriptor 'pop' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.pop() needs an argument'
+   too many -> 'TypeError: pop() takes at most 2 arguments (4 given)'
+   a keyword -> "TypeError: pop() missing required argument 'key' (pos 1)"
+OD.popitem of a dict -> "TypeError: descriptor 'popitem' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.popitem() needs an argument'
+   too many -> 'TypeError: popitem() takes at most 1 argument (4 given)'
+   a keyword -> "TypeError: popitem() got an unexpected keyword argument 'zzz'"
+OD.setdefault of a dict -> "TypeError: descriptor 'setdefault' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.setdefault() needs an argument'
+   too many -> 'TypeError: setdefault() takes at most 2 arguments (4 given)'
+   a keyword -> "TypeError: setdefault() missing required argument 'key' (pos 1)"
+OD.update of a dict -> "TypeError: descriptor 'update' for 'collections.OrderedDict' objects doesn't apply to a 'dict' object"
+   of nothing -> 'TypeError: unbound method OrderedDict.update() needs an argument'
+   too many -> 'TypeError: update() takes at most 1 positional argument (4 given)'
+   a keyword -> None
+OD.__or__ of a dict -> "TypeError: descriptor '__or__' requires a 'collections.OrderedDict' object but received a 'dict'"
+   of nothing -> "TypeError: descriptor '__or__' of 'collections.OrderedDict' object needs an argument"
+   too many -> 'TypeError: expected 1 argument, got 4'
+   a keyword -> 'TypeError: wrapper __or__() takes no keyword arguments'
+OD.__ior__ of a dict -> "TypeError: descriptor '__ior__' requires a 'collections.OrderedDict' object but received a 'dict'"
+   of nothing -> "TypeError: descriptor '__ior__' of 'collections.OrderedDict' object needs an argument"
+   too many -> 'TypeError: expected 1 argument, got 4'
+   a keyword -> 'TypeError: wrapper __ior__() takes no keyword arguments'
+done
