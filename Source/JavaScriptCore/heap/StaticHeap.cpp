@@ -325,7 +325,7 @@ void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
 JSString* StaticHeap::emptyStringWhileBuilding(VM& vm)
 {
     if (!s_emptyStringBeingBuilt)
-        s_emptyStringBeingBuilt = JSString::createHasOtherOwner(vm, *StringImpl::empty());
+        s_emptyStringBeingBuilt = JSString::createEmptyString(vm);
     return s_emptyStringBeingBuilt;
 }
 
