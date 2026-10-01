@@ -718,6 +718,41 @@ LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value
     return m_out.phi(Int32, results);
 }
 
+// value === theString, where theString is a constant and an atom. The two common cases are decided inline: the same StringImpl,
+// and another atom. Stub::IsStringEqualTo decides the others. This is for loops: a loop over many objects waits for memory, and the
+// fewer instructions an iteration has, the more iterations the processor has in flight.
+LValue Lowering::isStringEqualToAtom(Node* valueNode, LValue value, LValue theString)
+{
+    LBasicBlock continuation = m_out.newBlock();
+    LBasicBlock isResolved = m_out.newBlock();
+    LBasicBlock throughStub = newColdBlock();
+    Vector<ValueFromBlock, 5> results;
+    auto resolveIf = [&](LValue condition, bool answer) {
+        LBasicBlock next = m_out.newBlock();
+        results.append(m_out.anchor(answer ? m_out.booleanTrue : m_out.booleanFalse));
+        m_out.branch(condition, unsure(continuation), unsure(next));
+        m_out.appendTo(next);
+    };
+    if (!isSubtype(valueNode->type, TCell))
+        resolveIf(isNotCell(value), false);
+    if (!isSubtype(valueNode->type, TString | ~TCell))
+        resolveIf(m_out.notEqual(cellType(value), m_out.constInt32(StringType)), false);
+    LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
+    resolveIf(m_out.equal(impl, m_out.loadPtr(theString, m_heaps.JSRopeString_fiber0)), true);
+    m_out.branch(m_out.testNonZeroPtr(impl, m_out.constIntPtr(JSString::isRopeInPointer)), rarely(throughStub), usually(isResolved));
+
+    m_out.appendTo(isResolved);
+    results.append(m_out.anchor(m_out.booleanFalse));
+    m_out.branch(m_out.testNonZero32(m_out.load32(impl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom())), usually(continuation), rarely(throughStub));
+
+    m_out.appendTo(throughStub);
+    results.append(m_out.anchor(callStub(Stub::IsStringEqualTo, Int32, { { value, GPRInfo::argumentGPR0 }, { theString, GPRInfo::argumentGPR1 } }, { })));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return m_out.phi(Int32, results);
+}
+
 LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, VirtualRegister rhs)
 {
     Node* left = node->use(lhs);
@@ -785,10 +820,11 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
 
     if (isCompact()) {
         if (strict || isSubtype(both, TString)) {
+            bool isInline = m_block->isInLoop && !m_block->isGeneric;
             if (constantStringOf(right) && isAtomIfString(right))
-                return callStub(Stub::IsStringEqualTo, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { });
+                return isInline ? isStringEqualToAtom(left, a, b) : callStub(Stub::IsStringEqualTo, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { });
             if (constantStringOf(left) && isAtomIfString(left))
-                return callStub(Stub::IsStringEqualTo, Int32, { { b, GPRInfo::argumentGPR0 }, { a, GPRInfo::argumentGPR1 } }, { });
+                return isInline ? isStringEqualToAtom(right, b, a) : callStub(Stub::IsStringEqualTo, Int32, { { b, GPRInfo::argumentGPR0 }, { a, GPRInfo::argumentGPR1 } }, { });
         }
         return callStub(strict ? Stub::StrictEqual : Stub::LooseEqual, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } },
             { });

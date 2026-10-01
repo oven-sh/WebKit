@@ -554,6 +554,11 @@ struct Instance {
     // The Structure for a shape numbered in the image (ImageShape), with Structure::knownShape() set. Created on first use and
     // never freed. `names` are the shape's property names.
     Structure* structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names);
+
+    // { ...source }, where the source's Structure has a known shape. The copy must not have that Structure, because objects of a
+    // known shape only come from the literals that have the shape. It gets a Structure without a shape that has the same properties
+    // at the same offsets, so that the slots can be copied. Returns null if there is no such Structure.
+    JSObject* tryCopySlotsForSpread(JSObject* source);
     // The slot of each property, if the slots are not consecutive (KnownShape::slots).
     std::span<const uint16_t> slotsOfKnownShape(uint32_t shape) const;
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(Instance, structureIDBase); }

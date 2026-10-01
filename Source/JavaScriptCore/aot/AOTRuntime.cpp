@@ -45,6 +45,7 @@
 #include "LLIntSlowPaths.h"
 #include "LLIntThunks.h"
 #include "LinkBuffer.h"
+#include "ObjectConstructorInlines.h"
 #include "ThunkGenerators.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -193,6 +194,9 @@ struct Instance::Collections {
     Vector<PolymorphicSlots*> slotsOfSites;
     UncheckedKeyHashMap<String, Structure*> shapes; // Keyed by inline capacity and the addresses of the names. Null: no such structure exists.
     UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // Keyed by shape number. Holds the ones created so far.
+    // For Instance::tryCopySlotsForSpread(): the Structure of a copy of an object with a given Structure. Null: the slots cannot be
+    // copied. (Both structures are kept alive.)
+    UncheckedKeyHashMap<Structure*, Structure*> structuresOfCopies;
     // For Instance::adopt(): the Structure that an object with a given Structure gets when it is converted to a typed layout. Null:
     // it cannot be converted. (Both structures are kept alive.)
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> convertedStructures;
@@ -1351,6 +1355,11 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
     }
     for (Structure* structure : collections->knownShapes.values())
         visitor.appendUnbarriered(structure);
+    for (auto& [from, to] : collections->structuresOfCopies) {
+        visitor.appendUnbarriered(from);
+        if (to)
+            visitor.appendUnbarriered(to);
+    }
     for (Structure* structure : collections->emptyStructures.values())
         visitor.appendUnbarriered(structure);
     for (auto& [from, to] : collections->convertedStructures) {
@@ -1677,6 +1686,43 @@ Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStrin
 }
 template void Instance::visit(AbstractSlotVisitor&, bool);
 template void Instance::visit(SlotVisitor&, bool);
+
+JSObject* Instance::tryCopySlotsForSpread(JSObject* source)
+{
+    Structure* ofSource = source->structure();
+    Structure* ofCopy = nullptr;
+    if (auto it = collections->structuresOfCopies.find(ofSource); it != collections->structuresOfCopies.end())
+        ofCopy = it->value;
+    else {
+        // The conditions of tryCreateObjectViaCloning(), except for the prototype, which the copy does not share.
+        if (ofSource->canPerformFastPropertyEnumerationCommon() && checkStructureForClone(ofSource) && !ofSource->outOfLineCapacity()) {
+            Vector<UniquedStringImpl*, 32> names;
+            bool isInOrder = true;
+            ofSource->forEachProperty(*vm, [&](const PropertyTableEntry& entry) {
+                isInOrder &= !entry.attributes() && static_cast<size_t>(entry.offset()) == names.size();
+                names.append(entry.key());
+                return isInOrder;
+            });
+            if (isInOrder && !names.isEmpty()) {
+                DeferGC deferGC(*vm);
+                // With at least the capacity of the source, so that the copy has them all in the object too, and at least that of an
+                // empty object literal, so that { ...small, more } has room.
+                unsigned inlineCapacity = std::max<unsigned>(ofSource->inlineCapacity(), JSFinalObject::defaultInlineCapacity);
+                Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
+                if (empty->inlineCapacity() >= names.size())
+                    ofCopy = structureOfLiteral(empty, names.span());
+            }
+        }
+        collections->structuresOfCopies.add(ofSource, ofCopy);
+    }
+    if (!ofCopy)
+        return nullptr;
+    JSFinalObject* copy = JSFinalObject::create(*vm, ofCopy);
+    // (In both, the properties are at the offsets from zero up.)
+    for (PropertyOffset offset = 0; offset <= ofCopy->maxOffset(); ++offset)
+        copy->putDirectOffset(*vm, offset, source->getDirect(offset));
+    return copy;
+}
 
 void Instance::didHaveABadTime()
 {

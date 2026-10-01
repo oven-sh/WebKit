@@ -201,6 +201,7 @@ private:
     // `this` in a function that may escape.
     static bool isThisOfEscapingFunction(Node*);
     LValue isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
+    LValue isStringEqualToAtom(Node* valueNode, LValue value, LValue theString);
     // With Options::useAOTTypedFields(): checks a newly allocated object with this layout and these initial slot values (null for
     // empty), and leaves no slot holding a value that its field type rejects.
     void validateNewObject(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown = nullptr);

@@ -100,8 +100,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject* gl
 {
     AOT_OPERATION_BEGIN(globalObject);
     JSValue source = JSValue::decode(encodedSource);
-    if (!layoutID)
+    if (!layoutID) {
+        // (cloneObjectForSpread() copies an object whose Structure has a known shape one property at a time. With typed fields, what
+        // is in a slot may not be the property's value.)
+        if (source.isCell() && source.asCell()->type() == FinalObjectType && source.asCell()->structure()->typedLayoutID() && !TypedLayoutTable::hasTypedFields()) {
+            if (JSObject* copy = Instance::ensure(globalObject).tryCopySlotsForSpread(asObject(source)))
+                OPERATION_RETURN(scope, copy);
+        }
         OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source));
+    }
     if (source.isCell() && source.asCell()->type() == FinalObjectType) {
         Structure* structure = source.asCell()->structure();
         if (structure->typedLayoutID() == layoutID && structure->canPerformFastPropertyEnumerationCommon()) {
