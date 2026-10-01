@@ -10,7 +10,6 @@
 #include "AOTBuiltins.h"
 #include "AOTGraph.h"
 #include <bmalloc/StaticRegion.h>
-#include <sys/mman.h>
 
 #include "ArrayConstructor.h"
 #include "ArrayPrototype.h"
@@ -26,6 +25,8 @@
 #include "ParserError.h"
 
 #if ENABLE(AOT)
+
+#include <sys/mman.h>
 
 #include "AOTProgram.h"
 #include "AOTImage.h"
