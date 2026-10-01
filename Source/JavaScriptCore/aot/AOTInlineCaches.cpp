@@ -34,14 +34,15 @@ std::optional<uint32_t> locationOfProperty(PropertyOffset offset)
     return (static_cast<uint32_t>(location) & Slot::offsetMask) | (location < 0 ? Slot::isIndirect : 0);
 }
 
-// Read as an object whose first inline property is undefined.
+// Laid out like an object whose first inline property is undefined.
 static const EncodedJSValue holderOfUndefined[JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + 1] = { 0, 0, JSValue::ValueUndefined };
 static_assert(JSObject::offsetOfInlineStorage() == 2 * sizeof(EncodedJSValue));
 
 static void fill(VM& vm, Data* data, Slot* cache, Structure* structure, uint32_t offsetAndFlags, void* pointer)
 {
-    // The code reads the first word and then the second. In between it does nothing that lets this run, so all that matters is
-    // that the collector, which reads them at any time, never sees a structure with a second word that is not its own.
+    // Compiled code reads the first word and then the second, and does nothing in between that would let this function run. So the
+    // only requirement is that the collector, which may read the slot at any time, never sees a structure together with a second
+    // word that belongs to another structure.
     uint32_t attempts = cache->offset & Slot::attemptsMask;
     if (offsetAndFlags & (Slot::isGetter | Slot::pointerIsCell | Slot::pointerIsNotCell))
         offsetAndFlags |= Slot::isIndirect;
@@ -72,11 +73,11 @@ void makePrototypeChainWatchable(VM& vm, JSCell* base)
     }
 }
 
-// A slot is good for one structure. At a site that sees several, filling it again every time costs more than it saves (the collector
-// has to be told, for one thing), and the megamorphic cache is there for those. So it is only done so often.
+// A slot caches one structure. At a site that sees several, refilling the slot every time costs more than it saves (for one thing,
+// the collector has to be notified), and the megamorphic cache handles those sites. So the number of refills is limited.
 static bool mayReplace(Slot* cache, Structure* structure)
 {
-    // (Given over to the name: see generateGetById().)
+    // (The slot has been repurposed to hold the name: see generateGetById().)
     if ((cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
         return !!cache->structureID && cache->structureID == structure->id();
     if (!cache->structureID || cache->structureID == structure->id())
@@ -85,7 +86,7 @@ static bool mayReplace(Slot* cache, Structure* structure)
     return true;
 }
 
-// Whatever the reason a slot could not be filled, a site where that goes on happening is one for the megamorphic cache.
+// Whatever the reason that a slot could not be filled, a site where that keeps happening should use the megamorphic cache.
 static void countFailure(Slot* cache)
 {
     if ((cache->offset & Slot::attemptsMask) != Slot::attemptsMask)
@@ -94,7 +95,8 @@ static void countFailure(Slot* cache)
 
 static bool tryCacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache);
 
-// Which slot is to have what has been found out about objects of that structure: the place's own, until there is a second structure.
+// Returns a small integer that identifies the property name, or zero if the IDs have run out. The IDs follow the field IDs of the
+// image.
 static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
 {
     auto& table = vm.aotPropertyNameIDs;
@@ -113,7 +115,8 @@ static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
     return result.iterator->value;
 }
 
-// If the access found a plain data property of the base's own in one of the first inline slots: records the name's id in the Structure and returns it. Otherwise zero.
+// If the access found a plain own data property in one of the first inline slots, records the name's ID in the Structure and
+// returns it. Otherwise returns zero.
 static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* structure, const Identifier& ident, const PropertySlot& slot)
 {
     if (!slot.isCacheableValue() || slot.slotBase() != base || slot.attributes())
@@ -121,10 +124,10 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     PropertyOffset offset = slot.cachedOffset();
     if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFieldIDs)
         return 0;
-    // (A cell of the static heap that another VM reads has a Structure of the first VM's.)
+    // (A cell in the static heap that another VM reads has a Structure that belongs to the first VM.)
     if (structure->isDictionary() || structure->typedLayoutID() || structure->cannotConvertToTypedLayout() || &structure->vm() != &vm)
         return 0;
-    // As tryCacheGetById().
+    // The same conditions as in tryCacheGetById().
     if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
         return 0;
     uint16_t id = propertyNameID(vm, ident.impl());
@@ -135,13 +138,16 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     return id;
 }
 
+// Returns the slot that should cache accesses to objects with that structure: the site's own slot, until a second structure is
+// seen.
 static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, const Identifier& ident)
 {
     if (!cache->isPolymorphic()) {
         if (!cache->structureID || cache->structureID == structure->id())
             return cache;
         PolymorphicSlots* several = data->instance->makeSlotsOfSite(data, ident.impl());
-        // What it had is as good as it was. (The collector looks at any time: it never sees a structure with a second word that is not its own.)
+        // Move the existing entry, which is still valid. (The collector may read the slot at any time, and must never see a
+        // structure together with a second word that belongs to another structure.)
         Slot& first = several->slots[0];
         first.offset = cache->offset & ~Slot::attemptsMask;
         first.pointer = cache->pointer;
@@ -178,7 +184,8 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
     if (SharedData::contains(cache))
         return;
     if (mayBePolymorphic && usesStubs && base.isCell() && base.asCell()->structure() == structureBefore) {
-        // The slot is monomorphic for another Structure with the same name at the same offset. Now that this Structure says so too, the stub hits on both: the site stays monomorphic.
+        // The slot is monomorphic for another Structure that has the same name at the same offset. Now that this Structure records
+        // the name too, the stub hits for both, and the site stays monomorphic.
         if (uint16_t id = recordPropertyNameInStructure(globalObject->vm(), base.asCell(), structureBefore, ident, slot)) {
             uint32_t sameAccess = *locationOfProperty(slot.cachedOffset()) | static_cast<uint32_t>(id) << Slot::nameIDShift;
             if (cache->structureID && (cache->offset & ~Slot::attemptsMask) == sameAccess)
@@ -193,7 +200,7 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
 
 static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
 {
-    // Only the stubs know what to do about a getter.
+    // Only the stubs can handle a getter.
     uint32_t getterFlag = usesStubs && slot.isCacheableGetter() ? Slot::isGetter : 0;
     if (!base.isCell() || (!slot.isCacheableValue() && !slot.isUnset() && !getterFlag))
         return false;
@@ -201,20 +208,20 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
     VM& vm = globalObject->vm();
     JSCell* cell = base.asCell();
     Structure* structure = cell->structure();
-    // What the slot says, it says of the object as it was.
+    // The PropertySlot describes the object as it was before the access.
     if (structure != structureBefore)
         return false;
     if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
         return false;
     if (getterFlag) {
-        // And of whatever it was found in.
+        // The same goes for the object that holds the property.
         unsigned attributes;
         if (slot.slotBase()->structure()->get(vm, ident.impl(), attributes) != slot.cachedOffset() || !(attributes & PropertyAttribute::Accessor))
             return false;
-        // Where the stub looks for the getter's code is filled in when a function is first called from code. This one may only ever
-        // have been called from here.
+        // The field that the stub reads the getter's entry point from is filled in when the function is first called from
+        // JavaScript code. This getter may only ever have been called from here.
         if (auto* function = dynamicDowncast<JSFunction>(slot.getterSetter()->getter())) {
-            // (By where it is: without the JIT a host function does not say which intrinsic it is.)
+            // (Identified by its holder, because without the JIT a host function does not record its intrinsic.)
             if (ident == vm.propertyNames->length && slot.slotBase()->inherits<JSTypedArrayViewPrototype>() && slot.slotBase()->globalObject() == globalObject)
                 data->instance->getterOfLengthOfTypedArrays = function;
             if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable()); executable && executable->isGeneratedForCall())
@@ -224,7 +231,8 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
 
     if (!slot.isUnset() && slot.slotBase() == cell) {
         if (structure->isDictionary()) {
-            // Next time, if it has settled down. Once: an object that goes on to be one again is being used as one.
+            // Flatten the dictionary, so that the next access can be cached. This is done only once: an object that becomes a
+            // dictionary again is being used as one.
             if (!structure->hasBeenFlattenedBefore() && cell->isObject())
                 structure->flattenDictionaryStructure(vm, asObject(cell));
             return false;
@@ -236,18 +244,19 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
             return false;
         if (cache->hasPointer())
             stopWatching(data, cache);
-        // (Where there is no more to it than a place in the object, the second word is for the name: Slot::name.)
+        // (For a plain inline property, the second word holds the name: Slot::name.)
         uint32_t nameID = usesStubs ? recordPropertyNameInStructure(vm, cell, structure, ident, slot) : 0;
         fill(vm, data, cache, structure, *location | getterFlag | nameID << Slot::nameIDShift, (*location | getterFlag) & (Slot::isIndirect | Slot::isGetter) ? nullptr : ident.impl());
         return true;
     }
 
-    // What follows takes some doing, and undoing. It is for the sites that see few structures, and not for code that runs once.
+    // What follows is expensive to set up and to tear down. It is meant for sites that see few structures, not for code that runs
+    // once.
     uint32_t attempts = (cache->offset & Slot::attemptsMask) >> Slot::attemptsShift;
     if (attempts == Slot::maxAttempts)
         return false;
-    // A site that sees one structure needs two. One that is still at it after a few sees several, and each time costs a good deal
-    // more than looking in the megamorphic cache ever will.
+    // A site that sees one structure needs two attempts. One that is still trying after a few sees several structures, and each
+    // attempt costs far more than a lookup in the megamorphic cache.
     constexpr uint32_t maxAttemptsAtThis = 4;
     if (attempts >= maxAttemptsAtThis) {
         cache->offset |= Slot::attemptsMask;
@@ -260,7 +269,7 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
     if (structure->typeInfo().prohibitsPropertyCaching())
         return false;
     if (structure->isDictionary()) {
-        // Next time.
+        // Flatten the dictionary, so that the next access can be cached.
         if (!structure->hasBeenFlattenedBefore())
             structure->flattenDictionaryStructure(vm, asObject(cell));
         return false;
@@ -288,7 +297,7 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
     return true;
 }
 
-// As tryCacheGetBy() has it, for what it calls CustomAccessorGetter and CustomValueGetter.
+// The counterpart of what tryCacheGetBy() does for CustomAccessorGetter and CustomValueGetter.
 void noteCustomGetter(JSGlobalObject* globalObject, Instance& instance, JSObject* base, const Identifier& ident, const PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -309,11 +318,11 @@ void noteCustomGetter(JSGlobalObject* globalObject, Instance& instance, JSObject
             return;
         if (!generateConditionsForPrototypePropertyHitCustom(vm, globalObject, globalObject, structure, holder, ident.impl(), slot.attributes()).isValid())
             return;
-        // It stays so for as long as nothing is done to what the object inherits from, up to where the property is.
+        // This remains valid as long as the prototype chain is unchanged, up to the object that holds the property.
         if (!MegamorphicCache::noteDependenceOnPrototypes(structure->id(), holder))
             return;
     }
-    // (Which is all that the check that the function is given the right kind of object comes to, of an object of a Structure that is known.)
+    // (For an object with a known Structure, this is all that the check of the receiver's class amounts to.)
     bool passesHolder = !(slot.attributes() & PropertyAttribute::CustomAccessor);
     if (auto domAttribute = slot.domAttribute(); domAttribute && !(passesHolder ? holder : base)->inherits(domAttribute->classInfo))
         return;
@@ -337,11 +346,12 @@ static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* old
 
 void cachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
-    // A struct has been given a field. The next of its kind to be given that one need not come here, wherever it is done (Instance::addsOfFields).
+    // A field was added to an object with a typed layout. The next object with the same Structure that gains that field does not
+    // need to call the runtime, at any site (Instance::fieldAdditions).
     if (slot.type() == PutPropertySlot::NewTypedField && base.isCell() && slot.base() == base.asCell() && isInlineOffset(slot.cachedOffset())) {
         Structure* newStructure = base.asCell()->structure();
         if (newStructure->previousID() == oldStructure && !newStructure->isDictionary() && !oldStructure->mayBePrototype() && oldStructure->outOfLineCapacity() == newStructure->outOfLineCapacity())
-            globalObject->aotInstance()->noteAddOfField(oldStructure, slot.cachedOffset(), newStructure);
+            globalObject->aotInstance()->noteFieldAddition(oldStructure, slot.cachedOffset(), newStructure);
     }
     if (SharedData::contains(cache))
         return;
@@ -353,7 +363,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
 {
     if (!base.isCell() || (!slot.isCacheablePut() && !slot.isCacheablePutOfTypedField()) || slot.base() != base.asCell())
         return false;
-    // Objects that others inherit from have more depending on them than a store lets on.
+    // A prototype has more depending on it than a plain store accounts for.
     if (!oldStructure->propertyAccessesAreCacheable() || oldStructure->isDictionary() || oldStructure->mayBePrototype())
         return false;
 
@@ -378,7 +388,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         cache->fieldType = fieldType;
         WTF::storeStoreFence();
         cache->structureID = oldStructure->id();
-        // For a transition the collector has to see it too, even if it has been by already.
+        // For a transition, the collector has to visit the slot, even if it has already visited the Data.
         if (structureAfterwards)
             data->instance->noteTransitionCached(cache);
         didFillSlot(vm, data);
@@ -387,21 +397,22 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
     if (slot.type() == PutPropertySlot::ExistingProperty || slot.type() == PutPropertySlot::ExistingTypedField) {
         if (newStructure != oldStructure)
             return false;
-        // Code that has folded the property to a constant has to hear about writes that go around the runtime.
+        // Code that has constant-folded the property has to be notified of writes that bypass the runtime.
         oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
         stopWatching(data, cache);
         fillPut(nullptr);
         return true;
     }
 
-    // A new property. Only the case that takes no more than storing the value and the new structure.
+    // A new property. Only the case that takes no more than storing the value and the new structure is cached.
     if (newStructure->isDictionary() || newStructure->previousID() != oldStructure || oldStructure->outOfLineCapacity() != newStructure->outOfLineCapacity())
         return false;
 
     if (isDirect)
         stopWatching(data, cache);
     else {
-        // Nothing on the prototype chain has a say now (a setter, a read-only property), and that has to stay so.
+        // Nothing on the prototype chain intercepts the store now (a setter or a read-only property), and the cache is only valid
+        // while that remains true.
         auto status = prepareChainForCaching(globalObject, cell, ident.impl(), nullptr);
         if (!status || status->flattenedDictionary || status->usesPolyProto)
             return false;
@@ -417,7 +428,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
 
 static bool canUseMegamorphicCacheForGet(VM& vm, UniquedStringImpl* uid)
 {
-    // (The other tiers leave out three more names, which getByIdAndFillMegamorphicCache() has another way of being careful about.)
+    // (The other tiers exclude three more names, which getByIdAndFillMegamorphicCache() handles in another way.)
     return !parseIndex(*uid) && uid != vm.propertyNames->underscoreProto;
 }
 
@@ -426,8 +437,8 @@ static bool canUseMegamorphicCacheForPut(VM& vm, UniquedStringImpl* uid)
     return canUseMegamorphicPutById(vm, uid);
 }
 
-// What the other tiers do for a get_by_id that has gone megamorphic (getByIdMegamorphic() in JITOperations.cpp): the lookup, one
-// object at a time, keeping track of whether the answer is one that structures and the cache's epoch vouch for.
+// What the other tiers do for a get_by_id that has become megamorphic (getByIdMegamorphic() in JITOperations.cpp): the lookup, one
+// object at a time, tracking whether the result is one that the structures and the cache's epoch keep valid.
 JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue base, const Identifier& ident, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -442,7 +453,7 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
     bool cacheable = true;
     bool isNameThoseHaveASayAbout = uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype;
     while (true) {
-        // Some kinds of object only have a say of their own about a few names.
+        // Some kinds of object override getOwnPropertySlot() only for a few names.
         if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && (isNameThoseHaveASayAbout || (object->type() != ArrayType && object->type() != JSFunctionType && object->type() != DerivedStringObjectType && object != globalObject->arrayPrototype()))) [[unlikely]] {
             bool hasProperty = object->getNonIndexPropertySlot(globalObject, uid, slot);
             RETURN_IF_EXCEPTION(scope, { });
@@ -482,8 +493,8 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
     }
 }
 
-// putMegamorphic() in JITOperations.cpp. Only for a put that went by the rules of [[Set]]: that it ended up as a store to the
-// base is what says that nothing on the prototype chain objects.
+// The counterpart of putMegamorphic() in JITOperations.cpp. Only for a put that followed the rules of [[Set]]: the fact that it
+// ended as a store to the base shows that nothing on the prototype chain intercepts it.
 void fillMegamorphicCacheAfterPut(JSGlobalObject* globalObject, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();

@@ -3341,7 +3341,8 @@ public:
         }
 
         if (auto* immutableButterfly = dynamicDowncast<JSCellButterfly>(cell)) {
-            // (What comes of this is another that holds the same, which is no good for one that is told by which it is.)
+            // (Decoding creates a new butterfly with the same contents, which would not work for a sentinel that is compared by
+            // identity.)
             RELEASE_ASSERT(cell != encoder.vm().orderedHashTableSentinel());
             this->allocate<CachedImmutableButterfly>(encoder)->encode(encoder, *immutableButterfly);
             return Kind::ImmutableButterfly;
@@ -5582,7 +5583,8 @@ protected:
     // @importModule. 6: op_iterator_close_check (opcode numbering). 7: op_new_reg_exp_shared (opcode numbering). 8: op_iterator_close_check jumps.
     // 9: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number of value profiles;
     // LazyClosureVar resolve types, module function slot table.
-    // 10: GenericCacheEntry records the payload's size. 11: op_check_type (opcode numbering).
+    // 10: GenericCacheEntry records the payload's size. 11: op_check_type (opcode numbering). 12: a module's code block records the
+    // range of scope offsets of its `var`s. 13: op_type_tag (opcode numbering).
     static constexpr uint32_t cachedTypesFormatRevision = 13;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
@@ -5849,7 +5851,7 @@ struct BytecodeLinkEncoder::Impl {
         Strong<JSCell> root;
         SourceCode source;
         unsigned builtinEmbedderStamp { 0 };
-        bool isOfEngine { false }; // Nobody added it: addBuiltinsOfEngine().
+        bool isEngineBuiltin { false }; // Added by addEngineBuiltins(), not by the embedder.
         bool isLate { false };
         GenericCacheEntry* entry { nullptr }; // in the encoder's pages, which stay where they are until release()
         uint32_t entryOffset { 0 };
@@ -5903,25 +5905,25 @@ struct BytecodeLinkEncoder::Impl {
     }
 
 #if ENABLE(FTL_JIT)
-    // The engine's own functions that are written in JavaScript, each as a builtin of an embedder's would be: with a text of its own.
-    // What runs the program asks StaticHeap for them (BuiltinExecutables::staticExecutableFor()), so that they are neither parsed nor
-    // interpreted.
-    Vector<UnlinkedFunctionExecutable*> builtinsOfEngine; // By BuiltinCodeIndex. The modules keep them.
-    void addBuiltinsOfEngine()
+    // The engine's builtins that are written in JavaScript. Each is added the way an embedder's builtin would be, with its own
+    // source text. At run time they are obtained from StaticHeap (BuiltinExecutables::staticExecutableFor()), so they are neither
+    // parsed nor interpreted.
+    Vector<UnlinkedFunctionExecutable*> engineBuiltins; // Indexed by BuiltinCodeIndex. Kept alive by `modules`.
+    void addEngineBuiltins()
     {
         unsigned added = 0;
-        vm.builtinExecutables()->forEachOnItsOwn([&](unsigned index, UnlinkedFunctionExecutable* executable, const SourceCode& source) {
+        vm.builtinExecutables()->forEachStandaloneBuiltin([&](unsigned index, UnlinkedFunctionExecutable* executable, const SourceCode& source) {
             ParserError error;
             recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, std::numeric_limits<unsigned>::max());
             if (error.isValid()) {
                 dataLogLn("AOT: cannot generate bytecode for the builtin function `", executable->name().string(), "`: ", error.message());
                 return;
             }
-            while (builtinsOfEngine.size() <= index)
-                builtinsOfEngine.append(nullptr);
-            builtinsOfEngine[index] = executable;
+            while (engineBuiltins.size() <= index)
+                engineBuiltins.append(nullptr);
+            engineBuiltins[index] = executable;
             Module module { SourceCodeKey(), Strong<JSCell>(vm, executable), source, BuiltinExecutables::stampOf(index) };
-            module.isOfEngine = true;
+            module.isEngineBuiltin = true;
             add(WTF::move(module), BytecodeOrderNames { });
             ++added;
         });
@@ -5930,10 +5932,11 @@ struct BytecodeLinkEncoder::Impl {
     }
 #endif
 
-    // Functions that whoever compiles the program never gets to see: with no code, that were not placed, with nothing to go by.
+    // Counts of the functions that are not passed to the compiler: those without code, those that were not placed, and those
+    // without a key.
     std::array<unsigned, 3> omittedFunctions { };
 
-    // Every function of the module that has code: keeps the code, and says where it goes.
+    // For every function of the module that has code: retains the code and decides where it is placed.
     void placeCodeOf(UnlinkedFunctionExecutable& executable, unsigned module, const SourceCode& around, Encoder::LinkClass aroundGoes)
     {
         auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(vm);
@@ -6043,8 +6046,9 @@ struct BytecodeLinkEncoder::Impl {
             result[importer.index] = WTF::move(linkage);
         }
 
-        // The bundler has seen to who can get at what a module exports. But what it took for an import of a variable is only that here
-        // if it has been resolved, above, to the variable itself. Anything else is read some other way, as a value like any other.
+        // The bundler knows which code can access a module's exports. But what it treats as an import of a variable is only
+        // compiled as one here if it was resolved, above, to the variable itself. Any other import is read in another way, as an
+        // ordinary value, so the variable escapes.
         auto graphExports = arrayAt(header.exportsOffset, header.exportCount, static_cast<const Graph::Export*>(nullptr));
         auto graphRequests = arrayAt(header.requestsOffset, header.requestCount, static_cast<const Graph::Request*>(nullptr));
         auto graphStarExports = arrayAt(header.starExportsOffset, header.starExportCount, static_cast<const uint32_t*>(nullptr));
@@ -6073,7 +6077,8 @@ struct BytecodeLinkEncoder::Impl {
                 uint32_t requested = import.request() < module.requestCount ? graphRequests[module.firstRequest + import.request()].moduleIndex : Graph::noModule;
                 if (import.isNamespace()) {
                     everyExportEscapes(requested);
-                    // A variable of the module that imports it, which whatever links the modules puts the namespace in.
+                    // A namespace import is a variable of the importing module, in which the module linker stores the namespace
+                    // object.
                     if (Identifier localName = nameOf(import.localSid); !localName.isNull() && graphModule < linked.size() && linked[graphModule].codeBlock) {
                         SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(localName.impl());
                         if (!entry.isNull() && entry.varOffset().isScope())
@@ -6147,7 +6152,8 @@ struct BytecodeLinkEncoder::Impl {
         }
         return result;
     }
-    // Where the variables are that the module exports, going by the graph; and those that whoever links it puts something in by name.
+    // The scope offsets of the variables that the module exports, according to the prelinked graph, and of the variables that the
+    // module linker initializes by name.
     std::optional<Vector<uint32_t>> variablesExportedBy(unsigned index)
     {
         using Graph = PrelinkedModuleGraph;
@@ -6167,11 +6173,11 @@ struct BytecodeLinkEncoder::Impl {
         auto* symbolTable = uncheckedDowncast<SymbolTable>(codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell());
         Vector<uint32_t> result;
         for (unsigned i = 0; i < module.exportCount; ++i) {
-            // (What it hands on from another module is one of that module's.)
+            // (A re-export is a variable of the other module.)
             if (exports[i].kind() != Graph::ExportKind::Local)
                 continue;
             uint32_t sid = exports[i].localOrImportSid;
-            // (The engine's own names are kept anyway.)
+            // (The engine's private names are kept anyway.)
             if (sid == Graph::starDefaultSid)
                 continue;
             if (sid >= prelinkedGraphStringSlots.size())
@@ -6183,8 +6189,9 @@ struct BytecodeLinkEncoder::Impl {
             if (!entry.isNull() && entry.varOffset().isScope())
                 result.append(entry.scopeOffset().offset());
         }
-        // What is imported is somebody else's variable, unless it is a namespace: that is put in a variable of the module's own, by name, when the module is linked
-        // (CyclicModuleRecord::initializeEnvironment()). Whether it is one is not always known by now.
+        // An import is a variable of another module, unless it is a namespace import: the namespace object is stored by name in a
+        // variable of this module when the module is linked (CyclicModuleRecord::initializeEnvironment()). Whether an import is a
+        // namespace is not always known at this point.
         RELEASE_ASSERT(header.importsOffset <= prelinkedGraph.size() && header.importCount <= (prelinkedGraph.size() - header.importsOffset) / sizeof(Graph::Import));
         RELEASE_ASSERT(module.firstImport <= header.importCount && module.importCount <= header.importCount - module.firstImport);
         auto* imports = reinterpret_cast<const Graph::Import*>(prelinkedGraph.data() + header.importsOffset) + module.firstImport;
@@ -6205,15 +6212,15 @@ struct BytecodeLinkEncoder::Impl {
     Vector<AOT::ImageEnvironment> environmentsOfLink;
     size_t environmentsSizeOfLink { 0 };
 
-    // Every function of the link, compiled: there is nothing to wait for, all the code there is going to be is here.
+    // Compiles every function of the link. All of the program's code has been generated by now. Returns an empty image on failure.
     Vector<uint8_t> compileImage()
     {
         ImmutableIntrinsics::ensureShared(vm);
         AOT::TypeTable::load(vm);
-        // What a variable can hold, and what a function can be passed, is worked out from every store and every call there is.
+        // The whole-program analysis is only sound if it sees every store and every call.
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
-            dataLogLn("AOT: not all of the program's code is here: ", omittedFunctions[0], " functions have no code (was a limit put on how deep to generate it?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
-            RELEASE_ASSERT_NOT_REACHED();
+            dataLogLn("AOT: the compiler needs all of the program's code: ", omittedFunctions[0], " functions have no bytecode (is the bytecode depth limited?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
+            return { };
         }
         struct Job {
             AOT::ImageKey key;
@@ -6262,7 +6269,7 @@ struct BytecodeLinkEncoder::Impl {
             hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, bindingsOfModule(index).span(), describe);
             hints[index]->recordFunctionAssignmentsIn(codeBlock, describe);
         }
-        // (What is inside a function that has code both for a call and for `new` is there twice, and is the same both times.)
+        // (A function nested in a function that has code for both call and construct appears twice, with identical code.)
         std::set<std::tuple<uint32_t, uint32_t, uint32_t>> keys;
         for (auto& function : functionsToCompile) {
             for (bool isConstruct : { false, true }) {
@@ -6290,7 +6297,7 @@ struct BytecodeLinkEncoder::Impl {
         for (auto& function : functionsToCompile) {
             if (!hints[function.module])
                 continue;
-            // (The two are made from the one syntax tree.)
+            // (Both code blocks are generated from the same syntax tree.)
             if (auto* codeBlock = function.forCall ? function.forCall : function.forConstruct)
                 hints[function.module]->recordFunctionAssignmentsIn(codeBlock, describe);
         }
@@ -6420,9 +6427,9 @@ struct BytecodeLinkEncoder::Impl {
             });
             if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: ", classesOfProgram.numberOfNonEscapingMethods(), " methods do not escape");
-            // Where a function goes is seen from where it is made: by an instruction, or when a module is set up, for a variable that whoever
-            // put the program together has kept an eye on. One that comes about in any other way is anybody's.
-            BitVector isMadeWhereItCanBeSeen(functionsOfProgram.size() + 1);
+            // Tracking where a function object flows starts at its creation: by an instruction, or at module instantiation for a
+            // variable that the bundler tracks. A function that is created in any other way escapes.
+            BitVector hasVisibleCreationSite(functionsOfProgram.size() + 1);
             for (auto& job : jobs) {
                 for (const auto& instruction : job.codeBlock->instructions()) {
                     UnlinkedFunctionExecutable* made = nullptr;
@@ -6455,7 +6462,7 @@ struct BytecodeLinkEncoder::Impl {
                         break;
                     }
                     if (made)
-                        isMadeWhereItCanBeSeen.set(functionsOfProgram.numberOf(made));
+                        hasVisibleCreationSite.set(functionsOfProgram.numberOf(made));
                 }
             }
             for (auto& hintsOfModule : hints) {
@@ -6466,7 +6473,7 @@ struct BytecodeLinkEncoder::Impl {
                     if (function.isVisibleFromOutside)
                         function.summary->markEscaping(AOT::FunctionSummary::ReportedByBundler);
                     else if (function.isDeclaration)
-                        isMadeWhereItCanBeSeen.set(number);
+                        hasVisibleCreationSite.set(number);
                 });
             }
             for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
@@ -6478,20 +6485,21 @@ struct BytecodeLinkEncoder::Impl {
                     function.summary->markEscaping(AOT::FunctionSummary::NumberDoesNotFitInTypes);
                 else if (!isModuleOfProgram(moduleOfFunctionNumbered(number)))
                     function.summary->markEscaping(AOT::FunctionSummary::ExternalFunction);
-                else if (!isMadeWhereItCanBeSeen.get(number))
+                else if (!hasVisibleCreationSite.get(number))
                     function.summary->markEscaping(AOT::FunctionSummary::CreationSiteUnknown);
                 else if (AOT::mayReferenceItself(function.forCall))
                     function.summary->markEscaping(AOT::FunctionSummary::ReferencesItself);
             }
         }
 
-        // What the functions that are called with no check return: each goes by what the ones it calls return, so all together,
-        // starting from nothing, until nothing changes.
+        // Infer the return types of the functions that are called directly. Each depends on the return types of its callees, so
+        // they are computed together, from bottom, to a fixpoint.
         {
-            // And what the closed ones are passed, which goes by what whoever calls them has in hand: so every piece of code there is.
+            // The parameter types of non-escaping functions are inferred too. They depend on the values at their call sites, so all
+            // of the program's code has to be analyzed.
             using SetOfUnits = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
             struct AnalysisUnit {
-                Vector<const AOT::KnownFunction*, 1> functions; // That this is the code of, for a call.
+                Vector<const AOT::KnownFunction*, 1> functions; // The functions whose code for call this is.
                 const AOT::FunctionSummary* summary { nullptr };
                 SetOfUnits dependents;
                 Vector<const AOT::KnownFunction*> callees;
@@ -6627,7 +6635,8 @@ struct BytecodeLinkEncoder::Impl {
                 }
                 worklist = copyToVector(next);
             }
-            // Nothing that is known to go by something that has grown is left. If that is all there is to know, looking at everything again adds nothing.
+            // The worklist of known dependents is empty. If the recorded dependencies are complete, analyzing everything again
+            // changes nothing, which the digest confirms.
             uint64_t digest = summaryDigest();
             if (fullReanalysisCount && digest == digestBefore)
                 break;
@@ -6655,7 +6664,7 @@ struct BytecodeLinkEncoder::Impl {
                     const AOT::KnownFunction& caller = *functionsOfProgram.function(number);
                     for (const AOT::FunctionSummary* summaryOfCallee : caller.summary->knownTailCallees) {
                         const AOT::KnownFunction& callee = *functionsOfProgram.function(summaryOfCallee->number);
-                        if (AOT::howValuesArePassed(caller.summary, caller.conventionForCall).result == AOT::howValuesArePassed(callee.summary, callee.conventionForCall).result)
+                        if (AOT::valueRepresentations(caller.summary, caller.conventionForCall).result == AOT::valueRepresentations(callee.summary, callee.conventionForCall).result)
                             continue;
                         caller.summary->returnsBoxed = true;
                         callee.summary->returnsBoxed = true;
@@ -6666,7 +6675,7 @@ struct BytecodeLinkEncoder::Impl {
             if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: ", withCode, " functions have code for calls, ", closed, " of them do not escape, ", neverCalled, " of those have no call site");
             if (Options::logAOTTypeInference()) [[unlikely]] {
-                // Once more, now that it is settled, for each to say what it goes by and what it adds.
+                // Run the analysis once more at the fixpoint, so that each unit logs its inputs and its results.
                 auto nameOfJob = [&](unsigned index) {
                     auto* executable = jobs[index].executable;
                     return makeString('`', executable ? executable->name().string() : "(top level)"_s, "` @"_s, jobs[index].key.module, ':', jobs[index].key.start);
@@ -6707,14 +6716,14 @@ struct BytecodeLinkEncoder::Impl {
             const Vector<UnlinkedFunctionExecutable*>* builtins { nullptr };
         };
         CodeOfThisProgram codeOfProgram;
-        codeOfProgram.builtins = &builtinsOfEngine;
+        codeOfProgram.builtins = &engineBuiltins;
         for (auto& job : jobs)
             codeOfProgram.all.add(job.codeBlock, AOT::CodeOfProgram::About { hints[job.module].get(), linkages[job.module].get(), summariesByCodeBlock.get(job.codeBlock), job.key });
         std::atomic<uint64_t> functionsNeverReached { 0 };
         std::atomic<uint64_t> bytecodeNeverReached { 0 };
         auto work = [&] {
             for (size_t index = next++; index < jobs.size(); index = next++) {
-                // Whoever calls a closed function is known, all of them. One that nobody calls has no use for code.
+                // All callers of a non-escaping function are known. One without callers needs no code.
                 if (const AOT::FunctionSummary* summary = summariesByCodeBlock.get(jobs[index].codeBlock); summary && !summary->isReached()) {
                     functionsNeverReached++;
                     bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
@@ -6724,7 +6733,7 @@ struct BytecodeLinkEncoder::Impl {
                 }
                 AOT::CompiledCode code;
                 if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, &codeOfProgram)) {
-                    // (A function's key says where its source starts, if it is a function that somebody wrote.)
+                    // (A function's key gives the start of its source, unless the function is synthesized.)
                     {
                         auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                         bool isTopLevel = !(jobs[index].rank & 2);
@@ -6775,7 +6784,7 @@ struct BytecodeLinkEncoder::Impl {
                     return order == std::weak_ordering::less;
                 return a.first->isSymbol() < b.first->isSymbol();
             });
-            // (From one: they are what properties are looked up by in the dispatch table, where nothing stands for nothing.)
+            // (Numbered from one: they index the dispatch table, where zero means no entry.)
             for (uint32_t number = 0; number < inOrder.size(); ++number)
                 numbersOfIdentifiers.set(inOrder[number].first, number + 1);
             AOT::setNumbersOfIdentifiersOfProgram(&numbersOfIdentifiers);
@@ -6793,7 +6802,7 @@ struct BytecodeLinkEncoder::Impl {
             for (auto& job : jobs) {
                 if (job.codeBlock->codeType() != FunctionCode)
                     continue;
-                if (!AOT::constantsAreOfNoRealm(job.codeBlock, AOT::SymbolTablesAreShared::Yes)) {
+                if (!AOT::hasOnlyRealmIndependentConstants(job.codeBlock, AOT::SymbolTablesAreShared::Yes)) {
                     ++withOwn;
                     continue;
                 }
@@ -6814,8 +6823,8 @@ struct BytecodeLinkEncoder::Impl {
                         String said;
                         if (value.isString())
                             said = asString(value)->tryGetValue();
-                        // (Any other cell is the function's own, whoever else has it here: what StaticHeap makes of two functions
-                        // is two of everything.)
+                        // (Any other cell gets a number of its own, even if two functions share it here, because StaticHeap decodes
+                        // each function's constants separately.)
                         if (!said.isNull())
                             number = strings.ensure(said, take).iterator->value;
                         else {
@@ -6907,9 +6916,6 @@ struct BytecodeLinkEncoder::Impl {
                     builder.addRegExp(vm, regExp->pattern(), regExp->flags());
             }
         }
-        // A regular expression that the program makes out of a string finds its code by what it says. So it is worth having code
-        // for whatever string may be made one of, and it costs nothing but room to be wrong: a string in which something is
-        // escaped that only a regular expression has any call to escape.
         Vector<uint8_t> image = builder.finish();
         reportableSites = builder.takeReportableSites();
         return image;
@@ -7005,7 +7011,7 @@ auto BytecodeLinkEncoder::finish() -> Result
     static_assert(numberOfRegions == BytecodeLinkRegions::Count);
 #if ENABLE(FTL_JIT)
     if (m_impl->compilesAheadOfTime)
-        m_impl->addBuiltinsOfEngine();
+        m_impl->addEngineBuiltins();
 #endif
     Result result;
     Encoder& encoder = m_impl->encoder;
@@ -7049,7 +7055,7 @@ auto BytecodeLinkEncoder::finish() -> Result
     result.functionsWithoutName = encoder.functionsWithoutName();
     for (unsigned index = 0; index < m_impl->modules.size(); ++index) {
         auto& module = m_impl->modules[index];
-        if (!module.isOfEngine)
+        if (!module.isEngineBuiltin)
             result.entryOffsets.append(module.entryOffset);
         result.entryOffsetsOfModules.append(module.entryOffset);
         result.variablesExportedByModules.append(m_impl->variablesExportedBy(index));

@@ -53,12 +53,12 @@ LValue Emitter::fixed32(ptrdiff_t offset)
 
 LValue Emitter::changing32(ptrdiff_t offset)
 {
-    return m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, m_instance, offset));
+    return m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset));
 }
 
 LValue Emitter::structureWithID(LValue structureID)
 {
-    // (In an image: structureIDBaseOfImages. Code that is made when the program runs goes by what it finds.)
+    // (In an image the base is the constant structureIDBaseOfImages. Code that is compiled at run time loads the actual base.)
     if (usesStubs)
         return m_out.bitOr(m_out.zeroExtPtr(structureID), m_out.constIntPtr(structureIDBaseOfImages));
     return m_out.bitOr(m_out.zeroExtPtr(structureID), entry(Entry::StructureIDBase));
@@ -181,7 +181,7 @@ Emitter::ArrayValues Emitter::allocateJSArray(LValue publicLength, LValue vector
     return { array, butterfly };
 }
 
-// Room for a few more than there are, and for as many as fit in what is allocated anyway.
+// The vector length: at least the minimum, rounded up to use the whole allocation.
 static LValue vectorLengthFor(FTL::Output& out, LValue count)
 {
     LValue least = out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN);
@@ -200,13 +200,13 @@ LValue Emitter::newArrayOfValues(LValue values, LValue count, bool areInt32, LBa
     return array;
 }
 
-// The elements are the butterfly's until somebody writes to the array.
+// The array shares the immutable butterfly's elements, copy-on-write.
 LValue Emitter::newArrayFromButterfly(LValue immutableButterfly, LBasicBlock giveUp)
 {
     LValue mode = m_out.load8ZeroExt32(immutableButterfly, m_heaps.JSCell_indexingTypeAndMisc);
     LValue which = m_out.lShr(m_out.sub(m_out.bitAnd(mode, m_out.constInt32(IndexingShapeMask)), m_out.constInt32(Int32Shape)), m_out.constInt32(IndexingShapeShift));
     orElse(m_out.below(which, m_out.constInt32(3)), giveUp);
-    LValue structureID = m_out.load32(TypedPointer(m_heaps.AOTInstance_whatChanges,
+    LValue structureID = m_out.load32(TypedPointer(m_heaps.AOTInstance_mutableFields,
         m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(which), m_out.constInt32(2)), m_out.constIntPtr(Instance::offsetOfStructureIDsOfNewCopyOnWriteArrays())))));
     orElse(m_out.notZero32(structureID), giveUp);
     LValue array = allocateHeapCell(fixedPointer(Instance::offsetOfAllocatorOfArrays()), giveUp);
@@ -243,16 +243,16 @@ LValue Emitter::isOriginalArray(LValue cell)
     return m_out.equal(m_out.load32(cell, m_heaps.JSCell_structureID), expected);
 }
 
-// [a, ...b, c]: what is to be spread is an array as the realm makes them, that keeps its elements as values. (Going through one of those is not something a program can
-// tell from copying: VM::useImmutableIntrinsics.)
-LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue whichAreToBeSpread, LBasicBlock giveUp)
+// [a, ...b, c]: each value that is spread must be an array with the realm's original structure that stores its elements as
+// JSValues. (Iterating over such an array cannot be distinguished from copying it: VM::useImmutableIntrinsics.)
+LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue spreadMask, LBasicBlock giveUp)
 {
-    auto isToBeSpread = [&](LValue index) {
-        return m_out.testNonZero32(m_out.lShr(whichAreToBeSpread, m_out.castToInt32(index)), m_out.int32One);
+    auto isSpreadAt = [&](LValue index) {
+        return m_out.testNonZero32(m_out.lShr(spreadMask, m_out.castToInt32(index)), m_out.int32One);
     };
     LValue limit = m_out.zeroExtPtr(count);
 
-    // How long it is going to be.
+    // First compute the length of the result.
     LBasicBlock measure = m_out.newBlock();
     LBasicBlock measureOne = m_out.newBlock();
     LBasicBlock measureArray = m_out.newBlock();
@@ -271,9 +271,9 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue whichAreT
     LBasicBlock measureValue = m_out.newBlock();
     LBasicBlock measureCell = m_out.newBlock();
     LValue source = m_out.load64(m_out.baseIndex(m_heaps.variables, values, index));
-    m_out.branch(isToBeSpread(index), unsure(measureArray), unsure(measureValue));
+    m_out.branch(isSpreadAt(index), unsure(measureArray), unsure(measureValue));
 
-    // (What has been spread already is not a value, and is for the runtime to take apart.)
+    // (The result of an earlier op_spread is not a JavaScript value, and is left to the runtime.)
     m_out.appendTo(measureValue);
     ValueFromBlock one = m_out.anchor(m_out.intPtrOne);
     m_out.branch(isCell(source), unsure(measureCell), unsure(measureNext));
@@ -319,7 +319,7 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue whichAreT
 
     m_out.appendTo(fillOne);
     LValue value = m_out.load64(m_out.baseIndex(m_heaps.variables, values, which));
-    m_out.branch(isToBeSpread(which), unsure(fillFromArray), unsure(fillFromValue));
+    m_out.branch(isSpreadAt(which), unsure(fillFromArray), unsure(fillFromValue));
 
     m_out.appendTo(fillFromValue);
     m_out.store64(value, m_out.baseIndex(m_heaps.indexedContiguousProperties, elements, place));
@@ -339,7 +339,7 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue whichAreT
 
     m_out.appendTo(copyOne);
     LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, from, copied));
-    // Where there is nothing, whoever goes through the array is given undefined.
+    // Iteration yields undefined for a hole.
     m_out.store64(m_out.select(m_out.isZero64(element), m_out.constInt64(JSValue::encode(jsUndefined())), element), m_out.baseIndex(m_heaps.indexedContiguousProperties, elements, m_out.add(place, copied)));
     m_out.addIncomingToPhi(copied, m_out.anchor(m_out.add(copied, m_out.intPtrOne)));
     m_out.jump(copy);
@@ -354,7 +354,7 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue whichAreT
     return array;
 }
 
-// An array as the realm makes them says nothing of what is to be made in its likeness, so that is an array too.
+// An array with the realm's original structure has no species override, so the result is a plain array too.
 LValue Emitter::newArrayLike(LValue length, LValue array, LBasicBlock giveUp)
 {
     orElse(isInt32(length), giveUp);
@@ -374,7 +374,7 @@ LValue Emitter::singleCharacterString(LValue character)
     return m_out.loadPtr(m_out.baseIndex(m_heaps.singleCharacterStrings, fixedPointer(Instance::offsetOfSingleCharacterStrings()), m_out.zeroExtPtr(character)));
 }
 
-Emitter::PiecesOfString Emitter::piecesOfString(LValue string, LBasicBlock giveUp)
+Emitter::StringParts Emitter::stringParts(LValue string, LBasicBlock giveUp)
 {
     LBasicBlock flat = m_out.newBlock();
     LBasicBlock rope = m_out.newBlock();
@@ -389,7 +389,7 @@ Emitter::PiecesOfString Emitter::piecesOfString(LValue string, LBasicBlock giveU
     ValueFromBlock flatOffset = m_out.anchor(m_out.int32Zero);
     m_out.jump(continuation);
 
-    // A slice of a string is left a slice. What it is a slice of is all in one piece.
+    // A substring rope is used as it is. Its base string is never a rope.
     m_out.appendTo(rope);
     orElse(m_out.testNonZeroPtr(fiber0, m_out.constIntPtr(JSRopeString::isSubstringInPointer)), giveUp);
     LValue fiber1 = m_out.load64(string, m_heaps.JSRopeString_fiber1);
@@ -405,8 +405,8 @@ Emitter::PiecesOfString Emitter::piecesOfString(LValue string, LBasicBlock giveU
     return { m_out.phi(pointerType(), flatBase, sliceBase), m_out.phi(pointerType(), flatImpl, sliceImpl), m_out.phi(Int32, flatLength, sliceLength), m_out.phi(Int32, flatOffset, sliceOffset) };
 }
 
-// The characters from `from` up to `to`, which are in order and within the string.
-LValue Emitter::partOfString(LValue string, const PiecesOfString& pieces, LValue from, LValue to, LBasicBlock giveUp)
+// Returns the characters from `from` up to `to`. Both must be within the string, and `from` must not exceed `to`.
+LValue Emitter::substringOf(LValue string, const StringParts& pieces, LValue from, LValue to, LBasicBlock giveUp)
 {
     LBasicBlock emptyCase = m_out.newBlock();
     LBasicBlock notEmptyCase = m_out.newBlock();
@@ -452,7 +452,7 @@ LValue Emitter::partOfString(LValue string, const PiecesOfString& pieces, LValue
     results.append(m_out.anchor(string));
     m_out.branch(m_out.equal(span, pieces.length), unsure(continuation), unsure(notAllOfIt));
 
-    // (The runtime remembers the strings of two characters that it has made.)
+    // (The runtime caches the two-character strings that it creates.)
     m_out.appendTo(notAllOfIt);
     orElse(m_out.notEqual(span, m_out.constInt32(2)), giveUp);
     LValue rope = allocateHeapCell(fixedPointer(Instance::offsetOfAllocatorOfRopeStrings()), giveUp);
@@ -472,26 +472,26 @@ LValue Emitter::partOfString(LValue string, const PiecesOfString& pieces, LValue
 
 LValue Emitter::sliceOfString(LValue string, LValue start, LValue end, LBasicBlock giveUp)
 {
-    PiecesOfString pieces = piecesOfString(string, giveUp);
+    StringParts pieces = stringParts(string, giveUp);
     LValue length = pieces.length;
     auto pickIndex = [&](LValue index) {
         return m_out.select(m_out.greaterThanOrEqual(index, m_out.int32Zero),
             m_out.select(m_out.above(index, length), length, index),
             m_out.select(m_out.lessThan(m_out.add(length, index), m_out.int32Zero), m_out.int32Zero, m_out.add(length, index)));
     };
-    return partOfString(string, pieces, pickIndex(start), pickIndex(end), giveUp);
+    return substringOf(string, pieces, pickIndex(start), pickIndex(end), giveUp);
 }
 
 LValue Emitter::substringOfString(LValue string, LValue start, LValue end, LBasicBlock giveUp)
 {
-    PiecesOfString pieces = piecesOfString(string, giveUp);
+    StringParts pieces = stringParts(string, giveUp);
     LValue length = pieces.length;
     auto clampIndex = [&](LValue index) {
         return m_out.select(m_out.lessThan(index, m_out.int32Zero), m_out.int32Zero, m_out.select(m_out.greaterThan(index, length), length, index));
     };
     // Clamping is monotonic, so the indices can be ordered before it.
     LValue isReversed = m_out.greaterThan(start, end);
-    return partOfString(string, pieces, clampIndex(m_out.select(isReversed, end, start)), clampIndex(m_out.select(isReversed, start, end)), giveUp);
+    return substringOf(string, pieces, clampIndex(m_out.select(isReversed, end, start)), clampIndex(m_out.select(isReversed, start, end)), giveUp);
 }
 
 LValue Emitter::makeRope(LValue first, LValue second, LValue third, LBasicBlock giveUp)
@@ -537,7 +537,7 @@ LValue Emitter::makeRope(LValue first, LValue second, LValue third, LBasicBlock 
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 4> results;
     if (!third) {
-        // With nothing to add to it, a string is what it was.
+        // Concatenating with an empty string returns the other string.
         LBasicBlock firstIsSomething = m_out.newBlock();
         results.append(m_out.anchor(second));
         m_out.branch(m_out.isZero32(ofFirst.length), rarely(continuation), usually(firstIsSomething));
@@ -573,8 +573,8 @@ LValue Emitter::addStrings(LValue first, LValue second, LBasicBlock giveUp)
     return makeRope(first, second, nullptr, giveUp);
 }
 
-// The string itself, if there is nothing in it for toLowerCase() to change.
-LValue Emitter::lowerCaseIfItIsAlready(LValue string, LBasicBlock giveUp)
+// Returns the string itself if toLowerCase() would not change it.
+LValue Emitter::stringIfAlreadyLowerCase(LValue string, LBasicBlock giveUp)
 {
     orElse(m_out.logicalNot(isRopeString(string)), giveUp);
     LValue impl = m_out.loadPtr(string, m_heaps.JSString_value);
@@ -591,7 +591,7 @@ LValue Emitter::lowerCaseIfItIsAlready(LValue string, LBasicBlock giveUp)
 
 // ---- Objects
 
-// Object.keys(): what the Structure remembers having been asked for, in an array of its own.
+// Object.keys(): a copy-on-write array of the keys that the Structure has cached.
 LValue Emitter::keysOfObject(LValue object, LBasicBlock giveUp)
 {
     LValue previousOrRareData = m_out.loadPtr(structureOf(object), m_heaps.Structure_previousOrRareData);
@@ -603,22 +603,23 @@ LValue Emitter::keysOfObject(LValue object, LBasicBlock giveUp)
     return newArrayFromButterfly(cached, giveUp);
 }
 
-// A struct that has nothing in that slot, which is in the object, is given the field: what it is of afterwards is what the last of its kind to be given it was
-// (Instance::addsOfFields). The value is one that the slot holds. It is for whoever asks to tell the collector, whatever the value is: the object refers to another Structure now.
+// Adds a field to an object with a typed layout whose inline slot for it is empty. The new Structure is cached from the last object
+// with the same Structure that gained the field (Instance::fieldAdditions). The value must already be valid for the field. The caller
+// has to emit a write barrier whatever the value is, because the object now refers to another Structure.
 void Emitter::addTypedField(LValue object, LValue storedValue, LValue slot, LBasicBlock giveUp)
 {
     LValue structureID = m_out.load32(object, m_heaps.JSCell_structureID);
-    static_assert(Instance::indexOfAddOfField(0x120, 3) == (((0x120u >> 4) ^ (3 * 0x9e5u)) & (Instance::numberOfAddsOfFields - 1)));
-    LValue index = m_out.bitAnd(m_out.bitXor(m_out.lShr(structureID, m_out.constInt32(4)), m_out.mul(slot, m_out.constInt32(0x9e5))), m_out.constInt32(Instance::numberOfAddsOfFields - 1));
-    static_assert(sizeof(Instance::AddOfField) == 16);
-    LValue entry = m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(4)), m_out.constIntPtr(Instance::offsetOfAddsOfFields())));
-    orElse(m_out.equal(m_out.load32(TypedPointer(m_heaps.AOTInstance_whatChanges, entry)), structureID), giveUp);
-    orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, slot))), slot), giveUp);
+    static_assert(Instance::indexOfFieldAddition(0x120, 3) == (((0x120u >> 4) ^ (3 * 0x9e5u)) & (Instance::numberOfFieldAdditions - 1)));
+    LValue index = m_out.bitAnd(m_out.bitXor(m_out.lShr(structureID, m_out.constInt32(4)), m_out.mul(slot, m_out.constInt32(0x9e5))), m_out.constInt32(Instance::numberOfFieldAdditions - 1));
+    static_assert(sizeof(Instance::FieldAddition) == 16);
+    LValue entry = m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(4)), m_out.constIntPtr(Instance::offsetOfFieldAdditions())));
+    orElse(m_out.equal(m_out.load32(TypedPointer(m_heaps.AOTInstance_mutableFields, entry)), structureID), giveUp);
+    orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, entry, OBJECT_OFFSETOF(Instance::FieldAddition, slot))), slot), giveUp);
     m_out.store64(storedValue, TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(object, m_out.add(m_out.shl(m_out.zeroExtPtr(slot), m_out.constInt32(3)), m_out.constIntPtr(JSObject::offsetOfInlineStorage())))));
-    m_out.store32(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, structureIDAfterwards))), object, m_heaps.JSCell_structureID);
+    m_out.store32(m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, entry, OBJECT_OFFSETOF(Instance::FieldAddition, structureIDAfterAddition))), object, m_heaps.JSCell_structureID);
 }
 
-// array.length = n, of an array that keeps its elements as values and is at least that long: JSArray::setLength().
+// array.length = n, for an array that stores its elements as JSValues and is at least that long: see JSArray::setLength().
 void Emitter::setLengthOfArray(LValue array, LValue length, LBasicBlock giveUp)
 {
     orElse(isCell(array), giveUp);
@@ -630,7 +631,7 @@ void Emitter::setLengthOfArray(LValue array, LValue length, LBasicBlock giveUp)
     LValue before = m_out.load32(butterfly, m_heaps.Butterfly_publicLength);
     LValue afterwards = unboxInt32(length);
     orElse(m_out.belowOrEqual(afterwards, before), giveUp);
-    // (An array that is left with a great deal of room to spare is given less, which is for the runtime.)
+    // (An array that is left with a lot of unused capacity is reallocated, which is left to the runtime.)
     orElse(m_out.belowOrEqual(m_out.sub(before, afterwards), m_out.constInt32(64)), giveUp);
     splatWords(butterfly, afterwards, before, m_out.int64Zero, m_heaps.indexedContiguousProperties.atAnyIndex());
     m_out.store32(afterwards, butterfly, m_heaps.Butterfly_publicLength);
@@ -694,7 +695,7 @@ public:
             result = makeRope(arguments[0], arguments[1], arguments[2], giveUp);
             break;
         case Stub::HelperToLowerCase:
-            result = lowerCaseIfItIsAlready(arguments[0], giveUp);
+            result = stringIfAlreadyLowerCase(arguments[0], giveUp);
             break;
         case Stub::HelperObjectKeys:
             result = keysOfObject(arguments[0], giveUp);

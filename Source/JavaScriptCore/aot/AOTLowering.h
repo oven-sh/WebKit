@@ -69,8 +69,8 @@ private:
         LValue limit { nullptr }; // Int64. Indices below this hold a JSValue in the butterfly. Null if the array does not store its elements that way.
     };
     const ArrayView* viewOf(Node* access, Node* base);
-    void viewArraysAheadOf(BasicBlock*);
-    LBasicBlock wayInto(BasicBlock* successor);
+    void hoistArrayStorageLoadsAheadOf(BasicBlock*);
+    LBasicBlock entryBlockFor(BasicBlock* successor);
     Vector<std::tuple<BasicBlock*, Node*, ArrayView>, 4> m_arrayViews;
     void unsupported(Node*);
 
@@ -99,7 +99,7 @@ private:
     }
     LValue lowJSValueOfParameterOnEntry(unsigned index)
     {
-        switch (m_howValuesArePassed.parameters[index]) {
+        switch (m_valueRepresentations.parameters[index]) {
         case Rep::Int32:
             return boxInt32(m_out.castToInt32(registerOnEntry(argumentGPR(index))));
         case Rep::Boolean:
@@ -165,7 +165,7 @@ private:
     // not the original object must take the slow path.
     struct FieldStorage {
         LValue pointer;
-        bool mayStandForSomethingElse;
+        bool mayBeStandIn;
     };
     FieldStorage fieldStorageFor(Node* onBehalfOf, Node* baseNode, LValue base, uint16_t layoutID);
     LValue coerceToTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID);
@@ -191,7 +191,7 @@ private:
     void recordAvailableField(Node* base, const TypeTable::Field&, LValue value, Rep, LValue asJSValue, bool isWritten);
     static bool preservesFields(Node*);
     // The node's value, if it is an 8-bit string literal.
-    static std::optional<String> stringWrittenInProgram(Node*);
+    static std::optional<String> constantStringOf(Node*);
     // If the value is a string, it is an atom: either a literal, or read from a field with atomized strings
     // (TypeTable::FieldType::atoms).
     static bool isAtomIfString(Node*, unsigned depth = 0);
@@ -219,7 +219,7 @@ private:
     uint32_t callSiteBitsOf(Node*);
     uint32_t siteOf(Node*); // The same, for a location that is already registered as a call site or will never be queried.
     // For an operation that takes an index into bytecode tables: identifies whose bytecode the index refers to. See
-    // functionOfBytecodeOfCaller().
+    // bytecodeOwnerOfCaller().
     uint32_t whoseBytecode(Node* node) { return node->graph->isOutermost() ? 0 : m_graph.inlineFrames[node->graph->inlineFrame()].knownCallee + 1; }
     unsigned allocateSlots(unsigned count)
     {
@@ -423,22 +423,22 @@ private:
     void lowerCallDirectEval(Node*);
     LValue storeArgumentsToScratch(const Arguments&); // Stores all but the first. Returns their address.
     void finishCall(B3::PatchpointValue*, CallMode, Rep result = Rep::JSValue);
-    LBasicBlock leaveIfFunction(Node* calleeNode, LValue callee);
+    LBasicBlock branchIfCalleeIsFunction(Node* calleeNode, LValue callee);
 
     // AOTLowerBuiltins.cpp
-    LValue isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiver);
+    LValue isReceiverOfKind(Node* read, Node* baseNode, LValue base, Receiver);
     void lowerReadOfBuiltin(Node*, Node* baseNode);
     bool lowerCallOfBuiltin(Node*, Node* calleeNode, unsigned argc, unsigned argv, const Arguments&, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results);
-    UncheckedKeyHashMap<Node*, LValue> m_receiverChecks; // Result of isSuchAReceiver(), keyed by the read of the callee.
+    UncheckedKeyHashMap<Node*, LValue> m_receiverChecks; // Result of isReceiverOfKind(), keyed by the read of the callee.
 
     Graph& m_graph;
 
-    HowValuesArePassed m_howValuesArePassed; // For this function.
+    ValueRepresentations m_valueRepresentations; // For this function.
     LValue m_dataOnEntry { nullptr }; // For a cold-start function: the value of m_data outside loops.
     B3::Variable* m_dataInLoops { nullptr }; // For a cold-start function with loops: the Data found at the top of the current loop iteration.
     LValue m_callFrame { nullptr };
     LValue m_data { nullptr };
-    LValue m_dataOrNothing { nullptr };
+    LValue m_dataOrNull { nullptr };
     LValue m_constants { nullptr }; // For a cold-start function: FunctionInfo::constants.
     LValue m_calleeSlot { nullptr };
     LValue m_listSlot { nullptr }; // Signature::List: the argument count and address.

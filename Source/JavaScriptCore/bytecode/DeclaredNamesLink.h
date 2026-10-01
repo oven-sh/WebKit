@@ -35,8 +35,8 @@ namespace JSC {
 // scope chain right then. Only built while generating with OptimizeBytecode::Yes; the bytecode optimizer uses it to
 // locate free variables statically and to tell environment-record bindings (stable for the lifetime of an
 // activation) from names that fall through to the global object.
-// `const f = function () { }`, `g = () => { }`, `class C { }`: what the statement puts in the variable is the function that it makes.
-// As whoever generated the bytecode saw in the syntax tree.
+// `const f = function () { }`, `g = () => { }`, `class C { }`: the statement stores the function that it creates in the variable.
+// Recorded by the bytecode generator, from the syntax tree.
 struct FunctionAssignment {
     unsigned identifier { 0 }; // Of the variable: UnlinkedCodeBlock::identifier().
     unsigned functionExpr { 0 }; // UnlinkedCodeBlock::functionExpr(). Of a class, its constructor.
@@ -85,8 +85,8 @@ public:
         }
     };
 
-    // isOutermost: of the code of a module or a program, around which there are only the global scopes. (A function's may have no
-    // parent for no better reason than that nobody gave it one.)
+    // isOutermost: for the code of a module or a program, which is only enclosed by the global scopes. (A function's link may lack
+    // a parent simply because none was provided.)
     static Ref<DeclaredNamesLink> create(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, bool isOutermost, RefPtr<DeclaredNamesLink> parent)
     {
         return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, isOutermost, WTF::move(parent)));

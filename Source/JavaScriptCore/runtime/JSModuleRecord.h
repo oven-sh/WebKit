@@ -108,9 +108,9 @@ public:
     Resolution resolveImportWithSlot(JSGlobalObject*, const Identifier& localName, unsigned& importSlot);
     JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
 #if USE(BUN_JSC_ADDITIONS)
-    // Whether the imports that the graph of modules the embedder resolved ahead of time says are variables of other modules of
-    // the graph are those variables for this record: code that was compiled with the graph to go by (AOT::ModuleLinkage) reads them
-    // from where they are without asking. To be asked once the module is linked; the answer is kept.
+    // Whether the imports that the prelinked module graph resolves to variables of other modules in the graph really are those
+    // variables for this record. Code that was compiled using the graph (AOT::ModuleLinkage) reads them at fixed locations without
+    // checking. Call this once the module is linked. The result is cached.
     JS_EXPORT_PRIVATE bool isLinkedAsInImage(JSGlobalObject*);
     bool isItselfLinkedAsInImage(JSGlobalObject*, const Function<bool(JSModuleRecord*)>& mayImportFrom);
 #endif

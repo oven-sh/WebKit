@@ -153,10 +153,10 @@ public:
 
     using GetterEntry = LoadEntry;
 
-    // For the static compiler (aot/). A constructor makes an object and stores to it, one property after another, the same ones every
-    // time: an object that starts out with the one structure ends up with the other, with the values in it in that order from the start.
-    // Which structure it starts out with goes by what is being constructed with, and a class that others extend sees many.
-    // That the stores make properties, and do nothing else, goes by the prototype chain, like a StoreEntry.
+    // For AOT code (aot/). A constructor creates an object and stores the same properties to it, in the same order, every time. So
+    // an object that starts with the first structure ends with the last, with the values in that order from the first slot. The
+    // first structure depends on new.target, and the constructor of a class with subclasses sees many. That the stores add
+    // properties, and do nothing else, depends on the prototype chain, as for a StoreEntry.
     struct ConstructionEntry {
         static constexpr ptrdiff_t offsetOfFirstStructureID() { return OBJECT_OFFSETOF(ConstructionEntry, m_firstStructureID); }
         static constexpr ptrdiff_t offsetOfLastStructureID() { return OBJECT_OFFSETOF(ConstructionEntry, m_lastStructureID); }
@@ -348,12 +348,13 @@ public:
 
     uint16_t epoch() const { return m_epoch; }
 
-    // What is about to be cached about objects of that structure goes by the objects on their prototype chain, as far as `upTo` if that is
-    // given: they are marked (JSObject::isPrototypeUsedByMegamorphicCache()), so that a change to one of them is heard of, and
-    // a change to any other object is not. False: which they are cannot be told from the structure, so it is not to be cached.
+    // An entry that is about to be cached for objects with that structure depends on the objects on their prototype chain, up to
+    // `upTo` if it is given. They are marked (JSObject::isPrototypeUsedByMegamorphicCache()), so that a change to one of them
+    // invalidates the cache, and a change to any other object does not. Returns false if the chain cannot be determined from the
+    // structure, in which case nothing must be cached.
     JS_EXPORT_PRIVATE static bool NODELETE noteDependenceOnPrototypes(StructureID, JSCell* upTo = nullptr);
 
-    // What AssemblyHelpers::loadMegamorphicProperty() finds, for whoever is in C++ already. Null: nothing is known.
+    // The C++ equivalent of AssemblyHelpers::loadMegamorphicProperty(). Returns null if there is no entry.
     const LoadEntry* findLoad(StructureID structureID, UniquedStringImpl* uid) const
     {
         for (auto* entry : { &m_loadCachePrimaryEntries[primaryHash(structureID, uid) & loadCachePrimaryMask], &m_loadCacheSecondaryEntries[secondaryHash(structureID, uid) & loadCacheSecondaryMask] }) {
@@ -370,8 +371,9 @@ public:
             clearEntries();
     }
 
-    // Instead of forgetting everything at every collection: what an entry goes by is looked at, once it is known what is left, and the entry goes if any of it has. For a VM that
-    // runs code from the static compiler, most of which has this and nothing else to remember what it found. (Whatever thread: nothing is released.)
+    // An alternative to clearing the cache at every collection: once marking is complete, each entry whose referents have died is
+    // removed. This is for a VM that runs AOT code, most of which relies on this cache alone. (Safe on any thread, because nothing
+    // is released.)
     JS_EXPORT_PRIVATE void reconcileWeakReferencesAtGCEnd(VM&);
 
 private:

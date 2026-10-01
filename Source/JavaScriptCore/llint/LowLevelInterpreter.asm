@@ -2771,7 +2771,7 @@ macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, i
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
 .isShortForm:
-    # It does not say how to get in, which is the same for all of them: ExecutableBase::wayIntoShortForm().
+    # It does not say how to get in, which is the same for all of them: ExecutableBase::entrypointOfShortForm().
     loadp (ExecutableBase::m_aotEntry + which * 8)[t5], t4
     btpz t4, slowCase
     move t4, t1
@@ -2779,7 +2779,7 @@ macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, i
     # FunctionExecutable::aotIndexOfWhatConstructsByCalling: then that is the way in. (No function that is called has such an index.)
     loadi (ExecutableBase::m_aotIndex + which * 4)[t5], t5
     bieq t5, -1, .callCode
-    leap _g_aotWaysIntoStaticFunctions, t1
+    leap _g_aotStaticFunctionEntrypoints, t1
     loadp (which * 8)[t1], t1
     jmp .callCode
 .notJSFunction:

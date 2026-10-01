@@ -2413,7 +2413,7 @@ namespace JSC {
         unsigned startColumn() const { return m_startColumn; }
         unsigned endColumn() const { return m_endColumn; }
 
-        // What only whoever made the function knows about it (FunctionMetadataNode::plainInstanceFieldNames()).
+        // Information that is only available where the function is created (FunctionMetadataNode::plainInstanceFieldNames()).
         const FixedVector<Identifier>* plainInstanceFieldNames() const { return m_plainInstanceFieldNames; }
         void setPlainInstanceFieldNames(const FixedVector<Identifier>* names) { m_plainInstanceFieldNames = names; }
 
@@ -2631,7 +2631,7 @@ namespace JSC {
             DestructuringPatternNode* pattern;
             ExpressionNode* defaultValue;
             BindingType bindingType;
-            uint32_t typeTag; // JSToken::m_typeTag of the name of the property: what is said of a.b goes for { b } = a.
+            uint32_t typeTag; // JSToken::m_typeTag of the property name: the type tag for a.b also applies to { b } = a.
         };
         bool m_containsRestElement { false };
         bool m_containsComputedProperty { false };

@@ -76,7 +76,7 @@ inline FunctionCodeBlock* FunctionExecutable::replaceCodeBlockWith(VM& vm, CodeS
 
 inline JSString* FunctionExecutable::toString(JSGlobalObject* globalObject)
 {
-    // (One that was made when the program was built is nobody's to write to, for the sake of being asked twice.)
+    // (An executable in the static heap is read-only, so the result is not cached.)
     if (!rareData() && StaticHeap::contains(this))
         return toStringSlow(globalObject);
     RareData& rareData = ensureRareData();

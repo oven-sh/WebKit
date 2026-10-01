@@ -187,7 +187,7 @@ void UnlinkedCodeBlock::leaveToStaticHeap(bool rareDataToo, bool identifiersAndC
     auto forget = [](auto& vector) {
         new (NotNull, &vector) std::remove_reference_t<decltype(vector)>();
     };
-    // The memory goes. What is in it is not let go of: the copy has that now.
+    // Frees the memory without destroying the elements, which the copy now owns.
     auto free = [&](auto& vector) {
         static_assert(sizeof(vector) == sizeof(void*));
         void* storage = *std::bit_cast<void**>(&vector);

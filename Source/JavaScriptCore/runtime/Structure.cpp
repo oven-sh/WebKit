@@ -362,7 +362,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setStaticPropertiesReified(previous->staticPropertiesReified());
     setHasBeenDictionary(previous->hasBeenDictionary());
     setProtectPropertyTableWhileTransitioning(false);
-    setHeirsMayOverrideReadOnlyProperties(previous->heirsMayOverrideReadOnlyProperties());
+    setInheritorsMayOverrideReadOnlyProperties(previous->inheritorsMayOverrideReadOnlyProperties());
     setTransitionOffset(vm, invalidOffset);
     setMaxOffset(vm, invalidOffset);
  
@@ -373,7 +373,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     ASSERT(!previous->typeInfo().structureIsImmortal());
     setPreviousID(vm, previous);
 #if USE(BUN_JSC_ADDITIONS)
-    // (Whoever knows that what this is made for leaves them as they were says so: addNewPropertyTransition().)
+    // (A caller that knows that the transition leaves the fields in their slots restores this: addNewPropertyTransition().)
     if (m_typedLayoutID) [[unlikely]]
         forgetFieldsInSlots();
 #endif
@@ -429,7 +429,7 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
             result->setMaxOffset(vm, newMaxOffset);
         });
     }
-    // (It is not the structure of an object that has been given nothing yet, which is what that says: copies of objects go by it.)
+    // (didTransition distinguishes this from the structure of an empty object, which the code that copies objects relies on.)
     result->setDidTransition(!names.empty());
     return result;
 }
@@ -451,11 +451,11 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
         if (JSC::isValidOffset(result->get(vm, names[i])))
             return nullptr;
         taken.set(slots[i]);
-        // (for-in takes the property it comes to first to be the first in the object, and so on, unless it is told otherwise: as it is
-        // when a property has been taken out. Of structs it is told by canAccessPropertiesQuicklyForEnumeration().)
+        // (for-in assumes that properties are stored in enumeration order, unless the flag says otherwise, as it does after a
+        // deletion. For typed layouts, canAccessPropertiesQuicklyForEnumeration() handles this.)
         if ((slots[i] != i || numberOfSlots > inlineSlots) && !TypedLayoutTable::hasTypedFields())
             result->setIsQuickPropertyAccessAllowedForEnumeration(false);
-        // A property is put where one has been taken out of, if there is such a place, and in the last of them.
+        // A new property reuses the most recently deleted offset, if there is one.
         table->addDeletedOffset(offsetOf(slots[i]));
         result->addPropertyWithoutTransition(vm, names[i], attributes.empty() ? 0 : attributes[i], [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
             RELEASE_ASSERT(offset == offsetOf(slots[i]));
@@ -466,7 +466,8 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     }
     if (numberOfSlots && offsetOf(numberOfSlots - 1) > result->maxOffset())
         result->setMaxOffset(vm, offsetOf(numberOfSlots - 1));
-    // And that is what the rest are, as far as anybody can tell: what an object has room for is what it has and what it has had.
+    // The remaining slots are recorded as deleted offsets too, because an object's capacity is accounted for by the properties that
+    // it has and the ones that it has had.
     for (unsigned slot = 0; slot < numberOfSlots; ++slot) {
         if (!taken.get(slot))
             table->addDeletedOffset(offsetOf(slot));
@@ -476,7 +477,8 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
         for (unsigned offset = inlineSlots; offset < empty->inlineCapacity(); ++offset)
             table->addDeletedOffset(offset);
     }
-    // (That is nowhere but in the table, so the table is not for whatever this turns into to take. Adding a property has seen to that.)
+    // (That information is only in the property table, so a transition must not steal the table. If a property was added, the table
+    // is already pinned.)
     if (names.empty()) {
         ConcurrentJSLocker locker(result->m_lock);
         result->pin(locker, vm, table);
@@ -983,9 +985,9 @@ Structure* Structure::freezeTransition(VM& vm, Structure* structure, DeferredStr
     return nonPropertyTransition(vm, structure, TransitionKind::Freeze, deferred);
 }
 
-Structure* Structure::fixPropertiesTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
+Structure* Structure::makePropertiesImmutableTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
-    return nonPropertyTransition(vm, structure, TransitionKind::FixProperties, deferred);
+    return nonPropertyTransition(vm, structure, TransitionKind::MakePropertiesImmutable, deferred);
 }
 
 Structure* Structure::preventExtensionsTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
@@ -1048,7 +1050,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         // table, since our logic for walking the property transition chain to rematerialize the
         // table doesn't know how to take into account such wholesale edits.
 
-        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || transitionKind == TransitionKind::FixProperties);
+        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || transitionKind == TransitionKind::MakePropertiesImmutable);
 
         PropertyTable* table = structure->copyPropertyTableForPinning(vm);
         transition->pinForCaching(Locker { transition->m_lock }, vm, table);
@@ -1058,7 +1060,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         RELEASE_ASSERT(table);
         if (transitionKind == TransitionKind::Seal)
             table->seal();
-        else if (transitionKind == TransitionKind::FixProperties) {
+        else if (transitionKind == TransitionKind::MakePropertiesImmutable) {
             // (Nothing that happens to the object from here on moves what it has now: there is no gap for it to move down into.)
             RELEASE_ASSERT(!table->hasDeletedOffset());
             table->fix();
@@ -1075,9 +1077,10 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         checkOffset(transition->maxOffset(), transition->inlineCapacity());
     }
     
-    // (That says that stores to whatever inherits from the object have something to look out for.)
-    if (transitionKind == TransitionKind::FixProperties)
-        transition->setHeirsMayOverrideReadOnlyProperties(true);
+    // (hasReadOnlyOrGetterSetterPropertiesExcludingProto makes stores to inheriting objects check the prototype chain. After
+    // MakePropertiesImmutable they are still allowed, so a separate flag is set.)
+    if (transitionKind == TransitionKind::MakePropertiesImmutable)
+        transition->setInheritorsMayOverrideReadOnlyProperties(true);
     else if (setsReadOnlyOnNonAccessorProperties(transitionKind)
         && !transition->propertyTableOrNull()->isEmpty())
         transition->setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
@@ -1130,7 +1133,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     PropertyTable* table = nullptr;
     size_t beforeOutOfLineCapacity = this->outOfLineCapacity();
     size_t afterOutOfLineCapacity = beforeOutOfLineCapacity;
-    // (What an object was born with stays where it was born: see typedLayoutID().)
+    // (The fields of an object with a typed layout stay in their slots: see typedLayoutID().)
     bool movesProperties = isUncacheableDictionary() && !typedLayoutID();
     if (movesProperties) {
         table = propertyTableOrNull();
@@ -1329,8 +1332,9 @@ const TypedLayoutTable::Field* TypedLayoutTable::findField(uint16_t typedLayoutI
     UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
     if (!identifiers)
         return nullptr;
-    // (Whoever knows where the property is has no need of this: Structure::fieldIDInSlot(), fieldWithID(). It is for when a Structure is given a property, or its like is adopted.)
-    // They are in the order of their hashes (ImageBuilder::finish()).
+    // (Code that knows the slot of a property does not need this: see Structure::fieldIDInSlot() and fieldWithID(). This is for
+    // when a property is added to a Structure, or an object is converted to the typed layout.)
+    // The fields are sorted by hash (ImageBuilder::finish()).
     if (names.size() > 8) {
         if (name->isSymbol())
             return nullptr;
@@ -1426,8 +1430,8 @@ void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, u
     auto* field = TypedLayoutTable::findField(m_typedLayoutID, name);
     if (!field || field->slot >= numberOfSlotsWithFieldIDs)
         return;
-    // (If it is anywhere else, that there is nothing in the slot does not mean that the object has no such property. And a slot that has had something else in it is not gone by again:
-    // whoever looked at the Structure the object had then may not have looked since.)
+    // (If the property is anywhere else, an empty slot does not mean that the object lacks it. And a slot that has held another
+    // field is never trusted again, because code that checked the object's earlier Structure may not have checked since.)
     uint16_t& fieldID = m_fieldIDInSlot[field->slot];
     fieldID = !fieldID && !attributes && offset == static_cast<PropertyOffset>(field->slot) ? field->id : ambiguousFieldID;
 }
@@ -2114,8 +2118,8 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
     case TransitionKind::Freeze:
         kindName = "Freeze";
         break;
-    case TransitionKind::FixProperties:
-        kindName = "FixProperties";
+    case TransitionKind::MakePropertiesImmutable:
+        kindName = "MakePropertiesImmutable";
         break;
     case TransitionKind::BecomePrototype:
         kindName = "BecomePrototype";

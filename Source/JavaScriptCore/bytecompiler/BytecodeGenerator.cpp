@@ -5204,10 +5204,11 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
         return;
     }
 
-    // What has been checked to be an array. An iterator of arrays asks for the length, and for the element at the index it has got to, each
-    // time it is asked for the next: so does this. There is nothing to be done when the loop is left early, so nothing has to be caught.
-    // Which iterator an array has, and what its `next` is, is asked once, before the loop: it is what it is for any array unless the array,
-    // or a class of its own that it belongs to, says otherwise, and what any array says cannot be changed (VM::useImmutableIntrinsics).
+    // The subject has been checked to be an array. An array iterator reads the length, and the element at its current index, each
+    // time `next` is called, and this loop does the same. Nothing has to be done when the loop exits early, so no exception handler
+    // is needed. Which iterator the array has, and what its `next` method is, is checked once, before the loop. They are the
+    // defaults unless the array itself or its subclass overrides them, and the defaults cannot be changed
+    // (VM::useImmutableIntrinsics).
     if (forLoopNode && subjectNode->isSoundTypeCheckNode() && static_cast<SoundTypeCheckNode*>(subjectNode)->mask() == SoundTypeArray && m_vm.useImmutableIntrinsics) {
         RefPtr<RegisterID> array = newTemporary();
         emitNode(array.get(), subjectNode);

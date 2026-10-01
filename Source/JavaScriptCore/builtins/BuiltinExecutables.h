@@ -79,11 +79,12 @@ SourceCode name##Source();
     JSC_FOREACH_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    // ---- With a static heap (see BytecodeLinkEncoder::Impl::addBuiltinsOfEngine()).
-    // Each with a text of its own, and an executable made from that: not the ones above.
-    JS_EXPORT_PRIVATE void forEachOnItsOwn(const Function<void(unsigned index, UnlinkedFunctionExecutable*, const SourceCode&)>&);
-    std::optional<unsigned> indexOf(UnlinkedFunctionExecutable*) const; // Of one of those above.
-    // What says which of them an entry of a link is.
+    // ---- With a static heap (see BytecodeLinkEncoder::Impl::addEngineBuiltins()).
+    // Calls the function for each builtin, with its own source text and an executable created from that. These are not the
+    // executables above.
+    JS_EXPORT_PRIVATE void forEachStandaloneBuiltin(const Function<void(unsigned index, UnlinkedFunctionExecutable*, const SourceCode&)>&);
+    std::optional<unsigned> indexOf(UnlinkedFunctionExecutable*) const; // For one of the executables above.
+    // The stamp that identifies which builtin an entry of a link is.
     static constexpr unsigned stampOf(unsigned index) { return 0xeb170000u | index; }
     static constexpr bool isStamp(unsigned stamp) { return (stamp & 0xffff0000u) == 0xeb170000u; }
     static_assert(numberOfBuiltinCodes < 0x10000);

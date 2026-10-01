@@ -388,21 +388,21 @@ struct FunctionInfo {
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(FunctionInfo, flags); }
 
     // May be null, in which case only the Data knows the executable.
-    void setExecutable(ScriptExecutable* executable, CodeSpecializationKind kind, bool constantsAreOfNoRealm)
+    void setExecutable(ScriptExecutable* executable, CodeSpecializationKind kind, bool hasOnlyRealmIndependentConstants)
     {
         uintptr_t bits = std::bit_cast<uintptr_t>(executable);
         RELEASE_ASSERT(!(bits >> 48) && !(bits & 7));
-        bits |= (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0) | (constantsAreOfNoRealm ? 2 : 0);
+        bits |= (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0) | (hasOnlyRealmIndependentConstants ? 2 : 0);
         executableAndMoreLow = static_cast<uint32_t>(bits);
         executableAndMoreHigh = static_cast<uint16_t>(bits >> 32);
     }
     ScriptExecutable* executable() const { return std::bit_cast<ScriptExecutable*>((static_cast<uintptr_t>(executableAndMoreHigh) << 32 | executableAndMoreLow) & ~static_cast<uintptr_t>(7)); }
     CodeSpecializationKind kind() const { return executableAndMoreLow & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
-    bool constantsAreOfNoRealm() const { return executableAndMoreLow & 2; } // `constants` is complete; the Data has none of its own.
+    bool hasOnlyRealmIndependentConstants() const { return executableAndMoreLow & 2; } // `constants` is complete; the Data has none of its own.
     bool isOfCodeInImage() const { return flags & (hasSiteConstants | sitesHaveTheirConstants); }
     inline const ImageFunction* function() const; // For code in an image: located directly before the sites.
 
-    const void* constants; // const WriteBarrier<Unknown>*. Unless constantsAreOfNoRealm(), the Data holds the constants instead.
+    const void* constants; // const WriteBarrier<Unknown>*. Unless hasOnlyRealmIndependentConstants(), the Data holds the constants instead.
     const void* identifiers; // const Identifier*
     const Site* sites; // One per slot.
     uint32_t executableAndMoreLow; // See setExecutable().
@@ -543,10 +543,10 @@ struct Instance {
     JSObject* objectPrototype; // Kept alive by the realm.
     // One bit per field with a field ID (slot << 16 | id), set when a read of the field was satisfied by something other than a
     // plain data property or its absence. See Lowering::lowerGetById().
-    uint8_t* fieldsNotJustRead;
-    static constexpr size_t sizeOfFieldsNotJustRead = (static_cast<size_t>(Structure::numberOfSlotsWithFieldIDs) << 16) / 8;
-    static constexpr ptrdiff_t offsetOfFieldsNotJustRead() { return OBJECT_OFFSETOF(Instance, fieldsNotJustRead); }
-    void noteNotJustRead(unsigned slot, uint16_t id) { fieldsNotJustRead[(slot << 16 | id) >> 3] |= 1 << (id & 7); }
+    uint8_t* fieldsWithObservableReads;
+    static constexpr size_t sizeOfFieldsWithObservableReads = (static_cast<size_t>(Structure::numberOfSlotsWithFieldIDs) << 16) / 8;
+    static constexpr ptrdiff_t offsetOfFieldsWithObservableReads() { return OBJECT_OFFSETOF(Instance, fieldsWithObservableReads); }
+    void noteObservableRead(unsigned slot, uint16_t id) { fieldsWithObservableReads[(slot << 16 | id) >> 3] |= 1 << (id & 7); }
     // The realm's Function.prototype.call and its bound function Structure, for Stub::Call.
     JSCell* functionPrototypeCall { nullptr };
     uint32_t structureIDOfBoundFunctions { 0 };
@@ -603,17 +603,17 @@ struct Instance {
     JS_EXPORT_PRIVATE void didHaveABadTime();
     // Cache of transitions that add a typed field: (Structure, slot) -> new Structure. The caller has already checked that the
     // field type accepts the value. Cleared at every GC, so it keeps nothing alive.
-    struct AddOfField {
+    struct FieldAddition {
         uint32_t structureID;
         uint32_t slot;
-        uint32_t structureIDAfterwards;
+        uint32_t structureIDAfterAddition;
         uint32_t unused;
     };
-    static constexpr unsigned numberOfAddsOfFields = 1024;
-    static constexpr unsigned indexOfAddOfField(uint32_t structureID, unsigned slot) { return ((structureID >> 4) ^ (slot * 0x9e5u)) & (numberOfAddsOfFields - 1); }
-    AddOfField addsOfFields[numberOfAddsOfFields] { };
-    static constexpr ptrdiff_t offsetOfAddsOfFields() { return OBJECT_OFFSETOF(Instance, addsOfFields); }
-    void noteAddOfField(Structure* before, unsigned slot, Structure* afterwards);
+    static constexpr unsigned numberOfFieldAdditions = 1024;
+    static constexpr unsigned indexOfFieldAddition(uint32_t structureID, unsigned slot) { return ((structureID >> 4) ^ (slot * 0x9e5u)) & (numberOfFieldAdditions - 1); }
+    FieldAddition fieldAdditions[numberOfFieldAdditions] { };
+    static constexpr ptrdiff_t offsetOfFieldAdditions() { return OBJECT_OFFSETOF(Instance, fieldAdditions); }
+    void noteFieldAddition(Structure* before, unsigned slot, Structure* afterwards);
     // Cache of custom getters (PropertySlot::isCacheableCustom()), keyed by Structure and property name. The getter is still called
     // every time; only the lookup is skipped. Entries are added under the same conditions as in the other tiers (tryCacheGetBy())
     // and are valid for one megamorphic cache epoch.
@@ -639,7 +639,7 @@ struct Instance {
     static constexpr unsigned numberOfCachedAddressInfos = 512;
     CachedAddressInfo cachedAddressInfos[numberOfCachedAddressInfos] { };
     CachedAddressInfo& cachedAddressInfo(const void* address) { return cachedAddressInfos[(std::bit_cast<uintptr_t>(address) >> 2) % numberOfCachedAddressInfos]; }
-    uint32_t operationsNotCounted { 0 }; // See countOperationFor().
+    uint32_t uncountedOperations { 0 }; // See countOperationFor().
     // See CallSiteOverride.
     const void* overriddenReturnAddress { nullptr };
     uint32_t overridingSite { 0 };
@@ -653,7 +653,7 @@ struct Instance {
 // Whether an unlinked code block's constants can be shared by all realms. A SymbolTable qualifies only if it was created at build
 // time (SymbolTable::isSharedAcrossRealms()). The compiler runs before that is decided, so the caller says which to assume.
 enum class SymbolTablesAreShared : bool { No, Yes };
-JS_EXPORT_PRIVATE bool constantsAreOfNoRealm(UnlinkedCodeBlock*, SymbolTablesAreShared = SymbolTablesAreShared::No);
+JS_EXPORT_PRIVATE bool hasOnlyRealmIndependentConstants(UnlinkedCodeBlock*, SymbolTablesAreShared = SymbolTablesAreShared::No);
 
 JS_EXPORT_PRIVATE const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction&);
 
@@ -721,7 +721,7 @@ struct FunctionMetadata {
         FunctionDecls = 1 << 2, // WriteBarrier<UnlinkedFunctionExecutable>: offset and count.
         FunctionExprs = 1 << 3,
         StringSwitchJumpTables = 1 << 4, // UnlinkedStringJumpTable: offset of the first.
-        // Present unless FunctionInfo::constantsAreOfNoRealm(). Offset of: the number of constants, the number that are
+        // Present unless FunctionInfo::hasOnlyRealmIndependentConstants(). Offset of: the number of constants, the number that are
         // SourceCodeRepresentation::LinkTimeConstant, and their indices.
         RealmConstants = 1 << 5,
         // For an async function body: the resume target for each suspended state, taken from its last UnlinkedSimpleJumpTable.
@@ -793,8 +793,8 @@ struct CompiledFunctionInfo {
     Vector<InlineFrame> inlineFrames; // Graph::inlineFrames
     // The function expressions that appear in its bytecode (only that bytecode can instantiate them), and the functions that the
     // compiled code actually instantiates.
-    Vector<ImageKey> functionExpressionsWritten;
-    Vector<ImageKey> functionsMade;
+    Vector<ImageKey> functionExpressionsInCode;
+    Vector<ImageKey> functionsCreated;
     bool isOnlyCalledDirectly { false }; // FunctionSummary::isNonEscaping: only reached by direct calls.
     uint32_t numberOfFunction { 0 }; // FunctionSummary::number
     unsigned frameSizeInBytes { 0 };
@@ -906,7 +906,7 @@ public:
     // The code lives in an image, which stays mapped for the life of the process, as does its metadata.
     // Way: which entry adapter is used by callers that build interpreter-style frames (generateEnter(), generateEnterFunction()).
     enum class Way : uint8_t { TopLevel, Call, Construct };
-    static Way wayInto(UnlinkedCodeBlock*);
+    static Way entryBlockFor(UnlinkedCodeBlock*);
     JITCode(void* code, const ImageFunction&, Way);
     ~JITCode() final;
 

@@ -15,14 +15,15 @@ class UnlinkedCodeBlock;
 
 namespace AOT {
 
-// How code from the static compiler is called, by other such code and by the stubs.
+// The calling convention of AOT code, as used between AOT functions and by the stubs.
 //
-// A frame is the caller's frame pointer and the return address, with the function's own things below them, and that is all. There is
-// nothing in it that says whose it is, what it was passed or where it has got to: which function a frame belongs to, and where in
-// the function it is, is told from the address it is going to be returned to (see frameAt()).
+// A frame consists of the caller's frame pointer and the return address, with the function's own data below them, and nothing else.
+// It does not record which function it belongs to, what arguments were passed or the current position. The function and the
+// position in it are both derived from the address at which execution will resume in the frame (see frameAt()).
 //
-// Three registers hold the same thing in all such code, and in the stubs. A callee saves them in C and in the engine's own convention,
-// and this code never writes them: so nobody here saves them, and nobody loads them. Whoever comes in from outside (an adapter) does.
+// Three registers hold the same values in all AOT code and in the stubs. They are callee-saved both in the C calling convention and
+// in the engine's own, and AOT code never writes to them, so AOT code neither saves nor reloads them. An adapter sets them up on
+// entry from other code.
 static constexpr GPRReg instanceGPR = GPRInfo::jitDataRegister; // The realm's Instance.
 // And GPRInfo::numberTagRegister, GPRInfo::notCellMaskRegister.
 
@@ -32,9 +33,9 @@ constexpr GPRReg argumentGPR(unsigned index) { return GPRInfo::toArgumentRegiste
 #if CPU(ARM64)
 // `this`; for a constructor, new.target. A caller that knows the function makes no use of it leaves it out.
 static constexpr GPRReg thisGPR = ARM64Registers::x8;
-// For the stubs that call whatever they are given: how many arguments there are, not counting `this`.
+// For the stubs that call an unknown callee: the number of arguments, not counting `this`.
 static constexpr GPRReg countGPR = ARM64Registers::x9;
-// The object that is called. Likewise left out by who knows better.
+// The function object that is called. It is also omitted by a caller that knows that the callee does not use it.
 static constexpr GPRReg calleeGPR = ARM64Registers::x10;
 #elif CPU(X86_64)
 static constexpr GPRReg thisGPR = X86Registers::eax;
@@ -47,11 +48,11 @@ static constexpr GPRReg calleeGPR = InvalidGPRReg;
 #endif
 
 enum class Signature : uint8_t {
-    // Each parameter in its register. Whoever calls fills in undefined for what it has not got, and keeps what is left over to itself.
+    // Each parameter is in its register. The caller passes undefined for missing arguments and drops extra ones.
     Registers,
-    // For a function that can tell what it was really passed, or that has more parameters than there are registers:
-    // argumentGPR(0) = how many arguments, not counting `this`; argumentGPR(1) = where the first is. They are the caller's, and stay
-    // put until the function returns.
+    // For a function that can observe its actual arguments, or that has more parameters than there are registers: argumentGPR(0) =
+    // the number of arguments, not counting `this`; argumentGPR(1) = the address of the first. The arguments are in the caller's
+    // memory, and stay valid until the function returns.
     List,
 };
 
@@ -60,10 +61,11 @@ struct Convention {
     uint8_t numberOfParameters { 0 }; // Not counting `this`.
     bool usesThis { true };
 };
-// Plain from the bytecode, so the function and whoever calls it agree without asking each other.
+// Derived from the bytecode alone, so that a function and its callers agree without any communication.
 JS_EXPORT_PRIVATE Convention conventionOf(UnlinkedCodeBlock*);
 
-// Where a function's code is and, above the address, what it takes to call it without knowing anything else about it.
+// The address of a function's code and, in the bits above the address, what is needed to call it without knowing anything else
+// about it.
 struct EntryWord {
     static constexpr unsigned shiftOfNumberOfParameters = 48;
     static constexpr unsigned bitsOfNumberOfParameters = 4;

@@ -47,7 +47,7 @@ LValue Lowering::loadProperty(LValue object, LValue offset)
     return m_out.phi(Int64, inlineResult, outOfLineResult);
 }
 
-// word: the first of a slot whose offset is the location of a property (locationOfProperty()).
+// word: the first word of a slot whose offset field is the location of a property (locationOfProperty()).
 TypedPointer Lowering::cachedPropertyAddress(LValue object, LValue word, const AbstractHeap* heap)
 {
     // (A direct slot may have a property name id above the location.)
@@ -121,14 +121,16 @@ auto Lowering::availableField(Node* base, const TypeTable::Field& field) const -
 void Lowering::recordAvailableField(Node* base, const TypeTable::Field& field, LValue value, Rep rep, LValue asJSValue, bool isWritten)
 {
     base = skipAliases(base);
-    // (Two values may be the one object. An object is of one family for life.)
+    // (Two nodes may be the same object, so a store invalidates the field for every base. An object's typed layout never changes,
+    // so fields of other layouts are unaffected.)
     m_availableFields.removeAllMatching([&](auto& inHand) {
         return inHand.layoutID == field.first && inHand.slot == field.slot && (isWritten || inHand.base == base);
     });
     m_availableFields.append({ base, field.first, field.slot, field.id, rep, value, asJSValue });
 }
 
-// Whatever the lowering makes of it, it neither writes to an object nor runs any of the program's code. This has to say no more than the lowerings deliver.
+// Whether the lowering of the node neither writes to an object nor runs any of the program's code. This must not claim more than
+// the lowerings guarantee.
 bool Lowering::preservesFields(Node* node)
 {
     switch (node->kind) {
@@ -150,8 +152,8 @@ bool Lowering::preservesFields(Node* node)
     }
     if (node->guard)
         return false;
-    // (An object is asked what it is worth as a number or as a string, and the answer is the program's to give.)
-    auto nothingIsAnObject = [&] {
+    // (Converting an object to a number or a string calls valueOf() or toString(), which is the program's code.)
+    auto noOperandMayBeObject = [&] {
         for (auto& use : node->uses) {
             if (!use.node->type || mayBe(use.node->type, TAnyObject))
                 return false;
@@ -224,7 +226,7 @@ bool Lowering::preservesFields(Node* node)
     case op_neq:
     case op_jeq:
     case op_jneq:
-        return nothingIsAnObject();
+        return noOperandMayBeObject();
     case op_get_length: {
         Type base = node->use(node->as<OpGetLength>().m_base)->type;
         return base && isSubtype(base, TArray | TString);
@@ -250,8 +252,8 @@ bool Lowering::isThisOfEscapingFunction(Node* node)
 
 void Lowering::checkTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID)
 {
-    // Only what is born gets to be of the type, going by the text of the program. Whoever gets here has not been able to prove it, so it is looked into: what code without types puts into
-    // an array that it was handed, say, is not in that text.
+    // According to the types in the source, only objects allocated with this typed layout reach here. That could not be proven, so
+    // it is checked at run time. For example, untyped code can store any value in an array that it was passed.
     LBasicBlock isNot = newColdBlock();
     LBasicBlock is = m_out.newBlock();
     if (!isSubtype(valueNode->type, TCell)) {
@@ -279,7 +281,7 @@ LValue Lowering::cachedCoercionFor(Node* node, uint16_t layoutID)
     }
 }
 
-// (What an object was born as is for life, so this is good for as long as the value is.)
+// (An object's typed layout never changes, so the result stays valid for as long as the value is live.)
 LValue Lowering::coerceToTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID)
 {
     LBasicBlock isNot = newColdBlock();
@@ -302,7 +304,8 @@ Lowering::FieldStorage Lowering::fieldStorageFor(Node* onBehalfOf, Node* baseNod
 {
     if (baseNode->hasLayoutInRange(layoutID, layoutID))
         return { base, false };
-    // (An access whose base is in a register that is not followed has no op_type_tag ahead of it, and says so itself.)
+    // (An access whose base is in an untracked register has no op_type_tag node before it, so the type tag is taken from the access
+    // itself.)
     uint32_t tag = Graph::typeTagOf(onBehalfOf);
     if (!TypeTable::shared()->isOpen(layoutID) || (tag && TypeTable::shared()->isTrusted(tag) && TypeTable::shared()->layoutIDOf(tag) == layoutID && !isThisOfEscapingFunction(baseNode))) {
         checkTypedLayout(onBehalfOf, baseNode, base, layoutID);
@@ -313,7 +316,8 @@ Lowering::FieldStorage Lowering::fieldStorageFor(Node* onBehalfOf, Node* baseNod
     return { coerceToTypedLayout(onBehalfOf, baseNode, base, layoutID), true };
 }
 
-// Zero for what is not a cell. It is for life, so once it has been asked of a value it need not be asked again: not after a call, and not after a store.
+// Returns zero for a value that is not a cell. An object's typed layout never changes, so once it has been loaded for a value it
+// does not have to be reloaded, even after a call or a store.
 LValue Lowering::loadTypedLayoutIDOrZero(Node* node, LValue value)
 {
     while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz))
@@ -349,7 +353,8 @@ void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
-    // A closed method that is called with no need of the function object: which function it is is known, and all that reading it would do is throw if there is nothing to read it from.
+    // A closed method that is called without its function object. The callee is known, so the only effect of the read is to throw
+    // if the base is undefined or null.
     if (node->isReadOnlyToBeCalled) {
         if (!isSubtype(baseNode->type, TCell)) {
             LValue base = lowJSValue(baseNode);
@@ -367,30 +372,33 @@ void Lowering::lowerGetById(Node* node)
         lowerReadOfBuiltin(node, baseNode);
         return;
     }
-    // (With Options::useAOTFunctionSplitting() that is for the guards of the first copy. What gets here is the other.)
+    // (With Options::useAOTFunctionSplitting(), typed accesses are handled by the guards of the fast copy, and only the generic
+    // copy reaches this point.)
     if (auto field = (Options::aotShapeOptimizations() & 2) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
-        // An object that a literal of the program made says how it is laid out, and the type says which layouts have the property, and
-        // where. Whatever else the base may be, in spite of its type, is dealt with as if nothing had been said.
+        // An object created by a literal in the program records its layout, and the type says which layouts have the property and
+        // in which slot. Any other base, whatever its declared type, takes the generic path.
         LValue base = lowJSValue(baseNode);
         if (Options::useAOTTypedFields() && TypeTable::hasTypedFields() && field->id) {
-            // The slots of the family are verified: it is for the object's Structure to say whether the field is in its slot. Whatever is known of the object.
+            // The typed layout uses field IDs: the object's Structure says whether the field is in its slot. This applies whatever
+            // is known about the object.
             bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
             Stub stub = static_cast<Stub>(static_cast<unsigned>(allowsUndefined ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
             auto throughStub = [&]() -> LValue {
                 return callStub(stub, Int64, { { base, GPRInfo::argumentGPR0 } }, { { GPRInfo::argumentGPR1, field->id } }, StubClobbers::CallerSavedRegisters, node);
             };
             const AvailableField* inHand = availableField(baseNode, *field);
-            LValue whatItGave = inHand ? inHand->asJSValue : nullptr;
-            // (The long way may come to a getter: whatever else is in hand is let go of.)
+            LValue previouslyReadValue = inHand ? inHand->asJSValue : nullptr;
+            // (The slow path may call a getter, so forget all available fields.)
             m_availableFields.shrink(0);
             m_nodePreservesFields = true;
-            if (whatItGave) {
-                // Nothing has been done since that could have changed it. It is given again if reading it is all that reading it has ever come to (Instance::fieldsNotJustRead).
+            if (previouslyReadValue) {
+                // Nothing since the last read could have changed the field. Reuse the value, unless a read of this field has ever
+                // done more than load it (Instance::fieldsWithObservableReads).
                 unsigned index = field->slot << 16 | field->id;
                 LBasicBlock again = newColdBlock();
                 LBasicBlock continuation = m_out.newBlock();
-                ValueFromBlock kept = m_out.anchor(whatItGave);
-                LValue bits = m_out.load8ZeroExt32(m_out.address(m_heaps.root, m_out.loadPtr(m_out.address(m_heaps.root, m_instance, Instance::offsetOfFieldsNotJustRead())), index >> 3));
+                ValueFromBlock kept = m_out.anchor(previouslyReadValue);
+                LValue bits = m_out.load8ZeroExt32(m_out.address(m_heaps.root, m_out.loadPtr(m_out.address(m_heaps.root, m_instance, Instance::offsetOfFieldsWithObservableReads())), index >> 3));
                 m_out.branch(m_out.testIsZero32(bits, m_out.constInt32(1 << (index & 7))), usually(continuation), rarely(again));
                 m_out.appendTo(again);
                 ValueFromBlock readAgain = m_out.anchor(throughStub());
@@ -430,9 +438,9 @@ void Lowering::lowerGetById(Node* node)
             return;
         }
         if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
-            // The property is in its slot, or the object has none.
-            auto [storageOfBase, mayStandForSomethingElse] = fieldStorageFor(node, baseNode, base, field->first);
-            if (!mayStandForSomethingElse) {
+            // The property is in its slot, or the object does not have it.
+            auto [storageOfBase, mayBeStandIn] = fieldStorageFor(node, baseNode, base, field->first);
+            if (!mayBeStandIn) {
                 m_nodePreservesFields = true;
                 if (const AvailableField* inHand = availableField(baseNode, *field)) {
                     if (inHand->asJSValue && node->rep() == Rep::JSValue)
@@ -445,24 +453,25 @@ void Lowering::lowerGetById(Node* node)
                     return;
                 }
             }
-            LValue whatIsThere = m_out.load64(addressOfField(storageOfBase, *field));
+            LValue valueInSlot = m_out.load64(addressOfField(storageOfBase, *field));
             bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
-            if (mayStandForSomethingElse) {
+            if (mayBeStandIn) {
                 RELEASE_ASSERT(field->isInObject());
                 LBasicBlock slowCase = newColdBlock();
                 LBasicBlock continuation = m_out.newBlock();
                 Vector<ValueFromBlock, 3> results;
-                results.append(m_out.anchor(whatIsThere));
+                results.append(m_out.anchor(valueInSlot));
                 if ((field->isOptional || field->mayBeEmpty) && allowsUndefined) {
                     LBasicBlock nothingIsThere = m_out.newBlock();
-                    m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(nothingIsThere));
+                    m_out.branch(m_out.notZero64(valueInSlot), usually(continuation), rarely(nothingIsThere));
                     m_out.appendTo(nothingIsThere);
                     results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
                     m_out.branch(m_out.equal(storageOfBase, base), usually(continuation), rarely(slowCase));
                 } else
-                    m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(slowCase));
+                    m_out.branch(m_out.notZero64(valueInSlot), usually(continuation), rarely(slowCase));
                 m_out.appendTo(slowCase);
-                // (What comes next takes it for what the slot holds. So it is that, or this does not come back.)
+                // (Later code assumes that the result has the field's type, so the operation either returns such a value or
+                // throws.)
                 uint64_t which = static_cast<uint64_t>(numberOf(bytecode.m_property)) | static_cast<uint64_t>(field->first) << 32 | static_cast<uint64_t>(field->slot) << 48 | static_cast<uint64_t>(allowsUndefined) << 56 | 1ull << 63; // (The last so that it is not taken for an address.)
                 results.append(m_out.anchor(coldCallForValue(node, Entry::operationAOTGetFieldSlow, base, m_out.constInt64(which))));
                 m_out.jump(continuation);
@@ -471,23 +480,23 @@ void Lowering::lowerGetById(Node* node)
                 return;
             }
             if (field->isOptional || (field->mayBeEmpty && allowsUndefined))
-                whatIsThere = m_out.select(m_out.isZero64(whatIsThere), m_out.constInt64(JSValue::encode(jsUndefined())), whatIsThere);
+                valueInSlot = m_out.select(m_out.isZero64(valueInSlot), m_out.constInt64(JSValue::encode(jsUndefined())), valueInSlot);
             else if (field->mayBeEmpty) {
-                // The type says it is there. What comes next takes it for what the type says.
+                // The type says the field is present, and later code relies on its type, so a missing field throws.
                 LBasicBlock isMissing = newColdBlock();
                 LBasicBlock isThere = m_out.newBlock();
-                m_out.branch(m_out.notZero64(whatIsThere), usually(isThere), rarely(isMissing));
+                m_out.branch(m_out.notZero64(valueInSlot), usually(isThere), rarely(isMissing));
                 m_out.appendTo(isMissing);
                 coldCall(node, Entry::operationAOTCheckType, m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt32(field->fieldType.kinds));
                 m_out.unreachable();
                 m_out.appendTo(isThere);
             }
-            setJSValue(node, whatIsThere);
-            recordAvailableField(baseNode, *field, node->lowered, node->rep(), whatIsThere, false);
+            setJSValue(node, valueInSlot);
+            recordAvailableField(baseNode, *field, node->lowered, node->rep(), valueInSlot, false);
             return;
         }
         bool resultIsTyped = Options::useAOTTypedFields() && field->fieldType.isConstrained();
-        // (undefined has to be something the field is said to hold.)
+        // (Only if the field's type allows undefined.)
         bool testsForLack = field->firstWithout && (Options::aotShapeOptimizations() & 8) && (!resultIsTyped || (field->fieldType.kinds & MaskUndefined));
         LBasicBlock has = m_out.newBlock();
         LBasicBlock hasNot = m_out.newBlock();
@@ -497,29 +506,31 @@ void Lowering::lowerGetById(Node* node)
         if (baseNode->hasLayoutInRange(field->first, field->last)) {
             m_out.jump(has);
         } else {
-            // What it was born as, whatever has become of it since: the property is where it was then, or nothing is (Structure::typedLayoutID()).
+            // The layout the object was allocated with, whatever has happened to it since: the slot either holds the property or is
+            // empty (Structure::typedLayoutID()).
             LValue layout = loadTypedLayoutIDOrZero(baseNode, base);
             if (!testsForLack)
                 m_out.branch(isOneOf(layout, field->first, field->last), usually(has), rarely(otherwise));
             else {
-                // (What was never born as anything may not be a cell at all.)
-                LBasicBlock hasItNot = m_out.newBlock();
-                m_out.branch(isOneOf(layout, field->first, field->last), usually(has), unsure(hasItNot));
-                m_out.appendTo(hasItNot);
+                // (A layout ID of zero may mean that the value is not a cell.)
+                LBasicBlock lacksLayout = m_out.newBlock();
+                m_out.branch(isOneOf(layout, field->first, field->last), usually(has), unsure(lacksLayout));
+                m_out.appendTo(lacksLayout);
                 m_out.branch(m_out.notZero32(layout), usually(mayLack), rarely(otherwise));
             }
         }
         m_out.appendTo(has, mayLack);
-        LValue whatIsThere = m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
+        LValue valueInSlot = m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
         LBasicBlock isThere = m_out.newBlock();
-        m_out.branch(m_out.notZero64(whatIsThere), usually(isThere), rarely(otherwise));
+        m_out.branch(m_out.notZero64(valueInSlot), usually(isThere), rarely(otherwise));
         m_out.appendTo(isThere);
-        ValueFromBlock found = m_out.anchor(whatIsThere);
+        ValueFromBlock found = m_out.anchor(valueInSlot);
         m_out.jump(continuation);
-        // (Such an object inherits from Object.prototype, which has what it had to begin with: TypeTable::fieldOf() has seen to that.)
+        // (Such an object inherits from Object.prototype, whose properties cannot change. TypeTable::fieldOf() rejects the names
+        // that Object.prototype has.)
         m_out.appendTo(mayLack, hasNot);
         if (testsForLack)
-            // (That it has no such property, and inherits none, goes for what it is now.)
+            // (Whether the object lacks the property depends on its current layout, not on the one it was allocated with.)
             m_out.branch(isOneOf(layoutOf(base), field->firstWithout, field->lastWithout), unsure(hasNot), unsure(otherwise));
         else
             m_out.unreachable();
@@ -529,7 +540,7 @@ void Lowering::lowerGetById(Node* node)
         m_out.appendTo(otherwise, continuation);
         LValue slowCaseResult = getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property);
         if (resultIsTyped) {
-            // What comes next takes it for what the field is said to hold.
+            // Later code relies on the result having the field's type, so check it.
             LBasicBlock isThat = m_out.newBlock();
             LBasicBlock undecided = m_out.newBlock();
             emitTypeTests(nullptr, TTop, slowCaseResult, field->fieldType.kinds, isThat, undecided);
@@ -547,7 +558,8 @@ void Lowering::lowerGetById(Node* node)
     setJSValue(node, getByIdCached(node, lowJSValue(baseNode), baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
 }
 
-// operation: takes the global object, the base, identifier (whatever that means to it) and the cache, which it fills.
+// operation: takes the global object, the base, the identifier (in whatever form the operation expects) and the inline cache slot,
+// which it fills.
 LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry operation, unsigned identifierOfFunction)
 {
     unsigned identifier = operation == Entry::operationAOTGetByIdWellKnown ? identifierOfFunction : numberOf(identifierOfFunction);
@@ -585,7 +597,8 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     m_out.appendTo(rightStructure, hit);
     ValueFromBlock fastResult;
     if (stub) {
-        // Whatever takes more than a load from the base itself is the stub's business: a getter, what is inherited, what is out of line.
+        // Anything that takes more than a load from the base itself is left to the stub: getters, inherited properties and
+        // out-of-line properties.
         m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter | Slot::isIndirect) << 32)), usually(hit), rarely(slowCase));
         m_out.appendTo(hit, slowCase);
         LValue location = m_out.bitAnd(m_out.lShr(word, m_out.constInt32(32)), m_out.constInt64(Slot::directLocationMask));
@@ -593,8 +606,8 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     } else {
         m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter) << 32)), usually(hit), rarely(slowCase));
 
-        // In the base, or in an object that every base of this structure inherits it from (see cacheGetById()).
-        // (Unless there is more to it than a place in the base, what is there is the name: Slot::name.)
+        // The property is in the base, or in a holder that every base with this structure inherits it from (see cacheGetById()).
+        // (For a direct slot, the second word holds the name instead: Slot::name.)
         m_out.appendTo(hit, slowCase);
         LValue holder = m_out.loadPtr(slotWord(slot, 1));
         LValue isOnHolder = m_out.bitAnd(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIndirect) << 32)), m_out.notNull(holder));
@@ -619,44 +632,50 @@ void Lowering::lowerPutById(Node* node)
     LValue value = lowJSValue(valueNode);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
-    // (A field of a family whose slots are verified is stored to like any property: whoever does that is held to what the name holds, and remembers where it went.)
+    // (A field of a typed layout that uses field IDs is stored like any other property. The generic store checks the value against
+    // the field's type and caches the location.)
     if (auto field = (Options::aotShapeOptimizations() & 4) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {
-        // As for a read. A property of such a layout is one that can be written, like any that a literal makes.
+        // As for a read. A property in such a layout is always writable, like every property that a literal creates.
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock has = m_out.newBlock();
         LBasicBlock otherwise = Options::useAOTTypedFields() && TypeTable::hasTypedFields() ? newColdBlock() : m_out.newBlock();
         afterTypedStore = m_out.newBlock();
         if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
-            auto [storageOfBase, mayStandForSomethingElse] = fieldStorageFor(node, baseNode, base, field->first);
-            // What the slot does not hold goes the long way, where it is made to be that or refused. So does what makes the object have a property it did not have.
+            auto [storageOfBase, mayBeStandIn] = fieldStorageFor(node, baseNode, base, field->first);
+            // A value that the field's type does not accept takes the slow path, which converts or rejects it. So does a store that
+            // adds the property to the object.
             bool mayBeRejected = branchUnlessAccepted(valueNode, value, field->fieldType, otherwise);
             TypedPointer slotOfField = addressOfField(storageOfBase, *field);
             LValue storedValue = toFieldRepresentation(valueNode, value, field->fieldType);
-            // (If it may not be what the slot holds, what is here is not on every way to what comes next.)
-            if (!mayStandForSomethingElse && !mayBeRejected) {
-                // (Giving an object a field it did not have may take a call. It is of the engine's own code, and it does nothing to any other field.)
+            // (If the value may be rejected, this block does not dominate what follows, so the field cannot be recorded as
+            // available.)
+            if (!mayBeStandIn && !mayBeRejected) {
+                // (Adding a field to an object may call the runtime, but that runs none of the program's code and does not change
+                // any other field.)
                 m_nodePreservesFields = true;
                 if (valueNode->type && isSubtype(valueNode->type, TNumber))
                     recordAvailableField(baseNode, *field, lowDouble(valueNode), Rep::Double, storedValue, true);
                 else
                     recordAvailableField(baseNode, *field, storedValue, Rep::JSValue, storedValue, true);
             }
-            // (What is no struct is seen as one with nothing in it, and nothing is ever put there.)
-            if (field->isOptional || field->mayBeEmpty || mayStandForSomethingElse) {
-                RELEASE_ASSERT(!mayStandForSomethingElse || field->isInObject());
+            // (A base without the typed layout is represented by a stand-in whose slots are all empty. Nothing is ever stored to
+            // it.)
+            if (field->isOptional || field->mayBeEmpty || mayBeStandIn) {
+                RELEASE_ASSERT(!mayBeStandIn || field->isInObject());
                 LBasicBlock isThere = m_out.newBlock();
                 LBasicBlock isEmpty = (field->isOptional || field->mayBeEmpty) && field->isInObject() ? m_out.newBlock() : nullptr;
                 m_out.branch(m_out.notZero64(m_out.load64(slotOfField)), unsure(isThere), isEmpty ? unsure(isEmpty) : rarely(otherwise));
                 if (isEmpty) {
-                    // The object is given the field. What it is of afterwards is what the last of its kind to be given it was (Instance::addsOfFields).
+                    // Add the field to the object. The new Structure is cached from the last object with the same Structure that
+                    // gained the field (Instance::fieldAdditions).
                     m_out.appendTo(isEmpty);
-                    if (mayStandForSomethingElse)
+                    if (mayBeStandIn)
                         orElse(m_out.equal(storageOfBase, base), otherwise);
                     if (isCompact())
                         orElse(m_out.notNull(callHelper(Stub::HelperAddField, { base, storedValue, m_out.constInt32(field->slot) })), otherwise);
                     else
                         addTypedField(base, storedValue, m_out.constInt32(field->slot), otherwise);
-                    // (Whatever the value is: the object refers to another Structure now.)
+                    // (Needed whatever the value is, because the object now refers to another Structure.)
                     storeBarrier(base);
                     m_out.jump(afterTypedStore);
                 }
@@ -679,7 +698,7 @@ void Lowering::lowerPutById(Node* node)
         m_out.appendTo(cellCase, has);
         m_out.branch(isOneOf(layoutOf(base), field->first, field->last), usually(has), rarely(otherwise));
         m_out.appendTo(has, otherwise);
-        // (What the slot does not hold is stored the long way, which takes the property out of the slot.)
+        // (A value that the field's type does not accept is stored by the slow path, which moves the property out of the slot.)
         if (Options::useAOTTypedFields())
             branchUnlessAccepted(valueNode, value, field->fieldType.kindsOnly(), otherwise);
         m_out.store64(value, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
@@ -732,7 +751,7 @@ void Lowering::lowerPutById(Node* node)
     m_out.appendTo(hit, transition);
     LValue secondWord = m_out.load64(slotWord(slot, 1));
     if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
-        // (Slot::held: there is looking at the value to be done. The runtime does that.)
+        // (Slot::fieldType is set, so the value has to be checked. The runtime does that.)
         LBasicBlock isPlain = m_out.newBlock();
         m_out.branch(m_out.isZero64(m_out.lShr(secondWord, m_out.constInt32(32))), usually(isPlain), rarely(slowCase));
         m_out.appendTo(isPlain);
@@ -757,7 +776,7 @@ void Lowering::lowerPutById(Node* node)
     m_out.appendTo(continuation);
 }
 
-// The property as an array index, on the way to haveIndex. Everything that is not one goes to notIndex.
+// Returns the property as an array index and jumps to haveIndex. Jumps to notIndex if the property is not an index.
 LValue Lowering::lowIndex(Node* propertyNode, LBasicBlock haveIndex, LBasicBlock notIndex)
 {
     if (propertyNode->rep() == Rep::Int32) {
@@ -800,7 +819,8 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.appendTo(inBounds);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, view->butterfly, index));
         ValueFromBlock fast = m_out.anchor(element);
-        // (An array that keeps its elements this way has nothing at an index where it keeps nothing: what it inherits from has no elements, or it would keep them another way.)
+        // (For an array with this indexing type, a hole means the element is absent. If its prototype chain had indexed properties,
+        // the array would use another indexing type.)
         if (allowsEmpty)
             m_out.jump(continuation);
         else
@@ -822,7 +842,7 @@ void Lowering::lowerGetByVal(Node* node)
     }
 
     bool isOfArray = isSubtype(baseNode->type, TArray);
-    // (Of what is not known for an array, nothing is made of there being nothing where an element would be kept: it is asked.)
+    // (If the base is not known to be an array, a hole proves nothing, and the runtime is called.)
     bool missingMeansAbsent = allowsEmpty && isOfArray;
     if (allowsEmpty && !isOfArray && Options::verboseAOTCompilation()) [[unlikely]] {
         dataLog("AOT: LEAN an element is read from what is not known for an array: ");
@@ -905,7 +925,8 @@ void Lowering::lowerPutByVal(Node* node)
     LBasicBlock slowCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
 
-    // An element for which there is room in contiguous storage. Growing that and every other shape are the runtime's.
+    // The fast path stores an element that fits in contiguous storage. Growing the storage, and every other indexing shape, is left
+    // to the runtime.
     if (mayBe(baseNode->type, TAnyObject) && mayBe(propertyNode->type, TNumber)) {
         LBasicBlock haveIndex = m_out.newBlock();
         LBasicBlock cellCase = m_out.newBlock();
@@ -934,7 +955,7 @@ void Lowering::lowerPutByVal(Node* node)
         m_out.appendTo(beyondLength, lengthen);
         m_out.branch(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_vectorLength)), unsure(lengthen), unsure(slowCase));
 
-        // What is between the old length and here are holes already.
+        // The elements between the old length and the index are already holes.
         m_out.appendTo(lengthen, inBounds);
         m_out.store32(m_out.add(index, m_out.int32One), butterfly, m_heaps.Butterfly_publicLength);
         m_out.jump(inBounds);
@@ -1019,8 +1040,8 @@ void Lowering::lowerResolveScope(Node* node)
         return;
     }
     if (variable.kind == StaticVariable::Import) {
-        // The environment of the module that has the variable, which the environment of this one is given the first time it is
-        // asked for.
+        // The environment of the exporting module. It is cached in a slot of the importing module's environment the first time it
+        // is needed.
         LValue importer = walk(variable.depth);
         LValue exporter = m_out.load64(importer, m_heaps.JSLexicalEnvironment_variables[variable.import.scopeOffsetOfSlot]);
         LBasicBlock slowCase = m_out.newBlock();
@@ -1074,7 +1095,7 @@ bool Lowering::isFusedWithGetFromScope(Node* node)
     if (resolveStatically(resolve.m_var, resolve.m_localScopeDepth, resolve.m_resolveType).kind != StaticVariable::Unresolved)
         return false;
 
-    // Asked when lowering either of the two.
+    // This is called while lowering either of the two nodes.
     unsigned index = m_block->nodes[m_nodeIndex] == node ? m_nodeIndex : m_nodeIndex - 1;
     if (index >= m_block->nodes.size() || m_block->nodes[index] != node || index + 1 >= m_block->nodes.size())
         return false;
@@ -1140,7 +1161,7 @@ void Lowering::lowerGetFromScope(Node* node)
         return;
     }
     if (variable.kind == StaticVariable::Import) {
-        // The scope is the environment of the module that has it (lowerResolveScope()).
+        // The scope is the exporting module's environment (see lowerResolveScope()).
         loadClosureVariable(variable.offset.offset(), true);
         return;
     }
@@ -1160,7 +1181,8 @@ void Lowering::lowerGetFromScope(Node* node)
         LBasicBlock noAddress = m_out.newBlock();
         LBasicBlock structureHit = m_out.newBlock();
 
-        // Either way what is cached is only good for the kind of scope it was found in: the name may resolve to another.
+        // In both cases the cached location is only valid for a scope with the same structure, because the name may resolve to a
+        // different scope.
         LValue word = m_out.load64(slotWord(slot, 0));
         m_out.branch(m_out.equal(m_out.load32(scope, m_heaps.JSCell_structureID), lowHalf(m_out, word)), usually(structureHit), rarely(slowCase));
 
@@ -1210,15 +1232,15 @@ void Lowering::lowerPutToScope(Node* node)
     }
 
     if (closureOffset) {
-        // Nobody is watching it: where there is code from the static compiler, the optimizing JITs take no closure variable for a
-        // constant (DFG::Graph::tryGetConstantClosureVar()).
+        // No watchpoint has to be fired: when AOT code is present, the optimizing JITs do not constant-fold closure variables
+        // (DFG::Graph::tryGetConstantClosureVar()).
         m_out.store64(value, scope, m_heaps.JSLexicalEnvironment_variables[*closureOffset]);
         if (mayBe(valueNode->type, TCell))
             storeBarrier(scope);
         return;
     }
 
-    // What the operation has to know about the instruction, small enough for a Site.
+    // What the operation needs to know about the instruction, packed to fit in a Site.
     GetPutInfo info = bytecode.m_getPutInfo;
     static_assert(static_cast<unsigned>(ThrowIfNotFound) <= 1 && static_cast<unsigned>(DoNotThrowIfNotFound) <= 1);
     unsigned how = static_cast<unsigned>(info.resolveMode()) | static_cast<unsigned>(info.initializationMode()) << 1 | info.ecmaMode().isStrict() << 3;

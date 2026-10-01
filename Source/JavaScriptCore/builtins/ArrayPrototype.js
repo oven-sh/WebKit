@@ -346,9 +346,10 @@ function at(index)
     return (k >= 0 && k < length) ? array[k] : @undefined;
 }
 
-// ---- Forms of the above that the static compiler makes part of whoever calls one of them (AOT::Inliner), and that nothing else ever runs. |this| is an array, and all that is passed
-// is a function: so there is nothing to convert, nothing to check and no thisArg. In these, and only as that compiler has it, what is read where there is no element is empty
-// (Graph::readsElementsOrEmpty): so whether there is one need not be asked apart.
+// ---- Versions of the above that the AOT compiler inlines into their callers (AOT::Inliner). Nothing else ever runs them. |this|
+// is an array, and the only argument is a function, so there is nothing to convert or check, and no thisArg. In these functions,
+// and only when compiled by that compiler, reading a missing element yields the empty value (Graph::readsElementsOrEmpty), so
+// presence does not have to be tested separately.
 
 @overriddenName="forEach"
 function forEachOfArray(callback)

@@ -352,9 +352,9 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
             }
         }
 #endif
-        // Then it takes the instructions, which are not there to be had.
+        // Running it in another tier requires the instructions, which are not available.
         if (StaticHeap::contains(unlinkedCodeBlock) && StaticHeap::payloadIsOmitted()) [[unlikely]] {
-            throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time, and the program was built without its bytecode. The compiled code cannot be used here, and there is nothing else to run it from."_s));
+            throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and the executable was built without its bytecode. The compiled code cannot be used in this context, and there is no other code to run."_s));
             return nullptr;
         }
         RELEASE_AND_RETURN(throwScope, ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
@@ -370,7 +370,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
         return nullptr;
     }
-    // All the code there is for it is what it says it has.
+    // An executable in the short form only has its AOT code.
     RELEASE_ASSERT(!executable->isShortForm());
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();

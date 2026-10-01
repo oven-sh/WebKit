@@ -1904,14 +1904,15 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
             }
         } else if (failureReason == FailureReason::BufferFull) {
             failureReason = std::nullopt;
-            // To take what is narrow for wide costs making it narrow at the end. To take what is wide for narrow costs all that was done until that came out.
+            // Wrongly guessing 16-bit costs a conversion to 8-bit at the end. Wrongly guessing 8-bit costs all of the work done
+            // before the first 16-bit character.
             if (vm.jsonStringifyHints.isWide) {
                 if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
                     return result;
             } else if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
                 return result;
         }
-        // However far it had got: what is left to try is still a good deal faster than doing without.
+        // However much work is thrown away, retrying with 16-bit characters is still much faster than the generic path.
         if (failureReason == FailureReason::Found16BitLate) {
             failureReason = std::nullopt;
             if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())

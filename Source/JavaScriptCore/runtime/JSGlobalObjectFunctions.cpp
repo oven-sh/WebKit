@@ -886,7 +886,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     if (callFrame->argumentCount() > 1) {
         int32_t setIndex = callFrame->uncheckedArgument(1).asUInt32AsAnyInt();
 #if ENABLE(FTL_JIT)
-        // Code from the static compiler has no CodeBlock, and does not need one for this.
+        // AOT code has no CodeBlock, and does not need one for this.
         if (AOT::FunctionRef caller = AOT::callerFunction(callFrame))
             excludedSet = &caller.constantIdentifierSet(setIndex);
 #endif
@@ -1024,7 +1024,8 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
     }
 
     Structure* sourceStructure = source->structure();
-    // (What was born with a layout is of a type of the program's. The copy is whatever it is put to use as, which is for whoever knows that to say: Structure::typedLayoutID().)
+    // (An object with a typed layout has one of the program's types. The copy's layout depends on how the copy is used, which only
+    // the caller knows: see Structure::typedLayoutID().)
     if (!into && !sourceStructure->typedLayoutID() && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
             return cloned;

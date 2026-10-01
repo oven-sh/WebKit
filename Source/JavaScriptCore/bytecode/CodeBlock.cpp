@@ -489,7 +489,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 const UnlinkedHandlerInfo& unlinkedHandler = unlinkedCodeBlock->exceptionHandler(i);
                 HandlerInfo& handler = m_rareData->m_exceptionHandlers[i];
 #if ENABLE(JIT)
-                // (Code from an image goes by its own idea of where its handlers are, and the instructions may not be there to look at.)
+                // (AOT code locates its handlers through its own tables, and the instructions may not be available.)
                 OpcodeSize width = linkMode == LinkMode::ForCodeFromImage ? OpcodeSize::Narrow : instructions().at(unlinkedHandler.target).ptr()->width();
                 handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(width).code()));
 #else
@@ -1372,7 +1372,7 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
         if (uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable())->isAsync())
             resumableCodeOwner = ownerExecutable();
     } else if (m_unlinkedCode->codeType() == FunctionCode && isGeneratorOrAsyncFunctionBodyParseMode(m_unlinkedCode->parseMode()))
-        resumableCodeOwner = ownerExecutable()->isShortForm() ? static_cast<JSCell*>(ownerExecutable()) : uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable(); // (What is the function's own.)
+        resumableCodeOwner = ownerExecutable()->isShortForm() ? static_cast<JSCell*>(ownerExecutable()) : uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable(); // (An object that belongs to the function alone.)
 
     for (size_t i = 0; i < count; i++) {
         JSValue constant = constants[i].get();
@@ -2227,7 +2227,7 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 
     // Called for all live CodeBlocks.
     // We do not need to call updateAllPredictions for DFG / FTL since the same thing happens in LLInt / Baseline CodeBlock for them.
-    // Nor for code from the static compiler, which profiles nothing.
+    // Nor for AOT code, which does no profiling.
     if (JITCode::isBaselineCode(jitType()))
         updateAllPredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::KeepIfLive : ValueProfileSamples::Record);
 

@@ -224,7 +224,7 @@ Node* Graph::constant(JSValue value)
 {
     ASSERT(!value || !value.isCell());
     if (!value) {
-        // Not a key the table can hold.
+        // The empty value is encoded as zero, which the hash table reserves for empty buckets.
         if (!m_emptyConstant) {
             m_emptyConstant = addNode(NodeKind::Constant);
             m_emptyConstant->type = TEmpty;
@@ -250,7 +250,8 @@ NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructio
     Vector<VirtualRegister, 4> aliases;
     aliases.append(createThis->as<OpCreateThis>().m_dst);
     constexpr unsigned maximumCount = 64;
-    // Nothing gets in here from elsewhere: what a jump goes to is either after a jump or the top of a loop, and this stops at both.
+    // No jump can land in the middle of this sequence: a jump target either follows a branch or is a loop header, and the scan
+    // stops at both.
     for (unsigned offset = offsetOfCreateThis + createThis->size(); offset < instructions.size(); offset += instructions.at(offset)->size()) {
         auto instruction = instructions.at(offset);
         switch (instruction->opcodeID()) {
@@ -268,8 +269,9 @@ NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructio
         case op_type_tag:
             continue;
         case op_check_type:
-            // If it throws there is no object to be told anything by. That the object would have been made first can be told, if it
-            // is made on behalf of a proxy: not a thing to hold every constructor back for.
+            // If the check throws, the object is unreachable, so it does not matter that it has not been allocated yet. One
+            // difference is observable: with a proxy as new.target, allocating reads `prototype` through the proxy, and that read
+            // now comes after the check. That is accepted, rather than giving up on every constructor that checks a parameter.
             if (aliases.contains(instruction->as<OpCheckType>().m_value))
                 return plan;
             continue;
@@ -284,7 +286,8 @@ NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructio
                 index = plan.properties.size();
                 plan.properties.append({ bytecode.m_property, bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict() });
             } else if (!plan.properties[index].isDefined) {
-                // If a setter took the first it takes the second too, and only the last is kept.
+                // A second ordinary store to the same property. If a setter on the prototype chain receives the first store it must
+                // receive this one too, but a plan keeps only the last value.
                 return plan;
             }
             plan.stores.append({ offset, static_cast<unsigned>(index) });
@@ -374,8 +377,9 @@ Node* Graph::intrinsicReadBy(const JSInstruction* instruction, Node* base)
     const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
     if (!intrinsics)
         return nullptr;
-    // No scope between here and the global object has the name, and none can be given it: a variable that cannot be reconfigured
-    // cannot be shadowed by a declaration of a later script either.
+    // The number of the intrinsic that a global variable holds, or zero. The name has to resolve to the global object: no scope in
+    // between declares it, and none can start to, because a later script cannot declare a lexical variable that shadows a
+    // non-configurable global property.
     auto variable = [&](unsigned identifier, unsigned depth, ResolveType type) -> unsigned {
         if (isStaticClosureVarResolveType(type) || type == ResolvedClosureVar || type == ResolvedLazyClosureVar || !resolveStatically(identifier, depth, type).isGlobal)
             return 0;
@@ -458,7 +462,7 @@ CallIntrinsic Graph::intrinsicOfCall(const Node* node) const
     CallOperands operands = operandsOfCall(node->instruction);
     Node* callee = node->use(operands.callee);
     if (callee->kind == NodeKind::Intrinsic) {
-        // It is what it is, whatever it was found under.
+        // The callee is a known intrinsic, whichever name the program read it through.
         const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
         const ImmutableIntrinsics::Entry& entry = intrinsics->at(callee->intrinsic);
         const ImmutableIntrinsics::Entry& holder = intrinsics->at(entry.holder);
@@ -551,11 +555,11 @@ std::optional<uint32_t> Graph::distanceOfEnvironmentAccessed(const Node* node)
     if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
         if (!m_declaredNames)
             return std::nullopt;
-        // As for Graph::knownCallee(): not a variable of the function's own, and not one of a scope in between.
+        // As in knownFunctionReadBy(): the variable has to be the module's, not a local of this function or of a scope in between.
         auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(identifier).impl());
         if (resolution.kind != DeclaredNamesLink::Resolution::Slot || !resolution.isInOutermostEnvironment || resolution.offset != offset)
             return std::nullopt;
-        if (isThatManyScopesOut(node->use(scopeRegister), resolution.hops))
+        if (isScopeAtDepth(node->use(scopeRegister), resolution.hops))
             return found(m_linkage->distanceOfEnvironment);
         return std::nullopt;
     }
@@ -569,10 +573,10 @@ std::optional<uint32_t> Graph::distanceOfEnvironmentAccessed(const Node* node)
     return std::nullopt;
 }
 
-bool Graph::isScopeThatStandsForNoThis(const Node* node)
+bool Graph::isScopeUsedAsImplicitThis(const Node* node)
 {
     if (node->graph != this)
-        return node->graph->isScopeThatStandsForNoThis(node);
+        return node->graph->isScopeUsedAsImplicitThis(node);
     if (node->isBytecode(op_get_scope))
         return true;
     if (node->kind == NodeKind::Intrinsic)
@@ -588,8 +592,8 @@ bool Graph::isScopeThatStandsForNoThis(const Node* node)
     return kind == StaticVariable::Import || kind == StaticVariable::Closure;
 }
 
-// Counting from the scope that the function was made in.
-bool Graph::isThatManyScopesOut(const Node* scope, unsigned hops)
+// Whether `scope` is `hops` scopes out from the scope the function was created in.
+bool Graph::isScopeAtDepth(const Node* scope, unsigned hops)
 {
     if (scope->isBytecode(op_get_scope))
         return !hops;
@@ -646,8 +650,8 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
             proven = true;
         }
     }
-    // Whatever way it got there, if there is one function that it can be. (Whatever else it may be cannot be called: whoever makes the call
-    // sees to that.)
+    // The type of the callee may identify a single function, however the value got there. (The type may also allow values that are
+    // not callable. The lowering of the call checks for those.)
     if ((!known || !proven) && node->opcode != op_construct) {
         VirtualRegister calleeRegister;
         switch (node->opcode) {
@@ -699,7 +703,7 @@ const KnownFunction* Graph::knownCalleeIgnoringSummaries(const Node* node, bool*
     default:
         return nullptr;
     }
-    // In the generic copy of a loop what was read comes by way of phis, from that copy and from the other.
+    // In the generic copy of a split loop, the value read reaches the call through phis that merge that copy with the fast copy.
     Node* callee = node->use(calleeRegister);
     for (unsigned depth = 0; callee->kind == NodeKind::Phi && depth < 4; ++depth) {
         Node* source = nullptr;
@@ -719,7 +723,7 @@ const KnownFunction* Graph::knownCalleeIgnoringSummaries(const Node* node, bool*
     }
     if (!callee->isBytecode(op_get_from_scope))
         return nullptr;
-    // (Through a phi it is a hint like any other.)
+    // (A callee found through a phi is only a hint, never exact.)
     return knownFunctionReadBy(callee, callee == node->use(calleeRegister) ? isExact : nullptr);
 }
 
@@ -733,9 +737,9 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isExac
     UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
     ResolveType type = bytecode.m_getPutInfo.resolveType();
     if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
-        // Is it the module's variable? Not one of the function's own, and not one of a scope in between.
+        // Is this the module's variable, and not a local of this function or of a scope in between?
         const void* scope = const_cast<Graph*>(this)->identityOfScope(callee->use(bytecode.m_scope));
-        // If there is no telling which scope it is read from, it may be: which is no proof of anything, but is not to be overlooked.
+        // If the scope cannot be identified, the variable may still be the module's. That proves nothing, but it is a useful hint.
         if (!scope)
             return probablyFunctionInVariableOfModule(bytecode.m_var, bytecode.m_offset);
         if (scope != m_hints->scopeOfVariables())
@@ -752,12 +756,13 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isExac
             *isExact = variable.import.function->isExact;
         return variable.import.function;
     } else if (variable.kind == StaticVariable::ModuleImport && m_linkage) {
-        // An import that this code is not compiled to read from where it is (resolveStatically()). It is read all the same.
+        // An import that this code does not read from a static location (see resolveStatically()). The imported function is still a
+        // useful hint.
         if (const StaticImport* import = m_linkage->findImport(name); import && import->function)
             return import->function;
     }
-    // A read that was left to be resolved when the code is linked (BytecodeOptimizerAccess::resolveScopesStatically() only goes so
-    // far). It reads what it reads all the same: which is no proof of anything, but is not to be overlooked either.
+    // A read whose scope is resolved when the code is linked, because BytecodeOptimizerAccess::resolveScopesStatically() did not
+    // resolve it. The name still says which variable is likely to be read: a hint, unless the scope can be identified below.
     if (m_declaredNames) {
         auto resolution = m_declaredNames->resolve(name);
         switch (resolution.kind) {
@@ -765,7 +770,7 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isExac
             if (!resolution.isInOutermostEnvironment)
                 return nullptr;
             const KnownFunction* known = m_hints->find(name, resolution.offset);
-            // Is the scope that it is read from the one that the name is found in?
+            // Exact only if the scope that is read from is the one that declares the name.
             if (known && known->isExact && isExact)
                 *isExact = const_cast<Graph*>(this)->identityOfScope(callee->use(bytecode.m_scope)) == m_hints->scopeOfVariables();
             return known;
@@ -808,7 +813,7 @@ bool Graph::passesNoFunctionObject(const Node* node)
     const KnownFunction* known = knownCallee(node, &isExact);
     if (!known || !isExact || !known->needsNoFunctionObject.load(std::memory_order_relaxed))
         return false;
-    // Made as if the callee were not known: Lowering::lowerCallToKnownFunction().
+    // Lowered like a call to an unknown callee, which needs the function object: Lowering::lowerCallToKnownFunction().
     if (node->isBytecode(op_tail_call) && known->conventionForCall.signature == Signature::List)
         return false;
     if (closedMethodReadBy(node->use(calleeRegister))) {
@@ -817,8 +822,8 @@ bool Graph::passesNoFunctionObject(const Node* node)
     }
     if (!node->use(calleeRegister)->isBytecode(op_get_from_scope))
         return false;
-    // The function goes by where the environment of its module is, so that had better be known here too. (This says that the code
-    // rests on it: what is called does not look.)
+    // The callee finds its module's environment at a static distance from the Instance, without checking, so this code must depend
+    // on that distance too. distanceOfEnvironmentAccessed() records the dependency (usesStaticImports).
     return !!distanceOfEnvironmentAccessed(node->use(calleeRegister));
 }
 
@@ -852,7 +857,7 @@ void Graph::findBuiltinsCalled()
                 calleeRegister = bytecode.m_callee, argv = bytecode.m_argv;
             }
             Node* callee = node->use(calleeRegister);
-            // Math.floor(): what it is has been settled.
+            // For example Math.floor(): the callee is already known to be an intrinsic.
             if (callee->kind == NodeKind::Intrinsic) {
                 if (builtinWithNumber(callee->intrinsic) != Builtin::None)
                     node->builtinCalled = callee->intrinsic;
@@ -868,7 +873,8 @@ void Graph::findBuiltinsCalled()
             const StringImpl& name = *callee->graph->codeBlock()->identifier(read.m_property).impl();
             Receiver receiver = receiverOfType(base->type);
             if (receiver == Receiver::None) {
-                // What the source says it is, or, if it says nothing, what has a method of that name.
+                // Use the receiver type from the type table if there is one. Otherwise guess from which built-in types have a
+                // method with this name.
                 uint32_t tag = TypeTable::shared() ? typeTagOf(callee) : 0;
                 if (tag && TypeTable::shared()->isArray(tag) && mayBe(base->type, TArray))
                     receiver = Receiver::Array;
@@ -949,7 +955,7 @@ void Graph::elideReadsOfIteratorMethodsOfArrays()
 
 void Graph::elideReadsOfCalleesNotPassed()
 {
-    // How many of a read's uses want the value.
+    // For each read, the number of uses that need the value.
     UncheckedKeyHashMap<Node*, unsigned> wanted;
     Vector<Node*, 16> reads;
     auto note = [&](Node* user, const Use& use) {
@@ -983,10 +989,11 @@ void Graph::elideReadsOfCalleesNotPassed()
     for (Node* read : reads) {
         if (wanted.get(read))
             continue;
-        // Reading it does nothing that anybody can see: it holds the function, or is about to be given it (a declaration's is made
-        // when it is first read).
+        // The read has no observable effect: the variable holds the function, or is a lazily instantiated declaration, which is
+        // only created when it is first read.
         if (read->isBytecode(op_get_by_id)) {
-            // (Reading a method of what is no object throws. Of an object it does nothing that anybody can see.)
+            // (Reading a method from a value that is not an object throws, so that check stays. Reading it from an object has no
+            // observable effect.)
             if (closedMethodReadBy(read))
                 read->isReadOnlyToBeCalled = true;
             else
@@ -1013,7 +1020,7 @@ const void* Graph::identityOfScope(const Node* scope, unsigned depth)
         JSValue table = m_codeBlock->getConstant(reg);
         return table && table.isCell() ? table.asCell() : nullptr;
     };
-    // What comes by way of phis and of memory: all of it the same one.
+    // A scope that arrives through phis or stack slots: identified only if every source is the same scope.
     if (scope->kind != NodeKind::Bytecode) {
         Vector<const Node*, 16> worklist { scope };
         UncheckedKeyHashSet<const Node*> seen;
@@ -1031,7 +1038,7 @@ const void* Graph::identityOfScope(const Node* scope, unsigned depth)
                 worklist.append(node->uses[0].node);
                 break;
             case NodeKind::GetStack: {
-                // A register that lives in memory holds whatever was last put there.
+                // A register that is kept in its stack slot may hold the value of any store to that slot.
                 if (!std::exchange(m_hasStoresToFrameRegisters, true)) {
                     for (BasicBlock* block : m_rpo) {
                         for (Node* store : block->nodes) {
@@ -1048,7 +1055,7 @@ const void* Graph::identityOfScope(const Node* scope, unsigned depth)
                 break;
             }
             case NodeKind::Constant:
-                // What a register holds until it is given a scope. Nothing is read from that.
+                // The initial value of the register, before a scope is stored in it. No variable is read through it.
                 break;
             case NodeKind::Bytecode: {
                 const void* identity = identityOfScope(node, depth + 1);
@@ -1132,7 +1139,8 @@ Variable Graph::variableAccessedBy(const Node* node)
     switch (type) {
     case ResolvedClosureVar:
     case ResolvedLazyClosureVar:
-        // A store says which scope it is to: the constant that has the symbol table, which is what a scope goes by here.
+        // op_put_to_scope names the scope it stores to: its operand is the constant that holds the scope's symbol table, and that
+        // cell is how a scope is identified here.
         if (tableOfScope.isValid() && tableOfScope.isConstant()) {
             if (JSValue table = m_codeBlock->getConstant(tableOfScope); table && table.isCell())
                 return { table.asCell(), offset };
@@ -1145,7 +1153,7 @@ Variable Graph::variableAccessedBy(const Node* node)
     }
     if (auto variable = resolveStatically(identifier, localScopeDepth, type); variable.kind == StaticVariable::Import)
         return { variable.import.scope, variable.import.scopeOffset };
-    // One that was left to be looked for when the code is linked. It is not one of the function's own.
+    // An access whose scope is resolved when the code is linked. The variable is not a local of this function.
     if (m_declaredNames) {
         auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(identifier).impl());
         if (resolution.kind == DeclaredNamesLink::Resolution::Slot)
@@ -1164,7 +1172,7 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
             case op_put_to_scope: {
                 if (variableAccessedBy(node))
                     break;
-                // Is it in an environment record at all?
+                // Can the store be to a variable in an environment record at all?
                 auto bytecode = node->as<OpPutToScope>();
                 UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
                 ResolveType type = bytecode.m_getPutInfo.resolveType();
@@ -1192,7 +1200,7 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
                 break;
             }
             case op_create_scoped_arguments:
-                // An object by way of which the parameters that are in the record can be written.
+                // A scoped arguments object aliases the parameters in the environment record, so they can be written through it.
                 if (const void* scope = identityOfScope(node->use(node->as<OpCreateScopedArguments>().m_scope)))
                     summaries.giveUpOnScope(scope);
                 else {
@@ -1201,7 +1209,7 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
                 }
                 break;
             case op_call_direct_eval:
-                // Code that nobody has seen, which can write whatever is in sight of it.
+                // Direct eval runs code the compiler has not seen, which can write any variable in scope.
                 if (m_declaredNames)
                     m_declaredNames->forEachScope([&](const void* scope) { summaries.giveUpOnScope(scope); });
                 for (BasicBlock* other : m_rpo) {
@@ -1224,7 +1232,7 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
 
 void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExecutable)
 {
-    auto executableMadeBy = [&](Node* node) -> UnlinkedFunctionExecutable* {
+    auto executableCreatedBy = [&](Node* node) -> UnlinkedFunctionExecutable* {
         if (node->kind != NodeKind::Bytecode)
             return nullptr;
         switch (node->opcode) {
@@ -1236,31 +1244,12 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExec
             return nullptr;
         }
     };
-    auto valueIsUsed = [&](FunctionSummary* summary, FunctionSummary::ValueUseReason why, Node* user) {
-        summary->valueIsUsed.store(true, std::memory_order_relaxed);
-        uint32_t nothing = 0;
-        summary->valueUseReason.compare_exchange_strong(nothing, why | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8, std::memory_order_relaxed);
-    };
-    auto callsCallbackRepeatedly = [&](Node* user) {
-        Node* callee = user->isBytecode(op_call) ? user->use(user->as<OpCall>().m_callee) : user->isBytecode(op_call_ignore_result) ? user->use(user->as<OpCallIgnoreResult>().m_callee) : nullptr;
-        if (!callee || !callee->isBytecode(op_get_by_id))
-            return false;
-        static constexpr ASCIILiteral names[] = { "map"_s, "filter"_s, "forEach"_s, "some"_s, "every"_s, "find"_s, "findIndex"_s, "findLast"_s, "findLastIndex"_s, "reduce"_s, "reduceRight"_s, "flatMap"_s, "sort"_s, "toSorted"_s, "replace"_s, "replaceAll"_s };
-        const StringImpl& name = *m_codeBlock->identifier(callee->as<OpGetById>().m_property).impl();
-        for (ASCIILiteral candidate : names) {
-            if (WTF::equal(&name, candidate.span8()))
-                return true;
-        }
-        return false;
-    };
-    auto note = [&](BasicBlock* block, Node* user, const Use& use) {
-        // Where it is made, it is on its way to the variable. Anywhere else it goes, it has got out before it got there.
-        if (auto* executable = executableMadeBy(use.node)) {
-            if (auto* summary = summariesByExecutable.get(executable); summary && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value)) {
-                valueIsUsed(summary, FunctionSummary::AtCreationSite, user);
-                if (callsCallbackRepeatedly(user))
-                    summary->isUsedInLoop.store(true, std::memory_order_relaxed);
-            }
+    auto note = [&](Node* user, const Use& use) {
+        // At its creation site, the only use that does not count is the store that initializes its variable. Any other use lets the
+        // function object escape before it reaches the variable.
+        if (auto* executable = executableCreatedBy(use.node)) {
+            if (auto* summary = summariesByExecutable.get(executable); summary && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value))
+                summary->valueIsUsed.store(true, std::memory_order_relaxed);
             return;
         }
         if (!use.node->isBytecode(op_get_from_scope))
@@ -1269,9 +1258,7 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExec
         const KnownFunction* known = knownFunctionReadBy(use.node, &readIsExact);
         if (!known || !known->summary)
             return;
-        if (block->isInLoop || callsCallbackRepeatedly(user))
-            known->summary->isUsedInLoop.store(true, std::memory_order_relaxed);
-        // (`f?.()` asks whether there is anything to call.)
+        // (`f?.()` tests the callee for undefined and null.)
         if (user->isBytecode(op_check_tdz) || user->isBytecode(op_jundefined_or_null) || user->isBytecode(op_jnundefined_or_null))
             return;
         bool isCallee = false;
@@ -1281,21 +1268,21 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExec
             isCallee = use.reg == user->as<OpCallIgnoreResult>().m_callee;
         else if (user->isBytecode(op_tail_call))
             isCallee = use.reg == user->as<OpTailCall>().m_callee;
-        // (What may be a read of some other variable of that name is no proof of anything, either way.)
+        // (An inexact read may be of another variable with the same name, so it does not count as a direct call.)
         if (isCallee && readIsExact && known->forCall && knownCallee(user) == known && calleeIsExact(user)) {
             known->summary->directCalls.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        valueIsUsed(known->summary, !isCallee ? FunctionSummary::Operand : !readIsExact ? FunctionSummary::CalleeWithInexactRead : FunctionSummary::CalleeWithInexactCall, user);
+        known->summary->valueIsUsed.store(true, std::memory_order_relaxed);
     };
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
             for (auto& use : node->uses)
-                note(block, node, use);
+                note(node, use);
         }
         for (Node* phi : block->phis) {
             for (auto& use : phi->uses)
-                note(block, phi, use);
+                note(phi, use);
         }
     }
 }
@@ -1310,7 +1297,7 @@ void Graph::noteFieldsComparedWithStrings()
         JSValue constant = node->graph->codeBlock()->getConstant(node->reg);
         return constant && constant.isString();
     };
-    // Whatever the value may have been read from.
+    // Follows the value back to the property reads it may have come from.
     auto note = [&](auto& self, Node* node, unsigned depth) -> void {
         if (depth > 4)
             return;
@@ -1413,7 +1400,7 @@ void Graph::findListsOfArguments()
     if (numberOfUses.isEmpty())
         return;
 
-    // Of an array of the rest of the arguments or an arguments object: by calls that do not need there to be one.
+    // For a rest array or an arguments object: the number of uses by calls that can pass the arguments on without materializing it.
     UncheckedKeyHashMap<Node*, unsigned> numberOfAliasingUses;
     for (BasicBlock* block : m_rpo) {
         for (unsigned index = 0; index < block->nodes.size(); ++index) {
@@ -1424,7 +1411,8 @@ void Graph::findListsOfArguments()
                 ++numberOfAliasingUses.add(list, 0).iterator->value;
                 continue;
             }
-            // The last first. Nothing is between them and the call, so nobody can tell when they are done.
+            // In reverse order. They must come immediately before the call, with nothing in between that could observe when they
+            // run.
             Vector<Node*, 4> parts;
             if (list->isBytecode(op_spread))
                 parts.append(list);
@@ -1450,18 +1438,18 @@ void Graph::findListsOfArguments()
                 if (!part->isBytecode(op_spread))
                     continue;
                 Node* spread = part->use(part->as<OpSpread>().m_argument);
-                // (Iterating over an array comes to what is in it for as long as nobody has said otherwise.)
+                // (Spreading an array yields its elements, as long as array iteration has not been modified.)
                 if (spread->isBytecode(op_create_rest))
                     ++numberOfAliasingUses.add(spread, 0).iterator->value;
             }
         }
     }
 
-    // (What this function was passed is its caller's, and nobody writes to it.)
+    // (The arguments passed to this function are in the caller's frame, and nothing writes to them.)
     for (auto& [node, uses] : numberOfAliasingUses)
         node->isElided = uses == numberOfUses.get(node);
 
-    // An array that is made of others: [...a, ...b]. Likewise the spreads that nothing comes between and the making of it.
+    // An array built from other arrays: [...a, ...b]. The spreads immediately before it are elided in the same way.
     for (BasicBlock* block : m_rpo) {
         for (unsigned index = 0; index < block->nodes.size(); ++index) {
             Node* array = block->nodes[index];
@@ -1653,7 +1641,7 @@ uint32_t Graph::closedMethodReadBy(const Node* node)
 
 Type Graph::typeOfThisOnEntry() const
 {
-    // What gives an instance its fields is called by the constructor and by nothing else, on what has just been made.
+    // A class field initializer is only called by the constructor, on the instance that was just allocated.
     if (m_codeBlock->parseMode() == SourceParseMode::ClassFieldInitializerMode) {
         if (uint16_t layoutID = layoutIDOfThis())
             return typeOfObjectWithLayout(layoutID);
@@ -1688,7 +1676,7 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
         return std::nullopt;
     KnownShape shape;
     shape.inlineCapacity = KnownShape::inlineCapacityFor(count);
-    // As operationAOTNewObjectLiteral() finds them.
+    // Collects the property names the same way operationAOTNewObjectLiteral() does.
     auto& instructions = m_codeBlock->instructions();
     VirtualRegister object = node->as<OpNewObject>().m_dst;
     for (unsigned offset = node->bytecodeIndex.offset() + node->instruction->size(); shape.names.size() < count; offset += instructions.at(offset)->size()) {
@@ -1703,8 +1691,9 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
             return std::nullopt;
         shape.names.append(name);
     }
-    // (If it is still the literal that was looked at.)
-    // (All of it is in the object, what the family has no slot for coming after what it has. One that there is no room for like that is given what it has bit by bit.)
+    // Use the layout from the type table only if it describes this literal: the same names in the same order. All properties must
+    // fit inline, with the ones that have no slot in the typed layout after the ones that do. A literal that does not fit is
+    // initialized one property at a time.
     if (layout && layout->properties.size() == count && layout->capacity <= JSFinalObject::maxInlineCapacity) {
         bool isAsWritten = true;
         for (unsigned i = 0; i < count; ++i)
@@ -1716,12 +1705,13 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
             shape.inlineSlots = layout->inlineSlots;
             for (auto& property : layout->properties)
                 shape.slots.append(property.second);
-            // (An object of a closed family has room for what it can ever be given, which need not be all that the family has names for.)
+            // (An object with a closed typed layout gets room for the properties it can ever have, which may be fewer than the
+            // layout has names for.)
             shape.inlineCapacity = KnownShape::inlineCapacityFor(layout->layoutID ? std::min<unsigned>(layout->inlineSlots, layout->capacity) : layout->capacity);
             return shape;
         }
     }
-    // It is of the family all the same, if it is said to be of one: each property in the slot the family has for its name.
+    // Otherwise, if the allocation has a typed layout, each property goes in the slot the layout assigns to its name.
     if (uint16_t number = layoutIDOfNewObject(node)) {
         auto layout = TypeTable::shared()->typedLayout(number);
         BitVector taken;
@@ -1738,7 +1728,8 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
         shape.inlineCapacity = KnownShape::inlineCapacityFor(layout.inlineSlots);
         return shape;
     }
-    // (Nobody says what it is for. It may turn out to be for something that wants more room than it takes to make it.)
+    // (The allocation has no typed layout. The object may later be used as a type that needs more inline slots than the literal has
+    // properties, so reserve them now.)
     if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
         if (unsigned wanted = TypeTable::shared()->inlineSlotsNeededFor(shape.names.span()); wanted > count)
             shape.inlineCapacity = std::max(shape.inlineCapacity, KnownShape::inlineCapacityFor(wanted));
@@ -1784,7 +1775,7 @@ Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigne
             if (symbolTable->usesSloppyEval())
                 return result;
             if (entry.isModule) {
-                // An import, or a global: which, and where, is for when the modules have been linked.
+                // An import or a global. Which one, and where it is, is only known once the modules are linked.
                 result.kind = StaticVariable::Unresolved;
                 return result;
             }
@@ -1794,7 +1785,7 @@ Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigne
             if (m_declaredNames && type == GlobalProperty) {
                 auto resolution = m_declaredNames->resolve(uid);
                 if (resolution.kind == DeclaredNamesLink::Resolution::Slot) {
-                    // (It is none of the function's own: whatever made the bytecode would have said so.)
+                    // (Not a local of this function: the bytecode generator would have resolved that itself.)
                     result.kind = StaticVariable::Closure;
                     result.depth = depth + resolution.hops;
                     result.offset = ScopeOffset(resolution.offset);
@@ -1812,7 +1803,8 @@ Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigne
                 if (resolution.kind == DeclaredNamesLink::Resolution::Stable) {
                     result.kind = StaticVariable::ModuleImport;
                     result.depth = depth + resolution.hops;
-                    // Assigning to an import is an error that the environment of the module that imports it knows to throw.
+                    // Assigning to an import throws. That is left to the importing module's environment, so a name that is assigned
+                    // to is not accessed at a static location.
                     const StaticImport* import = m_linkage && !m_namesAssignedTo.get(identifierIndex) ? m_linkage->findImport(uid) : nullptr;
                     if (import) {
                         result.kind = StaticVariable::Import;
@@ -1827,7 +1819,7 @@ Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigne
             return result;
         case ScopeChainEntry::GlobalLexical:
         case ScopeChainEntry::Global:
-            // The operations that fill the caches look at what the name turned out to be, and only cache what stays put.
+            // Resolved at run time. The operations that fill the inline caches only cache bindings whose location cannot change.
             result.kind = StaticVariable::Unresolved;
             result.isGlobal = true;
             return result;
@@ -1843,7 +1835,7 @@ unsigned Graph::extraOfResolveScope(const OpResolveScope& bytecode)
 {
     if (resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType).isInGlobalScopes)
         return Site::resolvesInGlobalScopes;
-    // Too deep to be told from that is too deep to fit.
+    // A depth that would collide with Site::resolvesInGlobalScopes does not fit in the field.
     return bytecode.m_localScopeDepth < Site::resolvesInGlobalScopes ? bytecode.m_localScopeDepth : std::numeric_limits<unsigned>::max();
 }
 
@@ -1898,7 +1890,7 @@ void Graph::adoptInlinee(std::unique_ptr<Graph>&& other, InlineFrame frame)
 
 void Graph::computeOrderOfBlocks()
 {
-    // As Parser::computeReversePostOrder(), which has said which blocks are in loops of their own function's.
+    // The same algorithm as Parser::computeReversePostOrder(), which has already set isInLoop for the loops of each function.
     for (auto& block : blocks)
         block->isReachable = false;
     m_rpo.shrink(0);
@@ -2001,7 +1993,7 @@ void Node::dump(PrintStream& out) const
     case NodeKind::Guard:
         switch (guardKind) {
         case GuardKind::Whole:
-            out.print("Guard(", opcode, " bc#", bytecodeIndex.offset(), structureIsChecked ? ", structure checked" : "", slotIsPlain ? ", plain" : "", calleeIsChecked ? ", callee checked" : "", ")");
+            out.print("Guard(", opcode, " bc#", bytecodeIndex.offset(), structureIsChecked ? ", structure checked" : "", slotIsDirect ? ", plain" : "", calleeIsChecked ? ", callee checked" : "", ")");
             break;
         case GuardKind::Nothing:
             out.print("Guard()");
@@ -2018,8 +2010,8 @@ void Node::dump(PrintStream& out) const
         case GuardKind::SlotsAgree:
             out.print("GuardSlotsAgree(@", site->index, ", @", otherSite->index, ")");
             break;
-        case GuardKind::SlotIsPlain:
-            out.print("GuardSlotIsPlain(@", site->index, ")");
+        case GuardKind::SlotIsDirect:
+            out.print("GuardSlotIsDirect(@", site->index, ")");
             break;
         case GuardKind::BeginSlotChecks:
             out.print("BeginSlotChecks");
@@ -2160,7 +2152,7 @@ private:
     template<typename Functor>
     void forEachUse(const JSInstruction* instruction, const Functor& functor)
     {
-        // What the instruction as a whole reads: a register that one of its checkpoints wrote first is its own business.
+        // The registers the instruction reads as a whole. A register that one of its own checkpoints wrote earlier does not count.
         Vector<VirtualRegister, 4> defined;
         Vector<VirtualRegister, 8> seen;
         unsigned checkpoints = instruction->numberOfCheckpoints();
@@ -2210,7 +2202,8 @@ private:
         }
     }
 
-    // What there is a short way of doing that is worth leaving the fast copy of a loop for when it does not apply.
+    // Whether the instruction has a fast path that is worth a guard: when the guard fails, execution leaves the fast copy of the
+    // loop.
     bool canBeGuarded(const JSInstruction* instruction)
     {
         switch (instruction->opcodeID()) {
@@ -2246,12 +2239,12 @@ private:
         }
     }
 
-    // A function that does nothing but work something out from its arguments, in a straight line, once it has checked that they are
-    // what it takes them for. In the fast copy of a loop a call of one is replaced by what it works out: if the callee turns out to
-    // be another function, or a check fails, nothing has happened yet, and the generic copy makes the call.
+    // A function that only computes a value from its arguments, in straight-line code, after checking their types. In the fast copy
+    // of a loop, a call to one is replaced by that computation. If the callee turns out to be another function, or a check fails,
+    // nothing observable has happened yet, and the generic copy makes the call.
     //
-    // Every operation has to be one that the types make simple. The lowering of anything else calls the runtime, on behalf of an
-    // instruction that is not the caller's.
+    // Every operation must be one that the types make simple. The lowering of anything else calls the runtime, on behalf of an
+    // instruction that does not belong to the caller.
     bool canBeInlined(const KnownFunction* known, unsigned argumentCountIncludingThis)
     {
         UnlinkedFunctionCodeBlock* callee = known->forCall;
@@ -2374,7 +2367,8 @@ private:
         return returned && ok;
     }
 
-    // What the call comes to, its guards and all, at the end of the block. Null if the call is not one to do this to after all.
+    // Appends the inlined body of the call and its guards to the block, and returns the result. Returns null if the call cannot be
+    // inlined after all.
     Node* inlineCall(BasicBlock* block, const JSInstruction* call, unsigned offset)
     {
         if (call->opcodeID() != op_call)
@@ -2458,11 +2452,9 @@ private:
         return nullptr;
     }
 
-    // { a: x, b: y }: an op_new_object and, right after it, an op_put_by_id for each property (Options::evaluateObjectLiteralValuesFirst()).
-    // How many of those there are.
-    // What the fast copy of a loop does better than code that has caches to go by: numbers that are not boxed, elements got at by
-    // their index, a call that is not made. A loop that has none of it gains nothing by there being two of it.
-    static bool isBetterInFastCopy(OpcodeID opcode)
+    // What the fast copy of a loop does better than code that uses inline caches: unboxed numbers, indexed element accesses, and
+    // calls that are inlined. A loop with none of these gains nothing from being split.
+    static bool opcodeBenefitsFromFastCopy(OpcodeID opcode)
     {
         switch (opcode) {
         case op_add:
@@ -2522,7 +2514,7 @@ private:
         }
     }
 
-    // What the type of the base says of the property that the instruction gets at (GuardKind::Field).
+    // The typed field that the instruction accesses, according to the type of its base (GuardKind::Field).
     std::optional<TypeTable::Field> fieldReadBy(unsigned offset)
     {
         if (!Options::useAOTFunctionSplitting() || !TypeTable::shared())
@@ -2553,13 +2545,14 @@ private:
         return layoutID && base == instruction->as<OpCheckType>().m_value && m_graph.isTracked(base);
     }
 
-    // TypeTable::tableHasTypedFields(): the family that the base of the access after the op_type_tag there is said to be of, and where the base is.
+    // With typed fields: the typed layout of the base of the access that follows the op_type_tag at `offset`, and the register that
+    // holds the base.
     std::pair<uint16_t, VirtualRegister> layoutCheckedAt(unsigned offset)
     {
         if (!Options::useAOTTypedFields() || !TypeTable::hasTypedFields())
             return { };
         unsigned next = offset + m_instructions.at(offset)->size();
-        if (next >= m_instructions.size() || !goesByTypeWhereverItIs(next))
+        if (next >= m_instructions.size() || !usesTypedAccessWithoutGuard(next))
             return { };
         const JSInstruction* access = m_instructions.at(next).ptr();
         VirtualRegister base = access->opcodeID() == op_get_by_id ? access->as<OpGetById>().m_base : access->as<OpPutById>().m_base;
@@ -2568,7 +2561,8 @@ private:
         return { TypeTable::shared()->layoutIDOf(m_graph.typeTagAt(next)), base };
     }
 
-    // Likewise: where the base of the access after the op_type_tag there is, if it is said to be an array.
+    // Likewise: the register that holds the base of the access that follows the op_type_tag at `offset`, if the type table says it
+    // is an array.
     VirtualRegister arrayAssertedAt(unsigned offset)
     {
         if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
@@ -2588,8 +2582,9 @@ private:
         return base.isValid() && !base.isConstant() ? base : VirtualRegister();
     }
 
-    // Options::useAOTTypedFields() with one copy of the code: an access that goes by the type of the base does so in a loop as anywhere else, and wants no guard.
-    bool goesByTypeWhereverItIs(unsigned offset)
+    // With Options::useAOTTypedFields() and without function splitting, an access that relies on the type of its base does so
+    // inside loops as well as outside, and needs no guard.
+    bool usesTypedAccessWithoutGuard(unsigned offset)
     {
         if (!Options::useAOTTypedFields() || Options::useAOTFunctionSplitting() || !TypeTable::shared())
             return false;
@@ -2607,27 +2602,27 @@ private:
         return !!TypeTable::shared()->fieldOf(tag, m_codeBlock->identifier(identifier).impl());
     }
 
-    // With the blocks and the loops known: where the guards go. False if nowhere.
+    // Chooses where the guards go, once the blocks and loops are known. Returns false if there are none.
     bool chooseGuards()
     {
         if (!Options::useAOTLoopSplitting() || !Options::aotLoopSplittingPolicy() || !usesStubs || m_graph.loopsAreNotSplit)
             return false;
         unsigned size = m_instructions.size();
-        // Options::useAOTFunctionSplitting(): there are two copies of all of it, not just of the loops.
+        // With Options::useAOTFunctionSplitting() the whole function has two copies, not only its loops.
         BitVector fieldAccesses;
         if (Options::useAOTFunctionSplitting() && TypeTable::shared()) {
-            BitVector partOfWhatIsMade;
+            BitVector partOfAllocation;
             unsigned count = 0;
             for (const auto& instruction : m_instructions) {
                 unsigned offset = instruction.offset();
                 if (instruction->opcodeID() == op_new_object) {
                     for (unsigned store : m_graph.storesOfLiteral(offset))
-                        partOfWhatIsMade.set(store);
+                        partOfAllocation.set(store);
                 } else if (instruction->opcodeID() == op_create_this) {
                     for (auto& store : NewObjectPlan::forCreateThis(m_instructions, offset).stores)
-                        partOfWhatIsMade.set(store.offset);
+                        partOfAllocation.set(store.offset);
                 }
-                if (!partOfWhatIsMade.get(offset) && fieldReadBy(offset)) {
+                if (!partOfAllocation.get(offset) && fieldReadBy(offset)) {
                     fieldAccesses.set(offset);
                     ++count;
                 }
@@ -2639,10 +2634,10 @@ private:
         m_graph.hasTwoCopiesOfAll = hasTwoCopiesOfAll;
         struct OfBlock {
             Vector<unsigned, 8> guards;
-            bool hasWhatIsBetterInFastCopy { false };
+            bool benefitsFromFastCopy { false };
             bool hasRealCall { false };
-            // A call that the fast copy does not make, or an element got at by its index: each time round, that is a call less.
-            bool hasWhatIsMuchBetterInFastCopy { false };
+            // An inlined call or an indexed element access: each iteration makes one call fewer.
+            bool benefitsGreatlyFromFastCopy { false };
         };
         Vector<OfBlock> ofBlocks(m_graph.blocks.size());
         for (BasicBlock* block : m_graph.m_rpo) {
@@ -2684,26 +2679,26 @@ private:
                             m_recentFunctions.append({ bytecode.m_dst, known });
                     }
                 }
-                bool isGuarded = canBeGuarded(instruction) && !goesByTypeWhereverItIs(offset) && !isCheckSubsumedByAssertion(offset, block->bytecodeEnd);
+                bool isGuarded = canBeGuarded(instruction) && !usesTypedAccessWithoutGuard(offset) && !isCheckSubsumedByAssertion(offset, block->bytecodeEnd);
                 if (isGuarded)
                     ofBlock.guards.append(offset);
                 OpcodeID opcode = instruction->opcodeID();
                 if (isCallOrTheLike(opcode)) {
                     if (isGuarded) {
-                        ofBlock.hasWhatIsBetterInFastCopy = true;
-                        ofBlock.hasWhatIsMuchBetterInFastCopy = true;
+                        ofBlock.benefitsFromFastCopy = true;
+                        ofBlock.benefitsGreatlyFromFastCopy = true;
                     } else
                         ofBlock.hasRealCall = true;
-                } else if (isBetterInFastCopy(opcode)) {
-                    ofBlock.hasWhatIsBetterInFastCopy = true;
+                } else if (opcodeBenefitsFromFastCopy(opcode)) {
+                    ofBlock.benefitsFromFastCopy = true;
                     if (opcode == op_get_by_val || opcode == op_put_by_val)
-                        ofBlock.hasWhatIsMuchBetterInFastCopy = true;
+                        ofBlock.benefitsGreatlyFromFastCopy = true;
                 }
             }
         }
 
-        // The body of a loop is whatever gets to a jump back to its header without going through the header. A loop inside one that
-        // has two copies has two.
+        // The body of a loop is every block that reaches a back edge to its header without passing through the header. A loop
+        // nested in a split loop is split too.
         UncheckedKeyHashMap<BasicBlock*, BitVector> bodies;
         for (auto [from, header] : m_backEdges) {
             BitVector& body = bodies.ensure(header, [&] {
@@ -2727,8 +2722,8 @@ private:
             bool hasWhatIsMuchBetter = false;
             bool hasRealCall = false;
             for (unsigned index : body) {
-                hasWhatIsBetter |= ofBlocks[index].hasWhatIsBetterInFastCopy;
-                hasWhatIsMuchBetter |= ofBlocks[index].hasWhatIsMuchBetterInFastCopy;
+                hasWhatIsBetter |= ofBlocks[index].benefitsFromFastCopy;
+                hasWhatIsMuchBetter |= ofBlocks[index].benefitsGreatlyFromFastCopy;
                 hasRealCall |= ofBlocks[index].hasRealCall;
             }
             bool isProfitable = true;
@@ -2824,7 +2819,8 @@ private:
                 if (current)
                     current->bytecodeEnd = offset;
                 if (m_hasGuards && m_loopHeaders.get(offset)) {
-                    // Each of the three is followed by what it goes on to.
+                    // The header of a split loop gets three blocks: a reentry block, a pre-header and the header. The first two are
+                    // empty and end with a guard, and each is immediately followed by the block it falls through to.
                     BasicBlock* reentry = m_graph.addBlock();
                     reentry->bytecodeBegin = offset;
                     reentry->bytecodeEnd = offset;
@@ -2846,7 +2842,7 @@ private:
                 }
             }
             if (m_hasGuards && m_guards.get(offset)) {
-                // The block that comes right after is the one that goes on.
+                // A guard ends its block. The next block is the one it falls through to.
                 current->bytecodeEnd = offset;
                 current->endsWithGuard = true;
                 current = m_graph.addBlock();
@@ -2979,7 +2975,7 @@ private:
                 stack.removeLast();
             }
         };
-        // Handlers last in post order means first in the reverse; visiting them first keeps the root at the front.
+        // Visit the handlers first. They then come last in the reverse post order, which keeps the root at the front.
         for (BasicBlock* entrypoint : m_graph.catchEntrypoints)
             visitFrom(entrypoint);
         visitFrom(m_graph.root);
@@ -2993,7 +2989,7 @@ private:
             });
         }
 
-        // The body of a loop: whatever gets to the jump back without going through the header.
+        // The body of a loop: every block that reaches the back edge without passing through the header.
         for (auto [from, header] : backEdges) {
             header->isInLoop = true;
             Vector<BasicBlock*> worklist;
@@ -3012,7 +3008,7 @@ private:
         }
     }
 
-    // The instruction after the block counts too: inlineCall() may make it part of the block.
+    // The instruction after the block counts too, because inlineCall() may make it part of the block.
     template<typename Handler>
     static bool isCoveredBy(BasicBlock* block, const Handler& handler)
     {
@@ -3080,7 +3076,7 @@ private:
 
     struct SkippedStore {
         BasicBlock* block;
-        unsigned index; // In the nodes of the block: where it would have been.
+        unsigned index; // The index in the block's nodes where the store would have been.
         VirtualRegister reg;
         Node* value;
     };
@@ -3109,8 +3105,9 @@ private:
             m_graph.m_frameRegisterIndices[index] = numberOfFrameRegisters++;
         m_graph.frameRegisterTypes.fill(TNone, m_graph.numRegisters());
 
-        // It is for the sake of a handler that they do, which has nothing to go by but what is in memory. The number of a register is
-        // put to one use after another: what is in it is only anybody's business where a handler that reads it is still to come.
+        // Registers are kept in stack slots for exception handlers, which can only read values from memory. A register number is
+        // reused for unrelated values, so a store is only needed where a handler that reads the register can still be reached. This
+        // computes, for each block, the registers read by the handlers that cover it and by handlers reachable after it.
         m_skippedStores.clear();
         if (m_graph.catchEntrypoints.isEmpty() || m_needsEveryStore)
             return;
@@ -3148,7 +3145,8 @@ private:
         }
     }
 
-    // If it turns out that a register is read from memory somewhere other than on the way in to a handler.
+    // Emits the stores that were skipped, for when a register turns out to be read from its stack slot somewhere other than on
+    // entry to a handler.
     void makeSkippedStores()
     {
         for (unsigned i = m_skippedStores.size(); i--;) {
@@ -3183,7 +3181,7 @@ private:
             Node* node = m_graph.addNode(NodeKind::ConstantCell);
             node->range = IntegerRange::unknown();
             node->reg = reg;
-            // (What says how to make the array that a tagged template is passed has that array in its place by the time the code runs.)
+            // (A JSTemplateObjectDescriptor constant is replaced by the template object, an array, before the code runs.)
             node->type = value.asCell()->inherits<JSTemplateObjectDescriptor>() ? TArray : typeOfValue(value);
             m_constantCells[index] = node;
         }
@@ -3199,13 +3197,13 @@ private:
             Node* node = m_graph.addNode(NodeKind::LinkTimeConstant);
             node->range = IntegerRange::unknown();
             node->intrinsic = safeCast<uint16_t>(which.asInt32AsAnyInt());
-            node->type = TTop; // Which one it is is known, but not what the realm makes of it.
+            node->type = TTop; // The constant is known, but its value depends on the realm.
             return append(block, node);
         }
         if (reg.isConstant())
             return constantFor(reg);
         if (reg == VirtualRegister(CallFrameSlot::callee)) {
-            // Nothing writes it: read where it is wanted.
+            // Nothing writes the callee slot, so it is read at each use.
             Node* node = m_graph.addNode(NodeKind::Argument);
             node->reg = reg;
             node->type = TAnyObject;
@@ -3223,8 +3221,8 @@ private:
             return append(block, node);
         }
         if (!value) {
-            // Bytecode liveness says nothing reads this, and yet: it is a register that is only read on a path where it was
-            // never written, which is to say that op_enter's undefined is what it holds.
+            // Bytecode liveness says nothing reads this register. It is only read on a path where it was never written, so it holds
+            // the undefined that op_enter stored.
             return m_graph.constant(jsUndefined());
         }
         return value;
@@ -3243,8 +3241,7 @@ private:
                 node->reg = reg;
                 node->uses.append({ VirtualRegister(), value });
                 append(block, node);
-                // That is for whoever gets here by way of a handler, with nothing to go by but what is in memory. Everybody else
-                // knows what was put there.
+                // The store is for handlers, which can only read the value from memory. Other uses get the value directly.
             } else
                 m_skippedStores.append({ block, static_cast<unsigned>(block->nodes.size()), reg, value });
         }
@@ -3264,7 +3261,8 @@ private:
                 append(block, node);
                 set(block, node->reg, node);
             }
-            // Every local is undefined until op_enter says so again; a homed one needs its slot to hold a value from the start.
+            // Every local starts as undefined, as op_enter will store again. A register kept in a stack slot needs the slot to hold
+            // a value from the start.
             for (unsigned i = 0; i < m_graph.numLocals(); ++i)
                 set(block, virtualRegisterForLocal(i), m_graph.constant(jsUndefined()));
             return;
@@ -3291,14 +3289,14 @@ private:
             }
         }
 
-        RELEASE_ASSERT(m_literalsBeingMade.isEmpty());
+        RELEASE_ASSERT(m_pendingLiterals.isEmpty());
         for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
             const JSInstruction* instruction = m_instructions.at(offset).ptr();
             OpcodeID opcode = instruction->opcodeID();
-            // (Graph::typeTagAt())
+            // (See Graph::typeTagAt().)
             if (opcode == op_type_tag) {
-                // Of structs, it says more than that: what the next instruction gets at is of the family, or this does not go on. From here on whoever has the
-                // value in hand has something that is known for what it was born as, so it is a definition, as a check is.
+                // With typed layouts, op_type_tag is also a check: the base of the next instruction has the typed layout, or this
+                // throws. Later uses of the value can rely on the layout, so the node is a definition, as op_check_type is.
                 auto [layoutID, baseRegister] = layoutCheckedAt(offset);
                 bool isArray = false;
                 if (!layoutID) {
@@ -3311,11 +3309,11 @@ private:
                 Node* node = m_graph.addNode(NodeKind::Bytecode);
                 node->opcode = opcode;
                 node->instruction = instruction;
-                // (If it throws, it is on behalf of that instruction: what it says is what that would have said.)
+                // (If it throws, it does so on behalf of the next instruction, with the error that instruction would have thrown.)
                 node->bytecodeIndex = BytecodeIndex(offset + instruction->size());
                 node->uses.append({ baseRegister, base });
                 node->firstLayout = node->lastLayout = layoutID;
-                // (What a function that anybody may call is called on is whatever they please.)
+                // (The `this` of a function that escapes can be any value its callers choose.)
                 if (layoutID)
                     node->isTrusted = TypeTable::shared()->isTrusted(m_graph.typeTagAt(offset + instruction->size())) && !(TypeTable::shared()->isOpen(layoutID) && Graph::isThisOfEscapingFunction(base));
                 if (isArray)
@@ -3328,38 +3326,38 @@ private:
                 }
                 continue;
             }
-            // What comes next lets less by.
+            // The op_type_tag that follows checks for a narrower type.
             if (isCheckSubsumedByAssertion(offset, block->bytecodeEnd))
                 continue;
-            if (opcode == op_put_by_id && !m_literalsBeingMade.isEmpty() && m_literalsBeingMade.last().stores[m_literalsBeingMade.last().next] == offset) {
-                auto& literal = m_literalsBeingMade.last();
+            if (opcode == op_put_by_id && !m_pendingLiterals.isEmpty() && m_pendingLiterals.last().stores[m_pendingLiterals.last().next] == offset) {
+                auto& literal = m_pendingLiterals.last();
                 literal.node->uses.append({ NewObjectPlan::registerOf(literal.next), get(block, instruction->as<OpPutById>().m_value) });
                 if (++literal.next == literal.stores.size()) {
                     Node* node = literal.node;
-                    m_literalsBeingMade.removeLast();
+                    m_pendingLiterals.removeLast();
                     append(block, node);
                     set(block, node->reg, node);
                 }
                 continue;
             }
-            if (m_objectBeingPlanned && opcode == op_put_by_id) {
-                // One of the stores that the object is going to be made with the outcome of.
+            if (m_pendingCreateThis && opcode == op_put_by_id) {
+                // One of the stores whose values the object is going to be allocated with.
                 auto& stores = m_planOfObject.stores;
                 RELEASE_ASSERT(m_nextStoreOfPlan < stores.size() && stores[m_nextStoreOfPlan].offset == offset);
                 VirtualRegister reg = NewObjectPlan::registerOf(stores[m_nextStoreOfPlan].property);
                 Node* value = get(block, instruction->as<OpPutById>().m_value);
                 bool found = false;
-                for (auto& use : m_objectBeingPlanned->uses) {
+                for (auto& use : m_pendingCreateThis->uses) {
                     if (use.reg == reg) {
                         use.node = value;
                         found = true;
                     }
                 }
                 if (!found)
-                    m_objectBeingPlanned->uses.append({ reg, value });
+                    m_pendingCreateThis->uses.append({ reg, value });
                 if (++m_nextStoreOfPlan == stores.size()) {
-                    append(block, m_objectBeingPlanned);
-                    m_objectBeingPlanned = nullptr;
+                    append(block, m_pendingCreateThis);
+                    m_pendingCreateThis = nullptr;
                 }
                 continue;
             }
@@ -3367,7 +3365,7 @@ private:
             switch (opcode) {
             case op_new_object: {
                 VirtualRegister reg = instruction->as<OpNewObject>().m_dst;
-                // A register that a handler reads from memory is written where the instruction is.
+                // A register that a handler reads from its stack slot has to be written at the instruction itself.
                 if (!m_graph.isTracked(reg) || m_graph.isLiveIntoHandler(reg))
                     break;
                 auto stores = m_graph.storesOfLiteral(offset);
@@ -3381,12 +3379,13 @@ private:
                 node->bytecodeIndex = BytecodeIndex(offset);
                 node->numberOfLiteralProperties = stores.size();
                 node->reg = reg;
-                m_literalsBeingMade.append({ node, WTF::move(stores), 0 });
+                m_pendingLiterals.append({ node, WTF::move(stores), 0 });
                 continue;
             }
             case op_create_this: {
-                // A register that lives in memory is written where the instruction is.
-                // (An instance of a class of structs has its fields where their names say, not one after the other: they are stored one by one, by stores that know where.)
+                // A register that is kept in its stack slot has to be written at the instruction itself.
+                // (An instance with a typed layout has each field in the slot the layout assigns to its name, not in the order of
+                // the stores, so its fields are stored one at a time.)
                 if (m_graph.hasFrameRegisters() || block->isInLoop || m_graph.layoutIDOfThis())
                     break;
                 m_planOfObject = NewObjectPlan::forCreateThis(m_instructions, offset);
@@ -3402,7 +3401,7 @@ private:
                 node->reg = bytecode.m_dst;
                 node->block = block;
                 set(block, bytecode.m_dst, node);
-                m_objectBeingPlanned = node;
+                m_pendingCreateThis = node;
                 m_nextStoreOfPlan = 0;
                 continue;
             }
@@ -3414,7 +3413,7 @@ private:
             case op_enter:
                 for (unsigned i = m_codeBlock->numVars(); i--;)
                     set(block, virtualRegisterForLocal(i), m_graph.constant(jsUndefined()));
-                // It also puts the callee's scope in the scope register.
+                // op_enter also puts the callee's scope in the scope register.
                 if (m_codeBlock->scopeRegister().isValid()) {
                     Node* scope = m_graph.addNode(NodeKind::Bytecode);
                     scope->opcode = op_get_scope;
@@ -3425,10 +3424,10 @@ private:
                 }
                 continue;
             case op_iterator_close_check: {
-                // A branch that also writes a register, which is one thing too many for a node: a terminal has to come last,
-                // and what it defines has to be there for the phis of the successors and for the store of a homed register.
-                // So it is two nodes. The first is the iterator as the instruction leaves it. The second is the branch, and
-                // needs nothing but that to tell where to go (see Lowering::lowerIteratorCloseCheck()).
+                // This is a branch that also writes a register, which one node cannot represent: a terminal has to come last, and
+                // its definition has to be available to the phis of the successors and to the store to a stack slot. So it becomes
+                // two nodes. The first defines the iterator as the instruction leaves it. The second is the branch, which only
+                // needs that value to choose its target (see Lowering::lowerIteratorCloseCheck()).
                 auto bytecode = instruction->as<OpIteratorCloseCheck>();
                 auto addPart = [&] {
                     Node* node = m_graph.addNode(NodeKind::Bytecode);
@@ -3475,7 +3474,7 @@ private:
             }
 
             if (comesAfterGuard && block->predecessors[0]->terminal()->guardKind == GuardKind::Field) {
-                // The base got past the guard: whatever has it in hand has something that is known for what it was born as.
+                // The base passed the guard, so later uses of the value can rely on its typed layout.
                 Node* guard = block->predecessors[0]->terminal();
                 VirtualRegister baseRegister = opcode == op_get_by_id ? instruction->as<OpGetById>().m_base : instruction->as<OpPutById>().m_base;
                 Node* base = get(block, baseRegister);
@@ -3483,7 +3482,7 @@ private:
                 narrow->reg = baseRegister;
                 narrow->bytecodeIndex = BytecodeIndex(offset);
                 narrow->uses.append({ VirtualRegister(), base });
-                // (One that has no such property gets past it too.)
+                // (An object whose layout lacks the property passes the guard too.)
                 narrow->firstLayout = guard->firstWithout ? std::min(guard->firstLayout, guard->firstWithout) : guard->firstLayout;
                 narrow->lastLayout = std::max(guard->lastLayout, guard->lastWithout);
                 narrow->narrowedTo = typeOfObjectWithLayoutInRange(narrow->firstLayout, narrow->lastLayout);
@@ -3506,7 +3505,7 @@ private:
             if (opcode == op_call || opcode == op_call_ignore_result || opcode == op_tail_call) {
                 VirtualRegister thisRegister = Graph::operandsOfCall(instruction).argument(0);
                 for (auto& use : node->uses) {
-                    if (use.reg == thisRegister && m_graph.isScopeThatStandsForNoThis(use.node))
+                    if (use.reg == thisRegister && m_graph.isScopeUsedAsImplicitThis(use.node))
                         use.node = m_graph.constant(jsUndefined());
                 }
             }
@@ -3529,12 +3528,12 @@ private:
                 defs.append(reg);
             });
             if (opcode == op_check_type) {
-                // It leaves the register as it is, but from here on more is known about what is in it. That is what all of this
-                // is for: the check is a definition, of the same value with a smaller type.
+                // op_check_type does not change the register, but afterwards more is known about the value. So the check is a
+                // definition of the same value with a narrower type.
                 VirtualRegister reg = instruction->as<OpCheckType>().m_value;
                 if (m_graph.isTracked(reg)) {
                     node->reg = reg;
-                    // (What is in memory is the same value as before.)
+                    // (The stack slot already holds the same value.)
                     block->valuesAtTail[m_graph.registerIndex(reg)] = node;
                 }
             } else if (defs.size() == 1) {
@@ -3617,7 +3616,7 @@ private:
             return;
         }
 
-        // A terminal has to be the last node, and a SetStack or a Proj after it would not be.
+        // A terminal has to be the last node of its block, so it cannot be followed by a SetStack or a Proj.
         if (Node* last = block->terminal(); last && last->kind != NodeKind::Bytecode) {
             for (Node* node : block->nodes) {
                 if (node->kind == NodeKind::Bytecode && (isBranch(node->opcode) || isTerminal(node->opcode) || isThrow(node->opcode))) {
@@ -3628,11 +3627,11 @@ private:
         }
     }
 
-    // What is in the register on the way from one block to the other.
+    // The value of the register on the edge from one block to the other.
     Node* valueLeaving(BasicBlock* from, BasicBlock* to, unsigned index)
     {
         Node* value = from->valuesAtTail[index];
-        // What did not pass the test goes on as what it was.
+        // On the edge taken when the guard fails, the value keeps the type it had before.
         if (value && from->isReentry && to != from->successors[0] && value->kind == NodeKind::Narrow && value->block == from)
             return value->uses[0].node;
         return value;
@@ -3673,10 +3672,10 @@ private:
 
     void simplifyPhis()
     {
-        // A phi that only one value ever gets to is that value. The phis of a variable that a loop leaves alone have each other for
-        // inputs, all the way around the loop and through both copies of it, so this starts from the assumption that they are all
-        // nothing and looks for what contradicts it.
-        UncheckedKeyHashMap<Node*, Node*> origins; // Missing: nothing gets to it, so far. Itself: more than one value does.
+        // A phi that only one value reaches is replaced by that value. The phis of a variable that a loop does not modify have each
+        // other as inputs, all the way around the loop and through both of its copies. So this starts by assuming that no value
+        // reaches any phi, and iterates to a fixpoint.
+        UncheckedKeyHashMap<Node*, Node*> origins; // Missing: no value reaches it so far. Itself: more than one value does.
         auto originOf = [&](Node* node) -> Node* {
             while (node->kind == NodeKind::Narrow)
                 node = node->uses[0].node;
@@ -3723,7 +3722,7 @@ private:
             for (Node* node : block->nodes) {
                 for (auto& use : node->uses)
                     use.node = resolve(use.node);
-                // A variable that the loop leaves alone is on its way to the pre-header's phi, if to any.
+                // The target of a variable that the loop does not modify is the pre-header's phi, if it still exists.
                 if (node->target) {
                     node->target = resolve(node->target);
                     if (node->target->kind != NodeKind::Phi)
@@ -3741,26 +3740,26 @@ private:
     UnlinkedCodeBlock* m_codeBlock;
     const JSInstructionStream& m_instructions;
     Vector<Node*> m_constantCells;
-    // By bytecode offset, once the loops are known.
+    // Indexed by bytecode offset. Set once the loops are known.
     bool m_hasGuards { false };
     BitVector m_leaders;
     BitVector m_inLoop;
     BitVector m_guards;
     BitVector m_loopHeaders;
-    struct LiteralBeingMade {
-        Node* node; // The op_new_object, which is going to be put where the last of its stores is.
+    struct PendingLiteral {
+        Node* node; // The op_new_object, which is moved to where the last of its stores is.
         Vector<unsigned, 4> stores;
         unsigned next;
     };
-    Vector<LiteralBeingMade, 2> m_literalsBeingMade; // One inside the other.
-    Node* m_objectBeingPlanned { nullptr }; // An op_create_this that is going to be put where the last of its stores is.
+    Vector<PendingLiteral, 2> m_pendingLiterals; // Innermost last.
+    Node* m_pendingCreateThis { nullptr }; // An op_create_this that is moved to where the last of its stores is.
     NewObjectPlan m_planOfObject;
     unsigned m_nextStoreOfPlan { 0 };
     Vector<std::pair<BasicBlock*, BasicBlock*>> m_backEdges;
-    Vector<std::pair<VirtualRegister, unsigned>, 8> m_recentProperties; // In the block being looked at: what op_get_by_id put where.
-    Vector<std::pair<VirtualRegister, const KnownFunction*>, 8> m_recentFunctions; // And what op_get_from_scope probably did.
+    Vector<std::pair<VirtualRegister, unsigned>, 8> m_recentProperties; // In the current block: the property that op_get_by_id read into each register.
+    Vector<std::pair<VirtualRegister, const KnownFunction*>, 8> m_recentFunctions; // Likewise, the function that op_get_from_scope probably read.
     UncheckedKeyHashMap<UnlinkedFunctionCodeBlock*, bool> m_canBeInlined;
-    UncheckedKeyHashMap<unsigned, Node*, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_resultsOfInlinedCalls; // By the offset of the call.
+    UncheckedKeyHashMap<unsigned, Node*, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_resultsOfInlinedCalls; // Keyed by the bytecode offset of the call.
 };
 
 } // anonymous namespace

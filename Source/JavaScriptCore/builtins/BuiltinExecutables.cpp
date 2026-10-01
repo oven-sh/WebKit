@@ -341,7 +341,7 @@ UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
 JSC_FOREACH_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-void BuiltinExecutables::forEachOnItsOwn(const Function<void(unsigned index, UnlinkedFunctionExecutable*, const SourceCode&)>& functor)
+void BuiltinExecutables::forEachStandaloneBuiltin(const Function<void(unsigned index, UnlinkedFunctionExecutable*, const SourceCode&)>& functor)
 {
 #define ON_ITS_OWN(name, functionName, overrideName, length) { \
         SourceCode source = makeSource(StringImpl::createWithoutCopying(std::span { std::bit_cast<const Latin1Character*>(s_##name), static_cast<size_t>(length) }), SourceOrigin(), SourceTaintedOrigin::Untainted); \
@@ -368,7 +368,7 @@ FunctionExecutable* BuiltinExecutables::staticExecutableFor(BuiltinCodeIndex ind
     JSGlobalObject* realm = m_vm.m_realmForBuiltins;
     if (!realm) [[likely]]
         return nullptr;
-    return StaticHeap::builtinOfEngineFor(realm, static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });
+    return StaticHeap::engineBuiltinFor(realm, static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });
 }
 
 }

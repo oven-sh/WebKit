@@ -618,7 +618,8 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
 
     auto* propertyList = m_list;
     RefPtr<RegisterID> newObject;
-    // (What is said of the literal is said of the call that makes the copy: it may have to be laid out to suit its type, whatever it is a copy of.)
+    // (The type tag of the literal is attached to the call that creates the copy, because the copy may need the layout of its type,
+    // whatever it is a copy of.)
     if (propertyList->m_node->m_type & PropertyNode::Spread) {
         // Only one element and it is spread.
         if (!propertyList->m_next) {
@@ -656,8 +657,8 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
     }
 
     if (!newObject && generator.vm().bytecodeGenerationOptions.evaluateObjectLiteralValuesFirst) {
-        // { a: x, b: f() }: until it has all its properties nothing has a way of getting at the object, so when it is made makes no
-        // difference to anybody.
+        // { a: x, b: f() }: nothing can refer to the object until it has all of its properties, so the point at which it is
+        // allocated is not observable.
         constexpr unsigned maximumCount = 64;
         unsigned count = 0;
         bool isSimple = true;
@@ -670,7 +671,7 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
             Vector<RefPtr<RegisterID>, 8> values;
             for (auto* p = propertyList; p; p = p->m_next) {
                 RefPtr<RegisterID> value = generator.emitNode(p->m_node->m_assign);
-                // A variable may be another value by the time it is wanted.
+                // A variable may be reassigned before its value is stored, so copy it.
                 if (p->m_next && !value->isTemporary() && !value->virtualRegister().isConstant())
                     value = generator.move(generator.newTemporary(), value.get());
                 values.append(WTF::move(value));

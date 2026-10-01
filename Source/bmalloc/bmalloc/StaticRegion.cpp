@@ -141,9 +141,10 @@ bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size
         }
         return true;
     }
-    // For finding out who writes to it, which is allowed, and costs a page each time.
+    // A debugging aid for finding code that writes to the region. Writing is allowed, but each first write to a page makes a
+    // private copy of it.
     static const bool findWriters = !!getenv("BUN_STATIC_HEAP_READONLY");
-    // (=logall: of what is expected to be written to as well.)
+    // (=logall: also protects the arenas that are expected to be written to.)
     static const bool ofAll = findWriters && !strcmp(getenv("BUN_STATIC_HEAP_READONLY"), "logall");
     bool isReadOnly = findWriters && (ofAll || (arena != Arena::MutableCells && arena != Arena::MutableMalloc));
     void* result = mmap(wanted, size, isReadOnly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_PRIVATE, fileDescriptor, offsetInFile);
@@ -156,13 +157,12 @@ bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size
     return true;
 }
 
-// In Arena::MutableMalloc, what is asked for is preceded by how much was asked for: it may be given back, or be found too small,
-// when the program runs.
+// In Arena::MutableMalloc, each allocation is preceded by its requested size, because it may be freed or reallocated at run time.
 static constexpr size_t sizeOfHeader = 8;
 
-// What is in Arena::Malloc stays as it is once the region is built, so how big it is only matters until then, and is not in the
-// file: it is kept here, by where the thing is. And it is only kept clear of what comes next by as much as it has to be. Everything is
-// a multiple of this.
+// Allocations in Arena::Malloc are immutable once the region is built. Their sizes only matter until then, so they are kept in a
+// side table, indexed by address, and are not written to the file. Allocations are packed as tightly as alignment allows. Every
+// size is a multiple of this unit.
 static constexpr size_t unit = 8;
 
 static bool isInImmutableMalloc(const void* pointer)
@@ -187,8 +187,8 @@ static uint32_t& sizeOfImmutable(const void* pointer)
 
 static size_t unitsFor(size_t size) { return size ? (size + unit - 1) / unit : 1; }
 
-// What is freed while the region is being built is for the next one who asks for as much: what is not used again is in the file
-// all the same. By how many times 16 bytes it takes up, with what precedes it.
+// Memory that is freed while the region is being built is reused for later allocations, because unused memory would still end up in
+// the file. The free lists are indexed by size in units of 16 bytes, including the header.
 namespace {
 struct FreeBlock {
     FreeBlock* next;
@@ -228,7 +228,8 @@ static void* popFree(size_t which, size_t index)
     return block;
 }
 
-// So many units of Arena::Malloc, all zero. (What is too big for the lists is not used again.)
+// Frees that many units of Arena::Malloc, which must already be zeroed. (A block that is too large for the free lists is not
+// reused.)
 static void pushFreeImmutable(void* pointer, size_t units)
 {
     if (units && units < numberOfFreeLists)
@@ -276,12 +277,12 @@ void StaticRegion::clearFreeLists()
 static void* mallocImmutable(size_t size, size_t alignment)
 {
     RELEASE_BASSERT(size <= UINT32_MAX);
-    // Nothing whose size is not a multiple of 16 is, or is made of, what has to be at one.
+    // An object whose size is not a multiple of 16 cannot require, or contain anything that requires, 16-byte alignment.
     if (alignment <= 16)
         alignment = size % 16 || !size ? unit : 16;
     size_t units = unitsFor(size);
     if (alignment <= 16 && units + 1 < numberOfFreeLists) {
-        // The smallest that will do. What is left over of it is for somebody else.
+        // Best fit. The remainder of the block goes back on a free list.
         size_t atMultiple = firstFreeListInUse(immutableAtMultipleOf16, units);
         size_t other = firstFreeListInUse(immutableOthers, alignment == 16 ? units + 1 : units);
         if (atMultiple < numberOfFreeLists || other < numberOfFreeLists) {
@@ -314,7 +315,7 @@ void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
     if (alignment < 16)
         alignment = 16;
     if (size_t index = freeListFor(size); alignment == 16 && index < numberOfFreeLists) {
-        // The smallest that will do. What is left over of it is for somebody else.
+        // Best fit. The remainder of the block goes back on a free list.
         if (size_t found = firstFreeListInUse(mutableOnes, index); found < numberOfFreeLists) {
             auto* block = static_cast<char*>(popFree(mutableOnes, found));
             memcpy(block - sizeOfHeader, &size, sizeof(size));
@@ -335,7 +336,7 @@ void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
 size_t StaticRegion::mallocSize(const void* pointer)
 {
     if (isInImmutableMalloc(pointer)) {
-        // (Whoever wants to know that of what cannot change?)
+        // (The size of an immutable allocation is only needed while building.)
         RELEASE_BASSERT(s_isBuilding);
         return sizeOfImmutable(pointer);
     }
@@ -352,7 +353,7 @@ void* StaticRegion::reallocate(void* pointer, size_t newSize)
             size_t& used = s_used[static_cast<size_t>(Arena::Malloc)];
             size_t units = unitsFor(mallocSize(pointer));
             size_t newUnits = unitsFor(newSize);
-            // (Where it is has to do for what it is going to be, too.)
+            // (The current address also has to satisfy the alignment of the new size.)
             bool isWhereItMayBe = newSize % 16 || !(reinterpret_cast<uintptr_t>(pointer) & 15);
             if (reinterpret_cast<uintptr_t>(pointer) + units * unit == startOf(Arena::Malloc) + used && newUnits >= units && isWhereItMayBe && newSize <= UINT32_MAX && (newUnits - units) * unit <= arenaReservation - used) {
                 used += (newUnits - units) * unit;

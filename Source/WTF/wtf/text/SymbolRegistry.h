@@ -47,10 +47,11 @@ public:
 
     void remove(RegisteredSymbolImpl&);
 
-    // Symbols that were there before this was, are there for good, and are not this one's until they are asked for: another
-    // registry's, all static (becomeStatic()). It is only looked in. To be set before this has a symbol.
+    // Symbols that exist before this registry does, are immortal, and do not belong to it until they are first requested: those of
+    // another registry, all static (becomeStatic()). That registry is only read. It has to be set before this registry has a
+    // symbol.
     void setStaticRegistry(const SymbolRegistry* registry) { m_staticRegistry = registry; }
-    WTF_EXPORT_PRIVATE void becomeStatic(); // In memory that is never freed. From now on nothing of it changes.
+    WTF_EXPORT_PRIVATE void becomeStatic(); // The registry must be in memory that is never freed. It is immutable from now on.
     unsigned size() const { return m_table.size(); }
 
 private:

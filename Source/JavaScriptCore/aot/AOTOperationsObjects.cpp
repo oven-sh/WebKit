@@ -56,7 +56,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObject, JSObject*, (JSGlobalObject* glob
     if (StructureID structureID = cache[0].structureID)
         OPERATION_RETURN(scope, constructEmptyObject(vm, structureID.decode()));
 
-    // The same structure the other tiers would use, found the way they find it when a function is linked.
+    // The same structure that the other tiers use, found the way they find it when a function is linked.
     ObjectAllocationProfile profile;
     profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), inlineCapacity);
     Structure* structure = profile.structure();
@@ -64,7 +64,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObject, JSObject*, (JSGlobalObject* glob
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
 }
 
-// One that has nothing yet, of a family of structs: what it is given goes where the family has it.
+// Creates an empty object with a typed layout. Properties that are added later go in the slots that the layout assigns.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewTypedObject, JSObject*, (JSGlobalObject* globalObject, uint32_t layoutID, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -75,7 +75,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewTypedObject, JSObject*, (JSGlobalObject*
     OPERATION_RETURN(scope, Instance::newObjectOf(vm, structure));
 }
 
-// A class has been defined whose instances are structs of that family: they are born into it.
+// Records that a class has been defined whose instances have that typed layout, so that they are allocated with it.
 JSC_DEFINE_JIT_OPERATION(operationAOTNoteClass, void, (JSGlobalObject* globalObject, EncodedJSValue encodedConstructor, EncodedJSValue encodedPrototype, uint32_t layoutID))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -95,7 +95,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue va
     TypedLayoutTable::atomizeIfString(JSValue::decode(value));
 }
 
-// { ...source }, which is to be of that family of structs, if of any. A copy of one of the family is one.
+// { ...source }, where the result is to have that typed layout, if any. A copy of an object with the layout has the layout.
 JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue encodedSource, uint32_t layoutID))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -114,14 +114,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject* gl
     OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source, Instance::newObjectOf(vm, Instance::ensure(globalObject).emptyStructureForLayout(safeCast<uint16_t>(layoutID)))));
 }
 
-// An object literal: op_new_object and the op_put_by_id that follow it. values: what goes in each of the first `count` slots of the object:
-// which is the values of the properties one after the other, unless the literal is made as a layout that says otherwise
-// (KnownShape::slots). Then some may have nothing in them.
+// An object literal: op_new_object and the op_put_by_id instructions that follow it. values: the contents of the first `count`
+// slots of the object. These are the property values in order, unless the literal has a layout that assigns other slots
+// (KnownShape::slots), in which case some may be empty.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue* values, uint32_t count, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
     if (StructureID structureID = cache[0].structureID) {
-        // All that was missing was room.
+        // The structure is cached, so inline allocation only failed because the allocator had no free cell.
         Structure* structure = structureID.decode();
         if (uint16_t layoutID = structure->typedLayoutID(); layoutID && TypedLayoutTable::hasTypedFields() && structure->outOfLineCapacity()) [[unlikely]] {
             JSObject* object = Instance::newObjectOf(vm, structure);
@@ -156,8 +156,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
         inlineCapacityInBytecode = plan.inlineCapacity();
     } else {
         RELEASE_ASSERT(slots.empty());
-        // The first so many of Graph::storesOfLiteral(). Which they are was settled when the code was compiled: they are the stores
-        // to the register, whatever else there is in between.
+        // The first `count` entries of Graph::storesOfLiteral(). Which instructions they are was decided at compile time: they are
+        // the stores to the register, whatever else is in between.
         UnlinkedCodeBlock* codeBlock = callerCode(globalObject, callFrame);
         const JSInstruction* instruction = codeBlock->instructions().at(bytecodeIndexOfCaller(globalObject, callFrame)).ptr();
         inlineCapacityInBytecode = instruction->as<OpNewObject>().m_inlineCapacity;
@@ -178,7 +178,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     ObjectAllocationProfile profile;
     profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), inlineCapacityInBytecode);
     if (count > 1 || !slots.empty()) {
-        // All of it is known, so there is no call for a structure for every property on the way.
+        // All of the names are known, so there is no need to create a structure for each intermediate transition.
         Vector<UniquedStringImpl*, 32> names;
         for (unsigned i = 0; i < count; ++i)
             names.append(identifierOf(i).impl());
@@ -211,7 +211,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     OPERATION_RETURN(scope, object);
 }
 
-// op_create_this and the stores that follow it (NewObjectPlan). values: what each property ends up as.
+// op_create_this and the stores that follow it (NewObjectPlan). values: the final value of each property.
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlobalObject* globalObject, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -277,19 +277,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     if (!cacheable || last->isDictionary() || count > last->inlineCapacity() || object->butterfly() || first->mayBePrototype() || last->mayBePrototype())
         OPERATION_RETURN(scope, object);
 
-    // The site knows one function, and this is another: a class that extends the one whose constructor this is, as a rule.
+    // The site has cached one function, and this is another. Usually it is a subclass of the class whose constructor this is.
     if (cache->pointer && cache->pointer != constructor && !SharedData::contains(cache)) {
         if (first->propertyAccessesAreCacheable() && canUseMegamorphicPutFastPath(first))
             vm.ensureMegamorphicCache().initAsConstruction(first->id(), last->id(), cache);
         OPERATION_RETURN(scope, object);
     }
 
-    // What follows takes some doing. It works the first time or, as a rule, never.
+    // What follows is expensive. It either works the first time or, usually, never, so the attempts are limited.
     if ((cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
         OPERATION_RETURN(scope, object);
     cache->offset += 1u << Slot::attemptsShift;
 
-    // A store that leaves it to the prototypes made a property because none of them had anything to say. That has to stay so.
+    // An ordinary store added a property because nothing on the prototype chain intercepted it. The cache is only valid while that
+    // remains true.
     makePrototypeChainWatchable(vm, object);
     ObjectPropertyConditionSet conditions;
     for (unsigned i = 0; i < count; ++i) {
@@ -310,7 +311,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     OPERATION_RETURN(scope, object);
 }
 
-// Stub::ConstructByCalling. What op_create_this and the op_ret of code that constructs do, around a call.
+// For Stub::ConstructByCalling. Does what op_create_this and the op_ret of a constructor do, around a call to the code for call.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (CallFrame* callFrame))
 {
     auto* function = uncheckedDowncast<JSFunction>(callFrame->jsCallee());
@@ -404,9 +405,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayBuffer, JSObject*, (JSGlobalObject*
     OPERATION_RETURN(scope, CommonSlowPaths::allocateNewArrayBuffer(vm, structure, immutableButterfly));
 }
 
-// Which of the values are the results of op_spread is plain from the values: nothing else in a register is a JSCellButterfly.
-//     yetToBeSpread: which of them (a bit for each) are what is to be spread, and not what came of spreading it: nothing happens between
-//     when that would have been done and now (Graph::findListsOfArguments()).
+// Which values are results of op_spread is evident from the values: nothing else in a register is a JSCellButterfly.
+// yetToBeSpread: a bit mask of the values that have not been spread yet. Nothing observable happens between the point where that
+// would have been done and this call (Graph::findListsOfArguments()).
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue* encodedValues, uint32_t count, uint32_t yetToBeSpread))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -416,7 +417,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (JSGlobalObj
     };
 
     if (yetToBeSpread) {
-        // What iterating over an array comes to is what is in it, if nobody has said otherwise, and nobody can tell that it was not done.
+        // Iterating over an array yields its elements, as long as array iteration is unmodified, and skipping the iteration is then
+        // not observable.
         auto arrayToCopyFrom = [&](unsigned i) -> JSArray* {
             if (!(yetToBeSpread >> i & 1) || !values[i].isCell())
                 return nullptr;
@@ -460,7 +462,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (JSGlobalObj
                 }
             }
         }
-        // Each in its turn, then, as it would have been. (What has been made is where the collector looks: in the caller's frame.)
+        // Otherwise spread each value in turn, as the bytecode would have. (The results are stored in the caller's frame, where the
+        // collector finds them.)
         for (unsigned i = 0; i < count; ++i) {
             if (!(yetToBeSpread >> i & 1))
                 continue;
@@ -558,13 +561,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject* glob
 {
     AOT_OPERATION_BEGIN(globalObject);
     static constexpr bool areLegacyFeaturesEnabled = true;
-    // A RegExp is written to when it is matched with. One that was made when the program was built is the first VM's to write to.
+    // Matching writes to the RegExp. One in the static heap may only be written by the first VM.
     if (StaticHeap::isOnlyForFirstVM(regExp) && !StaticHeap::isFirst(vm)) [[unlikely]]
         regExp = RegExp::create(vm, uncheckedDowncast<RegExp>(regExp)->pattern(), uncheckedDowncast<RegExp>(regExp)->flags());
     OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), uncheckedDowncast<RegExp>(regExp), areLegacyFeaturesEnabled));
 }
 
-// op_new_reg_exp_shared. cache->pointer: the object that does for the site, which the code looks for before it comes here.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instance* instance, JSObject* object))
 {
     object->evictMistypedFields(*instance->vm);
@@ -583,13 +585,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, 
     return result;
 }
 
+// For op_new_reg_exp_shared. cache->pointer: the object that is shared by all executions of the site. Compiled code checks it
+// before calling this.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (JSGlobalObject* globalObject, JSCell* cell, uint32_t forTest, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
     if (StaticHeap::isOnlyForFirstVM(cell) && !StaticHeap::isFirst(vm)) [[unlikely]]
         cell = RegExp::create(vm, uncheckedDowncast<RegExp>(cell)->pattern(), uncheckedDowncast<RegExp>(cell)->flags());
     auto* regExp = uncheckedDowncast<RegExp>(cell);
-    // (The code takes what it finds there for good, which it is if nobody can put anything in the way of the builtin.)
+    // (Compiled code keeps using the cached object, which is only valid if nothing can intercept the call to the builtin.)
     if (!Options::useSharedRegExpLiteralObjects() || !RegExpObject::canShareLiteralAsReceiver(globalObject, forTest))
         OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
     RegExpObject* object = RegExpObject::createSharedLiteral(vm, globalObject->regExpStructure(), regExp);
@@ -597,12 +601,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (JSGlobalO
     OPERATION_RETURN(scope, object);
 }
 
-//     cache: for allocation. cache[0].pointer: the executable.
-//     isExpressionAndWhose: whether it is; above that, see functionOfBytecodeOfCaller().
+// cache: for allocation. cache[0].pointer: the executable.
+// isExpressionAndWhose: bit zero says whether it is a function expression. For the other bits, see bytecodeOwnerOfCaller().
 JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject* globalObject, JSScope* environment, uint32_t index, uint32_t isExpressionAndWhose, uint32_t kind, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    FunctionRef function = functionOfBytecodeOfCaller(globalObject, callFrame, isExpressionAndWhose >> 1);
+    FunctionRef function = bytecodeOwnerOfCaller(globalObject, callFrame, isExpressionAndWhose >> 1);
     FunctionExecutable* executable = isExpressionAndWhose & 1 ? function.functionExpr(index) : function.functionDecl(index);
     JSFunction* result = nullptr;
     switch (static_cast<FunctionKind>(kind)) {
@@ -619,13 +623,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject* gl
         result = JSAsyncGeneratorFunction::create(vm, globalObject, executable, environment);
         break;
     }
-    // Optimized code may take the only closure of a function for a constant. Once there have been two, nobody has to be told.
+    // Optimized code may constant-fold the only closure of a function. Once a second one has been created, the watchpoint has fired
+    // and no notification is needed.
     if (executable->singletonHasBeenInvalidated())
         fillAllocationCache(vm, callerData(globalObject, callFrame), cache, result->structure(), subspaceFor<JSFunction>(vm)->allocatorFor(JSFunction::allocationSize(0), AllocatorForMode::EnsureAllocator), 0, executable);
     OPERATION_RETURN(scope, result);
 }
 
-// (Not operationHasOwnProperty(): that goes by VM::hasOwnPropertyCache(), which is only there once the DFG has compiled something that looks in it.)
+// (Not operationHasOwnProperty(), which uses VM::hasOwnPropertyCache(). That only exists once the DFG has compiled code that uses
+// it.)
 JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (JSGlobalObject* globalObject, JSObject* object, EncodedJSValue encodedKey))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -682,8 +688,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateInternalFieldObject, JSObject*, (JSGl
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-//     cache: for allocation. cache[0].offset: the number of variables.
-// (How many variables there are is for what stands ahead of this: Emitter::newActivation().)
+// cache: for allocation. cache[0].offset: the number of variables.
+// (The inline path in front of this uses the number of variables: Emitter::newActivation().)
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateLexicalEnvironment, JSObject*, (JSGlobalObject* globalObject, JSScope* currentScope, JSCell* symbolTableCell, EncodedJSValue initialValue, uint32_t))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -704,11 +710,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScopeForHoistingFuncDeclInEval, Enco
     OPERATION_RETURN(scope, JSValue::encode(JSScope::resolveScopeForHoistingFuncDeclInEval(globalObject, environment, identifierAt(globalObject, callFrame, identifierIndex))));
 }
 
-// The arguments are read from where the caller of the function put them, which is not a place the function's code writes to.
+// The arguments are read from where the function's caller stored them, which the function's own code never writes to.
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateDirectArguments, JSObject*, (JSGlobalObject* globalObject, JSObject* callee, uint32_t count, EncodedJSValue* arguments, uint32_t numberOfParameters))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    // As DirectArguments::createByCopying().
+    // The same as DirectArguments::createByCopying().
     unsigned capacity = std::max(count, numberOfParameters);
     DirectArguments* result = DirectArguments::create(vm, globalObject->directArgumentsStructure(), count, capacity);
     for (unsigned i = count; i--;)
@@ -876,7 +882,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowTDZErrorOfThis, void, (JSGlobalObject*
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowTDZError, void, (JSGlobalObject* globalObject))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    // The name is what the source has at the call site that the caller left in its frame.
+    // The name is quoted from the source at the call site that the caller recorded in its frame.
     if (auto quote = quoteSourceWithoutText(vm, callFrame)) {
         throwException(globalObject, scope, quote->text.isNull() ? createTDZError(globalObject) : createTDZError(globalObject, StringView { quote->text }));
         OPERATION_RETURN(scope);
@@ -931,8 +937,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (JSGlobal
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
-// The two ways for the thunks in front of the put operations to end that take more than a store. Neither throws, but they return
-// to where an operation that may was called from.
+// The two endings of the thunks in front of the put operations that take more than a store. Neither throws, but they return to a
+// place that expects an operation that may throw.
 
 // For a new property that the megamorphic cache knows the transition for, where the object needs more storage first.
 JSC_DEFINE_JIT_OPERATION(operationAOTPutByIdReallocating, void, (VM* vmPointer, JSObject* base, EncodedJSValue value, const void* entryPointer))
@@ -964,7 +970,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTWriteBarrierAfterPut, void, (VM* vmPointer,
     OPERATION_RETURN(scope);
 }
 
-//     cache: as for cacheGetById(), of which this only does the simplest case.
+// cache: as for cacheGetById(). This only handles the simplest case.
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdDirect, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint32_t identifierIndex, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -1094,11 +1100,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInById, size_t, (JSGlobalObject* globalObje
     const Identifier& identifier = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = identifier.impl();
     JSObject* baseObject = asObject(base);
-    // (An array has a length, and a function a name, that their Structures say nothing of.)
+    // (An array's `length` and a function's `name` are not described by their Structures.)
     if (parseIndex(*uid) || !vm.megamorphicCache() || uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto)
         OPERATION_RETURN(scope, baseObject->hasProperty(globalObject, identifier));
 
-    // What the other tiers do for a site that sees objects of all kinds: the answer is left where generateFrontEndInById() finds it.
+    // What the other tiers do for a megamorphic site: the result is added to the cache that generateFrontEndInById() probes.
     PropertySlot slot(base, PropertySlot::InternalMethodType::HasProperty);
     JSObject* object = baseObject;
     bool cacheable = true;
@@ -1107,7 +1113,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInById, size_t, (JSGlobalObject* globalObje
             OPERATION_RETURN(scope, object->getNonIndexPropertySlot(globalObject, uid, slot));
         Structure* structure = object->structure();
         bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
-        structure = object->structure(); // (What is made of a static table when it is first asked for changes it.)
+        structure = object->structure(); // (Reifying a static property table changes the structure.)
         cacheable &= structure->propertyAccessesAreCacheable();
         if (hasProperty) {
             if (cacheable && slot.isCacheable() && (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary()))
@@ -1196,7 +1202,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutPrivateName, void, (JSGlobalObject* glob
         object->setPrivateField(globalObject, key, JSValue::decode(value), slot);
         OPERATION_RETURN_IF_EXCEPTION(scope);
         if (JSValue::decode(base) == object && slot.isCacheablePut() && slot.type() == PutPropertySlot::ExistingProperty && slot.base() == object && object->structure() == structureBefore) {
-            // Code that has folded the field to a constant has to hear about writes that go around the runtime.
+            // Code that has constant-folded the field has to be notified of writes that bypass the runtime.
             structureBefore->didCachePropertyReplacement(vm, slot.cachedOffset());
             cachePrivateName(vm, callerData(globalObject, callFrame), cache, object, JSValue::decode(property), slot.cachedOffset());
         }
@@ -1235,7 +1241,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckPrivateBrand, void, (JSGlobalObject* g
     OPERATION_RETURN_IF_EXCEPTION(scope);
     object->checkPrivateBrand(globalObject, JSValue::decode(brand));
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    // What brands an object has is a matter of its structure.
+    // An object's brands are determined by its structure.
     if (JSValue::decode(base) == object)
         cachePrivateName(vm, callerData(globalObject, callFrame), cache, object, JSValue::decode(brand), std::nullopt);
     OPERATION_RETURN(scope);
@@ -1311,7 +1317,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetPropertyEnumerator, JSCell*, (JSGlobalOb
     OPERATION_RETURN(scope, static_cast<JSCell*>(propertyNameEnumerator(globalObject, object)));
 }
 
-// Compiled code that knows no more of a number than that it is one hands it over as a double.
+// Compiled code that only knows that a value is a number passes it as a double.
 static ALWAYS_INLINE uint32_t enumeratorIndex(EncodedJSValue index)
 {
     JSValue value = JSValue::decode(index);

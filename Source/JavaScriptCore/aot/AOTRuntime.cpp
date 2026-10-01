@@ -74,7 +74,8 @@ void* nearCallTargetFor(void* code)
 {
     if (isJITPC(code))
         return code;
-    // Like the interpreter's entry points, an image is out of reach of a call instruction in the JIT's memory.
+    // Like the LLInt's entry points, code in an image is out of range of a near call from JIT memory, so the call goes through a
+    // thunk.
     static Lock lock;
     static NeverDestroyed<UncheckedKeyHashMap<void*, MacroAssemblerCodeRef<JSEntryPtrTag>>> thunks;
     Locker locker { lock };
@@ -89,7 +90,7 @@ void* nearCallTargetFor(void* code)
     return result.iterator->value.code().untaggedPtr();
 }
 
-extern "C" void* g_aotWaysIntoStaticFunctions[2]; // FunctionExecutable.cpp
+extern "C" void* g_aotStaticFunctionEntrypoints[2]; // FunctionExecutable.cpp
 
 RuntimeTable::RuntimeTable(VM& vm)
 {
@@ -110,11 +111,12 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
-    // What a FunctionExecutable in the short form has no room to say: ExecutableBase::wayIntoShortForm().
+    // A FunctionExecutable in the short form has no room for its entry points, so they are read from here:
+    // ExecutableBase::entrypointOfShortForm().
     set(Entry::EnterStaticFunctionForCall, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterStaticFunctionForCall)));
     set(Entry::EnterStaticFunctionForConstruct, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterStaticFunctionForConstruct)));
-    g_aotWaysIntoStaticFunctions[0] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForCall)];
-    g_aotWaysIntoStaticFunctions[1] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForConstruct)];
+    g_aotStaticFunctionEntrypoints[0] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForCall)];
+    g_aotStaticFunctionEntrypoints[1] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForConstruct)];
 
     auto addCallLinkInfo = [&](Entry entry, CallLinkInfo::CallType type) {
         auto info = makeUnique<VirtualCallInfo>();
@@ -158,9 +160,9 @@ RuntimeTable::RuntimeTable(VM& vm)
 
     installOperationFrontEnds(vm, m_entries);
 
-    // (With a JIT it has boundFunctionCallGenerator()'s thunk.)
+    // (With the JIT, bound functions use the thunk from boundFunctionCallGenerator().)
     if (usesStubs && !Options::useJIT())
-        vm.getBoundFunction(true, SourceTaintedOrigin::Untainted)->setCodeToBeCalledWith(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::CallBoundFunction))));
+        vm.getBoundFunction(true, SourceTaintedOrigin::Untainted)->setCallEntrypoint(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::CallBoundFunction))));
 }
 
 RuntimeTable::~RuntimeTable() = default;
@@ -176,7 +178,7 @@ struct Instance::Collections {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Collections);
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
-    bool hasAddsOfFields { false }; // Instance::addsOfFields
+    bool hasFieldAdditions { false }; // See Instance::fieldAdditions.
     // Functions linked without a Data, which would otherwise mark these. Their FunctionInfo points into the UnlinkedCodeBlock, which the
     // executable does not keep alive: an UnlinkedFunctionExecutable drops code that has aged (UnlinkedCodeBlock::maxAge).
     struct FunctionWithoutData {
@@ -184,32 +186,36 @@ struct Instance::Collections {
         UnlinkedCodeBlock* unlinkedCodeBlock;
     };
     Vector<FunctionWithoutData> functionsWithoutData;
-    // The slots that have, or have had, a transition. The collector goes over them again and again while it marks, and they are few.
+    // The slots that cache, or have cached, a structure transition. The collector revisits them repeatedly while marking. There are
+    // few.
     Vector<Slot*> transitions;
     Vector<Slot*> transitionsSinceLastCollection;
     Vector<PolymorphicSlots*> slotsOfSites;
-    UncheckedKeyHashMap<String, Structure*> shapes; // By inline capacity and the addresses of the names. Null: there is no such structure.
-    UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // By number: the ones that have been made.
-    // Instance::adopt(): what an object of a Structure turns into when it is made one of a family. Null: it cannot be. (Both are kept.)
-    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> adoptions;
-    // What goes where, for those of them that are not null: from which offset to which slot, and which field of the family it is (null: none).
+    UncheckedKeyHashMap<String, Structure*> shapes; // Keyed by inline capacity and the addresses of the names. Null: no such structure exists.
+    UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // Keyed by shape number. Holds the ones created so far.
+    // For Instance::adopt(): the Structure that an object with a given Structure gets when it is converted to a typed layout. Null:
+    // it cannot be converted. (Both structures are kept alive.)
+    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> convertedStructures;
+    // For each conversion that is possible: which property offset moves to which slot, and which field of the typed layout it
+    // becomes (null: none).
     struct LayoutConversionPlan {
         Vector<std::pair<PropertyOffset, uint16_t>> moves;
         Vector<const TypedLayoutTable::Field*> fields;
     };
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, LayoutConversionPlan> conversionPlans;
-    // Those that were turned down for what their Structure says. (Not kept: if another Structure comes to be where one of these was, its objects are read the long way, is all.)
-    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, ASCIILiteral> turnedDown; // And what for.
+    // Conversions that were rejected because of the Structure. (The Structure is not kept alive. If another Structure is later
+    // allocated at the same address, its objects only take the slow path.)
+    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, ASCIILiteral> rejectedConversions; // The value is the reason.
     UncheckedKeyHashMap<uint32_t, Structure*> emptyStructures;
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
-    size_t sizeOfInfos { 0 }; // If they are the Instance's own.
+    size_t sizeOfInfos { 0 }; // Zero unless the Instance owns them.
     size_t numberOfFunctions { 0 };
-    // Instance::allocateForData(). All in units of sixteen bytes from the Instance.
+    // For Instance::allocateForData(). Offsets from the Instance, in units of 16 bytes.
     size_t startOfDatas { 0 };
     size_t endOfDatasUsed { 0 };
     size_t endOfDatas { 0 };
-    Vector<std::pair<size_t, size_t>> freeAmongDatas; // Where and how much, in order.
+    Vector<std::pair<size_t, size_t>> freeAmongDatas; // Offset and size, sorted by offset.
 };
 
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
@@ -241,14 +247,14 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     size_t environmentsSize = 0;
     size_t size;
     size_t numberOfFunctions;
-    // (Addresses. It is memory once it is touched.)
+    // (Only address space is reserved. Pages are committed when they are first touched.)
     constexpr size_t roomForDatas = 256 * MB;
     auto startOfDatasFor = [](size_t numberOfFunctions) {
         return std::max<size_t>(roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + numberOfFunctions * sizeof(uint32_t)), static_cast<size_t>(leastStateWithData) << shiftOfStateWithData);
     };
     auto sizeFor = [&](size_t numberOfFunctions) { return startOfDatasFor(numberOfFunctions) + roomForDatas; };
     if (Image::environmentsSize() && !vm.m_aotInstanceOfProgram && StaticHeap::canPlaceCellsOf(vm)) {
-        // Where cells can be that the collector did not allocate.
+        // The environments are cells that the collector did not allocate, so they have to be in a block of the static heap.
         environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
         numberOfFunctions = Image::numberOfFunctionsOfImageWithEnvironments();
         size = sizeFor(numberOfFunctions);
@@ -276,8 +282,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->functionMetadataOffsets = environmentsSize ? StaticHeap::functionMetadataOffsets(vm) : nullptr;
     instance->constantsOfProgram = environmentsSize ? StaticHeap::constantsOfProgram(vm) : nullptr;
     instance->sharedData = SharedData::get();
-    // (Nothing of it is there until it is looked at.)
-    instance->fieldsNotJustRead = static_cast<uint8_t*>(OSAllocator::reserveAndCommit(sizeOfFieldsNotJustRead, OSAllocator::FastMallocPages));
+    // (Pages are committed when they are first touched.)
+    instance->fieldsWithObservableReads = static_cast<uint8_t*>(OSAllocator::reserveAndCommit(sizeOfFieldsWithObservableReads, OSAllocator::FastMallocPages));
     if (Image* image = Image::withCode()) {
         instance->code = static_cast<const uint8_t*>(image->code());
         instance->granulesOfCode = image->at<uint32_t>(image->header().granulesOfCodeOffset);
@@ -305,7 +311,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
             instance->structureIDsOfNewCopyOnWriteArrays[1] = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithDouble));
             instance->structureIDsOfNewCopyOnWriteArrays[2] = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithContiguous));
         }
-        // (The other tiers want to be told of the first of each kind that is made, and the second. If there are none, nobody does.)
+        // (The JIT tiers have to be notified of the first and second activation created for each SymbolTable. Inline allocation
+        // skips that, so it is only enabled without the JIT.)
         if (!Options::useJIT())
             instance->structureIDOfActivation = idOf(globalObject->activationStructure());
         instance->auxiliarySpace = &vm.auxiliarySpace();
@@ -318,7 +325,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->sentinelOfArrayIteration = vm.fastArrayUnboxedSentinel();
         instance->structureIDOfStrings = idOf(vm.stringStructure.get());
     }
-    // What the code has of the realm that only the engine's own functions can name. There are a handful, so they are made now, and the code has nothing to ask.
+    // Link-time constants, which only builtins can refer to. The image uses a handful, so they are initialized eagerly, and
+    // compiled code reads them without a check.
     if (Image* image = Image::withCode()) {
         MonotonicTime before = MonotonicTime::now();
         unsigned count = 0;
@@ -332,7 +340,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
             dataLogLn("AOT: ", count, " link-time constants made ready in ", (MonotonicTime::now() - before).microseconds(), " us");
     }
     memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
-    // (putDirect() does as it is told.)
+    // (putDirect() ignores the read-only attribute, so check that nothing has replaced an intrinsic on the global object.)
     for (unsigned number = 1; number < globalObject->immutableIntrinsics().size(); ++number) {
         const ImmutableIntrinsics::Entry& entry = ImmutableIntrinsics::shared()->at(number);
         if (entry.holder != ImmutableIntrinsics::globalObject)
@@ -354,7 +362,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     vm.m_aotInstances.append(instance);
     if (environmentsSize) {
         RELEASE_ASSERT(!vm.m_aotInstanceOfProgram);
-        // (StaticHeap::builtinOfEngineFor() went by that.)
+        // (StaticHeap::engineBuiltinFor() assumed that the first realm is the program's.)
         RELEASE_ASSERT(!vm.m_firstRealmHasBuiltinsOfStaticHeap || vm.m_firstRealm == globalObject);
         vm.m_aotInstanceOfProgram = instance;
     }
@@ -416,7 +424,7 @@ void Instance::destroy(Instance* instance)
     if (instance->collections->sizeOfInfos)
         OSAllocator::decommitAndRelease(instance->infos, instance->collections->sizeOfInfos);
     delete instance->collections;
-    OSAllocator::decommitAndRelease(instance->fieldsNotJustRead, sizeOfFieldsNotJustRead);
+    OSAllocator::decommitAndRelease(instance->fieldsWithObservableReads, sizeOfFieldsWithObservableReads);
     fastFree(instance->selectorsOnObjectPrototype);
     if (environmentsSize)
         StaticHeap::freeBlock(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
@@ -489,7 +497,7 @@ SUPPRESS_ASAN FunctionRef callerFunction(const CallFrame* callFrame)
         ImageAddressInfo what = classifyAddress(removeCodePtrTag(record->returnAddress));
         if (what.kind == ImageAddressInfo::Function) {
             FunctionRef function { instanceForFrame(record->previous), what.index };
-            // (What it is in the middle of may be what another does, that was made part of it.)
+            // (The return address may be in code that was inlined from another function.)
             if (function.info().function()->hasInlineFrames) [[unlikely]]
                 return function.locationForReturnAddress(removeCodePtrTag(record->returnAddress)).function;
             return function;
@@ -515,19 +523,19 @@ const RegisterAtOffsetList& adapterSavedRegisters()
         registers.add(GPRInfo::numberTagRegister, IgnoreVectors);
         registers.add(GPRInfo::notCellMaskRegister, IgnoreVectors);
         list.construct(registers);
-        // (In the order of their numbers, upwards.)
+        // (Registers are saved in increasing order of register number.)
         list->adjustOffsets(offsetOfInstanceRegisterInAdapter - list->find(instanceGPR)->offset());
         RELEASE_ASSERT(list->find(GPRInfo::numberTagRegister)->offset() == offsetOfNumberTagRegisterInAdapter && list->find(GPRInfo::notCellMaskRegister)->offset() == offsetOfNotCellMaskRegisterInAdapter);
     });
     return list.get();
 }
 
-bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesAreShared symbolTablesAreShared)
+bool hasOnlyRealmIndependentConstants(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesAreShared symbolTablesAreShared)
 {
     auto& constants = unlinkedCodeBlock->constantRegisters();
     auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
     for (unsigned i = 0; i < constants.size(); ++i) {
-        // (Code has those from the Instance: NodeKind::LinkTimeConstant.)
+        // (Compiled code reads link-time constants from the Instance: NodeKind::LinkTimeConstant.)
         if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
             continue;
         JSValue constant = constants[i].get();
@@ -542,14 +550,14 @@ bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesAre
     return true;
 }
 
-// The constants of unlinked code are good as they are, but for the ones that are of a realm.
+// The constants of the unlinked code can be used as they are, except for the ones that depend on the realm.
 static bool linkConstants(VM& vm, Data& data)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!data.unlinkedCodeBlock) {
-        // Whoever built the program has looked.
+        // This was determined when the program was built.
         const FunctionInfo& info = data.function().info();
-        if (info.constantsAreOfNoRealm()) {
+        if (info.hasOnlyRealmIndependentConstants()) {
             data.constants = info.constants;
             return true;
         }
@@ -577,25 +585,25 @@ static bool linkConstants(VM& vm, Data& data)
     UnlinkedCodeBlock* unlinkedCodeBlock = data.unlinkedCodeBlock;
     auto& constants = unlinkedCodeBlock->constantRegisters();
     auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
-    bool someAreOfTheRealm = false;
+    bool hasRealmDependentConstants = false;
     for (unsigned i = 0; i < constants.size(); ++i) {
         if (representations[i] == SourceCodeRepresentation::LinkTimeConstant) {
-            someAreOfTheRealm = true;
+            hasRealmDependentConstants = true;
             continue;
         }
         JSValue constant = constants[i].get();
         if (!constant || !constant.isCell())
             continue;
         if (auto* symbolTable = dynamicDowncast<SymbolTable>(constant.asCell())) {
-            // What becomes of these is a long story, about code from the other compilers (CodeBlock::setConstantRegisters()).
+            // A SymbolTable that is not shared has to be cloned for the JIT tiers, which CodeBlock::setConstantRegisters() does.
             if (!symbolTable->isSharedAcrossRealms()) {
                 data.constants = data.ensureCodeBlock()->constantRegisters().span().data();
                 return true;
             }
         } else if (constant.asCell()->inherits<JSTemplateObjectDescriptor>())
-            someAreOfTheRealm = true;
+            hasRealmDependentConstants = true;
     }
-    if (!someAreOfTheRealm) {
+    if (!hasRealmDependentConstants) {
         data.constants = constants.span().data();
         return true;
     }
@@ -641,8 +649,8 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->unlinkedCodeBlock = unlinkedCodeBlock;
     code.ref();
     data->code = &code;
-    // (Of a program that was put together with all it needs, they are what its FunctionInfo says. The unlinked code, if there is
-    // any, may have been decoded since, and has the same in a place of its own.)
+    // (With a static heap, use the identifiers from the FunctionInfo. The unlinked code, if it exists, may have been decoded later,
+    // and has its own copy of the same identifiers.)
     FunctionInfo& info = instance.infos[code.index()];
     data->identifiers = info.sites ? info.identifiers : unlinkedCodeBlock->identifiers().span().data();
     data->sites = code.sites();
@@ -655,7 +663,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     instance.setData(code.index(), data);
     data->indexAmongAll = instance.collections->all.size();
     instance.collections->all.append(data);
-    data->noteFilled(); // It is new.
+    data->noteFilled(); // New, so the next collection has to visit it.
 
     if (codeBlock)
         data->constants = codeBlock->constantRegisters().span().data();
@@ -674,19 +682,19 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
 
 Data* Instance::ensureData(uint32_t index)
 {
-    // (One that starts cold, and that only those have called that know what they are calling, has nothing there at all.)
+    // (A function that starts cold and has only been called directly has no Data yet.)
     Data* data = dataIfExists(index);
     if (data)
         return data;
     const FunctionInfo& info = infos[index];
     auto* executable = uncheckedDowncast<FunctionExecutable>(info.executable());
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfExists(info.kind());
-    // (An executable that was made when the program was built has no way of holding on to one.)
+    // (An executable in the static heap is read-only, so it cannot hold a reference to its JITCode.)
     Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function()), info.function() }, info.kind());
     RELEASE_ASSERT(code->index() == index);
     code->setInstance(*this);
     data = Data::create(*this, executable, unlinkedCodeBlock, code.get());
-    RELEASE_ASSERT(data); // Nothing that it is made of is made now.
+    RELEASE_ASSERT(data); // Cannot fail, because everything it links to already exists.
     return data;
 }
 
@@ -740,8 +748,8 @@ FunctionRef::Location FunctionRef::locationForReturnAddress(const void* returnAd
         asked = { returnAddress, index, site.value_or(Asked::hasNoSite) };
     }
     ASSERT(asked.function == index);
-    // Not every call is one that anybody was expected to ask about: what is called does not throw, and does not look at the stack. But
-    // something may look at the stack at any time (a profiler of allocations does). Then it is the function, and nowhere in particular.
+    // Not every call has a recorded site: the ones whose callee neither throws nor inspects the stack do not. But the stack can be
+    // walked at any time, for example by an allocation profiler. In that case, report the function without a position.
     if (asked.site == Asked::hasNoSite) [[unlikely]]
         return { *this, BytecodeIndex(), 0 };
     return locationForSite(*this, asked.site);
@@ -788,7 +796,7 @@ Data* FunctionRef::ensureData() const
 
 ScriptExecutable* FunctionRef::executable() const
 {
-    // (That of the code of a module is made when the program runs, so nothing that was made before says which it is.)
+    // (The executable of a module's top-level code is created at run time, so the FunctionInfo cannot refer to it.)
     if (Data* data = dataIfExists())
         return data->executable;
     return info().executable();
@@ -821,7 +829,7 @@ std::optional<std::pair<String, bool>> FunctionRef::quoteAt(BytecodeIndex byteco
 
 FunctionRef FunctionRef::of(CodeBlock* codeBlock)
 {
-    // (Not by way of its Data, which code that is not going to run again has let go of: CodeBlock::releaseAOTData().)
+    // (Not through its Data, which a CodeBlock that will not run again has released: CodeBlock::releaseAOTData().)
     if (codeBlock->jitType() != JITType::AOTJIT)
         return { };
     RefPtr generated = codeBlock->jitCode();
@@ -850,7 +858,7 @@ UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfExists() const
     return uncheckedDowncast<FunctionExecutable>(executable())->unlinkedExecutable()->codeBlockIfExists(info().kind());
 }
 
-// As many zeros as any function has bytes of instructions, in memory that is nobody's until somebody reads it.
+// A buffer of zeros as large as any function's instruction stream. Its pages are only committed if they are read.
 static std::span<const uint8_t> zerosForInstructions(size_t size)
 {
     static constexpr size_t most = static_cast<size_t>(1) << (32 - FunctionMetadata::shiftOfInstructionsSize);
@@ -865,7 +873,7 @@ static std::span<const uint8_t> zerosForInstructions(size_t size)
     return { zeros, size };
 }
 
-// It is not going to be interpreted, and whoever asks for one does not ask what the instructions are.
+// The result is never interpreted, and its users do not read the instructions.
 UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromMetadata() const
 {
     auto* metadata = this->metadata();
@@ -875,15 +883,15 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromMetadata() const
     PartsOfFunctionCode parts { };
     parts.scalars = StaticHeap::inData<uint8_t>(*scalars);
     parts.instructions = zerosForInstructions(metadata->instructionsSize());
-    // (Where the program has one table of them, the code goes by where a name is in that: which of the function's own identifiers is
-    // which is known to nobody. As with the instructions, whoever asks for one of these does not ask.)
+    // (When the program has one identifier table, compiled code refers to a name by its index in that table, and the function's own
+    // identifier list is not recorded. As with the instructions, users of the result do not read it.)
     parts.identifiers = StaticHeap::hasIdentifiersOfProgram() ? nullptr : static_cast<const Identifier*>(info().identifiers);
     parts.constants = static_cast<const WriteBarrier<Unknown>*>(info().constants);
     if (const uint32_t* word = metadata->find(FunctionMetadata::RealmConstants)) {
         const uint32_t* list = StaticHeap::inData<uint32_t>(*word);
         parts.linkTimeConstants = { list + 2, list[1] };
     }
-    // (Nor for the functions in it, which are asked for here: functionDecl(), functionExpr().)
+    // (The nested functions are not needed either. They are looked up through functionDecl() and functionExpr().)
     if (const uint32_t* words = metadata->find(FunctionMetadata::Handlers))
         parts.handlers = { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
     if (const uint32_t* word = metadata->find(FunctionMetadata::ExpressionInfo); word && !StaticHeap::hasPositionsOfCallSites())
@@ -899,8 +907,8 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
     DeferGCForAWhile deferGC(vm);
     DeferTerminationForAWhile deferTermination(vm);
     SuspendExceptionScope suspendExceptions(vm);
-    // It is the Data's. (The executable was there when the program was built, and to store to it is to have a page of one's own
-    // for the sake of a word.)
+    // The result is stored in the Data. (The executable is in the static heap. Storing one word to it would dirty a whole
+    // copy-on-write page.)
     Data* data = ensureData();
     UnlinkedCodeBlock* result = makeUnlinkedCodeBlockFromMetadata();
     if (!result)
@@ -917,7 +925,7 @@ const FunctionMetadata* FunctionRef::metadata() const
     if (!instance->functionMetadataOffsets)
         return nullptr;
     uint32_t at = instance->functionMetadataOffsets[index];
-    // (Odd: see reportedPositionFor().)
+    // (For odd values, see reportedPositionFor().)
     return at && !(at & 1) ? StaticHeap::inData<FunctionMetadata>(at) : nullptr;
 }
 
@@ -932,7 +940,7 @@ static uint64_t readVarint(const uint8_t*& at)
     }
 }
 
-// What StaticHeap's makePositions() wrote.
+// Decodes what makePositions() in StaticHeap.cpp wrote.
 auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstruction ofConstruction) const -> std::optional<ReportedPosition>
 {
     if (!instance->functionMetadataOffsets || !StaticHeap::hasPositionsOfCallSites())
@@ -946,7 +954,7 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
     }
     if (!at)
         return std::nullopt;
-    // Where the function starts: which is where it is, for want of anything better (a builtin has nothing that says where anything is).
+    // Start with the position of the function itself, which is the fallback. (A builtin has no other positions.)
     ReportedPosition result;
     result.lineColumn.line = static_cast<unsigned>(readVarint(at));
     result.lineColumn.column = static_cast<unsigned>(readVarint(at));
@@ -954,22 +962,23 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
     int64_t line = 0;
     int64_t column = 0;
     uint32_t source = 0;
-    auto withSignAtTheBottom = [](uint64_t value) {
+    auto zigZagDecode = [](uint64_t value) {
         return static_cast<int64_t>(value >> 1) ^ -static_cast<int64_t>(value & 1);
     };
     auto readPosition = [&]() -> ReportedPosition {
         uint64_t word = readVarint(at);
         if (word & 1)
-            column += withSignAtTheBottom(word >> 1);
+            column += zigZagDecode(word >> 1);
         else {
-            line += withSignAtTheBottom(word >> 2);
+            line += zigZagDecode(word >> 2);
             if (word & 2)
                 source = static_cast<uint32_t>(readVarint(at));
             column = static_cast<int64_t>(readVarint(at));
         }
         return { { static_cast<unsigned>(line), static_cast<unsigned>(column) }, source };
     };
-    // The last that is not past it: every place that a frame can say it is at is there, so that is the very one.
+    // Find the last entry that is not past the bytecode index. Every index that a frame can report has an entry, so this is an
+    // exact match.
     for (uint64_t count = readVarint(at); count--;) {
         uint64_t word = readVarint(at);
         offset += word >> 1;
@@ -1083,7 +1092,7 @@ std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionE
 void Data::destroy(Data* data)
 {
     Instance& instance = *data->instance;
-    // (MegamorphicCache::ConstructionEntry::m_site)
+    // (Invalidates MegamorphicCache::ConstructionEntry::m_site.)
     if (auto* cache = instance.vm->megamorphicCache())
         cache->bumpEpoch();
     RELEASE_ASSERT(instance.dataIfExists(data->code->index()) == data);
@@ -1131,7 +1140,7 @@ CodeBlock* Data::ensureCodeBlock()
         function().ensureUnlinkedCodeBlock();
     RELEASE_ASSERT(unlinkedCodeBlock->codeType() == FunctionCode);
     DeferGCForAWhile deferGC(vm);
-    // Whoever asks may well be dealing with an exception, and this is no place to find out that the VM has been told to stop.
+    // The caller may be handling an exception, so this must not observe a pending termination request.
     DeferTerminationForAWhile deferTermination(vm);
     SuspendExceptionScope suspendExceptions(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1183,7 +1192,7 @@ static FunctionExecutable* functionOf(Data& data, unsigned index, const WriteBar
 
 FunctionExecutable* Data::functionDecl(unsigned index)
 {
-    // A module shares them with whoever else runs its code.
+    // A module's code shares its nested functions with the other tiers that run it.
     if (function().codeType() != FunctionCode)
         return codeBlock->functionDecl(index);
     return functionOf(*this, index, function().functionDecls()[index]);
@@ -1227,7 +1236,7 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
     uint32_t index = code->index();
     if (instance.isLinked(index))
         RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
-    else if (code->imageFunction()->startsCold && !instance.infos[index].sites && constantsAreOfNoRealm(unlinkedCodeBlock)) {
+    else if (code->imageFunction()->startsCold && !instance.infos[index].sites && hasOnlyRealmIndependentConstants(unlinkedCodeBlock)) {
         if (!instance.collections->sizeOfInfos && Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: nothing was known of function ", index, " when the program was built");
         fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
@@ -1316,13 +1325,15 @@ void Instance::noteTransitionCached(Slot* slot)
     collections->transitionsSinceLastCollection.append(slot);
 }
 
-// What was there at the last collection and has not been filled since refers to nothing that is young.
+// With onlyNew, a Data that existed at the last collection and has not been filled since is skipped, because it refers to no young
+// objects.
 template<typename Visitor>
 void Instance::visit(Visitor& visitor, bool onlyNew)
 {
     for (Data* data : onlyNew ? collections->filledSinceLastCollection : collections->all)
         data->visit(visitor);
-    // Code that has cached a transition can put an object that has already been visited in the new structure.
+    // Code with a cached transition can move an object that was already visited to the new structure, so the new structure has to
+    // be marked.
     auto visitTransitions = [&](const Vector<Slot*>& slots) {
         for (Slot* slot : slots) {
             if (hasTransition(*slot) && visitor.isMarked(slot->structureID.decode()))
@@ -1340,7 +1351,7 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
         visitor.appendUnbarriered(structure);
     for (Structure* structure : collections->emptyStructures.values())
         visitor.appendUnbarriered(structure);
-    for (auto& [from, to] : collections->adoptions) {
+    for (auto& [from, to] : collections->convertedStructures) {
         visitor.appendUnbarriered(from.first);
         if (to)
             visitor.appendUnbarriered(to);
@@ -1431,52 +1442,54 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
         return false;
     };
     if (object->type() != FinalObjectType)
-        return no("it is no plain object"_s);
+        return no("it is not a plain object"_s);
     if (old->typedLayoutID())
-        return no("it is of another type's family"_s);
+        return no("it already has the layout of another type"_s);
     if (!capacity)
-        return no("there is no such family"_s);
+        return no("the type has no layout"_s);
     unsigned inlineSlots = TypedLayoutTable::inlineSlots(layoutID);
-    // Of a family whose slots are verified an object has what there is room for where the family has it, and the rest wherever: whoever reads asks first (Structure::fieldIDInSlot()).
+    // With a typed layout that uses field IDs, an object has as many fields in their assigned slots as it has room for, and the
+    // rest anywhere. Readers check the slot first (Structure::fieldIDInSlot()).
     bool usesFieldIDs = TypedLayoutTable::usesFieldIDs(layoutID);
     if (usesFieldIDs) {
         if (old->cannotConvertToTypedLayout())
-            return no("its like is never adopted"_s);
+            return no("objects with its structure cannot be converted"_s);
         capacity = inlineSlots = std::min<unsigned>(inlineSlots, old->inlineCapacity());
         if (!capacity) {
             old->setCannotConvertToTypedLayout();
-            return no("it has no room"_s);
+            return no("it does not have enough inline capacity"_s);
         }
     }
     if (old->hasPolyProto())
-        return no("of its prototype"_s);
+        return no("its prototype is not supported"_s);
     if (old->mayBePrototype())
-        return no("it is a prototype"_s);
-    // (Which private methods it has is for its Structure to say, and for no other.)
+        return no("it is used as a prototype"_s);
+    // (The private methods of an object are identified by its Structure, so the Structure cannot be replaced.)
     if (old->isBrandedStructure())
         return no("it has private methods"_s);
     if (old->inlineCapacity() < inlineSlots)
-        return no("it has no room"_s);
+        return no("it does not have enough inline capacity"_s);
     if (!old->isStructureExtensible())
         return no("it is not extensible"_s);
     if (old->isDictionary() && old->isUncacheableDictionary())
-        return no("it has been through too much (a dictionary)"_s);
+        return no("it is a dictionary"_s);
     Instance& instance = ensure(old->globalObject());
-    if (auto it = instance.collections->turnedDown.find({ old, layoutID }); it != instance.collections->turnedDown.end())
+    if (auto it = instance.collections->rejectedConversions.find({ old, layoutID }); it != instance.collections->rejectedConversions.end())
         return no(it->value);
-    auto noneOfItsLike = [&](ASCIILiteral why) {
-        if (!old->isDictionary() && instance.collections->turnedDown.size() < 4096)
-            instance.collections->turnedDown.add({ old, layoutID }, why);
+    auto rejectStructure = [&](ASCIILiteral why) {
+        if (!old->isDictionary() && instance.collections->rejectedConversions.size() < 4096)
+            instance.collections->rejectedConversions.add({ old, layoutID }, why);
         return no(why);
     };
-    // What the family has no slot for comes after the family's: in the object if all the family's are, and there is room; if not, outside.
-    Vector<std::pair<PropertyOffset, uint16_t>, 16> moves; // From where to which slot, in the order the properties are in.
+    // Properties without a slot in the typed layout come after the layout's slots: inline if all of the layout's slots are inline
+    // and there is room, otherwise out of line.
+    Vector<std::pair<PropertyOffset, uint16_t>, 16> moves; // From which offset to which slot, in property order.
     Vector<UniquedStringImpl*, 16> names;
     Vector<uint16_t, 16> slots;
-    Vector<const TypedLayoutTable::Field*, 16> fields; // Null: the family has no such name.
+    Vector<const TypedLayoutTable::Field*, 16> fields; // Null: the typed layout has no field with that name.
     Vector<unsigned, 16> attributes;
-    Vector<const TypedLayoutTable::Field*, 4> accessors; // Names of the family that are no fields of this.
-    // (The slots are numbered as for an object with room for just so many, so what is left of a bigger one goes unused.)
+    Vector<const TypedLayoutTable::Field*, 4> accessors; // Fields of the typed layout that are accessors on this object.
+    // (Slots are numbered as for an object with exactly `capacity` inline slots, so any extra inline capacity goes unused.)
     if (auto plan = instance.collections->conversionPlans.find({ old, layoutID }); plan != instance.collections->conversionPlans.end()) {
         moves = plan->value.moves;
         fields = plan->value.fields;
@@ -1496,7 +1509,8 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
             } else
                 isPlain &= !entry.attributes();
             attributes.append(entry.attributes());
-            // (Two names have one slot if no type has both. Whichever of them was given it, whoever reads the other would get that.)
+            // (Two names share a slot if no type has both. If an object had both, a read of one name would return the value of the
+            // other.)
             hasTwoForOneSlot |= field && !usesFieldIDs && taken.get(field->slot);
             unsigned slot = field && field->slot < capacity && !taken.get(field->slot) ? field->slot : next++;
             taken.set(slot);
@@ -1507,48 +1521,49 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
             return true;
         });
         if (!isPlain)
-            return noneOfItsLike("it has a property that is not plain"_s);
+            return rejectStructure("it has a property that is not a plain data property"_s);
         if (hasTwoForOneSlot)
-            return noneOfItsLike("it has two properties that no type has together"_s);
-        // (Where the slots are verified, whoever reads what is not there finds that out.)
+            return rejectStructure("it has two properties that share a slot"_s);
+        // (With field IDs, a read of a missing field detects that it is missing.)
         for (auto& field : TypedLayoutTable::fieldsOf(layoutID)) {
             if (!usesFieldIDs && !field.mayBeAbsent && !taken.get(field.slot))
-                return noneOfItsLike("it lacks a property that the type says it has"_s);
+                return rejectStructure("it lacks a required property"_s);
         }
-        // What it has no property of its own for it must not have from anywhere else: code that finds nothing in the slot looks no further.
+        // A field that the object lacks must not be inherited either, because code that finds the slot empty does not search the
+        // prototype chain.
         if (JSValue prototype = old->storedPrototype(); prototype.isObject() && asObject(prototype) != old->globalObject()->objectPrototype()) {
-            // (Which slots are taken does not say which names are.)
+            // (With field IDs, the occupied slots do not identify which names are present.)
             if (usesFieldIDs) {
                 if (!old->isDictionary())
                     old->setCannotConvertToTypedLayout();
-                return no("of its prototype"_s);
+                return no("its prototype is not supported"_s);
             }
             UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
             for (JSObject* holder = asObject(prototype); holder && holder != old->globalObject()->objectPrototype();) {
                 if (holder->type() != FinalObjectType && holder->type() != ObjectType)
-                    return no("of its prototype"_s);
+                    return no("its prototype is not supported"_s);
                 for (auto& field : TypedLayoutTable::fieldsOf(layoutID)) {
                     if (!taken.get(field.slot) && isValidOffset(holder->structure()->get(vm, PropertyName(Identifier::fromUid(vm, identifiers[field.identifier])))))
-                        return no("it inherits a property that the type has"_s);
+                        return no("it inherits a property that the type declares"_s);
                 }
                 JSValue next = holder->structure()->storedPrototype(holder);
                 holder = next.isObject() ? asObject(next) : nullptr;
             }
         }
     }
-    // What is in it has to be what the slots hold. (Which may take making something else what it has to be.)
+    // The values have to be valid for their fields. (Checking a value may convert another object to a typed layout.)
     Vector<JSValue, 16> values;
     for (unsigned i = 0; i < moves.size(); ++i) {
         JSValue value = object->getDirect(moves[i].first);
-        // (A name of the family holds what it holds wherever it is: whoever stores by it is held to that.)
+        // (A field's type applies wherever the value is stored, because every store by that name is checked against it.)
         if (fields[i] && TypedLayoutTable::checkStore(*fields[i], value) == TypedLayoutTable::StoreCheck::Rejected)
-            return no("a property of it is not what the type says"_s);
+            return no("the value of a property does not match its declared type"_s);
         values.append(fields[i] ? TypedLayoutTable::toFieldRepresentation(*fields[i], value) : value);
     }
     if (object->structure() != old)
-        return object->structure()->typedLayoutID() == layoutID; // It has itself in it.
+        return object->structure()->typedLayoutID() == layoutID; // The object refers to itself, and was converted by the check above.
     Structure* converted;
-    if (auto it = instance.collections->adoptions.find({ old, layoutID }); it != instance.collections->adoptions.end())
+    if (auto it = instance.collections->convertedStructures.find({ old, layoutID }); it != instance.collections->convertedStructures.end())
         converted = it->value;
     else {
         DeferGC deferGC(vm);
@@ -1559,7 +1574,7 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
         if (converted)
             converted->copyAccessorAndReadOnlyFlagsFrom(*old);
         if (converted && usesFieldIDs) {
-            // (As Structure::noteFieldAdded() would have it.)
+            // (The same result as calling Structure::noteFieldAdded() for each field.)
             uint16_t fieldIDInSlot[Structure::numberOfSlotsWithFieldIDs] { };
             for (auto* field : accessors) {
                 if (field->slot < Structure::numberOfSlotsWithFieldIDs)
@@ -1567,14 +1582,14 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
             }
             for (unsigned i = 0; i < fields.size(); ++i) {
                 if (auto* field = fields[i]; field && field->slot < Structure::numberOfSlotsWithFieldIDs)
-                    fieldIDInSlot[field->slot] = !fieldIDInSlot[field->slot] && field->slot < capacity && slots[i] == field->slot ? field->id : Structure::ambiguousFieldID; // (From `capacity` on the numbers are of places outside the object.)
+                    fieldIDInSlot[field->slot] = !fieldIDInSlot[field->slot] && field->slot < capacity && slots[i] == field->slot ? field->id : Structure::ambiguousFieldID; // (Slot numbers from `capacity` up are out of line.)
             }
             converted->setTypedLayoutID(layoutID, fieldIDInSlot);
         } else if (converted)
             converted->setTypedLayoutID(layoutID);
-        // (A dictionary is one object's own.)
+        // (A dictionary Structure belongs to a single object, so there is nothing to cache.)
         if (!old->isDictionary()) {
-            instance.collections->adoptions.add({ old, layoutID }, converted);
+            instance.collections->convertedStructures.add({ old, layoutID }, converted);
             if (converted) {
                 Collections::LayoutConversionPlan plan;
                 plan.moves = moves;
@@ -1584,12 +1599,13 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
         }
     }
     if (!converted)
-        return no("it has elements, or no structure can be made for it"_s);
+        return no("it has indexed elements, or no structure could be created"_s);
     {
         DeferGC deferGC(vm);
         unsigned oldOutside = old->outOfLineCapacity();
         unsigned newOutside = converted->outOfLineCapacity();
-        // (It has no elements. How much room there is outside is for the Structure to say, and the collector goes by that.)
+        // (The object has no indexed elements. The out-of-line capacity is derived from the Structure, and the collector relies on
+        // that.)
         if (newOutside != oldOutside) {
             Butterfly* butterfly = nullptr;
             if (newOutside) {
@@ -1628,7 +1644,7 @@ void Instance::lookAtObjectPrototype()
     if (structure->id().bits() == structureIDOfObjectPrototype)
         return;
     structureIDOfObjectPrototype = 0;
-    // (One that is a dictionary gets more properties and stays the same Structure.)
+    // (A dictionary can gain properties without changing its Structure.)
     if (structure->isDictionary() || !structure->propertyAccessesAreCacheable() || structure->typeInfo().overridesGetOwnPropertySlot()
         || structure->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence() || !structure->storedPrototype().isNull()
         || (structure->typeInfo().hasStaticPropertyTable() && !structure->staticPropertiesReified()))
@@ -1654,7 +1670,7 @@ Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStrin
     if (auto it = collections->shapes.find(key); it != collections->shapes.end())
         return it->value;
     Structure* result = Structure::createWithProperties(*vm, empty, names);
-    collections->shapes.add(WTF::move(key), result); // (The structure keeps the names.)
+    collections->shapes.add(WTF::move(key), result); // (The structure keeps the names alive.)
     return result;
 }
 template void Instance::visit(AbstractSlotVisitor&, bool);
@@ -1667,19 +1683,19 @@ void Instance::didHaveABadTime()
     zeroSpan(std::span { structureIDsOfNewCopyOnWriteArrays });
 }
 
-void Instance::noteAddOfField(Structure* before, unsigned slot, Structure* afterwards)
+void Instance::noteFieldAddition(Structure* before, unsigned slot, Structure* afterwards)
 {
-    AddOfField& entry = addsOfFields[indexOfAddOfField(before->id().bits(), slot)];
+    FieldAddition& entry = fieldAdditions[indexOfFieldAddition(before->id().bits(), slot)];
     entry.structureID = before->id().bits();
     entry.slot = slot;
-    entry.structureIDAfterwards = afterwards->id().bits();
-    collections->hasAddsOfFields = true;
+    entry.structureIDAfterAddition = afterwards->id().bits();
+    collections->hasFieldAdditions = true;
 }
 
 void Instance::finalizeUnconditionally(bool onlyNew)
 {
-    if (std::exchange(collections->hasAddsOfFields, false))
-        zeroSpan(std::span { addsOfFields });
+    if (std::exchange(collections->hasFieldAdditions, false))
+        zeroSpan(std::span { fieldAdditions });
     zeroSpan(std::span { customGetters });
     for (PolymorphicSlots* several : collections->slotsOfSites) {
         if (onlyNew && !several->owner->hasBeenFilledSinceLastCollection)
@@ -1695,7 +1711,7 @@ void Instance::finalizeUnconditionally(bool onlyNew)
     collections->transitions.appendVector(collections->transitionsSinceLastCollection);
     collections->transitionsSinceLastCollection.shrink(0);
     if (!onlyNew) {
-        // Each once, and only those that still have one.
+        // Remove duplicates and the slots that no longer have a transition.
         auto& transitions = collections->transitions;
         std::ranges::sort(transitions);
         transitions.shrink(std::ranges::unique(transitions).begin() - transitions.begin());
@@ -1755,14 +1771,14 @@ static Stub stubFor(JITCode::Way way)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-JITCode::Way JITCode::wayInto(UnlinkedCodeBlock* codeBlock)
+JITCode::Way JITCode::entryBlockFor(UnlinkedCodeBlock* codeBlock)
 {
     if (codeBlock->codeType() != FunctionCode)
         return Way::TopLevel;
     return codeBlock->isConstructor() ? Way::Construct : Way::Call;
 }
 
-// There are as many of these as there are ways to pick the first few of the registers that a callee saves.
+// There are only as many of these as there are prefixes of the list of callee-saved registers.
 const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& function)
 {
     static Lock lock;
@@ -1771,7 +1787,7 @@ const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& function)
     const ImageFrame& frame = Image::of(function).frameOf(function);
     uint64_t mask = ImageFunction::unpackRegisters(frame.calleeSaveRegisters);
     ptrdiff_t offsetOfFirst = -static_cast<ptrdiff_t>(frame.whereCalleeSavesStart * sizeof(CPURegister));
-    uint64_t key = (static_cast<uint64_t>(frame.whereCalleeSavesStart) << 32 | frame.calleeSaveRegisters) * 2 + 1; // Not one of the two that a table has a use for.
+    uint64_t key = (static_cast<uint64_t>(frame.whereCalleeSavesStart) << 32 | frame.calleeSaveRegisters) * 2 + 1; // Odd, so never the empty or deleted value of the hash table.
     auto isThat = [&](const RegisterAtOffsetList& list) {
         uint64_t registers = 0;
         for (unsigned i = 0; i < list.registerCount(); ++i)
@@ -1799,7 +1815,7 @@ const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& function)
 }
 
 JITCode::JITCode(void* code, const ImageFunction& function, Way way)
-    // Code in an image is nobody's memory: the collector, which paces itself by what the heap holds on to, is not to count it.
+    // Code in an image is file-backed memory, so it must not count toward the heap size that the collector uses to pace itself.
     : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(stubFor(way)))), ShareAttribute::Shared)
     , m_code(code)
     , m_entry(EntryWord::encode(code, function.convention()))
@@ -1812,7 +1828,7 @@ JITCode::~JITCode() = default;
 
 CodePtr<JSEntryPtrTag> JITCode::addressForCall(ArityCheckMode)
 {
-    // Whoever asks makes frames the way the interpreter wants them.
+    // Callers that use this address build frames in the interpreter's format.
     return m_addressForCall;
 }
 

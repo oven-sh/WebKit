@@ -700,10 +700,10 @@ public:
 
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
-    // Code is linked against clones for the sake of what the optimizing compilers infer about one realm's scopes. Where there are no
-    // such compilers, one of StaticHeap, which has what a clone has, and infers nothing, does as well, and costs nothing.
-    // Of one that is made when a program is built: nothing is ever going to look up any other. (What is where in a scope of the
-    // table's is known to the code that uses it.)
+    // Code is linked against clones because of what the optimizing compilers infer about one realm's scopes. Without those
+    // compilers, a table in the static heap can be used directly: it has what a clone has, infers nothing, and costs nothing.
+    // For a table that is created when a program is built: drops the names that nothing will ever look up. (The code that uses a
+    // scope knows the offsets of its variables.)
     void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
     {
         keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry&) { return names.contains(name); });

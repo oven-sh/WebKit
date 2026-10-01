@@ -83,8 +83,8 @@ ALWAYS_INLINE static bool appendOneEscapedJSONCharacter(std::span<OutputCharacte
 }
 
 #if CPU(ARM64) && COMPILER(CLANG)
-// For eight characters, of which the mask says which are to have a backslash put before them: where each character of what comes of it is from. Up to 7: the characters. From 8: what
-// each is written as after its backslash. 16: a backslash.
+// A shuffle table for eight input characters, indexed by the mask of the characters that need a backslash. Each output byte selects
+// its source. 0 to 7: the characters. 8 to 15: the escaped form of each character, which follows its backslash. 16: a backslash.
 struct JSONEscapeExpansion {
     alignas(16) uint8_t shuffle[256][16];
     uint8_t length[256];
@@ -141,7 +141,8 @@ ALWAYS_INLINE static void appendEscapedJSONVectors(std::span<OutputCharacterType
                 continue;
             }
         }
-        // What each is written as after a backslash: itself, or the letter that stands for it. (There is none for most of what is below a space.)
+        // The form of each character after its backslash: the character itself, or its escape letter. (Most control characters have
+        // none.)
         auto written = simde_vbslq_u8(controls, simde_vqtbl1q_u8(forms, characters), characters);
         if (simde_vmaxvq_u8(simde_vandq_u8(controls, simde_vceqzq_u8(written)))) [[unlikely]] {
             std::span<OutputCharacterType> room { to, 16 * 6 };
@@ -187,7 +188,8 @@ ALWAYS_INLINE static bool appendEscapedJSONStringContent(std::span<OutputCharact
     }
 #endif
 #if (CPU(ARM64) || CPU(X86_64)) && COMPILER(CLANG)
-    // Text that has something to escape in it is still mostly text that goes as it is. That is copied a vector at a time, up to the next character that wants looking at.
+    // Text that needs escaping still consists mostly of characters that are copied unchanged. Those are copied a vector at a time,
+    // up to the next character that needs attention.
     using InputLane = SameSizeUnsignedInteger<InputCharacterType>;
     using OutputLane = SameSizeUnsignedInteger<OutputCharacterType>;
     constexpr size_t stride = SIMD::stride<InputLane>;

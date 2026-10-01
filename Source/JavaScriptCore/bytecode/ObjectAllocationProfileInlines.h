@@ -61,8 +61,8 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
 
         executable = constructor->jsExecutable();
     }
-    // What follows keeps count in the executable of the prototypes that its functions make objects with. One that was made when the
-    // program was built is nobody's to write to.
+    // What follows counts, in the executable, the prototypes that its functions create objects with. An executable in the static
+    // heap is read-only.
     if (executable && StaticHeap::contains(executable))
         executable = nullptr;
     if (executable) {

@@ -513,9 +513,9 @@ public:
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
     Vector<AOT::Instance*, 1> m_aotInstances; // Each is its global object's.
     void* m_staticHeapOfVM { nullptr }; // See StaticHeap::isUsedBy().
-    // The realm that functions of the engine's own are being made for, where that is known (BuiltinExecutables::staticExecutableFor()).
+    // The realm that builtins are currently being created for, if known (BuiltinExecutables::staticExecutableFor()).
     JSGlobalObject* m_realmForBuiltins { nullptr };
-    JSGlobalObject* m_firstRealm { nullptr }; // Not kept alive by this, and never looked into.
+    JSGlobalObject* m_firstRealm { nullptr }; // Not kept alive by this, and never dereferenced.
     bool m_firstRealmHasBuiltinsOfStaticHeap { false };
     Vector<FunctionExecutable*> m_builtinsOfStaticHeap; // What it has been given, by BuiltinCodeIndex. The collector has nothing to do with them.
     AOT::Instance* m_aotInstanceOfProgram { nullptr }; // The one that has the environments of the program's modules in their places.

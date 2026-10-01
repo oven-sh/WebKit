@@ -159,12 +159,13 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
         return false;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // What was born into a family (Structure::typedLayoutID()) stays in it: it does not get to be whatever it is a copy of.
+    // An object keeps the typed layout that it was allocated with (Structure::typedLayoutID()), so it cannot take the structure of
+    // the object that it copies.
     if (targetStructure->typedLayoutID() && targetStructure->typedLayoutID() != sourceStructure->typedLayoutID())
         return false;
 #endif
 
-    // (Nothing watches the structure of what has been born into a family and has nothing yet: only code that is compiled ahead of time makes such things.)
+    // (Nothing watches the structure of an empty object with a typed layout, because only AOT code creates such objects.)
     if (!targetStructure->typedLayoutID() && targetStructure->transitionWatchpointSetIsStillValid()) {
         dataLogLnIf(verbose, "target transitionWatchpointSetIsStillValid");
         return false;

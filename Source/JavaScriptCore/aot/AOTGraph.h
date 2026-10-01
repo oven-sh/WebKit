@@ -80,8 +80,8 @@ enum class GuardKind : uint8_t {
     Reentry, // The inputs of the block's Narrow nodes have the types those nodes claim.
     Structure, // The base (uses[0]) has the Structure that the cache of `site` holds.
     SlotsAgree, // The caches of `site` and `otherSite` hold the same Structure.
-    SlotIsPlain, // The cache of `site` is for a property stored in the base itself (not Slot::isIndirect).
-    // These bracket a run of SlotsAgree and SlotIsPlain guards, which depend only on caches. The run is skipped if no cache has
+    SlotIsDirect, // The cache of `site` is for a property stored in the base itself (not Slot::isIndirect).
+    // These bracket a run of SlotsAgree and SlotIsDirect guards, which depend only on caches. The run is skipped if no cache has
     // changed since it last passed.
     BeginSlotChecks,
     EndSlotChecks,
@@ -242,7 +242,7 @@ struct Node {
     uint16_t builtinCalled { 0 };
     uint8_t receiverOfBuiltin { 0 };
     bool structureIsChecked { false }; // For a property access guard: another guard has already checked the base's Structure.
-    bool slotIsPlain { false }; // For a property access guard: another guard has already checked SlotIsPlain.
+    bool slotIsDirect { false }; // For a property access guard: another guard has already checked SlotIsDirect.
     bool calleeIsChecked { false };
     bool wasInferredUnreachable { false }; // inferTypes() found no value it could produce. For Options::validateAOTInferredTypes().
     bool isElided { false }; // Its value is unused and computing it has no side effects. Not lowered.
@@ -362,7 +362,7 @@ struct BasicBlock {
     // merging them in directly would widen the fast copy's types. Instead they must pass a check here (GuardKind::Reentry). If one
     // fails, execution stays in the generic copy for another iteration.
     bool isReentry { false };
-    bool isSeldomReached { false }; // The fallback for a failed GuardKind::IsIntrinsic.
+    bool isRarelyExecuted { false }; // The fallback for a failed GuardKind::IsIntrinsic.
 
     // Computed by optimizeLoops().
     BasicBlock* immediateDominator { nullptr };
@@ -444,7 +444,7 @@ public:
     bool isInTailPosition { true };
     // Its loops are not split, because callbacks will be inlined into them (see BasicBlock::isGeneric).
     bool loopsAreNotSplit { false };
-    Vector<UnlinkedFunctionExecutable*> functionsMade; // On the outermost graph: the functions that the generated code instantiates.
+    Vector<UnlinkedFunctionExecutable*> functionsCreated; // On the outermost graph: the functions that the generated code instantiates.
     // An inline-only variant of an array method (builtins/ArrayPrototype.js): op_get_by_val yields the empty value (JSValue())
     // where there is no element.
     bool readsElementsOrEmpty { false };
@@ -498,7 +498,7 @@ public:
     static bool readsOperandsFromFrame(const Node* node) { return node->isBytecode(op_new_array) && readsOperandsFromFrame(node->instruction); }
     unsigned numberOfFrameRegisters() const { return m_frameRegisters.bitCount(); }
     Convention convention() const { return m_convention; }
-    HowValuesArePassed howValuesArePassed() const { return AOT::howValuesArePassed(m_summary, m_convention); }
+    ValueRepresentations valueRepresentations() const { return AOT::valueRepresentations(m_summary, m_convention); }
 
     Node* addNode(NodeKind);
     BasicBlock* addBlock();
@@ -549,7 +549,7 @@ public:
     std::pair<Node*, Node*> arrayAndElementStored(const Node*) const;
     // An array allocated by this function. What the function stores in it is a good prediction of its contents.
     // Its elements are the node's uses and whatever the function stores in it afterwards.
-    static bool isArrayMadeHere(const Node* node) { return (node->isBytecode(op_new_array) && !readsOperandsFromFrame(node)) || node->isBytecode(op_new_array_with_size); }
+    static bool isLocallyAllocatedArray(const Node* node) { return (node->isBytecode(op_new_array) && !readsOperandsFromFrame(node)) || node->isBytecode(op_new_array_with_size); }
     // The function that the call or construct probably targets, if that can be determined.
     const KnownFunction* knownCallee(const Node*, bool* isExact = nullptr) const;
     const KnownFunction* knownCalleeIgnoringSummaries(const Node*, bool* isExact) const;
@@ -590,10 +590,10 @@ public:
     // unused.
     std::optional<uint32_t> distanceOfEnvironmentAccessed(const Node*);
     std::optional<uint32_t> distanceOfEnvironmentResolvedTo(const Node*); // The same for an op_resolve_scope.
-    static bool isThatManyScopesOut(const Node* scope, unsigned hops);
+    static bool isScopeAtDepth(const Node* scope, unsigned hops);
     // A scope passed as `this` in a call to a variable found in it. Calls to variables are compiled that way in case the scope is a
     // with scope. This one is not, so the callee sees undefined or the global `this`.
-    bool isScopeThatStandsForNoThis(const Node*);
+    bool isScopeUsedAsImplicitThis(const Node*);
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
     // The interprocedural summary for this function's call code block.
     void setSummary(const FunctionSummary* summary) { m_summary = summary; }
@@ -632,7 +632,7 @@ public:
     bool makesCalls { false }; // Calls functions that have their own frames.
     bool emitsCalls { false }; // The generated code may contain a call instruction, if only to a stub. A jump does not count.
     bool alwaysEmitsCalls { false }; // It does, in a way that inspecting the generated code cannot detect.
-    mutable std::optional<bool> callsAreLeft; // Cache for hasNoFrame().
+    mutable std::optional<bool> hasRemainingCalls; // Cache for hasNoFrame().
     // Integer constants in the program that are large enough to look like addresses (see the check in AOTCompiler.cpp).
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> wideIntegerConstants;
 
@@ -765,7 +765,7 @@ public:
     }
     // The uses of a freshly allocated object with plain properties of these names, if it is only ever read.
     struct OnlyRead {
-        Vector<Node*, 4> handedOn; // The object and its aliases (checks it passed through, and so on).
+        Vector<Node*, 4> aliasingUsers; // The object and its aliases (checks it passed through, and so on).
         Vector<std::pair<Node*, unsigned>, 8> reads; // Each op_get_by_id and the index of the name it reads.
         Vector<Node*, 2> tests; // Null or undefined checks, which are always false.
     };

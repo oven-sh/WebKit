@@ -13,27 +13,28 @@
 
 namespace bmalloc {
 
-// Memory that is at the same address in every process. What a program is going to need that does not depend on how it is run is
-// made once, when the program is built, by the code that would otherwise make it each time the program starts; the memory it was
-// made in is written to the program's file, and mapped from there when the program runs. Pointers from one part of it to another
-// are good as they are, and a page of it that nobody writes to is the file's, not the process's.
+// Memory that is at the same address in every process. Data that a program needs regardless of how it is run is created once, when
+// the program is built, by the same code that would otherwise create it at every start. The memory is written to the program's
+// file, and mapped from there when the program runs. Pointers within the region stay valid, and a page that is never written to
+// stays file-backed and shared, and does not count as the process's private memory.
 //
 // Nothing in it is ever freed. It may be written to: the mapping is private.
 class StaticRegion {
 public:
     enum class Arena : uint8_t {
-        Data, // Bytes that whoever builds the region puts there.
+        Data, // Raw bytes placed by the code that builds the region.
         Malloc, // What malloc returns while the region is being built.
         Cells, // For the garbage collector's clients. See JSC::StaticHeap.
-        // Like the two before, for what running the program is likely to write to: kept from making the others' pages dirty.
+        // Like the previous two, but for objects that a running program is likely to write to. Keeping them apart avoids dirtying
+        // the other arenas' pages.
         MutableCells,
         MutableMalloc,
-        // Not in the file. Zero when the process starts, in every process, whether or not the program has anything in the others:
-        // for what has to be made when the program runs, but is referred to by what is made when it is built.
+        // Not in the file. Zero-filled at process start, in every process, whether or not the program uses the other arenas. It is
+        // for objects that have to be created at run time but are referred to by objects created at build time.
         Bss,
         // The program's machine code and what goes with it (JSC::AOT::Image), from the file as well, but not built here.
         Image,
-        // Only there while the region is built, and in no file: for what is made on the way to what is kept.
+        // Exists only while the region is being built, and is not written to any file. It is for temporary objects.
         Scratch,
     };
     static constexpr unsigned numberOfArenas = 8;
@@ -80,15 +81,15 @@ public:
     // ---- When it runs.
 
     BEXPORT static void mapBss(); // Before anything else here. Crashes if the addresses are taken.
-    // What is where in Arena::Bss.
+    // The layout of Arena::Bss.
     static constexpr size_t offsetOfEmptyStringInBss = 0; // WTF::StringImpl::empty()
     static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
     static constexpr size_t offsetOfEmbedderSymbolsInBss = 128 * 1024; // JSC::StaticHeap::embedderSymbols()
-    // The rest is JSC::StaticHeap's. Addresses cost nothing: only what is touched is there.
+    // The rest belongs to JSC::StaticHeap. Reserving address space is free: only pages that are touched are committed.
     static constexpr size_t offsetOfVTablesInBss = 256 * 1024;
     static constexpr size_t offsetOfVMInBss = 1 << 20;
     static constexpr size_t offsetOfGlobalObjectInBss = 2 << 20;
-    static constexpr size_t offsetOfDecodersInBss = 16 << 20; // One for each module, as of the next few.
+    static constexpr size_t offsetOfDecodersInBss = 16 << 20; // One per module, like the next few.
     static constexpr size_t offsetOfSourceProvidersInBss = 64 << 20;
     static constexpr size_t offsetOfTopLevelExecutablesInBss = 128 << 20;
     static constexpr size_t offsetOfBlocksInBss = 256 << 20; // JSC::StaticHeap::allocateBlock()
@@ -105,8 +106,8 @@ public:
         return nullptr;
     }
     BEXPORT static size_t mallocSize(const void*);
-    BEXPORT static void* reallocate(void*, size_t); // Of what tryMalloc returned.
-    // Likewise. Nothing is used again; while building, what is freed becomes zero, so that it says nothing.
+    BEXPORT static void* reallocate(void*, size_t); // For a pointer that tryMalloc() returned.
+    // Likewise. At run time the memory is not reused. While building, freed memory is zeroed, so that the output is deterministic.
     static BINLINE void didFree(void* pointer)
     {
         if (s_isBuilding) [[unlikely]]
@@ -117,8 +118,8 @@ private:
     BEXPORT static void didFreeSlow(void*);
     BEXPORT static void* tryMallocSlow(size_t, size_t alignment);
 public:
-    BEXPORT static void clearFreeLists(); // When all is built.
-    BEXPORT static size_t bytesThatAreFree(); // Before that: what was freed and is in the file all the same.
+    BEXPORT static void clearFreeLists(); // Call this once the region is complete.
+    BEXPORT static size_t bytesThatAreFree(); // Before that: memory that was freed but still takes up space in the file.
 private:
 
     BEXPORT static bool s_isBuilding;

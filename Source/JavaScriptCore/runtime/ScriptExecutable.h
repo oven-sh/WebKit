@@ -50,11 +50,11 @@ public:
         
     CodeBlockHash hashFor(CodeSpecializationKind) const;
 
-    // A FunctionExecutable may be no longer than what comes before m_source (see its short form). What is asked here of one that is
-    // is answered from elsewhere.
+    // A FunctionExecutable may end before m_source (see its short form). For such an executable, the accessors here get their
+    // results from elsewhere.
     bool isShortForm() const { return isShortFunctionExecutable(); }
-    // The way to everything from m_source on, once it is known to be there. (To the compiler one of these is as long as they come, and
-    // what is there may be read before it is known to be wanted. This is a pointer that it knows nothing about.)
+    // Gives access to the fields from m_source on, once they are known to exist. (The compiler assumes that the object has its full
+    // size, and could load a field before the check for the short form. This returns a pointer that it cannot reason about.)
     const ScriptExecutable* inFull() const { return WTF::opaque(this); }
     ScriptExecutable* inFull() { return WTF::opaque(this); }
 
@@ -110,7 +110,7 @@ public:
     bool isInStrictContext() const { return lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature; }
     bool usesNonSimpleParameterList() const { return features() & NonSimpleParameterListFeature; }
 
-    // (There is nothing about the code of one in the short form that is anybody's to decide.)
+    // (These settings do not apply to an executable in the short form, whose code never changes.)
     void setNeverInline(bool value) { if (!isShortForm()) inFull()->m_neverInline = value; }
     void setNeverOptimize(bool value) { if (!isShortForm()) inFull()->m_neverOptimize = value; }
     void setNeverFTLOptimize(bool value) { if (!isShortForm()) inFull()->m_neverFTLOptimize = value; }
@@ -124,7 +124,7 @@ public:
     bool isOkToOptimize() const { return !neverOptimize(); }
     bool canUseOSRExitFuzzing() const { return !isShortForm() && inFull()->m_canUseOSRExitFuzzing; }
     bool isInsideOrdinaryFunction() const { return isShortForm() ? StaticHeap::rowOf(indexOfShortForm()).isInsideOrdinaryFunction : inFull()->m_isInsideOrdinaryFunction; }
-    // The code of a module: the executables of its functions are the ones that were made when the program was built.
+    // For the code of a module: the executables of its functions are the ones that were created when the program was built.
     bool usesStaticExecutables() const { return !isShortForm() && inFull()->m_usesStaticExecutables; }
     void setUsesStaticExecutables() { inFull()->m_usesStaticExecutables = true; }
     
@@ -147,7 +147,7 @@ public:
     void NODELETE recordParse(CodeFeatures, LexicallyScopedFeatures, bool hasCapturedVariables, int lastLine, unsigned endColumn);
     void installCode(CodeBlock*);
     void installCode(VM&, CodeBlock*, CodeType, CodeSpecializationKind, Profiler::JettisonReason);
-    // Code from the static compiler (aot/), for a function: it runs without a CodeBlock, and the function does not get one.
+    // Installs AOT code (aot/) for a function. It runs without a CodeBlock, and the function does not get one.
     void installAOTCode(VM&, CodeSpecializationKind, Ref<JITCode>&&);
     CodeBlock* newCodeBlockFor(CodeSpecializationKind, JSFunction*, JSScope*);
     CodeBlock* newReplacementCodeBlockFor(CodeSpecializationKind);

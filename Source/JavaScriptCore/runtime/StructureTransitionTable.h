@@ -67,8 +67,8 @@ enum class TransitionKind : uint8_t {
     SetBrand = 17,
 
 #if USE(BUN_JSC_ADDITIONS)
-    // As Freeze, of what the object has. It can be given more. See Structure::heirsMayOverrideReadOnlyProperties().
-    FixProperties = 18,
+    // As Freeze, of what the object has. It can be given more. See Structure::inheritorsMayOverrideReadOnlyProperties().
+    MakePropertiesImmutable = 18,
 #endif
 };
 
@@ -140,7 +140,7 @@ inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
     switch (transition) {
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
-    case TransitionKind::FixProperties:
+    case TransitionKind::MakePropertiesImmutable:
         return true;
     default:
         return false;
@@ -151,7 +151,7 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
 {
     switch (transition) {
     case TransitionKind::Freeze:
-    case TransitionKind::FixProperties:
+    case TransitionKind::MakePropertiesImmutable:
         return true;
     default:
         return false;

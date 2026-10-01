@@ -268,8 +268,8 @@ public:
     size_t numberOfUnlinkedStringSwitchJumpTables() const { return m_rareData ? m_rareData->m_unlinkedStringSwitchJumpTables.size() : 0; }
     const UnlinkedStringJumpTable& unlinkedStringSwitchJumpTable(int tableIndex) const { ASSERT(m_rareData); return m_rareData->m_unlinkedStringSwitchJumpTables[tableIndex]; }
 
-    // In what StaticHeap has made, one of the functions in the code that is marked is not what it says it is, but the function's
-    // FunctionExecutable, which is there for good (StaticHeap::retainNeededFunctionData()). To be asked first.
+    // In code created by StaticHeap, an entry with this bit set is not an UnlinkedFunctionExecutable but the function's
+    // FunctionExecutable, which is immortal (StaticHeap::retainNeededFunctionData()). Check this first.
     static constexpr uintptr_t isExecutable = 1;
     static FunctionExecutable* executableIn(const WriteBarrier<UnlinkedFunctionExecutable>& entry)
     {

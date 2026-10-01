@@ -156,20 +156,21 @@ public:
         bool isNamespaceReexport() const { return kind() == ExportKind::Namespace || (kind() == ExportKind::Indirect && localOrImportSid == starNamespaceSid); }
     };
 
-    // What the bundler knows of a variable at the top of a module, having seen every use of it there is in the program. Nothing at
-    // run time goes by these: they are for whoever compiles the program ahead of time.
+    // What the bundler knows about a top-level variable of a module, having seen every use of it in the program. Nothing uses these
+    // at run time. They are for the ahead-of-time compiler.
     struct Binding {
-        // (There are none for `var` and `let`, nor for what the bundler makes up for itself: it keeps no track of every store to those.)
+        // (There are none for `var` and `let`, nor for variables that the bundler synthesizes, because it does not track every
+        // store to those.)
         enum class Kind : uint8_t { Function = 2, GeneratorOrAsyncFunction, Class, Const };
         enum Flags : uint32_t {
             KindMask = 0xf,
             IsAssigned = 1 << 4, // Something assigns it other than its own declaration.
-            // What it holds can get somewhere other than into a call of it: something that is not `f` in `f()` names it, or whoever
-            // asks for an entry point by name gets it.
+            // The value can flow somewhere other than into a call of it: it is referenced other than as `f` in `f()`, or it is
+            // exported from an entry point.
             Escapes = 1 << 5,
             CallIgnoresThis = 1 << 6,
-            // What it holds can be got at by something that is not a use of the variable in the code of the program: whoever asks for an entry point
-            // by name, or what is evaluated. (Then it escapes, too.)
+            // The value can be obtained by something other than a use of the variable in the program's code: through an entry
+            // point's exports, or by evaluated code. (It then escapes, too.)
             IsVisibleFromOutside = 1 << 7,
         };
         uint32_t nameSid;

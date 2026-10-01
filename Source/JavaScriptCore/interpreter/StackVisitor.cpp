@@ -42,14 +42,14 @@
 
 namespace JSC {
 
-// The caller of a frame in the engine's own convention, and where that is going to be returned to.
+// Returns the caller of a frame that uses the engine's standard frame layout, and the address at which the caller will resume.
 static CallFrame* callerOf(CallFrame* callFrame, EntryFrame*& entryFrame, void*& returnPC)
 {
     EntryFrame* entryFrameOfCallee = entryFrame;
     returnPC = callFrame->rawReturnPC();
     CallFrame* caller = callFrame->callerFrame(entryFrame);
 #if ENABLE(FTL_JIT)
-    // What is above the way in to the VM is what called out of it, some way further up.
+    // The frame above a VM entry frame is the one that called out of the VM, some distance up the stack.
     if (entryFrame != entryFrameOfCallee && caller && AOT::hasCode())
         returnPC = AOT::returnAddressForFrame(caller, entryFrameOfCallee);
 #else
@@ -58,16 +58,16 @@ static CallFrame* callerOf(CallFrame* callFrame, EntryFrame*& entryFrame, void*&
     return caller;
 }
 
-// The frame, unless it is one that a stub of the static compiler's made for itself: those are nobody's, and it is the first above them.
+// Returns the frame, unless it belongs to an AOT stub. Stub frames are skipped, and the first frame above them is returned.
 static CallFrame* skipFramesOfStubs(CallFrame* callFrame, EntryFrame*& entryFrame, void*& returnPC, CallFrame*& adapter)
 {
 #if ENABLE(FTL_JIT)
     while (callFrame) {
         switch (AOT::classifyAddress(removeCodePtrTag(returnPC)).kind) {
         case AOT::ImageAddressInfo::Stub:
-            // One that was got to from outside the VM (Stub::ConstructByCalling is what Reflect.construct() may find itself calling) has made
-            // its frame the way the engine makes one for a native function, and has to be taken for that: it is all there is between
-            // one way in to the VM and the next, and whoever unwinds has to stop at each.
+            // A stub that was entered from outside the VM (for example Stub::ConstructByCalling, which Reflect.construct() may
+            // call) has set up its frame the way the engine does for a native function, and has to be treated as one. It is the
+            // only frame between one VM entry and the next, and the unwinder has to stop at each entry.
             if (callFrame->callerFrameOrEntryFrame() == entryFrame) {
                 returnPC = nullptr;
                 return callFrame;
@@ -297,7 +297,8 @@ void StackVisitor::findCaller(CallFrame* callFrame)
 #if ENABLE(FTL_JIT)
 void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t index)
 {
-    // Whether what is above is something that was called from here, and runs. (Not: nothing, or the frame that was being made for what turned out not to be a function.)
+    // Whether the frame above is that of a callee that is actually running. (It is not if there is no frame above, or if that frame
+    // was being set up for a callee that turned out not to be callable.)
     bool calleeRuns = m_frame.m_callFrame && (m_frame.m_aotFunction || m_frame.m_isWasmFrame || (!m_frame.m_callee.isNativeCallee() && m_frame.m_callee.rawPtr() && m_frame.m_callee.asCell()->isCallable()));
     m_frame.m_callFrame = callFrame;
     m_previousReturnPC = returnPC;
@@ -319,7 +320,7 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
     m_frame.m_bytecodeIndex = location.bytecodeIndex;
     m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfExists();
     findCaller(callFrame);
-    // What is above that came in some other way.
+    // The adapter's caller is not AOT code, so the cached Instance no longer applies.
     if (m_frame.m_aotAdapterFrame)
         m_aotInstance = nullptr;
 }

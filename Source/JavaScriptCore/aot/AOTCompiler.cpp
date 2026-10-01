@@ -43,15 +43,15 @@ static ScopeChain unknownScopeChain()
     return chain;
 }
 
-// How often each block runs, next to the others. It is what the register allocator goes by when not everything can have a register,
-// or two moves cannot both be done away with; and with no profile it has to come from the shape of the code. The lowering has said
-// which blocks it made for what seldom happens.
+// Estimates the relative execution frequency of each block. The register allocator uses it to decide what to spill and which moves
+// to coalesce. Without a profile, it has to be derived from the shape of the code. The lowering has already marked the blocks that
+// it created for rare cases.
 static void estimateFrequencies(B3::Procedure& proc)
 {
     proc.resetReachability();
     auto& loops = proc.naturalLoops();
 
-    // Got to without taking a branch that is rarely taken.
+    // The blocks that are reachable without taking a branch that is rarely taken.
     IndexSet<B3::BasicBlock*> likely;
     Vector<B3::BasicBlock*, 32> worklist;
     auto visit = [&](B3::BasicBlock* block) {
@@ -76,8 +76,8 @@ static void estimateFrequencies(B3::Procedure& proc)
 // See CompiledFunctionInfo::startsCold.
 static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
 {
-    // (Nothing takes as many slots as it takes bytes.)
-    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots) || !constantsAreOfNoRealm(unlinkedCodeBlock, SymbolTablesAreShared::Yes))
+    // (The number of slots is always less than the size of the bytecode.)
+    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots) || !hasOnlyRealmIndependentConstants(unlinkedCodeBlock, SymbolTablesAreShared::Yes))
         return false;
     for (const auto& instruction : unlinkedCodeBlock->instructions()) {
         if (instruction->opcodeID() == op_loop_hint)
@@ -86,9 +86,9 @@ static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
     return true;
 }
 
-// What holds the same thing all the way through is used where it is: as a value it would be copied to another register on the way in, which
-// would then have to be saved.
-static void usePinnedRegistersWhereTheyAre(B3::Air::Code& code)
+// A register that holds the same value throughout the function is used directly. As a B3 value it would be copied to another
+// register on entry, and that register would then have to be saved.
+static void usePinnedRegistersDirectly(B3::Air::Code& code)
 {
     using namespace B3::Air;
     Vector<std::pair<Tmp, Tmp>, 4> copies;
@@ -120,13 +120,14 @@ static void usePinnedRegistersWhereTheyAre(B3::Air::Code& code)
 // A function that calls nothing, keeps nothing on the stack and saves nothing has no frame.
 bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
 {
-    // (What is caught is caught in a frame.)
+    // (An exception handler needs a frame.)
     if (code.frameSize() || code.calleeSaveRegisterAtOffsetList().registerCount() || graph.alwaysEmitsCalls || !graph.catchEntrypoints.isEmpty())
         return false;
     if (!graph.emitsCalls)
         return true;
-    // What was written with a call in it may have turned out never to be reached. Whatever calls says that it overwrites the link register.
-    if (!graph.callsAreLeft) {
+    // Code that contained a call may have turned out to be unreachable. Every remaining call declares that it clobbers the link
+    // register, so look for that.
+    if (!graph.hasRemainingCalls) {
         bool found = false;
         for (B3::Air::BasicBlock* block : code) {
             for (B3::Air::Inst& inst : *block) {
@@ -136,9 +137,9 @@ bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
                     found |= inst.kind.opcode == B3::Air::ColdCCall;
             }
         }
-        graph.callsAreLeft = found;
+        graph.hasRemainingCalls = found;
     }
-    return !*graph.callsAreLeft;
+    return !*graph.hasRemainingCalls;
 }
 
 void emitEpilogueBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Code& code)
@@ -157,8 +158,8 @@ void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Co
     jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
 }
 
-// Options::preferUnsplitAOTLoops(). Of a graph whose loops have not been split.
-static bool loopsWillDoWhole(Graph& graph)
+// For Options::preferUnsplitAOTLoops(). Takes a graph whose loops have not been split.
+static bool loopsNeedNoSplitting(Graph& graph)
 {
     bool hasLoop = false;
     for (BasicBlock* block : graph.m_rpo) {
@@ -204,11 +205,11 @@ static bool loopsWillDoWhole(Graph& graph)
     return hasLoop;
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const CodeOfProgram* program, bool triesLoopsWhole = true)
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const CodeOfProgram* program, bool triesUnsplitLoops = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
-    triesLoopsWhole &= Options::preferUnsplitAOTLoops() && !Options::useAOTFunctionSplitting();
-    graph.loopsAreNotSplit = triesLoopsWhole;
+    triesUnsplitLoops &= Options::preferUnsplitAOTLoops() && !Options::useAOTFunctionSplitting();
+    graph.loopsAreNotSplit = triesUnsplitLoops;
     graph.setCalleeHints(hints);
     graph.setSummary(summary);
     graph.setVariableSummaries(variableSummaries);
@@ -231,8 +232,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
     planMultiValueReturns(graph);
-    // (With no loop split there is no choice to make: LoopOptimizer::viewArrays() looks at each loop by itself.)
-    if (triesLoopsWhole && Options::useAOTLoopSplitting() && Options::aotLoopSplittingPolicy() && !loopsWillDoWhole(graph))
+    // (Without loop splitting there is no choice to make: LoopOptimizer::hoistArrayStorageLoads() looks at each loop separately.)
+    if (triesUnsplitLoops && Options::useAOTLoopSplitting() && Options::aotLoopSplittingPolicy() && !loopsNeedNoSplitting(graph))
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false);
     inferRanges(graph);
     optimizeLoops(graph);
@@ -261,13 +262,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (Options::dumpAOTB3Graph()) [[unlikely]]
         dataLogLn("AOT B3:\n", proc);
 
-    // The code is going to run in another process, where nothing is where it is here. No lowering should have put an address in
-    // it; running the code only shows that for the paths that are taken, so look. (No JSValue that is not a cell is in this range.)
+    // The code is going to run in another process, where objects are at other addresses. No lowering should have embedded an
+    // address. Running the code only proves that for the paths that are taken, so check all constants. (No JSValue that is not a
+    // cell falls in this range.)
     for (B3::Value* value : proc.values()) {
         if (!value->hasInt64())
             continue;
         uint64_t bits = value->asInt64();
-        // (But for where structures are, which is the same in every process: structureIDBaseOfImages.)
+        // (Except for the base address of structures, which is the same in every process: structureIDBaseOfImages.)
         if (bits >= 4 * GB && bits < (1ULL << 47) && bits != structureIDBaseOfImages && !graph.wideIntegerConstants.contains(static_cast<int64_t>(bits))) {
             graph.fail("an address in the code"_s);
             return declined();
@@ -280,8 +282,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
             return;
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.emitFunctionPrologue();
-        // The limit leaves room for the runtime to do what it has to when the stack is used up, which is a great deal more than this.
-        // However deep the calls go, whatever made the last of them has checked.
+        // The stack limit leaves room for the runtime to handle a stack overflow, which is far more than this. However deep the
+        // calls go, the function that made the last call has checked the limit.
         constexpr unsigned maxFrameSizeWithoutStackCheck = 256;
         if (graph.makesCalls || code.frameSize() > maxFrameSizeWithoutStackCheck)
             stubCalls.call(jit, Stub::Prologue, code.frameSize(), CallSite { });
@@ -294,7 +296,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         jit.ret();
     }));
     for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i) {
-        // From catchThunk(): the frame pointer is this frame's again, and what this function saved on entry is still saved.
+        // Entered from catchThunk(): the frame pointer is this frame's again, and the registers that this function saved on entry
+        // are still saved.
         proc.code().setPrologueForEntrypoint(i + 1, createSharedTask<B3::Air::PrologueGeneratorFunction>([](CCallHelpers& jit, B3::Air::Code& code) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(code.frameSize())), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
@@ -302,18 +305,18 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     }
 
     B3::generateToAir(proc);
-    usePinnedRegistersWhereTheyAre(proc.code());
+    usePinnedRegistersDirectly(proc.code());
     B3::Air::prepareForGeneration(proc.code());
     CCallHelpers jit;
-    // The way in is what comes first.
-    CCallHelpers::Jump toTheWayIn;
+    // The main entry point has to be at the start of the code.
+    CCallHelpers::Jump jumpToMainEntrypoint;
     if (!graph.catchEntrypoints.isEmpty())
-        toTheWayIn = jit.jump();
+        jumpToMainEntrypoint = jit.jump();
     CCallHelpers::Label startOfCode = jit.label();
     jit.setOopsIsJustABreakpoint();
     B3::generate(proc, jit);
-    if (toTheWayIn.isSet())
-        toTheWayIn.linkTo(proc.code().entrypointLabel(0), &jit);
+    if (jumpToMainEntrypoint.isSet())
+        jumpToMainEntrypoint.linkTo(proc.code().entrypointLabel(0), &jit);
     else
         RELEASE_ASSERT(!CCallHelpers::differenceBetween(startOfCode, proc.code().entrypointLabel(0)));
     // The code is linked in ordinary memory. It is only copied into the image and never runs from here, so compiling needs no JIT memory.
@@ -327,8 +330,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.indexReferences = graph.indexReferences.link(linkBuffer);
     info.codeSize = linkBuffer.size();
     void* start = linkBuffer.entrypoint<JSEntryPtrTag>().untaggedPtr();
-    // (It turned out to be what comes first anyway.)
-    if (toTheWayIn.isSet() && static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(proc.code().entrypointLabel(0)).untaggedPtr()) - static_cast<uint8_t*>(start) == sizeof(uint32_t)) {
+    // (The main entry point was first after all, so the jump is removed.)
+    if (jumpToMainEntrypoint.isSet() && static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(proc.code().entrypointLabel(0)).untaggedPtr()) - static_cast<uint8_t*>(start) == sizeof(uint32_t)) {
         start = static_cast<uint8_t*>(start) + sizeof(uint32_t);
         info.codeSize -= sizeof(uint32_t);
         for (auto& call : info.stubCalls)
@@ -364,9 +367,9 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
             }
         };
         for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); ++i)
-            noteKeysOf(unlinkedCodeBlock->functionExpr(i), info.functionExpressionsWritten);
-        for (UnlinkedFunctionExecutable* executable : graph.functionsMade)
-            noteKeysOf(executable, info.functionsMade);
+            noteKeysOf(unlinkedCodeBlock->functionExpr(i), info.functionExpressionsInCode);
+        for (UnlinkedFunctionExecutable* executable : graph.functionsCreated)
+            noteKeysOf(executable, info.functionsCreated);
     }
     info.numberOfFunction = summary ? summary->number : 0;
     for (auto& frame : graph.inlineFrames)

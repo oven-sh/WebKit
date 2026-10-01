@@ -58,13 +58,13 @@ public:
 
     static void destroy(JSCell*);
         
-    // The short form. A function that was compiled when the program was built, and has no other code and never will, has no use for
-    // most of this: there is nothing to parse, nothing to compile, nothing to watch, and nothing that changes. Its executable
-    // (StaticHeap makes them) ends where ExecutableBase's m_jitCodeForCallWithArityCheck would be, and says so by its type: what calls a function goes by
-    // what comes before that, and whatever tells a FunctionExecutable by FunctionExecutableType, to get at its CodeBlock, finds none.
-    // The rest of what there is to say about it is in a table (StaticHeap::rowOf()), where whoever asks here looks:
-    // its name, how many parameters it has, which module it is in, and an UnlinkedFunctionExecutable that says everything else, which it
-    // shares with every function of which that is the same.
+    // The short form. A function that was compiled when the program was built, and that has no other code and never will, needs
+    // very little of this class: there is nothing to parse, compile or watch, and nothing changes. Its executable, which StaticHeap
+    // creates, ends where ExecutableBase's m_jitCodeForCallWithArityCheck would be, and is identified by its JSType. Calls only use
+    // the fields before that point, and code that recognizes a FunctionExecutable by FunctionExecutableType in order to reach its
+    // CodeBlock does not match it. Everything else about the function is in a table (StaticHeap::rowOf()), which the accessors here
+    // consult: its name, its parameter count, its module, and an UnlinkedFunctionExecutable for the remaining properties, which it
+    // shares with every function that has the same ones.
     static constexpr size_t sizeOfShortForm = 32;
     inline static Structure* createStructureOfShortForm(VM&, JSGlobalObject*, JSValue);
 
@@ -190,7 +190,7 @@ public:
     JSParserScriptMode scriptMode() const { return unlinkedExecutable()->scriptMode(); }
     SourceCode classSource() const
     {
-        // (The source of a constructor that nobody wrote is one of the engine's own; the class is in the module's.)
+        // (The source of a default class constructor belongs to the engine. The class is in the module's source.)
         if (isShortForm()) [[unlikely]]
             return unlinkedExecutable()->classSource(*sourceProvider());
         bool isInTopLevelSource = inFull()->m_unlinkedExecutable->isBuiltinDefaultClassConstructor() && inFull()->m_topLevelExecutable;
@@ -224,7 +224,7 @@ public:
         if (auto* rareData = this->rareData()) [[unlikely]]
             return rareData->m_lineCount;
         if (isShortForm()) [[unlikely]]
-            return 0; // (Where it ends, and where it is in a text that is not there, is nothing that anybody has a use for.)
+            return 0; // (Without source text, the end position is meaningless.)
         return inFull()->m_unlinkedExecutable->lineCount();
     }
 
@@ -318,8 +318,8 @@ public:
         return topLevelExecutableOfStaticExecutable();
     }
 
-    // Of one that was made when the program was built, and is nobody's to write to: where the code that was compiled for it then is,
-    // and which function that is (AOT::ImageFunction::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which go by these.
+    // For an executable in the static heap, which is read-only: the entry word of the code that was compiled for it, and the index
+    // of that function (AOT::ImageFunction::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which read these.
     uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; } // An AOT::EntryWord.
     uint32_t aotIndexFor(CodeSpecializationKind kind) const { return m_aotIndex[static_cast<unsigned>(kind)]; }
     void setUnlinkedExecutableWhileStaticHeapIsBuilt(UnlinkedFunctionExecutable* unlinked) { inFull()->m_unlinkedExecutable.setWithoutWriteBarrier(unlinked); }

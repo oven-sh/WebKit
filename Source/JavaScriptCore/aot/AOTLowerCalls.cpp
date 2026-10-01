@@ -21,9 +21,9 @@ namespace JSC { namespace AOT {
 
 using namespace B3;
 
-// See AOTConvention.h. Whatever is called, the arguments are in registers when the call is made, or in memory that is this function's
-// own; nothing is made on the stack for the callee, and the stack pointer is where it was when the call comes back.
-// A patchpoint goes into the block when it is made: whatever it takes has to have been made before.
+// See AOTConvention.h. For every kind of callee, the arguments are in registers when the call is made, or in memory that belongs to
+// this function's frame. Nothing is pushed on the stack for the callee, and the stack pointer is unchanged when the call returns.
+// A patchpoint is appended to the current block when it is created, so its operands have to be lowered first.
 
 Lowering::Arguments Lowering::lowerArguments(Node* node, unsigned argc, unsigned argv)
 {
@@ -60,9 +60,9 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
 {
     unsigned count = arguments.size() - 1;
     bool inMemory = count > numberOfArgumentGPRs;
-    RELEASE_ASSERT(mode != CallMode::TailCall || m_howValuesArePassed.result == Rep::JSValue);
+    RELEASE_ASSERT(mode != CallMode::TailCall || m_valueRepresentations.result == Rep::JSValue);
     if (inMemory && mode == CallMode::TailCall) {
-        // (Stub::TailCallList is called.)
+        // (Stub::TailCallList is reached with a call instruction.)
         m_graph.emitsCalls = true;
         m_graph.alwaysEmitsCalls = true;
     }
@@ -108,8 +108,8 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
     return patchpoint;
 }
 
-// A call of what a variable is proven to hold (KnownFunction::isExact): to where the function's code is, which is known when the image
-// is put together, with what the function has a use for and nothing else.
+// A call to the function that a variable is proven to hold (KnownFunction::isExact). It branches directly to the function's code,
+// whose address is known when the image is laid out, and passes only what the function uses.
 bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegister, unsigned argv, const Arguments& arguments, CallMode mode, bool hasResult)
 {
     bool isConstruct = mode == CallMode::Construct;
@@ -117,7 +117,8 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     const KnownFunction* known = m_graph.knownCallee(node, &isExact);
     if (!known || !isExact || !(isConstruct ? known->forConstruct : known->forCall))
         return false;
-    // Nothing gets here, going by the types; and nothing gets to the function from anywhere else, so there is no code for it. What does get here has been lied to.
+    // According to the types, this call is never reached, and nothing else calls the function, so it has no code. If execution gets
+    // here anyway, a type annotation was wrong, and this throws.
     if (known->summary && !known->summary->isReached()) {
         coldCall(node, Entry::operationAOTCheckType, m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt32(MaskOtherObject));
         m_out.unreachable();
@@ -125,7 +126,8 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         if (hasResult || mode == CallMode::TailCall)
             setJSValue(node, m_out.constInt64(JSValue::encode(jsUndefined())));
         if (node->numberOfReturnValues) {
-            // (Nothing gets here. Something of the right sort, for what comes next to be made of.)
+            // (Unreachable. These are placeholder values of the right representation, so that the code that follows can be
+            // lowered.)
             for (Node* read : m_graph.outermost().returnValueReads.get(node)) {
                 Rep rep = read->rep();
                 read->lowered = rep == Rep::Double ? m_out.constDouble(0) : rep == Rep::Int32 || rep == Rep::Boolean ? m_out.int32Zero : rep == Rep::Int64 ? m_out.int64Zero : m_out.constInt64(JSValue::encode(jsUndefined()));
@@ -137,23 +139,25 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     unsigned index = m_graph.indexOfKnownCallee(known->keyFor(isConstruct));
     bool passesCallee = !m_graph.passesNoFunctionObject(node);
     bool takesList = convention.signature == Signature::List;
-    // The list would be in this function's frame, which a tail call gives up.
+    // The list would be in this function's frame, which a tail call releases.
     if (takesList && node->isBytecode(op_tail_call))
         return false;
-    HowValuesArePassed how = isConstruct ? HowValuesArePassed { } : howValuesArePassed(known->summary, convention);
-    // What the callee returns goes to this function's caller as it is. With the whole program in view the two return it the same way
-    // (FunctionSummary::returnsBoxed).
-    if (how.result != m_howValuesArePassed.result && mode == CallMode::TailCall)
+    ValueRepresentations how = isConstruct ? ValueRepresentations { } : valueRepresentations(known->summary, convention);
+    // The callee's result is returned to this function's caller unchanged, so both have to use the same representation. With the
+    // whole program in view they do (FunctionSummary::returnsBoxed).
+    if (how.result != m_valueRepresentations.result && mode == CallMode::TailCall)
         mode = CallMode::Call;
 
-    // (A method that is closed is there from when its class is: there is nothing to see to but that there is an object to read it from, which the read does.)
-    bool isSurelyThere = known->isDeclaration || node->use(calleeRegister)->isReadOnlyToBeCalled;
-    LValue callee = passesCallee || !isSurelyThere ? lowJSValue(node->use(calleeRegister)) : nullptr;
-    if (!isSurelyThere) {
-        // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
+    // (A closed method exists from the moment its class does. The only check needed is that there is an object to read it from,
+    // which the read does.)
+    bool calleeIsInitialized = known->isDeclaration || node->use(calleeRegister)->isReadOnlyToBeCalled;
+    LValue callee = passesCallee || !calleeIsInitialized ? lowJSValue(node->use(calleeRegister)) : nullptr;
+    if (!calleeIsInitialized) {
+        // Until the variable is initialized it does not hold a function. (The temporal dead zone has already been checked.)
         LBasicBlock isNotInitialized = newColdBlock();
         LBasicBlock isInitialized = m_out.newBlock();
-        // (Or, if it is known by what it is and not by where it was read from: whatever else it may be.)
+        // (If the callee is known from its type and not from the variable it was read from, this also rejects the other values that
+        // the type allows.)
         Type typeOfCallee = node->use(calleeRegister)->type;
         if (isSubtype(typeOfCallee, TFunction | TUndefined | TEmpty))
             m_out.branch(m_out.equal(callee, m_out.constInt64(JSValue::ValueUndefined)), rarely(isNotInitialized), usually(isInitialized));
@@ -183,12 +187,12 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
                 passed.append(i < count ? arguments[i + 1] : undefined);
                 continue;
             }
-            RELEASE_ASSERT(i < count); // (Or it would have been passed undefined.)
+            RELEASE_ASSERT(i < count); // (Otherwise the parameter's type would include undefined.)
             passed.append(lowAs(node->use(VirtualRegister(firstArgument + i + 1)), how.parameters[i]));
         }
     }
 
-    // What it hands back, if that is several things (Node::numberOfReturnValues).
+    // The representations of the results, if the call returns several values in registers (Node::numberOfReturnValues).
     Vector<Rep, 8> things;
     if (node->numberOfReturnValues) {
         RELEASE_ASSERT(mode == CallMode::Call);
@@ -233,7 +237,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         graph->stubCalls.jumpToFunction(jit, index);
     });
     if (mode == CallMode::TailCall) {
-        // What comes after this in the bytecode returns what the call returned, if it was made like any other. It is not got to.
+        // The bytecode after a tail call returns the call's result, for tiers that make an ordinary call. Here it is unreachable.
         m_out.appendTo(m_out.newBlock());
         setJSValue(node, m_out.int64Zero);
         return true;
@@ -258,13 +262,13 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     Arguments arguments = lowerArguments(node, argc, argv);
     if (lowerCallToKnownFunction(node, calleeRegister, argv, arguments, mode, hasResult))
         return;
-    // (Whatever else is called hands back a boxed value.)
-    if (m_howValuesArePassed.result != Rep::JSValue && mode == CallMode::TailCall)
+    // (Any other callee returns a boxed value.)
+    if (m_valueRepresentations.result != Rep::JSValue && mode == CallMode::TailCall)
         mode = CallMode::Call;
 
     Node* calleeNode = node->use(calleeRegister);
     LValue callee = lowJSValue(calleeNode);
-    // A class that the types say something of has been defined.
+    // A call that records that a class with a typed layout has been defined.
     if (uint32_t classType = Graph::classNotedBy(node)) {
         if (uint16_t layoutID = TypeTable::shared()->layoutIDOfInstancesOf(classType))
             vmCall(node, Void, Entry::operationAOTNoteClass, m_globalObject, arguments[0], arguments[1], m_out.constInt32(layoutID));
@@ -277,7 +281,7 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
             setJSValue(node, copy);
         return;
     }
-    // @toLength() of an integer that is not negative is that integer, and of one that is, zero.
+    // @toLength() of a non-negative integer is that integer, and of a negative one is zero.
     if (mode == CallMode::Call && argc == 2 && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::toLength) {
         Node* argumentNode = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1));
         if (argumentNode->isInteger() && argumentNode->range.min >= 0) {
@@ -301,23 +305,24 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
             setJSValue(node, m_out.phi(Int64, quick, called));
         return;
     }
-    // A function of the language, if what it is called on and with is what it takes: then there is nothing to find out, and no frame to make.
+    // A call to a built-in function is lowered inline if the receiver and the arguments have the types it expects. That needs no
+    // lookup and no frame.
     LBasicBlock afterBuiltin = nullptr;
     Vector<ValueFromBlock, 2> resultsOfBuiltin;
     if (node->builtinCalled && mode != CallMode::Construct && lowerCallOfBuiltin(node, calleeNode, argc, argv, arguments, hasResult, afterBuiltin, resultsOfBuiltin)) {
         if (!afterBuiltin)
             return;
-        // (What comes after a call in tail position returns what it returned.)
+        // (The code after a call in tail position returns the call's result.)
         mode = CallMode::Call;
     }
-    // What the callee was found as says what it may well be.
+    // The name that the callee was read by suggests which function it is.
     StubIntrinsic intrinsic = StubIntrinsic::None;
     if (mode != CallMode::Construct && calleeNode->isBytecode(op_get_by_id))
         intrinsic = stubIntrinsicFor(calleeNode->graph->codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, hasResult);
     if (mode == CallMode::TailCall) {
-        LBasicBlock otherwise = leaveIfFunction(calleeNode, callee);
+        LBasicBlock otherwise = branchIfCalleeIsFunction(calleeNode, callee);
         if (emitCall(node, callee, arguments, mode, intrinsic)) {
-            // (It turned out not to be one that can be made like that.)
+            // (emitCall() returns a value only for a call that is not a tail call.)
             RELEASE_ASSERT_NOT_REACHED();
         }
         m_out.appendTo(otherwise);
@@ -334,10 +339,10 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         setJSValue(node, result);
 }
 
-// A call in tail position leaves nothing behind of the function that makes it. Whatever there is to say about a callee that cannot be
-// called is said of the caller, so that call is made like any other: what comes next returns what it returns, if it returns.
-// Goes on where the callee is a function, and hands back where it is not.
-LBasicBlock Lowering::leaveIfFunction(Node* calleeNode, LValue callee)
+// A call in tail position leaves no frame for the function that makes it. But the error for a callee that is not callable has to be
+// reported in the caller, so in that case an ordinary call is made, and the code that follows returns its result.
+// Continues in the block where the callee is a function, and returns the block for the other case.
+LBasicBlock Lowering::branchIfCalleeIsFunction(Node* calleeNode, LValue callee)
 {
     LBasicBlock isFunction = m_out.newBlock();
     LBasicBlock otherwise = newColdBlock();
@@ -351,10 +356,11 @@ LBasicBlock Lowering::leaveIfFunction(Node* calleeNode, LValue callee)
     return otherwise;
 }
 
-// f(...list), f.apply(o, list): a stub asks how long the list is, makes room, has it copied there, and makes the call (Stub::CallVarargs).
+// f(...list), f.apply(o, list): a stub gets the length of the list, reserves stack space, copies the elements there and makes the
+// call (Stub::CallVarargs).
 void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, VirtualRegister thisRegister, VirtualRegister argumentsRegister, int firstVarArg, CallMode mode)
 {
-    if (mode == CallMode::TailCall && (m_howValuesArePassed.result != Rep::JSValue || !node->graph->isInTailPosition))
+    if (mode == CallMode::TailCall && (m_valueRepresentations.result != Rep::JSValue || !node->graph->isInTailPosition))
         mode = CallMode::Call;
     LValue callee = lowJSValue(node->use(calleeRegister));
     LValue thisValue = lowJSValue(node->use(thisRegister));
@@ -363,8 +369,8 @@ void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, Virt
         return;
     }
     LValue list = lowJSValue(node->use(argumentsRegister));
-    LBasicBlock otherwise = mode == CallMode::TailCall ? leaveIfFunction(node->use(calleeRegister), callee) : nullptr;
-    // (Stub::TailCallVarargs is called.)
+    LBasicBlock otherwise = mode == CallMode::TailCall ? branchIfCalleeIsFunction(node->use(calleeRegister), callee) : nullptr;
+    // (Stub::TailCallVarargs is reached with a call instruction.)
     m_graph.emitsCalls = true;
     m_graph.alwaysEmitsCalls = true;
 
@@ -396,7 +402,7 @@ void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, Virt
     }
 }
 
-// The list was not made (Graph::findListsOfArguments()).
+// A call whose argument list was not materialized (Graph::findListsOfArguments()).
 void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, LValue thisValue, Node* list, CallMode mode)
 {
     struct Item {
@@ -423,7 +429,7 @@ void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, L
                 items.append({ ListDescriptor::Value, element, nullptr });
         }
     }
-    // How many of what this function was passed, and where they are.
+    // The number of arguments that this function was passed, and their address.
     auto passed = [&](Node* item) -> std::pair<LValue, LValue> {
         unsigned skipped = item->isBytecode(op_create_rest) ? item->as<OpCreateRest>().m_numParametersToSkip : 0;
         LValue count = m_out.zeroExtPtr(numberOfArgumentsPassed());
@@ -456,8 +462,8 @@ void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, L
         }
         first = m_scratch;
     }
-    // (Both ways on from here go by what has been put there.)
-    LBasicBlock otherwise = mode == CallMode::TailCall ? leaveIfFunction(calleeNode, callee) : nullptr;
+    // (Both paths from here use what was stored in the scratch area.)
+    LBasicBlock otherwise = mode == CallMode::TailCall ? branchIfCalleeIsFunction(calleeNode, callee) : nullptr;
 
     for (;;) {
         PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
@@ -478,7 +484,8 @@ void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, L
                 graph->stubCalls.call(jit, stub, site);
                 return;
             }
-            // (What this function was passed is not in its frame. The items are.)
+            // (The arguments that this function was passed are not in its frame, so they survive the epilogue. The items are in its
+            // frame.)
             if (forwardsAllArguments) {
                 emitEpilogueBeforeLeaving(jit, *graph, params.code());
                 graph->stubCalls.tailCall(jit, stub);
@@ -498,8 +505,8 @@ void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, L
     }
 }
 
-// A call whose callee is written "eval". If that is what it is, the code runs in the scope of the caller. If not, this is a call like any
-// other.
+// A call whose callee is written `eval`. If the callee really is eval, the code runs in the caller's scope. Otherwise this is an
+// ordinary call.
 void Lowering::lowerCallDirectEval(Node* node)
 {
     auto bytecode = node->as<OpCallDirectEval>();
@@ -508,7 +515,7 @@ void Lowering::lowerCallDirectEval(Node* node)
     LValue scope = lowCell(node->use(bytecode.m_scope));
     LValue thisValue = lowJSValue(node->use(bytecode.m_thisValue));
 
-    // Empty: it is not eval after all.
+    // An empty result means that the callee is not eval.
     LValue result = vmCall(node, Int64, Entry::operationAOTCallDirectEval, m_globalObject, callee, m_out.constInt32(arguments.size() - 1),
         arguments.size() > 1 ? arguments[1] : m_out.constInt64(JSValue::ValueUndefined), scope, thisValue, m_out.constInt32(node->bytecodeIndex.asBits()), m_out.constInt32(bytecode.m_lexicallyScopedFeatures));
 
@@ -549,7 +556,7 @@ bool Lowering::tryLowerCall(Node* node)
         return true;
     }
     case op_super_construct: {
-        // What sets it apart from op_construct is what the other tiers learn from it.
+        // It only differs from op_construct in the profiling that the other tiers do.
         auto bytecode = node->as<OpSuperConstruct>();
         lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, CallMode::Construct, true);
         return true;

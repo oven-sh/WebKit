@@ -296,7 +296,7 @@ public:
     std::optional<JITFailureReason> failureReason() { return m_failureReason; }
 
     size_t codeSize() const { return m_ref8.size() + m_ref16.size() + m_matchOnly8.size() + m_matchOnly16.size(); }
-    // (Code that was compiled ahead of time is nobody's to free, and so has no size that anybody knows.)
+    // (Code that was compiled ahead of time is never freed, so its size is not tracked.)
     bool has8BitCode() { return !!m_ref8; }
     bool has16BitCode() { return !!m_ref16; }
     void set8BitCode(MacroAssemblerCodeRef<Yarr8BitPtrTag> ref, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
@@ -310,7 +310,7 @@ public:
         saveMaps(WTF::move(maps));
     }
 
-    // Code that was compiled ahead of time always records where the subpatterns are. Whoever does not care is not told.
+    // Code that was compiled ahead of time always records the subpattern offsets. A caller that only wants the match ignores them.
     bool has8BitCodeMatchOnly() { return !!m_matchOnly8 || m_sizeOfOutputOfCodeFromImage; }
     bool has16BitCodeMatchOnly() { return !!m_matchOnly16 || m_sizeOfOutputOfCodeFromImage; }
     void setCodeFromImage(const void* for8Bit, const void* for16Bit, unsigned sizeOfOutput)
@@ -464,8 +464,8 @@ void jitCompile(YarrPattern&, StringView patternString, CharSize, std::optional<
 struct YarrCodeForImage {
     // The code, which is entered at its start, and after it the tables that are the pattern's own.
     Vector<uint8_t> bytes;
-    // Tables that any number of patterns use. Whoever places the code places one copy of each within 4 GB of it, and fills in the
-    // two instructions at `offset`: adrp reg, table; add reg, reg, :lo12:table.
+    // Tables that are shared between patterns. The code that lays out the image places one copy of each within 4 GB of the code,
+    // and patches the two instructions at `offset`: adrp reg, table; add reg, reg, :lo12:table.
     struct TableReference {
         uint32_t offset;
         uint8_t reg;

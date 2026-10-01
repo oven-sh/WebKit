@@ -103,8 +103,8 @@ public:
         prune();
 
 #if USE(BUN_JSC_ADDITIONS)
-        // What a program's build made of a module is that module's and no other's: its functions have code that goes by where the
-        // module's own variables are. Here, two modules that say the same thing are one.
+        // The code that a build created for a module belongs to that module alone, because its functions access the module's
+        // variables at fixed locations. This cache would treat two modules with identical source as one.
         if (StaticHeap::isProviderOfModule(key.source().provider())) {
             if (UnlinkedCodeBlockType* own = fetchFromDisk<UnlinkedCodeBlockType>(vm, key))
                 return own;
@@ -301,8 +301,8 @@ template <> struct CacheTypes<UnlinkedModuleProgramCodeBlock> {
 UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExecutable*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment*);
 // `depth` bounds how many levels of nested functions get code blocks (0 = only the program's own).
 #if USE(BUN_JSC_ADDITIONS)
-// For a shell: generates the code of every function in the source, as for a bytecode cache, and has the static compiler compile
-// all of it, without running or keeping any. Nothing if the source does not parse.
+// For a shell: generates the bytecode of every function in the source, as for a bytecode cache, and compiles all of it ahead of
+// time, without running or keeping any. Returns nothing if the source does not parse.
 struct AOTCompileAllResult {
     unsigned functions { 0 };
     unsigned compiled { 0 };

@@ -45,18 +45,19 @@ const StaticHeap::Header* StaticHeap::s_header = nullptr;
 static constexpr size_t pageSizeOfImage = 16 * KB;
 
 struct StaticHeapModule {
-    uint32_t entryOffset; // What they are sorted by.
-    // Of the key that the code is for, all that is not the same for every module, or the text itself.
+    uint32_t entryOffset; // The array is sorted by this.
+    // The parts of the module's SourceCodeKey that differ between modules, other than the source text itself.
     uint32_t keyHash;
     uint32_t keyLength;
     uint32_t keyFlags;
-    // Or, of a builtin function: its UnlinkedFunctionExecutable. Then the hash is the embedder's stamp, and there are no flags.
+    // For a builtin function this is its UnlinkedFunctionExecutable instead. keyHash is then the embedder's stamp, and keyFlags is
+    // unused.
     uint64_t codeBlock;
     uint64_t isBuiltinFunction;
 };
 
 struct StaticHeapTDZ {
-    uint64_t executable; // What they are sorted by.
+    uint64_t executable; // The array is sorted by this.
     uint64_t record;
     uint64_t moduleIndex;
 };
@@ -66,22 +67,22 @@ static SymbolRegistry* s_symbolRegistriesBeingBuilt[2];
 static size_t s_moduleBeingBuilt;
 static uint32_t s_entryOffsetOfModuleBeingBuilt;
 
-// The file: this, then each arena, on a page boundary.
+// The layout of the file: this header, then each arena, starting on a page boundary.
 struct StaticHeap::Header {
     static constexpr uint64_t expectedMagic = 0x3530504145485442ULL; // "BTHEAP05"
     static constexpr unsigned maxStructures = 32;
 
     uint64_t magic;
-    uint64_t stamp; // Of the engine: what is in the arenas is its objects.
-    uint64_t size; // Of everything.
+    uint64_t stamp; // Identifies the build of the engine. The arenas hold its objects, laid out as that build lays them out.
+    uint64_t size; // Of the whole file.
     uint64_t arenaOffset[Region::numberOfArenasInFile];
     uint64_t arenaSize[Region::numberOfArenasInFile];
-    // A part of Arena::Data that is not in the file, and that there is nothing at the addresses of: what nothing needs of the
-    // payload. Where it starts in the arena, and how long it is. What follows it in the arena follows what precedes it in the file.
+    // A range of Arena::Data that is not in the file and is left unmapped: the part of the bytecode payload that nothing needs at
+    // run time. holeInData is its offset in the arena. In the file, the data after the hole directly follows the data before it.
     uint64_t holeInData;
     uint64_t sizeOfHoleInData;
 
-    // Addresses.
+    // The fields below are addresses, not offsets.
     uint64_t strings;
     uint64_t stringsSize;
     uint64_t stringSlots;
@@ -94,25 +95,27 @@ struct StaticHeap::Header {
     uint64_t numberOfModules;
     uint64_t tdz; // StaticHeapTDZ[]
     uint64_t numberOfTDZ;
-    uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::ImageFunction::index.
-    uint64_t functionMetadataOffsets; // uint32_t[], likewise. Zero: the unlinked code of functions is here instead.
-    uint64_t rowsOfFunctions; // RowOfFunction[], likewise. See rowOf().
-    // Options::useGuardPagesForShortFunctionExecutables(): from here to there in Arena::Cells, every other page is not to be there.
+    uint64_t infosOfFunctions; // AOT::FunctionInfo[], indexed by AOT::ImageFunction::index.
+    uint64_t functionMetadataOffsets; // uint32_t[], indexed the same way. Zero if the unlinked code of functions is kept instead.
+    uint64_t rowsOfFunctions; // RowOfFunction[], indexed the same way. See rowOf().
+    // With Options::useGuardPagesForShortFunctionExecutables(), every other page of this range of Arena::Cells is left unmapped.
     uint64_t guardedFrom;
     uint64_t guardedTo;
     uint64_t numberOfFunctions;
-    // See PositionsToKeep. If there are any, FunctionMetadata::ExpressionInfo is where the positions of a function's call sites are, and
-    // an odd number among functionMetadataOffsets is one more than where those of code that has no metadata are.
-    uint64_t namesOfSources; // uint32_t[numberOfSources + 1]: where each starts in what follows them, which is UTF-8.
+    // See PositionsToKeep. With hasPositionsOfCallSites, FunctionMetadata::ExpressionInfo is the offset of the positions of a
+    // function's call sites. An odd entry in functionMetadataOffsets is one more than the offset of the positions for code that has
+    // no metadata.
+    uint64_t namesOfSources; // uint32_t[numberOfSources + 1]: the offset of each name in the UTF-8 text that follows the array.
     uint64_t numberOfSources;
     uint64_t hasPositionsOfCallSites;
     uint64_t hasIdentifiersOfProgram; // See AOT::NumbersOfIdentifiers.
-    uint64_t identifiersOfProgram; // UniquedStringImpl*[], by number.
+    uint64_t identifiersOfProgram; // UniquedStringImpl*[], indexed by identifier number.
     uint64_t constantsOfProgram; // EncodedJSValue[]. See AOT::NumbersOfConstants.
     uint64_t keysOfImage; // AOT::ImageKey[]. See keysOfImage().
     uint64_t capacityOfKeysOfImage;
 
-    // What the cells say they are: which of the VM's own structures, and where that has to be.
+    // The structures that cells in the heap use. Each is one of the VM's own structures, identified by its index in the VM,
+    // together with the StructureID it must have.
     uint32_t numberOfStructures;
     struct {
         uint32_t indexInVM;
@@ -120,13 +123,13 @@ struct StaticHeap::Header {
     } structures[maxStructures];
 };
 
-// The VM's own structures, which it makes first, are members of it that follow one another.
+// The structures that the VM creates first are consecutive members of VM.
 static std::span<WriteBarrier<Structure>> structuresOf(VM& vm)
 {
     return { &vm.structureStructure, static_cast<size_t>(&vm.bigIntStructure + 1 - &vm.structureStructure) };
 }
 
-// In Arena::Bss, a Decoder for each module.
+// Arena::Bss has room for one Decoder per module.
 static void* addressOfDecoder(size_t moduleIndex)
 {
     constexpr size_t stride = roundUpToMultipleOf<64>(sizeof(Decoder));
@@ -143,13 +146,13 @@ void StaticHeap::makeContainer(VM& vm)
     PreciseAllocation::setContainerOfStaticCells(PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace));
 }
 
-// What a VM other than the first has of its own, where the first has something that there is one of.
+// The per-VM state of every VM other than the first. The first VM uses the process-wide state instead.
 struct StaticHeapOfVM {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StaticHeapOfVM);
 
-    uint64_t number { 0 }; // No other VM of the process has it, or has had it. (Another may well come to be where this one was.)
+    uint64_t number { 0 }; // Unique in the process, and never reused. (A VM's address can be reused by a later VM.)
     PreciseAllocation* container { nullptr };
-    Vector<ScriptExecutable*> topLevelExecutables; // By module.
+    Vector<ScriptExecutable*> topLevelExecutables; // Indexed by module.
     UncheckedKeyHashMap<Decoder*, Ref<Decoder>> decoders;
     UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, std::array<Strong<UnlinkedFunctionCodeBlock>, 2>> code;
     UncheckedKeyHashMap<FunctionExecutable*, Strong<FunctionExecutable>> standIns;
@@ -165,7 +168,7 @@ bool StaticHeap::isUsedBy(VM& vm)
     return s_vm == &vm || vm.m_staticHeapOfVM;
 }
 
-// Whose the blocks are that cells are placed in.
+// Records which VM's container owns each block that cells are placed in.
 struct OwnerOfBlock {
     std::atomic<uintptr_t> start { 0 };
     std::atomic<size_t> size { 0 };
@@ -173,7 +176,7 @@ struct OwnerOfBlock {
 };
 static constexpr unsigned maxBlocks = 256;
 static OwnerOfBlock s_ownersOfBlocks[maxBlocks];
-static std::atomic<unsigned> s_numberOfOwnersEverUsed { 0 }; // The first so many.
+static std::atomic<unsigned> s_numberOfOwnersEverUsed { 0 }; // Only the first s_numberOfOwnersEverUsed entries have ever been used.
 
 PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
 {
@@ -185,7 +188,7 @@ PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
                 return owner.container.load(std::memory_order_relaxed);
         }
     }
-    // (A thread that helps a collector has none. All it wants to know is that the cell is marked, which any of them says.)
+    // (A GC helper thread has no VM. It only needs to know that the cell is marked, and every container reports that.)
     if (auto* ofVM = t_ofVMOfThread)
         return ofVM->container;
     return PreciseAllocation::containerOfStaticCells();
@@ -209,13 +212,13 @@ void StaticHeap::willAllocateUnlinkedFunctionSlow()
     s_nextCellIsOfAFunction = true;
 }
 
-// Where the cells are and how big, for as long as the region is being built. Nothing needs to be told once it is.
-static Vector<std::pair<void*, size_t>> s_cellsBeingBuilt[2]; // Those of Arena::Cells, and of Arena::MutableCells.
+// The address and size of each cell, kept only while the heap is being built.
+static Vector<std::pair<void*, size_t>> s_cellsBeingBuilt[2]; // For Arena::Cells and for Arena::MutableCells.
 
 template<typename Functor> static void forEachCell(Region::Arena arena, const Functor& functor)
 {
     RELEASE_ASSERT(arena == Region::Arena::Cells || arena == Region::Arena::MutableCells);
-    // (By index: what is done with a cell may make another.)
+    // (Iterates by index, because the functor may allocate another cell.)
     auto& cells = s_cellsBeingBuilt[arena == Region::Arena::MutableCells];
     for (size_t i = 0; i < cells.size(); ++i)
         functor(cells[i].first, cells[i].second);
@@ -283,7 +286,7 @@ void StaticHeap::freeBlock(void* block, size_t size)
         if (owner.start.load(std::memory_order_relaxed) == std::bit_cast<uintptr_t>(block) && owner.size.load(std::memory_order_relaxed))
             owner.size.store(0, std::memory_order_release);
     }
-    // Zeroed again, and nobody's memory until it is written to.
+    // Remapping zeroes the block and releases its physical pages until it is written again.
     void* result = mmap(block, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE | MAP_FIXED, -1, 0);
     RELEASE_ASSERT(result == block);
     Locker locker { s_blocksLock };
@@ -293,7 +296,8 @@ void StaticHeap::freeBlock(void* block, size_t size)
 void StaticHeap::didPlaceCell(VM& vm, JSCell* cell)
 {
     RELEASE_ASSERT(contains(cell) && !vm.heap.m_placeOfNextCell);
-    // As after a collection that found it. What has been stored in it since it was allocated is found by the next one.
+    // Give the cell the state it would have after a collection that marked it. The write barrier makes the next collection visit
+    // it, to find what has been stored in it since it was allocated.
     cell->setCellState(CellState::PossiblyBlack);
     vm.writeBarrier(cell);
 }
@@ -338,7 +342,7 @@ void StaticHeap::noteParentScopeTDZVariables(const UnlinkedFunctionExecutable& e
 
 namespace {
 
-// Says of a cell whether everything the collector would go on to from it is in the region too.
+// Checks that everything the collector would visit from a cell is in the static heap too.
 class ClosureChecker final : public AbstractSlotVisitor {
 public:
     ClosureChecker(VM& vm)
@@ -364,9 +368,9 @@ public:
     void append(const ConservativeRoots&) final { }
     void appendUnbarriered(JSCell* cell) final
     {
-        // (UnlinkedCodeBlock::executableIn())
+        // (Strip the tag bit: see UnlinkedCodeBlock::executableIn().)
         cell = std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(cell) & ~UnlinkedCodeBlock::isExecutable);
-        // (Which are looked at on their own.)
+        // (Structures are checked separately.)
         if (cell && cell->type() == StructureType)
             return;
         check(cell, "a cell");
@@ -397,7 +401,8 @@ static void* addressOfSourceProvider(size_t moduleIndex)
     return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + Region::offsetOfSourceProvidersInBss + moduleIndex * StaticHeap::sizeOfPlaceForSourceProvider);
 }
 
-// AOT::FunctionMetadata of a function whose code is not going to be here. What they refer to stays (UnlinkedCodeBlock::leaveToStaticHeap()).
+// The offset of the AOT::FunctionMetadata of each function whose unlinked code is not kept. What the metadata refers to is kept
+// (UnlinkedCodeBlock::leaveToStaticHeap()).
 static std::span<uint32_t> s_functionMetadataOffsetsBeingBuilt;
 static const StaticHeap::PositionsToKeep* s_positionsToKeep;
 static UncheckedKeyHashMap<CString, uint32_t>* s_sourcesBeingBuilt;
@@ -414,12 +419,14 @@ static void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
     bytes.append(static_cast<uint8_t>(value));
 }
 
-// The line and the column that the function starts at, in the text of the module (StaticHeap::whereFunctionStarts()). Then
-// how many there are. Then for each, in the order of the bytecode: twice how much further on it is than the one before, and one more
-// if something is constructed there; a position; and if something is constructed there another, of where that expression starts.
-// A position that is on the same line of the same source as the one before is one more than twice how many columns further on it is
-// (as a number that has its sign at the bottom). Any other is four times how many lines further down it is (likewise), and two more if
-// it is in another source, which then follows (zero: none, it is a place in the text of the module); and then the column.
+// The format of a function's positions, as a sequence of varints:
+//   - The line and column where the function starts in the module's text (StaticHeap::whereFunctionStarts()).
+//   - The number of entries.
+//   - For each entry, in bytecode order: (delta of the bytecode offset from the previous entry) << 1 | isConstruction, then a
+//     position. A construction has a second position, where its expression starts.
+// A position on the same line of the same source as the previous one is zigzag(column delta) << 1 | 1. Any other position is
+// zigzag(line delta) << 2 | sourceChanged << 1, then the number of the source if it changed (zero: no source, the position is in
+// the module's text), then the column.
 static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock, unsigned firstLine, unsigned startColumn, uint32_t entryOffsetOfModule)
 {
     Vector<uint8_t> stream;
@@ -427,7 +434,8 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
         Region::AllocationScope notInRegion(false);
         auto& sites = s_positionsToKeep->sites[index];
         Vector<uint32_t> offsets = sites.offsets;
-        // Where an async function that is waiting says it is (FunctionRef::resumePointOf()).
+        // Also keep the resume points of an async function, which is where it reports being while it is suspended
+        // (FunctionRef::resumePointOf()).
         if (size_t count = codeBlock->numberOfUnlinkedSwitchJumpTables(); count && isAsyncFunctionBodyParseMode(codeBlock->parseMode())) {
             auto& table = codeBlock->unlinkedSwitchJumpTable(count - 1);
             for (int32_t offset : table.m_branchOffsets)
@@ -444,7 +452,7 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
         int64_t previousLine = 0;
         int64_t previousColumn = 0;
         uint32_t previousSource = 0;
-        auto signAtTheBottom = [](int64_t value) {
+        auto zigZagEncode = [](int64_t value) {
             return static_cast<uint64_t>(value << 1) ^ static_cast<uint64_t>(value >> 63);
         };
         auto appendPosition = [&](LineColumn inModule) {
@@ -459,9 +467,9 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
             } else
                 position = inModule;
             if (position.line == previousLine && source == previousSource)
-                appendVarint(stream, signAtTheBottom(static_cast<int64_t>(position.column) - previousColumn) << 1 | 1);
+                appendVarint(stream, zigZagEncode(static_cast<int64_t>(position.column) - previousColumn) << 1 | 1);
             else {
-                appendVarint(stream, signAtTheBottom(static_cast<int64_t>(position.line) - previousLine) << 2 | (source != previousSource) << 1);
+                appendVarint(stream, zigZagEncode(static_cast<int64_t>(position.line) - previousLine) << 2 | (source != previousSource) << 1);
                 if (source != previousSource)
                     appendVarint(stream, source);
                 appendVarint(stream, position.column);
@@ -495,7 +503,7 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
             }
         }
     }
-    // (At an even address: see Header::hasPositionsOfCallSites.)
+    // (Allocated at an even address: see Header::hasPositionsOfCallSites.)
     auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, stream.size(), 2));
     memcpySpan(std::span { copy, stream.size() }, stream.span());
     s_bytesOfPositions += stream.size();
@@ -504,14 +512,14 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
     return copy;
 }
 
-static const uint8_t* copyInCommon(std::span<const uint8_t>, size_t alignment); // One copy of what is the same, while there is an ArraysInCommon.
+static const uint8_t* deduplicatedCopy(std::span<const uint8_t>, size_t alignment); // Shares one copy between equal arrays, while there is an ArrayDeduplicator.
 
 static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t entryOffsetOfModule)
 {
     if (s_functionMetadataOffsetsBeingBuilt.empty() || s_functionMetadataOffsetsBeingBuilt[index])
         return;
     if (codeBlock->codeType() != FunctionCode) {
-        // The code of a module, whose UnlinkedCodeBlock is here to say everything else about it.
+        // The code of a module. Its UnlinkedCodeBlock is kept, so only the positions are needed.
         if (s_positionsToKeep)
             s_functionMetadataOffsetsBeingBuilt[index] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(makePositions(index, codeBlock, 1, 1, entryOffsetOfModule)) - Region::startOf(Region::Arena::Data)) | 1;
         return;
@@ -525,7 +533,7 @@ static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExe
     RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Metadata::shiftOfInstructionsSize)));
     Vector<uint32_t, 10> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Metadata::shiftOfInstructionsSize | (codeBlock->isBuiltinFunction() ? Metadata::isBuiltinFunction : 0) };
     if (s_positionsToKeep) {
-        // (A constructor that nobody wrote has an executable of its own in every realm, and is nowhere in any source.)
+        // (A default class constructor gets its own executable in every realm, and has no position in any source.)
         if (executable) {
             words[0] |= Metadata::ExpressionInfo;
             words.append(in(Region::Arena::Data, makePositions(index, codeBlock, executable->firstLine(), executable->startColumn(), entryOffsetOfModule)));
@@ -555,7 +563,7 @@ static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExe
         words[0] |= Metadata::StringSwitchJumpTables;
         words.append(in(Region::Arena::Malloc, &codeBlock->unlinkedStringSwitchJumpTable(0)));
     }
-    if (!AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesAreShared::Yes)) {
+    if (!AOT::hasOnlyRealmIndependentConstants(codeBlock, AOT::SymbolTablesAreShared::Yes)) {
         auto& representations = codeBlock->constantsSourceCodeRepresentation();
         Vector<uint32_t, 16> list { static_cast<uint32_t>(representations.size()), 0 };
         for (unsigned i = 0; i < representations.size(); ++i) {
@@ -589,7 +597,7 @@ static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExe
             scalars = scalarsToMakeFunctionCodeFrom(*codeBlock);
         }
         words[0] |= Metadata::Scalars;
-        words.append(in(Region::Arena::Data, copyInCommon(scalars.span(), 1)));
+        words.append(in(Region::Arena::Data, deduplicatedCopy(scalars.span(), 1)));
         Region::AllocationScope notInRegion(false);
         scalars = { };
     }
@@ -599,7 +607,7 @@ static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExe
 }
 
 namespace {
-class ArraysInCommon {
+class ArrayDeduplicator {
 public:
     const uint8_t* copyOf(std::span<const uint8_t> content, size_t alignment = sizeof(void*))
     {
@@ -628,13 +636,13 @@ public:
 private:
     UncheckedKeyHashMap<uint64_t, Vector<std::span<const uint8_t>, 1>> m_copies;
 };
-ArraysInCommon* s_arraysBeingBuilt;
+ArrayDeduplicator* s_arrayDeduplicator;
 }
 
-static const uint8_t* copyInCommon(std::span<const uint8_t> content, size_t alignment)
+static const uint8_t* deduplicatedCopy(std::span<const uint8_t> content, size_t alignment)
 {
-    if (s_arraysBeingBuilt)
-        return s_arraysBeingBuilt->copyOf(content, alignment);
+    if (s_arrayDeduplicator)
+        return s_arrayDeduplicator->copyOf(content, alignment);
     auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, content.size(), alignment));
     memcpySpan(std::span { copy, content.size() }, content);
     return copy;
@@ -649,20 +657,20 @@ std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
 
 static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, CodeSpecializationKind kind)
 {
-    // (Its SymbolTables are being made here and now.)
-    bool constantsAreRealmIndependent = AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesAreShared::Yes);
+    // (Its SymbolTables are being created in the static heap right now, so they are shared.)
+    bool constantsAreRealmIndependent = AOT::hasOnlyRealmIndependentConstants(codeBlock, AOT::SymbolTablesAreShared::Yes);
     RELEASE_ASSERT(constantsAreRealmIndependent || !function.startsCold);
     info.constants = codeBlock->constantRegisters().span().data();
     info.identifiers = codeBlock->identifiers().span().data();
-    // Of code that is not going to be here, nothing is left that has these as anything but so many words in a row. One copy will do
-    // for all that have the same, with nothing before it or after it.
+    // When the unlinked code is not kept, these arrays are only ever read as plain arrays of words. So functions with equal arrays
+    // share one copy, without a header.
     const Vector<uint32_t>* numbersOfConstants = s_constantsOfProgram.empty() ? nullptr : &s_reportableSites[function.index].numbersOfConstants;
     if (numbersOfConstants && !numbersOfConstants->isEmpty()) {
         RELEASE_ASSERT(constantsAreRealmIndependent && codeBlock->codeType() == FunctionCode && numbersOfConstants->size() == codeBlock->constantRegisters().size());
         for (unsigned i = 0; i < numbersOfConstants->size(); ++i) {
             JSValue value = codeBlock->constantRegisters()[i].get();
             uint32_t number = numbersOfConstants->at(i);
-            // (What says which of the realm's things is meant is not read as a constant: AOT::NodeKind::LinkTimeConstant.)
+            // (A link-time constant is not read as a constant: see AOT::NodeKind::LinkTimeConstant.)
             if (codeBlock->constantsSourceCodeRepresentation()[i] == SourceCodeRepresentation::LinkTimeConstant)
                 value = JSValue();
             RELEASE_ASSERT(!value == (number == AOT::notAConstantOfProgram));
@@ -672,7 +680,7 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
             if (!inTable)
                 inTable = JSValue::encode(value);
             else if (inTable != JSValue::encode(value)) {
-                // Two strings that say the same. Either will do for both.
+                // Two JSStrings with equal contents. Either one can be used for both.
                 JSValue other = JSValue::decode(inTable);
                 RELEASE_ASSERT(value.isString() && other.isString());
                 String said = asString(value)->tryGetValue();
@@ -681,12 +689,12 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
             }
         }
         info.constants = nullptr;
-    } else if (s_arraysBeingBuilt && codeBlock->codeType() == FunctionCode)
-        info.constants = std::bit_cast<decltype(info.constants)>(s_arraysBeingBuilt->copyOf(asBytes(codeBlock->constantRegisters().span())));
-    if (s_arraysBeingBuilt && codeBlock->codeType() == FunctionCode) {
-        // (With one table for the whole program, the function has none of its own.)
+    } else if (s_arrayDeduplicator && codeBlock->codeType() == FunctionCode)
+        info.constants = std::bit_cast<decltype(info.constants)>(s_arrayDeduplicator->copyOf(asBytes(codeBlock->constantRegisters().span())));
+    if (s_arrayDeduplicator && codeBlock->codeType() == FunctionCode) {
+        // (With one identifier table for the whole program, the function has no table of its own.)
         if (s_identifiersOfProgram.empty())
-            info.identifiers = std::bit_cast<decltype(info.identifiers)>(s_arraysBeingBuilt->copyOf(asBytes(codeBlock->identifiers().span())));
+            info.identifiers = std::bit_cast<decltype(info.identifiers)>(s_arrayDeduplicator->copyOf(asBytes(codeBlock->identifiers().span())));
     }
     if (!s_identifiersOfProgram.empty()) {
         static_assert(sizeof(Identifier) == sizeof(UniquedStringImpl*));
@@ -707,13 +715,13 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     fillMetadata(function.index, codeBlock, executable, s_entryOffsetOfModuleBeingBuilt);
 }
 
-// The functions of `codeBlock`, whose source is `source`, and theirs.
-static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<AOT::FunctionInfo> byIndex, uint64_t& made, UnlinkedFunctionExecutable* only = nullptr)
+// Creates the executables of the functions nested in `codeBlock`, whose source is `source`, recursively.
+static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<AOT::FunctionInfo> byIndex, UnlinkedFunctionExecutable* only = nullptr)
 {
     auto make = [&](UnlinkedFunctionExecutable* unlinked) {
         if (unlinked->staticExecutable())
             return;
-        // The source of a constructor that nobody wrote is one of the engine's own, so its executable is made when the program runs.
+        // The source of a default class constructor belongs to the engine, so its executable is created at run time.
         bool isDefaultConstructor = unlinked->isBuiltinDefaultClassConstructor();
         auto functionKey = orderFunctionKey(*unlinked, isDefaultConstructor ? source : unlinked->linkedSourceCode(source));
         if (!functionKey)
@@ -737,8 +745,8 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
             }
             return;
         }
-        // A function that is compiled both to be called and to construct has the functions inside it twice over. There is one piece
-        // of code for each of those all the same, which is the code of one executable (AOT::FunctionInfo).
+        // A function compiled both for call and for construct has two copies of its nested functions. Each nested function still
+        // has only one compiled function, which belongs to one executable (AOT::FunctionInfo).
         FunctionExecutable* executable = nullptr;
         for (auto& function : code) {
             if (function && byIndex[function->index].executable())
@@ -755,7 +763,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
             unlinked->setStaticExecutable(executable);
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto* nested = unlinked->codeBlockIfExists(kind))
-                    makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, made);
+                    makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex);
             }
             return;
         }
@@ -772,16 +780,15 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
                 fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfExists(kind), executable, kind);
             }
         }
-        // (Whatever cannot be constructed with like that has code for it, or is not to be constructed with.)
+        // (Any other function either has code for construct or cannot be constructed.)
         if (code[0] && !code[1] && unlinked->constructAbility() == ConstructAbility::CanConstruct && !unlinked->isClassConstructorFunction()) {
             void* stub = image.addressOfStub(AOT::Stub::ConstructByCalling);
             executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, stub, std::bit_cast<uintptr_t>(stub), FunctionExecutable::aotIndexOfWhatConstructsByCalling);
         }
         unlinked->setStaticExecutable(executable);
-        made++;
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto* nested = unlinked->codeBlockIfExists(kind))
-                makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, made);
+                makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex);
         }
     };
     if (only) {
@@ -794,26 +801,27 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         make(codeBlock->functionExpr(i));
 }
 
-// The names in a SymbolTable are for finding a variable by its name when the program runs. Code says which variable it means by
-// where it is, unless it could not tell when it was generated whose the name was; and code that is evaluated when the program runs
-// can name anything it can see.
-struct NamesLookedUp {
+// The names in a SymbolTable are only needed to find a variable by name at run time. Compiled code refers to a variable by its
+// offset, unless the bytecode generator could not tell which scope declares the name. Code that is evaluated at run time can name
+// any variable in scope.
+struct DynamicallyResolvedNames {
     bool mayBeAny { false };
     UncheckedKeyHashSet<UniquedStringImpl*> names;
 };
 
-static UncheckedKeyHashSet<SymbolTable*>* s_tablesSeenTo;
+static UncheckedKeyHashSet<SymbolTable*>* s_processedSymbolTables;
 
 static bool isLookedUpByName(ResolveType type)
 {
     return type != ResolvedClosureVar && type != ResolvedLazyClosureVar && type != ModuleVar && !isStaticClosureVarResolveType(type);
 }
 
-// Adds what the code, and the code of the functions in it, looks up. Nothing else can see the scopes that the code makes.
-// exportedByModule: of the code of a module, where the variables are that it exports, if that is known.
-static void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, NamesLookedUp& lookedUp, uint64_t& tables, uint64_t& tablesWithNames, const Vector<uint32_t>* exportedByModule = nullptr)
+// Adds the names that the code and its nested functions look up to `lookedUp`, and drops the other names from the symbol tables of
+// the scopes the code creates. No other code can see those scopes.
+// exportedByModule: for the code of a module, the scope offsets of the variables it exports, if known.
+static void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, DynamicallyResolvedNames& lookedUp, const Vector<uint32_t>* exportedByModule = nullptr)
 {
-    NamesLookedUp own;
+    DynamicallyResolvedNames own;
     {
         Region::AllocationScope notInRegion(false);
         for (const auto& instruction : codeBlock->instructions()) {
@@ -845,10 +853,10 @@ static void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, NamesLoo
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto* nested = function->codeBlockIfExists(kind)) {
                 hasCode = true;
-                dropUnreferencedVariableNames(nested, own, tables, tablesWithNames);
+                dropUnreferencedVariableNames(nested, own);
             }
         }
-        // (Then there is no telling.)
+        // (Without its code, assume that it may look up any name.)
         if (!hasCode)
             own.mayBeAny = true;
     };
@@ -857,7 +865,7 @@ static void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, NamesLoo
     for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
         inside(codeBlock->functionExpr(i));
 
-    // The environment of a module is looked in by name by whoever asks the module for what it exports, and by the engine for names of its own.
+    // A module's environment is also searched by name to resolve the module's exports, and by the engine for its private names.
     SymbolTable* ofModule = nullptr;
     if (auto* moduleCode = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock))
         ofModule = dynamicDowncast<SymbolTable>(moduleCode->constantRegister(VirtualRegister(moduleCode->moduleEnvironmentSymbolTableConstantRegisterOffset())).get());
@@ -879,15 +887,13 @@ static void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, NamesLoo
         if (!table || table == ofModule)
             continue;
         {
-            // What is kept goes by who can see the scope, which is the code that has the table and what is inside that.
+            // Which names are kept depends on the code that can see the scope: the code that owns the table and the functions
+            // nested in it. So each table must be processed only once.
             Region::AllocationScope notInRegion(false);
-            RELEASE_ASSERT(s_tablesSeenTo->add(table).isNewEntry);
+            RELEASE_ASSERT(s_processedSymbolTables->add(table).isNewEntry);
         }
-        ++tables;
         if (!own.mayBeAny)
             table->keepOnlyNames(own.names);
-        ConcurrentJSLocker locker(table->m_lock);
-        tablesWithNames += !!table->size(locker);
     }
 
     Region::AllocationScope notInRegion(false);
@@ -989,17 +995,18 @@ ScriptExecutable*& StaticHeap::topLevelExecutableOfModuleInOtherVM(VM& vm, size_
     return ofVM(vm)->topLevelExecutables[index];
 }
 
-// Of each place for a SourceProvider: nobody's, somebody's who is making one there (whose), or that of one that is made.
-struct StateOfPlace {
-    std::atomic<uint64_t> maker { 0 }; // numberOf()
+// The state of each slot for a SourceProvider: free (maker is zero), being constructed by the VM whose number is `maker`, or
+// constructed (isMade).
+struct SourceProviderSlotState {
+    std::atomic<uint64_t> maker { 0 }; // See numberOf().
     std::atomic<bool> isMade { false };
 };
-static StateOfPlace* statesOfPlaces(size_t numberOfModules)
+static SourceProviderSlotState* sourceProviderSlotStates(size_t numberOfModules)
 {
-    static StateOfPlace* states;
+    static SourceProviderSlotState* states;
     static std::once_flag once;
     std::call_once(once, [&] {
-        states = new StateOfPlace[numberOfModules];
+        states = new SourceProviderSlotState[numberOfModules];
     });
     return states;
 }
@@ -1007,7 +1014,7 @@ static StateOfPlace* statesOfPlaces(size_t numberOfModules)
 void StaticHeap::didMakeSourceProvider(void* place)
 {
     size_t index = (std::bit_cast<uintptr_t>(place) - std::bit_cast<uintptr_t>(addressOfSourceProvider(0))) / sizeOfPlaceForSourceProvider;
-    statesOfPlaces(s_header->numberOfModules)[index].isMade.store(true, std::memory_order_release);
+    sourceProviderSlotStates(s_header->numberOfModules)[index].isMade.store(true, std::memory_order_release);
 }
 
 void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t sizeOfProvider, SourceProvider*& made)
@@ -1021,11 +1028,11 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
     if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock)
         return nullptr;
     void* place = addressOfSourceProvider(index);
-    StateOfPlace& state = statesOfPlaces(modules.size())[index];
+    SourceProviderSlotState& state = sourceProviderSlotStates(modules.size())[index];
     uint64_t maker = 0;
     if (state.maker.compare_exchange_strong(maker, numberOf(vm)))
         return place;
-    // (A VM that loads a module a second time gets what it always got: a provider like any other.)
+    // (A VM that loads the same module a second time gets an ordinary heap-allocated provider, as it would without a static heap.)
     if (maker == numberOf(vm))
         return nullptr;
     while (!state.isMade.load(std::memory_order_acquire))
@@ -1034,15 +1041,15 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
     return nullptr;
 }
 
-// A FunctionExecutable and an UnlinkedFunctionExecutable are made for every function, as ever: that is what finds the function's code and
-// says what there is to say about it. But most of what is in them is for code that is yet to be parsed, compiled or replaced, and a
-// program that goes without its bytecode has none. So they are made in Arena::Scratch, and this is when all that is done. What
-// is kept goes where cells go:
-// - For most functions, a FunctionExecutable in the short form, which see, and a row in a table. What is in the
-//   UnlinkedFunctionExecutable that the row does not say is the same for a great many functions, which have one between them.
-// - Both as they are, for a function that there is more to say about.
-// - The UnlinkedFunctionExecutable as it is, of a builtin, which is found by it.
-// The code that a function is in refers to its FunctionExecutable (UnlinkedCodeBlock::executableIn()).
+// A FunctionExecutable and an UnlinkedFunctionExecutable are created for every function, as usual: they are how the function's code
+// is found and described. But most of their fields are for code that has yet to be parsed, compiled or replaced, and a program that
+// ships without its bytecode has none. So they are created in Arena::Scratch, and this function then copies what is needed to the
+// arenas that are kept:
+//   - For most functions, a FunctionExecutable in the short form (see FunctionExecutable::sizeOfShortForm) and a RowOfFunction. The
+//     fields of the UnlinkedFunctionExecutable that are not in the row are equal for many functions, which share one copy.
+//   - For a function that cannot use the short form, both objects in full.
+//   - For a builtin, which is looked up by its UnlinkedFunctionExecutable, that object in full.
+// The code that contains a function refers to its FunctionExecutable directly (UnlinkedCodeBlock::executableIn()).
 void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
 {
     auto isScratch = [](uintptr_t bits) { return bits - Region::startOf(Region::Arena::Scratch) < Region::used(Region::Arena::Scratch) && s_cellsInScratch.contains(std::bit_cast<void*>(bits)); };
@@ -1060,7 +1067,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     };
     std::span functionMetadataOffsets { std::bit_cast<const uint32_t*>(header.functionMetadataOffsets), static_cast<size_t>(header.numberOfFunctions) };
 
-    // The executables first, one after the other: they are what is looked at when a function is called.
+    // First the executables, contiguously, because they are what a call reads.
     std::span<RowOfFunction> rows { static_cast<RowOfFunction*>(Region::allocate(Region::Arena::Data, header.numberOfFunctions * sizeof(RowOfFunction), pageSizeOfImage)), static_cast<size_t>(header.numberOfFunctions) };
     zeroSpan(rows);
     header.rowsOfFunctions = std::bit_cast<uint64_t>(rows.data());
@@ -1068,7 +1075,6 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     Vector<std::pair<uint32_t, UnlinkedFunctionExecutable*>> inShortForm;
     Vector<FunctionExecutable*> inFull;
     Structure* structureOfShortForm = vm.shortFunctionExecutableStructure.get();
-    UncheckedKeyHashMap<ASCIILiteral, unsigned> why;
     for (auto* executable : s_executablesInScratch) {
         UnlinkedFunctionExecutable* unlinked = executable->unlinkedExecutable();
         RELEASE_ASSERT(isScratch(std::bit_cast<uintptr_t>(executable)) && isScratch(std::bit_cast<uintptr_t>(unlinked)));
@@ -1076,11 +1082,11 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
         bool hasCode = hasCodeToCall || (executable->aotEntryFor(CodeSpecializationKind::CodeForConstruct) && !executable->constructsByCalling());
         uint32_t index = executable->aotIndexFor(hasCodeToCall ? CodeSpecializationKind::CodeForCall : CodeSpecializationKind::CodeForConstruct);
         size_t module = (std::bit_cast<uintptr_t>(executable->source().provider()) - std::bit_cast<uintptr_t>(addressOfSourceProvider(0))) / sizeOfPlaceForSourceProvider;
-        auto saysWhereItStarts = [&] {
+        auto hasStartPosition = [&] {
             uint32_t at = functionMetadataOffsets[index];
             return at && !(at & 1) && inData<AOT::FunctionMetadata>(at)->find(AOT::FunctionMetadata::ExpressionInfo);
         };
-        bool canBeShort = hasCode && unlinked->canBeSharedByStaticExecutables() && saysWhereItStarts()
+        bool canBeShort = hasCode && unlinked->canBeSharedByStaticExecutables() && hasStartPosition()
             && isPlaceOfSourceProvider(executable->source().provider()) && module < (1u << RowOfFunction::bitsOfModule)
             && unlinked->parameterCount() < (1u << RowOfFunction::bitsOfParameterCount)
             && executable->intrinsic() == NoIntrinsic && executable->evalContextType() == EvalContextType::None && !executable->overrideLineNumber()
@@ -1091,7 +1097,8 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
         }
         char* copy;
         if (Options::useGuardPagesForShortFunctionExecutables()) [[unlikely]] {
-            // (A cell is halfway between two multiples of 16, so it cannot end where a page does. What is in between is no address.)
+            // (Cells are at addresses that are 8 modulo 16, so a cell cannot end exactly at a page boundary. The bytes in between
+            // are filled with a value that is not a valid address.)
             auto* pages = static_cast<char*>(Region::allocate(Region::Arena::Cells, 2 * pageSizeOfImage, pageSizeOfImage));
             if (!header.guardedFrom)
                 header.guardedFrom = std::bit_cast<uintptr_t>(pages) - Region::startOf(Region::Arena::Cells);
@@ -1115,7 +1122,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
         inShortForm.append({ index, unlinked });
     }
 
-    // Then what they have between them, which is not much.
+    // Then the UnlinkedFunctionExecutables that they share. There are few.
     UncheckedKeyHashMap<String, UnlinkedFunctionExecutable*> shared;
     for (auto& [index, unlinked] : inShortForm) {
         auto bytes = unlinked->whatIsSharedByStaticExecutables();
@@ -1125,7 +1132,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
         rows[index].unlinkedFunction = static_cast<uint32_t>(std::bit_cast<uintptr_t>(one) - Region::startOf(Region::Arena::Cells));
     }
 
-    // Then what is kept as it is.
+    // Then the executables that are kept in full.
     for (auto* executable : inFull) {
         auto* copy = static_cast<FunctionExecutable*>(place(executable, sizeof(FunctionExecutable)));
         moved.add(executable, copy);
@@ -1156,7 +1163,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     }
     size_t foundBy = kept.size() - ofExecutablesInFull;
 
-    // And whatever refers to an executable refers to what has become of it.
+    // Finally, update every reference to an executable to point to its copy.
     for (uint32_t at : functionMetadataOffsets) {
         if (!at || at & 1)
             continue;
@@ -1180,11 +1187,12 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     }
     for (auto& info : std::span { std::bit_cast<AOT::FunctionInfo*>(header.infosOfFunctions), static_cast<size_t>(header.numberOfFunctions) }) {
         if (ScriptExecutable* executable = info.executable(); isScratch(std::bit_cast<uintptr_t>(executable)))
-            info.setExecutable(moved.get(uncheckedDowncast<FunctionExecutable>(executable)), info.kind(), info.constantsAreOfNoRealm());
+            info.setExecutable(moved.get(uncheckedDowncast<FunctionExecutable>(executable)), info.kind(), info.hasOnlyRealmIndependentConstants());
     }
 
-    // What is left is the functions in a function that there is no code for, and so no executable, and so no way to get to them.
-    // (Whether anything else refers to what is about to be gone is for whoever checks what cells refer to.)
+    // What remains in Arena::Scratch is the functions nested in a function that has no compiled code. It has no executable, so they
+    // are unreachable.
+    // (ClosureChecker reports any other reference to Arena::Scratch.)
     size_t inFunctionsWithoutCode = 0;
     for (auto list : s_listsOfFunctionsInFunctions) {
         for (auto& entry : list) {
@@ -1195,21 +1203,19 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
         }
     }
     s_rowsOfFunctions = rows.data();
-    for (auto& [reason, count] : why)
-        dataLogLn("StaticHeap:     in full, ", reason, ": ", count);
     if (Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("StaticHeap: of ", s_executablesInScratch.size(), " FunctionExecutables ", inShortForm.size(), " are in the short form, with ", shared.size(), " UnlinkedFunctionExecutables between them and ", rows.size_bytes(), " bytes of rows; ", inFull.size(), " are kept in full; ", foundBy, " more UnlinkedFunctionExecutables are kept for what finds a function by one; ", inFunctionsWithoutCode, " functions are in functions that there is no code for");
 }
 
-// The tables of the variables of scopes are made in Arena::Scratch too (CachedSymbolTable::decode()). By now the names that nothing looks up are gone from them
-// (dropUnreferencedVariableNames()), and what is left of most is how many variables there are and what kind of scope it is. Nothing writes to them, and nothing tells one from another
-// that says the same. Whatever refers to one is a word that has its address.
+// SymbolTables are created in Arena::Scratch too (CachedSymbolTable::decode()). By now dropUnreferencedVariableNames() has removed
+// the names that nothing looks up, so most tables only record the number of variables and the kind of scope. Nothing writes to them
+// or compares them by identity, so equal tables are merged. A reference to a table is any word that holds its address.
 static void deduplicateSymbolTables()
 {
     Region::AllocationScope notInRegion(false);
     UncheckedKeyHashMap<String, uintptr_t> kept;
     UncheckedKeyHashMap<uintptr_t, uintptr_t> moved;
-    // (In the order they were made in, so that the same program comes to the same bytes.)
+    // (In address order, which is creation order, so that the output is deterministic.)
     Vector<uintptr_t> tables;
     for (void* cell : s_cellsInScratch) {
         if (dynamicDowncast<SymbolTable>(static_cast<JSCell*>(cell)))
@@ -1225,17 +1231,14 @@ static void deduplicateSymbolTables()
             return std::bit_cast<uintptr_t>(cell);
         }).iterator->value);
     }
-    uint64_t references = 0;
     uintptr_t startOfScratch = Region::startOf(Region::Arena::Scratch);
     size_t usedOfScratch = Region::used(Region::Arena::Scratch);
     for (auto arena : { Region::Arena::Data, Region::Arena::Malloc, Region::Arena::Cells, Region::Arena::MutableCells, Region::Arena::MutableMalloc }) {
         for (auto& word : std::span { std::bit_cast<uintptr_t*>(Region::startOf(arena)), Region::used(arena) / sizeof(uintptr_t) }) {
             if (word - startOfScratch >= usedOfScratch)
                 continue;
-            if (auto found = moved.find(word); found != moved.end()) {
+            if (auto found = moved.find(word); found != moved.end())
                 word = found->value;
-                ++references;
-            }
         }
     }
 }
@@ -1264,10 +1267,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     s_namesOfSourcesBeingBuilt = &namesOfSources;
     s_bytesOfPositions = 0;
     s_numberOfPositions = 0;
-    UncheckedKeyHashSet<SymbolTable*> tablesSeenTo;
-    s_tablesSeenTo = &tablesSeenTo;
-    ArraysInCommon arraysInCommon;
-    s_arraysBeingBuilt = nullptr;
+    UncheckedKeyHashSet<SymbolTable*> processedSymbolTables;
+    s_processedSymbolTables = &processedSymbolTables;
+    ArrayDeduplicator arrayDeduplicator;
+    s_arrayDeduplicator = nullptr;
     if (!Region::beginBuilding())
         return { };
     PreciseAllocation* containerBefore = PreciseAllocation::containerOfStaticCells();
@@ -1298,9 +1301,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         header.stringSlots = std::bit_cast<uint64_t>(slots);
         DecoderStringTable table(stringsCopy, slots);
 
-        // Every string is an atom, of a table that has nothing else in it: whatever is equal to one of them, when the program runs,
-        // is that one.
-        // (The table itself is only for making them with. What is kept of it is made when they are all there.)
+        // Every string is an atom in a table that holds nothing else, so at run time any equal string atomizes to the one in the
+        // static heap.
+        // (This table is only used while building. The table that is kept is created once all the atoms exist.)
         auto atoms = makeUnique<AtomStringTable>();
         atoms->table().reserveInitialCapacity(count);
         for (bool isPrivate : { false, true }) {
@@ -1314,12 +1317,11 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             vm.heap.m_placeOfNextCell = placeOfEveryCellWhileBuilding;
             for (uint32_t ordinal = 0; ordinal < count; ++ordinal) {
                 table.atomFor(vm, ordinal);
-                // So that nothing that is decoded when the program runs has to make one, which would be writing to the slot. If
-                // nothing is going to be, the ones that are wanted are the ones that what is decoded here and now asks for.
+                // Create every JSString now, so that decoding at run time never has to create one, which would write to the slot.
+                // If nothing is decoded at run time, the only JSStrings needed are the ones that decoding here asks for.
                 if (!keptPayloadStart)
                     table.jsStringFor(vm, ordinal);
             }
-            unsigned numberOfAtomsOfStrings = atoms->table().size();
 
             if (!payload.empty() && !entryOffsetsOfModules.empty()) {
                 auto payloadCopy = copy(payload);
@@ -1333,12 +1335,13 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 auto imageView = AOT::ImageView::tryCreate(imageOfCode, reinterpret_cast<const void*>(Region::startOf(Region::Arena::Image)));
                 std::span<AOT::FunctionInfo> infosOfFunctions;
                 if (imageView) {
-                    // (Where it can be written to: what is left blank is filled in if it turns out to be wanted. See AOT::Data::create().)
+                    // (In a writable arena: entries that are left empty are filled in at run time if they are needed. See
+                    // AOT::Data::create().)
                     size_t size = imageView->numberOfFunctions() * sizeof(AOT::FunctionInfo);
                     infosOfFunctions = { static_cast<AOT::FunctionInfo*>(Region::allocate(Region::Arena::MutableMalloc, size, pageSizeOfImage)), imageView->numberOfFunctions() };
                     memset(static_cast<void*>(infosOfFunctions.data()), 0, size);
                     header.infosOfFunctions = std::bit_cast<uint64_t>(infosOfFunctions.data());
-                    s_arraysBeingBuilt = &arraysInCommon;
+                    s_arrayDeduplicator = &arrayDeduplicator;
                     if (uint32_t count = imageView->numberOfIdentifiersOfProgram()) {
                         RELEASE_ASSERT(reportableSites.size() == imageView->numberOfFunctions());
                         header.hasIdentifiersOfProgram = true;
@@ -1357,11 +1360,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     s_allocatesFunctionsInScratch = keptPayloadStart && positionsToKeep;
                     header.numberOfFunctions = infosOfFunctions.size();
                 }
-                uint64_t numberOfExecutables = 0;
-                uint64_t numberOfSymbolTables = 0;
-                uint64_t numberOfSymbolTablesWithNames = 0;
-                auto reportExecutables = makeScopeExit([&] {
-                });
                 Vector<StaticHeapTDZ> tdz;
                 s_tdzBeingBuilt = &tdz;
                 s_emptyStringBeingBuilt = nullptr;
@@ -1390,13 +1388,13 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         unsigned lengthOfBuiltin = 0;
                         unsigned stampOfBuiltin = 0;
                         if (isBuiltinFunction) {
-                            // Without code for it there is nothing to be had from its being here.
+                            // Without compiled code for the builtin, there is no benefit to having it in the static heap.
                             if (imageView)
                                 builtinFunction = decodeBuiltinForStaticHeap(decoder, lengthOfBuiltin, stampOfBuiltin, functions);
                             if (builtinFunction) {
                                 static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
                                 SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(lengthOfBuiltin), 1, 1 };
-                                makeExecutables(vm, nullptr, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, numberOfExecutables, builtinFunction);
+                                makeExecutables(vm, nullptr, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, builtinFunction);
                             }
                         }
                         UnlinkedCodeBlock* codeBlock = isBuiltinFunction ? nullptr : decodeAllForStaticHeap(decoder, key, functions);
@@ -1407,29 +1405,30 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         else if (!codeBlock)
                             numberOfCodeBlocksFailed++;
                         else if (imageView) {
-                            // Nothing is asked of the provider here, which is not there. It is counted as referred to, in memory that is
-                            // not kept: once more than it is, or it would be destroyed if the module turns out to have no functions.
+                            // The SourceProvider has not been constructed yet, and nothing here reads it. Only its reference count
+                            // changes, in memory that is not kept. The extra ref() keeps the count from reaching zero, which would
+                            // destroy it, if the module has no functions.
                             static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
                             SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(key.length()), 1, 1 };
-                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, numberOfExecutables);
-                            // The code of the module itself, but for its executable, which is made when the program runs.
+                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions);
+                            // The top-level code of the module. Its executable is created at run time.
                             if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
                                 fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall);
                         }
                         if (decoder.leavesFunctionCodeInPayload()) {
-                            NamesLookedUp lookedUp;
+                            DynamicallyResolvedNames lookedUp;
                             if (codeBlock) {
                                 const Vector<uint32_t>* exported = nullptr;
                                 for (size_t index = 0; index < variablesExportedByModules.size() && index < entryOffsetsOfModules.size(); ++index) {
                                     if (entryOffsetsOfModules[index] == sortedOffsets[i] && variablesExportedByModules[index])
                                         exported = &*variablesExportedByModules[index];
                                 }
-                                dropUnreferencedVariableNames(codeBlock, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames, exported);
+                                dropUnreferencedVariableNames(codeBlock, lookedUp, exported);
                             }
                             else if (builtinFunction) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                                     if (auto* code = builtinFunction->codeBlockIfExists(kind))
-                                        dropUnreferencedVariableNames(code, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames);
+                                        dropUnreferencedVariableNames(code, lookedUp);
                                 }
                             }
                             Region::AllocationScope notInRegion(false);
@@ -1444,7 +1443,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                                         s_listsOfFunctionsInFunctions.append(code->functionExprs());
                                     }
                                     if (auto* code = function->codeBlockIfExists(kind))
-                                        code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets(), !!s_arraysBeingBuilt);
+                                        code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets(), !!s_arrayDeduplicator);
                                 }
                                 function->leaveCodeInPayload(decoder, offsets);
                             }
@@ -1454,14 +1453,16 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         else
                             modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock), false };
                     }
-                    // (Not destroyed: it is referred to. It has one reference to what is let go of right after.)
+                    // (The Decoder is not destroyed, because objects refer to it. It holds one reference to the CachedBytecode,
+                    // which is released here.)
                     decoder.clearDecodedObjects();
                     cachedBytecode->deref();
                     memset(address, 0, sizeof(Decoder));
                 }
                 s_tdzBeingBuilt = nullptr;
                 if (imageView && imageView->keysAreOmitted()) {
-                    // An executable made here says which function it is. The rest are made when the program runs, and are looked up.
+                    // An executable created here records the index of its function. The other executables are created at run time
+                    // and find their functions by key, so only those keys are kept.
                     auto isLookedUp = [&](const AOT::ImageKey& key) {
                         return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !infosOfFunctions[imageView->indexOfFunctionWith(key)].executable();
                     };
@@ -1508,9 +1509,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     Region::AllocationScope notInRegion(false);
                     sources.clear();
                     namesOfSources.clear();
-                    tablesSeenTo.clear();
-                    arraysInCommon.clear();
-                    s_arraysBeingBuilt = nullptr;
+                    processedSymbolTables.clear();
+                    arrayDeduplicator.clear();
+                    s_arrayDeduplicator = nullptr;
                 }
                 s_functionMetadataOffsetsBeingBuilt = { };
                 // (See parentScopeTDZVariablesOf().)
@@ -1532,7 +1533,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         Thread::currentSingleton().setCurrentAtomStringTable(usualAtoms);
         {
             using StaticAtoms = AtomStringTable::StaticAtoms;
-            // (No more than half full. What it is made from was given room in advance, and a lot of it.)
+            // (At most half full. The table it is built from reserved far more capacity than it needs.)
             size_t capacity = WTF::roundUpToPowerOfTwo(std::max<size_t>(2 * atoms->table().size(), 8));
             RELEASE_ASSERT(hasOneBitSet(capacity) && capacity > atoms->table().size());
             std::span<uint32_t> entries { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, capacity * sizeof(uint32_t), pageSizeOfImage)), capacity };
@@ -1560,7 +1561,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         deduplicateSymbolTables();
     }
 
-    // What the collector never looks at must not be all that keeps something alive.
+    // The collector never visits the static heap, so nothing in it may hold the only reference to an object outside it.
     {
         ClosureChecker checker(vm);
         for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
@@ -1575,11 +1576,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         }
     }
 
-    // Cells are as they would be in the VM that is going to have them, after a collection that found them.
+    // Give the cells the state they would have in the VM that is going to use them, after a collection that marked them.
     auto structures = structuresOf(vm);
     uint32_t blockOfStructures = vm.structureStructure->id().bits() & ~static_cast<uint32_t>(MarkedBlock::blockSize - 1);
     UncheckedKeyHashMap<uint32_t, uint32_t> idInFirstVM;
-    UncheckedKeyHashMap<String, std::pair<uint64_t, uint64_t>> byClass;
     for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
         forEachCell(arena, [&](void* pointer, size_t size) {
             auto* cell = static_cast<JSCell*>(pointer);
@@ -1616,7 +1616,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         }
     }
 
-    // What a cell works out when it is first asked, and keeps: it is asked now. Nobody is going to store to it.
+    // Compute now what a cell would otherwise compute lazily and cache, because these cells are read-only at run time.
     forEachCell(Region::Arena::Cells, [&](void* pointer, size_t) {
         if (auto* bigInt = dynamicDowncast<JSBigInt>(static_cast<JSCell*>(pointer)))
             bigInt->hash();
@@ -1687,7 +1687,8 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
     auto& header = *reinterpret_cast<const Header*>(image.data());
     if (header.magic != Header::expectedMagic || header.stamp != AOT::imageStamp() || header.size > image.size())
         return false;
-    // An atom that the thread has already may be equal to one of these, and there can be only one.
+    // If the thread already has atoms, one of them could be equal to an atom in the static heap, and equal atoms must be the same
+    // object.
     AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
     if (!atoms->table().isEmpty())
         return false;
@@ -1699,7 +1700,8 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
     if (header.holeInData % pageSizeOfImage || header.sizeOfHoleInData % pageSizeOfImage || header.holeInData + header.sizeOfHoleInData > header.arenaSize[static_cast<unsigned>(Region::Arena::Data)])
         return false;
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
-        // (Some of it mapped and the rest not is nothing that anybody gets to see.)
+        // (If a later mapping fails, the arenas that are already mapped stay mapped. Nothing uses them, because s_header is not
+        // set.)
         if (static_cast<Region::Arena>(i) == Region::Arena::Data && header.sizeOfHoleInData) {
             uint64_t afterHole = header.holeInData + header.sizeOfHoleInData;
             if (!Region::map(Region::Arena::Data, fileDescriptor, offsetInFile + header.arenaOffset[i], header.holeInData)
@@ -1737,14 +1739,14 @@ void StaticHeap::willDestroy(VM& vm)
     if (t_ofVMOfThread == ofVM)
         t_ofVMOfThread = nullptr;
     vm.m_staticHeapOfVM = nullptr;
-    // (The container is not: something may yet ask a cell whose it is.)
+    // (The container is not freed, because a cell may still be asked for its container.)
     delete ofVM;
 }
 
 void StaticHeap::install(VM& vm)
 {
     if (s_header && s_vm && s_vm != &vm && !vm.m_staticHeapOfVM) {
-        // What has locks that are not taken (needsNoLocking()) is not for the compiler's threads to look at, whoever's they are.
+        // Objects whose locks are skipped (needsNoLocking()) must not be read by compiler threads, of any VM.
         if (!t_threadIsPrepared || !s_hasNoCompilerThreads || t_ofVMOfThread)
             return;
         static std::atomic<uint64_t> lastNumber { 1 };
@@ -1762,7 +1764,7 @@ void StaticHeap::install(VM& vm)
     }
     if (!s_header || s_vm || &vm != addressOfVM())
         return;
-    // Otherwise the strings are still good, as strings; the cells are not looked at again.
+    // If a structure does not match, the strings can still be used as strings, but the cells are never used.
     auto structures = structuresOf(vm);
     for (unsigned i = 0; i < s_header->numberOfStructures; ++i) {
         auto& expected = s_header->structures[i];
@@ -1781,7 +1783,7 @@ std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM& vm, std
     if (!s_header || !isUsedBy(vm) || strings.size() != s_header->stringsSize)
         return nullptr;
     auto* copy = std::bit_cast<const uint8_t*>(s_header->strings);
-    // They come out of the same file. This is against a mistake, not against malice.
+    // Both come from the same file. Comparing a sample guards against mistakes, not against tampering.
     size_t sample = std::min<size_t>(strings.size(), 4 * KB);
     if (memcmp(copy, strings.data(), sample) || memcmp(copy + strings.size() - sample, strings.data() + strings.size() - sample, sample))
         return nullptr;
@@ -1794,12 +1796,13 @@ RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedF
     auto found = std::ranges::lower_bound(all, std::bit_cast<uint64_t>(&executable), { }, &StaticHeapTDZ::executable);
     if (found == all.end() || found->executable != std::bit_cast<uint64_t>(&executable))
         return nullptr;
-    // (They are for whoever compiles what is inside the function. There is nothing to compile it from.)
+    // (They are only needed to compile the functions nested in this one, and without the payload there is nothing to compile them
+    // from.)
     if (payloadIsOmitted())
         return nullptr;
-    // (Which is there: the executable came out of a code block that codeFor() returned.)
-    // What comes of it is of a VM. The one that is there is of whichever VM got there first, which may be no more: it says which
-    // module, and that is all it is asked.
+    // (The Decoder exists, because the executable came from a code block that codeFor() returned.)
+    // The decoded result belongs to a VM. The Decoder at that address belongs to whichever VM created it first, which may have been
+    // destroyed. It is only used to identify the module.
     auto& placed = *static_cast<Decoder*>(addressOfDecoder(found->moduleIndex));
     return decodeParentScopeTDZVariablesForStaticHeap(decoderForKeptPayload(executable.vm(), placed).get(), std::bit_cast<const void*>(found->record));
 }
@@ -1822,7 +1825,7 @@ String StaticHeap::nameOfSource(uint32_t source)
     return String::fromUTF8(std::span { text + starts[source - 1], static_cast<size_t>(starts[source] - starts[source - 1]) });
 }
 
-// The first thing that makePositions() wrote.
+// Reads the first two values that makePositions() wrote.
 LineColumn StaticHeap::whereFunctionStarts(uint32_t indexOfFunction)
 {
     RELEASE_ASSERT(s_header && s_header->hasPositionsOfCallSites && indexOfFunction < s_header->numberOfFunctions);
@@ -1862,7 +1865,7 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
         return nullptr;
     if (payloadIsOmitted() && cachedBytecode.span().data() != omittedPayload().data())
         return nullptr;
-    // A recording is of what is read out of the payload.
+    // A bytecode order recording records what is read from the payload, so the payload has to be decoded.
     if (BytecodeOrderRecorder::ofVM(vm)) [[unlikely]]
         return nullptr;
     std::span<uint8_t> payload { std::bit_cast<uint8_t*>(s_header->payload), static_cast<size_t>(s_header->payloadSize) };
@@ -1882,8 +1885,8 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
     if (key.hash() != module->keyHash || key.length() != module->keyLength || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
         return nullptr;
 
-    // What is here refers to the module's provider by where it is. A module that is loaded with some other provider is another
-    // module, as far as that goes, and gets code of its own.
+    // Objects in the static heap refer to the module's SourceProvider by its fixed address. A module that is loaded with another
+    // provider is treated as a different module, and gets its own code.
     if (&key.source().provider() != addressOfSourceProvider(index))
         return nullptr;
 
@@ -1891,7 +1894,7 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
     return std::bit_cast<UnlinkedCodeBlock*>(module->codeBlock);
 }
 
-// What is here refers to it, to say which module it is of.
+// Objects in the static heap refer to the module's Decoder, which identifies the module they belong to.
 void StaticHeap::ensureDecoder(VM& vm, size_t index, SourceProvider& provider)
 {
     static NeverDestroyed<BitVector> s_hasDecoder;
@@ -1914,13 +1917,13 @@ public:
     }
 };
 
-FunctionExecutable* StaticHeap::builtinOfEngineFor(JSGlobalObject* globalObject, unsigned index, std::span<const Latin1Character> text)
+FunctionExecutable* StaticHeap::engineBuiltinFor(JSGlobalObject* globalObject, unsigned index, std::span<const Latin1Character> text)
 {
     VM& vm = globalObject->vm();
-    // The realm that the program is run in is the first that there is. (AOT::Instance::ensure() sees to it that it was.)
+    // The program runs in the VM's first realm. (AOT::Instance::ensure() checks that.)
     if (globalObject != vm.m_firstRealm || !hasExecutablesOfFunctions(vm) || BytecodeOrderRecorder::ofVM(vm))
         return nullptr;
-    // Where each is in the payload, plus one.
+    // For each builtin, one more than its entry offset in the payload. Zero if it is not in the static heap.
     static NeverDestroyed<Vector<uint32_t>> entries;
     static std::once_flag once;
     std::call_once(once, [] {
@@ -1936,7 +1939,7 @@ FunctionExecutable* StaticHeap::builtinOfEngineFor(JSGlobalObject* globalObject,
     });
     if (index >= entries->size() || !entries.get()[index])
         return nullptr;
-    // (Some are asked for more than once: a function that goes by two names is two functions.)
+    // (Some are requested more than once: a builtin that is exposed under two names becomes two function objects.)
     if (vm.m_builtinsOfStaticHeap.isEmpty())
         vm.m_builtinsOfStaticHeap.fill(nullptr, entries->size());
     if (FunctionExecutable* given = vm.m_builtinsOfStaticHeap[index])
@@ -1976,7 +1979,8 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
     ensureDecoder(vm, index, *provider);
 
     FunctionExecutable* executable = std::bit_cast<UnlinkedFunctionExecutable*>(modules[index].codeBlock)->staticExecutable();
-    // What the functions inside it are given for the executable of the code that they are all in. It is written to.
+    // The functions nested in the builtin need a top-level executable, which is written to, so it is a stand-in in the ordinary
+    // heap.
     if (auto*& slot = topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
         slot = standInFor(vm, executable);
         slot->setUsesStaticExecutables();

@@ -91,7 +91,7 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
 #else
     bool hasNoText = false;
 #endif
-    // (What goes without its text goes by something else.)
+    // (A program without its source text uses the quotes in the image instead.)
     if (!codeBlock->hasExpressionInfo() && !hasNoText)
         return message;
 

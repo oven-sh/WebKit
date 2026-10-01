@@ -117,8 +117,8 @@ class DecoderStringTable {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(DecoderStringTable, JS_EXPORT_PRIVATE);
 public:
     JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>);
-    // With memory for the slots that is not the table's. Either it is zero, or it is what another table of the same strings left
-    // there, all of which is there for good (StaticHeap).
+    // Uses caller-provided memory for the slots. It is either zeroed, or holds what another table for the same strings stored
+    // there, all of which is immortal (StaticHeap).
     JS_EXPORT_PRIVATE DecoderStringTable(std::span<const uint8_t>, uintptr_t* slots);
     uint32_t count() const { return m_count; }
     uint32_t lengthOf(uint32_t ordinal) const { return record(ordinal).length; }
@@ -292,16 +292,17 @@ public:
     enum class RecoverableCode : bool { No, Yes };
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr, RecoverableCode = RecoverableCode::Yes);
     bool canBorrowPayload() const { return m_canBorrowPayload; } // the embedder promised the payload outlives every use, so decoded objects may alias it
-    // StaticHeap: what is decoded when a program is built, to be there when it runs. It leaves in the payload only what running
-    // the program hardly ever asks for, and what it leaves there refers to its Decoder. So that is at an address which is known
-    // when the program is built (`address`, which is zero and has room), where there is another one before the program looks.
-    // Neither is ever destroyed.
+    // For StaticHeap, which decodes objects when a program is built so that they already exist when it runs. It leaves in the
+    // payload only what a running program rarely needs, and what it leaves there refers to its Decoder. So the Decoder is at an
+    // address that is known at build time (`address`, which is zeroed and large enough), and another Decoder is created at the same
+    // address before the program needs it. Neither is ever destroyed.
     static Decoder& createForStaticHeap(void* address, VM&, Ref<CachedBytecode>, RefPtr<SourceProvider>);
     bool isForStaticHeap() const { return m_isForStaticHeap; }
-    // Building one: the code of a function is decoded to see what is in it, and only some of that is kept (AOT::FunctionMetadata).
+    // While building a static heap: the code of a function is decoded to inspect it, and only part of it is kept
+    // (AOT::FunctionMetadata).
     bool leavesFunctionCodeInPayload() const;
     CachedBytecode& cachedBytecode() const { return m_cachedBytecode.get(); }
-    // (What refers to one of those was, for the most part, made in another process.)
+    // (Most references to a Decoder for a static heap were created in another process, so they are not counted.)
     void ref() const
     {
         if (!m_isForStaticHeap) [[likely]]
@@ -312,7 +313,7 @@ public:
         if (!m_isForStaticHeap) [[likely]]
             RefCounted::deref();
     }
-    void clearDecodedObjects(); // What it remembers of that is in memory it does not get to keep.
+    void clearDecodedObjects(); // Its record of decoded objects is in memory that is not kept.
     void setExternalStrings(DecoderStringTable& strings) { m_externalStrings = &strings; }
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
@@ -388,16 +389,17 @@ private:
     uint16_t m_persistentPayloadIndex { 0 };
 };
 
-// For StaticHeap. The code of the module whose entry the Decoder's CachedBytecode is for, and of every function in it; null if it
-// is not to be had. And the key it is for.
-// functions: each with UnlinkedFunctionExecutable::offsetsOfCachedCodeBlocks(), as it was.
+// For StaticHeap. Decodes the code of the module that the Decoder's CachedBytecode is positioned at, and of every function in it,
+// and returns the key that it was cached under. Returns null on failure.
+// functions: each function, with the value that UnlinkedFunctionExecutable::offsetsOfCachedCodeBlocks() had before decoding.
 UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder&, SourceCodeKey&, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
-// An UnlinkedFunctionCodeBlock that says everything about a function's code that the real one did, but for what the instructions
-// were: for whoever wants to ask one about code that is not going to be interpreted. The scalars are what the first of these gave.
+// Creates an UnlinkedFunctionCodeBlock that describes a function's code as the original did, except for the instructions
+// themselves. It is for callers that need a code block for code that is never interpreted. The scalars come from
+// scalarsToMakeFunctionCodeFrom().
 struct UnlinkedHandlerInfo;
 struct PartsOfFunctionCode {
     const uint8_t* scalars;
-    std::span<const uint8_t> instructions; // As many bytes as there were. Not looked at here.
+    std::span<const uint8_t> instructions; // The same number of bytes as the original. The contents are not read here.
     const Identifier* identifiers;
     const WriteBarrier<Unknown>* constants;
     std::span<const uint32_t> linkTimeConstants; // Which of those are SourceCodeRepresentation::LinkTimeConstant.
@@ -510,8 +512,8 @@ public:
         unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT
         unsigned functionsWithoutName { 0 }; // functions with code that the names of their module, which has some, do not cover
         std::array<uint32_t, numberOfRegions> regionEnds { };
-        // Hints::compileAheadOfTime: the code of every function of the link, from the static compiler (AOT::Image). It goes on a page
-        // boundary of the executable's file, and to registerAOTImage when the executable runs.
+        // With Hints::compileAheadOfTime: the machine code of every function of the link (AOT::Image). The embedder places it on a
+        // page boundary of the executable's file, and passes it to registerAOTImage when the executable runs.
         Vector<uint8_t> aotImage;
     };
 

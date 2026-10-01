@@ -5107,7 +5107,8 @@ int jscmain(int argc, char** argv)
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
-    // Before any option is set: Options::notifyOptionsChanged() turns useJIT off for good if the compilers are not installed yet.
+    // This has to come before any option is set: Options::notifyOptionsChanged() permanently turns useJIT off if the compilers are
+    // not installed yet.
     JSC::installCompilers();
     mainCommandLine.construct(argc, argv);
 

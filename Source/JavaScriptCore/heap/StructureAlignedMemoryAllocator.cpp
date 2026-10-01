@@ -118,7 +118,8 @@ public:
             // order to encode StructureIDs.
             g_jscConfig.startOfStructureHeap = reinterpret_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages
 #if USE(BUN_JSC_ADDITIONS)
-                // Right after bmalloc::StaticRegion, if that is to be had: code from the static compiler takes it to be there (AOT::structureIDBaseOfImages).
+                // Directly after bmalloc::StaticRegion, if that address range is available. AOT code assumes that it is there
+                // (AOT::structureIDBaseOfImages).
                 , reinterpret_cast<void*>(bmalloc::StaticRegion::base + bmalloc::StaticRegion::reservation)
 #endif
                 ));
@@ -148,7 +149,7 @@ public:
         m_usedBlocks.set(0);
 #elif USE(MIMALLOC)
         if (!m_useSystemHeap) [[likely]] {
-            // The block after the one that is not used is for whoever asks first (StaticHeap::offsetOfFirstStructureBlock).
+            // The block after the unused first block is reserved for the first VM (StaticHeap::offsetOfFirstStructureBlock).
             void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + 2 * MarkedBlock::blockSize);
             size_t size = g_jscConfig.sizeOfStructureHeap - 2 * MarkedBlock::blockSize;
 
@@ -223,7 +224,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             bmalloc_deallocate_inline(blockPtr);
             return;
 #elif USE(MIMALLOC)
-            // Nobody else gets that one: it goes when the first VM does, which is about when the process does.
+            // That block is never reused. It is released when the first VM is destroyed, which is about when the process exits.
             if (reinterpret_cast<uintptr_t>(blockPtr) == g_jscConfig.startOfStructureHeap + StaticHeap::offsetOfFirstStructureBlock) [[unlikely]]
                 return;
             mi_free(blockPtr);

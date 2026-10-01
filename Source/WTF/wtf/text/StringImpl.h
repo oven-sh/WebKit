@@ -436,8 +436,8 @@ public:
         ASCIILiteral literal() const { return ASCIILiteral::fromLiteralUnsafe(m_data8Char); }
     };
 
-    // At the same address in every process, unlike what is in the executable: what is made when a program is built, to be there
-    // when it runs (bmalloc::StaticRegion), refers to it. It is there before any other static initializer of the process has run.
+    // At the same address in every process, unlike data in the executable, because objects that are created when a program is built
+    // (bmalloc::StaticRegion) refer to it. It exists before any other static initializer of the process has run.
     ALWAYS_INLINE static StaticStringImpl* emptyAsStaticStringImpl() { return reinterpret_cast<StaticStringImpl*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfEmptyStringInBss); }
     ALWAYS_INLINE static StringImpl* empty() { SUPPRESS_MEMORY_UNSAFE_CAST return reinterpret_cast<StringImpl*>(emptyAsStaticStringImpl()); }
 
@@ -1199,7 +1199,7 @@ inline void StringImpl::ref()
 {
     STRING_STATS_REF_STRING(*this);
 
-    // Counting the references to what is never destroyed would only make a page that is a file's the process's (StaticRegion).
+    // Counting references to an immortal string would only dirty a page that is otherwise file-backed (StaticRegion).
     if (isStatic())
         return;
 

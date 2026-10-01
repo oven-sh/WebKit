@@ -139,7 +139,7 @@ public:
     // source text. Its source() equals what makeSource() would have returned. Only valid in the realm that runs the program.
     JS_EXPORT_PRIVATE static FunctionExecutable* builtinFunctionFor(JSGlobalObject*, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
     // The same for one of JSC's own builtins (BuiltinExecutables::stampOf()). May be called while the realm is being initialized.
-    static FunctionExecutable* builtinOfEngineFor(JSGlobalObject*, unsigned index, std::span<const Latin1Character> text);
+    static FunctionExecutable* engineBuiltinFor(JSGlobalObject*, unsigned index, std::span<const Latin1Character> text);
     JS_EXPORT_PRIVATE static RefPtr<TDZEnvironmentLink> parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&);
 
     // A cell's header identifies its Structure by StructureID, which is an offset into the structure heap. The first VM of a

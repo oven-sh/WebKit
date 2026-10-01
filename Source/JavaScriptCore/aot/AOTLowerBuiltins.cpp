@@ -21,14 +21,15 @@ namespace JSC { namespace AOT {
 
 using namespace B3;
 
-// BUN_AOT_OVERRIDDEN_METHODS: a file that says what the classes of the program that extend one of the language's own have for themselves of what they inherit, a line each: Map.set.
+// BUN_AOT_OVERRIDDEN_METHODS: the path of a file that lists the methods that the program's subclasses of built-in classes override,
+// one per line, for example `Map.set`.
 static const char* pathOfOverriddenMethods()
 {
     static const char* path = getenv("BUN_AOT_OVERRIDDEN_METHODS");
     return path;
 }
 
-// Whether some class of the program that extends that one may have the method for itself. (Without the file: for all anybody knows.)
+// Whether a subclass of that class in the program may override the method. (Without the file, assume that it may.)
 bool Lowering::mayBeOverridden(ASCIILiteral nameOfClass, Node* read)
 {
     return Graph::methodMayBeOverridden(nameOfClass, read);
@@ -53,7 +54,7 @@ bool Graph::methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read)
     if (!all.get() || !read || !read->isBytecode(op_get_by_id))
         return true;
     UniquedStringImpl* name = read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl();
-    // (Symbol.iterator goes by @@iterator there.)
+    // (The file spells Symbol.iterator as @@iterator.)
     StringView text(name);
     if (name->isSymbol()) {
         if (!text.startsWith("Symbol."_s))
@@ -63,10 +64,11 @@ bool Graph::methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read)
     return all.get()->contains(makeString(nameOfClass, '.', text)) || all.get()->contains(makeString(nameOfClass, ".*"_s));
 }
 
-// Null: it is, for certain.
-LValue Lowering::isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiver receiver)
+// Returns the condition under which the base is such a receiver. Null means that it always is.
+LValue Lowering::isReceiverOfKind(Node* read, Node* baseNode, LValue base, Receiver receiver)
 {
-    // What is known to be one of these is one whose method is the language's, unless a class has it for itself. (What has been done to the one object is not reckoned with.)
+    // A value that is known to be one of these has the built-in method, unless a subclass overrides it. (A method that is replaced
+    // on an individual object is not accounted for.)
     static constexpr ASCIILiteral namesOfClasses[] = { ""_s, "String"_s, "Array"_s, "Map"_s, "Set"_s, "WeakMap"_s, "WeakSet"_s, "RegExp"_s, "Date"_s, "Number"_s };
     if (receiver >= Receiver::Map && receiver <= Receiver::Date && baseNode->type && isSubtype(baseNode->type, typeOf(receiver)) && !mayBeOverridden(namesOfClasses[static_cast<unsigned>(receiver)], read))
         return nullptr;
@@ -81,7 +83,7 @@ LValue Lowering::isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiv
             return nullptr;
         return isCellAnd(baseNode, base, [&](LValue cell) { return isCellOfType(cell, StringType); });
     case Receiver::Array:
-        // (The types are taken at their word, as they are by whoever inlines what is written in JavaScript.)
+        // (The type annotation is trusted, as it is when builtins written in JavaScript are inlined.)
         if (read && isSubtype(baseNode->type, TArray) && Options::useAOTTypedFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(read)) && (!pathOfOverriddenMethods() || !mayBeOverridden("Array"_s, read)))
             return nullptr;
         return isCellAnd(baseNode, base, [&](LValue cell) { return isOriginalArray(cell); });
@@ -99,20 +101,21 @@ LValue Lowering::isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiv
     return nullptr;
 }
 
-// The read of a method that is about to be called on what it is read from (Graph::findBuiltinsCalled()). If that is what it is taken to be, there is nothing to look up.
+// The read of a method that is about to be called on the object it is read from (Graph::findBuiltinsCalled()). If the base is the
+// expected kind of receiver, no lookup is needed.
 void Lowering::lowerReadOfBuiltin(Node* node, Node* baseNode)
 {
     unsigned number = std::exchange(node->builtinCalled, 0);
     LValue known = m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[number]);
-    LValue isSuch = isSuchAReceiver(node, baseNode, lowJSValue(baseNode), static_cast<Receiver>(node->receiverOfBuiltin));
-    m_receiverChecks.set(node, isSuch);
-    if (!isSuch)
+    LValue isExpectedReceiver = isReceiverOfKind(node, baseNode, lowJSValue(baseNode), static_cast<Receiver>(node->receiverOfBuiltin));
+    m_receiverChecks.set(node, isExpectedReceiver);
+    if (!isExpectedReceiver)
         setJSValue(node, known);
     else {
         LBasicBlock otherwise = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         ValueFromBlock quick = m_out.anchor(known);
-        m_out.branch(isSuch, unsure(continuation), unsure(otherwise));
+        m_out.branch(isExpectedReceiver, unsure(continuation), unsure(otherwise));
         m_out.appendTo(otherwise);
         lowerGetById(node);
         ValueFromBlock found = m_out.anchor(lowJSValue(node));
@@ -123,8 +126,10 @@ void Lowering::lowerReadOfBuiltin(Node* node, Node* baseNode)
     node->builtinCalled = number;
 }
 
-// False: nothing has been done. Otherwise, if `afterwards` is left null, the call has been dealt with. If not, it has been if what it is made on and with is what it takes, with
-// what it gives in `results`, on the way to `afterwards`; and this is where it is not, for the call to be made as any call is.
+// Returns false if nothing was emitted. Otherwise, if `afterwards` is still null, the call has been lowered completely. If it is
+// not null, the fast path has been emitted: it applies when the receiver and the arguments have the expected types, adds its result
+// to `results` and jumps to `afterwards`. The current block is then the one for the other case, where the caller emits an ordinary
+// call.
 bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, unsigned argv, const Arguments& arguments, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results)
 {
     Builtin builtin = builtinWithNumber(node->builtinCalled);
@@ -152,9 +157,9 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         // The callee's identity is known, but that says nothing about `this`: Array.prototype.shift.call("abc").
         if (!mayBe(typeAt(0), typeOf(required)) || (required == Receiver::Number && !isSubtype(typeAt(0), TNumber)))
             return false;
-        also(isSuchAReceiver(nullptr, nodeAt(0), arguments[0], required));
+        also(isReceiverOfKind(nullptr, nodeAt(0), arguments[0], required));
     }
-    // Each is false if it cannot be.
+    // Each of these returns false if the argument cannot have the type.
     auto mustBe = [&](unsigned i, Type type, auto&& test) {
         if (i >= argc || !mayBe(typeAt(i), type))
             return false;
@@ -170,21 +175,22 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     auto mustBeObject = [&](unsigned i) {
         return mustBe(i, TAnyObject, [&](LValue value) { return isCellAnd(nodeAt(i), value, [&](LValue cell) { return isObjectCell(cell); }); });
     };
-    // A regular expression as the realm makes them: with nothing of its own that says how it is to be matched. And lastIndex is a number:
-    // matching converts it with ToLength() even if the expression is not global, which runs the program's code if it is an object.
-    auto mustBePlainRegExp = [&](unsigned i) {
+    // A regular expression with the realm's original structure, so without own properties that affect matching. Its lastIndex must
+    // be a number: matching converts it with ToLength() even if the expression is not global, which runs the program's code if it
+    // is an object.
+    auto mustBeOriginalRegExp = [&](unsigned i) {
         if (i >= argc || !isSubtype(typeAt(i), TRegExp))
             return false;
-        also(isSuchAReceiver(nullptr, nodeAt(i), arguments[i], Receiver::RegExp));
+        also(isReceiverOfKind(nullptr, nodeAt(i), arguments[i], Receiver::RegExp));
         also(isNumber(m_out.load64(arguments[i], m_heaps.RegExpObject_lastIndex)));
         return true;
     };
     auto asDouble = [&](unsigned i) { return isSubtype(typeAt(i), TNumber) ? lowDouble(nodeAt(i)) : numberToDouble(arguments[i]); };
     auto asInt32 = [&](unsigned i) { return isSubtype(typeAt(i), TInt32) ? lowInt32(nodeAt(i)) : unboxInt32(arguments[i]); };
-    auto toInt32 = [&](unsigned i) { return isSubtype(typeAt(i), TInt32) ? lowInt32(nodeAt(i)) : doubleToInt32(asDouble(i)); }; // Of a number.
+    auto toInt32 = [&](unsigned i) { return isSubtype(typeAt(i), TInt32) ? lowInt32(nodeAt(i)) : doubleToInt32(asDouble(i)); }; // The argument must be a number.
 
     LBasicBlock otherwise = nullptr;
-    // What has been asked for so far is all there is to ask ahead of time. mayGiveUp: there is more to find out on the way.
+    // Call this once all of the up-front checks have been added. mayGiveUp: the fast path has further checks of its own.
     auto begin = [&](bool mayGiveUp = false) {
         if (!fits && !mayGiveUp)
             return;
@@ -210,8 +216,8 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     };
     auto finishBoolean = [&](LValue value) { return finish(value, Rep::Boolean); };
     auto finishValue = [&](LValue value) { return finish(value, Rep::JSValue); };
-    // What an operation says that answers yes or no.
-    auto isYes = [&](LValue returned) { return m_out.testNonZero32(m_out.castToInt32(returned), m_out.constInt32(0xff)); };
+    // Converts the result of an operation that returns a bool.
+    auto isTrueResult = [&](LValue returned) { return m_out.testNonZero32(m_out.castToInt32(returned), m_out.constInt32(0xff)); };
     LValue undefined = m_out.constInt64(JSValue::encode(jsUndefined()));
     LValue thisValue = arguments[0];
 
@@ -237,8 +243,8 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         }
         return nullptr;
     };
-    // The elements, if the array keeps them as values one after the other.
-    auto butterflyOfValues = [&](LValue array) {
+    // The butterfly, if the array stores its elements as contiguous JSValues.
+    auto butterflyOfJSValueArray = [&](LValue array) {
         LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(array, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
         orElse(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), otherwise);
         return m_out.loadPtr(array, m_heaps.JSObject_butterfly);
@@ -422,7 +428,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     case Builtin::StringConstructor:
         if (count != 1)
             return false;
-        // (Of a symbol it says what the symbol is called, which converting one to a string does not.)
+        // (String(symbol) returns the symbol's description, whereas converting a symbol to a string throws.)
         if (!isSubtype(typeAt(1), TString) && !mayBe(typeAt(1), TSymbol | TAnyObject)) {
             begin();
             return finishValue(vmCall(node, pointerType(), Entry::operationToString, m_globalObject, arguments[1]));
@@ -454,7 +460,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
             begin();
             return finishBoolean(isSubtype(typeAt(1), TArray) ? m_out.booleanTrue : m_out.booleanFalse);
         }
-        // (What stands in for another object is what that is.)
+        // (A proxy is an array if its target is.)
         begin(true);
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock settled = m_out.newBlock();
@@ -484,7 +490,8 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         m_out.branch(m_out.equal(a, b), unsure(settled), unsure(differ));
         m_out.appendTo(differ);
         m_out.branch(m_out.bitAnd(isNumber(a), isNumber(b)), unsure(numbers), unsure(notNumbers));
-        // One number may be written in two ways. As doubles, the same number is the same bits, and nothing else is.
+        // A number may be encoded as an int32 or as a double. As doubles, two numbers are the same value exactly when their bits
+        // are equal.
         m_out.appendTo(numbers);
         answers.append(m_out.anchor(m_out.equal(m_out.bitCast(numberToDouble(a), Int64), m_out.bitCast(numberToDouble(b), Int64))));
         m_out.jump(settled);
@@ -492,7 +499,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         answers.append(m_out.anchor(m_out.booleanFalse));
         m_out.branch(m_out.bitAnd(isCell(a), isCell(b)), unsure(cells), unsure(settled));
         m_out.appendTo(cells);
-        answers.append(m_out.anchor(isYes(vmCall(node, Int64, Entry::operationSameValue, m_globalObject, a, b))));
+        answers.append(m_out.anchor(isTrueResult(vmCall(node, Int64, Entry::operationSameValue, m_globalObject, a, b))));
         m_out.jump(settled);
         m_out.appendTo(settled);
         return finishBoolean(m_out.phi(Int32, answers));
@@ -535,7 +542,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 2 || !mustBeObject(1))
             return false;
         begin();
-        return finishBoolean(isYes(vmCall(node, Int64, Entry::operationAOTHasOwnProperty, m_globalObject, arguments[1], arguments[2])));
+        return finishBoolean(isTrueResult(vmCall(node, Int64, Entry::operationAOTHasOwnProperty, m_globalObject, arguments[1], arguments[2])));
     case Builtin::DateNow:
         begin();
         return finish(plainCall(Double, Entry::operationDateNow, m_globalObject), Rep::Double);
@@ -567,15 +574,16 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     case Builtin::StringStartsWith:
     case Builtin::StringEndsWith: {
         bool atStart = builtin == Builtin::StringStartsWith;
-        // What is looked for is written in the program: it is compared with where it would be, a few bytes at a time.
-        if (auto written = count == 1 ? stringWrittenInProgram(nodeAt(1)) : std::nullopt; written && written->length() && written->length() <= 24) {
+        // The search string is a constant, so it is compared inline, a few bytes at a time, at the position where it would have to
+        // be.
+        if (auto written = count == 1 ? constantStringOf(nodeAt(1)) : std::nullopt; written && written->length() && written->length() <= 24) {
             begin();
-            LBasicBlock notForTheLooking = newColdBlock();
+            LBasicBlock needsSlowPath = newColdBlock();
             LBasicBlock isLongEnough = m_out.newBlock();
             LBasicBlock settled = m_out.newBlock();
             Vector<ValueFromBlock, 2> lengthsOtherwise;
             Vector<ValueFromBlock, 3> answers;
-            auto [characters, length] = narrowCharactersOf(thisValue, notForTheLooking, lengthsOtherwise);
+            auto [characters, length] = narrowCharactersOf(thisValue, needsSlowPath, lengthsOtherwise);
             LValue needed = m_out.constInt32(written->length());
             answers.append(m_out.anchor(m_out.booleanFalse));
             m_out.branch(m_out.aboveOrEqual(length, needed), unsure(isLongEnough), unsure(settled));
@@ -583,15 +591,15 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
             LValue where = atStart ? characters : m_out.add(characters, m_out.zeroExtPtr(m_out.sub(length, needed)));
             answers.append(m_out.anchor(m_out.isZero64(compareWithLiteral(where, written->span8()))));
             m_out.jump(settled);
-            m_out.appendTo(notForTheLooking);
+            m_out.appendTo(needsSlowPath);
             m_out.phi(Int32, lengthsOtherwise);
-            answers.append(m_out.anchor(isYes(vmCall(node, Int64, atStart ? Entry::operationStringStartsWith : Entry::operationStringEndsWith, m_globalObject, thisValue, arguments[1]))));
+            answers.append(m_out.anchor(isTrueResult(vmCall(node, Int64, atStart ? Entry::operationStringStartsWith : Entry::operationStringEndsWith, m_globalObject, thisValue, arguments[1]))));
             m_out.jump(settled);
             m_out.appendTo(settled);
             return finishBoolean(m_out.phi(Int32, answers));
         }
         LValue returned = atStart ? searchInString(Entry::operationStringStartsWith, Entry::operationStringStartsWithWithIndex) : searchInString(Entry::operationStringEndsWith, Entry::operationStringEndsWithWithEndPosition);
-        return returned && finishBoolean(isYes(returned));
+        return returned && finishBoolean(isTrueResult(returned));
     }
     case Builtin::StringIndexOf: {
         LValue returned = searchInString(Entry::operationStringIndexOf, Entry::operationStringIndexOfWithIndex);
@@ -616,7 +624,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         begin();
         bool isSlice = builtin == Builtin::StringSlice;
         LValue start = asInt32(1);
-        // (Past the end of any string, which is where both stop if they are not told where to.)
+        // (Larger than the length of any string, which is where both methods stop by default.)
         LValue end = count == 2 ? asInt32(2) : m_out.constInt32(std::numeric_limits<int32_t>::max());
         return finishValue(withHelper(isSlice ? Stub::HelperStringSlice : Stub::HelperStringSubstring, { thisValue, start, end }, [&] {
             return vmCall(node, pointerType(), isSlice ? Entry::operationStringSliceWithEnd : Entry::operationStringSubstringWithEnd, m_globalObject, thisValue, start, end);
@@ -649,7 +657,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
             begin();
             return finishValue(vmCall(node, pointerType(), Entry::operationStringReplaceStringString, m_globalObject, thisValue, arguments[1], arguments[2]));
         }
-        if (!mustBePlainRegExp(1))
+        if (!mustBeOriginalRegExp(1))
             return false;
         begin();
         return finishValue(vmCall(node, pointerType(), all ? Entry::operationStringProtoFuncReplaceAllRegExpString : Entry::operationStringProtoFuncReplaceRegExpString, m_globalObject, thisValue, arguments[1], arguments[2]));
@@ -664,14 +672,14 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
             begin();
             return finishValue(vmCall(node, pointerType(), Entry::operationStringSplit, m_globalObject, thisValue, arguments[1], limit));
         }
-        if (!mustBePlainRegExp(1))
+        if (!mustBeOriginalRegExp(1))
             return false;
         begin();
         return finishValue(vmCall(node, Int64, Entry::operationStringSplitRegExp, m_globalObject, thisValue, arguments[1], limit));
     }
     case Builtin::StringMatch:
     case Builtin::StringSearch:
-        if (count != 1 || !mustBePlainRegExp(1))
+        if (count != 1 || !mustBeOriginalRegExp(1))
             return false;
         begin();
         return finishValue(vmCall(node, Int64, builtin == Builtin::StringMatch ? Entry::operationStringMatchRegExp : Entry::operationStringSearchRegExp, m_globalObject, thisValue, arguments[1]));
@@ -679,7 +687,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     // ---- Arrays
 
     case Builtin::ArrayPush:
-        // (One at a time is for a stub: StubIntrinsic::Push.)
+        // (A push of a single value is handled by a stub: StubIntrinsic::Push.)
         if (count < 2)
             return false;
         begin();
@@ -706,7 +714,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 1)
             return false;
         begin(true);
-        LValue butterfly = butterflyOfValues(thisValue);
+        LValue butterfly = butterflyOfJSValueArray(thisValue);
         if (builtin == Builtin::ArrayIndexOf)
             return finish(m_out.castToInt32(vmCall(node, Int64, Entry::operationArrayIndexOfValueInt32OrContiguous, m_globalObject, butterfly, arguments[1], m_out.int32Zero)), Rep::Int32);
         return finishBoolean(m_out.notZero32(m_out.castToInt32(vmCall(node, Int64, Entry::operationArrayIncludesValueInt32OrContiguous, m_globalObject, butterfly, arguments[1], m_out.int32Zero))));
@@ -715,7 +723,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 1 || !mustBeInt32(1))
             return false;
         begin(true);
-        LValue butterfly = butterflyOfValues(thisValue);
+        LValue butterfly = butterflyOfJSValueArray(thisValue);
         LValue length = m_out.load32NonNegative(butterfly, m_heaps.Butterfly_publicLength);
         LValue index = asInt32(1);
         LValue place = m_out.select(m_out.lessThan(index, m_out.int32Zero), m_out.add(index, length), index);
@@ -761,7 +769,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 1)
             return false;
         begin();
-        return finishBoolean(isYes(vmCall(node, Int64, builtin == Builtin::MapDelete ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, m_globalObject, thisValue, arguments[1])));
+        return finishBoolean(isTrueResult(vmCall(node, Int64, builtin == Builtin::MapDelete ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, m_globalObject, thisValue, arguments[1])));
     case Builtin::WeakMapGet:
         if (count != 1)
             return false;
@@ -772,7 +780,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 1)
             return false;
         begin();
-        return finishBoolean(isYes(plainCall(Int64, builtin == Builtin::WeakMapHas ? Entry::operationAOTWeakMapHas : Entry::operationAOTWeakSetHas, thisValue, arguments[1])));
+        return finishBoolean(isTrueResult(plainCall(Int64, builtin == Builtin::WeakMapHas ? Entry::operationAOTWeakMapHas : Entry::operationAOTWeakSetHas, thisValue, arguments[1])));
 
     // ---- Regular expressions
 
@@ -780,7 +788,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 1 || !mustBeString(1))
             return false;
         begin();
-        return finishBoolean(isYes(vmCall(node, Int64, Entry::operationRegExpTestString, m_globalObject, thisValue, arguments[1])));
+        return finishBoolean(isTrueResult(vmCall(node, Int64, Entry::operationRegExpTestString, m_globalObject, thisValue, arguments[1])));
     case Builtin::RegExpExec:
         if (count != 1 || !mustBeString(1))
             return false;
@@ -810,7 +818,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     AOT_DATE_FIELD(FullYear) AOT_DATE_FIELD(Month) AOT_DATE_FIELD(Date) AOT_DATE_FIELD(Day) AOT_DATE_FIELD(Hours) AOT_DATE_FIELD(Minutes) AOT_DATE_FIELD(Seconds)
 #undef AOT_DATE_FIELD
 
-    // What there is a stub for (StubIntrinsic), or nothing yet: all that is gained is that the function is not looked up.
+    // These are handled by a stub (StubIntrinsic), or not yet at all. The only gain is that the method is not looked up.
     case Builtin::StringCharCodeAt:
     case Builtin::StringCharAt:
     case Builtin::StringAt:

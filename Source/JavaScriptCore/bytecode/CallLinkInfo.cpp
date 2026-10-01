@@ -346,7 +346,7 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
     if (!codeBlock)
         return { };
     if (codeBlock->jitType() == JITType::AOTJIT) {
-        // Every call site of code from the static compiler uses the same CallLinkInfo. The stack says which one this is.
+        // Every call site in AOT code uses the same CallLinkInfo. The stack identifies the call site.
         VM& vm = codeBlock->vm();
         BytecodeIndex bytecodeIndex(0);
         StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {

@@ -142,14 +142,14 @@ public:
     CodePtr<JSEntryPtrTag> generatedJITCodeWithArityCheckForCall() const
     {
         if (isShortFunctionExecutable()) [[unlikely]]
-            return wayIntoShortForm(CodeSpecializationKind::CodeForCall);
+            return entrypointOfShortForm(CodeSpecializationKind::CodeForCall);
         return WTF::opaque(this)->m_jitCodeForCallWithArityCheck;
     }
 
     CodePtr<JSEntryPtrTag> generatedJITCodeWithArityCheckForConstruct() const
     {
         if (isShortFunctionExecutable()) [[unlikely]]
-            return wayIntoShortForm(CodeSpecializationKind::CodeForConstruct);
+            return entrypointOfShortForm(CodeSpecializationKind::CodeForConstruct);
         return WTF::opaque(this)->m_jitCodeForConstructWithArityCheck;
     }
 
@@ -167,7 +167,7 @@ public:
         // no-arity entrypoint in non-virtual calls, which will "cache" this value directly in
         // machine code.
         if (isShortFunctionExecutable()) [[unlikely]]
-            return wayIntoShortForm(kind);
+            return entrypointOfShortForm(kind);
         ExecutableBase* inFull = WTF::opaque(this);
         if (arity == ArityCheckMode::MustCheckArity) {
             switch (kind) {
@@ -267,13 +267,14 @@ public:
         
 protected:
     // What m_jitCodeFor*WithArityCheck would be, of a FunctionExecutable in the short form.
-    JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> wayIntoShortForm(CodeSpecializationKind) const;
+    JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> entrypointOfShortForm(CodeSpecializationKind) const;
 
     // Of a FunctionExecutable: see aotEntryFor().
     uint64_t m_aotEntry[2] { }; // AOT::EntryWord
     uint32_t m_aotIndex[2] { };
-    // This is as far as the short form of a FunctionExecutable goes (FunctionExecutable::sizeOfShortForm): nothing below is to be asked of one. (And what
-    // is asked of another is asked through WTF::opaque(this), or the compiler may read it before it has looked which it is.)
+    // The short form of a FunctionExecutable ends here (FunctionExecutable::sizeOfShortForm), so the fields below must not be
+    // accessed on one. (On other executables they are accessed through WTF::opaque(this). Otherwise the compiler could hoist the
+    // load above the check for the short form.)
     CodePtr<JSEntryPtrTag> m_jitCodeForCallWithArityCheck;
     CodePtr<JSEntryPtrTag> m_jitCodeForConstructWithArityCheck;
     RefPtr<JSC::JITCode> m_jitCodeForCall;

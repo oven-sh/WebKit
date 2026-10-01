@@ -182,7 +182,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
     PutPropertySlot slot(base, isStrict, putByIdContextOf(globalObject, callFrame));
     Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
     if (isDirect && oldStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
-        // (A field that a class declares and gives nothing to start with is undefined until the constructor gets to it. There is nothing in its slot until then.)
+        // (A class field that is declared without an initializer is undefined until the constructor assigns it. Its slot stays
+        // empty until then.)
         if (!asObject(base)->putDirect(vm, ident, value, slot) && !value.isUndefined()) [[unlikely]]
             throwTypeError(globalObject, scope, TypedFieldError);
     } else if (isDirect)
@@ -190,14 +191,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
     else
         base.putInline(globalObject, ident, value, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    // (What makes a property come what may has done what any store would have, if nothing that the object inherits from has a say in the matter.)
+    // (A direct put that adds a property has the same effect as an ordinary put, provided that nothing on the prototype chain
+    // intercepts the store.)
     if (!isDirect || (slot.type() == PutPropertySlot::NewProperty && base.isObject() && asObject(base)->canPerformFastPutInline(vm, ident)))
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
     cachePutById(globalObject, callerData(globalObject, callFrame), base, oldStructure, ident, slot, isDirect, cache);
     OPERATION_RETURN(scope);
 }
 
-// Graph::readsElementsOrEmpty. index: a number that is not negative, and whole.
+// For Graph::readsElementsOrEmpty. index: a non-negative integer.
 JSC_DEFINE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedArray, EncodedJSValue encodedIndex))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -219,8 +221,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* 
     JSValue property = JSValue::decode(encodedProperty);
 
     if (base.isObject() && property.isString()) [[likely]] {
-        // A name nobody has made an atom of is not the name of any ordinary property. One that is gets to be found faster
-        // next time (Lowering::lowerGetByVal()).
+        // A string that has not been atomized cannot be the name of an ordinary property. One that has been atomized is added to
+        // the megamorphic cache, so that the next lookup is faster (Lowering::lowerGetByVal()).
         auto existingAtomString = asString(property)->toExistingAtomString(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         if (existingAtomString) {
@@ -243,7 +245,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* 
             JSObject* object = asObject(base);
             if (JSValue result = object->tryGetIndexQuickly(i))
                 OPERATION_RETURN(scope, JSValue::encode(result));
-            // Past the end of an ordinary array, or in a hole in it, with nothing of the kind in what it inherits from.
+            // An index past the end of an ordinary array, or at a hole, when the prototype chain has no indexed properties.
             Structure* structure = object->structure();
             if (structure->realm() == globalObject && globalObject->isOriginalArrayStructure(structure) && !hasAnyArrayStorage(structure->indexingType()) && globalObject->arrayPrototypeChainIsSane())
                 OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -290,9 +292,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (JSGlobalObject* globalObje
     OPERATION_RETURN(scope);
 }
 
-// What a name that no enclosing function or module declares refers to. The answer is a scope object; where it cannot change
-// (an import, or a global while no global lexical binding has come to shadow it) it is cached.
-//     cache->pointer: the scope. cache->offset: the global lexical binding epoch it was found in, plus one.
+// Resolves a name that no enclosing function or module declares. The result is a scope object. It is cached when it cannot change:
+// for an import, or for a global as long as no global lexical binding shadows it.
+// cache->pointer: the scope. cache->offset: the global lexical binding epoch at the time of the lookup, plus one.
 JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* globalObject, JSScope* startScope, uint32_t identifierIndex, Slot* cache, uint32_t localScopeDepth))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -302,8 +304,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
     const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     UNUSED_VARIABLE(uid);
-    // The compiler has seen what the code around the function declares, and this is not among it: asking each of those scopes by
-    // name would only be the reason for them to know the names of what is in them.
+    // The compiler has seen the declarations of the enclosing code, and this name is not among them. Skipping those scopes also
+    // means that they do not have to keep the names of their variables.
     if (localScopeDepth == Site::resolvesInGlobalScopes)
         startScope = globalObject->globalLexicalEnvironment();
     JSObject* resolved = JSScope::resolve(globalObject, startScope, ident);
@@ -319,11 +321,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
     else if (resolved->type() == ModuleEnvironmentType)
         cacheable = true;
     else if (resolved->type() == LexicalEnvironmentType) {
-        // Declared there, that is. What sloppy eval adds to a scope is a property of it, and is there when eval has put it there.
+        // Only if the name is declared there. A variable that sloppy eval adds to a scope is not in the symbol table, and only
+        // exists once eval has run.
         cacheable = !uncheckedDowncast<JSLexicalEnvironment>(resolved)->symbolTable()->get(uid).isNull();
     }
 
-    // A with scope or a scope that sloppy eval can add to, between here and there, makes the answer good for this time only.
+    // A `with` scope, or a scope that sloppy eval can add variables to, between the start and the result makes the result valid for
+    // this lookup only.
     unsigned depth = 0;
     if (cacheable) {
         for (JSScope* current = startScope; current && current != resolved; current = current->next()) {
@@ -335,7 +339,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
         }
     }
     if (cacheable && resolved->type() == LexicalEnvironmentType) {
-        // A scope of a function that encloses this one: another object each time, but how the scopes nest is how the code does.
+        // The scope of an enclosing function. It is a different object on every call, but its depth is fixed by how the code nests.
         cache->pointer = nullptr;
         cache->offset = Slot::resolvesByDepth | depth;
     } else if (uint32_t epochPlusOne = globalObject->globalLexicalBindingEpoch() + 1; cacheable && !(epochPlusOne & Slot::resolvesByDepth)) {
@@ -346,7 +350,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
     OPERATION_RETURN(scope, resolved);
 }
 
-// For op_get_from_scope and op_put_to_scope: the variable is at `offset` in any environment that has this one's symbol table.
+// For op_get_from_scope and op_put_to_scope: the variable is at `offset` in every environment with this environment's symbol table.
 static void cacheVariableOfEnvironment(VM& vm, Data* codeBlock, Slot* cache, JSLexicalEnvironment* environment, ScopeOffset offset)
 {
     if (offset.offset() > Slot::offsetMask)
@@ -360,9 +364,9 @@ static void cacheVariableOfEnvironment(VM& vm, Data* codeBlock, Slot* cache, JSL
     didFillSlot(vm, codeBlock);
 }
 
-//     cache->structureID: what the structure of the scope has to be for any of this.
-//     cache->pointer: the address of the variable, if it has one that lasts. Or see cacheVariableOfEnvironment().
-//     cache->offset: with no pointer, where the property is in the global object.
+// cache->structureID: the structure that the scope must have for the cache to apply.
+// cache->pointer: the address of the variable, if that address is stable. Otherwise see cacheVariableOfEnvironment().
+// cache->offset: without a pointer, the offset of the property in the global object.
 JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObject* globalObject, JSObject* scopeObject, uint32_t identifierIndex, Slot* cache, uint32_t how))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -373,8 +377,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
     const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
 
-    // For a scope of which the code can only ever see the one at this place: the global object, its lexical environment, the
-    // module's environment. What the name resolves to may be a scope of another kind the next time.
+    // For a scope that is unique at this site: the global object, its lexical environment, or the module's environment. The
+    // structure is still checked, because the name may resolve to another kind of scope next time.
     auto cacheAddress = [&](void* address) {
         cache->structureID = StructureID();
         WTF::storeStoreFence();
@@ -396,15 +400,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
                 offset = iter->value.scopeOffset();
         }
         if (!!offset) {
-            // Empty is either a binding in its dead zone, which the check_tdz that follows reports, or a function
-            // declaration nobody has asked for yet.
+            // An empty value is either a binding in its temporal dead zone, which the op_check_tdz that follows reports, or a
+            // function declaration that has not been instantiated yet.
             JSValue result = JSModuleEnvironment::readLazyClosureVar(vm, environment, offset);
             if (result)
                 cacheAddress(environment->variableAt(offset).slot());
             OPERATION_RETURN(scope, JSValue::encode(result));
         }
 
-        // An import: the variable is the exporter's.
+        // An import: the variable belongs to the exporting module.
         auto resolution = environment->moduleRecord()->resolveImport(globalObject, ident);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
@@ -420,7 +424,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
     }
 
     if (scopeObject->type() == LexicalEnvironmentType) {
-        // Every scope made from the same place in the code has the same table.
+        // Every scope created at the same place in the code has the same symbol table.
         auto* environment = uncheckedDowncast<JSLexicalEnvironment>(scopeObject);
         auto entry = environment->symbolTable()->get(uid);
         if (!entry.isNull()) {
@@ -450,7 +454,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
         }
 
         if (scopeObject->isGlobalObject()) {
-            // A var or a function declared by a program is a variable of the global object's, not a property in its storage.
+            // A `var` or function declared by a program is a variable of the global object, not a property in its storage.
             auto* variables = uncheckedDowncast<JSGlobalObject>(scopeObject);
             auto entry = variables->symbolTable()->get(uid);
             if (!entry.isNull())
@@ -469,7 +473,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
     })));
 }
 
-// The environment that an import the compiler knows the place of is in.
+// Returns the environment that holds an import whose location the compiler knows.
 JSC_DEFINE_JIT_OPERATION(operationAOTFillImportSlot, JSObject*, (JSGlobalObject* globalObject, JSObject* importer, uint32_t slot))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -483,9 +487,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadLazyClosureVar, EncodedJSValue, (JSGlob
     OPERATION_RETURN(scope, JSValue::encode(JSModuleEnvironment::readLazyClosureVar(vm, scopeObject, ScopeOffset(offset))));
 }
 
-// closureOffsetPlusOne: nonzero if the compiler knows the variable is at that offset (less one) of the environment.
-//     cache->offset: 1 once the variable's watchpoint set is known. cache->pointer: the set, if it has one.
-// how: the resolve mode, the initialization mode above it (two bits), whether the code is strict above that.
+// closureOffsetPlusOne: nonzero if the compiler knows that the variable is at that offset, minus one, in the environment.
+// cache->offset: 1 once the variable's watchpoint set has been looked up. cache->pointer: the set, if there is one.
+// how: the resolve mode, then the initialization mode (two bits), then whether the code is strict.
 JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalObject, JSObject* scopeObject, EncodedJSValue encodedValue, uint32_t identifierIndex, Slot* cache, uint32_t how))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -512,9 +516,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
         }
         if (!!offset) {
             environment->variableAt(offset).set(vm, environment, value);
-            // From now on it is written to without a word to anybody.
+            // From now on compiled code stores to the variable without firing the watchpoint, so invalidate it now.
             if (set)
-                set->invalidate(vm, StringFireDetail("Executed op_put_to_scope in code from the static compiler"));
+                set->invalidate(vm, StringFireDetail("Executed op_put_to_scope in AOT code"));
             cacheVariableOfEnvironment(vm, callerData(globalObject, callFrame), cache, environment, offset);
             OPERATION_RETURN(scope);
         }
@@ -564,13 +568,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (JSGlobalObj
     OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(encodedBase).get(globalObject, vm.propertyNames->length)));
 }
 
-// Comes back if the value is of the family by then.
+// Returns normally only if the value has the typed layout, after conversion if necessary.
 JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t layoutID))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isUndefinedOrNull()) {
-        // What getting at a property of it says.
+        // Throw the error that accessing a property of it would throw.
         if (!TypedLayoutTable::isAuditing())
             value.toObject(globalObject);
         OPERATION_RETURN(scope);
@@ -583,14 +587,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (JSGlobalObject* gl
         TypedLayoutTable::reportViolation(TypedLayoutTable::s_lastConversionFailure, safeCast<uint16_t>(layoutID), value);
         OPERATION_RETURN(scope);
     }
-    throwTypeError(globalObject, scope, makeString("Type check failed: this is not an object of the type it is used as, and cannot be made one: "_s, TypedLayoutTable::s_lastConversionFailure));
+    throwTypeError(globalObject, scope, makeString("Type check failed: the object does not have the layout of its declared type, and cannot be converted to it: "_s, TypedLayoutTable::s_lastConversionFailure));
     OPERATION_RETURN(scope);
 }
 
-// What stands for whatever is of a type of a family and is not one of the family. Nobody writes to it.
+// The stand-in for a value whose type has a typed layout but which does not have that layout itself. All of its slots are empty,
+// and it is never written to.
 alignas(16) static const EncodedJSValue s_emptyTypedObject[2 + 256] = { };
 
-// Where typed code is to look for what the value has: in the value, if it is of the family by now.
+// Returns the object that typed code should read the value's fields from: the value itself if it has the typed layout, after
+// conversion if necessary.
 JSC_DEFINE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t layoutID))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -623,13 +629,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (JSGlobalObje
     if (value.isUndefined() && allowsUndefined)
         OPERATION_RETURN(scope, JSValue::encode(value));
     if (TypedLayoutTable::checkStore(layoutID, slot, value) == TypedLayoutTable::StoreCheck::Rejected) {
-        throwTypeError(globalObject, scope, "Type check failed: a property is not what the type of the object says it is"_s);
+        throwTypeError(globalObject, scope, "Type check failed: the value of a property does not match its declared type"_s);
         OPERATION_RETURN(scope, encodedJSValue());
     }
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(layoutID, slot, value)));
 }
 
-// The Structure of the base does not say that the field is in its slot.
+// Called when the Structure of the base does not say that the field is in its slot.
 JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint32_t which))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -640,7 +646,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
     JSValue base = JSValue::decode(encodedBase);
     if (base.isObject()) {
         JSObject* object = asObject(base);
-        // What code that knows nothing of the types has made is made one of the family, if it can be.
+        // An object created by untyped code is converted to the typed layout, if possible.
         if (!object->structure()->cannotConvertToTypedLayout() && !object->structure()->typedLayoutID())
             Instance::convertToTypedLayout(vm, object, layoutID);
         Structure* structure = object->structure();
@@ -663,15 +669,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
         PropertySlot propertySlot(base, PropertySlot::InternalMethodType::Get);
         value = getByIdAndFillMegamorphicCache(globalObject, base, Identifier::fromUid(vm, uid), propertySlot);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        // (What the megamorphic cache has is a plain property, or the lack of one.)
+        // (An entry in the megamorphic cache is always a plain property or the absence of one.)
         if (!base.isObject() || (propertySlot.isUnset() ? propertySlot.isTaintedByOpaqueObject() : !propertySlot.isCacheableValue()))
-            globalObject->aotInstance()->noteNotJustRead(slot, field.id);
+            globalObject->aotInstance()->noteObservableRead(slot, field.id);
     }
     if (value.isUndefined() && allowsUndefined)
         OPERATION_RETURN(scope, JSValue::encode(value));
-    // (What comes next takes it for what the field holds. So it is that, or this does not come back.)
+    // (Later code assumes that the result has the field's type, so this either returns such a value or throws.)
     if (TypedLayoutTable::checkStore(field, value) == TypedLayoutTable::StoreCheck::Rejected) {
-        throwTypeError(globalObject, scope, "Type check failed: a property is not what the type of the object says it is"_s);
+        throwTypeError(globalObject, scope, "Type check failed: the value of a property does not match its declared type"_s);
         OPERATION_RETURN(scope, encodedJSValue());
     }
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(field, value)));
@@ -702,16 +708,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject*
     OPERATION_RETURN(scope);
 }
 
-// Options::validateAOTInferredTypes()
-// That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
+// For Options::validateAOTInferredTypes().
+// Validation must not change what the program does: this may be called while an exception is propagating.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
 {
     Type type = static_cast<Type>(highHalfOfType) << 64 | lowHalfOfType;
     Type actual = typeOfValue(JSValue::decode(encodedValue));
-    // What it was born as.
+    // Refine the type with the object's typed layout.
     if (actual & TFinalObjectTag)
         actual = (actual & ~TFinalObject) | typeOfObjectWithLayout(JSValue::decode(encodedValue).asCell()->structure()->typedLayoutID());
-    // Which function it is, if it is one of the program's.
+    // Refine the type with the function's number, if it is one of the program's functions.
     if (actual & TFunctionTag) {
         if (auto* function = dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()); function && !function->isHostFunction()) {
             Image* image = Image::withCode();
@@ -720,12 +726,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlo
                 if (uint32_t number = image->at<uint32_t>(image->header().numbersOfFunctionsOffset)[index])
                     actual = (actual & ~TFunction) | typeOfFunction(number);
             } else if (!function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)) {
-                // One that there is no code for: every call of it was made part of whoever made it. There is no telling which it is.
+                // A function without code: all of its calls were inlined. It cannot be identified, so assume that it matches.
                 actual = (actual & ~TAnyFunctionNumber) | (type & TAnyFunctionNumber);
             }
         }
     }
-    // (Nothing: what a stub takes for there being no exception.)
+    // (Zero is what a stub interprets as "no exception".)
     if (isSubtype(actual, type)) [[likely]]
         return 0;
     VM& vm = globalObject->vm();
@@ -761,7 +767,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlo
     dataLog(")");
     dataLogLn();
     if (JSValue value = JSValue::decode(encodedValue); value && value.isCell() && !value.asCell()->type() && static_cast<uint64_t>(encodedValue) != std::bit_cast<uintptr_t>(&s_emptyTypedObject[0])) {
-        // What is left of a cell, or what is not one yet.
+        // A cell that has been freed or is not initialized yet.
         JSCell* cell = value.asCell();
         auto* words = std::bit_cast<const uint64_t*>(cell);
         dataLog("    words:");
@@ -786,12 +792,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlo
             dataLogLn("    in a block of cells of ", block.handle().cellSize(), " bytes; marked: ", block.isMarked(cell), ", newly allocated: ", block.isNewlyAllocated(cell), ", live: ", block.handle().isLive(cell), ", free-listed: ", block.handle().isFreeListed());
         }
     }
-    // Where that is, the way anything that goes wrong in a program says where it went wrong.
+    // Print the stack trace, formatted as for an Error.
     JSObject* error = createError(globalObject, "the stack:"_s);
     JSValue stack = error->get(globalObject, vm.propertyNames->stack);
     if (!scope.exception() && stack.isString())
         dataLogLn(asString(stack)->value(globalObject).data);
-    // (Not a crash: whatever is there to report those may take its time, and whoever is waiting for this is a test.)
+    // (Exit instead of crashing: a crash reporter may take a long time, and the caller is a test.)
     _exit(70);
 }
 
@@ -811,7 +817,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM* vmPointer
     vm.writeBarrierSlowPath(cell);
 }
 
-// Null if the exception is not one that code gets to catch.
+// Returns null if the exception cannot be caught by JavaScript code.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer))
 {
     VM& vm = *vmPointer;
@@ -843,7 +849,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* glo
         OPERATION_RETURN(scope, 0);
     auto string = asString(value)->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0); // Out of memory resolving a rope.
-    const UnlinkedStringJumpTable& table = functionOfBytecodeOfCaller(globalObject, callFrame, whose).stringSwitchJumpTable(tableIndex);
+    const UnlinkedStringJumpTable& table = bytecodeOwnerOfCaller(globalObject, callFrame, whose).stringSwitchJumpTable(tableIndex);
     OPERATION_RETURN(scope, table.offsetForValue(string.data.impl()));
 }
 

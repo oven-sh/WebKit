@@ -52,7 +52,7 @@ public:
 
     PreciseAllocation* reuseForLowerTierPrecise();
 
-    // See StaticHeap. It has no cell of its own, is on no list, and is marked whatever happens.
+    // See StaticHeap. It has no cell of its own, is on no list, and always reports that it is marked.
     static PreciseAllocation* createForStaticCells(Heap&, Subspace*);
     static void setContainerOfStaticCells(PreciseAllocation* container) { s_containerOfStaticCells = container; }
     static PreciseAllocation* containerOfStaticCells() { return s_containerOfStaticCells; }

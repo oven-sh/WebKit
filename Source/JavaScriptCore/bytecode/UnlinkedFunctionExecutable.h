@@ -120,7 +120,7 @@ public:
     unsigned parameterCount() const { return m_parameterCount; }; // Excluding 'this'!
     SourceParseMode parseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); };
 
-    // (`provider` is the one that the function's own source is of. An executable of StaticHeap does not know it.)
+    // (`provider` is the provider of the function's own source. An executable in the static heap does not record it.)
     SourceCode classSource(SourceProvider& provider) const
     {
         materializeDeferredMembersIfNeeded();
@@ -292,7 +292,7 @@ public:
 
     bool singletonHasBeenInvalidated() const { return m_singletonHasBeenInvalidated; }
 
-    // The FunctionExecutable that StaticHeap made for it when the program was built, which link() gives to whoever it is good for.
+    // The FunctionExecutable that StaticHeap created for this function at build time. link() returns it where it is applicable.
     FunctionExecutable* staticExecutable() const { return m_staticExecutable; }
     UnlinkedFunctionCodeBlock* codeBlockIfExists(CodeSpecializationKind kind) const
     {
@@ -301,14 +301,14 @@ public:
         return (kind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct).get();
     }
     void setStaticExecutable(FunctionExecutable* executable) { m_staticExecutable = executable; }
-    // StaticHeap decodes the code of every function, to see what is in it, and leaves it in the payload all the same.
+    // StaticHeap decodes the code of every function to inspect it, but still leaves it in the payload.
     std::pair<int32_t, int32_t> offsetsOfCachedCodeBlocks() const
     {
         RELEASE_ASSERT(m_isCached);
         return { m_cachedCodeBlockForCallOffset, m_cachedCodeBlockForConstructOffset };
     }
     void leaveCodeInPayload(Decoder&, std::pair<int32_t, int32_t> offsetsOfCachedCodeBlocks);
-    // Which leaves this as it is: the code is `owner`'s to keep.
+    // Decodes the code without changing this object. `owner` keeps the code alive.
     UnlinkedFunctionCodeBlock* decodeCodeFromKeptPayload(VM&, CodeSpecializationKind, JSCell* owner);
     void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
 
@@ -415,8 +415,8 @@ public:
 
     bool hasName() const { return m_hasName; }
 
-    // See the short form of FunctionExecutable. Functions that are alike in everything but what they are called, how many parameters
-    // they have and where they are in the source have one of these between them: this is what is in it.
+    // See the short form of FunctionExecutable. Functions that only differ in their name, parameter count and source position share
+    // one UnlinkedFunctionExecutable. These say whether this one can be shared, and which bytes are shared.
     bool canBeSharedByStaticExecutables() const
     {
         return !m_nameIsDeferred && !m_membersAreDeferred && !m_scalarsAreDeferred && !m_members.live().rareData && !m_members.live().parentScopeTDZVariables

@@ -22,10 +22,9 @@ namespace AOT {
 
 struct Slot;
 
-// The operations behind every instruction that is not arithmetic, a plain property access or a variable access. What they have
-// in common is what they do without: operands and results are arguments and return values, never bytecode registers in the
-// frame, and nothing looks at the instruction stream, at the interpreter's metadata or at a profile. Part of
-// FOR_EACH_AOT_OPERATION (AOTRuntime.h).
+// The operations behind every instruction that is not arithmetic, a plain property access or a variable access. Operands and
+// results are arguments and return values, never bytecode registers in the frame, and nothing reads the instruction stream, the
+// interpreter's metadata or a profile. Part of FOR_EACH_AOT_OPERATION (AOTRuntime.h).
 #define FOR_EACH_AOT_OBJECT_OPERATION(v) \
     v(operationAOTNewObject) \
     v(operationAOTNewObjectLiteral) \
@@ -121,7 +120,7 @@ struct Slot;
     v(operationAOTConstructByCalling) \
     v(operationAOTNoteFilled) \
     v(operationAOTHasOwnProperty) \
-    v(operationAOTGiveData) \
+    v(operationAOTEnsureData) \
     v(operationAOTCallDirectEval) \
 
 // Property names that instructions imply rather than name, so that they are not among the function's identifiers.
@@ -220,7 +219,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTSetAdd, void, (JSGlobalObject*, JSCell* se
 JSC_DECLARE_JIT_OPERATION(operationAOTInByVal, size_t, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTDelById, size_t, (JSGlobalObject*, EncodedJSValue base, uint32_t identifierIndex, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTDelByVal, size_t, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property, uint32_t isStrict));
-// Like everything that is called for a site these are told an identifier, which they have no use for.
+// Like every operation that is called for a site, these are passed an identifier, which they ignore.
 JSC_DECLARE_JIT_OPERATION(operationAOTGetPrivateName, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property, uint32_t, Slot*, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutPrivateName, void, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, uint32_t, Slot*, uint32_t isDefine));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasPrivateName, size_t, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property));
@@ -241,7 +240,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTEnumeratorInByVal, size_t, (JSGlobalObject
 JSC_DECLARE_JIT_OPERATION(operationAOTEnumeratorPutByVal, void, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue propertyName, EncodedJSValue value, EncodedJSValue index, EncodedJSValue mode, JSCell* enumerator, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTEnumeratorHasOwnProperty, size_t, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue propertyName, EncodedJSValue index, EncodedJSValue mode, JSCell* enumerator));
 
-// for-of. The ones that try something fast hand back the empty value if there is nothing for it but the protocol.
+// for-of. The operations that try a fast path return the empty value if the generic protocol has to be used.
 JSC_DECLARE_JIT_OPERATION(operationAOTIteratorOpenTryFast, EncodedJSValue, (JSGlobalObject*, EncodedJSValue iterable, EncodedJSValue symbolIterator, EncodedJSValue* next));
 JSC_DECLARE_JIT_OPERATION(operationAOTAsyncIteratorOpenTryFast, EncodedJSValue, (JSGlobalObject*, EncodedJSValue iterable, EncodedJSValue symbolIterator, EncodedJSValue* next));
 JSC_DECLARE_JIT_OPERATION(operationAOTIteratorNextTryFast, EncodedJSValue, (JSGlobalObject*, JSObject* iterator));
@@ -259,7 +258,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (Ca
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance*, void* addressInFunction));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (JSGlobalObject*, JSObject*, EncodedJSValue));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGiveData, void, (Instance*, uint32_t index));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance*, uint32_t index));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (JSGlobalObject*, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));
 
 } } // namespace JSC::AOT

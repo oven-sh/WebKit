@@ -393,7 +393,7 @@ private:
     // Save the occurrence order since the module loader loads and runs the modules in this order.
     // http://www.ecma-international.org/ecma-262/6.0/#sec-moduleevaluation
     Vector<ModuleRequest> m_requestedModules;
-    bool m_didReleasePrelinkedRequests { false }; // They are made again from the graph if anybody asks.
+    bool m_didReleasePrelinkedRequests { false }; // They are recreated from the prelinked graph on demand.
 
     WriteBarrier<JSModuleNamespaceObject> m_moduleNamespaceObject;
     WriteBarrier<JSModuleNamespaceObject> m_deferredNamespaceObject;

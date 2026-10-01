@@ -254,8 +254,9 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             continue;
 
 #if USE(BUN_JSC_ADDITIONS)
-        // In code that is compiled ahead of time this comes after a call of what does not come back, half a million times over. It is wanted after the last of them, so that what
-        // that call would have returned to is still part of the function.
+        // In code that is compiled ahead of time, an Oops follows every call that does not return, which is half a million times in
+        // a large program. It is only needed after the last block, so that the return address of that call is still inside the
+        // function.
         if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && code.findNextBlock(block))
             continue;
 #endif

@@ -87,7 +87,7 @@ void TypeTable::load(VM& vm)
         for (unsigned i = 0; i < words[1]; ++i)
             table->m_openLayoutsWithField.add(table->m_names[words[2 + i * wordsOfPropertyOfLayout]].impl(), Vector<uint32_t> { }).iterator->value.append(number);
     }
-    // The ids of the fields: one after the other among those that have the same slot, whichever family they are of.
+    // Assign field IDs: consecutive numbers among the fields that share a slot, across all typed layouts.
     {
         uint32_t last[Structure::numberOfSlotsWithFieldIDs] { };
         for (uint32_t number = 1; number < table->m_typedLayouts.size(); ++number) {
@@ -120,7 +120,7 @@ void TypeTable::finalizeAtomizedFields()
     if (!table || !table->m_hasTypedFields || table->m_fieldsCompared.isEmpty())
         return;
     auto words = table->m_words.mutableSpan();
-    UncheckedKeyHashSet<uint64_t> names; // Family << 32 | which of m_names, plus one.
+    UncheckedKeyHashSet<uint64_t> names; // Typed layout << 32 | (index in m_names + 1).
     for (uint32_t number = 1; number < table->m_typedLayouts.size(); ++number) {
         if (!table->isUsable(number))
             continue;
@@ -136,7 +136,7 @@ void TypeTable::finalizeAtomizedFields()
             names.add(static_cast<uint64_t>(number) << 32 | (name[0] + 1));
         }
     }
-    // The same is said again wherever a layout or a type has the field.
+    // The same information is repeated wherever a layout or a type has the field, so update those copies too.
     for (uint32_t number = 1; number < table->m_layouts.size(); ++number) {
         auto layout = words.subspan(table->m_layouts[number]);
         for (unsigned i = 0; i < layout[1]; ++i) {
@@ -183,7 +183,7 @@ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringI
         uint16_t id = 0;
         if (m_hasTypedFields && usesFieldIDs(field[2])) {
             id = m_idsOfFields.get({ field[2], name });
-            // (An object that has no such property of its own has Object.prototype's, which is more than a slot with nothing in it says.)
+            // (An object without such an own property inherits Object.prototype's, which an empty slot cannot represent.)
             if (!id || isInherited)
                 return std::nullopt;
         }
@@ -202,7 +202,7 @@ std::optional<TypeTable::Field> TypeTable::fieldOfLayout(uint32_t number, Unique
         if (m_names[entry[0]].impl() != name)
             continue;
         bool mayBeAbsent = !!(entry[1] >> 16);
-        // (An object that has no such property of its own has Object.prototype's.)
+        // (An object without such an own property inherits Object.prototype's.)
         if (mayBeAbsent && m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; }))
             return std::nullopt;
         uint16_t id = 0;
@@ -211,7 +211,8 @@ std::optional<TypeTable::Field> TypeTable::fieldOfLayout(uint32_t number, Unique
             if (!id)
                 return std::nullopt;
         }
-        // (Whatever the types say has to be there: what is known only for its family may be an object that is still being given what it is to have.)
+        // (Fields may be empty even if the types say they are present: an object that is only known by its typed layout may still
+        // be under construction.)
         return withId(id, Field { static_cast<uint16_t>(entry[1]), mayBeAbsent, static_cast<uint8_t>(inlineSlotsOf(number)), true, safeCast<uint16_t>(number), safeCast<uint16_t>(number), 0, 0, 0,
             FieldType::from(entry[2], entry[3]) });
     }
@@ -256,7 +257,7 @@ std::optional<TypeTable::Layout> TypeTable::layoutOf(uint32_t type) const
         if (!isUsable(layout[2]))
             return std::nullopt;
         result.layoutID = safeCast<uint16_t>(layout[2]);
-        // (What a literal has that the family has no slot for comes after the family's slots, in the object like them.)
+        // (Properties of a literal that the typed layout has no slot for come after the layout's slots, and are inline like them.)
         result.inlineSlots = std::max<unsigned>(inlineSlotsOf(layout[2]), result.capacity);
     }
     for (unsigned i = 0; i < layout[1]; ++i) {

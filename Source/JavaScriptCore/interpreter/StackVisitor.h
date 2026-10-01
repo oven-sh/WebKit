@@ -85,8 +85,8 @@ public:
         CallFrame* callerFrame() const { return m_callerFrame; }
         EntryFrame* entryFrame() const { return m_entryFrame; }
         CalleeBits callee() const { return m_callee; }
-        // A frame of code from the static compiler (aot/) has none until somebody asks, here: it is made then, which is not something to
-        // do in the middle of an allocation or a collection. Nothing else there is to ask of a Frame does that.
+        // A frame of AOT code has no CodeBlock until it is requested here, and then one is created. That must not happen during an
+        // allocation or a collection. No other accessor of Frame has this side effect.
         CodeBlock* codeBlock() const
         {
             if (m_aotFunction && !m_codeBlock) [[unlikely]]
@@ -97,18 +97,18 @@ public:
         // The realm the frame's code runs in. Unlike callFrame()->lexicalGlobalObject(), this is valid for every kind of frame: a frame of
         // AOT code has no callee slot to find the realm through.
         JS_EXPORT_PRIVATE JSGlobalObject* lexicalGlobalObject(VM&) const;
-        // Set: it is a frame of code from the static compiler. There is nothing in such a frame for anybody but the code: all there is to
-        // know about it is what is asked here.
+        // Set if this is a frame of AOT code. Such a frame holds nothing that other code can interpret, so everything about it has
+        // to be obtained through these accessors.
         AOT::FunctionRef aotFunction() const { return m_aotFunction; }
-        // Between such a frame and callerFrame(), if that is not another: the frame of what let the code in, which has saved registers.
+        // The adapter frame between an AOT frame and callerFrame(), if the caller is not AOT code. The adapter has saved registers.
         CallFrame* aotAdapterFrame() const { return m_aotAdapterFrame; }
-        // It is not a frame at all, but a call that such code makes no more, having what the callee does in its place. The frame is that
-        // of the function that has it, which comes later.
+        // Not a physical frame, but a call that was inlined into AOT code. The physical frame is that of the function it was
+        // inlined into, which is visited later.
         bool isInlinedAOTFrame() const { return !!m_aotInlineFrame; }
-        // What it was doing last was a tail call, which such code has made no more (as above). The frame is there, and whoever unwinds
-        // has to reckon with it. As far as the program can tell there is no such frame.
+        // The frame's last action was a tail call that was inlined (see above). The physical frame exists, and the unwinder has to
+        // process it, but it is not visible to the program.
         bool isTailDeleted() const { return m_isTailDeleted; }
-        // Of the code that the frame runs, if it is JavaScript.
+        // The executable of the code that the frame runs, if it is JavaScript.
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
         JS_EXPORT_PRIVATE bool isBuiltinFunction() const; // hasCode()
         BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
@@ -176,11 +176,11 @@ public:
         mutable CodeBlock* m_codeBlock { nullptr };
         AOT::FunctionRef m_aotFunction;
         CallFrame* m_aotAdapterFrame { nullptr };
-        AOT::FunctionRef m_aotFunctionOfFrame; // Whose code it is that runs in the frame.
+        AOT::FunctionRef m_aotFunctionOfFrame; // The function whose machine code runs in the frame.
         unsigned m_aotInlineFrame { 0 };
         bool m_isTailDeleted { false };
         void* m_returnPC { nullptr };
-        void* m_callerReturnPC { nullptr }; // Where m_callerFrame is going to be returned to.
+        void* m_callerReturnPC { nullptr }; // The address at which m_callerFrame will resume.
         size_t m_index { 0 };
         size_t m_argumentCountIncludingThis { 0 };
         BytecodeIndex m_bytecodeIndex { };
@@ -241,8 +241,8 @@ private:
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
-    AOT::Instance* m_aotInstance { nullptr }; // Of the frames of code from the static compiler that are being gone through, once it has been looked up.
-    CallFrame* m_aotAdapterSkippedAtTop { nullptr }; // See the constructor. Whoever unwinds has its saved registers to restore.
+    AOT::Instance* m_aotInstance { nullptr }; // The Instance of the AOT frames that are being visited, once it has been looked up.
+    CallFrame* m_aotAdapterSkippedAtTop { nullptr }; // See the constructor. The unwinder has to restore the registers that it saved.
     bool m_topEntryFrameIsEmpty { false };
 };
 

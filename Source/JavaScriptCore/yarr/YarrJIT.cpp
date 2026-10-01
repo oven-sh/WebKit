@@ -1441,7 +1441,7 @@ class YarrGenerator final : public YarrJITInfo {
         failMatches.append(branchTestTable(tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, character, table, CharacterClass::tableSize, TableIs::Shared));
     }
 
-    // In code that is to work wherever it is put, where a table is is said by how far it is from the code.
+    // Position-independent code addresses a table relative to the program counter.
     enum class TableIs : bool { ThePatternsOwn, Shared };
     void moveAddressOfTable(const void* table, size_t size, TableIs tableIs, MacroAssembler::RegisterID reg)
     {
@@ -9598,7 +9598,15 @@ public:
             });
         }
 
-        LinkBuffer linkBuffer(m_jit, &codeBlock, LinkBuffer::Profile::YarrJIT, JITCompilationCanFail);
+        // Code for an image is only copied, never run from here, so it is linked in ordinary memory. That works in a process without a JIT.
+        Vector<uint32_t> storageForImage;
+        if (m_forImage) {
+            m_jit.padBeforePatch();
+            storageForImage.grow(m_jit.m_assembler.codeSize() / sizeof(uint32_t));
+        }
+        LinkBuffer linkBuffer = m_forImage
+            ? LinkBuffer(m_jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(storageForImage.mutableSpan().data()), storageForImage.sizeInBytes(), LinkBuffer::Profile::YarrJIT)
+            : LinkBuffer(m_jit, &codeBlock, LinkBuffer::Profile::YarrJIT, JITCompilationCanFail);
         if (linkBuffer.didFailToAllocate()) {
             codeBlock.setFallBackWithFailureReason(JITFailureReason::ExecutableMemoryAllocationFailure);
             return;
@@ -9607,7 +9615,14 @@ public:
         if (m_forImage) {
             auto* start = static_cast<const uint8_t*>(linkBuffer.entrypoint<NoPtrTag>().untaggedPtr());
             auto& bytes = m_forImage->bytes;
-            bytes.append(std::span { start, linkBuffer.size() });
+            // Branch compaction leaves nops at the end.
+            size_t sizeOfCode = linkBuffer.size();
+#if CPU(ARM64)
+            constexpr uint32_t nop = 0xd503201f;
+            while (sizeOfCode > sizeof(uint32_t) && *reinterpret_cast<const uint32_t*>(start + sizeOfCode - sizeof(uint32_t)) == nop)
+                sizeOfCode -= sizeof(uint32_t);
+#endif
+            bytes.append(std::span { start, sizeOfCode });
             auto offsetOf = [&](auto label) {
                 return static_cast<uint32_t>(static_cast<const uint8_t*>(linkBuffer.locationOf<NoPtrTag>(label).untaggedPtr()) - start);
             };

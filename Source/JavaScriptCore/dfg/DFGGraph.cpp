@@ -1467,7 +1467,7 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
     }
 
 #if ENABLE(FTL_JIT)
-    // Code from the static compiler writes to closure variables without telling anyone.
+    // AOT code writes to closure variables without firing watchpoints.
     if (AOT::Image::hasAny())
         return JSValue();
 #endif

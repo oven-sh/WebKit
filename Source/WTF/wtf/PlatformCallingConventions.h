@@ -123,8 +123,10 @@
 #endif // ENABLE(JIT_OPERATION_VALIDATION) || ENABLE(JIT_OPERATION_DISASSEMBLY)
 
 #if USE(BUN_JSC_ADDITIONS)
-// Whoever calls one has its address from somewhere that the linker can see: a compiler that puts it in code, or a table. So one that nothing refers to can go, and with it what only
-// it refers to: that is how an executable comes to be linked without the compilers (JavaScriptCore/runtime/CompilerHooks.h). They have external linkage, so they are emitted regardless.
+// Every caller gets an operation's address from something that the linker can see: a compiler that embeds it in code, or a table.
+// So an operation that nothing refers to can be dropped, together with whatever only it refers to. That is how an executable can be
+// linked without the compilers (JavaScriptCore/runtime/CompilerHooks.h). Operations have external linkage, so they are emitted
+// regardless.
 #define JIT_OPERATION_REFERENCED_FROM_ASM
 #else
 #define JIT_OPERATION_REFERENCED_FROM_ASM REFERENCED_FROM_ASM

@@ -474,7 +474,7 @@ bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
         m_isLinkedAsInImage = TriState::False;
         return false;
     }
-    // And the modules it imports from, and so on: its code calls theirs without anybody asking again.
+    // The same must hold for the modules that it imports from, transitively, because its code calls theirs without any check.
     Vector<JSModuleRecord*, 16> records { this };
     UncheckedKeyHashSet<JSModuleRecord*> seen { this };
     bool result = true;
@@ -498,9 +498,10 @@ bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
 
 bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const Function<bool(JSModuleRecord*)>& mayImportFrom)
 {
-    // Its functions are the ones that were made when the program was built, which is what the code takes what it calls to be.
+    // Its functions are the ones that were created when the program was built, which is what compiled code assumes about its
+    // callees.
     bool result = isPrelinked() && (m_moduleProgramExecutable ? m_moduleProgramExecutable->usesStaticExecutables() : m_gaveStaticExecutables);
-    // Where the code takes it to be, if it takes it to be anywhere.
+    // Whether the environment is at the location that compiled code assumes, if it assumes one.
     auto environmentIsInItsPlace = [&](AbstractModuleRecord* record) {
         AOT::ImageEnvironment environment = AOT::Image::environmentOf(record->prelinkedIndex());
         if (!environment.distance)

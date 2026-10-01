@@ -69,7 +69,7 @@ enum class JITType : uint8_t {
     BaselineJIT = 0b011,
     DFGJIT = 0b100,
     FTLJIT = 0b101,
-    AOTJIT = 0b110, // Code from the static compiler (aot/). Position independent, never speculates, never tiers up.
+    AOTJIT = 0b110, // Code that was compiled ahead of time (aot/). Position independent, never speculates, never tiers up.
 };
 static constexpr unsigned widthOfJITType = 3;
 static_assert(WTF::getMSBSet(static_cast<std::underlying_type_t<JITType>>(JITType::AOTJIT)) + 1 == widthOfJITType);

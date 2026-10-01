@@ -118,7 +118,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetDelete, size_t, (JSGlobalObject* globalO
     OPERATION_RETURN(scope, uncheckedDowncast<JSSet>(set)->remove(globalObject, JSValue::decode(key)));
 }
 
-// (The values are in the frame of whoever calls, where the collector finds them.)
+// (The values are in the caller's frame, where the collector finds them.)
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (JSGlobalObject* globalObject, JSArray* array, EncodedJSValue* values, uint32_t count))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -141,7 +141,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (JSGloba
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(array->length())));
 }
 
-// end: what nobody passes is the most there is.
+// end: INT32_MAX if the argument was omitted.
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySlice, JSArray*, (JSGlobalObject* globalObject, JSArray* array, int32_t start, int32_t end))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -179,7 +179,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDateField, EncodedJSValue, (VM* vm
     return 0;
 }
 
-// What code falls back on when it cannot make the array itself (Lowering::newArrayOf()): with those elements, one after the other, kept in that way.
+// The fallback for when compiled code cannot allocate the array inline (Lowering::newArrayOf()). Creates an array with those
+// elements and that indexing type.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfValues, JSCell*, (JSGlobalObject* globalObject, const EncodedJSValue* values, uint32_t count, uint32_t indexingType))
 {
     AOT_OPERATION_PROLOGUE(globalObject);

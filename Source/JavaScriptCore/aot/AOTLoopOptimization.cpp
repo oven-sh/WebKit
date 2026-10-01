@@ -16,14 +16,14 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// What the fast copy of a loop (see BasicBlock::isGeneric) does over and over that it need only do once.
+// Hoists loop-invariant work out of the fast copy of a split loop (see BasicBlock::isGeneric).
 //
-// The fast copy of a loop that has no other loop in it is often free of anything that could change a structure, a cache or a
-// binding: all of that is in the generic copy, which comes back by way of the pre-header. In such a loop
-//   - a guard whose inputs are the same every time round moves to the pre-header, along with the instruction it is for;
-//   - of the property accesses that have the same base, one checks the base's structure. That the caches of the others are for
-//     the structure that its cache is for is checked in the pre-header.
-// A guard that fails in the pre-header sends one iteration to the generic copy, as it would have from where it was.
+// The fast copy of an innermost loop is often free of anything that could change a structure, an inline cache or a binding: all of
+// that is in the generic copy, which re-enters through the pre-header. In such a loop:
+//   - A guard whose inputs are loop-invariant moves to the pre-header, together with the instruction that it guards.
+//   - Of the property accesses with the same base, only one checks the base's structure. The pre-header checks that the inline
+//     caches of the others are for the same structure as its cache.
+// A guard that fails in the pre-header sends one iteration to the generic copy, as it would have from its original position.
 class LoopOptimizer {
 public:
     LoopOptimizer(Graph& graph)
@@ -40,8 +40,8 @@ public:
         }
     }
 
-    // Loops that are kept whole. From the outside in, so that an array is looked at as seldom as will do.
-    void viewArrays()
+    // For loops that are not split. Outermost loops first, so that an array's storage is loaded as rarely as possible.
+    void hoistArrayStorageLoads()
     {
         computeDominators();
         for (BasicBlock* header : m_graph.m_rpo) {
@@ -72,7 +72,7 @@ public:
             }
             if (!isProper)
                 continue;
-            m_isWhole = true;
+            m_isUnsplit = true;
             bool isKnown = true;
             for (BasicBlock* block : m_graph.m_rpo) {
                 if (!loop.body.get(block->index))
@@ -81,7 +81,7 @@ public:
                 for (Node* node : block->nodes)
                     isKnown = isKnown && noteEffects(loop, node);
             }
-            m_isWhole = false;
+            m_isUnsplit = false;
             if (!isKnown || loop.writesIndexed)
                 continue;
             for (BasicBlock* block : loop.blocks) {
@@ -95,7 +95,7 @@ public:
                         base = node->use(node->as<OpGetLength>().m_base);
                     if (!base || !base->type || !isSubtype(base->type, TArray))
                         continue;
-                    base = asItComesTo(loop, base);
+                    base = invariantValueOf(loop, base);
                     if (!base || !base->type || !isSubtype(base->type, TArray))
                         continue;
                     node->viewedAheadOf = header;
@@ -114,11 +114,11 @@ private:
         BasicBlock* preHeader { nullptr };
         BasicBlock* header { nullptr };
         Vector<BasicBlock*, 2> latches;
-        BitVector body; // By block index.
+        BitVector body; // Indexed by block index.
         Vector<BasicBlock*> blocks; // In reverse post order.
 
         bool writesIndexed { false };
-        bool changesStructures { false }; // Of plain objects with no elements: one may be made one of a family, or given a property it did not have.
+        bool changesStructures { false }; // Of plain objects without indexed elements: one may be converted to a typed layout, or gain a property.
         bool writesVariables { false };
         Vector<unsigned, 8> propertiesWritten;
     };
@@ -130,7 +130,7 @@ private:
             rpo[i]->rpoIndex = i;
             rpo[i]->immediateDominator = nullptr;
         }
-        // The handlers are ways in too. What is above them and the root is nothing, which null stands for.
+        // Exception handlers are entry points too. The common dominator of the handlers and the root is represented by null.
         auto isEntry = [&](BasicBlock* block) { return block == m_graph.root || block->isCatchEntrypoint; };
         BitVector processed(rpo.size());
         auto intersect = [&](BasicBlock* a, BasicBlock* b) -> BasicBlock* {
@@ -168,7 +168,8 @@ private:
             }
         }
 
-        // Numbered so that a block's descendants in the tree are the blocks whose numbers are within its own.
+        // Pre- and post-order numbers, so that a block's descendants in the dominator tree are the blocks whose numbers lie within
+        // its own.
         Vector<Vector<BasicBlock*, 2>> children(m_graph.blocks.size());
         Vector<BasicBlock*, 4> roots;
         for (BasicBlock* block : rpo) {
@@ -208,7 +209,7 @@ private:
         for (BasicBlock* predecessor : loop.header->predecessors) {
             if (predecessor == preHeader)
                 continue;
-            // Only by way of the header, or there is no saying that what the pre-header did was done.
+            // The loop must only be entered through the header. Otherwise what the pre-header did may not have happened.
             if (!loop.header->dominates(predecessor))
                 return false;
             loop.latches.append(predecessor);
@@ -237,7 +238,7 @@ private:
 
     static uint32_t flagsOfPut(const OpPutById& bytecode) { return (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0); }
 
-    // Whether the guard does what the instruction does (Lowering::lowerGuard()), and so nothing else does.
+    // Whether the guard performs the whole instruction (Lowering::lowerGuard()), so that nothing else does.
     bool applies(Node* guard)
     {
         switch (guard->opcode) {
@@ -256,7 +257,7 @@ private:
             return m_graph.intrinsicOfCall(guard) != CallIntrinsic::None;
         case op_resolve_scope: {
             auto bytecode = guard->as<OpResolveScope>();
-            // Either it is a matter of following pointers that never change, or the guard's.
+            // Either the scope is found by following pointers that never change, or the guard checks it.
             if (isStaticClosureVarResolveType(bytecode.m_resolveType))
                 return true;
             auto variable = guard->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType);
@@ -278,14 +279,14 @@ private:
 
     static bool isNumber(Node* node) { return isSubtype(node->type, TNumber); }
 
-    // False if there is no telling what the node does. This has to say no more than the lowering delivers.
+    // Returns false if the effects of the node are unknown. This must not claim more than the lowering guarantees.
     bool noteEffects(Loop& loop, Node* node)
     {
         switch (node->kind) {
         case NodeKind::Constant:
         case NodeKind::ConstantCell:
         case NodeKind::Intrinsic:
-        case NodeKind::LinkTimeConstant: // (That the realm makes it is nothing that a program can see.)
+        case NodeKind::LinkTimeConstant: // (Initializing it lazily is not observable.)
         case NodeKind::Argument:
         case NodeKind::Phi:
         case NodeKind::Proj:
@@ -311,8 +312,9 @@ private:
         if (node->guard)
             return true;
 
-        // What is not split off has its long way where it is. These have one that changes nothing: it looks, or it throws.
-        if (m_isWhole) {
+        // In a loop that is not split, the slow path stays in the loop. For these instructions the slow path changes nothing: it
+        // only reads, or throws.
+        if (m_isUnsplit) {
             switch (node->opcode) {
             case op_get_by_val:
                 if (node->use(node->as<OpGetByVal>().m_base)->type && isSubtype(node->use(node->as<OpGetByVal>().m_base)->type, TArray) && isNumber(node->use(node->as<OpGetByVal>().m_property)))
@@ -323,7 +325,8 @@ private:
                     return true;
                 break;
             case op_get_by_id:
-                // (Nothing is read: Lowering::lowerEquality(). Where a class may have one of its own it is asked, of what is not an array as the realm makes them, and that may run anything.)
+                // (Nothing is read: see Lowering::lowerEquality(). If a subclass may override the method, the lookup is performed
+                // for anything that is not an array with the realm's original structure, and that may run arbitrary code.)
                 if (Graph::isReadOfIteratorMethodOfArray(node) && !Graph::methodMayBeOverridden("Array"_s, node))
                     return true;
                 break;
@@ -355,12 +358,14 @@ private:
             loop.changesStructures |= !node->uses[0].node->hasLayoutInRange(node->firstLayout, node->lastLayout);
             return true;
         }
-        // (What is not known to be a struct may be anything, with getters and setters: it is an access like any other.)
+        // (A base that is not known to have a typed layout may be any object, with getters and setters, so this is treated like any
+        // other access.)
         if (auto field = Graph::typedFieldAccessedBy(node); field && !field->id && node->use(node->opcode == op_get_by_id ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base)->hasLayoutInRange(field->first, field->last)) {
             bool isRead = node->opcode == op_get_by_id;
             if (isRead)
                 return true;
-            // (What the slot does not hold is stored the long way, which runs no code either: the property is plain.)
+            // (A value that the field's type does not accept is stored by the slow path, which runs no code either, because the
+            // property is a plain data property.)
             loop.propertiesWritten.append(node->as<OpPutById>().m_property);
             loop.changesStructures = true;
             return true;
@@ -458,7 +463,7 @@ private:
         case op_not:
         case op_jtrue:
         case op_jfalse:
-            // Finding out whether a value is true takes no more than looking at it.
+            // Converting a value to a boolean only inspects it.
             return true;
 
         case op_resolve_scope:
@@ -476,7 +481,7 @@ private:
     bool isInvariant(const Loop& loop, Node* node)
     {
         if (!node->block)
-            return true; // A constant.
+            return true; // Constants belong to no block.
         return !loop.body.get(node->block->index);
     }
 
@@ -485,9 +490,10 @@ private:
         return node->kind == NodeKind::Narrow || node->isBytecode(op_type_tag) || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz);
     }
 
-    // The value, if it is the same one every time round: as it is ahead of the loop. To say a type of a variable, or to check it, is to define it again, and a variable that is
-    // defined in a loop has a phi at the top of it. It is none the less the value that came in.
-    Node* asItComesTo(const Loop& loop, Node* node)
+    // Returns the loop-invariant value that the node is an alias of, as it is before the loop, or null. A type annotation or a type
+    // check on a variable redefines it, and a variable that is defined in a loop has a phi at the header. The value is still the
+    // one that entered the loop.
+    Node* invariantValueOf(const Loop& loop, Node* node)
     {
         for (unsigned steps = 0; steps < 64; ++steps) {
             if (isInvariant(loop, node))
@@ -498,25 +504,25 @@ private:
             }
             if (node->kind != NodeKind::Phi || node->block != loop.header || node->uses.size() != loop.header->predecessors.size())
                 return nullptr;
-            Node* comesIn = nullptr;
+            Node* valueOnEntry = nullptr;
             for (unsigned i = 0; i < node->uses.size(); ++i) {
                 Node* input = node->uses[i].node;
                 if (!loop.body.get(loop.header->predecessors[i]->index)) {
-                    if (comesIn && comesIn != input)
+                    if (valueOnEntry && valueOnEntry != input)
                         return nullptr;
-                    comesIn = input;
+                    valueOnEntry = input;
                     continue;
                 }
-                // (Round an inner loop as well, it may be. That is asking too much.)
+                // (The value may also pass through an inner loop. That case is not handled.)
                 for (unsigned inner = 0; input != node; ++inner) {
                     if (inner == 64 || !isAliasOfOperand(input))
                         return nullptr;
                     input = input->uses[0].node;
                 }
             }
-            if (!comesIn)
+            if (!valueOnEntry)
                 return nullptr;
-            node = comesIn;
+            node = valueOnEntry;
         }
         return nullptr;
     }
@@ -530,8 +536,9 @@ private:
         return true;
     }
 
-    // With the same inputs, and in a loop that does no more than noteEffects() has been told.
-    bool staysTheSame(const Loop& loop, Node* guard)
+    // Whether the guard produces the same result on every iteration, given invariant inputs and a loop with only the effects that
+    // noteEffects() recorded.
+    bool isInvariantGuard(const Loop& loop, Node* guard)
     {
         switch (guard->opcode) {
         case op_get_by_id:
@@ -545,14 +552,14 @@ private:
         case op_call:
             return hasNoEffects(m_graph.intrinsicOfCall(guard));
         case op_get_from_scope:
-            // Which may be a property of the global object.
+            // The variable may be a property of the global object.
             return !loop.writesVariables && !loop.propertiesWritten.contains(guard->as<OpGetFromScope>().m_var);
         default:
             return false;
         }
     }
 
-    bool runsEveryTime(const Loop& loop, BasicBlock* block)
+    bool executesOnEveryIteration(const Loop& loop, BasicBlock* block)
     {
         for (BasicBlock* latch : loop.latches) {
             if (!block->dominates(latch))
@@ -594,10 +601,10 @@ private:
         return node;
     }
 
-    // In a loop that does no more than noteEffects() has been told, and in what has been moved ahead of it: reading the same property
-    // of the same object again gives the same value, if the loop does not write a property of that name, and checking the same value
-    // again comes to the same.
-    void eliminateRepeats(Loop& loop)
+    // Eliminates redundant guards in a loop with only the effects that noteEffects() recorded, and among the guards hoisted out of
+    // it. Reading the same property of the same object again yields the same value if the loop does not write a property with that
+    // name, and checking the same value again has the same outcome.
+    void eliminateRedundantGuards(Loop& loop)
     {
         struct Known {
             Node* guard;
@@ -616,7 +623,7 @@ private:
             return guard->as<OpCheckType>().m_mask == earlier.guard->as<OpCheckType>().m_mask
                 && resolve(guard->use(guard->as<OpCheckType>().m_value)) == resolve(earlier.guard->use(earlier.guard->as<OpCheckType>().m_value));
         };
-        // True if the pair is of no further use.
+        // Returns true if the guard and its instruction are redundant.
         auto visit = [&](Node* guard, Node* instruction) {
             if (guard->guardKind != GuardKind::Whole)
                 return false;
@@ -681,7 +688,7 @@ private:
         if (!findLoop(preHeader, loop))
             return;
         for (BasicBlock* block : loop.blocks) {
-            // The generic copy of a loop inside this one.
+            // This is the generic copy of a loop nested in this one.
             if (block->isGeneric)
                 return;
             for (Node* node : block->nodes) {
@@ -690,24 +697,24 @@ private:
             }
         }
 
-        // In an order in which whatever a guard's inputs come from has been looked at.
+        // In reverse post order, so that the definitions of a guard's inputs are visited before the guard.
         for (BasicBlock* block : loop.blocks) {
             for (unsigned i = 0; i < block->nodes.size(); ++i) {
                 Node* node = block->nodes[i];
-                if (node->kind == NodeKind::Guard && node->guardKind == GuardKind::KnownCallee && isInvariant(loop, node->uses[0].node) && runsEveryTime(loop, block)) {
+                if (node->kind == NodeKind::Guard && node->guardKind == GuardKind::KnownCallee && isInvariant(loop, node->uses[0].node) && executesOnEveryIteration(loop, block)) {
                     block->nodes.removeAt(i--);
                     addToPreHeader(loop, node);
                 }
             }
 
             Node* guard = block->terminal();
-            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || !runsEveryTime(loop, block))
+            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || !executesOnEveryIteration(loop, block))
                 continue;
             BasicBlock* next = block->successors[0];
             Node* instruction = next->nodes.isEmpty() ? nullptr : next->nodes[0];
             if (!instruction || instruction->guard != guard)
                 continue;
-            if (inputsAreInvariant(loop, guard) && staysTheSame(loop, guard)) {
+            if (inputsAreInvariant(loop, guard) && isInvariantGuard(loop, guard)) {
                 Node* hoisted = addGuardToPreHeader(loop, GuardKind::Whole, guard);
                 hoisted->uses = guard->uses;
                 hoisted->guarded = instruction;
@@ -726,13 +733,13 @@ private:
             }
         }
 
-        eliminateRepeats(loop);
+        eliminateRedundantGuards(loop);
 
-        // What there is to know about a typed array that stays the same one: nothing here can detach it or change its length.
+        // Hoist the loads of the vector and length of a loop-invariant typed array. Nothing in the loop can detach or resize it.
         Vector<Node*, 4> storages;
         for (BasicBlock* block : loop.blocks) {
             Node* guard = block->terminal();
-            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || !Graph::typedArrayAccessed(guard) || !runsEveryTime(loop, block))
+            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || !Graph::typedArrayAccessed(guard) || !executesOnEveryIteration(loop, block))
                 continue;
             Node* base = guard->opcode == op_get_by_val ? guard->use(guard->as<OpGetByVal>().m_base) : guard->use(guard->as<OpPutByVal>().m_base);
             if (!isInvariant(loop, base))
@@ -748,7 +755,8 @@ private:
             storages.append(storage);
             guard->storage = storage;
         }
-        // An access that does not run every time is no reason to look, but is as well served if something else was.
+        // An access that does not run on every iteration does not justify hoisting, but it can use what was hoisted for another
+        // access.
         for (BasicBlock* block : loop.blocks) {
             Node* guard = block->terminal();
             if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || guard->storage || !Graph::typedArrayAccessed(guard))
@@ -760,7 +768,7 @@ private:
             }
         }
 
-        // One check of the structure for each base.
+        // Check the structure once for each base.
         Vector<std::pair<Node*, Vector<Node*, 4>>, 8> groups;
         for (BasicBlock* block : loop.blocks) {
             Node* guard = block->terminal();
@@ -791,15 +799,15 @@ private:
             slotChecks.append(check);
         };
         for (auto& [base, guards] : groups) {
-            // A property that is read or written every time round is as a rule one of the object's own.
+            // A property that is accessed on every iteration is usually an own property stored inline.
             for (Node* guard : guards) {
-                if (runsEveryTime(loop, guard->block)) {
-                    addSlotCheck(GuardKind::SlotIsPlain, guard, nullptr);
-                    guard->slotIsPlain = true;
+                if (executesOnEveryIteration(loop, guard->block)) {
+                    addSlotCheck(GuardKind::SlotIsDirect, guard, nullptr);
+                    guard->slotIsDirect = true;
                 }
             }
             Node* leader = guards[0];
-            bool checkedAhead = isInvariant(loop, base) && runsEveryTime(loop, leader->block);
+            bool checkedAhead = isInvariant(loop, base) && executesOnEveryIteration(loop, leader->block);
             if (checkedAhead) {
                 Node* check = addGuardToPreHeader(loop, GuardKind::Structure, leader);
                 check->uses.append({ VirtualRegister(), base });
@@ -823,7 +831,7 @@ private:
     }
 
     Graph& m_graph;
-    bool m_isWhole { false };
+    bool m_isUnsplit { false };
 };
 
 } // anonymous namespace
@@ -833,7 +841,7 @@ void optimizeLoops(Graph& graph)
     LoopOptimizer optimizer(graph);
     if (graph.hasGuards())
         optimizer.run();
-    optimizer.viewArrays();
+    optimizer.hoistArrayStorageLoads();
 }
 
 } } // namespace JSC::AOT

@@ -54,18 +54,19 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
 void FunctionExecutable::becomeStatic(VM& vm)
 {
     static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_jitCodeForCallWithArityCheck) == sizeOfShortForm);
-    // Which realm's it is remains to be seen (topLevelExecutable()), and there is going to be more than one function made of it, or
-    // there may as well be.
+    // Which realm it belongs to is determined later (topLevelExecutable()), and more than one function object may be created from
+    // it, so the singleton watchpoint is invalidated.
     m_topLevelExecutable.clear();
-    m_singleton.invalidate(vm, StringFireDetail("Made when the program was built"));
+    m_singleton.invalidate(vm, StringFireDetail("Created in the static heap"));
 }
 
-// AOT::Stub::EnterStaticFunctionForCall and AOT::Stub::EnterStaticFunctionForConstruct, once there is an AOT::RuntimeTable. (The interpreter goes by this as well: virtualThunkFor.)
+// AOT::Stub::EnterStaticFunctionForCall and AOT::Stub::EnterStaticFunctionForConstruct, once an AOT::RuntimeTable exists. (The
+// interpreter uses these too: virtualThunkFor.)
 extern "C" {
-JS_EXPORT_PRIVATE void* g_aotWaysIntoStaticFunctions[2] { };
+JS_EXPORT_PRIVATE void* g_aotStaticFunctionEntrypoints[2] { };
 }
 
-CodePtr<JSEntryPtrTag> ExecutableBase::wayIntoShortForm(CodeSpecializationKind kind) const
+CodePtr<JSEntryPtrTag> ExecutableBase::entrypointOfShortForm(CodeSpecializationKind kind) const
 {
     unsigned which = static_cast<unsigned>(kind);
     if (!m_aotEntry[which])
@@ -73,8 +74,8 @@ CodePtr<JSEntryPtrTag> ExecutableBase::wayIntoShortForm(CodeSpecializationKind k
     // (See FunctionExecutable::aotIndexOfWhatConstructsByCalling.)
     if (kind == CodeSpecializationKind::CodeForConstruct && m_aotIndex[which] == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
         return CodePtr<JSEntryPtrTag>::fromTaggedPtr(std::bit_cast<void*>(m_aotEntry[which]));
-    ASSERT(g_aotWaysIntoStaticFunctions[which]);
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_aotWaysIntoStaticFunctions[which]);
+    ASSERT(g_aotStaticFunctionEntrypoints[which]);
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_aotStaticFunctionEntrypoints[which]);
 }
 
 void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, void* stub, uint64_t entry, uint32_t index)
@@ -232,7 +233,7 @@ LineColumn ScriptExecutable::whereShortFormStarts() const
     return StaticHeap::whereFunctionStarts(indexOfShortForm());
 }
 
-// Hardly anybody asks, and what they want is which source it is: there is no text for the rest to be about.
+// This is rarely called, and callers only want to identify the source. There is no text for the offsets to refer to.
 const SourceCode& ScriptExecutable::sourceOfShortForm() const
 {
     static Lock lock;
@@ -301,8 +302,8 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() { [native code] }"_s));
 
 #if USE(BUN_JSC_ADDITIONS)
-    // It still starts the way whoever tells one kind of function from another by its text expects.
-    // (The source of a constructor that nobody wrote is one of the engine's own. Its class's is the program's.)
+    // The result still starts the way that code which classifies functions by their source text expects.
+    // (The source of a default class constructor belongs to the engine. Its class's source belongs to the program.)
     if ((isClass() ? classSource().provider() : sourceProvider())->hasNoText()) {
         if (isClass())
             return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, ecmaName().string(), " { [native code] }"_s));

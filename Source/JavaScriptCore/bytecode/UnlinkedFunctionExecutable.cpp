@@ -71,7 +71,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     function->finishParsing(executable->name(), executable->functionMode());
     function->setPlainInstanceFieldNames(executable->plainInstanceFieldNames());
-    // (One that was made when the program was built has been told, and is nobody's to write to.)
+    // (An executable in the static heap already has this information, and is read-only.)
     if (!StaticHeap::contains(executable))
         executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
 
@@ -80,8 +80,8 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, executable->evalContextType(), executable->isBuiltinDefaultClassConstructor()), codeGenerationMode);
 
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
-    // What is going to be compiled ahead of time is worth keeping it for: both specializations get it, and so does the compiler.
-    // (Whoever has all the code generated takes it from the executable in the end: BytecodeLinkEncoder.)
+    // For ahead-of-time compilation the link is kept: both specializations use it, and so does the compiler.
+    // (BytecodeLinkEncoder takes it from the executable once all code has been generated.)
     RefPtr<DeclaredNamesLink> parentDeclaredNames = vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically ? executable->parentDeclaredNames() : executable->takeParentDeclaredNames();
 #if ENABLE(FTL_JIT)
     if (vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
@@ -275,8 +275,8 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    // One that was made when the program was built is every VM's to look at, and nobody's to store to. What a VM gets for it, the
-    // VM keeps.
+    // An executable in the static heap is shared by all VMs and is read-only, so the code that a VM decodes for it is kept by the
+    // VM.
     if (m_isCached && StaticHeap::contains(this) && !StaticHeap::isBuilding()) [[unlikely]] {
         if (UnlinkedFunctionCodeBlock* kept = StaticHeap::codeOf(vm, *this, specializationKind))
             return kept;
@@ -391,7 +391,7 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     ASSERT(m_cachedCodeBlockForCallOffset || m_cachedCodeBlockForConstructOffset);
 
     RefPtr<Decoder> decoder = WTF::move(m_decoder);
-    // (What comes of it now is nothing that was there when the program was built.)
+    // (What is decoded now does not belong to the static heap.)
     if (decoder->isForStaticHeap() && !StaticHeap::isBuilding()) [[unlikely]]
         decoder = StaticHeap::decoderForKeptPayload(vm, *decoder);
     int32_t cachedCodeBlockForCallOffset = m_cachedCodeBlockForCallOffset;

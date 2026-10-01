@@ -214,7 +214,8 @@ private:
 
     FunctionRareData* allocateRareData(VM&);
 public:
-    // For an executable of StaticHeap that turns out to be no good in this realm: another, of the same function.
+    // For a function whose executable is in the static heap but cannot be used in this realm: replaces it with another executable
+    // for the same function.
     void replaceExecutable(VM&, FunctionExecutable*);
 private:
     FunctionRareData* allocateAndInitializeRareData(JSGlobalObject*, size_t inlineCapacity);

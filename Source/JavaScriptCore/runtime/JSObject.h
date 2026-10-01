@@ -362,9 +362,10 @@ public:
 
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 #if USE(BUN_JSC_ADDITIONS)
-    // Before a property is made into something that is not a plain value: see Structure::typedLayoutID().
+    // Call this before a property is changed into something other than a plain data property: see Structure::typedLayoutID().
     JS_EXPORT_PRIVATE void evictTypedField(VM&, PropertyName);
-    // Of an object that has just been made, with whatever it was given: see TypedLayoutTable. How many were.
+    // For a newly created object: evicts the fields whose values do not match their types (see TypedLayoutTable). Returns the
+    // number of fields evicted.
     JS_EXPORT_PRIVATE unsigned evictMistypedFields(VM&);
 #endif
     JS_EXPORT_PRIVATE static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
@@ -572,9 +573,9 @@ public:
 
     void setStructure(VM&, Structure*);
 
-    // What it has stays as it is: nothing can be written to, redefined or deleted. It can be given more, and assigning to what
-    // inherits from it goes on working (Structure::heirsMayOverrideReadOnlyProperties()).
-    JS_EXPORT_PRIVATE void fixProperties(JSGlobalObject*);
+    // Makes all existing properties immutable: they cannot be written, redefined or deleted. New properties can still be added, and
+    // assigning to an object that inherits from this one still works (Structure::inheritorsMayOverrideReadOnlyProperties()).
+    JS_EXPORT_PRIVATE void makePropertiesImmutable(JSGlobalObject*);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
 
@@ -663,8 +664,9 @@ public:
 
     bool mayBePrototype() const;
     void didBecomePrototype(VM&);
-    // Whether something in the MegamorphicCache, about an object that has this on its prototype chain, goes by what this has and what
-    // its own prototype is. It stays so. Whoever changes either says so if it is (VM::invalidateStructureChainIntegrity()).
+    // Whether an entry in the MegamorphicCache, for an object that has this object on its prototype chain, depends on this object's
+    // properties and prototype. The flag is never cleared. Code that changes either has to invalidate the cache if the flag is set
+    // (VM::invalidateStructureChainIntegrity()).
     bool isPrototypeUsedByMegamorphicCache() const;
     void setIsPrototypeUsedByMegamorphicCache() { setPerCellBit(true); }
 

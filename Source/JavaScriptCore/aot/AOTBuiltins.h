@@ -14,13 +14,13 @@
 
 namespace JSC { namespace AOT {
 
-// What is known of the functions of the language itself, where a program cannot put others in their place
-// (VM::useImmutableIntrinsics). They go by their numbers: ImmutableIntrinsics.
+// What is known about the language's built-in functions, when a program cannot replace them (VM::useImmutableIntrinsics). They are
+// identified by their intrinsic numbers: see ImmutableIntrinsics.
 
 struct BuiltinSignature {
     enum class Condition : uint8_t {
         Always,
-        IfFirstArgumentIsNoObject, // Or there is none.
+        IfFirstArgumentIsNotObject, // Or there is none.
         IfThisIsHolder, // It is called on the object that it was found on.
     };
     Type result; // Of a call that comes back.
@@ -31,8 +31,8 @@ std::optional<BuiltinSignature> signatureOfIntrinsic(unsigned number);
 // Of `new` of it.
 std::optional<Type> resultOfConstructingIntrinsic(unsigned number);
 
-// What a property of that name of a value of that type is: a value that is not an object has no properties of its own to speak of, and
-// nothing can be done about where it gets the rest from. Zero: not known, or not a cell.
+// The intrinsic that a property with that name has on a value of that primitive type. A primitive has no own properties to speak
+// of, and the prototype that it inherits from cannot be changed. Returns zero if it is unknown or not a cell.
 unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name);
 
 // The functions that the compiler does the work of itself, or has done by what the other tiers call for them, if what they are called on and with is what it takes
@@ -83,16 +83,16 @@ enum class Builtin : uint8_t {
     FOR_EACH_AOT_BUILTIN(AOT_DEFINE_BUILTIN)
 #undef AOT_DEFINE_BUILTIN
 };
-Builtin builtinWithNumber(unsigned intrinsic); // By its number.
+Builtin builtinWithNumber(unsigned intrinsic); // Takes an intrinsic number.
 
-// What a method may be called on, for it to be known what the method is without looking: a string, or an object that is as the realm makes them
-// (Instance::structureIDsOfReceivers).
+// The kinds of receiver for which a method is known without a lookup: a string, or an object with the realm's original structure
+// for its class (Instance::structureIDsOfReceivers).
 enum class Receiver : uint8_t { None, String, Array, Map, Set, WeakMap, WeakSet, RegExp, Date, Number };
 Type typeOf(Receiver);
-JSType cellTypeOf(Receiver); // Not of a Number.
-// What a property of that name of one is. Zero: not known, or not a cell.
+JSType cellTypeOf(Receiver); // Not valid for Receiver::Number.
+// The intrinsic that a property with that name has on such a receiver. Returns zero if it is unknown or not a cell.
 unsigned intrinsicFoundOn(Receiver, const StringImpl& name);
-// What something of that type is, if that settles it. Otherwise, going by the name of a method that is called on it, what it is likely to be.
+// The kind of receiver that a value of that type is, if the type determines it.
 Receiver receiverOfType(Type);
 // The kind of receiver a built-in method operates on: the class whose prototype holds it. None for a function that ignores `this`, such as
 // Math.floor.

@@ -51,8 +51,8 @@ struct JSFrameData {
     WriteBarrier<CodeBlock> codeBlock;
     BytecodeIndex bytecodeIndex;
     bool m_isAsyncFrame { false };
-    // A function's code from the static compiler has no CodeBlock unless somebody asks for one, and most stack traces are never
-    // looked at: this stands for it until StackFrame::codeBlock() is called.
+    // AOT code has no CodeBlock unless one is requested, and most stack traces are never inspected. These fields identify the code
+    // until StackFrame::codeBlock() is called.
     CodeSpecializationKind aotKind { CodeSpecializationKind::CodeForCall };
     WriteBarrier<FunctionExecutable> aotExecutable { };
 };
@@ -95,8 +95,8 @@ public:
         return nullptr;
     }
 
-    // What is mostly asked of the CodeBlock of a frame that hasLineAndColumnInfo(). None of these makes one, so they can be asked
-    // at the end of a collection, which codeBlock() cannot.
+    // The most common queries about the CodeBlock of a frame that hasLineAndColumnInfo(). None of them creates a CodeBlock, so they
+    // can be used at the end of a collection, unlike codeBlock().
     CodeBlock* codeBlockIfExists() const
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
@@ -144,8 +144,8 @@ public:
     }
 
     LineColumn computeLineAndColumn() const;
-    // Of a frame of code that was compiled ahead of time, if that says where it is in the sources that the program was made from:
-    // then computeLineAndColumn() and sourceURL() go by this too.
+    // For a frame of AOT code that records its position in the program's original sources. computeLineAndColumn() and sourceURL()
+    // then use this too.
     JS_EXPORT_PRIVATE std::optional<AOT::FunctionRef::ReportedPosition> reportedPosition(AOT::FunctionRef::OfConstruction = AOT::FunctionRef::OfConstruction::WhereItIs) const;
     String functionName(VM&) const;
     SourceID sourceID() const;

@@ -44,7 +44,7 @@ class ModuleFunctionDeclarationSlots final : public ThreadSafeRefCounted<ModuleF
 public:
     static Ref<ModuleFunctionDeclarationSlots> create(FixedVector<uint32_t>&& offsets) { return adoptRef(*new ModuleFunctionDeclarationSlots(WTF::move(offsets))); }
 
-    // (One of StaticHeap is there for good, and is not written to.)
+    // (One in the static heap is immortal and read-only.)
     void ref() const
     {
         if (!StaticHeap::contains(this)) [[likely]]
@@ -148,8 +148,8 @@ public:
     ModuleFunctionDeclarationSlots* heapAllocatedFunctionDeclSlots() const { return m_heapAllocatedFunctionDeclSlots.get(); }
     void setHeapAllocatedFunctionDeclSlots(Ref<ModuleFunctionDeclarationSlots>&& slots) { m_heapAllocatedFunctionDeclSlots = WTF::move(slots); }
 
-    // Where the module environment has the variables of variableDeclarations() that are in it: BytecodeGenerator puts them next to
-    // each other. InitializeEnvironment makes them undefined, which this lets it do without knowing what they are called.
+    // The range of scope offsets of the variables from variableDeclarations() that are in the module environment. BytecodeGenerator
+    // allocates them contiguously. InitializeEnvironment sets them to undefined, which this allows without knowing their names.
     unsigned firstVarScopeOffset() const { return m_firstVarScopeOffset; }
     unsigned numberOfVarScopeOffsets() const { return m_numberOfVarScopeOffsets; }
     void setVarScopeOffsets(unsigned first, unsigned count)

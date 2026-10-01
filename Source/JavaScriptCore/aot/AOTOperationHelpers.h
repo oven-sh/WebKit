@@ -14,13 +14,15 @@
 
 namespace JSC { namespace AOT {
 
-// An operation is called by a stub, in a frame of the stub's: which is what it takes itself to have been called from, and what `callFrame`
-// is in all of them. Where the stub is to go back to says which function called it, and where that has got to.
-// (The function whose code that is. What it is in the middle of may be what another does: FunctionRef::locationForReturnAddress().)
+// An operation is called by a stub, from the stub's frame. That frame is what the operation sees as its caller, and what
+// `callFrame` refers to in all of them. The stub's return address identifies the function that called it, and the position in that
+// function.
+// (This returns the function that the machine code belongs to. The code at that position may have been inlined from another
+// function: see FunctionRef::locationForReturnAddress().)
 ALWAYS_INLINE FunctionRef caller(JSGlobalObject* globalObject, CallFrame* callFrame) { return FunctionRef::at(globalObject->aotInstance(), removeCodePtrTag(callFrame->rawReturnPC())); }
-// The function whose bytecode it is that the caller is in the middle of: itself, unless that is one that was made part of it. Whatever goes
-// by a number that the bytecode has is a matter for this one; slots and the like are the caller's.
-ALWAYS_INLINE FunctionRef functionOfBytecodeOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame)
+// The function whose bytecode the caller is executing: the caller itself, unless the code was inlined from another function.
+// Indices that come from the bytecode have to be resolved against this function. Slots and similar data belong to the caller.
+ALWAYS_INLINE FunctionRef bytecodeOwnerOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     FunctionRef function = caller(globalObject, callFrame);
     if (!function.info().function()->hasInlineFrames) [[likely]]
@@ -29,12 +31,14 @@ ALWAYS_INLINE FunctionRef functionOfBytecodeOfCaller(JSGlobalObject* globalObjec
 }
 ALWAYS_INLINE BytecodeIndex bytecodeIndexOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame) { return caller(globalObject, callFrame).bytecodeIndexAt(removeCodePtrTag(callFrame->rawReturnPC())); }
 
-// Whatever a function that has no Data of its own comes to an operation for, it may well be for want of one. See Instance::misses.
-// (One in so many is looked at, and counts for as many: finding out whose it is takes longer than some operations do.)
+// When a function without its own Data calls an operation, the reason may well be that it has no inline caches. See
+// Instance::misses.
+// (Only one call in eight is examined, and it counts for eight, because identifying the caller takes longer than some operations
+// do.)
 ALWAYS_INLINE void countOperationFor(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     constexpr uint32_t oneIn = 8;
-    if (++globalObject->aotInstance()->operationsNotCounted % oneIn) [[likely]]
+    if (++globalObject->aotInstance()->uncountedOperations % oneIn) [[likely]]
         return;
     FunctionRef function = caller(globalObject, callFrame);
     if (!function.instance->dataIfExists(function.index)) [[unlikely]]
@@ -49,28 +53,28 @@ ALWAYS_INLINE void countOperationFor(JSGlobalObject* globalObject, CallFrame* ca
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
-// For a stub that a function may have jumped to on its way out: then there is nobody that it is done on behalf of.
-#define AOT_OPERATION_BEGIN_FOR_NOBODY(globalObject) \
+// For a stub that a function may have tail-called, in which case there is no calling function.
+#define AOT_OPERATION_BEGIN_WITHOUT_CALLER(globalObject) \
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
-// What an operation wants to know about the function that called it, other than what it was passed. All of it is what a
-// function is linked with, none of it is bytecode, metadata or a profile, and this is the only place that says where it is.
-// (Which may be the one that is nobody's: SharedData. That goes for its slots too, and neither is written to.)
+// What an operation needs to know about its calling function, other than its arguments. All of it is data that a function is linked
+// with, none of it is bytecode, metadata or a profile, and this is the only place that knows where it is.
+// (The result may be the shared placeholder, SharedData. Neither it nor its slots are ever written to.)
 ALWAYS_INLINE Data* callerData(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     FunctionRef function = caller(globalObject, callFrame);
     Data* data = function.instance->dataIfExists(function.index);
     return data ? data : function.instance->sharedData;
 }
-ALWAYS_INLINE UnlinkedCodeBlock* callerCode(JSGlobalObject* globalObject, CallFrame* callFrame) { return functionOfBytecodeOfCaller(globalObject, callFrame).ensureUnlinkedCodeBlock(); }
+ALWAYS_INLINE UnlinkedCodeBlock* callerCode(JSGlobalObject* globalObject, CallFrame* callFrame) { return bytecodeOwnerOfCaller(globalObject, callFrame).ensureUnlinkedCodeBlock(); }
 
-// What a slot refers to it does not keep alive: Data::finalizeUnconditionally() empties it when that dies. A collection of the young
-// only looks at the ones that have said that they have something new. An identifier of a structure that has died is sooner or later
-// that of another.
+// A slot does not keep what it refers to alive: Data::finalizeUnconditionally() clears it when that dies. An eden collection only
+// visits the Datas that have been marked as filled since the last collection. The slot has to be cleared because the StructureID of
+// a dead structure is eventually reused.
 ALWAYS_INLINE void didFillSlot(VM&, Data* data)
 {
     if (data == SharedData::get())
@@ -80,16 +84,17 @@ ALWAYS_INLINE void didFillSlot(VM&, Data* data)
         data->noteFilled();
 }
 ALWAYS_INLINE const Identifier& identifierAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return static_cast<const Identifier*>(caller(globalObject, callFrame).info().identifiers)[index]; }
-// The same, for an operation that is called often enough to be told: which of the caller's known callees it is, plus one, or none for the
-// caller itself (Lowering::whoseBytecode()). Looking it up means going through the places the caller calls from.
-ALWAYS_INLINE FunctionRef functionOfBytecodeOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame, uint32_t whose)
+// The same, for an operation that is called often enough to be passed the answer. whose: the index of one of the caller's known
+// callees, plus one, or zero for the caller itself (Lowering::whoseBytecode()). Looking it up would mean searching the caller's
+// call sites.
+ALWAYS_INLINE FunctionRef bytecodeOwnerOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame, uint32_t whose)
 {
     FunctionRef function = caller(globalObject, callFrame);
     if (!whose) [[likely]]
         return function;
     return { function.instance, function.info().function()->knownCallees()[whose - 1] };
 }
-// (Code that is evaluated is not made part of anything, and nothing is made part of it.)
+// (Eval code is never inlined, and nothing is inlined into it.)
 ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(JSGlobalObject* globalObject, CallFrame* callFrame) { return caller(globalObject, callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
 
 } } // namespace JSC::AOT

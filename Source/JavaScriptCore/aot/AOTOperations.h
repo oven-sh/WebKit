@@ -60,7 +60,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject*, Encoded
 JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (JSGlobalObject*, EncodedJSValue, uint32_t layoutID)); // Lowering::checkTypedLayout()
 JSC_DECLARE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t layoutID)); // Lowering::coerceToTypedLayout()
-// which: the number of the name | family << 32 | slot << 48 | whether undefined will do << 56.
+// which: the identifier number | typed layout << 32 | slot << 48 | allowsUndefined << 56.
 JSC_DECLARE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint32_t which)); // Stub::ReadSlot0: id | slot << 16 | undefined will do << 24
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint64_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject*, JSObject*)); // Lowering::validateNewObject()

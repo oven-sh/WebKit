@@ -235,7 +235,7 @@ namespace JSC {
     macro(enqueueJob) \
 
 
-// They are at the same addresses in every process, unlike what is in the executable: code that was decoded when a program was
+// These are at the same addresses in every process, unlike data in the executable, because code that was decoded when a program was
 // built (StaticHeap) has them among its identifiers.
 namespace Symbols {
 enum class Index : unsigned {

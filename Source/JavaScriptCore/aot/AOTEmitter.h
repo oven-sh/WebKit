@@ -26,9 +26,10 @@ using FTL::rarely;
 using FTL::unsure;
 using FTL::usually;
 
-// What it takes to say in B3 what the engine's values and objects are made of, whoever it is said for: a function of a program (Lowering), or one of the pieces of code that
-// all of them call (Helpers). What is here goes by the names that the FTL has for the same things, and takes what those take, but for this: nothing is known by its
-// address. What the FTL knows the address of is found from the Instance.
+// Emits B3 code that operates on the engine's values and objects. It is shared by the code that compiles a program's functions
+// (Lowering) and the code that generates the shared helper stubs (Helpers). The methods have the same names and parameters as their
+// FTL counterparts, with one difference: nothing is referred to by its address. What the FTL would embed as an address is loaded
+// from the Instance.
 class Emitter {
     WTF_MAKE_NONCOPYABLE(Emitter);
 protected:
@@ -38,7 +39,7 @@ protected:
     {
     }
 
-    // What is in the same registers throughout, and what is found from that.
+    // Sets up the pinned registers and the values that are derived from them.
     void findPinnedRegisters();
 
     LValue isInt32(LValue v) { return m_out.aboveOrEqual(v, m_numberTag); }
@@ -66,9 +67,9 @@ protected:
 
     // Goes on if the condition holds.
     void orElse(LValue condition, LBasicBlock otherwise);
-    template<typename Functor> void forEachUpTo(LValue count, const Functor&); // An Int32. The functor is given an index the size of a pointer.
+    template<typename Functor> void forEachUpTo(LValue count, const Functor&); // count is an Int32. The functor receives a pointer-sized index.
 
-    // Of the Instance: what stays as it is once the Instance has been made, and what does not.
+    // Loads from the Instance: fields that are constant once the Instance has been created, and fields that change.
     LValue fixedPointer(ptrdiff_t offset);
     LValue fixed32(ptrdiff_t offset);
     LValue changing32(ptrdiff_t offset);
@@ -81,8 +82,8 @@ protected:
     void storeStructure(LValue cell, LValue structure);
     void splatWords(LValue base, LValue begin, LValue end, LValue value, const B3::AbstractHeap&); // Int32 indices of words.
     void mutatorFence();
-    // An array that keeps its elements as values, one after the other (or as integers, which look the same): with room for vectorLength, of which the first publicLength are for
-    // whoever asks to fill in. The rest have nothing in them.
+    // An array with contiguous JSValue storage (or Int32 storage, which has the same layout) and capacity vectorLength. The caller
+    // has to fill in the first publicLength elements. The rest are holes.
     struct ArrayValues {
         LValue array;
         LValue butterfly;
@@ -95,28 +96,29 @@ protected:
     LValue singleCharacterString(LValue character); // Int32, no more than maxSingleCharacterString.
     LValue emptyString() { return fixedPointer(Instance::offsetOfEmptyString()); }
 
-    // ---- What is long enough to be worth having once (Helpers), and short enough to be worth spelling out where code goes round and round. Each goes to giveUp with nothing done
-    // if it is not the plain case.
+    // ---- Code sequences that are long enough to share (Helpers), but short enough to emit inline in loops. Each jumps to giveUp,
+    // without side effects, if it is not the common case.
     LValue newArrayOfValues(LValue values, LValue count, bool areInt32, LBasicBlock giveUp); // Int32 count.
     LValue newArrayFromButterfly(LValue immutableButterfly, LBasicBlock giveUp);
     LValue newActivation(LValue scope, LValue symbolTable, LValue initialValue, LValue count, LBasicBlock giveUp);
-    LValue newArrayWithSpread(LValue values, LValue count, LValue whichAreToBeSpread, LBasicBlock giveUp);
-    LValue newArrayLike(LValue length, LValue array, LBasicBlock giveUp); // What map() and the like put their results in: of that length, a value, with nothing in it yet.
-    // Where the characters are: in the string itself, or, if it is a slice, in what it is a slice of. Anything else that has yet to be put together is given up on.
-    struct PiecesOfString {
-        LValue base; // A string that is all in one piece.
+    LValue newArrayWithSpread(LValue values, LValue count, LValue spreadMask, LBasicBlock giveUp);
+    LValue newArrayLike(LValue length, LValue array, LBasicBlock giveUp); // The array that map() and similar builtins store their results in. length is a JSValue. The elements are holes.
+    // The location of a string's characters: in the string itself or, for a substring rope, in its base string. Any other rope is
+    // given up on.
+    struct StringParts {
+        LValue base; // A string that is not a rope.
         LValue impl; // Its StringImpl.
-        LValue length; // Of the string that was asked about.
+        LValue length; // The length of the original string.
         LValue offset; // Where in the base it starts.
     };
-    PiecesOfString piecesOfString(LValue string, LBasicBlock giveUp);
-    LValue partOfString(LValue string, const PiecesOfString&, LValue from, LValue to, LBasicBlock giveUp);
+    StringParts stringParts(LValue string, LBasicBlock giveUp);
+    LValue substringOf(LValue string, const StringParts&, LValue from, LValue to, LBasicBlock giveUp);
     LValue sliceOfString(LValue string, LValue start, LValue end, LBasicBlock giveUp); // As slice() and substring() take them, once they are integers.
     LValue substringOfString(LValue string, LValue start, LValue end, LBasicBlock giveUp);
     LValue makeRope(LValue first, LValue second, LValue thirdOrNull, LBasicBlock giveUp);
     LValue addStrings(LValue first, LValue second, LBasicBlock giveUp); // Of values, that may be anything.
     LValue keysOfObject(LValue object, LBasicBlock giveUp);
-    LValue lowerCaseIfItIsAlready(LValue string, LBasicBlock giveUp);
+    LValue stringIfAlreadyLowerCase(LValue string, LBasicBlock giveUp);
     void setLengthOfArray(LValue array, LValue length, LBasicBlock giveUp); // Both are values. To no more than it is.
     void addTypedField(LValue object, LValue storedValue, LValue slot, LBasicBlock giveUp);
     LValue isOriginalArray(LValue cell); // A boolean: see Instance::structureIDsOfOriginalArrays.
@@ -132,8 +134,9 @@ protected:
     LValue m_notCellMask { nullptr };
 };
 
-// The code of one of the Stub::Helper... stubs: what an Emitter says, compiled once for everybody. It is given what it works on in the argument registers and hands back what it
-// made, or nothing if it gave up, having done nothing that shows: then it is for whoever called to have the same done the long way. It calls nothing.
+// Generates the code of one of the Stub::Helper... stubs: an Emitter sequence that is compiled once and shared. It takes its
+// operands in the argument registers and returns its result, or null if it gave up. In that case it has had no side effects, and
+// the caller has to take the slow path. It makes no calls.
 void generateHelper(CCallHelpers&, Stub);
 
 } } // namespace JSC::AOT

@@ -153,7 +153,7 @@ static constexpr unsigned SoundTypeAll         = (1u << 10) - 1;
 // Above the tags a mask may say more about the objects that SoundTypeOtherObject lets by: that they are typed arrays of one type,
 // which is that many after FirstTypedArrayType, less one. Zero: any will do.
 static constexpr unsigned SoundTypeTypedArrayShift = 10;
-// (After the typed arrays, in the order that whoever makes the masks has them: bun's src/ast/sound_types.rs.)
+// (These follow the typed arrays, in the order that the code that generates the masks uses: bun's src/ast/sound_types.rs.)
 static constexpr JSType soundTypeOtherKindsOfObject[] = { JSMapType, JSSetType, JSWeakMapType, JSWeakSetType, RegExpObjectType, JSPromiseType, JSDateType, ErrorInstanceType };
 static constexpr unsigned SoundTypeMaskEnd = (NumberOfTypedArrayTypesExcludingDataView + std::size(soundTypeOtherKindsOfObject) + 1) << SoundTypeTypedArrayShift; // No mask is this or more.
 constexpr unsigned soundTypeTagsOfMask(unsigned mask) { return mask & SoundTypeAll; }

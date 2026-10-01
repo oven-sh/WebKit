@@ -245,7 +245,7 @@ private:
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* const m_vm;
-    AOT::Instance* m_aotInstance { nullptr }; // What code from the static compiler has of this realm. Made when there is such code.
+    AOT::Instance* m_aotInstance { nullptr }; // The per-realm data of AOT code. Created when there is such code.
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
@@ -1280,12 +1280,14 @@ public:
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
     bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
-    // VM::useImmutableIntrinsics. What the objects that the language defines have when the realm is made stays as it is, and
-    // so do the variables of the global object that they are found in: a program that is compiled ahead of time can then take
-    // Math.floor or [].push for what they are. All but Object.prototype can be given more, so that what the language gets later can
-    // be added; that nothing can turn up in Object.prototype is what says that a property no object on the way has is not there.
+    // For VM::useImmutableIntrinsics. Makes the initial properties of the language's built-in objects immutable, together with the
+    // global variables that hold those objects. A program that is compiled ahead of time can then rely on the identity of
+    // Math.floor or [].push. New properties can still be added to every object except Object.prototype, so that polyfills for newer
+    // language features work. Object.prototype is not extensible, which guarantees that a property that no object on a prototype
+    // chain has is really absent.
     JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
-    // What that fixed, by the numbers of ImmutableIntrinsics. (They stay where they are, so there is nothing to keep alive.)
+    // The values that it made immutable, indexed by their ImmutableIntrinsics numbers. (The objects stay reachable through their
+    // properties, so this does not have to keep them alive.)
     std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();
 

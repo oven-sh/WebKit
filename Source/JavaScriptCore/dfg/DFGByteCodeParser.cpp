@@ -2047,8 +2047,8 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
     }
 
     if (codeBlock->jitType() == JITType::AOTJIT) {
-        // There is no Baseline or LLInt code to exit to, and no profiling to go by.
-        VERBOSE_LOG("    Failing because the callee is code from the static compiler.\n");
+        // There is no Baseline or LLInt code to exit to, and no profiling information.
+        VERBOSE_LOG("    Failing because the callee is AOT code.\n");
         return { UINT_MAX, InlineAttribute::None };
     }
 

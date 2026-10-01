@@ -573,7 +573,7 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
 #if ENABLE(FTL_JIT)
                 } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall); function && function.instance->isLinked(function.index)) {
-                    // Code from the static compiler has none, and does not need one for this.
+                    // AOT code has no CodeBlock, and does not need one for this.
                     JSValue state = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
                     results.append(StackFrame(vm, owner, asyncFunction, executable, CodeSpecializationKind::CodeForCall, function.resumePointOf(state.isInt32() ? state.asInt32() : 0), /* isAsyncFrame */ true));
 #endif
@@ -909,14 +909,14 @@ public:
             // (What has been made part of another function has no handlers. The other's are looked at when it is its turn.)
             if (visitor->isInlinedAOTFrame())
                 return IterationStatus::Continue;
-            // (Whatever can throw is called from somewhere that is known.)
+            // (Every call that can throw has a recorded call site.)
             RELEASE_ASSERT(visitor->bytecodeIndex());
             if (!m_isTermination) {
                 m_handler = { function.handlerFor(visitor->bytecodeIndex().offset()), function };
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
             }
-            // There is nothing else that such a frame could be, and nobody is told of its going.
+            // An AOT frame needs no other processing, and no debugger or profiler hook is notified when it is unwound.
             copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
             return visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
         } else
@@ -1408,7 +1408,7 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
             // Compile the callee:
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(function), functionScope, CodeSpecializationKind::CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
-            if (newCodeBlock) // Code from the static compiler runs without one (ScriptExecutable::installAOTCode()).
+            if (newCodeBlock) // AOT code runs without one (ScriptExecutable::installAOTCode()).
                 newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
@@ -1542,7 +1542,7 @@ CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction*
     RETURN_IF_EXCEPTION(throwScope, { });
 
     if (!newCodeBlock) {
-        // Code from the static compiler, which stays.
+        // AOT code, which is never replaced.
         cachedCall.m_addressForCall = cachedCall.functionExecutable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
         return nullptr;
     }

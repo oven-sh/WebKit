@@ -175,7 +175,7 @@ void ClassesOfProgram::recordNonEscapingMethod(uint32_t classType, UniquedString
 {
     Locker locker { m_lock };
     auto result = m_methods.add({ classType, name }, function);
-    // Twice: the text was copied, and there is no saying which copy is meant.
+    // Defined twice: the bundler duplicated the source text, and it is unknown which copy a reference means.
     if (!result.isNewEntry && result.iterator->value != function) {
         m_nonEscapingMethods.remove(result.iterator->value);
         result.iterator->value = 0;
@@ -310,7 +310,7 @@ void ModuleHints::prove()
         variable.function.isExact = variable.binding.keepsDeclaredValue && variable.numberOfFunctions == 1 && variable.isDescribed;
         variable.function.escapes = variable.binding.escapes;
         variable.function.isVisibleFromOutside = variable.binding.isVisibleFromOutside;
-        // (It is strict code, which nobody can ask what it was called as. Function.prototype.caller can ask the other kind.)
+        // (Strict code cannot be asked for its callee. Sloppy code can, through Function.prototype.caller.)
         variable.function.needsNoFunctionObject = variable.function.isExact && variable.function.forCall && !needsFunctionObject(variable.function.forCall);
     }
 }
@@ -329,7 +329,7 @@ void ModuleHints::noteEscape(unsigned scopeOffset)
 unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)
 {
     unsigned capacity = std::min(std::max(numberOfProperties, 1u), JSFinalObject::maxInlineCapacity);
-    // With whatever else there is room for in a cell of the size it takes.
+    // Plus the extra capacity that fits in a cell of the size class that it is allocated from.
     size_t size = JSFinalObject::allocationSize(capacity);
     capacity += (MarkedSpace::optimalSizeFor(size) - size) / sizeof(WriteBarrier<Unknown>);
     return std::min(capacity, JSFinalObject::maxInlineCapacity);
@@ -358,10 +358,10 @@ std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant)
     return number ? std::optional { number } : std::nullopt;
 }
 
-HowValuesArePassed howValuesArePassed(const FunctionSummary* summary, Convention convention)
+ValueRepresentations valueRepresentations(const FunctionSummary* summary, Convention convention)
 {
-    HowValuesArePassed result;
-    // (What is checked is what a value is when it is boxed.)
+    ValueRepresentations result;
+    // (Validation checks boxed values.)
     if (!summary || !summary->isNonEscaping || convention.signature != Signature::Registers || Options::validateAOTInferredTypes())
         return result;
     auto repFor = [](Type type) {
@@ -404,7 +404,7 @@ Convention conventionOf(UnlinkedCodeBlock* codeBlock)
             takesList = true;
             break;
         case op_get_argument:
-            // (It counts `this`.)
+            // (op_get_argument counts `this`.)
             takesList |= static_cast<unsigned>(instruction->as<OpGetArgument>().m_index) > numberOfParameters;
             break;
         default:
@@ -433,7 +433,7 @@ bool needsFunctionObject(UnlinkedCodeBlock* codeBlock)
 
 bool readsCallee(UnlinkedCodeBlock* codeBlock)
 {
-    // A function expression that has a name is given a copy of itself to go by that name, whether or not it ever says the name.
+    // A named function expression gets a copy of its callee bound to its name, whether or not it ever uses the name.
     Vector<VirtualRegister, 2> copies;
     bool result = false;
     for (const auto& instruction : codeBlock->instructions()) {

@@ -34,13 +34,7 @@ struct FunctionSummary {
     // The function is used as a value: stored, passed, compared, used with `new`, has a property read, or is called through
     // something other than a direct call. If false, all of its callers are known.
     std::atomic<bool> valueIsUsed { false };
-    // The first use that set valueIsUsed, for logging. See Graph::recordUsesOfKnownFunctions().
-    enum ValueUseReason : uint32_t { NotSaid, AtCreationSite, CalleeWithInexactRead, CalleeWithInexactCall, Operand };
-    std::atomic<uint32_t> valueUseReason { 0 }; // ValueUseReason | (opcode, or 1000 + NodeKind) << 8
     std::atomic<uint32_t> directCalls { 0 };
-    // Called from inside a loop, or passed to a built-in that calls its callback once per element. This is the only execution
-    // frequency information available.
-    std::atomic<bool> isUsedInLoop { false };
 
     // Valid once valueIsUsed is final. Only direct calls can reach this function.
     bool isNonEscaping { false };
@@ -101,7 +95,7 @@ struct FunctionSummary {
     // function's code and its callees, independent of callers. Starts at zero. Assumes that property reads and writes on the
     // arguments do not run user code.
     static constexpr unsigned maxTrackedEscapingParameters = 31;
-    static constexpr uint32_t whatIsPassedBeyondParametersEscapes = 1u << 31;
+    static constexpr uint32_t extraArgumentsEscape = 1u << 31;
     mutable std::atomic<uint32_t> escapingParameters { 0 };
 };
 // One summary per function, however many variables hold it.
@@ -346,12 +340,12 @@ public:
 // Unboxed calling convention. All callers of a non-escaping function are known, as are the types they pass and the type returned. A
 // parameter that is always an int32 or a boolean is passed unboxed in its usual register; one that is always a double is passed in
 // the FPR with the same index. The same applies to the result. Derived from the summary alone, so caller and callee agree.
-struct HowValuesArePassed {
+struct ValueRepresentations {
     std::array<Rep, numberOfArgumentGPRs> parameters;
     Rep result { Rep::JSValue };
-    HowValuesArePassed() { parameters.fill(Rep::JSValue); }
+    ValueRepresentations() { parameters.fill(Rep::JSValue); }
 };
-HowValuesArePassed howValuesArePassed(const FunctionSummary*, Convention);
+ValueRepresentations valueRepresentations(const FunctionSummary*, Convention);
 // The same for multi-value returns. The first value uses the first argument register, and so on.
 Vector<Rep, 8> returnValueReps(const FunctionSummary*, unsigned count);
 

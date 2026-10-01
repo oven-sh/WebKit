@@ -2333,11 +2333,11 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 #endif // ENABLE(WEBASSEMBLY)
 
-    // (Ahead of what follows, which would have to be told.)
+    // (This has to come before what follows, which depends on the resulting structures.)
     if (vm.useImmutableIntrinsics) [[unlikely]] {
         makeIntrinsicsImmutable();
         for (JSObject* prototype : { static_cast<JSObject*>(arrayIteratorPrototype), static_cast<JSObject*>(mapIteratorPrototype), static_cast<JSObject*>(setIteratorPrototype), static_cast<JSObject*>(m_stringIteratorPrototype.get()) })
-            prototype->fixProperties(this);
+            prototype->makePropertiesImmutable(this);
     }
 
     // Detect property change.
@@ -2454,7 +2454,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         this->haveABadTime(vm);
 
 #if ENABLE(FTL_JIT)
-    // Its builtin functions have AOT code (StaticHeap::builtinOfEngineFor()), which finds the instance through the VM. Loading a module of
+    // Its builtin functions have AOT code (StaticHeap::engineBuiltinFor()), which finds the instance through the VM. Loading a module of
     // the program would make the instance, but a Worker may run without loading one.
     if (vm.m_firstRealm == this && vm.m_firstRealmHasBuiltinsOfStaticHeap)
         AOT::Instance::ensure(this);
@@ -3493,15 +3493,15 @@ void JSGlobalObject::makeIntrinsicsImmutable()
         JSObject* object = value.getObject();
         RELEASE_ASSERT(object);
         if (i < numberWhoseObjectsAreFixed) {
-            object->fixProperties(this);
+            object->makePropertiesImmutable(this);
             JSValue prototype = object->isCallable() ? object->get(this, vm.propertyNames->prototype) : JSValue();
             scope.assertNoException();
             if (JSObject* prototypeObject = prototype ? prototype.getObject() : nullptr)
-                prototypeObject->fixProperties(this);
+                prototypeObject->makePropertiesImmutable(this);
         }
         putDirect(vm, identifier, value, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
     }
-    m_iteratorPrototype->fixProperties(this);
+    m_iteratorPrototype->makePropertiesImmutable(this);
     // (Without JSObject::preventExtensions()'s way of seeing to it that no element is added, which every array would pay for. One
     // that has no elements to begin with asks whether it may have any.)
     JSObject* objectPrototype = this->objectPrototype();

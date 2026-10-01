@@ -21,8 +21,9 @@ class VM;
 
 namespace AOT {
 
-// What the functions of the language do, for code that knows which it is calling, and on what (Lowering::lowerCallOfBuiltin()), where the other tiers have no operation
-// that will do. They are given what they work on as it is: there is no frame, and nothing to look up. Part of FOR_EACH_AOT_OPERATION (AOTRuntime.h).
+// Implementations of built-in functions for code that knows the callee and the type of the receiver
+// (Lowering::lowerCallOfBuiltin()), where the other tiers have no suitable operation. They take their operands directly: there is
+// no call frame, and nothing is looked up. Part of FOR_EACH_AOT_OPERATION (AOTRuntime.h).
 #define FOR_EACH_AOT_BUILTIN_OPERATION(v) \
     v(operationAOTMath) \
     v(operationAOTMathAtan2) \

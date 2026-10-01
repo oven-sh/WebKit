@@ -59,8 +59,8 @@ void Lowering::checkIsObjectOrThrowIteratorResultIsNotObject(Node* node, LValue 
     m_out.appendTo(continuation);
 }
 
-// iterator = symbolIterator.call(iterable); next = iterator.next. Unless the runtime knows a shortcut for the iterable, in which
-// case next is a marker (a sentinel cell, or a number if iterator is one) that tells op_iterator_next which.
+// iterator = symbolIterator.call(iterable); next = iterator.next. If the runtime has a fast path for the iterable, `next` is
+// instead a sentinel (a sentinel cell, or a number if `iterator` is one) that tells op_iterator_next which fast path to use.
 void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
 {
     VirtualRegister iteratorRegister, nextRegister, symbolIteratorRegister, iterableRegister;
@@ -81,7 +81,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     LValue symbolIterator = lowJSValue(node->use(symbolIteratorRegister));
 
     if (usesStubs && !isAsync) {
-        // Every loop has to be ready for anything, and how that is done is the same for all of them.
+        // Every loop has to handle every kind of iterable, and the code is the same for all of them, so it is in a stub.
         PatchpointValue* opened = callStub(Stub::IteratorOpen, m_proc.addTuple({ Int64, Int64 }),
             { { iterable, GPRInfo::argumentGPR0 }, { symbolIterator, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Next))), GPRInfo::argumentGPR2 } },
             { });
@@ -95,7 +95,8 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     LBasicBlock genericCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
 
-    // An array as the realm makes them is gone through by its index, and there is no iterator: what the runtime would say (IterationMode::FastArray).
+    // An array with the realm's original structure is iterated by index, without an iterator object. This is what the runtime would
+    // decide too (IterationMode::FastArray).
     std::optional<ValueFromBlock> iteratorOfArray;
     std::optional<ValueFromBlock> nextOfArray;
     if (!isAsync && Options::useUnboxedFastArrayIteration() && mayBe(node->use(iterableRegister)->type, TArray)) {
@@ -136,7 +137,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     setProj(node, nextRegister, m_out.phi(Int64, nexts));
 }
 
-// result = next.call(iterator); done = result.done; value = done ? (nothing anybody looks at) : result.value. Or the shortcut.
+// result = next.call(iterator); done = result.done; value = done ? (unused) : result.value. Or the fast path.
 void Lowering::lowerIteratorNext(Node* node)
 {
     auto bytecode = node->as<OpIteratorNext>();
@@ -147,7 +148,7 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue iterable = lowJSValue(node->use(bytecode.m_iterable));
 
     if constexpr (usesStubs) {
-        // Every loop over an array would have a copy of how that is done, and every loop has to be ready for anything else: of which every loop would have a copy as well.
+        // Otherwise every loop would contain a copy of the array fast path, and a copy of the generic path as well.
         unsigned slotOfDone = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Done));
         unsigned slotOfValue = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Value));
         RELEASE_ASSERT(slotOfValue == slotOfDone + 1);
@@ -184,7 +185,7 @@ void Lowering::lowerIteratorNext(Node* node)
         valueResults.append(m_out.anchor(value));
         nextResults.append(m_out.anchor(newNext));
     };
-    // The operations behind the shortcuts hand back the value, or nothing at the end.
+    // The operations behind the fast paths return the value, or empty at the end.
     auto doneIfEmpty = [&](LValue value) { return boxBoolean(m_out.isZero64(value)); };
 
     m_out.branch(isCell(next), unsure(nextIsCell), unsure(nextIsNotCell));
@@ -192,7 +193,8 @@ void Lowering::lowerIteratorNext(Node* node)
     m_out.appendTo(nextIsCell, nextIsNotCell);
     m_out.branch(isSentinelCell(next), unsure(markedCase), unsure(genericCase));
 
-    // Then, and only then, iterator may be a sentinel instead of an object: iterable is an array, and next the index to visit.
+    // Only in this case may `iterator` be a sentinel instead of an object: `iterable` is then an array, and `next` is the index to
+    // visit.
     m_out.appendTo(nextIsNotCell, markedCase);
     LValue iteratorIsSentinel = isCellAnd(iteratorNode, iterator, [&](LValue cell) { return isSentinelCell(cell); });
     m_out.branch(iteratorIsSentinel, unsure(indexCase), unsure(genericCase));
@@ -204,7 +206,8 @@ void Lowering::lowerIteratorNext(Node* node)
         m_out.jump(continuation);
     }
 
-    // An element that is there, in storage that holds JSValues. The end, holes and everything else are the runtime's.
+    // An element that is present, in storage that holds JSValues. The end of the array, holes and everything else are left to the
+    // runtime.
     m_out.appendTo(indexCase, indexIsInt32);
     m_out.branch(isInt32(next), usually(indexIsInt32), rarely(indexSlow));
 
@@ -219,14 +222,14 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(iterable, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
     m_out.branch(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), usually(rightShape), rarely(indexSlow));
 
-    // As unsigned: the index of a finished iteration, -1, is above any length.
+    // Compared as unsigned: the index of a finished iteration, -1, is larger than any length.
     m_out.appendTo(rightShape, inBounds);
     LValue butterfly = m_out.loadPtr(iterable, m_heaps.JSObject_butterfly);
     LValue isInBounds = m_out.bitAnd(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), m_out.notEqual(index, m_out.constInt32(std::numeric_limits<int32_t>::max())));
     LBasicBlock isAtTheEnd = m_out.newBlock();
     m_out.branch(isInBounds, usually(inBounds), unsure(isAtTheEnd));
 
-    // That is all: JSArrayIterator::nextValueWithIndexInFrame().
+    // The end of the array: see JSArrayIterator::nextValueWithIndexInFrame().
     m_out.appendTo(isAtTheEnd);
     finish(m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt64(JSValue::encode(jsNumber(JSArrayIterator::doneIndex))));
     m_out.jump(continuation);
@@ -253,7 +256,7 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue done = getByIdCached(node, result, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Done));
     LValue isDone;
     {
-        // As toBoolean(), for a value that is not a node.
+        // The same as toBoolean(), for a value that is not a node.
         LBasicBlock notBoolean = m_out.newBlock();
         LBasicBlock haveDone = m_out.newBlock();
         ValueFromBlock booleanResult = m_out.anchor(unboxBoolean(done));
@@ -277,7 +280,7 @@ void Lowering::lowerIteratorNext(Node* node)
     setProj(node, bytecode.m_next, m_out.phi(Int64, nextResults));
 }
 
-// dst = next.call(iterator [, value]), or, if next is the marker, the value is queued on the producer.
+// dst = next.call(iterator [, value]). If `next` is the sentinel, the value is queued on the producer instead.
 void Lowering::lowerAsyncIteratorNext(Node* node)
 {
     auto bytecode = node->as<OpAsyncIteratorNext>();
@@ -310,8 +313,8 @@ void Lowering::lowerAsyncIteratorNext(Node* node)
 }
 
 // The first half of op_iterator_close_check (see the parser): the iterator to close. If there is no iterator object, and closing
-// one could be noticed after all (somebody gave array iterators a return method), this is where it gets made. If it could not,
-// the marker stays, which is how the second half knows that there is nothing to do.
+// one would be observable (because array iterators have been given a `return` method), the iterator is created here. Otherwise the
+// sentinel stays, which tells the second half that there is nothing to do.
 void Lowering::lowerIteratorCloseCheck(Node* node)
 {
     auto bytecode = node->as<OpIteratorCloseCheck>();
@@ -380,7 +383,8 @@ bool Lowering::tryLowerIteration(Node* node)
         return true;
 
     case op_get_property_enumerator: {
-        // What the Structure of an object with no elements remembers having made for the last of its kind, if that goes for whatever the object inherits from as well.
+        // The enumerator that the Structure of an object without indexed elements has cached, if it is still valid for the
+        // prototype chain.
         Node* baseNode = node->use(node->as<OpGetPropertyEnumerator>().m_base);
         LValue base = lowJSValue(baseNode);
         LBasicBlock generic = m_out.newBlock();
@@ -411,7 +415,8 @@ bool Lowering::tryLowerIteration(Node* node)
         LValue enumerator = low(bytecode.m_enumerator);
         LValue mode = low(bytecode.m_mode);
         LValue index = low(bytecode.m_index);
-        // The object is still of the Structure that the names were taken from, and has no elements: the next name is the next in the list. JSPropertyNameEnumerator::computeNext().
+        // The object still has the Structure that the names were collected from, and has no indexed elements, so the next name is
+        // the next in the list. See JSPropertyNameEnumerator::computeNext().
         LBasicBlock generic = m_out.newBlock();
         LBasicBlock hasOne = m_out.newBlock();
         LBasicBlock isAtTheEnd = m_out.newBlock();
@@ -430,7 +435,7 @@ bool Lowering::tryLowerIteration(Node* node)
         Vector<ValueFromBlock, 3> names;
         Vector<ValueFromBlock, 3> modes;
         Vector<ValueFromBlock, 3> indices;
-        // (A value belongs to the block it is made in, a constant too: one for each block that uses it.)
+        // (A B3 value belongs to the block it is created in, even a constant, so each block creates its own.)
         auto ownStructureMode = [&] { return m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(JSPropertyNameEnumerator::OwnStructureMode)))); };
         names.append(m_out.anchor(m_out.loadPtr(m_out.baseIndex(m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, m_out.loadPtr(enumerator, m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVector), m_out.zeroExtPtr(next)))));
         modes.append(m_out.anchor(ownStructureMode()));
@@ -463,7 +468,8 @@ bool Lowering::tryLowerIteration(Node* node)
         Node* baseNode = node->use(bytecode.m_base);
         LValue base = lowJSValue(baseNode);
         LValue enumerator = low(bytecode.m_enumerator);
-        // The name is one of the object's own, and the object is as it was: how far down the list the name is says where the property is.
+        // The name is an own property and the object's Structure is unchanged, so the position of the name in the list gives the
+        // property's offset.
         LBasicBlock generic = m_out.newBlock();
         LBasicBlock isInObject = m_out.newBlock();
         LBasicBlock isOutside = m_out.newBlock();

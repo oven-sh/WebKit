@@ -69,7 +69,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
-const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object can only hold what its type says, as a plain property"_s };
+const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object must stay a plain data property whose value matches its declared type"_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError { "Attempting to change access mechanism for an unconfigurable property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError { "Attempting to change configurable attribute of unconfigurable property."_s };
@@ -874,7 +874,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
         if (hasProperty) {
             if (attributes & PropertyAttribute::ReadOnly) {
-                if (!structure->heirsMayOverrideReadOnlyProperties() || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+                if (!structure->inheritorsMayOverrideReadOnlyProperties() || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
                     return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
                 break;
             }
@@ -2956,20 +2956,20 @@ void JSObject::seal(VM& vm)
     }
 }
 
-void JSObject::fixProperties(JSGlobalObject* globalObject)
+void JSObject::makePropertiesImmutable(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    if (structure()->heirsMayOverrideReadOnlyProperties())
+    if (structure()->inheritorsMayOverrideReadOnlyProperties())
         return;
     if (hasNonReifiedStaticProperties())
         reifyAllStaticProperties(globalObject);
     materializeLazyOwnProperties(vm);
-    // (That leaves a dictionary, of which nobody can tell from the Structure what it does not have.)
+    // (That may leave a dictionary, whose Structure does not reliably say which properties are absent.)
     if (structure()->isDictionary())
         flattenDictionaryObject(vm);
     Structure* oldStructure = structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-    setStructure(vm, Structure::fixPropertiesTransition(vm, oldStructure, &deferred));
+    setStructure(vm, Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred));
     if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
@@ -3142,7 +3142,7 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
 
     ASSERT(index <= MAX_ARRAY_INDEX);
 
-    if (structure()->heirsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !hasIndexedProperties(indexingType())) [[unlikely]]
+    if (structure()->inheritorsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !hasIndexedProperties(indexingType())) [[unlikely]]
         return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
 
     ensureWritable(vm);
@@ -3501,7 +3501,7 @@ bool JSObject::putByIndexBeyondVectorLength(JSGlobalObject* globalObject, unsign
     case ALL_BLANK_INDEXING_TYPES: {
         if (indexingShouldBeSparse()) {
             // Object.prototype must not end up with somewhere to keep elements for having refused one: every array would pay for it.
-            if (structure()->heirsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !needsSlowPutIndexing()) [[unlikely]]
+            if (structure()->inheritorsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !needsSlowPutIndexing()) [[unlikely]]
                 return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
             auto* arrayStorage = ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm);
             if (!hasSlowPutArrayStorage(indexingType())) [[likely]]
@@ -4365,7 +4365,7 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
 {
     unsigned i = 0;
     Structure* structure = this->structure();
-    // (What a slot of a born object holds is for putDirectInternal() to see to.)
+    // (Stores to the slots of an object with a typed layout have to go through putDirectInternal(), which checks the field's type.)
     if (!((structure->typedLayoutID() && TypedLayoutTable::hasLayouts()) || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
         Vector<PropertyOffset, 16> offsets(size, [&](size_t index) -> std::optional<PropertyOffset> {
             PropertyName propertyName(properties[index]);

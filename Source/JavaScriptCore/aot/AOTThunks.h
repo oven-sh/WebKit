@@ -16,11 +16,11 @@ class VM;
 
 namespace AOT {
 
-// The common cases of some operations, in machine code: what is too long to have a copy of at every site, and too hot to go to C++
-// for. They are stubs like any other (AOTStubs.h), but nothing calls them by that name: a front end stands in for its operation in
-// the runtime table. It takes the same arguments and hands back the same results, and whatever it has no quick answer for it
-// passes on to the operation, arguments untouched, as if that had been called in the first place. So the compiler knows nothing of
-// them, and where there are none (they are written for one kind of CPU) all that is lost is speed.
+// The common cases of some operations, in machine code: sequences that are too long to duplicate at every site and too hot to leave
+// to C++. They are stubs like any other (AOTStubs.h), but nothing calls them by name: a front end replaces its operation in the
+// runtime table. It takes the same arguments and returns the same results, and tail-calls the operation, with the arguments
+// untouched, for anything that it cannot handle. So the compiler does not know about them, and on a CPU that they are not written
+// for, only speed is lost.
 void installOperationFrontEnds(VM&, void** runtimeTableEntries);
 
 #if CPU(ARM64)

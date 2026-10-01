@@ -27,7 +27,7 @@ bool Lowering::tryLowerObjects(Node* node)
 
 // ---- Allocation
 
-// The sites that have slots leave them to their operations, and to the thunks in front of those (AOTThunks.cpp).
+// Sites with slots leave them to be filled by their operations, and read by the thunks in front of those (AOTThunks.cpp).
 
 LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue, 8>& values, LBasicBlock otherwise)
 {
@@ -55,13 +55,13 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
     LValue object = allocation;
     orElse(m_out.notNull(object));
 
-    // The rest of the header is in the second slot, whose low half has nothing in it.
+    // The rest of the header is in the second slot, whose low half is zero.
     m_out.store64(m_out.bitOr(m_out.zeroExt(structureID, Int64), m_out.load64(slotWord(slot + 1, 0))), m_out.address(m_heaps.root, object, 0));
     m_out.storePtr(m_out.intPtrZero, object, m_heaps.JSObject_butterfly);
     for (unsigned i = 0; i < values.size(); ++i)
         m_out.store64(values[i], m_out.address(m_heaps.properties.atAnyNumber(), object, JSObject::offsetOfInlineStorage() + i * sizeof(EncodedJSValue)));
 
-    // What there is room for and nothing to put in. As a rule there is none.
+    // Clear the unused inline capacity. Usually there is none.
     LBasicBlock clear = m_out.newBlock();
     LBasicBlock clearOne = m_out.newBlock();
     LBasicBlock cleared = m_out.newBlock();
@@ -91,7 +91,7 @@ void Lowering::validateNewObject(Node* node, LValue object, uint32_t layout, con
 {
     if (!Options::useAOTTypedFields() || !layout || !TypeTable::shared())
         return;
-    // (Of structs, `layout` is the family.)
+    // (With typed fields, `layout` is a typed layout ID.)
     auto fieldTypes = fieldTypesIfKnown ? *fieldTypesIfKnown : TypeTable::hasTypedFields() ? TypeTable::shared()->fieldTypesBySlotOfLayout(layout) : TypeTable::shared()->fieldTypesBySlot(layout);
     LBasicBlock someIsNot = nullptr;
     for (unsigned slot = 0; slot < inSlots.size() && slot < fieldTypes.size(); ++slot) {
@@ -118,7 +118,7 @@ bool Lowering::tryLowerAllocation(Node* node)
 {
 
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
-        m_graph.functionsMade.append(isExpression ? code().codeBlock()->functionExpr(index) : code().codeBlock()->functionDecl(index));
+        m_graph.functionsCreated.append(isExpression ? code().codeBlock()->functionExpr(index) : code().codeBlock()->functionDecl(index));
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewFunction, m_globalObject, lowCell(node->use(scope)),
             m_out.constInt32(index), m_out.constInt32(isExpression | whoseBytecode(node) << 1), m_out.constInt32(static_cast<uint32_t>(kind)), slotAddress(allocateSlots(2))));
         return true;
@@ -144,7 +144,8 @@ bool Lowering::tryLowerAllocation(Node* node)
             }
             auto shapeOfThis = m_graph.shapeOfLiteral(node);
             if (uint16_t layoutID = Graph::layoutIDOfNewObject(node); layoutID && (!shapeOfThis || !shapeOfThis->layoutID)) {
-                // It is of a family, and has something that the family has no slot for: it starts with nothing, and is given one thing after another.
+                // The object has a typed layout, but also a property that the layout has no slot for. So it is created empty, and
+                // its properties are added one at a time.
                 LValue object = vmCall(node, pointerType(), Entry::operationAOTNewTypedObject, m_globalObject, m_out.constInt32(layoutID), slotAddress(allocateSlots(2)));
                 auto& instructions = code().codeBlock()->instructions();
                 auto& stores = code().storesOfLiteral(node->bytecodeIndex.offset());
@@ -162,7 +163,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             bool fieldTypesAreKnown = false;
             bool hasSlotsOutside = shapeOfThis && shapeOfThis->hasSlotsOutside();
             if (auto shape = WTF::move(shapeOfThis)) {
-                // Each where the layout has it.
+                // Put each value in the slot that the layout assigns.
                 if (!shape->slots.isEmpty()) {
                     Vector<LValue, 8> inSlots;
                     Vector<Node*, 8> nodesInSlots;
@@ -218,7 +219,7 @@ bool Lowering::tryLowerAllocation(Node* node)
     case op_create_this: {
         auto bytecode = node->as<OpCreateThis>();
         if (unsigned count = node->numberOfLiteralProperties) {
-            // There is one of these to a class: worth spelling out. See generateFrontEndCreateThisWithProperties().
+            // There is only one of these per class, so it is worth emitting inline. See generateFrontEndCreateThisWithProperties().
             Vector<LValue, 8> values;
             Vector<Node*, 8> inSlotsOfLayout;
             uint32_t layout = 0;
@@ -234,7 +235,8 @@ bool Lowering::tryLowerAllocation(Node* node)
                 KnownShape shape;
                 for (auto& property : plan.properties)
                     shape.names.append(code().codeBlock()->identifier(property.identifier).impl());
-                // The table of types says what a constructor makes where the first of its stores is. (In order: so far that is all it can be.)
+                // The type table records what a constructor creates at the position of its first store. (Only layouts whose
+                // properties are in store order are supported so far.)
                 if (uint32_t tag = node->graph->typeTagAt(plan.stores[0].offset); tag && (Options::aotShapeOptimizations() & 1) && TypeTable::shared()) {
                     if (auto layout = TypeTable::shared()->layoutOf(tag); layout && layout->properties.size() == count) {
                         bool isAsWritten = true;
@@ -309,7 +311,7 @@ bool Lowering::tryLowerAllocation(Node* node)
     }
     case op_new_array_with_spread: {
         auto bytecode = node->as<OpNewArrayWithSpread>();
-        // (An op_spread that has been done away with stands for what it was to spread.)
+        // (An op_spread that was elided is replaced by its operand.)
         uint32_t yetToBeSpread = 0;
         bool someHaveBeenSpread = false;
         const BitVector& whichAreSpread = code().codeBlock()->bitVector(bytecode.m_bitVector);
@@ -321,7 +323,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 yetToBeSpread |= 1u << i;
                 element = element->use(element->as<OpSpread>().m_argument);
             } else
-                someHaveBeenSpread |= whichAreSpread.get(i); // (Whatever the node is: what a register holds may have been put away and got out again.)
+                someHaveBeenSpread |= whichAreSpread.get(i); // (Decided by the bit vector, not by the node: the value may have passed through a stack slot.)
             elements.append(element);
         }
         for (unsigned i = 0; i < elements.size(); ++i)
@@ -351,7 +353,8 @@ bool Lowering::tryLowerAllocation(Node* node)
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_globalObject, lowConstantRegister(node->as<OpNewRegExp>().m_regexp)));
         return true;
     case op_new_reg_exp_shared: {
-        // One object does for the site: nothing gets hold of it but the builtin it is the receiver of, which leaves it as it is.
+        // One object is shared by all executions of the site. Only the builtin that it is the receiver of ever sees it, and that
+        // leaves it unchanged.
         auto bytecode = node->as<OpNewRegExpShared>();
         if (!Options::useSharedRegExpLiteralObjects()) {
             setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_globalObject, lowConstantRegister(bytecode.m_regexp)));
@@ -475,7 +478,7 @@ void Lowering::lowerToThis(Node* node)
     auto bytecode = node->as<OpToThis>();
     Node* valueNode = node->use(bytecode.m_srcDst);
     bool isStrict = bytecode.m_ecmaMode.isStrict();
-    // Only a scope is ever replaced in strict code, and an object that is not a scope never is. (A scope is none of the kinds of object that have a bit of their own.)
+    // In strict code only a scope is replaced, and an object that is not a scope never is. (A scope is in TOtherObject.)
     if (isStrict ? !mayBe(valueNode->type, TOtherObject) : isSubtype(valueNode->type, TAnyObject & ~TOtherObject)) {
         setResult(node, lowRaw(valueNode), valueNode->rep());
         return;
@@ -514,7 +517,7 @@ void Lowering::lowerToThis(Node* node)
 
 bool Lowering::tryLowerConversion(Node* node)
 {
-    // Leaves alone every value for which the test holds, and everything of a type in identity.
+    // Returns the value unchanged if its type is in `identity` or if the test holds at run time.
     auto identityOr = [&](Node* valueNode, Type identity, auto&& isIdentity, auto&& slow) {
         if (isSubtype(valueNode->type, identity)) {
             setResult(node, lowRaw(valueNode), valueNode->rep());
@@ -594,7 +597,7 @@ bool Lowering::tryLowerConversion(Node* node)
         return true;
     case op_typeof_is_object:
     case op_typeof_is_function: {
-        // Null is an object, a function is not, and it takes a closer look to tell what the objects are that say for themselves whether they can be called.
+        // null is an object and a function is not. Objects that define their own callability need a closer look.
         bool wantsObject = node->opcode == op_typeof_is_object;
         Node* valueNode = node->use(wantsObject ? node->as<OpTypeofIsObject>().m_operand : node->as<OpTypeofIsFunction>().m_operand);
         Type yes = wantsObject ? TNull | TArray : TFunction;
@@ -649,7 +652,7 @@ bool Lowering::tryLowerConversion(Node* node)
         });
     case op_strcat: {
         auto bytecode = node->as<OpStrcat>();
-        // Strings are strung together as they are: two or three at a time.
+        // Strings are concatenated directly into ropes, two or three at a time.
         bool areStrings = bytecode.m_count >= 2 && bytecode.m_count <= 5;
         for (unsigned i = 0; i < bytecode.m_count; ++i)
             areStrings &= isSubtype(node->use(VirtualRegister(bytecode.m_src.offset() - static_cast<int>(i)))->type, TString);
@@ -717,7 +720,7 @@ bool Lowering::tryLowerConversion(Node* node)
 
         m_out.appendTo(continuation);
         setProj(node, bytecode.m_dst, m_out.notZero64(m_out.phi(Int64, results)), Rep::Boolean);
-        // A temporary of the instruction's own.
+        // A temporary that only the instruction itself uses.
         setProj(node, bytecode.m_hasInstanceOrPrototype, m_out.constInt64(JSValue::encode(jsUndefined())));
         return true;
     }
@@ -744,7 +747,7 @@ void Lowering::lowerGetLength(Node* node)
             setInt64(node, view->length);
             return;
         }
-        // It is where the elements are, however they are kept, if there is such a place.
+        // The length is in the butterfly for every indexing type, if there is a butterfly.
         LBasicBlock hasStorage = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
@@ -778,7 +781,8 @@ void Lowering::lowerGetLength(Node* node)
     else
         m_out.branch(isCell(base), usually(cellCase), rarely(genericCase));
 
-    // An array that has storage of some kind has its length there. One above what an int32 holds is for the runtime.
+    // An array with any kind of storage has its length in the butterfly. A length that does not fit in an int32 is left to the
+    // runtime.
     m_out.appendTo(cellCase, arrayCase);
     if (mayBe(baseNode->type, TArray)) {
         LValue indexingType = m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc);
@@ -875,8 +879,8 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
             return true;
         }
         if (mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32)) {
-            // An element of an array that keeps its elements as values, its own to write to, where there is room for it already: at the end as a rule, which is how
-            // map() and the like fill in what they make.
+            // A store to an array with contiguous JSValue storage that is not copy-on-write, at an index within its capacity.
+            // Usually the index is the length, which is how map() and similar builtins fill their results.
             slowCase = m_out.newBlock();
             continuation = m_out.newBlock();
             if (!isSubtype(propertyNode->type, TInt32))
@@ -917,7 +921,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
         if (isCompact() || !mayBe(baseNode->type, TAnyObject) || !mayBe(propertyNode->type, TNumber))
             return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property)));
 
-        // An element that is there, in contiguous or int32 storage. Whether one that is not there is to be had from anywhere else is for the runtime to find out.
+        // An element that is present in contiguous or int32 storage. For a hole, the runtime has to search the prototype chain.
         LValue base = lowJSValue(baseNode);
         LBasicBlock haveIndex = m_out.newBlock();
         LBasicBlock cellCase = m_out.newBlock();

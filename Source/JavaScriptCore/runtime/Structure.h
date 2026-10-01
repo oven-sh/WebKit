@@ -426,7 +426,7 @@ public:
     static Structure* toUncacheableDictionaryTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
-    static Structure* fixPropertiesTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -1037,10 +1037,10 @@ public:
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
 #if USE(BUN_JSC_ADDITIONS)
-    // Set on objects whose properties were made read-only by JSObject::fixProperties(). Per spec, an inherited read-only property
+    // Set on objects whose properties were made read-only by JSObject::makePropertiesImmutable(). Per spec, an inherited read-only property
     // blocks assignment on inheriting objects, so with a read-only Object.prototype.toString, `Foo.prototype.toString = f` would
     // fail. Properties fixed this way do not block such assignments.
-    DEFINE_BITFIELD(bool, heirsMayOverrideReadOnlyProperties, HeirsMayOverrideReadOnlyProperties, 1, 31);
+    DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
 #endif
 
     enum class StructureVariant : uint8_t {

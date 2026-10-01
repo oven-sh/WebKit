@@ -228,7 +228,7 @@ protected:
         }
 
 #if ENABLE(FTL_JIT)
-        // What kind of frame it is says what there is in it to look at.
+        // The kind of frame determines which of its slots are meaningful.
         m_pcInfo = AOT::classifyAddress(m_pc);
         if (m_pcInfo.kind != AOT::ImageAddressInfo::NotInImage)
             return;

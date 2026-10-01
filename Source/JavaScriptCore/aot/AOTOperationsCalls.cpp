@@ -36,9 +36,10 @@ namespace JSC { namespace AOT {
 
 // ---- for-of
 
-// What op_iterator_open does before it resorts to calling iterable[Symbol.iterator]: an iterable of a kind the engine knows how
-// to walk, whose protocol nobody has touched, gets an iterator and a marker for a next method, which is how op_iterator_next
-// knows. Every kind is welcome at every site: what the other tiers ration is the code they emit per kind, and here it is one call.
+// What op_iterator_open does before it falls back to calling iterable[Symbol.iterator]. An iterable of a kind that the engine can
+// iterate directly, and whose iteration protocol is unmodified, gets an iterator and a sentinel in place of its `next` method,
+// which is how op_iterator_next recognizes it. Every kind is accepted at every site: the other tiers limit the kinds per site to
+// limit the code they emit, and here it is a single call.
 JSC_DEFINE_JIT_OPERATION(operationAOTIteratorOpenTryFast, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedIterable, EncodedJSValue encodedSymbolIterator, EncodedJSValue* next))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -124,7 +125,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAsyncIteratorOpenTryFast, EncodedJSValue, (
     OPERATION_RETURN(scope, encodedJSValue());
 }
 
-// For an iterator that came with a marker. The value, or empty when the iteration is done.
+// For an iterator that came with a sentinel. Returns the value, or empty when the iteration is done.
 JSC_DEFINE_JIT_OPERATION(operationAOTIteratorNextTryFast, EncodedJSValue, (JSGlobalObject* globalObject, JSObject* iterator))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -166,7 +167,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIteratorNextTryFast, EncodedJSValue, (JSGlo
     OPERATION_RETURN(scope, value ? JSValue::encode(value) : encodedJSValue());
 }
 
-// For an array that has no iterator object. index: in and out.
+// For an array that is iterated without an iterator object. index: read and updated.
 JSC_DEFINE_JIT_OPERATION(operationAOTIteratorNextWithIndex, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue iterable, EncodedJSValue* encodedIndex))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -199,8 +200,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIteratorResultIsNotObject, void, (JSGl
 
 // ---- Calls
 
-// What iterating over it comes to is what is in it, and nobody can tell whether it was iterated over.
-static bool canBeCopiedFrom(JSValue value)
+// Whether iterating over the value yields exactly its elements, and the iteration is not observable.
+static bool isIterationUnobservable(JSValue value)
 {
     if (!value.isCell())
         return false;
@@ -217,10 +218,10 @@ static unsigned copyableLength(JSValue value)
     return uncheckedDowncast<JSArray>(value.asCell())->length();
 }
 
-// Stub::CallVarargs: how many there are, and then all of them, one after the other. See ListDescriptor.
+// For Stub::CallVarargs: first the number of arguments, then the arguments themselves. See ListDescriptor.
 JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* globalObject, EncodedJSValue listOrItems, uint32_t descriptorBits))
 {
-    AOT_OPERATION_BEGIN_FOR_NOBODY(globalObject);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(globalObject);
     ListDescriptor descriptor { descriptorBits };
     uint64_t length = 0;
     if (!descriptor.isOfItems()) {
@@ -228,7 +229,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* glo
         OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     } else {
         auto* items = std::bit_cast<EncodedJSValue*>(listOrItems);
-        bool allCanBeCopiedFrom = true;
+        bool allIterationsAreUnobservable = true;
         auto forEachSpread = [&](const auto& functor) {
             unsigned word = 0;
             for (unsigned i = 0; i < descriptor.numberOfItems(); ++i) {
@@ -238,10 +239,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* glo
             }
         };
         forEachSpread([&](EncodedJSValue& item, unsigned) {
-            allCanBeCopiedFrom &= canBeCopiedFrom(JSValue::decode(item));
+            allIterationsAreUnobservable &= isIterationUnobservable(JSValue::decode(item));
         });
-        if (!allCanBeCopiedFrom) [[unlikely]] {
-            // Then code runs, which may do anything to the others: each is gone through when it is its turn, and what it came to is kept.
+        if (!allIterationsAreUnobservable) [[unlikely]] {
+            // Iterating runs code, which may modify the other items. So each item is iterated in turn, and the results are kept.
             bool threw = false;
             const void* returnAddress = removeCodePtrTag(callFrame->rawReturnPC());
             FunctionRef function = caller(globalObject, callFrame);
@@ -287,13 +288,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* glo
 
 JSC_DEFINE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject* globalObject, EncodedJSValue* where, EncodedJSValue listOrItems, uint32_t descriptorBits, uint32_t length))
 {
-    AOT_OPERATION_BEGIN_FOR_NOBODY(globalObject);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(globalObject);
     ListDescriptor descriptor { descriptorBits };
     if (!descriptor.isOfItems()) {
         loadVarargs(globalObject, std::bit_cast<JSValue*>(where), JSValue::decode(listOrItems), descriptor.firstVarArg(), length);
         OPERATION_RETURN(scope);
     }
-    // (Nothing has run since they were counted.)
+    // (No code has run since the items were counted.)
     auto* items = std::bit_cast<EncodedJSValue*>(listOrItems);
     unsigned word = 0;
     for (unsigned i = 0; i < descriptor.numberOfItems(); ++i) {
@@ -327,8 +328,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject* globalO
     OPERATION_RETURN(scope);
 }
 
-// llint_virtual_call(), which begins by asking for the CodeBlock of the caller, in case there is an error to report. Nearly always
-// what there is to do is get a function that has not been called before its code.
+// A replacement for llint_virtual_call(), which starts by looking up the caller's CodeBlock in case there is an error to report. In
+// nearly all cases, all that is needed is to link a function that has not been called before.
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
 {
     JSValue callee = calleeFrame->guaranteedJSValueCallee();
@@ -341,7 +342,7 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     auto* function = dynamicDowncast<JSFunction>(callee.asCell());
     if (!function)
         return LLInt::llint_virtual_call(calleeFrame, callLinkInfo);
-    // (It has its code from the start, and reports its own errors.)
+    // (A host function always has its code, and reports its own errors.)
     if (function->isHostFunction())
         return encodeResult(function->executable()->entrypointFor(kind, ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
     FunctionExecutable* executable = function->jsExecutable();
@@ -351,15 +352,15 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVM(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    DeferTraps deferTraps(vm); // Nothing gets to throw away the code that is about to run.
+    DeferTraps deferTraps(vm); // So that nothing can jettison the code that is about to run.
     calleeFrame->setCodeBlock(nullptr);
     if (executable->aotEntryFor(kind)) {
         DeferGCForAWhile deferGC(vm);
-        // (The executable is every VM's, and says what it says. It is the function that gets another.)
+        // (The executable is shared by every VM and is read-only, so it is the function that is given a different executable.)
         if (!linkStaticFunction(vm, executable, kind, function->scopeUnchecked())) [[unlikely]] {
-            // (That takes other code, and this is all there is.)
+            // (That requires other code for the function, and a function in the short form has only its AOT code.)
             if (executable->isShortForm()) {
-                throwSyntaxError(function->realm(), scope, makeString("The function "_s, executable->ecmaName().string(), " was compiled ahead of time for a module that is not linked the way it was then, and there is no other code for it"_s));
+                throwSyntaxError(function->realm(), scope, makeString("The function "_s, executable->ecmaName().string(), " was compiled ahead of time, but its module is linked differently at run time, and the executable has no other code for it"_s));
                 return encodeResult(nullptr, std::bit_cast<void*>(&vm));
             }
             executable = StaticHeap::standInFor(vm, executable);
@@ -372,8 +373,8 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     return encodeResult(executable->entrypointFor(kind, ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
 }
 
-// Stub::LinkFunction. Whoever called the function knew what it was calling: code of a module that is linked as compiled, and so then are
-// the modules it imports from, and theirs (JSModuleRecord::isLinkedAsInImage()). There is nothing that could be in the way.
+// For Stub::LinkFunction. The caller called the function directly, so it belongs to a module that is linked as it was compiled, and
+// so do the modules that it imports from, transitively (JSModuleRecord::isLinkedAsInImage()). So linking cannot fail.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* instance, void* addressInFunction))
 {
     VM& vm = *instance->vm;
@@ -389,15 +390,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* ins
     RELEASE_ASSERT(Data::create(*instance, executable, executable->unlinkedExecutable()->codeBlockIfExists(kind), code.get()));
 }
 
-// For a stub that is about to fill a slot: didFillSlot(), but for the epoch.
+// For a stub that is about to fill a slot. The same as didFillSlot(), except that it does not change the epoch.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data* data))
 {
     if (!data->hasBeenFilledSinceLastCollection)
         data->noteFilled();
 }
 
-// For a stub that has seen slots fail a function that has none of its own once too often.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGiveData, void, (Instance* instance, uint32_t index))
+// For a stub that has seen too many inline cache misses in a function that has no Data of its own.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance* instance, uint32_t index))
 {
     instance->ensureData(index);
 }
@@ -411,13 +412,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (In
     throwStackOverflowError(instance->globalObject, scope);
 }
 
-// Empty if the callee is not eval after all.
+// Returns empty if the callee is not eval.
 JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope* callerScopeChain, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    // What eval() looks at of the frame that a call would have been made with.
-    // It makes that the last frame that the VM knows of, so it has to lead somewhere: to where this was called from.
-    // (A Register starts out as whatever was there.)
+    // A stand-in for the parts of the callee frame that eval() reads.
+    // eval() makes it the VM's top call frame, so it has to link to a valid caller frame: the one that this was called from.
+    // (A Register is not initialized by its constructor.)
     uint64_t words[CallFrame::headerSizeInRegisters + 2] { };
     Register* frame = std::bit_cast<Register*>(&words[0]);
     CallFrame* calleeFrame = CallFrame::create(frame);

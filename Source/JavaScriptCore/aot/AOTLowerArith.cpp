@@ -95,7 +95,8 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
     };
 
     if (node->isInteger() && left->isInteger() && right->isInteger()) {
-        // It has been proven that the result is what it would be in doubles. In 64 bits nothing is lost on the way to it either.
+        // The result has been proven to equal the result in double arithmetic. In 64 bits, the intermediate values do not overflow
+        // either.
         bool narrow = node->rep() == Rep::Int32 && left->rep() == Rep::Int32 && right->rep() == Rep::Int32;
         LValue a = narrow ? lowInt32(left) : lowInt64(left);
         LValue b = narrow ? lowInt32(right) : lowInt64(right);
@@ -111,7 +112,7 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
             result = m_out.mul(a, b);
             break;
         case op_mod:
-            // Of something that is not negative by something that is positive.
+            // The dividend is non-negative and the divisor is positive.
             result = m_out.sub(a, m_out.mul(m_out.div(a, b), b));
             break;
         default:
@@ -120,7 +121,7 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         setResult(node, result, narrow ? Rep::Int32 : Rep::Int64);
         return;
     }
-    // The remainder of one integer by another is an integer's work, if the one is not negative and the other is positive.
+    // The remainder of two integers can use integer arithmetic if the dividend is non-negative and the divisor is positive.
     auto remainderOfInt32s = [&](LValue a, LValue b, LBasicBlock otherwise) {
         orElse(m_out.bitAnd(m_out.greaterThanOrEqual(a, m_out.int32Zero), m_out.greaterThan(b, m_out.int32Zero)), otherwise);
         return m_out.sub(a, m_out.mul(m_out.div(a, b), b));
@@ -144,7 +145,7 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         return;
     }
 
-    // Nothing is known. Numbers are handled here; everything else is the runtime's.
+    // Nothing is known about the operands. Numbers are handled inline, and everything else by the runtime.
     LValue a = lowJSValue(left);
     LValue b = lowJSValue(right);
     bool mayBeNumbers = mayBe(left->type, TNumber) && mayBe(right->type, TNumber);
@@ -182,7 +183,7 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         results.append(m_out.anchor(boxInt32(remainderOfInt32s(unboxInt32(a), unboxInt32(b), doubleCase))));
         m_out.jump(continuation);
     } else if (hasIntCase) {
-        // In 64 bits none of these overflow, so whether the result is an int32 can be asked afterwards.
+        // None of these overflow in 64 bits, so whether the result fits in an int32 can be tested afterwards.
         LValue wideA = m_out.signExt32To64(unboxInt32(a));
         LValue wideB = m_out.signExt32To64(unboxInt32(b));
         LValue wide = opcode == op_add ? m_out.add(wideA, wideB) : opcode == op_sub ? m_out.sub(wideA, wideB) : m_out.mul(wideA, wideB);
@@ -232,7 +233,7 @@ LValue Lowering::toInt32ForBitOp(Node* operand)
     case Rep::JSValue:
         break;
     }
-    // Sometimes one and sometimes another, so it is boxed. All three are computed, and one is picked.
+    // The representation varies at run time, so the value is boxed. All three conversions are computed, and one is selected.
     RELEASE_ASSERT(isSubtype(operand->type, TNumber | TBoolean));
     LValue value = lowRaw(operand);
     LValue result = unboxBoolean(value);
@@ -355,7 +356,7 @@ void Lowering::lowerUnaryArith(Node* node, VirtualRegister operandRegister)
     switch (opcode) {
     case op_inc:
     case op_dec: {
-        // Away from the ends of the range an int32 stays one.
+        // An int32 that is not at the end of the range stays an int32.
         int32_t limit = opcode == op_inc ? INT32_MAX : INT32_MIN;
         m_out.branch(m_out.bitAnd(isInt32(value), m_out.notEqual(unboxInt32(value), m_out.constInt32(limit))), usually(fastCase), rarely(slowCase));
         m_out.appendTo(fastCase, slowCase);
@@ -474,7 +475,7 @@ LValue Lowering::lowerCompare(Node* node, OpcodeID opcode, VirtualRegister lhs, 
     return m_out.phi(Int32, results);
 }
 
-std::optional<String> Lowering::stringWrittenInProgram(Node* node)
+std::optional<String> Lowering::constantStringOf(Node* node)
 {
     if (node->kind != NodeKind::ConstantCell || !node->reg.isConstant())
         return std::nullopt;
@@ -559,8 +560,8 @@ LValue Lowering::areEqualAssumingAtomStrings(Node* left, LValue a, Node* right, 
         return m_out.equal(implOf(a), implOf(b));
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 5> results;
-    // What is no string is the same as another thing if the two are the same bits.
-    auto goOnIf = [&](LValue condition) {
+    // Values that are not strings are equal exactly when their bits are equal.
+    auto continueIf = [&](LValue condition) {
         LBasicBlock next = m_out.newBlock();
         results.append(m_out.anchor(m_out.equal(a, b)));
         m_out.branch(condition, unsure(next), unsure(continuation));
@@ -570,9 +571,9 @@ LValue Lowering::areEqualAssumingAtomStrings(Node* left, LValue a, Node* right, 
         if (isSubtype(node->type, TString))
             continue;
         if (!isSubtype(node->type, TCell))
-            goOnIf(isCell(value));
+            continueIf(isCell(value));
         if (!isSubtype(node->type & TCell, TString))
-            goOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)));
+            continueIf(m_out.equal(cellType(value), m_out.constInt32(StringType)));
     }
     results.append(m_out.anchor(m_out.equal(implOf(a), implOf(b))));
     m_out.jump(continuation);
@@ -586,16 +587,17 @@ void Lowering::atomizeIfString(Node* node, LValue value)
         return;
     LBasicBlock isNot = newColdBlock();
     LBasicBlock done = m_out.newBlock();
-    auto goOnIf = [&](LValue condition) {
+    auto continueIf = [&](LValue condition) {
         LBasicBlock next = m_out.newBlock();
         m_out.branch(condition, unsure(next), unsure(done));
         m_out.appendTo(next);
     };
     if (!isSubtype(node->type, TCell))
-        goOnIf(isCell(value));
+        continueIf(isCell(value));
     if (!isSubtype(node->type & TCell, TString))
-        goOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)));
-    // (JSString::isDefinitelyAtom(). One that is not marked may be one all the same, or be long enough not to have to be: that is found out the long way.)
+        continueIf(m_out.equal(cellType(value), m_out.constInt32(StringType)));
+    // (JSString::isDefinitelyAtom(). A string without the flag may still be an atom, or may be too long to need to be one. The slow
+    // path finds out.)
     m_out.branch(m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(TypeInfoPerCellBit)), usually(done), rarely(isNot));
     m_out.appendTo(isNot);
     plainCall(Void, Entry::operationAOTMakeAtom, value);
@@ -603,7 +605,7 @@ void Lowering::atomizeIfString(Node* node, LValue value)
     m_out.appendTo(done);
 }
 
-// Zero if those are the characters, of which there are known to be as many.
+// Returns zero if the characters equal the literal. The lengths are already known to match.
 LValue Lowering::compareWithLiteral(LValue characters, std::span<const Latin1Character> written)
 {
     LValue difference = m_out.int64Zero;
@@ -612,7 +614,7 @@ LValue Lowering::compareWithLiteral(LValue characters, std::span<const Latin1Cha
         unsigned width = left >= 8 ? 8 : left >= 4 ? 4 : left >= 2 ? 2 : 1;
         uint64_t expected = 0;
         memcpy(&expected, written.data() + at, width);
-        // (It is not an address, whatever it looks like.)
+        // (This is a plain integer, not an address to relocate.)
         m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
         TypedPointer address = m_out.address(m_heaps.characters8.atAnyIndex(), characters, at);
         LValue loaded = width == 8 ? m_out.load64(address) : m_out.zeroExt(width == 4 ? m_out.load32(address) : width == 2 ? m_out.load16ZeroExt32(address) : m_out.load8ZeroExt32(address), Int64);
@@ -641,7 +643,7 @@ Lowering::NarrowCharacters Lowering::narrowCharactersOf(LValue string, LBasicBlo
     LBasicBlock wide = m_out.newBlock();
     LBasicBlock rope = m_out.newBlock();
     LBasicBlock slice = m_out.newBlock();
-    LBasicBlock inPieces = m_out.newBlock();
+    LBasicBlock isUnresolvedRope = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
     LValue fiber = m_out.loadPtr(string, m_heaps.JSRopeString_fiber0);
     m_out.branch(m_out.testNonZeroPtr(fiber, m_out.constIntPtr(JSString::isRopeInPointer)), rarely(rope), usually(inOnePiece));
@@ -660,9 +662,9 @@ Lowering::NarrowCharacters Lowering::narrowCharactersOf(LValue string, LBasicBlo
     m_out.appendTo(rope);
     LValue lengthOfRope = m_out.load32(string, m_heaps.JSRopeString_length);
     constexpr uintptr_t narrowSlice = JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
-    m_out.branch(m_out.equal(m_out.bitAnd(fiber, m_out.constIntPtr(narrowSlice)), m_out.constIntPtr(narrowSlice)), unsure(slice), unsure(inPieces));
+    m_out.branch(m_out.equal(m_out.bitAnd(fiber, m_out.constIntPtr(narrowSlice)), m_out.constIntPtr(narrowSlice)), unsure(slice), unsure(isUnresolvedRope));
     m_out.appendTo(slice);
-    // (JSRopeString::CompactFibers. What it is a slice of is in one piece.)
+    // (See JSRopeString::CompactFibers. The base of a substring rope is never a rope.)
     LValue lengthAndLowOfBase = m_out.load64(string, m_heaps.JSRopeString_fiber1);
     LValue highOfBaseAndOffset = m_out.load64(string, m_heaps.JSRopeString_fiber2);
     LValue base = m_out.bitOr(m_out.lShr(lengthAndLowOfBase, m_out.constInt32(32)), m_out.shl(m_out.bitAnd(highOfBaseAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
@@ -670,7 +672,7 @@ Lowering::NarrowCharacters Lowering::narrowCharactersOf(LValue string, LBasicBlo
     ValueFromBlock charactersOfSlice = m_out.anchor(m_out.add(m_out.loadPtr(m_out.loadPtr(base, m_heaps.JSString_value), m_heaps.StringImpl_data), offset));
     ValueFromBlock lengthOfSlice = m_out.anchor(lengthOfRope);
     m_out.jump(continuation);
-    m_out.appendTo(inPieces);
+    m_out.appendTo(isUnresolvedRope);
     lengthOtherwise.append(m_out.anchor(lengthOfRope));
     m_out.jump(otherwise);
 
@@ -678,33 +680,33 @@ Lowering::NarrowCharacters Lowering::narrowCharactersOf(LValue string, LBasicBlo
     return { m_out.phi(pointerType(), charactersOfImpl, charactersOfSlice), m_out.phi(Int32, lengthOfNarrow, lengthOfSlice) };
 }
 
-// value === theString, which says that.
+// value === theString, where theString is a constant with the contents `said`.
 LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String& said, LValue theString)
 {
     LBasicBlock continuation = m_out.newBlock();
     LBasicBlock slowCase = newColdBlock();
     Vector<ValueFromBlock, 6> results;
-    auto decideIf = [&](LValue condition, bool answer, bool isLikely = false) {
+    auto resolveIf = [&](LValue condition, bool answer, bool isLikely = false) {
         LBasicBlock next = m_out.newBlock();
         results.append(m_out.anchor(answer ? m_out.booleanTrue : m_out.booleanFalse));
         m_out.branch(condition, isLikely ? usually(continuation) : unsure(continuation), unsure(next));
         m_out.appendTo(next);
     };
-    // (What the program spells out in two places is one string: NumbersOfConstants.)
-    decideIf(m_out.equal(value, theString), true);
+    // (Equal string literals in the program share one JSString: see NumbersOfConstants.)
+    resolveIf(m_out.equal(value, theString), true);
     if (!isSubtype(valueNode->type, TCell))
-        decideIf(isNotCell(value), false);
+        resolveIf(isNotCell(value), false);
     if (!isSubtype(valueNode->type, TString | ~TCell))
-        decideIf(m_out.notEqual(cellType(value), m_out.constInt32(StringType)), false);
-    LBasicBlock notForTheLooking = m_out.newBlock();
+        resolveIf(m_out.notEqual(cellType(value), m_out.constInt32(StringType)), false);
+    LBasicBlock needsSlowPath = m_out.newBlock();
     Vector<ValueFromBlock, 2> lengthsOtherwise;
-    auto [characters, length] = narrowCharactersOf(value, notForTheLooking, lengthsOtherwise);
-    decideIf(m_out.notEqual(length, m_out.constInt32(said.length())), false, true);
+    auto [characters, length] = narrowCharactersOf(value, needsSlowPath, lengthsOtherwise);
+    resolveIf(m_out.notEqual(length, m_out.constInt32(said.length())), false, true);
     results.append(m_out.anchor(m_out.isZero64(compareWithLiteral(characters, said.span8()))));
     m_out.jump(continuation);
 
-    // (How long it is settles it as a rule, whatever it takes to look at it.)
-    m_out.appendTo(notForTheLooking);
+    // (The length usually decides the comparison, even if the characters cannot be read inline.)
+    m_out.appendTo(needsSlowPath);
     results.append(m_out.anchor(m_out.booleanFalse));
     m_out.branch(m_out.notEqual(m_out.phi(Int32, lengthsOtherwise), m_out.constInt32(said.length())), usually(continuation), rarely(slowCase));
 
@@ -720,19 +722,21 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
 {
     Node* left = node->use(lhs);
     Node* right = node->use(rhs);
-    // array[Symbol.iterator] === Array.prototype.values (Graph::elideReadsOfIteratorMethodsOfArrays()). An array as the realm makes them has no such property of its own, and inherits
-    // from Array.prototype, whose own cannot be changed. Of any other array it is asked.
+    // array[Symbol.iterator] === Array.prototype.values (Graph::elideReadsOfIteratorMethodsOfArrays()). An array with the realm's
+    // original structure has no such own property, and inherits it from Array.prototype, where it cannot be changed. For any other
+    // array the property is looked up.
     if (Node* read = left->isElided ? left : right->isElided ? right : nullptr) {
         RELEASE_ASSERT(strict && Graph::isReadOfIteratorMethodOfArray(read));
-        // No class has one of its own, and Array.prototype's stays what it is. (What has been done to the one array is not reckoned with.)
+        // No subclass overrides it, and Array.prototype's cannot change. (A property that is added to an individual array is not
+        // accounted for.)
         if (!mayBeOverridden("Array"_s, read))
             return m_out.booleanTrue;
         LValue array = lowJSValue(read->use(read->as<OpGetById>().m_base));
-        LBasicBlock isSomeOtherArray = newColdBlock();
+        LBasicBlock isNotOriginalArray = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         ValueFromBlock itIs = m_out.anchor(m_out.booleanTrue);
-        m_out.branch(isOriginalArray(array), usually(continuation), rarely(isSomeOtherArray));
-        m_out.appendTo(isSomeOtherArray);
+        m_out.branch(isOriginalArray(array), usually(continuation), rarely(isNotOriginalArray));
+        m_out.appendTo(isNotOriginalArray);
         ValueFromBlock asked = m_out.anchor(m_out.equal(vmCall(read, Int64, Entry::operationAOTIteratorMethodOfArray, m_globalObject, array), lowJSValue(read == left ? right : left)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
@@ -749,13 +753,13 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     if (isSubtype(both, TBoolean))
         return m_out.equal(lowBoolean(left), lowBoolean(right));
     if (strict && !(left->type & right->type) && !(mayBe(left->type, TNumber) && mayBe(right->type, TNumber)))
-        return m_out.booleanFalse; // No value is of both types.
+        return m_out.booleanFalse; // The types are disjoint.
 
     LValue a = lowJSValue(left);
     LValue b = lowJSValue(right);
 
-    // Where identity of the bits is the whole story: neither side can be a number (int32 1 and double 1 are equal, NaN is not
-    // equal to itself), a string or a BigInt (equal by content), and for == neither can be converted.
+    // The cases where comparing the bits is sufficient: neither side can be a number (int32 1 equals double 1, and NaN does not
+    // equal itself), a string or a BigInt (which compare by content), and for == neither side can be converted.
     Type byContent = TNumber | TString | TBigInt;
     if (strict) {
         if (!mayBe(left->type, byContent) || !mayBe(right->type, byContent))
@@ -765,24 +769,25 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
 
     // (== of two strings is ===.)
     if ((strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt)) {
-        // What the program spells out is a short atom. A string that says the same is short: so where short ones are atoms it is that atom, or does not say the same.
+        // A string literal in the program is a short atom. An equal string is just as short, so where short strings are known to be
+        // atoms, it is either the same atom or not equal.
         if ((isAtomIfString(left) && isAtomIfString(right))
-            || (stringWrittenInProgram(right) && isAtomIfString(right) && isAtomIfShortString(left))
-            || (stringWrittenInProgram(left) && isAtomIfString(left) && isAtomIfShortString(right)))
+            || (constantStringOf(right) && isAtomIfString(right) && isAtomIfShortString(left))
+            || (constantStringOf(left) && isAtomIfString(left) && isAtomIfShortString(right)))
             return areEqualAssumingAtomStrings(left, a, right, b);
     }
     if (!isCompact() && (strict || isSubtype(both, TString))) {
-        if (auto said = stringWrittenInProgram(right))
+        if (auto said = constantStringOf(right))
             return isStringEqualTo(node, left, a, *said, b);
-        if (auto said = stringWrittenInProgram(left))
+        if (auto said = constantStringOf(left))
             return isStringEqualTo(node, right, b, *said, a);
     }
 
     if (isCompact()) {
         if (strict || isSubtype(both, TString)) {
-            if (stringWrittenInProgram(right) && isAtomIfString(right))
+            if (constantStringOf(right) && isAtomIfString(right))
                 return callStub(Stub::IsStringEqualTo, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { });
-            if (stringWrittenInProgram(left) && isAtomIfString(left))
+            if (constantStringOf(left) && isAtomIfString(left))
                 return callStub(Stub::IsStringEqualTo, Int32, { { b, GPRInfo::argumentGPR0 }, { a, GPRInfo::argumentGPR1 } }, { });
         }
         return callStub(strict ? Stub::StrictEqual : Stub::LooseEqual, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } },
@@ -798,7 +803,7 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     m_out.branch(m_out.bitAnd(isInt32(a), isInt32(b)), unsure(continuation), unsure(notBothInt));
 
     m_out.appendTo(notBothInt, slowCase);
-    // The same bits, and not a number: equal, whatever it is.
+    // Equal bits that are not a number are equal values.
     results.append(m_out.anchor(m_out.booleanTrue));
     m_out.branch(m_out.bitAnd(m_out.equal(a, b), isNotNumber(a)), unsure(continuation), unsure(slowCase));
 

@@ -203,7 +203,7 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
 
 void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
-    // (As for a function that is inside another: what `new` runs too, if it can tell.)
+    // (As for a nested function: the code for construct is generated too, if the function can observe the difference.)
     generateUnlinkedCodeBlocksOfFunction(vm, executable, parentSource, { }, error, depth == std::numeric_limits<unsigned>::max() ? depth : depth + 1, optimize);
 }
 

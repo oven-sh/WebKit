@@ -513,7 +513,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             }
             if (TypedLayoutTable::checkStore(*field, value) == TypedLayoutTable::StoreCheck::Rejected)
                 return TypedFieldError;
-            // (Nobody remembers how it went, so everybody who does not know the types gets here every time.)
+            // (The outcome is not cached, so untyped code takes this path on every store.)
             isTypedField = true;
             value = TypedLayoutTable::toFieldRepresentation(*field, value);
             if (auto* fieldType = TypedLayoutTable::fieldTypeOf(*field))
@@ -523,8 +523,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && typedLayoutID) [[unlikely]]
             evictTypedField(vm, propertyName);
     }
-    // Of a family whose slots are verified. The Structure that the object has, or is about to have, says which field is at the offset, if any is: what is stored there is what that holds.
-    // (What is not in its slot is looked at by whoever reads it. What is made an accessor is no longer said to be in its slot.)
+    // For a typed layout that uses field IDs. The Structure that the object has, or is about to get, says which field is at the
+    // offset, if any, and the stored value has to match that field's type.
+    // (A field that is not in its slot is checked by the code that reads it. A property that becomes an accessor is no longer
+    // recorded as being in its slot.)
     auto isRejectedAtOffset = [&](Structure* itsStructure, PropertyOffset where) {
         if (static_cast<unsigned>(where) >= Structure::numberOfSlotsWithFieldIDs || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             return false;

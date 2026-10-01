@@ -197,7 +197,7 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool us
 
 static FindFirstCallerFrameWithCodeblockFunctor findFirstCallerFrameWithCode(VM& vm, CallFrame* startCallFrame)
 {
-    // (It is a stub's, which is nobody's: nobody who walks the stack gets to see it.)
+    // (The frame belongs to an AOT stub, which stack walks skip.)
     if (startCallFrame && vm.topCallFrame == startCallFrame && AOT::topCallFrameIsAOTFrame(startCallFrame))
         startCallFrame = nullptr;
     if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {

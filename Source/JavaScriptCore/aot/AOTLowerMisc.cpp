@@ -49,8 +49,8 @@ LValue Lowering::isUndefinedOrNull(Node* value)
     return isOther(lowJSValue(value));
 }
 
-// == null, or typeof == "undefined" (which null is not): also true of objects that masquerade as undefined, which is a matter
-// for the structure's flags and realm.
+// == null, or typeof == "undefined" (which is false for null). Both are also true for objects that masquerade as undefined, which
+// depends on the structure's flags and realm.
 LValue Lowering::equalsNull(Node* value, bool nullCounts)
 {
     auto notCellCase = [&](LValue jsValue) {
@@ -87,7 +87,7 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
         m_out.jump(edgeTo(block->successors[0]));
         return;
     case op_ret:
-        // There is one way out, however many returns there are: what it takes to leave is not worth having twice.
+        // All returns share one exit block, so that the epilogue is only emitted once.
         if (!m_returnBlock)
             m_returnBlock = m_out.newBlock();
         if (m_graph.numberOfRegisterReturnValues) {
@@ -95,7 +95,7 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
             for (unsigned i = 0; i < m_registerReturnValues.size(); ++i)
                 m_registerReturnValues[i].append(m_out.anchor(lowAs(object->use(NewObjectPlan::registerOf(i)), m_returnValueReps[i])));
         } else
-            m_returnValues.append(m_out.anchor(lowAs(node->use(node->as<OpRet>().m_value), m_howValuesArePassed.result)));
+            m_returnValues.append(m_out.anchor(lowAs(node->use(node->as<OpRet>().m_value), m_valueRepresentations.result)));
         m_out.jump(m_returnBlock);
         return;
     case op_unreachable:
@@ -198,17 +198,17 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
             return a.string->length() < b.string->length();
         return memcmp(a.string->span8().data(), b.string->span8().data(), a.string->length()) < 0;
     });
-    auto goesOnIf = [&](LValue condition, LBasicBlock otherwise) {
+    auto proceedIf = [&](LValue condition, LBasicBlock otherwise) {
         LBasicBlock next = m_out.newBlock();
         m_out.branch(condition, usually(next), rarely(otherwise));
         m_out.appendTo(next);
     };
     if (!isKnownToBeCell && !isSubtype(scrutinee->type, TCell))
-        goesOnIf(isCell(value), defaultBlock);
+        proceedIf(isCell(value), defaultBlock);
     if (!isSubtype(scrutinee->type, TString | ~TCell))
-        goesOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
+        proceedIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
 
-    // There is only one atom for any content, and what the program spells out is one.
+    // Atoms are unique, and string literals in the program are atoms, so pointers can be compared.
     if (all.size() <= 8 && isAtomIfShortString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant && one.string->length() <= TypedLayoutTable::maxLengthOfAtomizedString; })) {
         LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
         for (auto& one : all) {
@@ -229,12 +229,12 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
     ValueFromBlock plainLength = m_out.anchor(rawLength);
     m_out.jump(dispatch);
 
-    // One that is in pieces, or has room for characters that none of these has. How long it is is plain all the same, and as a rule that settles it.
+    // A rope, or a 16-bit string, which none of the cases is. Its length is still available, and usually decides the outcome.
     m_out.appendTo(ifOfSuchALength);
     {
         LValue itsLength = m_out.phi(Int32, lengthsOtherwise);
         unsigned longest = all.isEmpty() ? 0 : all.last().string->length();
-        goesOnIf(m_out.belowOrEqual(itsLength, m_out.constInt32(longest)), defaultBlock);
+        proceedIf(m_out.belowOrEqual(itsLength, m_out.constInt32(longest)), defaultBlock);
         if (longest < 64) {
             uint64_t lengths = 0;
             for (auto& one : all)
@@ -245,10 +245,10 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
             m_out.jump(slowCase);
     }
 
-    // What is written in the program is an atom: so if it says the same as any of them, there is an atom that says so.
+    // String literals in the program are atoms. So if the value equals any of the cases, an atom with its contents exists.
     m_out.appendTo(slowCase);
     LValue atom = vmCall(place, pointerType(), Entry::operationAOTFindEqualAtom, m_globalObject, value);
-    goesOnIf(m_out.notNull(atom), defaultBlock);
+    proceedIf(m_out.notNull(atom), defaultBlock);
     ValueFromBlock charactersOfAtom = m_out.anchor(m_out.loadPtr(atom, m_heaps.StringImpl_data));
     ValueFromBlock lengthOfAtom = m_out.anchor(m_out.load32(atom, m_heaps.StringImpl_length));
     m_out.jump(dispatch);
@@ -290,7 +290,7 @@ void Lowering::findChainsOfComparisons()
     auto isOneOfThose = [&](Node* node) {
         if (node->kind == NodeKind::Constant)
             return node->constant && !node->constant.isCell();
-        return stringWrittenInProgram(node) && isAtomIfString(node);
+        return constantStringOf(node) && isAtomIfString(node);
     };
     auto comparisonAtTheEndOf = [&](BasicBlock* block) -> std::optional<Comparison> {
         Node* terminal = block->terminal();
@@ -330,7 +330,7 @@ void Lowering::findChainsOfComparisons()
                 break;
             if (next->isCatchEntrypoint || next->isLoopHeader || next->isPreHeader || next->isReentry)
                 break;
-            if (next->isGeneric != head->isGeneric || next->isSeldomReached != head->isSeldomReached || next->isInLoop != head->isInLoop || next->graph != head->graph)
+            if (next->isGeneric != head->isGeneric || next->isRarelyExecuted != head->isRarelyExecuted || next->isInLoop != head->isInLoop || next->graph != head->graph)
                 break;
             if (!std::ranges::all_of(next->nodes, [&](Node* node) { return node == next->terminal() || node->isElided; }))
                 break;
@@ -354,7 +354,7 @@ void Lowering::lowerChainOfComparisons(BasicBlock* head, const ChainOfComparison
 {
     Node* place = head->terminal();
     Node* scrutinee = chain.value;
-    // Each arm leaves as from the block that it is written in: what the phis of where it goes are given depends on that.
+    // Each arm leaves as if from the block that it was written in, because the values for the phis of its target depend on that.
     struct Way {
         BasicBlock* from;
         BasicBlock* to;
@@ -364,13 +364,14 @@ void Lowering::lowerChainOfComparisons(BasicBlock* head, const ChainOfComparison
     auto wayFrom = [&](BasicBlock* from, BasicBlock* to) -> LBasicBlock {
         SetForScope asFrom(m_block, from);
         if (to->phis.isEmpty())
-            return wayInto(to);
+            return entryBlockFor(to);
         LBasicBlock edge = m_out.newBlock();
         ways.append({ from, to, edge });
         return edge;
     };
 
-    // No two of them are the same thing, so in what order they are asked after is neither here nor there. (Of two that are, the second is never got to.)
+    // The cases are distinct, so the order in which they are tested does not matter. (Of two equal cases, the second is
+    // unreachable.)
     Vector<StringCase, 16> strings;
     Vector<FTL::SwitchCase> integers;
     Vector<std::pair<double, LBasicBlock>, 4> fractions;
@@ -392,8 +393,8 @@ void Lowering::lowerChainOfComparisons(BasicBlock* head, const ChainOfComparison
         }
         double number = constant.asNumber();
         if (number != number)
-            continue; // Nothing is.
-        // (-0 is 0.)
+            continue; // NaN equals nothing.
+        // (-0 equals 0.)
         if (number >= std::numeric_limits<int32_t>::min() && number <= std::numeric_limits<int32_t>::max() && number == static_cast<int32_t>(number)) {
             if (bitsSeen.add(JSValue::encode(jsNumber(static_cast<int32_t>(number)))).isNewEntry)
                 integers.append(FTL::SwitchCase(m_out.constInt32(static_cast<int32_t>(number)), wayFrom(arm.block, arm.target), FTL::Weight()));
@@ -471,7 +472,7 @@ void Lowering::lowerChainOfComparisons(BasicBlock* head, const ChainOfComparison
         SetForScope asFrom(m_block, way.from);
         m_out.appendTo(way.edge);
         emitUpsilons(way.from, way.to);
-        m_out.jump(wayInto(way.to));
+        m_out.jump(entryBlockFor(way.to));
     }
 }
 
@@ -600,7 +601,7 @@ void Lowering::emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, u
         else {
             if (mayBe(candidates, TFinalObject))
                 passIf(isType(FinalObjectType));
-            // The rest of those that have a type to themselves, if there are few enough that it can be.
+            // The remaining object types that have a JSType of their own, if there are few enough candidates.
             if (Type others = candidates & TObject & ~(TFinalObject | TOtherObject); others && std::popcount(others) <= 2) {
                 for (auto& kind : kindsOfObject) {
                     if (mayBe(others, kind.type))
@@ -677,7 +678,7 @@ bool Lowering::tryLowerMisc(Node* node)
             return true;
         }
         if (code().scopeIsEnvironmentOfModule()) {
-            // (Most have no use for it: what they read of the module's they find the same way.)
+            // (Most functions do not use it: they find the module's variables at a static location.)
             if (node->useCount)
                 setJSValue(node, environmentAt(code().distanceOfEnvironmentOfModule()));
             return true;
@@ -695,7 +696,7 @@ bool Lowering::tryLowerMisc(Node* node)
         setInt32(node, numberOfArgumentsPassed());
         return true;
     case op_get_argument: {
-        // (It counts `this`.)
+        // (op_get_argument counts `this`.)
         unsigned index = node->as<OpGetArgument>().m_index - 1;
         if (m_graph.convention().signature == Signature::List)
             setJSValue(node, argumentPassedOrUndefined(index));
@@ -717,7 +718,8 @@ bool Lowering::tryLowerMisc(Node* node)
     }
     case op_type_tag: {
         Node* value = node->uses[0].node;
-        // (An array: it is taken to be one. Of a family whose slots are verified: it is asked when something is read.)
+        // (For an array, the annotation is trusted. For a typed layout that uses field IDs, the check happens when a field is
+        // read.)
         if (node->narrowedTo || value->hasLayoutInRange(node->firstLayout, node->lastLayout) || (TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(node->firstLayout) && TypeTable::shared()->usesFieldIDs(node->firstLayout))) {
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
@@ -742,15 +744,15 @@ bool Lowering::tryLowerMisc(Node* node)
         Node* value = node->use(bytecode.m_value);
         unsigned mask = bytecode.m_mask;
         if (value->isKnownToPass(mask)) {
-            // Something earlier has seen to it.
+            // An earlier check has already established this.
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
             m_sameAs = nullptr;
             return true;
         }
 
-        // Only what the value can still be is tested for, the cheapest first. Whatever that does not settle (a callable object
-        // that is not a function, say) and every failure is for the runtime, which either comes back or throws.
+        // Only the types that the value can still have are tested, cheapest first. Whatever that does not decide (for example a
+        // callable object that is not a function), and every failure, is left to the runtime, which either returns or throws.
         LValue jsValue = lowJSValue(value);
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
@@ -758,8 +760,8 @@ bool Lowering::tryLowerMisc(Node* node)
 
         m_out.appendTo(slowPath, continuation);
         coldCall(node, Entry::operationAOTCheckType, jsValue, m_out.constInt32(mask), ColdCall::ChangesNothing);
-        // Where the tests leave nothing open, what gets here is not coming back: and then nothing has to be kept for when it does,
-        // which is what would have everything that is in use in a register that has to be saved.
+        // If the inline tests are exhaustive, the call never returns. Marking it as such means that nothing has to stay live across
+        // it, which would otherwise force live values into callee-saved registers.
         Type admitted = value->type & typeAcceptedByMask(mask);
         Type candidates = value->type & typeProvingMask(mask);
         bool everyObjectPasses = isSubtype(TAnyObject & value->type, candidates) && mayBe(candidates, TAnyObject);
@@ -830,7 +832,7 @@ bool Lowering::tryLowerMisc(Node* node)
     case op_debug:
     case op_log_shadow_chicken_prologue:
     case op_log_shadow_chicken_tail:
-        // Only in code compiled for the debugger or the profilers, which is not what gets compiled ahead of time.
+        // These only occur in code compiled for the debugger or the profilers, which is never compiled ahead of time.
         unsupported(node);
         return false;
     default:

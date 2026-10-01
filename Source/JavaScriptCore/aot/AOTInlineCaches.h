@@ -30,9 +30,8 @@ std::optional<uint32_t> locationOfProperty(PropertyOffset);
 //     cache->structureID: the structure of the base. cache->offset: the location of the property, and what pointer is (see Slot).
 //     cache->pointer: null if that is the base itself. Else the object on the prototype chain that has the property; or, if none
 //     has, something that looks enough like an object that has undefined there.
-// structureBefore: the base's, if it is a cell, before the property was looked up: getting it may have run anything.
-// Says why not, if it did not.
-// mayBePolymorphic: whoever reads the slot knows what to make of Slot::isPolymorphic().
+// structureBefore: the structure of the base, if it is a cell, before the lookup. The lookup may have run arbitrary code.
+// mayBePolymorphic: the code that reads the slot handles Slot::isPolymorphic().
 void cacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache, bool mayBePolymorphic = false);
 
 //     cache->structureID: the structure of the base. cache->pointer: the private name, or the brand.
@@ -40,9 +39,9 @@ void cacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefo
 void noteCustomGetter(JSGlobalObject*, Instance&, JSObject* base, const Identifier&, const PropertySlot&); // Instance::customGetters
 void cachePrivateName(VM&, Data*, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset>);
 
-// A slot that rests on what the objects on the prototype chain have, or do not have, is told when that changes by the structures
-// they have now. A structure can only tell if nothing has ever moved on from it, and an object that has next to nothing in it, as
-// many a prototype does, shares its structure with others that have. There is only one of a prototype: it gets a structure of its own.
+// A slot that depends on what the objects on the prototype chain have, or lack, is invalidated through watchpoints on their current
+// structures. A structure can only be watched if nothing has ever transitioned from it, and an object with few properties, as many
+// prototypes are, shares its structure with objects that have. A prototype is a singleton, so it is given its own structure.
 void makePrototypeChainWatchable(VM&, JSCell* base);
 
 // A site's slot is good for one structure. Behind it, for the sites that see many, is the VM's megamorphic cache, which the
@@ -55,7 +54,7 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject*, JSValue base, Structure* oldS
 void cachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);
 
 // For a site that allocates cells of one structure and size. Two slots.
-//     cache[0].structureID: the structure. cache[0].offset, pointer: whatever else the site wants to have at hand.
+// cache[0].structureID: the structure. cache[0].offset, pointer: available for the site's own use.
 //     cache[1].offset: the other half of a new cell's header. cache[1].pointer: the allocator.
 // cache[0]: the callee. cache[1]: its CodeBlock. See Lowering::lowerCallToKnownFunction().
 // cache[0] and cache[1]: as for fillAllocationCache(), for the structure the object ends up with, and for that callee only.

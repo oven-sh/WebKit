@@ -52,7 +52,7 @@ namespace JSC::B3 {
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
     macro(AOTInstance_whatIsFixed, 0, Mutability::Immutable) \
-    macro(AOTInstance_whatChanges, 0, Mutability::Mutable) \
+    macro(AOTInstance_mutableFields, 0, Mutability::Mutable) \
     macro(ArrayBuffer_data, ArrayBuffer::offsetOfData(), Mutability::Mutable) \
     macro(ArrayStorage_numValuesInVector, ArrayStorage::numValuesInVectorOffset(), Mutability::Mutable) \
     macro(Butterfly_arrayBuffer, Butterfly::offsetOfArrayBuffer(), Mutability::Mutable) \

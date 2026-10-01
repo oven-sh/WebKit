@@ -129,13 +129,13 @@ public:
     void setSourceTaintedOrigin(SourceTaintedOrigin taintedness) { m_taintedness = taintedness; }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // What an image of code from the static compiler (AOT::Image) knows this source by. Zero: nothing.
+    // The ID that an AOT::Image uses for this source. Zero: none.
     uint32_t aotModuleID() const { return m_aotModuleID; }
     void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
-    // A program that was compiled ahead of time can be built without its text. Then source() is as long as the text was, so that
-    // what says where something is in it still does, and there is nothing in it to read.
-    // From now on nothing in it changes, and its strings are nobody's to count references to. It is never destroyed.
+    // Makes the provider immutable and immortal, and its strings static, so that it can be shared between threads.
     JS_EXPORT_PRIVATE void becomeShareableBetweenThreads();
+    // A program that was compiled ahead of time can be built without its source text. source() then has the length of the original
+    // text, so that offsets into it stay valid, but its contents must not be read.
     bool hasNoText() const { return m_hasNoText; }
     void setHasNoText() { m_hasNoText = true; }
 #endif

@@ -198,7 +198,7 @@ static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
     jit.move(instance, A0);
     jit.move(T11, A1);
     jit.loadPtr(Address(instance, Instance::offsetOfRuntimeTable()), T12);
-    jit.loadPtr(Address(T12, static_cast<unsigned>(Entry::operationAOTGiveData) * sizeof(void*)), T12);
+    jit.loadPtr(Address(T12, static_cast<unsigned>(Entry::operationAOTEnsureData) * sizeof(void*)), T12);
     jit.call(T12, OperationPtrTag);
     jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(0), A0, A1);
     jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(16), A2, A3);
@@ -540,12 +540,12 @@ static void generateInstanceOf(CCallHelpers& jit)
 // Returns a null address for a rope or a 16-bit string. A substring of an 8-bit string is read in place. Clobbers only T9-T11.
 static void generateNarrowCharacters(CCallHelpers& jit)
 {
-    CCallHelpers::JumpList isNotForTheLooking;
+    CCallHelpers::JumpList needsSlowLookup;
     jit.loadPtr(Address(A0, JSString::offsetOfValue()), T9);
     Jump isRope = jit.branchIfRopeStringImpl(T9);
     jit.load32(Address(T9, StringImpl::lengthMemoryOffset()), T10);
     jit.load32(Address(T9, StringImpl::flagsOffset()), T11);
-    isNotForTheLooking.append(jit.branchTest32(CCallHelpers::Zero, T11, TrustedImm32(StringImpl::flagIs8Bit())));
+    needsSlowLookup.append(jit.branchTest32(CCallHelpers::Zero, T11, TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(T9, StringImpl::dataOffset()), A0);
 
     CCallHelpers::Label pack = jit.label();
@@ -560,7 +560,7 @@ static void generateNarrowCharacters(CCallHelpers& jit)
     jit.load32(Address(A0, JSRopeString::offsetOfLength()), T10);
     constexpr uintptr_t narrowSlice = JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
     jit.and64(TrustedImm32(narrowSlice), T9, T11);
-    isNotForTheLooking.append(jit.branch64(CCallHelpers::NotEqual, T11, TrustedImm32(narrowSlice)));
+    needsSlowLookup.append(jit.branch64(CCallHelpers::NotEqual, T11, TrustedImm32(narrowSlice)));
     // See JSRopeString::CompactFibers. The base string of a substring is always resolved.
     jit.load64(Address(A0, JSRopeString::offsetOfFiber1()), T9);
     jit.load64(Address(A0, JSRopeString::offsetOfFiber2()), T11);
@@ -574,7 +574,7 @@ static void generateNarrowCharacters(CCallHelpers& jit)
     jit.add64(T11, A0);
     jit.jump().linkTo(pack, &jit);
 
-    isNotForTheLooking.link(&jit);
+    needsSlowLookup.link(&jit);
     jit.move(TrustedImm32(0), A0);
     jit.jump().linkTo(pack, &jit);
 }
@@ -1595,11 +1595,11 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         }
         haveSlot.link(&jit);
         jit.load64(slotWord(A1, 0), T11);
-        Jump isIntricateThere = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
+        Jump isIndirectLocation = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
         jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
         jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
         jit.ret();
-        isIntricateThere.link(&jit);
+        isIndirectLocation.link(&jit);
         jit.loadPtr(slotWord(A1, 1), T12);
         jit.moveConditionallyTest64(CCallHelpers::NonZero, T12, T12, T12, A0, T12);
         Jump isGetterThere = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isGetter) << 32));
@@ -1766,10 +1766,10 @@ static void generatePutById(CCallHelpers& jit)
             Jump isAtom = jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(TypeInfoPerCellBit));
             // A long string need not be an atom and is stored as it is.
             jit.loadPtr(Address(A1, JSString::offsetOfValue()), T12);
-            Jump isInPieces = jit.branchIfRopeStringImpl(T12);
+            Jump stringIsRope = jit.branchIfRopeStringImpl(T12);
             jit.load32(Address(T12, StringImpl::lengthMemoryOffset()), T12);
             Jump haveLength = jit.jump();
-            isInPieces.link(&jit);
+            stringIsRope.link(&jit);
             jit.load32(Address(A1, JSRopeString::offsetOfLength()), T12);
             haveLength.link(&jit);
             miss.append(jit.branch32(CCallHelpers::BelowOrEqual, T12, TrustedImm32(TypedLayoutTable::maxLengthOfAtomizedString)));
@@ -2279,7 +2279,7 @@ static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const L
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
     hasExecutable.link(&jit);
-    // A short-form executable does not store this. See ExecutableBase::wayIntoShortForm().
+    // A short-form executable does not store this. See ExecutableBase::entrypointOfShortForm().
     Jump saysHowToGetIn = jit.branchIfNotType(T11, ShortFunctionExecutableType);
     jit.loadPtr(Address(T11, FunctionExecutable::offsetOfAOTEntryFor(kind)), T12);
     slow.append(jit.branchTestPtr(CCallHelpers::Zero, T12));
@@ -2465,7 +2465,7 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, total, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(total, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), total);
     hasExecutable.link(&jit);
-    // A short-form executable does not store this. See ExecutableBase::wayIntoShortForm().
+    // A short-form executable does not store this. See ExecutableBase::entrypointOfShortForm().
     Jump saysHowToGetIn = jit.branchIfNotType(total, ShortFunctionExecutableType);
     jit.loadPtr(Address(total, FunctionExecutable::offsetOfAOTEntryFor(CodeSpecializationKind::CodeForCall)), scratch);
     slowCase.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
@@ -2836,7 +2836,8 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
     else {
 #if CPU(ARM64)
         if (kind == CodeSpecializationKind::CodeForCall) {
-            // This frame holds the list, as the one that Stub::Call makes does, and is told by the same return address.
+            // This frame holds the argument list, like the frame that Stub::Call creates, and is identified by the same return
+            // address.
             s_callVarargsReturnAddress = jit.label();
             s_addressesOfLabels->append({ jit.label(), ARM64Registers::lr, s_returnFromCallWithList });
             jit.m_assembler.adr(ARM64Registers::lr, 0);

@@ -167,8 +167,9 @@ public:
     }
     
 private:
-    // Bun: by the offset as well as the pointer. Whoever looks for a value only accepts one with the same offset, and code compiled ahead
-    // of time has thousands of accesses to the same pointer in a block (the frame, the Instance): going through them all is quadratic.
+    // Bun: keyed by the offset as well as the pointer. A lookup only accepts a value with the same offset, and code compiled ahead
+    // of time has thousands of accesses to the same pointer in one block (the frame, the Instance), so scanning all of them is
+    // quadratic.
     using Key = std::pair<Value*, int64_t>;
     static Key keyFor(Value* pointer, int64_t offset) { return { pointer, offset }; }
 
@@ -178,7 +179,7 @@ private:
     // - It can't be a MemoryMatches array because the MemoryValue*'s could be turned into Identity's.
     UncheckedKeyHashMap<Key, Matches> m_map;
 
-    // What clobber() goes by. As the value was when it was added: it may have been turned into an Identity since.
+    // What clobber() needs, recorded when the value was added, because the value may have been replaced by an Identity since.
     struct Clobberable {
         Value* value;
         Key key;

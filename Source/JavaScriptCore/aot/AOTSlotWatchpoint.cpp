@@ -51,12 +51,12 @@ void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
     data->slotEpoch++;
 }
 
-// Of an object whose properties were fixed (JSObject::fixProperties()): what it had then, it has, where it had it. If it cannot be
+// Of an object whose properties were fixed (JSObject::makePropertiesImmutable()): what it had then, it has, where it had it. If it cannot be
 // given more either, what it does not have it never will. There is nothing to watch for.
 static bool isPermanentlyValid(const ObjectPropertyCondition& condition)
 {
     Structure* structure = condition.object()->structure();
-    if (!structure->heirsMayOverrideReadOnlyProperties())
+    if (!structure->inheritorsMayOverrideReadOnlyProperties())
         return false;
     switch (condition.kind()) {
     case PropertyCondition::Presence:

@@ -21,9 +21,9 @@ namespace JSC { namespace AOT {
 
 using namespace B3;
 
-// The fast copy of a loop (see BasicBlock::isGeneric). A guard is lowered to the short way of doing the instruction that comes
-// after it, all of it, with a way out to the generic copy from wherever it turns out not to apply. Up to the last way out it does
-// nothing that can be told from the outside: the generic copy starts the instruction over.
+// The fast copy of a split loop (see BasicBlock::isGeneric). A guard is lowered to the complete fast path of the instruction that
+// follows it, with an exit to the generic copy from every point where the fast path turns out not to apply. Before its last exit,
+// the fast path has no observable effect, because the generic copy executes the instruction from the start.
 
 static LValue lowHalf(FTL::Output& out, LValue word) { return out.castToInt32(word); }
 static LValue hasFlag(FTL::Output& out, LValue word, uint32_t flag) { return out.testNonZero64(word, out.constInt64(static_cast<int64_t>(static_cast<uint64_t>(flag) << 32))); }
@@ -37,10 +37,8 @@ void Lowering::lowerGuard(BasicBlock* block, Node* guard)
     emitUpsilons(block, block->successors[0]);
     m_out.jump(block->successors[0]->lowered);
 
-    // What the generic copy wants boxed is boxed on the way there.
+    // Values that the generic copy needs boxed are boxed on the exit edge.
     m_out.appendTo(m_exit);
-    if (guard->guardKind == GuardKind::Field) {
-    }
     emitUpsilons(block, block->successors[1]);
     m_out.jump(block->successors[1]->lowered);
     m_exit = nullptr;
@@ -54,8 +52,8 @@ LBasicBlock Lowering::newColdBlock()
     return result;
 }
 
-// Another thread sets them, which is nothing that B3 has a way to be told: it takes two loads with no store between them for one,
-// and a loop that stores nothing would look once. So it is not shown a load.
+// Another thread sets the trap bits, which B3 has no way to model: it would merge two loads with no store in between, and hoist the
+// load out of a loop that stores nothing. So the load is hidden in a patchpoint.
 LValue Lowering::trapBits()
 {
     PatchpointValue* patchpoint = m_out.patchpoint(Int32);
@@ -69,10 +67,11 @@ LValue Lowering::trapBits()
     return patchpoint;
 }
 
-// from: what the value is known to be. Every type can be told from every other by looking.
+// from: the known type of the value. Every type can be distinguished from every other at run time.
 void Lowering::exitUnlessOfType(LValue value, Type from, Type wanted)
 {
-    // Which function it is, or what it was born as, is not looked into: if that has to be known, and is not, it does not pass.
+    // The function number and the typed layout are not tested. If the wanted type requires one and it is not already known, the
+    // value does not pass.
     if ((from & wanted & TFunctionTag) && !isSubtype(from & TAnyFunctionNumber, wanted))
         wanted &= ~TFunction;
     if ((from & wanted & TFinalObjectTag) && !isSubtype(from & TAnyLayoutNumber, wanted))
@@ -88,11 +87,12 @@ void Lowering::exitUnlessOfType(LValue value, Type from, Type wanted)
         return type;
     };
     auto isType = [&](JSType jsType) { return m_out.equal(cellTypeOfValue(), m_out.constInt32(jsType)); };
-    // In an order in which each test can take it that the ones before it failed: what is not a cell comes first.
+    // The tests are ordered so that each can assume that the earlier ones failed. The tests for values that are not cells come
+    // first.
     auto consider = [&](Type atoms, auto&& test) {
         if (!mayBe(remaining, atoms))
             return;
-        // With one verdict for all that is left there is nothing to find out.
+        // If all of the remaining types have the same outcome, no further test is needed.
         if (isSubtype(remaining, wanted) || !mayBe(remaining, wanted))
             return;
         RELEASE_ASSERT(isSubtype(atoms & remaining, wanted) || !mayBe(atoms & remaining, wanted));
@@ -137,7 +137,7 @@ void Lowering::guardReentry(BasicBlock* block)
                 node->loweredAsJSValue = value->rep() == Rep::JSValue ? lowRaw(value) : value->loweredAsJSValue;
             continue;
         }
-        // It has to be an integer, and no bigger than the loop's own get.
+        // The value has to be an integer within the range that was computed for the loop.
         LValue integer;
         if (value->isInteger())
             integer = lowInt64(value);
@@ -151,7 +151,7 @@ void Lowering::guardReentry(BasicBlock* block)
             exitUnless(isInt32(jsValue));
             integer = m_out.signExt32To64(unboxInt32(jsValue));
         }
-        // Numbers, whatever they look like (see compile()).
+        // These are plain integers, not addresses to relocate (see compile()).
         m_graph.wideIntegerConstants.add(node->range.min);
         m_graph.wideIntegerConstants.add(node->range.max);
         exitUnless(m_out.greaterThanOrEqual(integer, m_out.constInt64(node->range.min)));
@@ -168,7 +168,7 @@ unsigned Lowering::slotOfPropertyGuard(Node* guard)
     return sharedSite(guard, numberOf(guard, bytecode.m_property), (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0));
 }
 
-// There is always something there to load.
+// The slot always exists, so the load can be hoisted above the checks.
 LValue Lowering::loadSlotWord(unsigned slot, unsigned word)
 {
     LValue result = m_out.load64(slotWord(slot, word));
@@ -203,7 +203,7 @@ void Lowering::emitGuard(Node* guard)
     case GuardKind::SlotsAgree:
         exitUnless(m_out.equal(m_out.castToInt32(loadSlotWord(slotOfPropertyGuard(guard->site), 0)), m_out.castToInt32(loadSlotWord(slotOfPropertyGuard(guard->otherSite), 0))));
         return;
-    case GuardKind::SlotIsPlain:
+    case GuardKind::SlotIsDirect:
         exitUnless(m_out.logicalNot(hasFlag(m_out, loadSlotWord(slotOfPropertyGuard(guard->site), 0), Slot::isIndirect)));
         return;
     case GuardKind::BeginSlotChecks: {
@@ -236,12 +236,12 @@ void Lowering::emitGuard(Node* guard)
     case GuardKind::KnownCallee: {
         const KnownFunction* known = m_graph.knownCallee(guard);
         if (m_graph.calleeIsExact(guard)) {
-            // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
+            // Until the variable is initialized it does not hold a function. (The temporal dead zone has already been checked.)
             if (!known->isDeclaration)
                 exitUnless(isCell(lowJSValue(guard->uses[0].node)));
             return;
         }
-        RELEASE_ASSERT_NOT_REACHED(); // There is no such guard of what is not proven (inlineCall()).
+        RELEASE_ASSERT_NOT_REACHED(); // inlineCall() only creates this guard for a proven callee.
         return;
     }
     case GuardKind::TypedArrayStorage: {
@@ -359,8 +359,8 @@ void Lowering::exitUnless(LValue condition)
 }
 
 
-// Where a property that is in the base itself is.
-static LValue plainLocation(FTL::Output& out, LValue base, LValue word)
+// The address of a property that is stored inline in the base.
+static LValue directLocation(FTL::Output& out, LValue base, LValue word)
 {
     LValue location = out.bitAnd(out.lShr(word, out.constInt32(32)), out.constInt64(Slot::directLocationMask));
     return out.add(base, out.shl(location, out.constInt32(3)));
@@ -375,7 +375,7 @@ void Lowering::guardGetById(Node* guard)
         guard->lowered = m_out.int64Zero;
         return;
     }
-    // No two names are ever the same place.
+    // Properties with different names never alias.
     const AbstractHeap& heap = m_heaps.properties[bytecode.m_property];
     LValue base = lowJSValue(baseNode);
     unsigned slot = slotOfPropertyGuard(guard);
@@ -383,31 +383,32 @@ void Lowering::guardGetById(Node* guard)
     if (!guard->structureIsChecked)
         checkStructure(baseNode, base, word);
 
-    if (guard->slotIsPlain) {
-        guard->lowered = m_out.load64(TypedPointer(heap, plainLocation(m_out, base, word)));
+    if (guard->slotIsDirect) {
+        guard->lowered = m_out.load64(TypedPointer(heap, directLocation(m_out, base, word)));
         return;
     }
 
     LBasicBlock plain = m_out.newBlock();
-    LBasicBlock intricate = m_out.newBlock();
+    LBasicBlock indirectCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(hasFlag(m_out, word, Slot::isIndirect), rarely(intricate), usually(plain));
+    m_out.branch(hasFlag(m_out, word, Slot::isIndirect), rarely(indirectCase), usually(plain));
 
-    m_out.appendTo(plain, intricate);
-    ValueFromBlock plainResult = m_out.anchor(m_out.load64(TypedPointer(heap, plainLocation(m_out, base, word))));
+    m_out.appendTo(plain, indirectCase);
+    ValueFromBlock directResult = m_out.anchor(m_out.load64(TypedPointer(heap, directLocation(m_out, base, word))));
     m_out.jump(continuation);
 
-    m_out.appendTo(intricate, continuation);
+    m_out.appendTo(indirectCase, continuation);
     exitUnless(m_out.logicalNot(hasFlag(m_out, word, Slot::isGetter)));
     LValue holder = loadSlotWord(slot, 1);
-    ValueFromBlock intricateResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(m_out.notNull(holder), holder, base), word, &heap)));
+    ValueFromBlock indirectResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(m_out.notNull(holder), holder, base), word, &heap)));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    guard->lowered = m_out.phi(Int64, plainResult, intricateResult);
+    guard->lowered = m_out.phi(Int64, directResult, indirectResult);
 }
 
-// Goes on if the value is what the slot holds, and to `otherwise` if it is not, or if that is not plain.
+// Falls through if the value is accepted by the field's type. Jumps to `otherwise` if it is not, or if that cannot be decided
+// inline.
 bool Lowering::branchUnlessAccepted(Node* valueNode, LValue value, TypeTable::FieldType fieldType, LBasicBlock otherwise)
 {
     if (!fieldType.isConstrained())
@@ -451,16 +452,17 @@ void Lowering::guardField(Node* guard)
         if (!isSubtype(baseNode->type, TCell))
             exitUnless(isCell(base));
         if (!baseNode->hasLayoutInRangeIfCell(guard->firstLayout, guard->lastLayout)) {
-            LValue isOneThatHasIt = isOneOf(loadTypedLayoutID(base), guard->firstLayout, guard->lastLayout);
+            LValue hasLayoutWithProperty = isOneOf(loadTypedLayoutID(base), guard->firstLayout, guard->lastLayout);
             if (!guard->firstWithout)
-                exitUnless(isOneThatHasIt);
+                exitUnless(hasLayoutWithProperty);
             else {
-                // That it has no such property, and inherits none, goes for what it is now. (TypeTable::fieldOf() has seen to what Object.prototype has.)
+                // Whether the object lacks the property, and inherits none, depends on its current layout. (TypeTable::fieldOf()
+                // rejects the names that Object.prototype has.)
                 has = m_out.newBlock();
                 done = m_out.newBlock();
-                LBasicBlock mayHaveNone = m_out.newBlock();
-                m_out.branch(isOneThatHasIt, usually(has), unsure(mayHaveNone));
-                m_out.appendTo(mayHaveNone);
+                LBasicBlock mayLackProperty = m_out.newBlock();
+                m_out.branch(hasLayoutWithProperty, usually(has), unsure(mayLackProperty));
+                m_out.appendTo(mayLackProperty);
                 exitUnless(isOneOf(layoutOf(base), guard->firstWithout, guard->lastWithout));
                 thereIsNone = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
                 m_out.jump(done);
@@ -468,22 +470,22 @@ void Lowering::guardField(Node* guard)
             }
         }
     }
-    // No two names are ever the same place.
+    // Properties with different names never alias.
     TypedPointer slot = m_out.address(m_heaps.properties[isRead ? guard->as<OpGetById>().m_property : guard->as<OpPutById>().m_property], base, JSObject::offsetOfInlineStorage() + guard->slotOfField * sizeof(EncodedJSValue));
-    // It is where it was, or nothing is (Structure::typedLayoutID()).
-    LValue whatIsThere = m_out.load64(slot);
-    exitUnless(m_out.notZero64(whatIsThere));
+    // The slot either holds the property or is empty (Structure::typedLayoutID()).
+    LValue valueInSlot = m_out.load64(slot);
+    exitUnless(m_out.notZero64(valueInSlot));
     if (isRead) {
         if (done) {
-            ValueFromBlock found = m_out.anchor(whatIsThere);
+            ValueFromBlock found = m_out.anchor(valueInSlot);
             m_out.jump(done);
             m_out.appendTo(done);
-            whatIsThere = m_out.phi(Int64, found, *thereIsNone);
+            valueInSlot = m_out.phi(Int64, found, *thereIsNone);
         }
-        guard->lowered = whatIsThere;
+        guard->lowered = valueInSlot;
         return;
     }
-    // That it can be written is a matter of what the object is now.
+    // Whether the property is writable depends on the object's current Structure.
     exitUnless(m_out.testIsZero32(m_out.load32(m_out.address(m_heaps.root, structureOf(base), Structure::bitFieldOffset())), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)));
     Node* valueNode = guard->use(guard->as<OpPutById>().m_value);
     LValue value = lowJSValue(valueNode);
@@ -511,30 +513,31 @@ void Lowering::guardPutById(Node* guard)
     if (!guard->structureIsChecked)
         checkStructure(baseNode, base, word);
 
-    if (guard->slotIsPlain) {
-        m_out.store64(value, TypedPointer(heap, plainLocation(m_out, base, word)));
+    if (guard->slotIsDirect) {
+        m_out.store64(value, TypedPointer(heap, directLocation(m_out, base, word)));
         if (mayBe(valueNode->type, TCell))
             storeBarrier(base);
         return;
     }
 
     LBasicBlock plain = m_out.newBlock();
-    LBasicBlock intricate = m_out.newBlock();
+    LBasicBlock indirectCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(hasFlag(m_out, word, Slot::isIndirect), rarely(intricate), usually(plain));
+    m_out.branch(hasFlag(m_out, word, Slot::isIndirect), rarely(indirectCase), usually(plain));
 
-    m_out.appendTo(plain, intricate);
-    ValueFromBlock plainAddress = m_out.anchor(plainLocation(m_out, base, word));
+    m_out.appendTo(plain, indirectCase);
+    ValueFromBlock directAddress = m_out.anchor(directLocation(m_out, base, word));
     m_out.jump(continuation);
 
-    // Out of line. A new property is not for here: what it does to the structure, everything else here would have to look out for.
-    m_out.appendTo(intricate, continuation);
+    // An out-of-line property. Adding a property is not handled here, because every other guard would have to account for the
+    // structure change.
+    m_out.appendTo(indirectCase, continuation);
     exitUnless(m_out.isZero32(lowHalf(m_out, loadSlotWord(slot, 1))));
-    ValueFromBlock intricateAddress = m_out.anchor(cachedPropertyAddress(base, word).value());
+    ValueFromBlock indirectAddress = m_out.anchor(cachedPropertyAddress(base, word).value());
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    m_out.store64(value, TypedPointer(heap, m_out.phi(pointerType(), plainAddress, intricateAddress)));
+    m_out.store64(value, TypedPointer(heap, m_out.phi(pointerType(), directAddress, indirectAddress)));
     if (mayBe(valueNode->type, TCell))
         storeBarrier(base);
 }
@@ -557,7 +560,7 @@ TypedPointer Lowering::elementOfTypedArray(Node* guard, Node* baseNode, Node* pr
 {
     LValue index;
     if (propertyNode->isInteger())
-        index = lowInt64(propertyNode); // One that is negative is, unsigned, beyond any length.
+        index = lowInt64(propertyNode); // A negative index, treated as unsigned, is larger than any length.
     else if (!mayBe(propertyNode->type, TNumber)) {
         exitUnless(m_out.booleanFalse);
         index = m_out.int64Zero;
@@ -579,7 +582,7 @@ TypedPointer Lowering::elementOfTypedArray(Node* guard, Node* baseNode, Node* pr
         length = m_out.loadPtr(base, m_heaps.JSArrayBufferView_length);
         vector = m_out.loadPtr(base, m_heaps.JSArrayBufferView_vector);
     }
-    // One that has been detached has no length.
+    // A detached typed array has a length of zero.
     exitUnless(m_out.below(index, length));
     unsigned logSize = 0;
     for (auto& kind : typedArrayKinds) {
@@ -640,7 +643,7 @@ void Lowering::guardGetByVal(Node* guard)
         exitUnless(isCell(base));
 
     if (guard->guarded && isSubtype(guard->guarded->type, TNumber)) {
-        // An array that is taken to hold numbers (see the type of op_get_by_val).
+        // An array that is assumed to hold numbers (see the type of op_get_by_val).
         LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
         if (guard->guarded->rep() == Rep::Int32) {
             exitUnless(m_out.equal(shape, m_out.constInt32(Int32Shape)));
@@ -700,7 +703,7 @@ void Lowering::guardGetByVal(Node* guard)
     results.append(m_out.anchor(element));
     m_out.jump(continuation);
 
-    // A hole is not a number.
+    // A hole is a NaN, which does not compare equal to itself.
     m_out.appendTo(doubleCase, noButterfly);
     LValue number = m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly, m_out.zeroExtPtr(index)));
     exitUnless(m_out.doubleEqual(number, number));
@@ -712,7 +715,7 @@ void Lowering::guardGetByVal(Node* guard)
         LValue type = cellType(base);
         exitUnless(m_out.below(m_out.sub(type, m_out.constInt32(FirstTypedArrayType)), m_out.constInt32(NumberOfTypedArrayTypesExcludingDataView)));
         exitUnless(m_out.testIsZero32(m_out.load8ZeroExt32(base, m_heaps.JSArrayBufferView_mode), m_out.constInt32(isResizableOrGrowableSharedMode)));
-        // One that has been detached has no length.
+        // A detached typed array has a length of zero.
         LValue wideIndex = m_out.zeroExtPtr(index);
         exitUnless(m_out.below(wideIndex, m_out.loadPtr(base, m_heaps.JSArrayBufferView_length)));
         LValue vector = m_out.loadPtr(base, m_heaps.JSArrayBufferView_vector);
@@ -781,7 +784,7 @@ void Lowering::guardPutByVal(Node* guard)
 
     bool valueIsNumber = isSubtype(valueNode->type, TNumber);
     bool valueMayBeNumber = mayBe(valueNode->type, TNumber);
-    // Only asked for where it is one, or where it has been made sure of.
+    // Only called where the value is a number, or has been checked to be one.
     auto valueAsDouble = [&]() -> LValue {
         if (valueIsNumber)
             return lowDouble(valueNode);
@@ -847,7 +850,7 @@ void Lowering::guardPutByVal(Node* guard)
     LValue indexingMode = m_out.bitAnd(m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask | CopyOnWrite));
     m_out.branch(m_out.notZero32(indexingMode), unsure(hasButterfly), unsure(noButterfly));
 
-    // An element for which there is room. What is between the old length and it are holes already.
+    // An element that fits in the allocated storage. The elements between the old length and the index are already holes.
     m_out.appendTo(hasButterfly, contiguousCase);
     LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
     exitUnless(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_vectorLength)));
@@ -963,7 +966,8 @@ void Lowering::guardGetLength(Node* guard)
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 3> results;
 
-    // An array that has storage of some kind has its length there. One above what an int32 holds is for the runtime.
+    // An array with any kind of storage has its length in the butterfly. A length that does not fit in an int32 is left to the
+    // runtime.
     if (mayBe(baseNode->type, TArray)) {
         LValue indexingType = m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc);
         LValue isArrayWithStorage = m_out.bitAnd(m_out.testNonZero32(indexingType, m_out.constInt32(IsArray)), m_out.testNonZero32(indexingType, m_out.constInt32(IndexingShapeMask)));
@@ -1010,8 +1014,8 @@ void Lowering::guardCheckType(Node* guard)
 
     LValue jsValue = lowJSValue(value);
     if (isSubtype(value->type & typeAcceptedByMask(mask), TNumber) && mayBe(value->type, TDouble)) {
-        // What comes of it is going to be held as a double. Taking the offset of a double's encoding away leaves the double's own
-        // bits, all of which are below what it leaves of anything else.
+        // The result is going to be an unboxed double. Subtracting the double encode offset yields the double's own bits, which
+        // compare below the result for any other kind of value.
         LBasicBlock isDouble = m_out.newBlock();
         LBasicBlock isNotDouble = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
@@ -1097,7 +1101,7 @@ bool Lowering::guardGetFromScope(Node* guard)
     ResolveType type = bytecode.m_getPutInfo.resolveType();
     LValue scope = lowCell(guard->use(bytecode.m_scope));
 
-    // A function declaration that nobody has asked for yet is not there yet.
+    // A function declaration that has not been instantiated yet leaves the variable empty.
     auto loadLazily = [&](unsigned offset) {
         guard->lowered = m_out.load64(scope, m_heaps.JSLexicalEnvironment_variables[offset]);
         exitUnless(m_out.notZero64(guard->lowered));
@@ -1136,7 +1140,7 @@ bool Lowering::guardGetFromScope(Node* guard)
     m_out.appendTo(hasPointer, isAddress);
     m_out.branch(hasFlag(m_out, word, Slot::pointerIsCell), unsure(isSymbolTable), unsure(isAddress));
 
-    // Whatever kind of scope the variable is in, this is the heap that stores to variables are in.
+    // Whatever kind of scope holds the variable, this is the abstract heap that stores to variables use.
     const AbstractHeap& variables = m_heaps.JSLexicalEnvironment_variables.atAnyIndex();
     m_out.appendTo(isAddress, isSymbolTable);
     LValue atAddress = m_out.load64(TypedPointer(variables, pointer));
@@ -1197,7 +1201,8 @@ void Lowering::checkCallee(Node* guard)
     case CallIntrinsic::None:
         RELEASE_ASSERT_NOT_REACHED();
     }
-    // Every kind of executable is big enough to have something there, and only in a native one is it ever the address of a function.
+    // Every kind of executable is large enough for this load to be safe, and only a NativeExecutable ever has the address of a
+    // function at this offset.
     exitUnless(m_out.equal(m_out.loadPtr(executable, m_heaps.NativeExecutable_function), entry(function)));
 }
 
@@ -1253,7 +1258,7 @@ bool Lowering::guardCall(Node* guard)
         break;
     }
     case CallIntrinsic::StringCharCodeAt: {
-        // Of a string that has its characters together, at a place where there is one.
+        // For a string that is not a rope, and an index that is in bounds.
         Node* thisNode = guard->use(operands.argument(0));
         Node* indexNode = guard->use(operands.argument(1));
         LValue string = lowJSValue(thisNode);
@@ -1293,7 +1298,7 @@ bool Lowering::guardCall(Node* guard)
         break;
     }
     case CallIntrinsic::ArrayPush: {
-        // On to an array that has room, in storage of a kind that the value can go in as it is.
+        // For an array with spare capacity, whose indexing type can hold the value without conversion.
         Node* thisNode = guard->use(operands.argument(0));
         Node* valueNode = guard->use(operands.argument(1));
         LValue array = lowJSValue(thisNode);

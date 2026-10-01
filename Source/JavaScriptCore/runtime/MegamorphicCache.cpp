@@ -84,7 +84,7 @@ void MegamorphicCache::reconcileWeakReferencesAtGCEnd(VM& vm)
     reconcileStores(m_storeCacheSecondaryEntries);
     reconcileHas(m_hasCachePrimaryEntries);
     reconcileHas(m_hasCacheSecondaryEntries);
-    // (What these go by besides is not a cell.)
+    // (These also depend on something that is not a cell, so they are simply invalidated.)
     for (auto& entry : m_constructionEntries)
         entry.m_epoch = invalidEpoch;
     m_hasBeenReconciled = true;

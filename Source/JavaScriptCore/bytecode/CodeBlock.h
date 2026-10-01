@@ -110,8 +110,8 @@ class CodeBlock : public JSCell {
 public:
 
     enum CopyParsedBlockTag { CopyParsedBlock };
-    // ForCodeFromImage: the block is going to run code from the static compiler (installAOTCode), which has no use for what
-    // linking the bytecode makes: there is no metadata table, and there are no profiles.
+    // ForCodeFromImage: the block is going to run AOT code (installAOTCode), which does not need what linking the bytecode creates.
+    // There is no metadata table, and there are no profiles.
     enum class LinkMode : uint8_t { Full, ForCodeFromImage };
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
@@ -593,7 +593,7 @@ public:
 #if ENABLE(FTL_JIT)
     void installAOTCode(Ref<AOT::JITCode>&&); // The code of a program or a module.
     void adoptAOTCode(AOT::JITCode&, AOT::Data*); // See AOT::Data::ensureCodeBlock().
-    // Of code that is not going to run again: what only running it has a use for goes now, and not when the collector gets to it.
+    // For code that will not run again: releases the data that is only needed to run it now, instead of waiting for the collector.
     void releaseAOTData();
     AOT::Data* aotData()
     {

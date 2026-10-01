@@ -38,8 +38,9 @@ using CustomAccessorValueFunc = FunctionPtr<CustomAccessorPtrTag, bool(JSGlobalO
 
 class PutPropertySlot {
 public:
-    // ExistingTypedField: as ExistingProperty, but only what the slot holds may be stored there (TypedLayoutTable). Whoever remembers where it is has to look at what it stores.
-    // NewTypedField: likewise, as NewProperty.
+    // ExistingTypedField: like ExistingProperty, but only values that match the field's type may be stored (TypedLayoutTable). Code
+    // that caches the location has to check the values that it stores.
+    // NewTypedField: likewise, like NewProperty.
     enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor, ExistingTypedField, NewTypedField };
     enum Context : uint8_t { UnknownContext, PutById, PutByIdEval };
 

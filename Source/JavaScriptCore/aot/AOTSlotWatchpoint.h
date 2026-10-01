@@ -45,8 +45,8 @@ private:
 
 using SlotWatchpointMap = UncheckedKeyHashMap<Slot*, FixedVector<SlotWatchpoint>>;
 
-// Has the conditions watched on behalf of the slot, in place of whatever was. False, and nothing is watched, if that cannot be
-// done, in which case the slot must not be filled.
+// Installs watchpoints for the conditions on behalf of the slot, replacing any existing ones. Returns false, with nothing watched,
+// if that is not possible. The slot must then not be filled.
 bool watchConditions(VM&, Data*, Slot*, const ObjectPropertyConditionSet&);
 void stopWatching(Data*, Slot*);
 void moveWatching(Data*, Slot* from, Slot* to); // What the one had is in the other now.

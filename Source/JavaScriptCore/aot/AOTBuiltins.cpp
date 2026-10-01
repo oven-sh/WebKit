@@ -27,8 +27,8 @@ struct Row {
     Condition condition { Condition::Always };
 };
 
-// What the specification says comes back, whatever is passed, if anything comes back at all. Where that goes by something that a
-// program can put its own code behind, there is a condition, or no row.
+// The type that the specification guarantees for the result, whatever the arguments, if the call returns at all. Where the result
+// depends on something that a program can hook with its own code, the row has a condition, or there is no row.
 constexpr Type TStringOrUndefined = TString | TUndefined;
 constexpr Type TNumberOrUndefined = TNumber | TUndefined;
 constexpr Type TObjectOrNull = TAnyObject | TNull;
@@ -38,7 +38,7 @@ const Row rows[] = {
     { "parseInt"_s, TNumber }, { "parseFloat"_s, TNumber }, { "isNaN"_s, TBoolean }, { "isFinite"_s, TBoolean },
     { "encodeURIComponent"_s, TString }, { "encodeURI"_s, TString }, { "decodeURIComponent"_s, TString }, { "decodeURI"_s, TString },
     { "escape"_s, TString }, { "unescape"_s, TString },
-    // Constructors, called.
+    // Constructors that are called as functions.
     { "String"_s, TString }, { "Number"_s, TNumber }, { "Boolean"_s, TBoolean }, { "BigInt"_s, TBigInt }, { "Symbol"_s, TSymbol },
     { "Array"_s, TArray }, { "Object"_s, TAnyObject }, { "Date"_s, TString },
 
@@ -51,7 +51,7 @@ const Row rows[] = {
     { "Object.defineProperty"_s, TAnyObject }, { "Object.defineProperties"_s, TAnyObject },
 
     { "Array.isArray"_s, TBoolean },
-    // (What they make goes by what they are called on.)
+    // (What they create depends on their `this` value.)
     { "Array.from"_s, TArray, Condition::IfThisIsHolder }, { "Array.of"_s, TArray, Condition::IfThisIsHolder },
 
     { "Math.abs"_s, TNumber }, { "Math.acos"_s, TNumber }, { "Math.acosh"_s, TNumber }, { "Math.asin"_s, TNumber }, { "Math.asinh"_s, TNumber },
@@ -74,7 +74,7 @@ const Row rows[] = {
     { "Reflect.ownKeys"_s, TArray }, { "Reflect.getPrototypeOf"_s, TObjectOrNull }, { "Reflect.getOwnPropertyDescriptor"_s, TFinalObject | TUndefined },
     { "ArrayBuffer.isView"_s, TBoolean },
 
-    // Of a string. (They turn whatever they are called on into one.)
+    // String methods. (They convert their `this` value to a string.)
     { "String.prototype.at"_s, TStringOrUndefined }, { "String.prototype.charAt"_s, TString }, { "String.prototype.charCodeAt"_s, TNumber },
     { "String.prototype.codePointAt"_s, TNumberOrUndefined }, { "String.prototype.concat"_s, TString }, { "String.prototype.endsWith"_s, TBoolean },
     { "String.prototype.includes"_s, TBoolean }, { "String.prototype.indexOf"_s, TNumber }, { "String.prototype.isWellFormed"_s, TBoolean },
@@ -86,9 +86,9 @@ const Row rows[] = {
     { "String.prototype.toWellFormed"_s, TString }, { "String.prototype.trim"_s, TString }, { "String.prototype.trimEnd"_s, TString },
     { "String.prototype.trimStart"_s, TString }, { "String.prototype.trimLeft"_s, TString }, { "String.prototype.trimRight"_s, TString },
     { "String.prototype.valueOf"_s, TString },
-    // These leave it to the first argument, if that is an object that has a method for it: which can be anybody's.
-    { "String.prototype.replace"_s, TString, Condition::IfFirstArgumentIsNoObject }, { "String.prototype.replaceAll"_s, TString, Condition::IfFirstArgumentIsNoObject },
-    { "String.prototype.split"_s, TArray, Condition::IfFirstArgumentIsNoObject }, { "String.prototype.search"_s, TNumber, Condition::IfFirstArgumentIsNoObject },
+    // These delegate to the first argument if it is an object with the corresponding method, which can be the program's code.
+    { "String.prototype.replace"_s, TString, Condition::IfFirstArgumentIsNotObject }, { "String.prototype.replaceAll"_s, TString, Condition::IfFirstArgumentIsNotObject },
+    { "String.prototype.split"_s, TArray, Condition::IfFirstArgumentIsNotObject }, { "String.prototype.search"_s, TNumber, Condition::IfFirstArgumentIsNotObject },
 
     { "Number.prototype.toFixed"_s, TString }, { "Number.prototype.toString"_s, TString }, { "Number.prototype.toPrecision"_s, TString },
     { "Number.prototype.toExponential"_s, TString }, { "Number.prototype.toLocaleString"_s, TString }, { "Number.prototype.valueOf"_s, TNumber },
@@ -97,7 +97,7 @@ const Row rows[] = {
     { "BigInt.prototype.toString"_s, TString }, { "BigInt.prototype.toLocaleString"_s, TString }, { "BigInt.prototype.valueOf"_s, TBigInt },
 };
 
-// `new` of it, with itself for new.target.
+// The result of `new` with the constructor itself as new.target.
 const Row constructors[] = {
     { "Object"_s, TAnyObject }, { "Array"_s, TArray }, { "Function"_s, TFunction },
     { "Map"_s, TMap }, { "Set"_s, TSet }, { "WeakMap"_s, TWeakMap }, { "WeakSet"_s, TWeakSet }, { "WeakRef"_s, TObject },
@@ -109,7 +109,7 @@ const Row constructors[] = {
 };
 
 struct Tables {
-    Vector<const Row*> called; // By number.
+    Vector<const Row*> called; // Indexed by intrinsic number.
     Vector<const Row*> constructed;
     unsigned stringPrototype { 0 };
     unsigned numberPrototype { 0 };
@@ -117,7 +117,7 @@ struct Tables {
     unsigned symbolPrototype { 0 };
     unsigned bigIntPrototype { 0 };
     unsigned prototypesOfReceivers[16] { };
-    Vector<Builtin> builtins; // By number.
+    Vector<Builtin> builtins; // Indexed by intrinsic number.
 };
 
 const Tables* tables()
@@ -131,7 +131,8 @@ const Tables* tables()
         result.construct();
         result->called.fill(nullptr, intrinsics->count());
         result->constructed.fill(nullptr, intrinsics->count());
-        // The number that stands for what is found by that path from the global object. Zero: nothing that is fixed.
+        // Returns the intrinsic number of the object at that path from the global object, or zero if it is not an immutable
+        // intrinsic.
         auto find = [&](ASCIILiteral path) -> unsigned {
             unsigned number = ImmutableIntrinsics::globalObject;
             for (StringView part : StringView(path).split('.')) {
@@ -142,7 +143,7 @@ const Tables* tables()
             }
             return number;
         };
-        // (One object may be found by two paths. Then what is said of it by either had better be true of it.)
+        // (One object may be reachable by two paths. The rows for both paths then have to be valid for it.)
         for (auto& row : rows) {
             if (unsigned number = find(row.path); number && !result->called[number])
                 result->called[number] = &row;
@@ -296,7 +297,7 @@ unsigned intrinsicFoundOn(Receiver receiver, const StringImpl& name)
     return intrinsics->at(number).canonical;
 }
 
-static constexpr Receiver receiversThereAre[] = { Receiver::String, Receiver::Array, Receiver::Map, Receiver::Set, Receiver::WeakMap, Receiver::WeakSet, Receiver::RegExp, Receiver::Date, Receiver::Number };
+static constexpr Receiver allReceivers[] = { Receiver::String, Receiver::Array, Receiver::Map, Receiver::Set, Receiver::WeakMap, Receiver::WeakSet, Receiver::RegExp, Receiver::Date, Receiver::Number };
 
 Receiver requiredReceiver(unsigned intrinsic)
 {
@@ -304,7 +305,7 @@ Receiver requiredReceiver(unsigned intrinsic)
     if (!all)
         return Receiver::None;
     unsigned holder = ImmutableIntrinsics::shared()->at(intrinsic).holder;
-    for (Receiver receiver : receiversThereAre) {
+    for (Receiver receiver : allReceivers) {
         if (all->prototypesOfReceivers[static_cast<unsigned>(receiver)] == holder)
             return receiver;
     }
@@ -315,7 +316,7 @@ Receiver receiverOfType(Type type)
 {
     if (!type)
         return Receiver::None;
-    for (Receiver receiver : receiversThereAre) {
+    for (Receiver receiver : allReceivers) {
         if (isSubtype(type, typeOf(receiver)))
             return receiver;
     }
@@ -324,9 +325,9 @@ Receiver receiverOfType(Type type)
 
 Receiver receiverLikelyToHave(Type type, const StringImpl& name)
 {
-    // The only one that it may be, of those that have a method of that name that there is something to be done with.
+    // Returns the only kind of receiver that the type allows, among those that have a supported method with that name.
     Receiver found = Receiver::None;
-    for (Receiver receiver : receiversThereAre) {
+    for (Receiver receiver : allReceivers) {
         if (receiver == Receiver::Number || !mayBe(type, typeOf(receiver)))
             continue;
         if (builtinWithNumber(intrinsicFoundOn(receiver, name)) == Builtin::None)

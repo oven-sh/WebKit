@@ -104,10 +104,10 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
         Identifier identifier = Identifier::fromString(vm, name);
         add(ImmutableIntrinsics::globalObject, *identifier.impl(), globalObject->getDirect(vm, identifier));
     }
-    // What is found on the way is looked at in its turn.
+    // Objects that are discovered along the way are appended, and visited in turn.
     for (unsigned number = 1; number < values.size(); ++number) {
         JSObject* object = JSValue::decode(values[number]).getObject();
-        if (!object || description->m_entries[number].canonical != number || !object->structure()->heirsMayOverrideReadOnlyProperties())
+        if (!object || description->m_entries[number].canonical != number || !object->structure()->inheritorsMayOverrideReadOnlyProperties())
             continue;
         object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& property) {
             constexpr unsigned fixed = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;

@@ -44,11 +44,11 @@ public:
 
     StringTableImpl& table() LIFETIME_BOUND { return m_table; }
 
-    // Atoms that were there before the thread was, are there for good, and are not in table() until they are asked for: strings
-    // that are static (StringImpl::becomeStatic()) and say that they are atoms. It is only looked in, when table() does not have
-    // what is wanted. To be set before the thread has an atom that may be equal to one of them.
-    // They are all within reach of one address, and nothing is ever added: so it is a table of how far each is from that, in units
-    // of 8 bytes, nothing standing for nothing, that is looked in the way any table is.
+    // Atoms that exist before the thread does, are immortal, and are not in table() until they are first requested: strings that
+    // are static (StringImpl::becomeStatic()) and flagged as atoms. This table is read-only, and is consulted when table() has no
+    // match. It has to be set before the thread has an atom that could equal one of them.
+    // All of the atoms are within range of one base address, and none are ever added. So this is an open-addressing hash table of
+    // offsets from that base, in units of 8 bytes, where zero means an empty bucket.
     struct StaticAtoms {
         static constexpr unsigned shift = 3;
         const uint32_t* entries { nullptr };
