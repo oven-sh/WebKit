@@ -214,6 +214,9 @@ public:
 
     int32_t adjustJumpTarget(JSInstructionStream::Offset originalBytecodeOffset, int32_t originalJumpTarget)
     {
+        // Nothing jumps to itself. This is a hole in a switch's jump table, which has to stay zero to go on meaning the default.
+        if (static_cast<int32_t>(originalBytecodeOffset) == originalJumpTarget)
+            return 0;
         return adjustJumpTarget(InsertionPoint(originalBytecodeOffset, Position::OriginalBytecodePoint), InsertionPoint(originalJumpTarget, Position::LabelPoint));
     }
 

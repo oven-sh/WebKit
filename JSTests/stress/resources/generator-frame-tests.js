@@ -582,6 +582,73 @@ test("delegating", () => {
     shouldBe(run("nr"), "i1 done:101 | inner done,before");
 });
 
+// A load can end up right in front of a switch, whose jump table has a zero for each value between the cases that has no case.
+test("a switch with gaps between its cases", () => {
+    function* integers(k) {
+        let v = opaque(k) | 0;
+        yield 1;
+        if (k > 50)
+            yield 2;
+        switch (v) {
+        case 0:
+            return "zero";
+        case 1:
+            return "one";
+        case 3:
+            return "three";
+        case 6:
+            return "six";
+        default:
+            return "default";
+        }
+    }
+    let results = [];
+    for (let k of [-1, 0, 1, 2, 3, 4, 5, 6, 7])
+        results.push(drive(integers(k), "nn"));
+    shouldBe(results.join(), "1 done:default,1 done:zero,1 done:one,1 done:default,1 done:three,1 done:default,1 done:default,1 done:six,1 done:default");
+
+    function* characters(c) {
+        let v = opaque(c);
+        yield 1;
+        if (c === "never")
+            yield 2;
+        switch (v) {
+        case "a":
+            return "A";
+        case "b":
+            return "B";
+        case "d":
+            return "D";
+        }
+        return "none";
+    }
+    results = [];
+    for (let c of ["a", "b", "c", "d", "e"])
+        results.push(drive(characters(c), "nn"));
+    shouldBe(results.join(), "1 done:A,1 done:B,1 done:none,1 done:D,1 done:none");
+
+    function* inLoop(values) {
+        let log = [];
+        for (let v of values) {
+            yield v;
+            switch (v) {
+            case 10:
+                log.push("ten");
+                break;
+            case 11:
+                log.push("eleven");
+                continue;
+            case 14:
+                log.push("fourteen");
+                break;
+            }
+            log.push(v);
+        }
+        return log.join();
+    }
+    shouldBe(drive(inLoop([10, 12, 11, 13, 14]), "nnnnnn"), "10 12 11 13 14 done:ten,10,12,eleven,13,fourteen,14");
+});
+
 test("async functions", () => {
     async function f(fail) {
         let a = opaque(1);
