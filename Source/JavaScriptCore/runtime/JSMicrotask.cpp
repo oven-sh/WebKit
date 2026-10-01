@@ -161,7 +161,8 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
 
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
         if ((sizeof...(args) + 1) >= (newCodeBlock ? newCodeBlock->numParameters() : functionExecutable->parameterCount() + 1)) [[likely]] {
-            auto* entry = functionExecutable->generatedJITCodeAddressForCall();
+            // AOT code has no CodeBlock or JITCode. See Interpreter::prepareForMicrotaskCall().
+            auto* entry = newCodeBlock ? functionExecutable->generatedJITCodeAddressForCall() : functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
             auto* callee = asObject(functionObject.asCell());
             if constexpr (!sizeof...(args))
                 return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, newCodeBlock, callee, thisValue, context));

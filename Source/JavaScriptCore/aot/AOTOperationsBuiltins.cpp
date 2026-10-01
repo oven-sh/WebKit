@@ -9,6 +9,7 @@
 #if ENABLE(FTL_JIT)
 
 #include "AOTOperationHelpers.h"
+#include "ArrayPrototypeInlines.h"
 #include "DateInstance.h"
 #include "FrameTracers.h"
 #include "JSArrayInlines.h"
@@ -121,6 +122,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetDelete, size_t, (JSGlobalObject* globalO
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (JSGlobalObject* globalObject, JSArray* array, EncodedJSValue* values, uint32_t count))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
+    uint64_t length = array->length();
+    if (length + count > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
+        // The same steps as arrayProtoFuncPush() with several arguments: every value is stored, past the last index as a named property,
+        // and then setting the length throws. pushInline() would throw a different error at the first value that does not fit.
+        for (uint32_t i = 0; i < count; ++i) {
+            array->putByIndexInline(globalObject, length + i, JSValue::decode(values[i]), true);
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        }
+        setLength(globalObject, vm, array, length + count);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(length + count)));
+    }
     for (uint32_t i = 0; i < count; ++i) {
         array->pushInline(globalObject, JSValue::decode(values[i]));
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());

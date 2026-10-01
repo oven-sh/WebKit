@@ -31,6 +31,11 @@
 #include <wtf/SHA1.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#if OS(DARWIN) || OS(LINUX)
+#include <pthread.h>
+#include <sys/mman.h>
+#endif
+
 namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBuilder);
@@ -1676,6 +1681,39 @@ Image* Image::registerImageFromFile(const char* path)
     return registerImageCopyingCode(WTF::move(*contents));
 }
 
+// Returns an executable copy of the code, aligned to imagePageSize and never freed, or null. It does not come from ExecutableAllocator, so
+// that an image can be used with the JIT off, as it is when its code is mapped from an executable file.
+static void* copyToExecutableMemory(std::span<const uint8_t> code)
+{
+#if OS(DARWIN) || OS(LINUX)
+    size_t size = WTF::roundUpToMultipleOf(WTF::pageSize(), code.size() + imagePageSize);
+#if OS(DARWIN) && CPU(ARM64)
+    void* mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
+#else
+    void* mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+#endif
+    if (mapping == MAP_FAILED)
+        return nullptr;
+    void* result = reinterpret_cast<void*>(WTF::roundUpToMultipleOf<imagePageSize>(reinterpret_cast<uintptr_t>(mapping)));
+#if OS(DARWIN) && CPU(ARM64)
+    pthread_jit_write_protect_np(false);
+    memcpy(result, code.data(), code.size());
+    pthread_jit_write_protect_np(true);
+#else
+    memcpy(result, code.data(), code.size());
+    if (mprotect(mapping, size, PROT_READ | PROT_EXEC)) {
+        munmap(mapping, size);
+        return nullptr;
+    }
+#endif
+    MacroAssembler::cacheFlush(result, code.size());
+    return result;
+#else
+    UNUSED_PARAM(code);
+    return nullptr;
+#endif
+}
+
 Image* Image::registerImageCopyingCode(Vector<uint8_t>&& contents)
 {
     if (contents.size() < sizeof(ImageHeader))
@@ -1687,15 +1725,9 @@ Image* Image::registerImageCopyingCode(Vector<uint8_t>&& contents)
         return nullptr;
     void* code = nullptr;
     if (header.codeSize) {
-        // (On a page boundary, as it is when it is mapped: some of it goes by that.)
-        RefPtr<ExecutableMemoryHandle> handle = ExecutableAllocator::singleton().allocate(header.codeSize + imagePageSize, JITCompilationCanFail);
-        if (!handle)
+        code = copyToExecutableMemory(data->span().subspan(header.codeOffset, header.codeSize));
+        if (!code)
             return nullptr;
-        code = reinterpret_cast<void*>(WTF::roundUpToMultipleOf<imagePageSize>(reinterpret_cast<uintptr_t>(handle->start().untaggedPtr())));
-        performJITMemcpy<jitMemcpyRepatch>(code, data->span().data() + header.codeOffset, header.codeSize);
-        MacroAssembler::cacheFlush(code, header.codeSize);
-        auto* forGood = handle.leakRef();
-        UNUSED_VARIABLE(forGood);
     }
     return registerImage(data->span(), code);
 }

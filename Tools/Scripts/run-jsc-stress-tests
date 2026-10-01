@@ -1386,6 +1386,26 @@ BASE_MODES = [
             "--useJIT=false",
         ]
     ],
+    # Bun: the main script is compiled ahead of time, in-process, and runs that code. The JIT is off, as it is in an executable built
+    # with AOT. Code the compiler never saw (eval, new Function, other scripts that are loaded) runs in the interpreter.
+    [
+        "AOT",
+        "aot",
+        [
+            "--compileMainScriptAheadOfTime=true",
+            "--useJIT=false",
+        ]
+    ],
+    # Bun: the same, and every type the compiler inferred is checked against the value at run time.
+    [
+        "AOTValidate",
+        "aot-validate",
+        [
+            "--compileMainScriptAheadOfTime=true",
+            "--useJIT=false",
+            "--validateAOTInferredTypes=true",
+        ]
+    ],
     [
         # NOTE: Tests rely on this using scribbleFreeCells.
         "NoCJITValidate",
@@ -1572,6 +1592,10 @@ def defaultRunConfig(config, subsetOptions, *optionalTestSpecificOptions)
         runBytecodeCacheConfig(config, *optionalTestSpecificOptions)
         runMiniModeConfig(config, *optionalTestSpecificOptions) unless $skipMiniMode
         runLockdownConfig(config, *optionalTestSpecificOptions) unless $skipLockdown
+        if $isFTLPlatform and $architecture == "arm64"
+            runAOTConfig(config, *optionalTestSpecificOptions)
+            runAOTValidateConfig(config, *optionalTestSpecificOptions)
+        end
         if $jitTests
             if not subsetOptions.has_key?(:skipNoLLInt)
                 runNoLLIntConfig(config, *optionalTestSpecificOptions)

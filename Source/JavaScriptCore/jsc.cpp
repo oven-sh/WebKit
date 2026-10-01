@@ -22,6 +22,7 @@
 
 #include "config.h"
 
+#include "AOTFunction.h"
 #include "APICast.h"
 #include "ArrayBuffer.h"
 #include "AtomicsObject.h"
@@ -431,6 +432,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
 static JSC_DECLARE_HOST_FUNCTION(functionNoOSRExitFuzzing);
 static JSC_DECLARE_HOST_FUNCTION(functionOptimizeNextInvocation);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfDFGCompiles);
+static JSC_DECLARE_HOST_FUNCTION(functionIsAOTCompiled);
 static JSC_DECLARE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled);
 static JSC_DECLARE_HOST_FUNCTION(functionJSCOptions);
 static JSC_DECLARE_HOST_FUNCTION(functionReoptimizationRetryCount);
@@ -804,6 +806,7 @@ private:
         addFunction(vm, "noFTL"_s, functionNoFTL, 1);
         addFunction(vm, "noOSRExitFuzzing"_s, functionNoOSRExitFuzzing, 1);
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
+        addFunction(vm, "isAOTCompiled"_s, functionIsAOTCompiled, 1);
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
         addFunction(vm, "jscOptions"_s, functionJSCOptions, 0);
         addFunction(vm, "optimizeNextInvocation"_s, functionOptimizeNextInvocation, 1);
@@ -2799,6 +2802,19 @@ JSC_DEFINE_HOST_FUNCTION(functionOptimizeNextInvocation, (JSGlobalObject* global
 JSC_DEFINE_HOST_FUNCTION(functionNumberOfDFGCompiles, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(numberOfDFGCompiles(globalObject, callFrame));
+}
+
+// Whether calls to a function run AOT code. The function must have been called at least once.
+JSC_DEFINE_HOST_FUNCTION(functionIsAOTCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+#if ENABLE(FTL_JIT)
+    if (auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0)); function && !function->isHostFunction())
+        return JSValue::encode(jsBoolean(!!AOT::FunctionRef::of(globalObject->vm(), function->jsExecutable(), CodeSpecializationKind::CodeForCall)));
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+#endif
+    return JSValue::encode(jsBoolean(false));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -5091,6 +5107,8 @@ int jscmain(int argc, char** argv)
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
+    // Before any option is set: Options::notifyOptionsChanged() turns useJIT off for good if the compilers are not installed yet.
+    JSC::installCompilers();
     mainCommandLine.construct(argc, argv);
 
 #if OS(WINDOWS)
@@ -5104,7 +5122,6 @@ int jscmain(int argc, char** argv)
         processConfigFile(Options::configFile(), "jsc");
     }
 
-    JSC::installCompilers();
     JSC::initialize();
 #if ENABLE(JIT_OPERATION_VALIDATION)
     JSC::JITOperationList::populatePointersInEmbedder(&startOfJITOperationsInShell, &endOfJITOperationsInShell);
