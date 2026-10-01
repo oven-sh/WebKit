@@ -322,7 +322,7 @@ bool JSFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObje
             if (!isValidOffset(offset)) {
                 // For class constructors, prototype object is initialized from bytecode via defineOwnProperty().
                 ASSERT(!thisObject->jsExecutable()->isClassConstructorFunction());
-                AllowLockedPropertiesMutation allowMutation(vm);
+                AllowLazyPropertyMaterialization allowMaterialization(vm);
                 thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
                 offset = thisObject->getDirectOffset(vm, vm.propertyNames->prototype, attributes);
                 ASSERT(isValidOffset(offset));
@@ -380,7 +380,7 @@ void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* gl
 
 bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->didLockProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
         return JSObject::put(cell, globalObject, propertyName, value, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -413,7 +413,7 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
 
 bool JSFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
-    if (cell->structure()->didLockProperties()) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::deleteProperty(cell, globalObject, propertyName, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -428,7 +428,7 @@ bool JSFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Prop
 
 bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool throwException)
 {
-    if (object->structure()->didLockProperties()) [[unlikely]]
+    if (object->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, throwException);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -533,7 +533,7 @@ void JSFunction::reifyLength(VM& vm)
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
     const Identifier& identifier = vm.propertyNames->length;
     rareData->setHasReifiedLength();
-    AllowLockedPropertiesMutation allowMutation(vm);
+    AllowLazyPropertyMaterialization allowMaterialization(vm);
     putDirect(vm, identifier, initialValue, initialAttributes);
 }
 
@@ -568,7 +568,7 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
     RETURN_IF_EXCEPTION(throwScope, PropertyStatus::Lazy);
 
     rareData->setHasReifiedName();
-    AllowLockedPropertiesMutation allowMutation(vm);
+    AllowLazyPropertyMaterialization allowMaterialization(vm);
     putDirect(vm, propID, jsString(vm, WTF::move(name)), initialAttributes);
     return PropertyStatus::Reified;
 }
@@ -623,7 +623,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyPrototypeIfNeeded(VM& vm, JSGlob
         if (!getDirect(vm, propertyName)) {
             // For class constructors, prototype object is initialized from bytecode via defineOwnProperty().
             ASSERT(!jsExecutable()->isClassConstructorFunction());
-            AllowLockedPropertiesMutation allowMutation(vm);
+            AllowLazyPropertyMaterialization allowMaterialization(vm);
             putDirect(vm, propertyName, constructPrototypeObject(globalObject, this), prototypeAttributesForNonClass);
             return PropertyStatus::Reified;
         }
@@ -674,7 +674,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         RETURN_IF_EXCEPTION(scope, PropertyStatus::Lazy);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         rareData->setHasReifiedName();
-        AllowLockedPropertiesMutation allowMutation(vm);
+        AllowLazyPropertyMaterialization allowMaterialization(vm);
         putDirect(vm, nameIdent, string, initialAttributes);
     } else if (this->inherits<JSRemoteFunction>()) {
         FunctionRareData* rareData = this->ensureRareData(vm);
@@ -683,7 +683,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
             name = jsEmptyString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         rareData->setHasReifiedName();
-        AllowLockedPropertiesMutation allowMutation(vm);
+        AllowLazyPropertyMaterialization allowMaterialization(vm);
         putDirect(vm, nameIdent, name, initialAttributes);
     } else {
         ASSERT(isNonBoundHostFunction());
@@ -691,7 +691,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         JSString* name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         rareData->setHasReifiedName();
-        AllowLockedPropertiesMutation allowMutation(vm);
+        AllowLazyPropertyMaterialization allowMaterialization(vm);
         putDirect(vm, nameIdent, name, initialAttributes);
     }
     return PropertyStatus::Reified;

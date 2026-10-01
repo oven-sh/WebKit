@@ -243,7 +243,7 @@ void ClonedArguments::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObjec
 
 bool ClonedArguments::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName ident, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->didLockProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
         return JSObject::put(cell, globalObject, ident, value, slot);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(cell);
     VM& vm = globalObject->vm();
@@ -260,7 +260,7 @@ bool ClonedArguments::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNa
 
 bool ClonedArguments::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName ident, DeletePropertySlot& slot)
 {
-    if (cell->structure()->didLockProperties()) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::deleteProperty(cell, globalObject, ident, slot);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(cell);
     VM& vm = globalObject->vm();
@@ -274,7 +274,7 @@ bool ClonedArguments::deleteProperty(JSCell* cell, JSGlobalObject* globalObject,
 
 bool ClonedArguments::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName ident, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    if (object->structure()->didLockProperties()) [[unlikely]]
+    if (object->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::defineOwnProperty(object, globalObject, ident, descriptor, shouldThrow);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(object);
     VM& vm = globalObject->vm();
@@ -295,8 +295,8 @@ void ClonedArguments::materializeSpecials(JSGlobalObject* globalObject)
     bool isStrictMode = executable->isInStrictContext();
     
     {
-        // These properties are part of an arguments object from the start; a locked one still gets them. No JavaScript runs here.
-        AllowLockedPropertiesMutation allowMutation(vm);
+        // An arguments object has these from the start, so one with immutable properties still gets them. No JavaScript runs here.
+        AllowLazyPropertyMaterialization allowMaterialization(vm);
         if (isStrictMode || executable->usesNonSimpleParameterList())
             putDirectAccessor(globalObject, vm.propertyNames->callee, this->realm()->throwTypeErrorArgumentsCalleeGetterSetter(), PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
         else

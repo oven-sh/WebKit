@@ -1,5 +1,5 @@
-// The global object can be locked. Besides its properties, that covers its top-level `var` and function declarations, which
-// live in its symbol table and are written by compiled code directly: locking makes each of them read-only.
+// The global object's properties can be made immutable. That covers its top-level `var` and function declarations too, which
+// live in its symbol table and are written by compiled code directly: each of them becomes read-only.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -34,8 +34,8 @@ for (let i = 0; i < 20000; i++) {
 }
 let ownKeysBefore = Reflect.ownKeys(globalThis).length;
 
-$vm.lockProperties(globalThis);
-shouldBe($vm.didLockProperties(globalThis), true);
+$vm.makePropertiesImmutable(globalThis);
+shouldBe($vm.hasImmutableProperties(globalThis), true);
 shouldBe(Object.isExtensible(globalThis), false);
 
 // Properties.

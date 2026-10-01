@@ -74,7 +74,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
-const ASCIILiteral LockedObjectPropertyDefineError { "Attempting to define a property on a locked object."_s };
+const ASCIILiteral ImmutableObjectPropertyDefineError { "Attempting to define property on object whose properties are immutable."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError { "Attempting to change access mechanism for an unconfigurable property."_s };
@@ -966,8 +966,8 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
         if (slot.attributes() & PropertyAttribute::CustomValue) {
-            // A native setter must not run for a locked receiver reached through Reflect.set(holder, key, value, receiver).
-            if (receiver->structure()->didLockProperties()) [[unlikely]]
+            // A native setter must not run for such a receiver, reached through Reflect.set(holder, key, value, receiver).
+            if (receiver->structure()->hasImmutableProperties()) [[unlikely]]
                 return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
             PutValueFunc customSetter = slot.customSetter();
             if (customSetter)
@@ -1048,7 +1048,7 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
     VM& vm = globalObject->vm();
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
 
-    if (thisObject->structure()->didLockProperties()) [[unlikely]] {
+    if (thisObject->structure()->hasImmutableProperties()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
     }
@@ -1897,8 +1897,8 @@ void JSObject::convertDoubleToContiguousWhilePerformingSetIndex(VM& vm, unsigned
 ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
 {
     ASSERT(inherits(info()));
-    // A locked object never gains or converts element storage: compiled code asks for this before writing elements in place.
-    if (structure()->didLockProperties()) [[unlikely]]
+    // Never gains or converts element storage: compiled code asks for this before it writes elements in place.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
         return {};
 
     if (isCopyOnWrite(indexingMode())) {
@@ -1935,8 +1935,8 @@ ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
 
 ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
 {
-    // A locked object never gains or converts element storage: compiled code asks for this before writing elements in place.
-    if (structure()->didLockProperties()) [[unlikely]]
+    // Never gains or converts element storage: compiled code asks for this before it writes elements in place.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
         return { };
     ASSERT(Options::allowDoubleShape());
     ASSERT(inherits(info()));
@@ -1978,8 +1978,8 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
 
 ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
 {
-    // A locked object never gains or converts element storage: compiled code asks for this before writing elements in place.
-    if (structure()->didLockProperties()) [[unlikely]]
+    // Never gains or converts element storage: compiled code asks for this before it writes elements in place.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
         return { };
     ASSERT(inherits(info()));
 
@@ -2022,8 +2022,8 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
 
 ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
 {
-    // A locked object never gains or converts element storage: compiled code asks for this before writing elements in place.
-    if (structure()->didLockProperties()) [[unlikely]]
+    // Never gains or converts element storage: compiled code asks for this before it writes elements in place.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
         return nullptr;
     ASSERT(inherits(info()));
 
@@ -2144,7 +2144,7 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
 void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
 {
     ASSERT(prototype.isObject() || prototype.isNull());
-    if (structure()->didLockProperties()) [[unlikely]]
+    if (structure()->hasImmutableProperties()) [[unlikely]]
         return;
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
@@ -2191,10 +2191,10 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
     }
 
-    if (this->structure()->didLockProperties()) [[unlikely]] {
+    if (this->structure()->hasImmutableProperties()) [[unlikely]] {
         if (this->getPrototypeDirect() == prototype)
             return true;
-        return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of a locked object"_s);
+        return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
     }
 
     // Default realm global objects should have mutable prototypes despite having
@@ -2309,7 +2309,7 @@ bool JSObject::putDirectCustomAccessor(VM& vm, PropertyName propertyName, JSValu
 
 void JSObject::putDirectCustomGetterSetterWithoutTransition(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)
 {
-    if (structure()->didLockProperties() && !vm.allowLockedPropertiesMutationCount) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
         return;
     ASSERT(!parseIndex(propertyName));
     ASSERT(value.isCustomGetterSetter());
@@ -2341,7 +2341,7 @@ bool JSObject::putDirectNonIndexAccessor(VM& vm, PropertyName propertyName, Gett
 
 void JSObject::putDirectNonIndexAccessorWithoutTransition(VM& vm, PropertyName propertyName, GetterSetter* accessor, unsigned attributes)
 {
-    if (structure()->didLockProperties() && !vm.allowLockedPropertiesMutationCount) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
         return;
     ASSERT(attributes & PropertyAttribute::Accessor);
     StructureID structureID = this->structureID();
@@ -2405,8 +2405,8 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
     VM& vm = globalObject->vm();
 
-    // A locked object keeps every property it has. Deleting one it does not have succeeds, as it does for any object.
-    if (thisObject->structure()->didLockProperties()) [[unlikely]]
+    // Every property the object has stays. Deleting one it does not have succeeds, as it does for any object.
+    if (thisObject->structure()->hasImmutableProperties()) [[unlikely]]
         return !thisObject->hasOwnProperty(globalObject, propertyName);
     
     if (std::optional<uint32_t> index = parseIndex(propertyName))
@@ -2465,7 +2465,7 @@ bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
 
-    if (thisObject->structure()->didLockProperties()) [[unlikely]]
+    if (thisObject->structure()->hasImmutableProperties()) [[unlikely]]
         return !thisObject->hasOwnProperty(globalObject, i);
     
     if (i > MAX_ARRAY_INDEX)
@@ -2922,9 +2922,8 @@ JSString* JSObject::toString(JSGlobalObject* globalObject) const
 
 void JSObject::seal(VM& vm)
 {
-    // Property attributes of a locked object do not change. Object.seal() does not come here for one: it takes the generic path,
-    // which reports the refusal.
-    if (structure()->didLockProperties()) [[unlikely]]
+    // The attributes do not change. Object.seal() does not come here for such an object: it takes the generic path, which reports the refusal.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
         return;
     if (isSealed(vm))
         return;
@@ -2939,9 +2938,8 @@ void JSObject::seal(VM& vm)
 
 void JSObject::freeze(VM& vm)
 {
-    // Property attributes of a locked object do not change. Object.freeze() does not come here for one: it takes the generic path,
-    // which reports the refusal.
-    if (structure()->didLockProperties()) [[unlikely]]
+    // The attributes do not change. Object.freeze() does not come here for such an object: it takes the generic path, which reports the refusal.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
         return;
     if (isFrozen(vm))
         return;
@@ -2971,9 +2969,9 @@ void JSObject::materializeLazyOwnProperties(VM& vm)
     scope.releaseAssertNoExceptionExceptTermination();
 }
 
-// A class that overrides a write hook can change the object before, or without, reaching JSObject's checks. Such a class can be
-// locked only if each of its hooks hands a locked object to JSObject's implementation first; the ones that do are listed here.
-static bool canLockProperties(JSObject* object)
+// A class that overrides a write hook can change the object before, or without, reaching JSObject's checks. Its objects can have
+// immutable properties only if each of its hooks hands such an object to JSObject's implementation first. These classes do.
+static bool canMakePropertiesImmutable(JSObject* object)
 {
     const MethodTable* table = object->methodTable();
     bool usesOnlyJSObjectHooks = table->put == JSObject::put && table->putByIndex == JSObject::putByIndex
@@ -2983,27 +2981,27 @@ static bool canLockProperties(JSObject* object)
     if (usesOnlyJSObjectHooks)
         return true;
     // Not DirectArguments or ScopedArguments: a mapped element is a view of the function's parameter variable, which the function
-    // can still assign. JSGlobalObject's own hooks only add its variables, which lockProperties() makes read-only.
+    // can still assign. JSGlobalObject's own hooks only add its variables, which makePropertiesImmutable() makes read-only.
     return object->inherits<JSArray>() || object->inherits<JSFunction>() || object->inherits<ErrorInstance>()
         || object->inherits<RegExpObject>() || object->inherits<StringObject>() || object->inherits<ClonedArguments>()
         || object->inherits<JSGlobalObject>();
 }
 
-bool JSObject::didLockProperties() const
+bool JSObject::hasImmutableProperties() const
 {
     if (type() == GlobalProxyType)
-        return uncheckedDowncast<JSGlobalProxy>(this)->target()->didLockProperties();
-    return structure()->didLockProperties();
+        return uncheckedDowncast<JSGlobalProxy>(this)->target()->hasImmutableProperties();
+    return structure()->hasImmutableProperties();
 }
 
-bool JSObject::lockProperties(VM& vm)
+bool JSObject::makePropertiesImmutable(VM& vm)
 {
-    if (structure()->didLockProperties())
+    if (structure()->hasImmutableProperties())
         return true;
-    // `globalThis` may be the proxy in front of the global object; the object to lock is the one behind it.
+    // `globalThis` may be the proxy in front of the global object: act on the object behind it.
     if (type() == GlobalProxyType)
-        return uncheckedDowncast<JSGlobalProxy>(this)->target()->lockProperties(vm);
-    if (!canLockProperties(this))
+        return uncheckedDowncast<JSGlobalProxy>(this)->target()->makePropertiesImmutable(vm);
+    if (!canMakePropertiesImmutable(this))
         return false;
     // The global object keeps top-level `var` and function declarations in its symbol table, and compiled code writes those slots
     // directly, past every property check. Make each one read-only and fire the watchpoint that makes such code look again: the
@@ -3021,11 +3019,11 @@ bool JSObject::lockProperties(VM& vm)
             }
         }
         if (changed)
-            global->varReadOnlyWatchpointSet().fireAll(vm, "The global object was locked");
+            global->varReadOnlyWatchpointSet().fireAll(vm, "The global object's properties were made immutable");
     }
     // The JIT and the quick C++ paths write Int32/Double/Contiguous/ArrayStorage elements in place, slow-put storage included
     // (it only diverts stores to holes). Dictionary indexing mode keeps every element in the sparse map, so each indexed store,
-    // delete and length change reaches a C++ slow path, which refuses for a locked object. Objects with no indexed storage
+    // delete and length change reaches a C++ slow path, which refuses. Objects with no indexed storage
     // (every intrinsic prototype) are untouched, so Array.prototype keeps its blank indexing.
     if (hasIndexedProperties(indexingType()))
         enterDictionaryIndexingMode(vm);
@@ -3035,7 +3033,7 @@ bool JSObject::lockProperties(VM& vm)
     Structure* oldStructure = structure();
     // Deferred, so adaptive watchpoints on this object see the new structure and re-install instead of firing their sets.
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-    setStructure(vm, Structure::lockPropertiesTransition(vm, oldStructure, &deferred));
+    setStructure(vm, Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred));
     if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
     return true;
@@ -3177,8 +3175,8 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (structure()->didLockProperties()) [[unlikely]] {
-        // Nothing below applies to a locked object: validate against the current descriptor, as defineOwnNonIndexProperty() does.
+    if (structure()->hasImmutableProperties()) [[unlikely]] {
+        // Nothing below applies: validate against the current descriptor, as defineOwnNonIndexProperty() does.
         Identifier propertyName = Identifier::from(vm, index);
         PropertyDescriptor current;
         bool isCurrentDefined = getOwnPropertyDescriptor(globalObject, propertyName, current);
@@ -3686,9 +3684,9 @@ bool JSObject::putDirectIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* 
 bool JSObject::putDirectIndexSlowOrBeyondVectorLength(JSGlobalObject* globalObject, unsigned i, JSValue value, unsigned attributes, PutDirectIndexMode mode)
 {
     VM& vm = globalObject->vm();
-    if (structure()->didLockProperties() && !vm.allowLockedPropertiesMutationCount) [[unlikely]] {
+    if (structure()->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, LockedObjectPropertyDefineError);
+        return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, ImmutableObjectPropertyDefineError);
     }
     ASSERT(!value.isCustomGetterSetter());
 
@@ -4148,7 +4146,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // Step 2.a
         if (!isExtensible)
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
-        ASSERT(!object || !object->structure()->didLockProperties());
+        ASSERT(!object || !object->structure()->hasImmutableProperties());
 
         if (object) {
             if (descriptor.isAccessorDescriptor()) {
@@ -4172,12 +4170,12 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
     if (isEqual)
         return true;
 
-    // A locked object accepts a definition that changes nothing and refuses every other one.
-    if (object && object->structure()->didLockProperties()) [[unlikely]] {
+    // An object with immutable properties accepts a definition that changes nothing and refuses every other one.
+    if (object && object->structure()->hasImmutableProperties()) [[unlikely]] {
         bool wouldChange = wouldChangeProperty(globalObject, descriptor, current);
         RETURN_IF_EXCEPTION(scope, false);
         if (wouldChange)
-            return typeError(globalObject, scope, throwException, LockedObjectPropertyDefineError);
+            return typeError(globalObject, scope, throwException, ImmutableObjectPropertyDefineError);
         return true;
     }
 
@@ -4447,8 +4445,8 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
 {
     unsigned i = 0;
     Structure* structure = this->structure();
-    // A locked object: no batching (it builds structures and writes slots directly); each put below goes through putOwnDataProperty, which refuses.
-    if (!(structure->didLockProperties() || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
+    // No batching for immutable properties (it builds structures and writes slots directly): each put below goes through putOwnDataProperty(), which refuses.
+    if (!(structure->hasImmutableProperties() || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
         Vector<PropertyOffset, 16> offsets(size, [&](size_t index) -> std::optional<PropertyOffset> {
             PropertyName propertyName(properties[index]);
 

@@ -301,7 +301,7 @@ public:
     static Structure* toUncacheableDictionaryTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
-    JS_EXPORT_PRIVATE static Structure* lockPropertiesTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -837,7 +837,7 @@ public:
     DEFINE_BITFIELD(bool, hasNonEnumerableProperties, HasNonEnumerableProperties, 1, 6);
     DEFINE_BITFIELD(bool, hasSpecialProperties, HasSpecialProperties, 1, 7);
     DEFINE_BITFIELD(DefinitelyNonThenableState, definitelyNonThenableState, DefinitelyNonThenableState, 2, 8); // This flag can be flipped on the main thread at any timing.
-    DEFINE_BITFIELD(bool, didLockProperties, DidLockProperties, 1, 10); // Set by TransitionKind::LockProperties and inherited by every later transition. See JSObject::lockProperties().
+    DEFINE_BITFIELD(bool, hasImmutableProperties, HasImmutableProperties, 1, 10); // Set by TransitionKind::MakePropertiesImmutable and inherited by every later transition. See JSObject::makePropertiesImmutable().
     DEFINE_BITFIELD(TransitionKind, transitionKind, TransitionKind, 5, 13);
     DEFINE_BITFIELD(bool, isWatchingReplacement, IsWatchingReplacement, 1, 18); // This flag can be fliped on the main thread at any timing.
     DEFINE_BITFIELD(bool, mayBePrototype, MayBePrototype, 1, 19);
@@ -868,7 +868,7 @@ public:
     {
         return flags == (flags & (
             s_didPreventExtensionsBits
-            | s_didLockPropertiesBits
+            | s_hasImmutablePropertiesBits
             | s_isQuickPropertyAccessAllowedForEnumerationBits
             | s_hasNonEnumerablePropertiesBits
             | s_hasSpecialPropertiesBits

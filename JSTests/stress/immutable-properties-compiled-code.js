@@ -1,5 +1,5 @@
-// Stores, adds, deletes and indexed stores that were hot and cached before the object was locked: no tier keeps a fast path
-// into a locked object. Locking moves the object to a new structure, and no store is ever cached for a locked structure.
+// Stores, adds, deletes and indexed stores that were hot and cached before the object's properties were made immutable: no tier
+// keeps a fast path into it. The object moves to a new structure, and no store is ever cached for such a structure.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -77,7 +77,7 @@ function warm(includeTargets) {
 
 warm(true); // every site is hot and has stored into each target through whatever fast path its tier offers
 for (let target of Object.values(targets))
-    $vm.lockProperties(target);
+    $vm.makePropertiesImmutable(target);
 warm(false);
 
 for (let [name, target] of Object.entries(targets)) {
@@ -99,11 +99,11 @@ for (let [name, target] of Object.entries(targets)) {
     shouldBe(Reflect.ownKeys(target).length, keys, name + ": own keys");
     shouldBe("fresh" in target, false, name + ": no property was added");
     let copy = defineByLiteralSpread(target);
-    shouldBe($vm.didLockProperties(copy), false, name + ": a spread copy is not locked");
+    shouldBe($vm.hasImmutableProperties(copy), false, name + ": a spread copy is not immutable");
     shouldBe(copy.x, "copy", name);
 }
 
-// The same stores keep working, and keep being fast, for unlocked objects of the same original shapes.
+// The same stores keep working for ordinary objects of the same original shapes.
 {
     let object = { x: 0, keep: 1 };
     for (let i = 0; i < 5000; i++)

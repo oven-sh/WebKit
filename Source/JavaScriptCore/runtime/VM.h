@@ -1150,7 +1150,7 @@ public:
     MicrotaskQueue& defaultMicrotaskQueue();
 
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
-    unsigned allowLockedPropertiesMutationCount { 0 };
+    unsigned allowLazyPropertyMaterializationCount { 0 };
 
     JS_EXPORT_PRIVATE void drainMicrotasks();
 #if USE(BUN_JSC_ADDITIONS)
@@ -1559,15 +1559,15 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
-// While one of these is alive, properties can be put directly on an object whose Structure says didLockProperties(). It is for the
+// While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(). It is for the
 // places where the engine materializes a property the object logically already has: a static property table entry, a function's
 // name, length or prototype, an error's stack, an arguments object's callee. Keep it around the write alone: nothing inside it
 // may run JavaScript.
-class AllowLockedPropertiesMutation {
-    WTF_MAKE_NONCOPYABLE(AllowLockedPropertiesMutation);
+class AllowLazyPropertyMaterialization {
+    WTF_MAKE_NONCOPYABLE(AllowLazyPropertyMaterialization);
 public:
-    explicit AllowLockedPropertiesMutation(VM& vm) : m_vm(vm) { ++m_vm.allowLockedPropertiesMutationCount; }
-    ~AllowLockedPropertiesMutation() { --m_vm.allowLockedPropertiesMutationCount; }
+    explicit AllowLazyPropertyMaterialization(VM& vm) : m_vm(vm) { ++m_vm.allowLazyPropertyMaterializationCount; }
+    ~AllowLazyPropertyMaterialization() { --m_vm.allowLazyPropertyMaterializationCount; }
 private:
     VM& m_vm;
 };

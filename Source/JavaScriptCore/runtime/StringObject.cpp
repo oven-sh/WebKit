@@ -63,7 +63,7 @@ bool StringObject::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* g
 
 bool StringObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->didLockProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
         return JSObject::put(cell, globalObject, propertyName, value, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -81,7 +81,7 @@ bool StringObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
 
 bool StringObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned propertyName, JSValue value, bool shouldThrow)
 {
-    if (cell->structure()->didLockProperties()) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::putByIndex(cell, globalObject, propertyName, value, shouldThrow);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -106,7 +106,7 @@ static bool NODELETE isStringOwnProperty(JSGlobalObject* globalObject, StringObj
 
 bool StringObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool throwException)
 {
-    if (object->structure()->didLockProperties()) [[unlikely]]
+    if (object->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, throwException);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -132,7 +132,7 @@ bool StringObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObj
 
 bool StringObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
-    if (cell->structure()->didLockProperties()) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::deleteProperty(cell, globalObject, propertyName, slot);
     VM& vm = globalObject->vm();
     StringObject* thisObject = uncheckedDowncast<StringObject>(cell);
@@ -146,7 +146,7 @@ bool StringObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Pr
 
 bool StringObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned i)
 {
-    if (cell->structure()->didLockProperties()) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::deletePropertyByIndex(cell, globalObject, i);
     StringObject* thisObject = uncheckedDowncast<StringObject>(cell);
     if (thisObject->internalValue()->canGetIndex(i))

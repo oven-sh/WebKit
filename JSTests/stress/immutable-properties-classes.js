@@ -1,5 +1,5 @@
-// The classes with write hooks of their own that can be locked: arrays, functions, errors, RegExp objects, String objects and
-// unmapped arguments objects. Their lazily materialized properties still appear after the lock.
+// The classes with write hooks of their own that support immutable properties: arrays, functions, errors, RegExp objects, String
+// objects and unmapped arguments objects. Their lazily materialized properties still appear afterwards.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -24,7 +24,7 @@ function snapshot(object) {
     })) + " length:" + String(object.length);
 }
 
-// Arrays: every storage kind against every mutator, each mutator made hot on unlocked arrays of the same kind first.
+// Arrays: every storage kind against every mutator, each mutator made hot on ordinary arrays of the same kind first.
 {
     let kinds = {
         int32: () => [1, 2, 3, 4],
@@ -68,7 +68,7 @@ function snapshot(object) {
                     mutate(make());
                 } catch { }
             }
-            let array = $vm.lockProperties(make());
+            let array = $vm.makePropertiesImmutable(make());
             let before = snapshot(array);
             for (let i = 0; i < 40; i++) {
                 try {
@@ -79,7 +79,7 @@ function snapshot(object) {
         }
     }
 
-    let array = $vm.lockProperties([1, 2, 3]);
+    let array = $vm.makePropertiesImmutable([1, 2, 3]);
     shouldThrow(() => array.push(4), TypeError);
     shouldThrow(() => array.pop(), TypeError);
     shouldThrow(() => { "use strict"; array[0] = 9; }, TypeError);
@@ -91,10 +91,10 @@ function snapshot(object) {
     shouldBe(Reflect.deleteProperty(array, 0), false);
     shouldBe(array.map(x => x * 2).join(), "2,4,6");
     shouldBe([...array].join(), "1,2,3");
-    shouldBe($vm.didLockProperties(array.slice()), false);
+    shouldBe($vm.hasImmutableProperties(array.slice()), false);
 }
 
-// Functions: name, length and prototype are materialized lazily and still appear on a locked function.
+// Functions: name, length and prototype are materialized lazily and still appear.
 {
     function declared(a, b) { }
     let arrow = (a) => { };
@@ -102,7 +102,7 @@ function snapshot(object) {
     let native = Math.max;
     class Klass { static s() { } }
     for (let fn of [declared, arrow, bound, native, Klass])
-        $vm.lockProperties(fn);
+        $vm.makePropertiesImmutable(fn);
 
     shouldBe(declared.name, "declared");
     shouldBe(declared.length, 2);
@@ -129,14 +129,14 @@ function snapshot(object) {
     }
     shouldThrow(() => { "use strict"; declared.prototype = {}; }, TypeError);
     shouldBe(declared.prototype.constructor, declared);
-    // The prototype object itself was not locked.
+    // The prototype object itself was left alone.
     declared.prototype.method = function () { return 1; };
     shouldBe(new declared().method(), 1);
 }
 
-// Errors: line, column, sourceURL and stack are materialized lazily and still appear on a locked error.
+// Errors: line, column, sourceURL and stack are materialized lazily and still appear.
 {
-    let error = $vm.lockProperties(new RangeError("message"));
+    let error = $vm.makePropertiesImmutable(new RangeError("message"));
     shouldBe(typeof error.stack, "string");
     shouldBe(typeof error.line, "number");
     shouldBe(error.message, "message");
@@ -153,7 +153,7 @@ function snapshot(object) {
 // RegExp objects: lastIndex becomes non-writable (compiled code tests the object's own flag), so matching that has to update
 // it fails as it does for a frozen RegExp; matching that does not need to update it works.
 {
-    let plain = $vm.lockProperties(/b/);
+    let plain = $vm.makePropertiesImmutable(/b/);
     shouldBe(plain.test("abc"), true);
     shouldBe("abc".replace(plain, "X"), "aXc");
     shouldBe(Object.getOwnPropertyDescriptor(plain, "lastIndex").writable, false);
@@ -162,14 +162,14 @@ function snapshot(object) {
     shouldThrow(() => plain.compile("c"), TypeError);
     shouldBe(plain.source, "b");
 
-    let global = $vm.lockProperties(/b/g);
+    let global = $vm.makePropertiesImmutable(/b/g);
     shouldThrow(() => global.exec("abcb"), TypeError);
     shouldBe(global.lastIndex, 0);
 }
 
 // String objects.
 {
-    let string = $vm.lockProperties(new String("ab"));
+    let string = $vm.makePropertiesImmutable(new String("ab"));
     shouldBe(string.length, 2);
     shouldBe(string[1], "b");
     shouldThrow(() => { "use strict"; string.extra = 1; }, TypeError);
@@ -184,7 +184,7 @@ function snapshot(object) {
 // Unmapped (strict-mode) arguments objects: callee, Symbol.iterator and length still appear.
 {
     let args = (function () { "use strict"; return arguments; })(1, 2, 3);
-    $vm.lockProperties(args);
+    $vm.makePropertiesImmutable(args);
     shouldBe(args.length, 3);
     shouldBe([...args].join(), "1,2,3");
     shouldBe(typeof args[Symbol.iterator], "function");
@@ -196,10 +196,10 @@ function snapshot(object) {
     shouldBe(args[0], 1);
 }
 
-// Built-in prototypes and constructors: static properties are reified lazily and still appear after the lock.
+// Built-in prototypes and constructors: static properties are reified lazily and still appear.
 {
     for (let object of [Array.prototype, Array, Math, JSON, Promise.prototype, Promise, RegExp.prototype, Map.prototype, Object])
-        $vm.lockProperties(object);
+        $vm.makePropertiesImmutable(object);
     shouldBe([3, 1, 2].toSorted().join(), "1,2,3");
     shouldBe(typeof Array.prototype.findLast, "function");
     shouldBe(Math.hypot(3, 4), 5);

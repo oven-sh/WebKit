@@ -472,8 +472,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
-        // An error has these properties from the start; a locked one still gets them. No JavaScript runs from here on.
-        AllowLockedPropertiesMutation allowMutation(vm);
+        // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
+        AllowLazyPropertyMaterialization allowMaterialization(vm);
         putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
         putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
         if (!m_sourceURL.isEmpty())
@@ -492,8 +492,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
         {
-            // An error has these properties from the start; a locked one still gets them. No JavaScript runs inside.
-            AllowLockedPropertiesMutation allowMutation(vm);
+            // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs inside.
+            AllowLazyPropertyMaterialization allowMaterialization(vm);
             putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
             putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
             if (!m_sourceURL.isEmpty())
@@ -514,7 +514,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
             else
 #endif
                 stackValue = jsString(vm, WTF::move(stackString));
-            AllowLockedPropertiesMutation allowMutation(vm);
+            AllowLazyPropertyMaterialization allowMaterialization(vm);
             putDirect(vm, vm.propertyNames->stack, stackValue, attributes);
         }
         m_errorInfoMaterialized = true;
@@ -561,7 +561,7 @@ void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject*
 
 bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    if (object->structure()->didLockProperties()) [[unlikely]]
+    if (object->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -573,7 +573,7 @@ bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
 
 bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->didLockProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
         return JSObject::put(cell, globalObject, propertyName, value, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -587,7 +587,7 @@ bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
 
 bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
-    if (cell->structure()->didLockProperties()) [[unlikely]]
+    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
         return JSObject::deleteProperty(cell, globalObject, propertyName, slot);
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);

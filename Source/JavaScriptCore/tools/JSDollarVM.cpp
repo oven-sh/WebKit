@@ -2211,8 +2211,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionGetPID);
 static JSC_DECLARE_HOST_FUNCTION(functionVMTaintedState);
 static JSC_DECLARE_HOST_FUNCTION(functionHaveABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHavingABadTime);
-static JSC_DECLARE_HOST_FUNCTION(functionLockProperties);
-static JSC_DECLARE_HOST_FUNCTION(functionDidLockProperties);
+static JSC_DECLARE_HOST_FUNCTION(functionMakePropertiesImmutable);
+static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateProxy);
@@ -3255,27 +3255,27 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHavingABadTime, (JSGlobalObject* globalObject
     return JSValue::encode(jsBoolean(target->isHavingABadTime()));
 }
 
-// Calls JSObject::lockProperties() and returns the object. Throws a TypeError for an object of a class that cannot be locked.
-// Usage: $vm.lockProperties(object)
-JSC_DEFINE_HOST_FUNCTION(functionLockProperties, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// Calls JSObject::makePropertiesImmutable() and returns the object. Throws a TypeError for an object of a class that does not support it.
+// Usage: $vm.makePropertiesImmutable(object)
+JSC_DEFINE_HOST_FUNCTION(functionMakePropertiesImmutable, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = callFrame->argument(0).getObject();
     if (!object)
-        return throwVMTypeError(globalObject, scope, "lockProperties expects an object"_s);
-    if (!object->lockProperties(vm))
-        return throwVMTypeError(globalObject, scope, "lockProperties: an object of this class cannot be locked"_s);
+        return throwVMTypeError(globalObject, scope, "makePropertiesImmutable expects an object"_s);
+    if (!object->makePropertiesImmutable(vm))
+        return throwVMTypeError(globalObject, scope, "makePropertiesImmutable: objects of this class do not support it"_s);
     return JSValue::encode(object);
 }
 
-// Usage: $vm.didLockProperties(value)
-JSC_DEFINE_HOST_FUNCTION(functionDidLockProperties, (JSGlobalObject*, CallFrame* callFrame))
+// Usage: $vm.hasImmutableProperties(value)
+JSC_DEFINE_HOST_FUNCTION(functionHasImmutableProperties, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     JSObject* object = callFrame->argument(0).getObject();
-    return JSValue::encode(jsBoolean(object && object->didLockProperties()));
+    return JSValue::encode(jsBoolean(object && object->hasImmutableProperties()));
 }
 
 // Calls the specified test function after adjusting the stack to have the specified
@@ -5951,8 +5951,8 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, alwaysAllow, "haveABadTime"_s, functionHaveABadTime, 1);
     addFunction(vm, alwaysAllow, "isHavingABadTime"_s, functionIsHavingABadTime, 1);
-    addFunction(vm, alwaysAllow, "lockProperties"_s, functionLockProperties, 1);
-    addFunction(vm, alwaysAllow, "didLockProperties"_s, functionDidLockProperties, 1);
+    addFunction(vm, alwaysAllow, "makePropertiesImmutable"_s, functionMakePropertiesImmutable, 1);
+    addFunction(vm, alwaysAllow, "hasImmutableProperties"_s, functionHasImmutableProperties, 1);
 
     addFunction(vm, allowIfNotFuzz, "callWithStackSize"_s, functionCallWithStackSize, 2);
 
