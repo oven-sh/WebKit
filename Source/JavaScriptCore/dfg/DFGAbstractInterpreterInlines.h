@@ -3248,8 +3248,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                 clobberWorld();
             break;
         case Array::SlowPutArrayStorage:
-            if (node->arrayMode().mayStoreToHole())
-                clobberWorld();
+            // The store in bounds takes a slow path that throws when the object is frozen (see
+            // clobberize).
+            clobberWorld();
             break;
         default:
             break;
