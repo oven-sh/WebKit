@@ -235,7 +235,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // Code that was compiled with the whole program in front of it finds the variables of a module without looking for the
         // module: see AOT::Instance::placeForEnvironment().
         void* place = nullptr;
-        if (isPrelinked() && AOT::Image::environmentsSize()) {
+        // (The program that was compiled is the one that the realm's own loader loads. Another loader's is a further instance of it.)
+        if (isPrelinked() && AOT::Image::environmentsSize() && moduleLoader() == globalObject->moduleLoader()) {
             AOT::ImageEnvironment environment = AOT::Image::environmentOf(prelinkedIndex());
             if (environment.distance && environment.size == JSModuleEnvironment::allocationSize(symbolTable, jsModule->importSlotCount())) {
                 place = AOT::Instance::ensure(globalObject).placeForEnvironment(environment);

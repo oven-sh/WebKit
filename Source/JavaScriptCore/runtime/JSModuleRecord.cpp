@@ -643,6 +643,8 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         // has to be the one this record would ask for.)
         if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode()) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
             && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
+            // (The code of a program that was compiled ahead of time is for one instance of it, which is the realm's own loader's.)
+            && (!StaticHeap::isUsedBy(vm) || shared->isOfAnotherLoader() == (moduleLoader() != globalObject->moduleLoader()))
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             bool alike = resolvesImportsLike(globalObject, shared);
             RETURN_IF_EXCEPTION(scope, nullptr);

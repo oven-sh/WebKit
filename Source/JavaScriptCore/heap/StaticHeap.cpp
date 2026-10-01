@@ -34,6 +34,10 @@
 #include <mach/mach_vm.h>
 #endif
 
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0
+#endif
+
 namespace JSC {
 
 using Region = bmalloc::StaticRegion;
@@ -1230,7 +1234,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
 }
 
 // SymbolTables are created in Arena::Scratch too (CachedSymbolTable::decode()). By now dropUnreferencedVariableNames() has removed
-// the names that nothing looks up, so most tables only record the number of variables and the kind of scope. Nothing writes to them
+// the names that nothing looks up, if there is no bytecode, so most tables only record the number of variables and the kind of scope. Nothing writes to them
 // or compares them by identity, so equal tables are merged. A reference to a table is any word that holds its address.
 static void deduplicateSymbolTables()
 {
@@ -1456,7 +1460,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             else
                                 global->setLineStarts({ std::span { deduplicatedCopy(bytes, 1), bytes.size() }, nullptr });
                         }
-                        if (decoder.leavesFunctionCodeInPayload()) {
+                        // (Code that can still be interpreted has to be linked first, which finds variables by name where running it
+                        // does not: to watch them, and to check what the bytecode optimizer resolved.)
+                        if (decoder.leavesFunctionCodeInPayload() && Options::omitBytecodeFromStaticHeap()) {
                             DynamicallyResolvedNames lookedUp;
                             if (codeBlock) {
                                 const Vector<uint32_t>* exported = nullptr;

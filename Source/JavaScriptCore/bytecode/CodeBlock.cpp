@@ -737,15 +737,20 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                     const Identifier& ident = identifier(bytecode.m_var);
                     {
                         ConcurrentJSLocker locker(symbolTable->m_lock);
-                        auto iter = symbolTable->find(locker, ident.impl());
-                        ASSERT(iter != symbolTable->end(locker));
-                        if (bytecode.m_getPutInfo.initializationMode() == InitializationMode::ScopedArgumentInitialization) {
-                            ASSERT(bytecode.m_value.isArgument());
-                            unsigned argumentIndex = bytecode.m_value.toArgument() - 1;
-                            symbolTable->prepareToWatchScopedArgument(iter->value, argumentIndex);
-                        } else
-                            iter->value.prepareToWatch();
-                        metadata.m_watchpointSet = iter->value.watchpointSet();
+                        // A table in the static heap is not written to. Nothing is inferred about its variables.
+                        if (symbolTable->isSharedAcrossRealms()) [[unlikely]]
+                            metadata.m_watchpointSet = nullptr;
+                        else {
+                            auto iter = symbolTable->find(locker, ident.impl());
+                            ASSERT(iter != symbolTable->end(locker));
+                            if (bytecode.m_getPutInfo.initializationMode() == InitializationMode::ScopedArgumentInitialization) {
+                                ASSERT(bytecode.m_value.isArgument());
+                                unsigned argumentIndex = bytecode.m_value.toArgument() - 1;
+                                symbolTable->prepareToWatchScopedArgument(iter->value, argumentIndex);
+                            } else
+                                iter->value.prepareToWatch();
+                            metadata.m_watchpointSet = iter->value.watchpointSet();
+                        }
                     }
                     // Generator and async function bodies can resume on a new CodeBlock after the
                     // original is cleared (e.g. by deleteAllCode). setConstantRegisters gives the new

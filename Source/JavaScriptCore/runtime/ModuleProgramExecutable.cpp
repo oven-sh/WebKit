@@ -49,6 +49,7 @@ ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, c
 {
     for (unsigned i = 0; i < moduleScopeSymbolTables.size(); ++i)
         m_moduleScopeSymbolTables[i].setWithoutWriteBarrier(moduleScopeSymbolTables[i]);
+    m_isOfAnotherLoader = linker && linker->moduleLoader() != globalObject->moduleLoader();
 #if USE(BUN_JSC_ADDITIONS)
     if (linker && linker->isPrelinked()) {
         m_linkerPrelinkedGraph = linker->prelinkedGraph();
@@ -101,7 +102,7 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
 #if ENABLE(FTL_JIT)
     if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables()
-        && AOT::Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
+        && !isOfAnotherLoader() && AOT::Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
         if (auto*& slot = StaticHeap::topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
             slot = this;
             setUsesStaticExecutables();
