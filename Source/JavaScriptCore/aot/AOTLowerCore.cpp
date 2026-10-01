@@ -246,6 +246,10 @@ bool Lowering::run()
 
     // Runs on every way in, so what it computes may only depend on the frame pointer and on what is in the same register throughout.
     m_howValuesArePassed = m_graph.howValuesArePassed();
+    if (unsigned count = m_graph.numberOfThingsReturnedInRegisters) {
+        m_howThingsAreReturned = howThingsAreReturned(m_graph.facts(), count);
+        m_thingsReturned.grow(count);
+    }
     m_callFrame = m_out.framePointer();
     m_instance = registerOnEntry(instanceGPR);
     m_numberTag = registerOnEntry(GPRInfo::numberTagRegister);
@@ -340,7 +344,25 @@ bool Lowering::run()
     if (m_returnBlock) {
         m_out.appendTo(m_returnBlock);
         Rep rep = m_howValuesArePassed.result;
-        m_out.ret(m_out.phi(rep == Rep::JSValue ? Int64 : rep == Rep::Double ? Double : Int32, m_returnValues));
+        if (m_graph.numberOfThingsReturnedInRegisters) {
+            // (The phis first: what leaves is the last thing in the block.)
+            Vector<LValue, 8> things;
+            for (unsigned i = 0; i < m_thingsReturned.size(); ++i) {
+                Rep how = m_howThingsAreReturned[i];
+                things.append(m_out.phi(how == Rep::JSValue ? Int64 : how == Rep::Double ? Double : Int32, m_thingsReturned[i]));
+            }
+            PatchpointValue* patchpoint = m_out.patchpoint(Void);
+            for (unsigned i = 0; i < things.size(); ++i)
+                patchpoint->append(ConstrainedValue(things[i], m_howThingsAreReturned[i] == Rep::Double ? ValueRep::reg(FPRInfo::toArgumentRegister(i)) : ValueRep::reg(argumentGPR(i))));
+            patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+            patchpoint->effects.terminal = true;
+            patchpoint->setGenerator([graph = &m_graph](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                emitEpilogueBeforeLeaving(jit, *graph, params.code());
+                jit.ret();
+            });
+        } else
+            m_out.ret(m_out.phi(rep == Rep::JSValue ? Int64 : rep == Rep::Double ? Double : Int32, m_returnValues));
     }
     m_heaps.computeRangesAndDecorateInstructions();
     m_proc.deleteOrphans();

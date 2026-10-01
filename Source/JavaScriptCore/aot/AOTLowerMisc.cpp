@@ -90,7 +90,12 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
         // There is one way out, however many returns there are: what it takes to leave is not worth having twice.
         if (!m_returnBlock)
             m_returnBlock = m_out.newBlock();
-        m_returnValues.append(m_out.anchor(lowAs(node->use(node->as<OpRet>().m_value), m_howValuesArePassed.result)));
+        if (m_graph.numberOfThingsReturnedInRegisters) {
+            Node* object = node->use(node->as<OpRet>().m_value);
+            for (unsigned i = 0; i < m_thingsReturned.size(); ++i)
+                m_thingsReturned[i].append(m_out.anchor(lowAs(object->use(NewObjectPlan::registerOf(i)), m_howThingsAreReturned[i])));
+        } else
+            m_returnValues.append(m_out.anchor(lowAs(node->use(node->as<OpRet>().m_value), m_howValuesArePassed.result)));
         m_out.jump(m_returnBlock);
         return;
     case op_unreachable:

@@ -113,6 +113,13 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         m_out.appendTo(m_out.newBlock());
         if (hasResult || mode == CallMode::TailCall)
             setJSValue(node, m_out.constInt64(JSValue::encode(jsUndefined())));
+        if (node->numberOfThingsReturned) {
+            // (Nothing gets here. Something of the right sort, for what comes next to be made of.)
+            for (Node* read : m_graph.outermost().readsOfThingsReturned.get(node)) {
+                Rep rep = read->rep();
+                read->lowered = rep == Rep::Double ? m_out.constDouble(0) : rep == Rep::Int32 || rep == Rep::Boolean ? m_out.int32Zero : rep == Rep::Int64 ? m_out.int64Zero : m_out.constInt64(JSValue::encode(jsUndefined()));
+            }
+        }
         return true;
     }
     Convention convention = isConstruct ? known->conventionForConstruct : known->conventionForCall;
@@ -166,7 +173,23 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         }
     }
 
-    PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : how.result == Rep::JSValue ? Int64 : how.result == Rep::Double ? Double : Int32);
+    // What it hands back, if that is several things (Node::numberOfThingsReturned).
+    Vector<Rep, 8> things;
+    if (node->numberOfThingsReturned) {
+        RELEASE_ASSERT(mode == CallMode::Call);
+        things = howThingsAreReturned(known->facts, node->numberOfThingsReturned);
+    }
+    auto typeFor = [](Rep rep) -> LType { return rep == Rep::JSValue ? Int64 : rep == Rep::Double ? Double : Int32; };
+    LType typeOfResult = mode == CallMode::TailCall ? Void : typeFor(how.result);
+    if (things.size() == 1)
+        typeOfResult = typeFor(things[0]);
+    else if (!things.isEmpty()) {
+        Vector<B3::Type> types;
+        for (Rep rep : things)
+            types.append(typeFor(rep));
+        typeOfResult = m_proc.addTuple(WTF::move(types));
+    }
+    PatchpointValue* patchpoint = m_out.patchpoint(typeOfResult);
     if (passesCallee)
         patchpoint->append(ConstrainedValue(callee, ValueRep::reg(calleeGPR)));
     if (convention.usesThis)
@@ -179,6 +202,11 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
             patchpoint->append(ConstrainedValue(passed[i], how.parameters[i] == Rep::Double ? ValueRep::reg(FPRInfo::toArgumentRegister(i)) : ValueRep::reg(argumentGPR(i))));
     }
     finishCall(patchpoint, mode, how.result);
+    if (!things.isEmpty()) {
+        patchpoint->resultConstraints.shrink(0);
+        for (unsigned i = 0; i < things.size(); ++i)
+            patchpoint->resultConstraints.append(things[i] == Rep::Double ? ValueRep::reg(FPRInfo::toArgumentRegister(i)) : ValueRep::reg(argumentGPR(i)));
+    }
     CallSite site { mode == CallMode::TailCall ? StubCall::noCallSite : callSiteBitsOf(node) };
     patchpoint->setGenerator([graph = &m_graph, index, mode, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -193,6 +221,14 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         // What comes after this in the bytecode returns what the call returned, if it was made like any other. It is not got to.
         m_out.appendTo(m_out.newBlock());
         setJSValue(node, m_out.int64Zero);
+        return true;
+    }
+    if (!things.isEmpty()) {
+        Vector<LValue, 8> handedBack;
+        for (unsigned i = 0; i < things.size(); ++i)
+            handedBack.append(things.size() == 1 ? static_cast<LValue>(patchpoint) : m_out.extract(patchpoint, i));
+        for (Node* read : m_graph.outermost().readsOfThingsReturned.get(node))
+            setResult(read, handedBack[read->whichThing], things[read->whichThing]);
         return true;
     }
     if (hasResult)

@@ -667,7 +667,9 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         return declined();
     if (program)
         inlineCalls(graph, *program);
+    doWithoutObjectsThatAreOnlyRead(graph);
     inferTypes(graph);
+    findThingsReturnedInRegisters(graph);
     // (With no loop split there is no choice to make: LoopOptimizer::viewArrays() looks at each loop by itself.)
     if (triesLoopsWhole && Options::aotSplitLoops() && Options::aotLoopsToSplit() && !loopsWillDoWhole(graph))
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableFacts, program, false);
@@ -933,6 +935,7 @@ bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBl
         return false;
     graph.noteUsesOfProvenFunctions(factsOfExecutables);
     graph.noteFieldsComparedWithStrings();
+    noteThingsReturned(graph);
     graph.noteClassesDefined();
     if (variableFacts)
         graph.noteWhatCannotBeToldOfVariables(*variableFacts);
@@ -951,6 +954,7 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
         parametersThatEscape = std::numeric_limits<uint32_t>::max();
         return TTop;
     }
+    doWithoutObjectsThatAreOnlyRead(graph);
     Type result = inferTypes(graph, &calleesConsulted, &calleesGivenMore) & TTop;
     parametersThatEscape = facts ? AOT::parametersThatEscape(graph, &calleesConsulted) : std::numeric_limits<uint32_t>::max();
     return result;

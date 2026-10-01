@@ -86,6 +86,7 @@ public:
                 switch (node->opcode) {
                 case op_ret:
                     m_returnType |= node->use(node->as<OpRet>().m_value)->type;
+                    noteThingsReturnedBy(node);
                     break;
                 case op_tail_call:
                     m_returnType |= resultOfCall(node);
@@ -99,6 +100,7 @@ public:
                 if (calleesGivenMore && isReached()) {
                     noteArgumentsOf(node);
                     noteWhatIsPutInVariablesBy(node);
+                    noteWhetherObjectReturnedIsWantedBy(node);
                 }
             }
         }
@@ -145,6 +147,7 @@ public:
     Type returnType() const { return m_returnType; }
     Vector<const KnownFunction*>* calleesConsulted { nullptr };
     Vector<const KnownFunction*>* calleesGivenMore { nullptr };
+    std::optional<UsersOfNodes> m_users;
 
 private:
     // ---- Options::aotFollowsFunctions(). See abi/DESIGN-types.md, for now.
@@ -544,6 +547,75 @@ private:
         return signature->result;
     }
 
+    // ---- ProgramFacts::typesOfThingsReturned, objectReturnedIsWanted.
+    const UsersOfNodes& users()
+    {
+        if (!m_users)
+            m_users.emplace(m_graph);
+        return *m_users;
+    }
+
+    void noteThingsReturnedBy(Node* node)
+    {
+        const ProgramFacts* facts = m_graph.facts();
+        if (!calleesGivenMore || node->graph != &m_graph)
+            return;
+        auto* names = thingsReturnedInRegistersBy(m_graph.codeBlock(), facts);
+        if (!names)
+            return;
+        Node* object = node->use(node->as<OpRet>().m_value);
+        RELEASE_ASSERT(object->isBytecode(op_new_object) && object->numberOfLiteralProperties == names->size());
+        for (unsigned i = 0; i < names->size(); ++i) {
+            Type type = object->use(NewObjectPlan::registerOf(i))->type;
+            Type old = facts->typesOfThingsReturned[i].join(type);
+            if ((old | type) != old)
+                facts->moreIsKnownOfThingsReturned.store(true, std::memory_order_relaxed);
+        }
+    }
+
+    void noteWhetherObjectReturnedIsWantedBy(Node* node)
+    {
+        if (!thingsReturnedByFunctions() || (node->opcode != op_call && node->opcode != op_tail_call))
+            return;
+        bool isProven = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isProven);
+        if (!known || !isProven || !known->forCall || !known->facts)
+            return;
+        auto* names = thingsReturnedByFunctions()->namesOfThingsReturnedBy(known->forCall);
+        if (!names || (node->opcode == op_call && users().isOnlyRead(node, names->span(), 0)))
+            return;
+        if (known->facts->objectReturnedIsWanted.exchange(true, std::memory_order_relaxed))
+            return;
+        known->facts->moreIsKnownOfThingsReturned.store(true, std::memory_order_relaxed);
+        if (!calleesGivenMore->contains(known))
+            calleesGivenMore->append(known);
+    }
+
+    // Of an op_get_by_id: what it reads is one of the things that a call was handed in registers.
+    std::optional<Type> typeOfThingReturnedThatIsReadBy(Node* read)
+    {
+        if (!thingsReturnedByFunctions())
+            return std::nullopt;
+        Node* call = read->use(read->as<OpGetById>().m_base);
+        while (call->kind == NodeKind::Narrow || call->isBytecode(op_check_type) || call->isBytecode(op_check_tdz) || call->isBytecode(op_type_tag))
+            call = call->uses[0].node;
+        if (!call->isBytecode(op_call))
+            return std::nullopt;
+        bool isProven = false;
+        const KnownFunction* known = m_graph.knownCallee(call, &isProven);
+        if (!known || !isProven || !known->forCall)
+            return std::nullopt;
+        auto* names = thingsReturnedInRegistersBy(known->forCall, known->facts);
+        if (!names)
+            return std::nullopt;
+        size_t index = names->find(read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl());
+        if (index == notFound || !users().isOnlyRead(call, names->span(), 0))
+            return std::nullopt;
+        if (calleesConsulted && !calleesConsulted->contains(known))
+            calleesConsulted->append(known);
+        return hasBeenGotTo(call) ? known->facts->typesOfThingsReturned[index].load() : TNone;
+    }
+
     Type resultOfCall(Node* node)
     {
         if (!hasBeenGotTo(node))
@@ -887,6 +959,8 @@ private:
             }
             return TFinalObject;
         case op_get_by_id:
+            if (auto type = typeOfThingReturnedThatIsReadBy(node))
+                return *type;
             if (TypeTable::areStructsToGoBy() && Options::aotTypesFields()) {
                 if (uint32_t method = Graph::closedMethodReadBy(node))
                     return typeOf(node->as<OpGetById>().m_base) ? typeOfFunction(method) : TNone;

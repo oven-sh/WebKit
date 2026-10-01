@@ -455,6 +455,9 @@ private:
     LValue m_scratch { nullptr };
     LBasicBlock m_returnBlock { nullptr };
     Vector<ValueFromBlock, 4> m_returnValues;
+    // Graph::numberOfThingsReturnedInRegisters: each, from wherever it is returned; and how it goes.
+    Vector<Vector<ValueFromBlock, 4>, 8> m_thingsReturned;
+    Vector<Rep, 8> m_howThingsAreReturned;
     LBasicBlock m_exit { nullptr }; // While a guard is lowered: the way to the generic copy.
     Vector<std::pair<BasicBlock*, LBasicBlock>, 2> m_edges; // While a branch is lowered: the ways to successors that have phis.
     LBasicBlock m_afterSlotChecks { nullptr };

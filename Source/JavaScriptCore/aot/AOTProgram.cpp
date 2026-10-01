@@ -167,6 +167,25 @@ Type VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned re
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionsOfProgram);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ClassesOfProgram);
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ThingsReturnedByFunctions);
+
+static ThingsReturnedByFunctions* s_thingsReturnedByFunctions;
+void setThingsReturnedByFunctions(ThingsReturnedByFunctions* things) { s_thingsReturnedByFunctions = things; }
+ThingsReturnedByFunctions* thingsReturnedByFunctions() { return s_thingsReturnedByFunctions; }
+
+void ThingsReturnedByFunctions::note(UnlinkedCodeBlock* code, Names&& names)
+{
+    Locker locker { m_lock };
+    m_names.set(code, WTF::move(names));
+}
+
+const ThingsReturnedByFunctions::Names* thingsReturnedInRegistersBy(UnlinkedCodeBlock* code, const ProgramFacts* facts)
+{
+    if (!s_thingsReturnedByFunctions || !facts || !facts->isClosed || facts->isExposed.load(std::memory_order_relaxed) || facts->objectReturnedIsWanted.load(std::memory_order_relaxed))
+        return nullptr;
+    return s_thingsReturnedByFunctions->namesOfThingsReturnedBy(code);
+}
+
 static ClassesOfProgram* s_classesOfProgram;
 void setClassesOfProgram(ClassesOfProgram* classes) { s_classesOfProgram = classes; }
 ClassesOfProgram* classesOfProgram() { return s_classesOfProgram; }
@@ -373,6 +392,18 @@ HowValuesArePassed howValuesArePassed(const ProgramFacts* facts, Convention conv
     for (unsigned i = 0; i < convention.numberOfParameters; ++i)
         result.parameters[i] = repFor(facts->parameterTypes[i + 1].load());
     result.result = repFor(facts->returnType.load());
+    return result;
+}
+
+Vector<Rep, 8> howThingsAreReturned(const ProgramFacts* facts, unsigned count)
+{
+    bool asTheyAre = Options::aotPassesValuesUnboxed() && Options::aotTypesParametersOfClosedFunctions() && !Options::aotVerifiesFacts();
+    Vector<Rep, 8> result;
+    for (unsigned i = 0; i < count; ++i) {
+        Type type = facts->typesOfThingsReturned[i].load();
+        Rep rep = asTheyAre && type ? repForType(type) : Rep::JSValue;
+        result.append(rep == Rep::Int32 || rep == Rep::Double || rep == Rep::Boolean ? rep : Rep::JSValue);
+    }
     return result;
 }
 

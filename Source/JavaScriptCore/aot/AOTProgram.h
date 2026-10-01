@@ -80,6 +80,14 @@ struct ProgramFacts {
     std::array<AtomicType, mostParameters> parameterTypes { };
     // KnownFunction::returnType, where the function itself finds it.
     mutable AtomicType returnType;
+    // What it returns is, every time, an object that a literal has just made with properties of the same names (ThingsReturnedByFunctions). If it is closed, and nobody who calls it does
+    // anything with the object but read those, there is no object: what it would have been made with is handed back as it is, each thing in a register, as a function in Go hands back several.
+    static constexpr unsigned mostThingsReturned = 8;
+    mutable std::array<AtomicType, mostThingsReturned> typesOfThingsReturned { }; // From nothing up, like the rest.
+    // Somebody who calls it does something else with what it returns. From false to true, and never back.
+    mutable std::atomic<bool> objectReturnedIsWanted { false };
+    // One or the other has changed since whoever goes round asking last asked.
+    mutable std::atomic<bool> moreIsKnownOfThingsReturned { false };
     // What the function is passed that something may still be able to get at when it has returned: a bit for each parameter, `this` being
     // the first. It goes by the code of the function and of what that calls, whoever calls it: from nothing up, like the rest.
     // It takes for granted that reading and writing properties of what was passed runs nobody's code.
@@ -278,6 +286,34 @@ private:
 JS_EXPORT_PRIVATE void setClassesOfProgram(ClassesOfProgram*); // Not while anything is being compiled.
 ClassesOfProgram* classesOfProgram();
 
+// The functions that return, every time, an object that a literal has just made and nothing else has seen, with properties of the same names in the same order. From the bytecode alone.
+class ThingsReturnedByFunctions {
+    WTF_MAKE_TZONE_ALLOCATED(ThingsReturnedByFunctions);
+    WTF_MAKE_NONCOPYABLE(ThingsReturnedByFunctions);
+public:
+    ThingsReturnedByFunctions() = default;
+    using Names = Vector<UniquedStringImpl*, 8>;
+
+    // While every piece of code has its say (noteThingsReturned()): any thread.
+    JS_EXPORT_PRIVATE void note(UnlinkedCodeBlock*, Names&&);
+
+    // After that: any thread.
+    const Names* namesOfThingsReturnedBy(UnlinkedCodeBlock* code) const
+    {
+        auto it = m_names.find(code);
+        return it == m_names.end() ? nullptr : &it->value;
+    }
+    unsigned size() const { return m_names.size(); }
+
+private:
+    Lock m_lock;
+    UncheckedKeyHashMap<UnlinkedCodeBlock*, Names> m_names;
+};
+JS_EXPORT_PRIVATE void setThingsReturnedByFunctions(ThingsReturnedByFunctions*); // Not while anything is being compiled.
+ThingsReturnedByFunctions* thingsReturnedByFunctions();
+// If that is how it hands them back, as things stand.
+JS_EXPORT_PRIVATE const ThingsReturnedByFunctions::Names* thingsReturnedInRegistersBy(UnlinkedCodeBlock*, const ProgramFacts*);
+
 class CalleeHints;
 struct ModuleLinkage;
 // What whoever compiles the program has for each piece of its code, for making one part of another.
@@ -304,6 +340,8 @@ struct HowValuesArePassed {
     HowValuesArePassed() { parameters.fill(Rep::JSValue); }
 };
 HowValuesArePassed howValuesArePassed(const ProgramFacts*, Convention);
+// Likewise the things that are returned in registers: the first in the first register that a parameter would have, and so on.
+Vector<Rep, 8> howThingsAreReturned(const ProgramFacts*, unsigned count);
 
 // A constant that is whatever the realm has for it (SourceCodeRepresentation::LinkTimeConstant): the number of that among what cannot be
 // changed (ImmutableIntrinsics), if it is one of those. Then code gets it from there, and has no use for the constant.

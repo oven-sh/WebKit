@@ -8,6 +8,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTTypeTable.h"
 #include "BytecodeStructs.h"
 #include "JSCInlines.h"
 #include "SymbolTable.h"
@@ -792,6 +793,266 @@ void promoteEnvironments(Graph& graph)
 }
 
 // TEMPORARY-ESCAPE-STATS
+UsersOfNodes::UsersOfNodes(Graph& graph)
+{
+    auto note = [&](Node* user) {
+        if (user->isElided)
+            return;
+        for (auto& use : user->uses)
+            m_users.add(use.node, Vector<Node*, 2> { }).iterator->value.append(user);
+    };
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* phi : block->phis)
+            note(phi);
+        for (Node* node : block->nodes)
+            note(node);
+    }
+}
+
+std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t family) const
+{
+    OnlyRead result;
+    result.handedOn.append(object);
+    for (unsigned i = 0; i < result.handedOn.size(); ++i) {
+        Node* alias = result.handedOn[i];
+        for (Node* user : of(alias)) {
+            if (user->kind == NodeKind::Narrow) {
+                result.handedOn.append(user);
+                continue;
+            }
+            if (user->kind != NodeKind::Bytecode || user->guard)
+                return std::nullopt;
+            switch (user->opcode) {
+            case op_check_tdz:
+                result.handedOn.append(user);
+                break;
+            case op_check_type: {
+                // (It gets past, or there would be something to throw.)
+                unsigned mask = user->as<OpCheckType>().m_mask;
+                if (mask > SoundTypeAll || !(mask & SoundTypeOtherObject))
+                    return std::nullopt;
+                result.handedOn.append(user);
+                break;
+            }
+            case op_type_tag:
+                // (Likewise. Where the slots are verified it asks nothing.)
+                if (!user->firstLayout || !TypeTable::shared() || (user->firstLayout != family && !user->isTakenAtItsWord && !TypeTable::shared()->isVerified(user->firstLayout)))
+                    return std::nullopt;
+                result.handedOn.append(user);
+                break;
+            case op_get_by_id: {
+                auto bytecode = user->as<OpGetById>();
+                if (user->use(bytecode.m_base) != alias)
+                    return std::nullopt;
+                UniquedStringImpl* name = user->graph->codeBlock()->identifier(bytecode.m_property).impl();
+                size_t index = names.size();
+                for (size_t candidate = 0; candidate < names.size(); ++candidate) {
+                    if (names[candidate] == name)
+                        index = candidate;
+                }
+                // (What it has no property of its own for is a matter of what it inherits.)
+                if (index == names.size())
+                    return std::nullopt;
+                result.reads.append({ user, static_cast<unsigned>(index) });
+                break;
+            }
+            case op_jundefined_or_null:
+            case op_jnundefined_or_null:
+            case op_jeq_null:
+            case op_jneq_null:
+                result.tests.append(user);
+                break;
+            default:
+                return std::nullopt;
+            }
+        }
+    }
+    return result;
+}
+
+// None: it has one of them twice.
+static std::optional<ThingsReturnedByFunctions::Names> namesOfLiteral(Node* node)
+{
+    auto& instructions = node->graph->codeBlock()->instructions();
+    auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
+    RELEASE_ASSERT(stores.size() >= node->numberOfLiteralProperties);
+    ThingsReturnedByFunctions::Names names;
+    for (unsigned i = 0; i < node->numberOfLiteralProperties; ++i) {
+        UniquedStringImpl* name = node->graph->codeBlock()->identifier(instructions.at(stores[i])->as<OpPutById>().m_property).impl();
+        if (names.contains(name))
+            return std::nullopt;
+        names.append(name);
+    }
+    return names;
+}
+
+void noteThingsReturned(Graph& graph)
+{
+    ThingsReturnedByFunctions* all = thingsReturnedByFunctions();
+    UnlinkedCodeBlock* code = graph.codeBlock();
+    if (!all || code->codeType() != FunctionCode || code->isConstructor())
+        return;
+    // (What one that can be suspended returns goes to whatever resumes it.)
+    if (code->parseMode() != SourceParseMode::NormalFunctionMode && code->parseMode() != SourceParseMode::ArrowFunctionMode && code->parseMode() != SourceParseMode::MethodMode)
+        return;
+    std::optional<UsersOfNodes> users;
+    std::optional<ThingsReturnedByFunctions::Names> names;
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode)
+                continue;
+            // (What something else returns.)
+            if (node->opcode == op_tail_call || node->opcode == op_tail_call_varargs)
+                return;
+            if (node->opcode != op_ret)
+                continue;
+            Node* object = node->use(node->as<OpRet>().m_value);
+            if (!object->isBytecode(op_new_object) || !object->numberOfLiteralProperties || object->numberOfLiteralProperties > ProgramFacts::mostThingsReturned)
+                return;
+            if (!users)
+                users.emplace(graph);
+            if (users->of(object).size() != 1)
+                return;
+            auto itsNames = namesOfLiteral(object);
+            if (!itsNames || (names && !(*names == *itsNames)))
+                return;
+            names = WTF::move(itsNames);
+        }
+    }
+    if (names)
+        all->note(code, WTF::move(*names));
+}
+
+static std::atomic<uint64_t> s_functionsThatReturnThings;
+static std::atomic<uint64_t> s_callsThatAreHandedThings;
+
+void findThingsReturnedInRegisters(Graph& graph)
+{
+    if (!thingsReturnedByFunctions())
+        return;
+    if (auto* names = thingsReturnedInRegistersBy(graph.codeBlock(), graph.facts())) {
+        for (BasicBlock* block : graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (!node->isBytecode(op_ret) || node->graph != &graph)
+                    continue;
+                Node* object = node->use(node->as<OpRet>().m_value);
+                RELEASE_ASSERT(object->isBytecode(op_new_object) && object->numberOfLiteralProperties == names->size());
+                object->isElided = true;
+            }
+        }
+        graph.numberOfThingsReturnedInRegisters = names->size();
+        s_functionsThatReturnThings.fetch_add(1, std::memory_order_relaxed);
+    }
+    std::optional<UsersOfNodes> users;
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (!node->isBytecode(op_call) || node->isElided)
+                continue;
+            bool isProven = false;
+            const KnownFunction* known = graph.knownCallee(node, &isProven);
+            if (!known || !isProven || !known->forCall)
+                continue;
+            auto* names = thingsReturnedInRegistersBy(known->forCall, known->facts);
+            if (!names)
+                continue;
+            if (!users)
+                users.emplace(graph);
+            auto onlyRead = users->isOnlyRead(node, names->span(), 0);
+            // (Or it would have said that the object is wanted.)
+            RELEASE_ASSERT(onlyRead);
+            node->numberOfThingsReturned = names->size();
+            auto& reads = graph.readsOfThingsReturned.add(node, Vector<Node*, 8> { }).iterator->value;
+            for (auto [read, index] : onlyRead->reads) {
+                read->kind = NodeKind::Proj;
+                read->uses.shrink(0);
+                read->uses.append({ VirtualRegister(), node });
+                read->whichThing = index;
+                reads.append(read);
+            }
+            for (Node* test : onlyRead->tests) {
+                for (auto& use : test->uses) {
+                    if (onlyRead->handedOn.contains(use.node))
+                        use.node = graph.constant(jsBoolean(true));
+                }
+            }
+            for (Node* alias : onlyRead->handedOn) {
+                if (alias != node)
+                    alias->isElided = true;
+            }
+            s_callsThatAreHandedThings.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+}
+
+static std::atomic<uint64_t> s_objectsNotMade;
+
+void doWithoutObjectsThatAreOnlyRead(Graph& graph)
+{
+    // TEMPORARY: for telling whether something is this one's doing.
+    static const bool isOff = [] { const char* text = getenv("BUN_AOT_MAKES_ALL_OBJECTS"); return text && !strcmp(text, "1"); }();
+    if (isOff)
+        return;
+    auto resolve = [](Node* node) {
+        while (node->replacement)
+            node = node->replacement;
+        return node;
+    };
+    // (Doing without one may be what it takes to do without another that was in it.)
+    for (bool changed = true; changed;) {
+        changed = false;
+        std::optional<UsersOfNodes> users;
+        for (BasicBlock* block : graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (!node->isBytecode(op_new_object) || !node->numberOfLiteralProperties || node->isElided)
+                    continue;
+                auto& instructions = node->graph->codeBlock()->instructions();
+                auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
+                RELEASE_ASSERT(stores.size() >= node->numberOfLiteralProperties);
+                Vector<UniquedStringImpl*, 8> names;
+                bool hasOneTwice = false;
+                for (unsigned i = 0; i < node->numberOfLiteralProperties; ++i) {
+                    UniquedStringImpl* name = node->graph->codeBlock()->identifier(instructions.at(stores[i])->as<OpPutById>().m_property).impl();
+                    hasOneTwice |= names.contains(name);
+                    names.append(name);
+                }
+                if (hasOneTwice)
+                    continue;
+                if (!users)
+                    users.emplace(graph);
+                auto onlyRead = users->isOnlyRead(node, names.span(), Graph::familyOfNewObject(node));
+                if (!onlyRead)
+                    continue;
+                for (auto [read, index] : onlyRead->reads) {
+                    read->replacement = node->use(NewObjectPlan::registerOf(index));
+                    read->isElided = true;
+                }
+                for (Node* test : onlyRead->tests) {
+                    for (auto& use : test->uses) {
+                        if (onlyRead->handedOn.contains(use.node))
+                            use.node = graph.constant(jsBoolean(true));
+                    }
+                }
+                for (Node* alias : onlyRead->handedOn)
+                    alias->isElided = true;
+                s_objectsNotMade.fetch_add(1, std::memory_order_relaxed);
+                changed = true;
+            }
+        }
+        if (!changed)
+            break;
+        for (BasicBlock* block : graph.m_rpo) {
+            for (Node* phi : block->phis) {
+                for (auto& use : phi->uses)
+                    use.node = resolve(use.node);
+            }
+            for (Node* node : block->nodes) {
+                for (auto& use : node->uses)
+                    use.node = resolve(use.node);
+            }
+        }
+    }
+}
+
 static std::atomic<uint64_t> s_sites[numberOfAllocationKinds][static_cast<unsigned>(Escape::NumberOfThem)];
 
 void analyzeEscapes(Graph& graph)
@@ -815,6 +1076,8 @@ uint32_t parametersThatEscape(Graph& graph, Vector<const KnownFunction*>* callee
 
 void reportEscapeStatistics()
 {
+    dataLogLn("  NOTMADE ", s_objectsNotMade.load(), " objects that are only read (counted each time the code they are in is looked at)");
+    dataLogLn("  NOTMADE ", thingsReturnedByFunctions() ? thingsReturnedByFunctions()->size() : 0, " functions return a literal with the same names every time; ", s_functionsThatReturnThings.load(), " hand them back in registers, to ", s_callsThatAreHandedThings.load(), " calls");
     for (unsigned kind = 0; kind < numberOfAllocationKinds; ++kind) {
         for (unsigned escape = 0; escape < static_cast<unsigned>(Escape::NumberOfThem); ++escape) {
             if (uint64_t count = s_sites[kind][escape].load())

@@ -6441,6 +6441,11 @@ struct BytecodeLinkEncoder::Impl {
         AOT::ClassesOfProgram classesOfProgram;
         AOT::setClassesOfProgram(&classesOfProgram);
         auto forgetClassesOfProgram = makeScopeExit([] { AOT::setClassesOfProgram(nullptr); });
+        AOT::ThingsReturnedByFunctions thingsReturnedByFunctions;
+        // TEMPORARY: BUN_AOT_RETURNS_OBJECTS=1, for telling whether something is this one's doing.
+        if (const char* text = getenv("BUN_AOT_RETURNS_OBJECTS"); !text || strcmp(text, "1"))
+            AOT::setThingsReturnedByFunctions(&thingsReturnedByFunctions);
+        auto forgetThingsReturnedByFunctions = makeScopeExit([] { AOT::setThingsReturnedByFunctions(nullptr); });
         {
             MonotonicTime before = MonotonicTime::now();
             for (auto& hintsOfModule : hints) {
@@ -6648,6 +6653,9 @@ struct BytecodeLinkEncoder::Impl {
                         mixType(summary.facts->thisType.load());
                         mixType(summary.facts->returnType.load());
                         mix(summary.facts->parametersThatEscape.load());
+                        mix(summary.facts->objectReturnedIsWanted.load());
+                        for (auto& type : summary.facts->typesOfThingsReturned)
+                            mixType(type.load());
                     }
                     for (auto* function : summary.functions)
                         mixType(function->returnType.load());
@@ -6682,6 +6690,7 @@ struct BytecodeLinkEncoder::Impl {
                     if (summary.facts) {
                         uint32_t old = summary.facts->parametersThatEscape.fetch_or(escaping, std::memory_order_relaxed);
                         summary.changed |= (old | escaping) != old;
+                        summary.changed |= summary.facts->moreIsKnownOfThingsReturned.exchange(false, std::memory_order_relaxed);
                     }
                     for (auto* function : summary.functions) {
                         AOT::Type old = function->returnType.join(type);
@@ -6758,6 +6767,23 @@ struct BytecodeLinkEncoder::Impl {
                     withCode += !!function.forCall;
                     closed += function.facts->isClosed;
                     neverCalled += function.facts->isClosed && !function.facts->parameterTypes[0].load();
+                }
+                if (Options::aotReportStats() && AOT::thingsReturnedByFunctions()) [[unlikely]] {
+                    unsigned exposed = 0, wanted = 0, never = 0, inRegisters = 0;
+                    for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
+                        const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+                        if (!function.forCall || !AOT::thingsReturnedByFunctions()->namesOfThingsReturnedBy(function.forCall))
+                            continue;
+                        if (!function.facts->isClosed)
+                            exposed++;
+                        else if (!function.facts->parameterTypes[0].load())
+                            never++;
+                        else if (function.facts->objectReturnedIsWanted.load())
+                            wanted++;
+                        else
+                            inRegisters++;
+                    }
+                    dataLogLn("  NOTMADE of the functions that return a literal with the same names every time: ", exposed, " get somewhere that is not reckoned with, ", never, " are never called, of ", wanted, " somebody wants the object, ", inRegisters, " hand the things back in registers");
                 }
                 if (Options::aotReportStats()) [[unlikely]] {
                     static constexpr ASCIILiteral whys[] = { "?"_s, "the bundler says it escapes"_s, "is not made where it can be seen"_s, "may get hold of itself"_s, "is not of the program"_s, "has no code for a call"_s,

@@ -293,6 +293,9 @@ struct Node {
     // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
     // op_create_this: how many properties the object is made with (NewObjectPlan). Their values are the uses at NewObjectPlan::registerOf().
     unsigned numberOfLiteralProperties { 0 };
+    // An op_call of a function that hands back that many things in registers (findThingsReturnedInRegisters()). Nothing wants what the call itself gives.
+    uint8_t numberOfThingsReturned { 0 };
+    uint8_t whichThing { 0 }; // A NodeKind::Proj of such a call, which was the op_get_by_id that read it: which of them.
     // An op_get_by_val or op_get_length of an array, in a loop that changes no array: the header of the loop ahead of which the array is looked at (BasicBlock::arraysViewed).
     BasicBlock* viewedAheadOf { nullptr };
     Node* arrayViewed { nullptr }; // Which of those it is: what the base is, as it comes to the loop.
@@ -637,6 +640,8 @@ public:
     unsigned indexOfKnownCallee(const ImageKey&);
     Vector<ImageKey> knownCallees;
     bool callsItself { false }; // As good as a loop.
+    unsigned numberOfThingsReturnedInRegisters { 0 }; // By this function. None: it returns what it returns.
+    UncheckedKeyHashMap<Node*, Vector<Node*, 8>> readsOfThingsReturned; // By the call: Node::whichThing.
     bool makesCalls { false }; // Of functions, in frames of their own.
     bool emitsCalls { false }; // There may be an instruction in the code that calls something, if only a stub. (A jump is not one.)
     bool emitsCallsWhateverIsLeft { false }; // And there is no telling by looking at what the code has come to.
@@ -755,6 +760,28 @@ private:
     Vector<std::unique_ptr<Graph>> m_adopted;
 };
 
+// Who uses what each node gives.
+class UsersOfNodes {
+public:
+    explicit UsersOfNodes(Graph&);
+    std::span<Node* const> of(Node* node) const
+    {
+        auto it = m_users.find(node);
+        return it == m_users.end() ? std::span<Node* const> { } : it->value.span();
+    }
+    // What is done with an object that has just been made with plain properties of those names, if all that is done with it is to read them.
+    struct OnlyRead {
+        Vector<Node*, 4> handedOn; // The object, and whatever else is the object: a check that it got past, and the like.
+        Vector<std::pair<Node*, unsigned>, 8> reads; // Which op_get_by_id reads which of the names.
+        Vector<Node*, 2> tests; // Whether it is null or undefined. It is not.
+    };
+    // family: what it was born as, if anything.
+    std::optional<OnlyRead> isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t family) const;
+
+private:
+    UncheckedKeyHashMap<Node*, Vector<Node*, 2>> m_users;
+};
+
 // Phases. Each returns false (and Graph::failed() says why) if the function is not for the static compiler.
 bool parseBytecode(Graph&);
 // What the function returns. calleesConsulted: the functions whose KnownFunction::returnType that went by.
@@ -766,6 +793,9 @@ void simplify(Graph&);
 void inlineCalls(Graph&, const CodeOfProgram&);
 void analyzeEscapes(Graph&); // Node::escape
 void promoteEnvironments(Graph&); // Node::isPromoted
+void doWithoutObjectsThatAreOnlyRead(Graph&); // Before the types are worked out.
+void noteThingsReturned(Graph&); // ThingsReturnedByFunctions::note(). Of code as it is written.
+void findThingsReturnedInRegisters(Graph&); // Once the types are worked out, and before anything is made of them.
 // ProgramFacts::parametersThatEscape, going by what is said so far of the functions it calls (calleesConsulted).
 uint32_t parametersThatEscape(Graph&, Vector<const KnownFunction*>* calleesConsulted);
 void reportEscapeStatistics();
