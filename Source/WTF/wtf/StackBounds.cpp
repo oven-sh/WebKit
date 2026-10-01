@@ -37,6 +37,8 @@
 #endif
 
 #if OS(LINUX)
+#include <string.h>
+#include <sys/auxv.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -146,24 +148,50 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // OS(OPENBSD)
 
+#if OS(LINUX)
+// The end of the mapping that holds the stack the process started on, or nullptr if this thread is not on that stack,
+// as in the child of a fork() in another thread. Whatever starts a program copies its strings to the end of that
+// mapping: the arguments, the environment above them, and above that the executable's path, which AT_EXECFN points to.
+// Only a null pointer (Linux) or less follows, so the mapping ends with the last string's page. The environment is
+// looked at too because a loader that is run as a command (glibc's ld.so, PRoot) redirects AT_EXECFN to argv[0].
+static void* endOfInitialStackMapping(size_t pageSize, size_t maxSize)
+{
+    auto stackPointer = reinterpret_cast<uintptr_t>(currentStackPointer());
+    uintptr_t lastString = 0;
+    auto consider = [&](uintptr_t string) {
+        if (string > stackPointer && string - stackPointer < maxSize)
+            lastString = std::max(lastString, string);
+    };
+    consider(getauxval(AT_EXECFN));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    for (char** variable = environ; variable && *variable; ++variable)
+        consider(reinterpret_cast<uintptr_t>(*variable));
+    if (!lastString)
+        return nullptr;
+    return reinterpret_cast<void*>(roundUpToMultipleOf(pageSize, lastString + strlen(reinterpret_cast<const char*>(lastString)) + 1));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+}
+#endif
+
 StackBounds StackBounds::currentThreadStackBoundsInternal()
 {
-    auto ret = newThreadStackBounds(pthread_self());
 #if OS(LINUX)
-    // on glibc, pthread_attr_getstack will generally return the limit size (minus a guard page)
-    // for the main thread; this is however not necessarily always true on every libc - for example
-    // on musl, it will return the currently reserved size - since the stack bounds are expected to
-    // be constant (and they are for every thread except main, which is allowed to grow), check
-    // resource limits and use that as the boundary instead (and prevent stack overflows in JSC)
+    // The main thread's stack grows on demand until its mapping spans RLIMIT_STACK, so its bound is that far below the
+    // mapping's end, which is above the argument and environment strings. libc is not asked: the origin it reports is
+    // below those strings, musl reports what is mapped now as the size, and glibc and bionic need /proc/self/maps.
     if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) {
-        void* origin = ret.origin();
+        size_t pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
         rlimit limit;
         getrlimit(RLIMIT_STACK, &limit);
         rlim_t size = limit.rlim_cur;
-        if (size == RLIM_INFINITY)
+        // No limit, or one that reaches below address zero.
+        if (size >= reinterpret_cast<uintptr_t>(currentStackPointer()))
             size = 8 * MB;
+        void* origin = endOfInitialStackMapping(pageSize, size);
+        if (!origin)
+            return newThreadStackBounds(pthread_self());
         // account for a guard page
-        size -= static_cast<rlim_t>(sysconf(_SC_PAGESIZE));
+        size -= static_cast<rlim_t>(pageSize);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         void* bound = static_cast<char*>(origin) - size;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -181,7 +209,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             stackBounds = { oldestEnviron, bound };
         return stackBounds;
     }
-#elif OS(FREEBSD)
+#endif
+    auto ret = newThreadStackBounds(pthread_self());
+#if OS(FREEBSD)
     // libthr reports the main thread's stack as RLIMIT_STACK below its top, but when the executable
     // carries a sized PT_GNU_STACK (ld -z stack-size) exec maps only trunc_page(p_memsz) for it,
     // raising rlim_cur to that if it was smaller and leaving it alone if it was larger. The usable
