@@ -186,6 +186,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, aotExtraCacheMissesBeforeOwnData, 4, Normal, "... plus this many."_s) \
     v(Unsigned, aotQuoteCompressionBlockSize, 65536, Normal, "Source text that error messages may quote is compressed in blocks of this many bytes. Tests use a small value to get more than one block."_s) \
     v(Bool, useAOTSourceQuotes, false, Normal, "An image stores the source text that error messages may quote, for programs built without source text."_s) \
+    v(Bool, hideTextOfFunctionsForTesting, false, Normal, "Function.prototype.toString() says of the program's functions what it says in a program that was built without its source text."_s) \
     v(Bool, omitBytecodeFromStaticHeap, false, Normal, "When building: the static heap omits the bytecode it was built from and keeps only the source position information."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "Freeze the initial properties of built-in objects such as Object.prototype, Array.prototype and Math when a realm is created. See JSGlobalObject::makeIntrinsicsImmutable()."_s) \
     v(Bool, useTypeTags, false, Normal, "Allow type tags in source text: a 0x01 byte followed by six characters that encode a number (Lexer::readTypeTag()), attached to the next token. The bundler emits them to convey static types."_s) \
