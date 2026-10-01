@@ -90,7 +90,7 @@ Type typeOfValue(JSValue value)
         return TTop;
     if (value.isString()) {
         const StringImpl* impl = asString(value)->tryGetValueImpl();
-        return impl && impl->isAtom() ? TAtomString : TOtherString;
+        return impl && impl->isAtom() ? TAtomString : asString(value)->length() <= SlotsOfBornObjects::lengthOfShortString ? TShortOtherString : TLongString;
     }
     return typeOfCellOfType(value.asCell()->type());
 }
@@ -138,6 +138,8 @@ void dumpType(PrintStream& out, Type type)
     take(TString, "String"_s);
     take(TAtomString, "AtomString"_s);
     take(TOtherString, "OtherString"_s);
+    take(TShortOtherString, "ShortOtherString"_s);
+    take(TLongString, "LongString"_s);
     take(TSymbol, "Symbol"_s);
     take(TBigInt, "BigInt"_s);
     take(TFunction, "Function"_s);
@@ -1311,6 +1313,80 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
         for (Node* phi : block->phis) {
             for (auto& use : phi->uses)
                 note(block, phi, use);
+        }
+    }
+}
+
+void Graph::noteFieldsComparedWithStrings()
+{
+    if (!Options::aotTypesFields() || !TypeTable::areStructsToGoBy())
+        return;
+    auto isStringOfProgram = [](Node* node) {
+        if (node->kind != NodeKind::ConstantCell || !node->reg.isConstant())
+            return false;
+        JSValue constant = node->graph->codeBlock()->getConstant(node->reg);
+        return constant && constant.isString();
+    };
+    // Whatever the value may have been read from.
+    auto note = [&](auto& self, Node* node, unsigned depth) -> void {
+        if (depth > 4)
+            return;
+        switch (node->kind) {
+        case NodeKind::Narrow:
+            self(self, node->uses[0].node, depth + 1);
+            return;
+        case NodeKind::Phi:
+            for (auto& use : node->uses) {
+                if (use.node != node)
+                    self(self, use.node, depth + 1);
+            }
+            return;
+        case NodeKind::Bytecode:
+            if (node->opcode == op_check_type)
+                self(self, node->use(node->as<OpCheckType>().m_value), depth + 1);
+            else if (node->opcode == op_check_tdz)
+                self(self, node->uses[0].node, depth + 1);
+            else if (node->opcode == op_get_by_id) {
+                if (auto field = fieldOfStructGotAtBy(node))
+                    TypeTable::shared()->noteComparedWithString(*field);
+            }
+            return;
+        default:
+            return;
+        }
+    };
+    auto compared = [&](Node* node, VirtualRegister lhs, VirtualRegister rhs) {
+        Node* left = node->use(lhs);
+        Node* right = node->use(rhs);
+        if (isStringOfProgram(right))
+            note(note, left, 0);
+        else if (isStringOfProgram(left))
+            note(note, right, 0);
+    };
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode)
+                continue;
+            switch (node->opcode) {
+#define AOT_COMPARISON(Struct, opcodeName) \
+            case opcodeName: \
+                compared(node, node->as<Struct>().m_lhs, node->as<Struct>().m_rhs); \
+                break;
+            AOT_COMPARISON(OpStricteq, op_stricteq)
+            AOT_COMPARISON(OpNstricteq, op_nstricteq)
+            AOT_COMPARISON(OpEq, op_eq)
+            AOT_COMPARISON(OpNeq, op_neq)
+            AOT_COMPARISON(OpJstricteq, op_jstricteq)
+            AOT_COMPARISON(OpJnstricteq, op_jnstricteq)
+            AOT_COMPARISON(OpJeq, op_jeq)
+            AOT_COMPARISON(OpJneq, op_jneq)
+#undef AOT_COMPARISON
+            case op_switch_string:
+                note(note, node->use(node->as<OpSwitchString>().m_scrutinee), 0);
+                break;
+            default:
+                break;
+            }
         }
     }
 }

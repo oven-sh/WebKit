@@ -204,7 +204,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
         goesOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
 
     // There is only one atom for any content, and what the program spells out is one.
-    if (all.size() <= 8 && isAtomIfString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant; })) {
+    if (all.size() <= 8 && isAtomIfShortString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant && one.says->length() <= SlotsOfBornObjects::lengthOfShortString; })) {
         LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
         for (auto& one : all) {
             LBasicBlock next = m_out.newBlock();

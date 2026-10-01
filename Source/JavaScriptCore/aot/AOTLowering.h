@@ -180,6 +180,7 @@ private:
         Node* base;
         uint16_t family;
         uint16_t slot;
+        uint16_t id; // TypeTable::Field::id: names of a family whose slots are verified have slots between them.
         Rep rep;
         LValue value;
         LValue asJSValue; // Null: nobody has made that of it.
@@ -194,6 +195,7 @@ private:
     static std::optional<String> stringWrittenInProgram(Node*);
     // If the value is a string at all it is an atom: it is written in the program, or comes from a slot whose strings are (TypeTable::Holds::atoms).
     static bool isAtomIfString(Node*, unsigned depth = 0);
+    static bool isAtomIfShortString(Node*, unsigned depth = 0); // Or is a long one: SlotsOfBornObjects::lengthOfShortString.
     LValue areTheSameGivenThatStringsAreAtoms(Node* left, LValue, Node* right, LValue); // Neither is a number or a BigInt.
     void makeAtomIfString(Node*, LValue);
     // `this`, in the code of a function that is not closed.

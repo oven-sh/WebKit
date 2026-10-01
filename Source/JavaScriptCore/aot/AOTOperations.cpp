@@ -815,6 +815,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
         PropertySlot propertySlot(base, PropertySlot::InternalMethodType::Get);
         value = getByIdAndFillMegamorphicCache(globalObject, base, Identifier::fromUid(vm, uid), propertySlot);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        // (What the megamorphic cache has is a plain property, or the lack of one.)
+        if (!base.isObject() || (propertySlot.isUnset() ? propertySlot.isTaintedByOpaqueObject() : !propertySlot.isCacheableValue()))
+            globalObject->aotInstance()->noteNotJustRead(slot, field.id);
     }
     if (value.isUndefined() && undefinedWillDo)
         OPERATION_RETURN(scope, JSValue::encode(value));

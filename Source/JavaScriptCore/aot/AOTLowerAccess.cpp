@@ -128,7 +128,7 @@ auto Lowering::fieldInHand(Node* base, const TypeTable::Field& field) const -> c
 {
     base = whatIsHandedOn(base);
     for (auto& inHand : m_fieldsInHand) {
-        if (inHand.base == base && inHand.family == field.first && inHand.slot == field.slot)
+        if (inHand.base == base && inHand.family == field.first && inHand.slot == field.slot && inHand.id == field.id)
             return &inHand;
     }
     return nullptr;
@@ -144,7 +144,7 @@ void Lowering::noteFieldInHand(Node* base, const TypeTable::Field& field, LValue
     m_fieldsInHand.removeAllMatching([&](auto& inHand) {
         return inHand.family == field.first && inHand.slot == field.slot && (isWritten || inHand.base == base);
     });
-    m_fieldsInHand.append({ base, field.first, field.slot, rep, value, asJSValue });
+    m_fieldsInHand.append({ base, field.first, field.slot, field.id, rep, value, asJSValue });
 }
 
 // Whatever the lowering makes of it, it neither writes to an object nor runs any of the program's code. This has to say no more than the lowerings deliver.
@@ -399,14 +399,38 @@ void Lowering::lowerGetById(Node* node)
         if (Options::aotTypesFields() && TypeTable::areStructs() && field->id) {
             // The slots of the family are verified: it is for the object's Structure to say whether the field is in its slot. Whatever is known of the object.
             isLoweredThisWay(2);
-            countShape(Instance::ReadHas);
             bool undefinedWillDo = field->isOptional || !field->holds.saysSomething() || (field->holds.kinds & MaskUndefined);
             Stub stub = static_cast<Stub>(static_cast<unsigned>(undefinedWillDo ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
             auto throughStub = [&]() -> LValue {
                 return callStub(stub, Int64, { { base, GPRInfo::argumentGPR0 } }, { { GPRInfo::argumentGPR1, field->id } }, StubClobbers::WhatCallsDo, node);
             };
+            const FieldInHand* inHand = fieldInHand(baseNode, *field);
+            LValue whatItGave = inHand ? inHand->asJSValue : nullptr;
+            // (The long way may come to a getter: whatever else is in hand is let go of.)
+            m_fieldsInHand.shrink(0);
+            m_nodeLeavesFieldsAlone = true;
+            if (whatItGave) {
+                // Nothing has been done since that could have changed it. It is given again if reading it is all that reading it has ever come to (Instance::fieldsNotJustRead).
+                unsigned index = field->slot << 16 | field->id;
+                LBasicBlock again = newColdBlock();
+                LBasicBlock continuation = m_out.newBlock();
+                ValueFromBlock kept = m_out.anchor(whatItGave);
+                LValue bits = m_out.load8ZeroExt32(m_out.address(m_heaps.root, m_out.loadPtr(m_out.address(m_heaps.root, m_instance, Instance::offsetOfFieldsNotJustRead())), index >> 3));
+                m_out.branch(m_out.testIsZero32(bits, m_out.constInt32(1 << (index & 7))), usually(continuation), rarely(again));
+                m_out.appendTo(again);
+                ValueFromBlock readAgain = m_out.anchor(throughStub());
+                m_out.jump(continuation);
+                m_out.appendTo(continuation);
+                LValue value = m_out.phi(Int64, kept, readAgain);
+                setJSValue(node, value);
+                noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
+                return;
+            }
+            countShape(Instance::ReadHas);
             if (!readsFieldsInPlace()) {
-                setJSValue(node, throughStub());
+                LValue value = throughStub();
+                setJSValue(node, value);
+                noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
                 return;
             }
             LBasicBlock isThere = m_out.newBlock();
@@ -426,7 +450,9 @@ void Lowering::lowerGetById(Node* node)
             ValueFromBlock foundOut = m_out.anchor(throughStub());
             m_out.jump(continuation);
             m_out.appendTo(continuation);
-            setJSValue(node, m_out.phi(Int64, found, foundOut));
+            LValue value = m_out.phi(Int64, found, foundOut);
+            setJSValue(node, value);
+            noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
             return;
         }
         if (Options::aotTypesFields() && TypeTable::areStructs()) {

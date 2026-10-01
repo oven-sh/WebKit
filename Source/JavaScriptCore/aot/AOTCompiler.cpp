@@ -932,6 +932,7 @@ bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBl
     if (!parseBytecode(graph))
         return false;
     graph.noteUsesOfProvenFunctions(factsOfExecutables);
+    graph.noteFieldsComparedWithStrings();
     graph.noteClassesDefined();
     if (variableFacts)
         graph.noteWhatCannotBeToldOfVariables(*variableFacts);

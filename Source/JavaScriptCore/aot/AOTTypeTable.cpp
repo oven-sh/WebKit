@@ -106,6 +106,59 @@ void TypeTable::load(VM& vm)
     s_shared = table.release();
 }
 
+void TypeTable::noteComparedWithString(const Field& field) const
+{
+    if (!m_hasStructs || field.holds.atoms || !(field.holds.kinds & SoundTypeString))
+        return;
+    Locker locker { m_lockOfFieldsCompared };
+    m_fieldsCompared.add(static_cast<uint64_t>(field.first) << 32 | static_cast<uint64_t>(field.slot) << 16 | field.id);
+}
+
+void TypeTable::settleWhichStringsAreAtoms()
+{
+    TypeTable* table = s_shared;
+    if (!table || !table->m_hasStructs || table->m_fieldsCompared.isEmpty())
+        return;
+    auto words = table->m_words.mutableSpan();
+    UncheckedKeyHashSet<uint64_t> names; // Family << 32 | which of m_names, plus one.
+    for (uint32_t number = 1; number < table->m_families.size(); ++number) {
+        if (!table->isUsable(number))
+            continue;
+        auto family = words.subspan(table->m_families[number]);
+        for (unsigned i = 0; i < family[1]; ++i) {
+            auto name = family.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+            if (!(name[2] & SoundTypeString) || (name[2] & SlotsOfBornObjects::stringsAreAtoms))
+                continue;
+            uint16_t id = table->m_idsOfFields.get({ number, table->m_names[name[0]].impl() });
+            if (!table->m_fieldsCompared.contains(static_cast<uint64_t>(number) << 32 | static_cast<uint64_t>(name[1] & 0xffff) << 16 | id))
+                continue;
+            name[2] |= SlotsOfBornObjects::stringsAreAtoms;
+            names.add(static_cast<uint64_t>(number) << 32 | (name[0] + 1));
+        }
+    }
+    // The same is said again wherever a layout or a type has the field.
+    for (uint32_t number = 1; number < table->m_layouts.size(); ++number) {
+        auto layout = words.subspan(table->m_layouts[number]);
+        for (unsigned i = 0; i < layout[1]; ++i) {
+            auto property = layout.subspan(table->wordsBeforePropertiesOfLayout() + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+            if (names.contains(static_cast<uint64_t>(layout[2]) << 32 | (property[0] + 1)))
+                property[2] |= SlotsOfBornObjects::stringsAreAtoms;
+        }
+    }
+    for (uint32_t type = 1; type < table->m_types.size(); ++type) {
+        auto record = words.subspan(table->m_types[type] + 1, words[table->m_types[type]]);
+        if (record.size() < 3 || record[0] != Shape)
+            continue;
+        for (unsigned i = 0; i < record[2]; ++i) {
+            auto field = record.subspan(3 + i * wordsOfField, wordsOfField);
+            if (field[2] && names.contains(static_cast<uint64_t>(field[2]) << 32 | (field[0] + 1)))
+                field[7] |= SlotsOfBornObjects::stringsAreAtoms;
+        }
+    }
+    if (Options::aotVerbose() || Options::aotReportStats())
+        dataLogLn("AOT: ", names.size(), " fields that hold strings are compared with strings that the program spells out: the short strings there are atoms");
+}
+
 static TypeTable::Field withId(uint16_t id, TypeTable::Field field)
 {
     field.id = id;

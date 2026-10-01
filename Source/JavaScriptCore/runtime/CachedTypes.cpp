@@ -6462,6 +6462,7 @@ struct BytecodeLinkEncoder::Impl {
                 if (!AOT::noteUsesOfProvenFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfExecutables, variableFacts))
                     unreadable++;
             });
+            AOT::TypeTable::settleWhichStringsAreAtoms();
             if (Options::aotReportStats()) [[unlikely]] {
                 std::array<unsigned, 4> functions { };
                 std::array<uint64_t, 4> calls { };

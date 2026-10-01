@@ -56,7 +56,11 @@ static constexpr Type TNull = Type(1) << 4;
 // A string that is an atom: in one piece, and the only one there is that says what it says. So two of them are the same string if they are the same StringImpl. What the program
 // spells out is one, and so is what is in a field whose type is a union of such. It goes wherever types go: through parameters, results, variables.
 static constexpr Type TAtomString = Type(1) << 5;
-static constexpr Type TOtherString = Type(1) << 37;
+// One that is not known for an atom: of at most SlotsOfBornObjects::lengthOfShortString characters, or of more. In a field whose strings are atoms there is none of the first kind. So what
+// is read from one is the same as a short atom if it has the same StringImpl, and not otherwise.
+static constexpr Type TShortOtherString = Type(1) << 37;
+static constexpr Type TLongString = Type(1) << 38;
+static constexpr Type TOtherString = TShortOtherString | TLongString;
 static constexpr Type TString = TAtomString | TOtherString;
 static constexpr Type TSymbol = Type(1) << 6;
 static constexpr Type TBigInt = Type(1) << 7;

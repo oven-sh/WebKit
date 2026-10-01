@@ -211,8 +211,11 @@ struct SlotsOfBornObjects {
         uint16_t last;
         uint16_t unused;
     };
-    // Among Held::kinds: a string there is an atom. Whoever stores one that is not makes it one, where it is (JSString::toAtomString()).
+    // Among Held::kinds: a string there is an atom, unless it is a long one. Whoever stores a short one that is not makes it one, where it is (JSString::toAtomString()).
+    // So it is the same as a short atom if it has the same StringImpl, and not otherwise. (A long one is left as it is, in pieces if that is how it is: text that is added to over and over
+    // is not gone through each time.)
     static constexpr unsigned stringsAreAtoms = 1u << 15;
+    static constexpr unsigned lengthOfShortString = 40;
     enum class Says : uint8_t { Nothing, Admits, Refuses };
     // With these the objects are structs: what one was born as is the number of a family, every name of the family has a slot that is its own in every object of
     // the family, whether or not the object has the property, and code reads and writes the slots without asking. So:

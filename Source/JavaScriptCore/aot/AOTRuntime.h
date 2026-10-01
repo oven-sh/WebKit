@@ -533,6 +533,16 @@ struct Instance {
     const uint32_t* dispatch; // The image's: see ImageDispatchEntry.
     const uint32_t* rowsOfSelectors;
     JSObject* objectPrototype; // The realm's, which keeps it.
+    // A bit for each field whose slot is verified (slot << 16 | id): a read of it has been answered by something other than a plain property or the lack of one. See Lowering::lowerGetById().
+    uint8_t* fieldsNotJustRead;
+    static constexpr size_t sizeOfFieldsNotJustRead = (static_cast<size_t>(Structure::numberOfSlotsWithFields) << 16) / 8;
+    static constexpr ptrdiff_t offsetOfFieldsNotJustRead() { return OBJECT_OFFSETOF(Instance, fieldsNotJustRead); }
+    void noteNotJustRead(unsigned slot, uint16_t id) { fieldsNotJustRead[(slot << 16 | id) >> 3] |= 1 << (id & 7); }
+    // The realm's Function.prototype.call, and the Structure it makes bound functions with: Stub::Call.
+    JSCell* functionPrototypeCall { nullptr };
+    uint32_t structureIDOfBoundFunctions { 0 };
+    static constexpr ptrdiff_t offsetOfFunctionPrototypeCall() { return OBJECT_OFFSETOF(Instance, functionPrototypeCall); }
+    static constexpr ptrdiff_t offsetOfStructureIDOfBoundFunctions() { return OBJECT_OFFSETOF(Instance, structureIDOfBoundFunctions); }
     uint8_t* selectorsOnObjectPrototype; // A bit for each selector, as of when its Structure was the one below.
     uint32_t structureIDOfObjectPrototype; // Zero: nobody has looked, or there is no telling from its Structure.
     // The realm's (JSGlobalObject::immutableIntrinsics()), where code gets at them with one load.

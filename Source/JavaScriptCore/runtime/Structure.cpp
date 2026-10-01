@@ -1373,7 +1373,7 @@ void SlotsOfBornObjects::makeAtomIfString(JSValue value)
     if (!value.isString())
         return;
     JSString* string = asString(value);
-    if (string->isDefinitelyAtom())
+    if (string->isDefinitelyAtom() || string->length() > lengthOfShortString)
         return;
     // (All it wants of the realm is somewhere to say that there is no memory left, which is the end of the process here.)
     JSGlobalObject* globalObject = string->vm().deprecatedVMEntryGlobalObject(nullptr);

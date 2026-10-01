@@ -287,6 +287,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->factsOfFunctions = environmentsSize ? StaticHeap::factsOfFunctions(vm) : nullptr;
     instance->constantsOfProgram = environmentsSize ? StaticHeap::constantsOfProgram(vm) : nullptr;
     instance->sharedData = SharedData::get();
+    // (Nothing of it is there until it is looked at.)
+    instance->fieldsNotJustRead = static_cast<uint8_t*>(OSAllocator::reserveAndCommit(sizeOfFieldsNotJustRead, OSAllocator::FastMallocPages));
     if (Image* image = Image::withCode()) {
         instance->code = static_cast<const uint8_t*>(image->code());
         instance->granulesOfCode = image->at<uint32_t>(image->header().granulesOfCodeOffset);
@@ -355,6 +357,10 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->rowsOfSelectors = image->at<uint32_t>(image->header().rowsOfSelectorsOffset);
         RELEASE_ASSERT(!image->header().hashOfIntrinsics || image->header().hashOfIntrinsics == ImmutableIntrinsics::shared()->hash());
         instance->objectPrototype = globalObject->objectPrototype();
+        if (JSValue call = globalObject->linkTimeConstant(LinkTimeConstant::callFunction); call.isCell()) {
+            instance->functionPrototypeCall = call.asCell();
+            instance->structureIDOfBoundFunctions = globalObject->boundFunctionStructure()->id().bits();
+        }
         instance->selectorsOnObjectPrototype = static_cast<uint8_t*>(fastZeroedMalloc(image->header().numberOfSelectors / 8 + 1));
     }
     globalObject->setAOTInstance(instance);
@@ -423,6 +429,7 @@ void Instance::destroy(Instance* instance)
     if (instance->collections->sizeOfInfos)
         OSAllocator::decommitAndRelease(instance->infos, instance->collections->sizeOfInfos);
     delete instance->collections;
+    OSAllocator::decommitAndRelease(instance->fieldsNotJustRead, sizeOfFieldsNotJustRead);
     fastFree(instance->selectorsOnObjectPrototype);
     if (environmentsSize)
         StaticHeap::freeBlock(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
@@ -1480,7 +1487,9 @@ void Instance::dumpSlotStatistics(PrintStream& out)
                 out.println("SHAPECOUNT\t", readsForReason[i], "\treason ", i);
         }
         static constexpr ASCIILiteral paths[] = { "calls"_s, "hit: in the object itself"_s, "hit: out of line or inherited"_s, "hit: a getter"_s, "miss: no cell"_s, "miss: the slot is nobody's"_s, "miss: the slot is empty"_s, "miss: the slot has another structure"_s,
-            "table: in the object itself"_s, "table: out of line"_s, "table: not its own, so undefined"_s, "not settled by the table"_s, "megamorphic cache asked"_s, "the operation is called"_s, "miss: the slot has another structure, and has given up"_s, "table: the structure is of no known shape"_s, "megamorphic cache asked, by the name in the slot"_s, "a slot is given over to the name"_s, "the length of a typed array"_s, ""_s, "KEYED calls"_s, "KEYED an element of an array"_s, "KEYED an element of a typed array"_s, "KEYED a name: megamorphic cache asked"_s, "KEYED the operation is called"_s, "one of several: it is one of them"_s, "goes to find out and remember"_s };
+            "table: in the object itself"_s, "table: out of line"_s, "table: not its own, so undefined"_s, "not settled by the table"_s, "megamorphic cache asked"_s, "the operation is called"_s, "miss: the slot has another structure, and has given up"_s, "table: the structure is of no known shape"_s, "megamorphic cache asked, by the name in the slot"_s, "a slot is given over to the name"_s, "the length of a typed array"_s, ""_s, "KEYED calls"_s, "KEYED an element of an array"_s, "KEYED an element of a typed array"_s, "KEYED a name: megamorphic cache asked"_s, "KEYED the operation is called"_s, "one of several: it is one of them"_s, "goes to find out and remember"_s,
+            "CALL of a function of the program's, in registers"_s, "CALL of a function of the program's that wants a list"_s, "CALL of what call is bound to"_s, "CALL of a native function"_s, "CALL of anything else"_s };
+        static_assert(std::size(paths) == 32);
         for (unsigned i = 0; i < std::size(paths); ++i) {
             if (pathsOfStubs[i])
                 out.println("STUBPATH\t", pathsOfStubs[i], "\t", paths[i]);

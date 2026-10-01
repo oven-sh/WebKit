@@ -11,6 +11,8 @@
 #include "Identifier.h"
 #include "Structure.h"
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
+#include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
@@ -39,13 +41,19 @@ public:
     JS_EXPORT_PRIVATE static void load(VM&);
     static const TypeTable* shared(); // Null: there is none.
 
+    struct Field;
+    // The field is compared somewhere with a string that the program spells out. Says whoever goes through the program before any of it is compiled, on whichever thread.
+    void noteComparedWithString(const Field&) const;
+    // Once all of it has been gone through, and before anything else is asked: the strings of such a field are atoms (Holds::atoms), whatever its type says of them.
+    JS_EXPORT_PRIVATE static void settleWhichStringsAreAtoms();
+
     // What is ever put in a slot, as far as whoever checked the types could tell.
     struct Holds {
         uint32_t kinds { 0 }; // The bits of a check (SoundTypeMaskBits). Zero: anything.
         // If not zero: what the bit for other objects stands for is objects born as one of these layouts, and no others.
         uint16_t first { 0 };
         uint16_t last { 0 };
-        // A string there is an atom: its type is a union of string literals. So two of them are the same string if they are the same StringImpl.
+        // A string there is an atom, or a long one (SlotsOfBornObjects::stringsAreAtoms): its type is a union of string literals, or the program compares it with strings that it spells out.
         bool atoms { false };
         static Holds from(uint32_t kinds, uint32_t families) { return { kinds & ~SlotsOfBornObjects::stringsAreAtoms, static_cast<uint16_t>(families >> 16), static_cast<uint16_t>(families), !!(kinds & SlotsOfBornObjects::stringsAreAtoms) }; }
         uint16_t kindsAsHeld() const { return safeCast<uint16_t>(kinds | (atoms ? SlotsOfBornObjects::stringsAreAtoms : 0u)); } // SlotsOfBornObjects::Held::kinds
@@ -64,7 +72,7 @@ public:
             if (areStructs())
                 result &= ~TInt32;
             if (atoms)
-                result &= ~TOtherString;
+                result &= ~TShortOtherString;
             return result;
         }
     };
@@ -205,6 +213,8 @@ private:
     UncheckedKeyHashMap<UniquedStringImpl*, Vector<uint32_t>> m_openFamiliesWithName; // In order.
     UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint16_t> m_idsOfFields; // By family and name. What is not here has none: there are only so many, and only so many slots that a Structure speaks for.
     bool m_hasStructs { false };
+    mutable Lock m_lockOfFieldsCompared;
+    mutable UncheckedKeyHashSet<uint64_t> m_fieldsCompared; // Family << 32 | slot << 16 | id. (Names that have one slot between them, in a family whose slots are not verified, hold the same.)
     unsigned wordsBeforePropertiesOfLayout() const { return m_hasStructs ? 3 : 2; }
     Vector<uint32_t> m_types; // Likewise.
 };

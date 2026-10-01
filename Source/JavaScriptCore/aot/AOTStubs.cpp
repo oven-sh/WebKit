@@ -1788,7 +1788,17 @@ static void generatePutById(CCallHelpers& jit)
             // (Where the strings are atoms, one that is not plainly an atom is for the runtime to make one of.)
             Jump anyStringWillDo = jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(SlotsOfBornObjects::stringsAreAtoms));
             jit.load8(Address(A1, JSCell::typeInfoFlagsOffset()), T12);
-            miss.append(jit.branchTest32(CCallHelpers::Zero, T12, TrustedImm32(TypeInfoPerCellBit)));
+            Jump isAtom = jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(TypeInfoPerCellBit));
+            // (A long one need not be, and is left as it is.)
+            jit.loadPtr(Address(A1, JSString::offsetOfValue()), T12);
+            Jump isInPieces = jit.branchIfRopeStringImpl(T12);
+            jit.load32(Address(T12, StringImpl::lengthMemoryOffset()), T12);
+            Jump haveLength = jit.jump();
+            isInPieces.link(&jit);
+            jit.load32(Address(A1, JSRopeString::offsetOfLength()), T12);
+            haveLength.link(&jit);
+            miss.append(jit.branch32(CCallHelpers::BelowOrEqual, T12, TrustedImm32(SlotsOfBornObjects::lengthOfShortString)));
+            isAtom.link(&jit);
             anyStringWillDo.link(&jit);
         }
         ifHolds(SoundTypeString);
@@ -2583,12 +2593,46 @@ static void callTheWayTheEngineDoes(CCallHelpers& jit, CodeSpecializationKind ki
     jit.ret();
 }
 
+static CCallHelpers::Label s_startOfCallOfAnyCount;
+
+// Function.prototype.call.bind(f), which lets a program write f(object, ...) for object.f(...) whatever has become of object.f: f is called on the first of what is passed, with the rest.
+// (Left to itself it is a call of a bound function, of `call`, which is written in JavaScript and makes an array of what it is passed, and then of f with the array spread out.)
+static void callWhatCallIsBoundTo(CCallHelpers& jit)
+{
+    CCallHelpers::JumpList isNot;
+    isNot.append(jit.branchIfNotCell(calleeGPR));
+    jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), T11);
+    isNot.append(jit.branch32(CCallHelpers::NotEqual, T11, Address(instanceGPR, Instance::offsetOfStructureIDOfBoundFunctions())));
+    jit.loadPtr(Address(calleeGPR, JSBoundFunction::offsetOfTargetFunction()), T11);
+    isNot.append(jit.branchPtr(CCallHelpers::NotEqual, T11, Address(instanceGPR, Instance::offsetOfFunctionPrototypeCall())));
+    isNot.append(jit.branchTest32(CCallHelpers::NonZero, Address(calleeGPR, JSBoundFunction::offsetOfBoundArgsLength())));
+    // (Whoever gets here has seen to it that what is called is a function. So it has to be one still. Whatever else call may be bound to is dealt with as it was.)
+    jit.load64(Address(calleeGPR, JSBoundFunction::offsetOfBoundThis()), T11);
+    isNot.append(jit.branchIfNotCell(T11));
+    isNot.append(jit.branchIfNotType(T11, JSFunctionType));
+    jit.move(T11, calleeGPR);
+    countPath(jit, 29);
+    Jump nothingIsPassed = jit.branchTest32(CCallHelpers::Zero, countGPR);
+    jit.move(argumentGPR(0), thisGPR);
+    for (unsigned i = 0; i + 1 < numberOfArgumentGPRs; ++i)
+        jit.move(argumentGPR(i + 1), argumentGPR(i));
+    jit.sub32(TrustedImm32(1), countGPR);
+    jit.jump().linkTo(s_startOfCallOfAnyCount, &jit);
+    nothingIsPassed.link(&jit);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), thisGPR);
+    jit.jump().linkTo(s_startOfCallOfAnyCount, &jit);
+    isNot.link(&jit);
+}
+
 // See Stub::Call. count: what is in countGPR, if that is known here.
 static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::optional<unsigned> count)
 {
+    if (kind == CodeSpecializationKind::CodeForCall && !count)
+        s_startOfCallOfAnyCount = jit.label();
     CCallHelpers::JumpList theLongWay;
     findCodeOfCallee(jit, kind, theLongWay);
     Jump takesList = jit.branchTest64(CCallHelpers::NonZero, T12, CCallHelpers::TrustedImm64(1LL << EntryWord::bitOfIsList));
+    countPath(jit, 27);
     jit.urshift64(T12, TrustedImm32(EntryWord::shiftOfNumberOfParameters), T13);
     jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), T12);
     Jump enough = count ? jit.branch32(CCallHelpers::BelowOrEqual, T13, TrustedImm32(*count)) : jit.branch32(CCallHelpers::BelowOrEqual, T13, countGPR);
@@ -2616,6 +2660,7 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
             jit.store64(argumentGPR(i), slotOfFrameBeingMade(CallFrameSlot::thisArgument, (i + 1) * sizeof(Register)));
     };
     takesList.link(&jit);
+    countPath(jit, 28);
     spill();
     jit.move(countGPR, argumentGPR(0));
     jit.addPtr(TrustedImm32(slotOfFrameBeingMade(CallFrameSlot::thisArgument, sizeof(Register)).offset), CCallHelpers::stackPointerRegister, argumentGPR(1));
@@ -2625,6 +2670,24 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
     jit.ret();
 
     theLongWay.link(&jit);
+    if (kind == CodeSpecializationKind::CodeForCall)
+        callWhatCallIsBoundTo(jit);
+    if (getenv("BUN_AOT_COUNTS_STUB_PATHS")) {
+        // TEMPORARY
+        CCallHelpers::JumpList isSomethingElse;
+        isSomethingElse.append(jit.branchIfNotCell(calleeGPR));
+        isSomethingElse.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
+        jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), T11);
+        Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
+        jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
+        hasExecutable.link(&jit);
+        isSomethingElse.append(jit.branchIfNotType(T11, NativeExecutableType));
+        countPath(jit, 30);
+        Jump counted = jit.jump();
+        isSomethingElse.link(&jit);
+        countPath(jit, 31);
+        counted.link(&jit);
+    }
     spill();
     callTheWayTheEngineDoes(jit, kind);
 }

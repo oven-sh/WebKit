@@ -482,7 +482,7 @@ std::optional<String> Lowering::stringWrittenInProgram(Node* node)
     if (!constant || !constant.isString())
         return std::nullopt;
     String said = asString(constant)->tryGetValue();
-    if (said.isNull() || !said.is8Bit() || said.length() > 40)
+    if (said.isNull() || !said.is8Bit() || said.length() > SlotsOfBornObjects::lengthOfShortString)
         return std::nullopt;
     return said;
 }
@@ -514,6 +514,34 @@ bool Lowering::isAtomIfString(Node* node, unsigned depth)
             return isAtomIfString(node->use(node->as<OpCheckType>().m_value), depth + 1);
         if (node->opcode == op_check_tdz)
             return isAtomIfString(node->uses[0].node, depth + 1);
+        return false;
+    default:
+        return false;
+    }
+}
+
+bool Lowering::isAtomIfShortString(Node* node, unsigned depth)
+{
+    if (node->type && !mayBe(node->type, TShortOtherString))
+        return true;
+    if (depth > 4)
+        return false;
+    switch (node->kind) {
+    case NodeKind::ConstantCell:
+        return isAtomIfString(node, depth);
+    case NodeKind::Narrow:
+        return isAtomIfShortString(node->uses[0].node, depth + 1);
+    case NodeKind::Phi:
+        for (auto& use : node->uses) {
+            if (use.node != node && !isAtomIfShortString(use.node, depth + 1))
+                return false;
+        }
+        return true;
+    case NodeKind::Bytecode:
+        if (node->opcode == op_check_type)
+            return isAtomIfShortString(node->use(node->as<OpCheckType>().m_value), depth + 1);
+        if (node->opcode == op_check_tdz)
+            return isAtomIfShortString(node->uses[0].node, depth + 1);
         if (node->opcode == op_get_by_id) {
             auto field = Graph::fieldOfStructGotAtBy(node);
             return field && field->holds.atoms;
@@ -554,7 +582,7 @@ LValue Lowering::areTheSameGivenThatStringsAreAtoms(Node* left, LValue a, Node* 
 
 void Lowering::makeAtomIfString(Node* node, LValue value)
 {
-    if (!mayBe(node->type, TString) || isAtomIfString(node))
+    if (!mayBe(node->type, TString) || isAtomIfShortString(node))
         return;
     LBasicBlock isNot = newColdBlock();
     LBasicBlock done = m_out.newBlock();
@@ -567,7 +595,7 @@ void Lowering::makeAtomIfString(Node* node, LValue value)
         goOnIf(isCell(value));
     if (!isSubtype(node->type & TCell, TString))
         goOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)));
-    // (JSString::isDefinitelyAtom(). One that is not marked may be one all the same: that is found out the long way.)
+    // (JSString::isDefinitelyAtom(). One that is not marked may be one all the same, or be long enough not to have to be: that is found out the long way.)
     m_out.branch(m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(TypeInfoPerCellBit)), usually(done), rarely(isNot));
     m_out.appendTo(isNot);
     plainCall(Void, Entry::operationAOTMakeAtom, value);
@@ -736,8 +764,13 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
         return m_out.equal(a, b);
 
     // (== of two strings is ===.)
-    if ((strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt) && isAtomIfString(left) && isAtomIfString(right))
-        return areTheSameGivenThatStringsAreAtoms(left, a, right, b);
+    if ((strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt)) {
+        // What the program spells out is a short atom. A string that says the same is short: so where short ones are atoms it is that atom, or does not say the same.
+        if ((isAtomIfString(left) && isAtomIfString(right))
+            || (stringWrittenInProgram(right) && isAtomIfString(right) && isAtomIfShortString(left))
+            || (stringWrittenInProgram(left) && isAtomIfString(left) && isAtomIfShortString(right)))
+            return areTheSameGivenThatStringsAreAtoms(left, a, right, b);
+    }
     if (Options::aotComparesWithStringsInPlace() && !isCompact() && (strict || isSubtype(both, TString))) {
         if (auto said = stringWrittenInProgram(right))
             return isStringThatSays(node, left, a, *said, b);

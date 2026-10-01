@@ -586,6 +586,7 @@ public:
     bool hasTwoCopiesOfAll { false }; // Options::aotAssertsTypes(): not just of its loops.
     // See ProgramFacts.
     void noteUsesOfProvenFunctions(const FactsOfExecutables&);
+    void noteFieldsComparedWithStrings(); // TypeTable::noteComparedWithString()
     // f(a, ...b), f.apply(o, arguments): what the callee is passed is put together from where it is (Stub::CallVarargs, Stub::CallList).
     // What would have been made only to be copied from, right before the call, is not (Node::isElided). Nor is an array of the rest of
     // the arguments, or an arguments object, that nothing is done with but that: it says nothing that what this function was passed
