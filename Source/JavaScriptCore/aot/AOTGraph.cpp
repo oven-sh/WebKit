@@ -1242,10 +1242,10 @@ bool Graph::knowsWhichMethodsAreOverridden()
 bool Graph::methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read)
 {
     static const NeverDestroyed<std::optional<UncheckedKeyHashSet<String>>> all = [] () -> std::optional<UncheckedKeyHashSet<String>> {
-        const char* path = Options::aotOverriddenMethodsPath();
-        if (!path)
+        if (!Options::aotOverriddenMethodsPath())
             return std::nullopt;
-        auto contents = FileSystem::readEntireFile(String::fromUTF8(path));
+        String path { Options::aotOverriddenMethodsPath() };
+        auto contents = FileSystem::readEntireFile(path);
         if (!contents) {
             dataLogLn("AOT: ", path, " cannot be read");
             return std::nullopt;
