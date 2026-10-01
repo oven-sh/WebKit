@@ -151,11 +151,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // OS(OPENBSD)
 
 #if OS(LINUX)
-// The end of the mapping that holds the stack the process started on, or nullptr if this thread is not on that stack,
-// as in the child of a fork() in another thread. Whatever starts a program copies its strings to the end of that
-// mapping: the arguments, the environment above them, and above that the executable's path, which AT_EXECFN points to.
-// Only a null pointer (Linux) or less follows, so the mapping ends with the last string's page. The environment is
-// looked at too because a loader that is run as a command (glibc's ld.so, PRoot) redirects AT_EXECFN to argv[0].
+// The end of the mapping that holds the stack the process started on, or nullptr if this thread is not on that stack
+// within maxSize of the end, as in the child of a fork() in another thread. Whatever starts a program copies its
+// strings to the end of that mapping: the arguments, the environment above them, and above that the executable's
+// path, which AT_EXECFN points to. Only a null pointer (Linux) or less follows, so the mapping ends with the last
+// string's page. The environment is looked at too because a loader that is run as a command (glibc's ld.so, PRoot)
+// redirects AT_EXECFN to argv[0].
 static void* endOfInitialStackMapping(size_t pageSize, size_t maxSize)
 {
     auto stackPointer = reinterpret_cast<uintptr_t>(currentStackPointer());
@@ -172,6 +173,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     }
     uintptr_t end = roundUpToMultipleOf(pageSize, lastString + strlen(reinterpret_cast<const char*>(lastString)) + 1);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    // A limit lowered to less than what is in use, plus the guard page, says nothing about this stack.
+    if (end - stackPointer + pageSize >= maxSize)
+        return nullptr;
     // Being in reach says little once the limit has been raised. Two stacks have unmapped memory between them, and
     // msync(), which has nothing to do for anonymous memory, fails with ENOMEM if it meets any.
     uintptr_t start = roundDownToMultipleOf(pageSize, stackPointer);
