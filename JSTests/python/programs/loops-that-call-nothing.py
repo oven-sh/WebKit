@@ -367,6 +367,10 @@ rung = []
 
 
 def rings(number, frame):
+    # On a machine that is busy it can go off before the loop has been got to. Then it is set again.
+    if frame.f_code.co_name == "<module>":
+        signal.setitimer(signal.ITIMER_REAL, 0.002)
+        return
     rung.append((frame.f_code.co_name, frame.f_locals["i"] == frame.f_locals["last"] or frame.f_locals["i"] == frame.f_locals["last"] + 1))
 
 
@@ -400,6 +404,9 @@ for waits in (waits_for_it, waits_with_while):
 
 
 def stops_it(number, frame):
+    if frame.f_code.co_name == "<module>":
+        signal.setitimer(signal.ITIMER_REAL, 0.002)
+        return
     raise KeyError(frame.f_code.co_name)
 
 
