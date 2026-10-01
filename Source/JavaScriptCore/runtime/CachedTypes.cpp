@@ -5914,7 +5914,7 @@ struct BytecodeLinkEncoder::Impl {
             ParserError error;
             recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, std::numeric_limits<unsigned>::max());
             if (error.isValid()) {
-                dataLogLn("AOT: no code for `", executable->name().string(), "`, one of the engine's own functions: ", error.message());
+                dataLogLn("AOT: cannot generate bytecode for the builtin function `", executable->name().string(), "`: ", error.message());
                 return;
             }
             while (builtinsOfEngine.size() <= index)
@@ -5926,7 +5926,7 @@ struct BytecodeLinkEncoder::Impl {
             ++added;
         });
         if (Options::verboseAOTCompilation()) [[unlikely]]
-            dataLogLn("AOT: ", added, " of the engine's own functions are part of the link");
+            dataLogLn("AOT: ", added, " builtin functions are included");
     }
 #endif
 
@@ -6304,7 +6304,7 @@ struct BytecodeLinkEncoder::Impl {
             proven += hintsOfModule->numberOfSingleFunctionVariables();
         }
         if (Options::verboseAOTCompilation()) [[unlikely]]
-            dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that the bundler tells of or that are given one");
+            dataLogLn("AOT: ", proven, " of ", variables, " candidate module variables always hold the same function");
 
         auto linkages = linkModules(hints);
         unsigned numberOfThreads = Options::numberOfAOTCompilerThreads() ? Options::numberOfAOTCompilerThreads() : WTF::numberOfProcessorCores();
@@ -6418,7 +6418,8 @@ struct BytecodeLinkEncoder::Impl {
                 const AOT::KnownFunction& function = *functionsOfProgram.function(number);
                 function.needsNoFunctionObject.store(function.forCall && !AOT::needsFunctionObject(function.forCall), std::memory_order_relaxed);
             });
-            dataLogLn("AOT: ", classesOfProgram.numberOfNonEscapingMethods(), " methods are closed");
+            if (Options::verboseAOTCompilation()) [[unlikely]]
+                dataLogLn("AOT: ", classesOfProgram.numberOfNonEscapingMethods(), " methods do not escape");
             // Where a function goes is seen from where it is made: by an instruction, or when a module is set up, for a variable that whoever
             // put the program together has kept an eye on. One that comes about in any other way is anybody's.
             BitVector isMadeWhereItCanBeSeen(functionsOfProgram.size() + 1);
@@ -6645,7 +6646,7 @@ struct BytecodeLinkEncoder::Impl {
                 neverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
             }
             if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: of ", withCode, " functions that there is code to call, ", closed, " get nowhere that is not reckoned with (CLOSED), of which ", neverCalled, " are never seen to be called");
+                dataLogLn("AOT: ", withCode, " functions have code for calls, ", closed, " of them do not escape, ", neverCalled, " of those have no call site");
             if (Options::logAOTTypeInference()) [[unlikely]] {
                 // Once more, now that it is settled, for each to say what it goes by and what it adds.
                 auto nameOfJob = [&](unsigned index) {
@@ -6700,7 +6701,7 @@ struct BytecodeLinkEncoder::Impl {
                     functionsNeverReached++;
                     bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
                     if (Options::verboseAOTCompilation()) [[unlikely]]
-                        dataLogLn("AOT: left out: `", jobs[index].executable ? jobs[index].executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
+                        dataLogLn("AOT: omitted as unreachable: `", jobs[index].executable ? jobs[index].executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
                     continue;
                 }
                 AOT::CompiledCode code;
@@ -6869,7 +6870,8 @@ struct BytecodeLinkEncoder::Impl {
                     again = true;
                 }
             });
-            dataLogLn("AOT: ", functionsNeverReached.load(), " closed functions that nothing reaches are left out (", bytecodeNeverReached.load(), " bytes of bytecode)");
+            if (Options::verboseAOTCompilation()) [[unlikely]]
+                dataLogLn("AOT: omitted ", functionsNeverReached.load(), " unreachable functions (", bytecodeNeverReached.load(), " bytes of bytecode)");
             if (again) {
                 functionsNeverReached = 0;
                 bytecodeNeverReached = 0;

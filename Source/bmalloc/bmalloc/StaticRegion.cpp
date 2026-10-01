@@ -7,6 +7,7 @@
 
 #include "BAssert.h"
 #include "BPlatform.h"
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -126,9 +127,15 @@ bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size
     void* wanted = reinterpret_cast<void*>(startOf(arena) + offsetInArena);
     if (arena == Arena::Image) {
         void* result = mmap(wanted, size, isCode ? PROT_READ | PROT_EXEC : PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
+        // Darwin refuses an executable mapping of a file that is not signed (EPERM), but allows a mapping of one to be made executable.
+        bool needsExecutePermission = false;
+        if (result == MAP_FAILED && isCode && errno == EPERM) {
+            result = mmap(wanted, size, PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
+            needsExecutePermission = true;
+        }
         if (result == MAP_FAILED)
             return false;
-        if (result != wanted) {
+        if (result != wanted || (needsExecutePermission && mprotect(result, size, PROT_READ | PROT_EXEC))) {
             munmap(result, size);
             return false;
         }
