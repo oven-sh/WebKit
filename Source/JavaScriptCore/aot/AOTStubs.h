@@ -245,6 +245,8 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(PutToScope) \
     /* As GetById, for a site whose identifier is a WellKnownIdentifier. */ \
     v(GetByIdWellKnown) \
+    /* A0 = an object, A1 = a value. Whether A1 is on A0's prototype chain, 0 or 1, in A0. */ \
+    v(InstanceOf) \
     /* A0 = next, A1 = iterator, A2 = iterable, as op_iterator_next has them; A3 = two slots, one after the other, for done and value. */ \
     /* Comes back with A0 = done, A1 = value, A2 = next. */ \
     v(IteratorNext) \

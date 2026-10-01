@@ -1193,10 +1193,12 @@ Vector<uint8_t> ImageBuilder::finish()
     header.familyOfNamedOffset = place(familyOfNamed.sizeInBytes());
     Vector<uint32_t> startOfFields;
     Vector<uint32_t> fields;
+    header.largestFieldID = 0;
     for (auto& ofSlot : fieldsOfSlot) {
         // (Ids are from one.)
         startOfFields.append(safeCast<uint32_t>(fields.size()) - 1);
         fields.appendVector(ofSlot);
+        header.largestFieldID = std::max(header.largestFieldID, safeCast<uint32_t>(ofSlot.size()));
     }
     Vector<uint16_t> familyOfField;
     for (auto& ofSlot : familiesOfSlot)

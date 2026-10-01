@@ -480,6 +480,43 @@ static void generateEqual(CCallHelpers& jit, Entry operation)
 
 static void generateStrictEqual(CCallHelpers& jit) { generateEqual(jit, Entry::operationAOTCompareStrictEq); }
 
+// The prototype walk of AccessCase::InstanceOfMegamorphic.
+static void generateInstanceOf(CCallHelpers& jit)
+{
+    CCallHelpers::JumpList slowPath;
+    slowPath.append(jit.branchIfNotCell(A1));
+    slowPath.append(jit.branchIfNotObject(A1));
+    jit.move(A0, T11);
+
+    CCallHelpers::Label loop = jit.label();
+    // AssemblyHelpers::emitLoadPrototype(), with the Structure decoded the position-independent way.
+    slowPath.append(jit.branchTest8(CCallHelpers::NonZero, Address(T11, JSObject::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+    jit.load32(Address(T11, JSCell::structureIDOffset()), T12);
+    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T12);
+    jit.load64(Address(T12, Structure::prototypeOffset()), T12);
+    Jump hasMonoProto = jit.branchTest64(CCallHelpers::NonZero, T12);
+    jit.load64(Address(T11, offsetRelativeToBase(knownPolyProtoOffset)), T12);
+    hasMonoProto.link(&jit);
+    Jump isInstance = jit.branch64(CCallHelpers::Equal, T12, A1);
+    jit.move(T12, T11);
+    jit.branchIfCell(T11).linkTo(loop, &jit);
+    jit.move(TrustedImm32(0), A0);
+    jit.ret();
+
+    isInstance.link(&jit);
+    jit.move(TrustedImm32(1), A0);
+    jit.ret();
+
+    slowPath.link(&jit);
+    loadInstance(jit, T11);
+    jit.move(A1, A2);
+    jit.move(A0, A1);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTDefaultHasInstance) * sizeof(void*)), T11);
+    callAndCheckException(jit, T11, Returns::Value);
+}
+
 // Of the string in A0: where its characters are, in the low 48 bits, and how many there are (or 0xffff, if more) above them. No characters: it is in pieces, or they are wide.
 // A slice of a narrow string is looked at where it is. Changes T9 to T11 and nothing else.
 static void generateNarrowCharacters(CCallHelpers& jit)
@@ -1380,7 +1417,7 @@ static void generateGetByIdFrom(CCallHelpers& jit, Entry operation, GPRReg base)
     jit.load32(Address(base, JSCell::structureIDOffset()), T12);
     Jump isOfAnotherStructure = jit.branch32(CCallHelpers::NotEqual, T11, T12);
     Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
-    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::offsetBits), T11);
+    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
     jit.load64(CCallHelpers::BaseIndex(base, T11, CCallHelpers::TimesEight), A0);
     jit.ret();
 
@@ -1505,10 +1542,10 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
     countPath(jit, 1);
 #if CPU(ARM64)
-    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::offsetBits), T11);
+    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
 #else
     jit.urshift64(TrustedImm32(32), T11);
-    jit.and32(TrustedImm32(Slot::offsetMask), T11);
+    jit.and32(TrustedImm32(Slot::directLocationMask), T11);
 #endif
     jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
     jit.ret();
@@ -1536,6 +1573,23 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     if (operation == Entry::operationAOTGetById) {
         constexpr GPRReg several = T13;
         constexpr GPRReg ownSlotOfSite = T14;
+        {
+            // A direct slot with a property name id: the base's Structure may have the same name at the same inline offset (a base-class field in another subclass, say).
+            // T11 = the slot's first word, T12 = the base's StructureID.
+            Jump isIndirect = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+            jit.extractUnsignedBitfield64(T11, TrustedImm32(32 + Slot::nameIDShift), TrustedImm32(16), T13);
+            Jump hasNoNameID = jit.branchTest32(CCallHelpers::Zero, T13);
+            jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T14);
+            jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T12);
+            constexpr ptrdiff_t wordsBeforeInlineStorage = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue);
+            jit.load16(CCallHelpers::BaseIndex(T12, T14, CCallHelpers::TimesTwo, Structure::offsetOfFieldInSlot() - wordsBeforeInlineStorage * sizeof(uint16_t)), T12);
+            Jump isAnotherName = jit.branch32(CCallHelpers::NotEqual, T12, T13);
+            jit.load64(CCallHelpers::BaseIndex(A0, T14, CCallHelpers::TimesEight), A0);
+            jit.ret();
+            isIndirect.link(&jit);
+            hasNoNameID.link(&jit);
+            isAnotherName.link(&jit);
+        }
         // The slot is for some other structure: this is the second that the place has seen.
         findOutAndRemember.append(jit.branchTest32(CCallHelpers::NonZero, T11));
         // It has none. Either it has nothing at all or the place has seen several (Slot::isOfSeveral()).
@@ -1585,7 +1639,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         countPath(jit, 25);
         jit.load64(slotWord(A1, 0), T11);
         Jump isIntricateThere = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
-        jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::offsetBits), T11);
+        jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
         jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
         jit.ret();
         isIntricateThere.link(&jit);
@@ -2871,7 +2925,7 @@ static void getWellKnownInFrameOfStub(CCallHelpers& jit, WellKnownIdentifier ide
     jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
     Jump isOfAnotherStructure = jit.branch32(CCallHelpers::NotEqual, T11, T12);
     Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
-    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::offsetBits), T11);
+    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
     jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
     Jump found = jit.jump();
 

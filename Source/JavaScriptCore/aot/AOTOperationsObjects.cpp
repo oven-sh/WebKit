@@ -897,6 +897,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceof, size_t, (JSGlobalObject* global
     OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, value, prototype));
 }
 
+// op_instanceof once Symbol.hasInstance has been read and is not the default (DFG: InstanceOfCustom).
+JSC_DEFINE_JIT_OPERATION(operationAOTInstanceofCustom, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, JSObject* constructor, EncodedJSValue encodedHasInstance))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    OPERATION_RETURN(scope, constructor->hasInstance(globalObject, JSValue::decode(encodedValue), JSValue::decode(encodedHasInstance)));
+}
+
+// Slow path of Stub::InstanceOf.
+JSC_DEFINE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedPrototype))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, JSValue::decode(encodedValue), JSValue::decode(encodedPrototype)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowTDZErrorOfThis, void, (JSGlobalObject* globalObject))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -941,6 +955,10 @@ static ALWAYS_INLINE const Identifier& wellKnownIdentifier(VM& vm, uint32_t whic
         return vm.propertyNames->done;
     case WellKnownIdentifier::Value:
         return vm.propertyNames->value;
+    case WellKnownIdentifier::HasInstanceSymbol:
+        return vm.propertyNames->hasInstanceSymbol;
+    case WellKnownIdentifier::Prototype:
+        return vm.propertyNames->prototype;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

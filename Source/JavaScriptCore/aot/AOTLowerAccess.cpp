@@ -50,7 +50,10 @@ LValue Lowering::loadProperty(LValue object, LValue offset)
 // word: the first of a slot whose offset is the location of a property (locationOfProperty()).
 TypedPointer Lowering::cachedPropertyAddress(LValue object, LValue word, const AbstractHeap* heap)
 {
-    LValue location = m_out.aShr(m_out.shl(word, m_out.constInt32(32 - Slot::offsetBits)), m_out.constInt32(64 - Slot::offsetBits));
+    // (A direct slot may have a property name id above the location.)
+    LValue location = m_out.select(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIntricate) << 32)),
+        m_out.aShr(m_out.shl(word, m_out.constInt32(32 - Slot::offsetBits)), m_out.constInt32(64 - Slot::offsetBits)),
+        m_out.bitAnd(m_out.lShr(word, m_out.constInt32(32)), m_out.constInt64(Slot::directLocationMask)));
     LValue storage = m_out.select(m_out.lessThan(location, m_out.int64Zero), m_out.loadPtr(object, m_heaps.JSObject_butterfly), object);
     return TypedPointer(heap ? *heap : m_heaps.properties.atAnyNumber(), m_out.add(storage, m_out.shl(location, m_out.constInt32(3))));
 }
@@ -643,7 +646,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
         // Whatever takes more than a load from the base itself is the stub's business: a getter, what is inherited, what is out of line.
         m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter | Slot::isIntricate) << 32)), usually(hit), rarely(slowCase));
         m_out.appendTo(hit, slowCase);
-        LValue location = m_out.bitAnd(m_out.lShr(word, m_out.constInt32(32)), m_out.constInt64(Slot::offsetMask));
+        LValue location = m_out.bitAnd(m_out.lShr(word, m_out.constInt32(32)), m_out.constInt64(Slot::directLocationMask));
         fastResult = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(base, m_out.shl(location, m_out.constInt32(3))))));
     } else {
         m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter) << 32)), usually(hit), rarely(slowCase));

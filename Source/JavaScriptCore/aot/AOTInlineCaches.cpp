@@ -95,6 +95,46 @@ static void countFailure(Slot* cache)
 static ASCIILiteral tryCacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache);
 
 // Which slot is to have what has been found out about objects of that structure: the place's own, until there is a second structure.
+static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
+{
+    auto& table = vm.aotPropertyNameIDs;
+    if (!table.next) {
+        Image* image = Image::withShapes();
+        table.next = (image ? image->header().largestFieldID : 0) + 1;
+    }
+    auto result = table.ids.add(uid, 0);
+    if (!result.isNewEntry)
+        return result.iterator->value;
+    if (table.next >= Structure::noTellingWhichField) {
+        table.ids.remove(result.iterator);
+        return 0;
+    }
+    result.iterator->value = static_cast<uint16_t>(table.next++);
+    return result.iterator->value;
+}
+
+// If the access found a plain data property of the base's own in one of the first inline slots: records the name's id in the Structure and returns it. Otherwise zero.
+static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* structure, const Identifier& ident, const PropertySlot& slot)
+{
+    if (!slot.isCacheableValue() || slot.slotBase() != base || slot.attributes())
+        return 0;
+    PropertyOffset offset = slot.cachedOffset();
+    if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFields)
+        return 0;
+    // (A cell of the static heap that another VM reads has a Structure of the first VM's.)
+    if (structure->isDictionary() || structure->bornAs() || structure->isNeverAdopted() || &structure->vm() != &vm)
+        return 0;
+    // As tryCacheGetById().
+    if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
+        return 0;
+    uint16_t id = propertyNameID(vm, ident.impl());
+    if (!id)
+        return 0;
+    RELEASE_ASSERT(!structure->fieldInSlot(offset) || structure->fieldInSlot(offset) == id);
+    structure->setPropertyNameIDInInlineSlot(offset, id);
+    return id;
+}
+
 static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, const Identifier& ident)
 {
     if (!cache->isOfSeveral()) {
@@ -137,6 +177,14 @@ ASCIILiteral cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base
 {
     if (SharedData::contains(cache))
         return "the function has no slots yet"_s;
+    if (mayBeOfSeveral && usesStubs && base.isCell() && base.asCell()->structure() == structureBefore && !(Options::aotDisableFastPaths() & 1)) {
+        // The slot is monomorphic for another Structure with the same name at the same offset. Now that this Structure says so too, the stub hits on both: the site stays monomorphic.
+        if (uint16_t id = recordPropertyNameInStructure(globalObject->vm(), base.asCell(), structureBefore, ident, slot)) {
+            uint32_t sameAccess = *locationOfProperty(slot.cachedOffset()) | static_cast<uint32_t>(id) << Slot::nameIDShift;
+            if (cache->structureID && (cache->offset & ~Slot::attemptsMask) == sameAccess)
+                return ""_s;
+        }
+    }
     if (mayBeOfSeveral && usesStubs && base.isCell())
         cache = slotToFill(globalObject->vm(), data, cache, base.asCell()->structure(), ident);
     ASCIILiteral whyNot = tryCacheGetById(globalObject, data, base, structureBefore, ident, slot, cache);
@@ -193,7 +241,8 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, Data* data, JS
         if (cache->hasPointer())
             stopWatching(data, cache);
         // (Where there is no more to it than a place in the object, the second word is for the name: Slot::name.)
-        fill(vm, data, cache, structure, *location | getterFlag, (*location | getterFlag) & (Slot::isIntricate | Slot::isGetter) ? nullptr : ident.impl());
+        uint32_t nameID = usesStubs ? recordPropertyNameInStructure(vm, cell, structure, ident, slot) : 0;
+        fill(vm, data, cache, structure, *location | getterFlag | nameID << Slot::nameIDShift, (*location | getterFlag) & (Slot::isIntricate | Slot::isGetter) ? nullptr : ident.impl());
         return ""_s;
     }
 

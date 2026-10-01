@@ -1453,6 +1453,9 @@ void Structure::setKnownShape(VM& vm, uint16_t shape)
         return;
     RELEASE_ASSERT(!m_knownShape);
     m_knownShape = shape;
+    // (Property name ids are only for a Structure with no layout class.)
+    if (!m_bornAs)
+        zeroSpan(std::span { m_fieldInSlot });
     m_bornAs = shape;
     if (!isWatchingReplacement())
         return;

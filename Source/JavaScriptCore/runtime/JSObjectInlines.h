@@ -528,6 +528,9 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     auto isRefusedWhereItGoes = [&](Structure* itsStructure, PropertyOffset where) {
         if (static_cast<unsigned>(where) >= Structure::numberOfSlotsWithFields || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             return false;
+        // (Without a layout class the table holds property name ids, which constrain nothing: VM::aotPropertyNameIDs.)
+        if (!itsStructure->bornAs()) [[likely]]
+            return false;
         uint16_t id = itsStructure->fieldInSlot(where);
         if (!id || id == Structure::noTellingWhichField) [[likely]]
             return false;

@@ -248,8 +248,21 @@ void RegExp::updateMetadataFromPattern(Yarr::YarrPattern& pattern)
     if (m_rareData)
         return;
 #endif
-    if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndices.isEmpty()) {
+    if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndices.isEmpty() || !pattern.m_anchoredWords.isEmpty()) {
         auto rareData = makeUnique<RareData>();
+        if (!pattern.m_anchoredWords.isEmpty()) {
+            auto& words = pattern.m_anchoredWords;
+            std::ranges::stable_sort(words, { }, &String::length);
+            Vector<unsigned> firstWordOfLength;
+            firstWordOfLength.fill(words.size(), words.last().length() + 2);
+            for (unsigned i = words.size(); i--;)
+                firstWordOfLength[words[i].length()] = i;
+            // A length that no word has starts where the next longer one does.
+            for (unsigned length = firstWordOfLength.size() - 1; length--;)
+                firstWordOfLength[length] = std::min(firstWordOfLength[length], firstWordOfLength[length + 1]);
+            rareData->m_anchoredWords = FixedVector<String>(WTF::move(words));
+            rareData->m_firstWordOfLength = FixedVector<unsigned>(WTF::move(firstWordOfLength));
+        }
         rareData->m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
         rareData->m_captureGroupNames = FixedVector<AtomString>::map(pattern.m_captureGroupNames, [](auto& name) {
             return AtomString { name };

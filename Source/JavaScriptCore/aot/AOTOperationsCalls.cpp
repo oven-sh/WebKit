@@ -442,6 +442,17 @@ static UncheckedKeyHashMap<Slot*, LastSeenAtSite>& lastSeen()
     static NeverDestroyed<UncheckedKeyHashMap<Slot*, LastSeenAtSite>> map;
     return map.get();
 }
+// TEMPORARY. Of a place that has seen several structures: where the property was, each time.
+struct WhereSiteOfSeveralFoundIt {
+    uint64_t inlineAt[16] { }; // The last: further on than that.
+    uint64_t outOfLine { 0 };
+    uint64_t notItsOwn { 0 };
+};
+static UncheckedKeyHashMap<Slot*, WhereSiteOfSeveralFoundIt>& whereSitesOfSeveralFoundIt()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<Slot*, WhereSiteOfSeveralFoundIt>> map;
+    return map.get();
+}
 static uint64_t s_readsAtDepth[depthOfStacks + 1]; // The last: further down than that, or never seen.
 static uint64_t s_probesAtDepth[2][depthOfStacks + 1]; // [whether it is the object's own and in it]
 static uint64_t s_readsWithNobodysSlot;
@@ -468,6 +479,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteRead, void, (JSCell* base, Slo
     if (slot->isOfSeveral()) {
         auto* several = static_cast<SlotsOfSite*>(slot->pointer);
         name = several->name;
+        if (name) {
+            auto& where = whereSitesOfSeveralFoundIt().add(slot, WhereSiteOfSeveralFoundIt { }).iterator->value;
+            unsigned attributesThere;
+            PropertyOffset offsetThere = base->structure()->getConcurrently(name, attributesThere);
+            if (!isValidOffset(offsetThere))
+                where.notItsOwn++;
+            else if (!isInlineOffset(offsetThere))
+                where.outOfLine++;
+            else
+                where.inlineAt[std::min<unsigned>(offsetThere, 15)]++;
+        }
         for (Slot& one : several->slots) {
             if (one.structureID == base->structureID())
                 slot = &one;
@@ -477,7 +499,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteRead, void, (JSCell* base, Slo
         unsigned attributes;
         PropertyOffset offset = base->structure()->getConcurrently(name, attributes);
         auto location = isValidOffset(offset) ? locationOfProperty(offset) : std::nullopt;
-        if (!location || *location != (slot->offset & (Slot::offsetMask | Slot::isIntricate)) || base->structure()->isDictionary()) {
+        if (!location || *location != (slot->offset & (Slot::directLocationMask | Slot::isIntricate)) || base->structure()->isDictionary()) {
             dataLogLn("AOT: WRONG SLOT ", RawPointer(slot), ": structure ", RawPointer(base->structure()), " id ", id, " has the name at offset ", offset, ", the slot says ", RawHex(slot->offset), "; dictionary ", base->structure()->isDictionary(), "; type ", static_cast<unsigned>(base->type()));
             CRASH();
         }
@@ -551,6 +573,25 @@ void dumpGettersCalled(PrintStream& out)
         }
         for (unsigned n = 1; n <= most; ++n)
             out.println("PROBES\t", all[n], "\tsites that saw ", n, n == most ? " or more" : "", " structures: ", sites[n], " sites; own and inline ", own[n], "; the commonest structure ", byTopOne[n], ", two ", byTopTwo[n], ", four ", byTopFour[n]);
+    }
+    {
+        uint64_t atCommonest[2] { }, elsewhereInline = 0, outOfLine = 0, notItsOwn = 0;
+        for (auto& [slot, where] : whereSitesOfSeveralFoundIt()) {
+            unsigned commonest = 0;
+            for (unsigned i = 1; i < 16; ++i) {
+                if (where.inlineAt[i] > where.inlineAt[commonest])
+                    commonest = i;
+            }
+            for (unsigned i = 0; i < 16; ++i)
+                (i == commonest && i < 15 ? atCommonest[i >= 8] : elsewhereInline) += where.inlineAt[i];
+            outOfLine += where.outOfLine;
+            notItsOwn += where.notItsOwn;
+        }
+        out.println("SEVERAL\t", atCommonest[0], "\tits own, in the object, where the place finds it most often: one of the first 8");
+        out.println("SEVERAL\t", atCommonest[1], "\tlikewise: one of the next 7");
+        out.println("SEVERAL\t", elsewhereInline, "\tits own, in the object, somewhere else");
+        out.println("SEVERAL\t", outOfLine, "\tits own, outside the object");
+        out.println("SEVERAL\t", notItsOwn, "\tnot its own: inherited, or not there");
     }
     out.println("DEPTH\t", s_readsWithNobodysSlot, "\treads: the slot is nobody's");
     for (unsigned depth = 0; depth <= depthOfStacks; ++depth) {

@@ -365,7 +365,7 @@ void Lowering::exitUnless(LValue condition)
 // Where a property that is in the base itself is.
 static LValue plainLocation(FTL::Output& out, LValue base, LValue word)
 {
-    LValue location = out.bitAnd(out.lShr(word, out.constInt32(32)), out.constInt64(Slot::offsetMask));
+    LValue location = out.bitAnd(out.lShr(word, out.constInt32(32)), out.constInt64(Slot::directLocationMask));
     return out.add(base, out.shl(location, out.constInt32(3)));
 }
 

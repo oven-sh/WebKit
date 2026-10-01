@@ -69,6 +69,7 @@ struct ImageHeader {
     uint32_t startOfFieldsOffset;
     uint32_t fieldsOffset;
     uint32_t familyOfFieldOffset;
+    uint32_t largestFieldID; // Property name ids (VM::aotPropertyNameIDs) start above it: both kinds are stored in Structure::m_fieldInSlot.
     uint32_t inlineSlotsOfFamiliesOffset;
     uint32_t auditsTypes; // Options::aotAuditsTypes()
     // With numberOfIdentifiersOfProgram, a selector is the number of the identifier, and what it says is for StaticHeap to know.

@@ -687,6 +687,13 @@ public:
         uint32_t length { 0 };
         bool isWide { false };
     } jsonStringifyHints;
+    // 16-bit ids for property names, assigned on first use by AOT::cacheGetById(). A Structure without a layout class records the id of the plain data property in each of its
+    // first inline slots (Structure::fieldInSlot()), so that a monomorphic inline cache also hits on other Structures that have the same name at the same offset.
+    // Per VM because objects cross realms. A name with an id is kept alive, so that its address is not reused by another name.
+    struct {
+        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint16_t> ids;
+        uint32_t next { 0 };
+    } aotPropertyNameIDs;
     KeyAtomStringCache keyAtomStringCache;
     // Bytecode-cache decode: one lazy [class(c0)<<6|class(c1)] -> atom table for the bulk of minified identifiers, shared by every Decoder. The 64 classes are the ASCII identifier characters (Decoder::atomForInlineString).
     static constexpr unsigned cachedBytecodeTwoCharacterAtomsSize = 64 * 64;

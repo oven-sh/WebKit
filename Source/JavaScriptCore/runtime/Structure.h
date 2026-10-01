@@ -500,6 +500,12 @@ public:
     static constexpr unsigned numberOfSlotsWithFields = 8;
     static constexpr uint16_t noTellingWhichField = 0xffff;
     uint16_t fieldInSlot(unsigned slot) const { return m_fieldInSlot[slot]; }
+    // Of a Structure with no layout class: VM::aotPropertyNameIDs. Property additions copy the table; every other transition starts from an empty one.
+    void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
+    {
+        ASSERT(!m_bornAs && !isDictionary() && slot < m_inlineCapacity);
+        m_fieldInSlot[slot] = id;
+    }
     JS_EXPORT_PRIVATE void setBornAs(uint16_t family, std::span<const uint16_t, numberOfSlotsWithFields>); // For whoever knows what is in its slots.
     // Of what was born as nothing: there is no making its like one of a family, whichever (AOT::Instance::adopt()).
     bool isNeverAdopted() const { return !m_bornAs && m_fieldInSlot[0] == noTellingWhichField; }

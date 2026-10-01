@@ -689,9 +689,47 @@ bool Lowering::tryLowerConversion(Node* node)
         setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetPrototypeOf, m_globalObject, lowJSValue(node->use(node->as<OpGetPrototypeOf>().m_value))));
         return true;
     case op_instanceof: {
+        // The steps of JIT::emit_op_instanceof(). Both property reads go through ordinary inline caches.
         auto bytecode = node->as<OpInstanceof>();
-        LValue result = vmCall(node, Int64, Entry::operationAOTInstanceof, m_globalObject, lowJSValue(node->use(bytecode.m_value)), lowJSValue(node->use(bytecode.m_constructor)));
-        setProj(node, bytecode.m_dst, m_out.notZero64(result), Rep::Boolean);
+        Node* valueNode = node->use(bytecode.m_value);
+        Node* constructorNode = node->use(bytecode.m_constructor);
+        LValue value = lowJSValue(valueNode);
+        LValue constructor = lowJSValue(constructorNode);
+        LBasicBlock constructorIsObject = m_out.newBlock();
+        LBasicBlock constructorIsNotObject = newColdBlock();
+        LBasicBlock isCustom = newColdBlock();
+        LBasicBlock isDefault = m_out.newBlock();
+        LBasicBlock valueIsObject = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 4> results;
+
+        m_out.branch(isCellAnd(constructorNode, constructor, [&](LValue cell) { return isObjectCell(cell); }), usually(constructorIsObject), rarely(constructorIsNotObject));
+
+        m_out.appendTo(constructorIsNotObject);
+        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTInstanceof, m_globalObject, value, constructor))); // Throws.
+        m_out.jump(continuation);
+
+        m_out.appendTo(constructorIsObject);
+        LValue hasInstance = getByIdCached(node, constructor, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::HasInstanceSymbol));
+        LValue defaultHasInstance = m_out.load64(m_out.address(m_heaps.root, m_globalObject, JSGlobalObject::offsetOfFunctionProtoHasInstanceSymbolFunction()));
+        LValue implementsDefault = m_out.testNonZero32(m_out.load8ZeroExt32(constructor, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(ImplementsDefaultHasInstance));
+        m_out.branch(m_out.bitAnd(m_out.equal(hasInstance, defaultHasInstance), implementsDefault), usually(isDefault), rarely(isCustom));
+
+        m_out.appendTo(isCustom);
+        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTInstanceofCustom, m_globalObject, value, constructor, hasInstance)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(isDefault);
+        results.append(m_out.anchor(m_out.int64Zero));
+        m_out.branch(isCellAnd(valueNode, value, [&](LValue cell) { return isObjectCell(cell); }), unsure(valueIsObject), unsure(continuation));
+
+        m_out.appendTo(valueIsObject);
+        LValue prototype = getByIdCached(node, constructor, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Prototype));
+        results.append(m_out.anchor(callStub(Stub::InstanceOf, Int64, { { value, GPRInfo::argumentGPR0 }, { prototype, GPRInfo::argumentGPR1 } }, { })));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        setProj(node, bytecode.m_dst, m_out.notZero64(m_out.phi(Int64, results)), Rep::Boolean);
         // A temporary of the instruction's own.
         setProj(node, bytecode.m_hasInstanceOrPrototype, m_out.constInt64(JSValue::encode(jsUndefined())));
         return true;

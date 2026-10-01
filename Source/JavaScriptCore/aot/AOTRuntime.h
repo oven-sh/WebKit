@@ -296,6 +296,12 @@ static_assert(!(structureIDBaseOfImages & 0xffffffff));
 struct Slot {
     static constexpr unsigned offsetBits = 24;
     static constexpr uint32_t offsetMask = (1u << offsetBits) - 1;
+    // op_get_by_id, unless isIntricate: the low bits of `offset` are the location (in words from the start of the object) and the rest is the property name id, or zero.
+    static constexpr unsigned directLocationBits = 8;
+    static constexpr uint32_t directLocationMask = (1u << directLocationBits) - 1;
+    static constexpr unsigned nameIDShift = directLocationBits;
+    static_assert(offsetBits - nameIDShift == 16);
+    static_assert(JSFinalObject::maxInlineCapacity + JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) <= directLocationMask);
     static constexpr unsigned attemptsShift = 24; // How often a cache that is expensive to set up has been (see cacheGetById()).
     static constexpr uint32_t maxAttempts = 15;
     static constexpr uint32_t attemptsMask = maxAttempts << attemptsShift;
