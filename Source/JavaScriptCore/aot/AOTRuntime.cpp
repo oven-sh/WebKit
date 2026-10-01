@@ -279,8 +279,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->granulesOfCode = image->at<uint32_t>(image->header().granulesOfCodeOffset);
         instance->startsOfFunctionsAfterFirst = image->at<uint32_t>(image->header().startsOfFunctionsOffset) + 1;
     }
-    instance->missesForEightSlots = Options::aotMissesForEightSlots();
-    instance->missesToSpare = Options::aotMissesToSpare();
+    instance->missesForEightSlots = Options::aotCacheMissesPerEightSlotsBeforeOwnData();
+    instance->missesToSpare = Options::aotExtraCacheMissesBeforeOwnData();
     instance->structureIDBase = JSC::structureIDBase();
     RELEASE_ASSERT_WITH_MESSAGE(!Image::withCode() || instance->structureIDBase == structureIDBaseOfImages, "Structures are not where the program's code takes them to be: the addresses were taken.");
     {
@@ -326,7 +326,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
             instance->linkTimeConstants[which] = JSValue::encode(globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(which)));
             ++count;
         }
-        if (Options::aotVerbose()) [[unlikely]]
+        if (Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: ", count, " link-time constants made ready in ", (MonotonicTime::now() - before).microseconds(), " us");
     }
     memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
@@ -662,7 +662,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
         return nullptr;
     }
     if (!info.sites) {
-        if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
+        if (!instance.collections->sizeOfInfos && Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: nothing was known of function ", code.index(), " when the program was built");
         fillInfo(info, executable, unlinkedCodeBlock, code, data->constants);
     }
@@ -1224,7 +1224,7 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
     if (instance.isLinked(index))
         RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
     else if (code->imageFunction()->startsCold && !instance.infos[index].sites && constantsAreOfNoRealm(unlinkedCodeBlock)) {
-        if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
+        if (!instance.collections->sizeOfInfos && Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: nothing was known of function ", index, " when the program was built");
         fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
         instance.infos[index].flags |= FunctionInfo::startsCold;

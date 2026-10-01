@@ -104,10 +104,10 @@ public:
         unsigned size = callee->instructionsSize();
         // There is going to be no other copy of it.
         if (summary && summary->isNonEscaping && summary->directCalls.load(std::memory_order_relaxed) == 1)
-            return size <= Options::aotInlinesOnlyCallUpTo();
+            return size <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite();
         // Every copy of it is that much more code, unless it is no longer than the call. That is worth it where it may be run over and over, which is all
         // that there is to go by. (In a big program: 5.4MB for what is between 30 and 60 bytes, and 0.07MB for what is up to 18.)
-        return size <= (isCalledInLoop ? Options::aotInlinesUpTo() : std::min(Options::aotInlinesOutsideLoopsUpTo(), Options::aotInlinesUpTo()));
+        return size <= (isCalledInLoop ? Options::maximumAOTInlineCandidateBytecodeCostInLoop() : std::min(Options::maximumAOTInlineCandidateBytecodeCost(), Options::maximumAOTInlineCandidateBytecodeCostInLoop()));
     }
 
     // Plain from its bytecode.
@@ -194,9 +194,9 @@ private:
         bool isCertainlyTheIntrinsic = false;
         // It is a form of the method that will only do for an array.
         bool isLeanForm = false;
-        // Options::aotVerbose(): why one of the engine's own functions does not become part of its caller.
+        // Options::verboseAOTCompilation(): why one of the engine's own functions does not become part of its caller.
         auto notTaken = [&](ASCIILiteral why) {
-            dataLogLnIf(Options::aotVerbose(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
+            dataLogLnIf(Options::verboseAOTCompilation(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
             return false;
         };
         if (calleeNode->isBytecode(op_new_func_exp)) {
@@ -217,7 +217,7 @@ private:
                     isLeanForm = true;
                 }
             }
-            isCertainlyTheIntrinsic = Options::aotTypesFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(calleeNode));
+            isCertainlyTheIntrinsic = Options::useAOTTypedFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(calleeNode));
         } else {
             bool isExact = false;
             const KnownFunction* known = caller.knownCallee(call, &isExact);
@@ -229,9 +229,9 @@ private:
         // (A closure that is called where it is made is as good as called from one place.)
         if (intrinsicToCheckFor && (!about || !canBePartOfAnother(callee)))
             return notTaken(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
-        if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::aotInlinesOnlyCallUpTo() : isProfitable(callee, about->summary, block->isInLoop)))
+        if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : isProfitable(callee, about->summary, block->isInLoop)))
             return intrinsicToCheckFor ? notTaken("it is too big"_s) : false;
-        if (m_inlinedBytecodeSize + callee->instructionsSize() > Options::aotInlinesAtMost() || m_graph.inlineFrames.size() > PackedSite::mostInlineFrames)
+        if (m_inlinedBytecodeSize + callee->instructionsSize() > Options::maximumAOTInliningCallerBytecodeCost() || m_graph.inlineFrames.size() > PackedSite::mostInlineFrames)
             return intrinsicToCheckFor ? notTaken("the caller has taken over enough"_s) : false;
         unsigned depth = 0;
         for (unsigned frame = caller.inlineFrame(); frame; frame = m_graph.inlineFrames[frame].parent)
@@ -279,7 +279,7 @@ private:
         }
 
         // ---- Nothing is in the way.
-        dataLogLnIf(Options::aotVerbose() && intrinsicToCheckFor, "AOT: a builtin is made part of its caller at bc#", call->bytecodeIndex.offset());
+        dataLogLnIf(Options::verboseAOTCompilation() && intrinsicToCheckFor, "AOT: a builtin is made part of its caller at bc#", call->bytecodeIndex.offset());
         m_didInline = true;
         m_inlinedBytecodeSize += callee->instructionsSize();
         m_parents.add(inlinee.get(), &caller);
@@ -524,7 +524,7 @@ private:
             return 0;
         const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
         if (!intrinsics) {
-            dataLogLnIf(Options::aotVerbose(), "AOT: no builtin is made part of anything: the intrinsics are not known");
+            dataLogLnIf(Options::verboseAOTCompilation(), "AOT: no builtin is made part of anything: the intrinsics are not known");
             return 0;
         }
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
@@ -570,14 +570,14 @@ private:
 void inlineCalls(Graph& graph, const CodeOfProgram& program)
 {
     // (A site has to have room to say which call it is in.)
-    if (!Options::aotInlines() || !PackedSite::fits(CallSiteIndex(BytecodeIndex(graph.codeBlock()->instructionsSize())).bits()))
+    if (!Options::useAOTInlining() || !PackedSite::fits(CallSiteIndex(BytecodeIndex(graph.codeBlock()->instructionsSize())).bits()))
         return;
     Inliner(graph, program).run();
 }
 
 bool mayBecomePartOfAnother(UnlinkedCodeBlock* codeBlock, const FunctionSummary* summary)
 {
-    return Options::aotInlines() && Inliner::isProfitable(codeBlock, summary) && Inliner::canBePartOfAnother(codeBlock);
+    return Options::useAOTInlining() && Inliner::isProfitable(codeBlock, summary) && Inliner::canBePartOfAnother(codeBlock);
 }
 
 } } // namespace JSC::AOT

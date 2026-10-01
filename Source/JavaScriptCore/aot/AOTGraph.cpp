@@ -1280,7 +1280,7 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExec
 
 void Graph::noteFieldsComparedWithStrings()
 {
-    if (!Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced())
+    if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
         return;
     auto isStringOfProgram = [](Node* node) {
         if (node->kind != NodeKind::ConstantCell || !node->reg.isConstant())
@@ -1503,15 +1503,15 @@ bool Graph::isThisOfEscapingFunction(const Node* node)
 
 std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
 {
-    if (!Options::aotTypesFields() || Options::aotAssertsTypes() || !TypeTable::typedFieldsAreEnforced() || node->guard)
+    if (!Options::useAOTTypedFields() || Options::useAOTFunctionSplitting() || !TypeTable::typedFieldsAreEnforced() || node->guard)
         return std::nullopt;
     uint32_t tag = typeTagOf(node);
     unsigned identifier;
     VirtualRegister base;
-    if (node->isBytecode(op_get_by_id) && (Options::aotShapes() & 2)) {
+    if (node->isBytecode(op_get_by_id) && (Options::aotShapeOptimizations() & 2)) {
         identifier = node->as<OpGetById>().m_property;
         base = node->as<OpGetById>().m_base;
-    } else if (node->isBytecode(op_put_by_id) && (Options::aotShapes() & 4)) {
+    } else if (node->isBytecode(op_put_by_id) && (Options::aotShapeOptimizations() & 4)) {
         identifier = node->as<OpPutById>().m_property;
         base = node->as<OpPutById>().m_base;
     } else
@@ -1526,7 +1526,7 @@ std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
 
 std::optional<TypeTable::Field> Graph::fieldOfTypedBase(const Node* base, UniquedStringImpl* name)
 {
-    if (!Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced() || !base->type || !isSubtype(base->type, TFinalObject))
+    if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || !base->type || !isSubtype(base->type, TFinalObject))
         return std::nullopt;
     auto layoutIDs = layoutRangeOf(base->type);
     if (!layoutIDs.lowest || layoutIDs.lowest != layoutIDs.highest)
@@ -1536,7 +1536,7 @@ std::optional<TypeTable::Field> Graph::fieldOfTypedBase(const Node* base, Unique
 
 uint32_t Graph::classNotedBy(const Node* node)
 {
-    if (!node->isBytecode(op_call_ignore_result) || !Options::aotTypesFields() || !TypeTable::hasTypedFields())
+    if (!node->isBytecode(op_call_ignore_result) || !Options::useAOTTypedFields() || !TypeTable::hasTypedFields())
         return 0;
     CallOperands operands = operandsOfCall(node->instruction);
     if (operands.argc != 2 || linkTimeConstantOf(node->use(operands.callee)) != LinkTimeConstant::noteClass)
@@ -1619,7 +1619,7 @@ void Graph::noteClassesDefined()
 
 uint32_t Graph::closedMethodReadBy(const Node* node)
 {
-    if (!node->isBytecode(op_get_by_id) || !Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced() || !classesOfProgram())
+    if (!node->isBytecode(op_get_by_id) || !Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || !classesOfProgram())
         return 0;
     uint32_t tag = typeTagOf(node);
     if (!tag)
@@ -1641,14 +1641,14 @@ Type Graph::typeOfThisOnEntry() const
 
 uint16_t Graph::layoutIDOfThis() const
 {
-    if (!Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced() || !classesOfProgram())
+    if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || !classesOfProgram())
         return 0;
     return classesOfProgram()->layoutIDOfThisIn(m_codeBlock);
 }
 
 uint16_t Graph::layoutIDOfNewObject(const Node* node)
 {
-    if (!Options::aotTypesFields() || !TypeTable::hasTypedFields() || !(Options::aotShapes() & 1))
+    if (!Options::useAOTTypedFields() || !TypeTable::hasTypedFields() || !(Options::aotShapeOptimizations() & 1))
         return 0;
     uint32_t tag = typeTagOf(node);
     return tag ? TypeTable::shared()->layoutIDOfAllocation(tag) : 0;
@@ -1660,7 +1660,7 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
         return node->graph->shapeOfLiteral(node);
     unsigned count = node->numberOfLiteralProperties;
     std::optional<TypeTable::Layout> layout;
-    if (uint32_t tag = typeTagOf(node); tag && (Options::aotShapes() & 1) && TypeTable::shared())
+    if (uint32_t tag = typeTagOf(node); tag && (Options::aotShapeOptimizations() & 1) && TypeTable::shared())
         layout = TypeTable::shared()->layoutOf(tag);
     if ((!count && !layout && !layoutIDOfNewObject(node)) || count > KnownShape::maxProperties)
         return std::nullopt;
@@ -1717,7 +1717,7 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
         return shape;
     }
     // (Nobody says what it is for. It may turn out to be for something that wants more room than it takes to make it.)
-    if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
+    if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
         if (unsigned wanted = TypeTable::shared()->inlineSlotsNeededFor(shape.names.span()); wanted > count)
             shape.inlineCapacity = std::max(shape.inlineCapacity, KnownShape::inlineCapacityFor(wanted));
     }
@@ -2505,16 +2505,16 @@ private:
     // What the type of the base says of the property that the instruction gets at (GuardKind::Field).
     std::optional<TypeTable::Field> fieldReadBy(unsigned offset)
     {
-        if (!Options::aotAssertsTypes() || !TypeTable::shared())
+        if (!Options::useAOTFunctionSplitting() || !TypeTable::shared())
             return std::nullopt;
         uint32_t tag = m_graph.typeTagAt(offset);
         if (!tag)
             return std::nullopt;
         const JSInstruction* instruction = m_instructions.at(offset).ptr();
         unsigned identifier;
-        if (instruction->opcodeID() == op_get_by_id && (Options::aotShapes() & 2))
+        if (instruction->opcodeID() == op_get_by_id && (Options::aotShapeOptimizations() & 2))
             identifier = instruction->as<OpGetById>().m_property;
-        else if (instruction->opcodeID() == op_put_by_id && (Options::aotShapes() & 4) && !instruction->as<OpPutById>().m_flags.isDirect())
+        else if (instruction->opcodeID() == op_put_by_id && (Options::aotShapeOptimizations() & 4) && !instruction->as<OpPutById>().m_flags.isDirect())
             identifier = instruction->as<OpPutById>().m_property;
         else
             return std::nullopt;
@@ -2524,7 +2524,7 @@ private:
     bool isCheckSubsumedByAssertion(unsigned offset, unsigned end)
     {
         const JSInstruction* instruction = m_instructions.at(offset).ptr();
-        if (instruction->opcodeID() != op_check_type || !(instruction->as<OpCheckType>().m_mask & MaskOtherObject) || Options::aotAuditsTypes())
+        if (instruction->opcodeID() != op_check_type || !(instruction->as<OpCheckType>().m_mask & MaskOtherObject) || Options::auditAOTTypedFields())
             return false;
         unsigned next = offset + instruction->size();
         if (next >= end || m_instructions.at(next)->opcodeID() != op_type_tag)
@@ -2536,7 +2536,7 @@ private:
     // TypeTable::tableHasTypedFields(): the family that the base of the access after the op_type_tag there is said to be of, and where the base is.
     std::pair<uint16_t, VirtualRegister> layoutCheckedAt(unsigned offset)
     {
-        if (!Options::aotTypesFields() || !TypeTable::hasTypedFields())
+        if (!Options::useAOTTypedFields() || !TypeTable::hasTypedFields())
             return { };
         unsigned next = offset + m_instructions.at(offset)->size();
         if (next >= m_instructions.size() || !goesByTypeWhereverItIs(next))
@@ -2551,7 +2551,7 @@ private:
     // Likewise: where the base of the access after the op_type_tag there is, if it is said to be an array.
     VirtualRegister arrayAssertedAt(unsigned offset)
     {
-        if (!Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced())
+        if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
             return { };
         unsigned next = offset + m_instructions.at(offset)->size();
         if (next >= m_instructions.size())
@@ -2568,19 +2568,19 @@ private:
         return base.isValid() && !base.isConstant() ? base : VirtualRegister();
     }
 
-    // Options::aotTypesFields() with one copy of the code: an access that goes by the type of the base does so in a loop as anywhere else, and wants no guard.
+    // Options::useAOTTypedFields() with one copy of the code: an access that goes by the type of the base does so in a loop as anywhere else, and wants no guard.
     bool goesByTypeWhereverItIs(unsigned offset)
     {
-        if (!Options::aotTypesFields() || Options::aotAssertsTypes() || !TypeTable::shared())
+        if (!Options::useAOTTypedFields() || Options::useAOTFunctionSplitting() || !TypeTable::shared())
             return false;
         uint32_t tag = m_graph.typeTagAt(offset);
         if (!tag)
             return false;
         const JSInstruction* instruction = m_instructions.at(offset).ptr();
         unsigned identifier;
-        if (instruction->opcodeID() == op_get_by_id && (Options::aotShapes() & 2))
+        if (instruction->opcodeID() == op_get_by_id && (Options::aotShapeOptimizations() & 2))
             identifier = instruction->as<OpGetById>().m_property;
-        else if (instruction->opcodeID() == op_put_by_id && (Options::aotShapes() & 4))
+        else if (instruction->opcodeID() == op_put_by_id && (Options::aotShapeOptimizations() & 4))
             identifier = instruction->as<OpPutById>().m_property;
         else
             return false;
@@ -2590,12 +2590,12 @@ private:
     // With the blocks and the loops known: where the guards go. False if nowhere.
     bool chooseGuards()
     {
-        if (!Options::aotSplitLoops() || !Options::aotLoopsToSplit() || !usesStubs || m_graph.loopsAreNotSplit)
+        if (!Options::useAOTLoopSplitting() || !Options::aotLoopSplittingPolicy() || !usesStubs || m_graph.loopsAreNotSplit)
             return false;
         unsigned size = m_instructions.size();
-        // Options::aotAssertsTypes(): there are two copies of all of it, not just of the loops.
+        // Options::useAOTFunctionSplitting(): there are two copies of all of it, not just of the loops.
         BitVector fieldAccesses;
-        if (Options::aotAssertsTypes() && TypeTable::shared()) {
+        if (Options::useAOTFunctionSplitting() && TypeTable::shared()) {
             BitVector partOfWhatIsMade;
             unsigned count = 0;
             for (const auto& instruction : m_instructions) {
@@ -2612,7 +2612,7 @@ private:
                     ++count;
                 }
             }
-            if (count < std::max(1u, Options::aotAssertsTypesIfAccesses()))
+            if (count < std::max(1u, Options::minimumTypedAccessesForAOTFunctionSplitting()))
                 fieldAccesses.clearAll();
         }
         bool hasTwoCopiesOfAll = !fieldAccesses.isEmpty();
@@ -2712,7 +2712,7 @@ private:
                 hasRealCall |= ofBlocks[index].hasRealCall;
             }
             bool isProfitable = true;
-            switch (Options::aotLoopsToSplit()) {
+            switch (Options::aotLoopSplittingPolicy()) {
             case 2:
                 isProfitable = hasWhatIsBetter;
                 break;
@@ -3548,11 +3548,11 @@ private:
                 guard->slotOfField = field->slot;
                 guard->firstLayout = field->first;
                 guard->lastLayout = field->last;
-                if (guard->opcode == op_get_by_id && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics()) {
+                if (guard->opcode == op_get_by_id && (Options::aotShapeOptimizations() & 8) && Options::useImmutableIntrinsics()) {
                     guard->firstWithout = field->firstWithout;
                     guard->lastWithout = field->lastWithout;
                 }
-                if (Options::aotTypesFields() && field->fieldType.isConstrained()) {
+                if (Options::useAOTTypedFields() && field->fieldType.isConstrained()) {
                     guard->fieldTypeKinds = safeCast<uint16_t>(field->fieldType.kinds);
                     guard->fieldTypeFirst = field->fieldType.first;
                     guard->fieldTypeLast = field->fieldType.last;

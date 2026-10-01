@@ -90,7 +90,7 @@ enum class GuardKind : uint8_t {
     TypedArrayStorage, // The typed array (uses[0]) has a fixed length. Also loads its length and storage pointer.
     IsIntrinsicOfArray, // IsIntrinsic, and uses[1] is an array. Created by inlineCalls().
     IsIntrinsic, // uses[0] is the ImmutableIntrinsic numbered Node::intrinsic. Created by inlineCalls().
-    // With Options::aotAssertsTypes(). For an op_get_by_id or op_put_by_id whose base has a static type (TypeTable): the base was
+    // With Options::useAOTFunctionSplitting(). For an op_get_by_id or op_put_by_id whose base has a static type (TypeTable): the base was
     // allocated with the property in Node::slotOfField (its layout is in [firstLayout, lastLayout]) and the property is still
     // there. The guard also performs the access. Afterwards the base's layout is known (a Narrow with narrowedTo), so later guards
     // on it check less.
@@ -201,7 +201,7 @@ struct Node {
     // GuardKind::Field on a read: layouts that lack the property, for which the result is undefined. 0, 0 means none.
     uint16_t firstWithout { 0 };
     uint16_t lastWithout { 0 };
-    // GuardKind::Field with Options::aotTypesFields(): the field type (TypeTable::FieldType). Zero kinds means unconstrained.
+    // GuardKind::Field with Options::useAOTTypedFields(): the field type (TypeTable::FieldType). Zero kinds means unconstrained.
     uint16_t fieldTypeKinds { 0 };
     uint16_t fieldTypeFirst { 0 };
     uint16_t fieldTypeLast { 0 };
@@ -213,7 +213,7 @@ struct Node {
                 return true;
         }
         // For an open layout the tag alone proves nothing. See Lowering::fieldStorageFor().
-        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::aotAuditsTypes() && isTrusted)
+        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::auditAOTTypedFields() && isTrusted)
             return true;
         return type && isSubtype(type, TCell) && hasLayoutInRangeIfCell(first, last);
     }
@@ -570,7 +570,7 @@ public:
     static bool methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read); // Whether a program class that extends this built-in class may override the method.
     static bool isIteratorMethodOfAnyArray(const Node*); // Array.prototype.values, which is also Array.prototype[Symbol.iterator].
     void findBuiltinsCalled(); // Sets Node::builtinCalled. Requires types.
-    bool hasTwoCopiesOfAll { false }; // With Options::aotAssertsTypes(): the whole function has two copies, not just its loops.
+    bool hasTwoCopiesOfAll { false }; // With Options::useAOTFunctionSplitting(): the whole function has two copies, not just its loops.
     // See FunctionSummary.
     void recordUsesOfKnownFunctions(const FunctionSummaryMap&);
     void noteFieldsComparedWithStrings(); // TypeTable::noteComparedWithString()

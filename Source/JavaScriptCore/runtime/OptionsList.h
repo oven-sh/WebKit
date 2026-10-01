@@ -140,35 +140,35 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
     \
-    v(Bool, aotVerbose, false, Normal, "Log what the static compiler compiles and why it declines a function."_s) \
-    v(Bool, aotDumpGraph, false, Normal, "Dump the static compiler's IR."_s) \
-    v(Bool, aotDumpB3, false, Normal, "Dump the B3 the static compiler produces."_s) \
-    v(Bool, aotDumpDisassembly, false, Normal, "Dump the machine code the static compiler produces."_s) \
-    v(OptionString, aotWritesMap, nullptr, Normal, "When compiling: a file to write what is where in the image to (functions, the calls of stubs in them, and what was known at each place in the bytecode), for making sense of a profile."_s) \
-    v(Bool, aotForceVeneers, false, Normal, "In an image, make every direct call from one function to another the way one that is out of reach is made. For testing."_s) \
-    v(OptionString, aotImagePath, nullptr, Normal, "An image of code from the static compiler: functions it has code for run that code."_s) \
-    v(Bool, definePlainInstanceFieldsInConstructor, false, Normal, "The constructor of a class all of whose instance fields are a name and nothing else (class C { a; b; }) defines them itself, instead of calling a function that does."_s) \
-    v(Bool, evaluateObjectLiteralValuesFirst, false, Normal, "The values of the properties of an object literal are all worked out before the object is made, where nobody can tell: making the object and giving it its properties is then one run of instructions."_s) \
-    v(Bool, resolveAllScopeSlotsStatically, false, Normal, "The bytecode optimizer gives get_from_scope the slot of a variable it can prove the place of even where that makes the instruction wider."_s) \
-    v(Unsigned, aotThreads, 0, Normal, "How many threads compile an image. Zero: as many as there are processors."_s) \
-    v(Bool, useAOTInlineFastPathsInLoops, false, Normal, "The ahead-of-time compiler emits fast paths inline, instead of calls to shared stubs, in loops and in functions that call themselves. Faster where code is hot; about a tenth more code."_s) \
-    v(Bool, aotSplitLoops, false, Normal, "The static compiler makes two copies of every loop: one that only does what is quick, and leaves for the other when it cannot."_s) \
-    v(Bool, staticHeapGuardsShortFunctionExecutables, false, Normal, "For testing. Each FunctionExecutable in the short form is the last thing on a page, and there is nothing at the addresses of the page after it: whatever takes one for more than it is crashes."_s) \
-    v(OptionString, aotTypeTable, nullptr, Normal, "When compiling: the types of the program (AOT::TypeTable), which its text refers to by number (useTypeTags)."_s) \
-    v(Unsigned, aotShapes, 15, Normal, "What is made of the shapes in the table of types. 1: literals are laid out as it says. 2: reads go by it. 4: so do writes. 8: what a layout is known not to have is undefined."_s) \
-    v(Bool, aotAssertsTypes, false, Normal, "When compiling: there are two copies of a function that gets at properties through types. In the first, what an object was born as is tested once, and from then on it is known; whatever does not pass goes on in the other copy, which takes nothing for granted, and stays there."_s) \
-    v(Bool, aotTypesFields, false, Normal, "What is read through a type is of the kind the table of types gives the field. From a slot of an object that was born with one, that is so because whatever is stored there is looked at first, by everybody (TypedLayoutTable). From anything else it is read the long way, and looked at: if it is something else, that is a TypeError, as where a parameter is. There is one copy of the code. (With aotAssertsTypes: two, and the second is where it goes on instead.)"_s) \
-    v(Bool, aotAuditsTypes, false, Normal, "aotTypesFields, with structs: the code relies on nothing that the types say, and whatever would have been a TypeError is logged instead (AUDIT lines), once for each reason and family. To find what a program does that its types do not say."_s) \
-    v(Bool, aotKeepsLoopsWhole, true, Normal, "A function has one copy of its loops if all that a second would be for (an element or the length of what is known to be an array, a field of a struct, a check) has a long way of its own that disturbs nothing."_s) \
-    v(Unsigned, aotAssertsTypesIfAccesses, 1, Normal, "...if it has at least so many such accesses."_s) \
-    v(Bool, aotInlines, true, Normal, "A call of a function that is proven to be the callee is replaced by what the function does, if that is little or if it is the only call there is."_s) \
-    v(Unsigned, aotInlinesUpTo, 60, Normal, "aotInlines: how many bytes of bytecode a function may have that is called from several places, to become part of what calls it in a loop."_s) \
-    v(Unsigned, aotInlinesOutsideLoopsUpTo, 18, Normal, "aotInlines: and how many where it is not called in a loop. (About what a call comes to.)"_s) \
-    v(Unsigned, aotInlinesOnlyCallUpTo, 1200, Normal, "aotInlines: how many if it is called from one place, and by nothing else."_s) \
-    v(Unsigned, aotInlinesAtMost, 4000, Normal, "aotInlines: how many bytes of bytecode one function takes over in all."_s) \
+    v(Bool, verboseAOTCompilation, false, Normal, "Log which functions the AOT compiler compiles and why it rejects a function."_s) \
+    v(Bool, dumpAOTGraph, false, Normal, "Dump the AOT compiler's IR."_s) \
+    v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
+    v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
+    v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function) to this file, for symbolicating profiles."_s) \
+    v(Bool, forceAOTVeneers, false, Normal, "For testing. Route every direct call between functions in an image through a veneer, as if the target were out of range."_s) \
+    v(OptionString, aotImagePath, nullptr, Normal, "Path to an AOT image. Functions that the image has code for run that code."_s) \
+    v(Bool, definePlainInstanceFieldsInConstructor, false, Normal, "A class whose instance fields all lack initializers (class C { a; b; }) defines them directly in its constructor instead of calling a synthesized initializer function."_s) \
+    v(Bool, evaluateObjectLiteralValuesFirst, false, Normal, "Evaluate all property values of an object literal before allocating the object, where the difference is unobservable, so that the allocation and its stores form one run of instructions."_s) \
+    v(Bool, resolveAllScopeSlotsStatically, false, Normal, "The bytecode optimizer resolves get_from_scope to a scope slot whenever it can prove the variable's location, even if that widens the instruction."_s) \
+    v(Unsigned, numberOfAOTCompilerThreads, 0, Normal, "Number of threads used to compile an image. Zero means one per processor."_s) \
+    v(Bool, useAOTInlineFastPathsInLoops, false, Normal, "The AOT compiler emits fast paths inline, instead of calling shared stubs, in loops and in recursive functions. Faster in hot code, at the cost of about 10% more code."_s) \
+    v(Bool, useAOTLoopSplitting, false, Normal, "The AOT compiler emits two copies of each loop: a fast copy with no slow paths, and a generic copy that the fast copy exits to."_s) \
+    v(Bool, useGuardPagesForShortFunctionExecutables, false, Normal, "For testing. Place each short-form FunctionExecutable at the end of a page followed by an unmapped page, so that reading past it crashes."_s) \
+    v(OptionString, aotTypeTablePath, nullptr, Normal, "When compiling: path to the program's type table (AOT::TypeTable), which the source refers to by index (see useTypeTags)."_s) \
+    v(Unsigned, aotShapeOptimizations, 15, Normal, "Bitmask selecting how shapes from the type table are used. 1: lay out object literals accordingly. 2: optimize reads. 4: optimize writes. 8: a read of a property that a layout is known to lack yields undefined."_s) \
+    v(Bool, useAOTFunctionSplitting, false, Normal, "When compiling: emit two copies of a function that accesses properties through static types. The first checks each object's layout once and relies on it afterwards. A failed check transfers to the second, fully generic copy for the rest of the call."_s) \
+    v(Bool, useAOTTypedFields, false, Normal, "A value read through a static type has the type that the type table gives the field. For an object allocated with a typed layout this holds because every store to the field is checked (TypedLayoutTable). For any other object the value is read on the slow path and checked, and a mismatch throws a TypeError, as for a parameter. With useAOTFunctionSplitting a mismatch transfers to the generic copy instead."_s) \
+    v(Bool, auditAOTTypedFields, false, Normal, "With useAOTTypedFields: compiled code relies on nothing the types say, and each violation that would have thrown a TypeError is logged instead (AUDIT lines), once per reason and typed layout. For finding where a program contradicts its types."_s) \
+    v(Bool, preferUnsplitAOTLoops, true, Normal, "Compile each function with its loops unsplit first, hoisting the storage and length loads of loop-invariant arrays out of the loop. With useAOTLoopSplitting, the function is recompiled with split loops only if a loop contains an access whose slow path has side effects. Requires useImmutableIntrinsics."_s) \
+    v(Unsigned, minimumTypedAccessesForAOTFunctionSplitting, 1, Normal, "With useAOTFunctionSplitting: only split a function that has at least this many typed property accesses."_s) \
+    v(Bool, useAOTInlining, true, Normal, "Inline a call whose callee is known exactly, if the callee is small or this is its only call site."_s) \
+    v(Unsigned, maximumAOTInlineCandidateBytecodeCostInLoop, 60, Normal, "With useAOTInlining: maximum bytecode size of a callee with several call sites, for a call site in a loop."_s) \
+    v(Unsigned, maximumAOTInlineCandidateBytecodeCost, 18, Normal, "With useAOTInlining: the same for a call site outside a loop. Roughly the size of a call."_s) \
+    v(Unsigned, maximumAOTInlineCandidateBytecodeCostForSingleCallSite, 1200, Normal, "With useAOTInlining: maximum bytecode size of a callee that has exactly one call site."_s) \
+    v(Unsigned, maximumAOTInliningCallerBytecodeCost, 4000, Normal, "With useAOTInlining: maximum total bytecode size inlined into one function."_s) \
     v(Bool, validateAOTInferredTypes, false, Normal, "For testing the AOT compiler. Compiled code checks every value whose type was inferred rather than checked, and crashes if the type is wrong."_s) \
     v(Bool, logAOTTypeInference, false, Normal, "After whole-program type inference, logs the result for each function and variable and what contributed to it. Lines start with \"AOT inference:\"."_s) \
-    v(Unsigned, aotLoopsToSplit, 3, Normal, "Which loops aotSplitLoops is for. 1: all. 2: those with something in them that the fast copy does better (arithmetic, elements got at by index, a call that it does not make). 3: those in which no call is made. 4: both. 5: those in which no call is made, or that have a call that the fast copy does not make or an element got at by its index."_s) \
+    v(Unsigned, aotLoopSplittingPolicy, 3, Normal, "Which loops useAOTLoopSplitting applies to. 1: all. 2: loops that contain something the fast copy improves (arithmetic, indexed element accesses, a call it can elide). 3: loops that make no calls. 4: loops that satisfy both 2 and 3. 5: loops that make no calls, or that contain a call the fast copy elides or an indexed element access."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
@@ -178,15 +178,15 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
     v(Bool, useUnboxedFastArrayIteration, true, Normal, "for-of and array destructuring over an Array keep the index in the frame instead of allocating an Array Iterator object"_s) \
     v(Bool, useSharedRegExpLiteralObjects, true, Normal, "reuse one RegExpObject per literal site when the object provably cannot be observed"_s) \
-    v(Unsigned, aotMissesForEightSlots, 8, Normal, "How often a slot may fail a function that started with none of its own before it gets them: this many times for every eight slots it would have, ..."_s) \
-    v(Unsigned, aotMissesToSpare, 4, Normal, "... and this many more."_s) \
-    v(Unsigned, aotSizeOfBlocksOfQuotes, 65536, Normal, "What an error message may quote is compressed in blocks of this many bytes. Small, for a test whose program would otherwise have one block."_s) \
-    v(Bool, aotKeepsQuotes, false, Normal, "An image says what the source says wherever an error message may quote it, for a program that is built without its text."_s) \
-    v(Bool, staticHeapLeavesOutPayload, false, Normal, "When a program is built, its static heap has none of the bytecode it was built from, only what says where in the source each instruction came from."_s) \
-    v(Bool, useImmutableIntrinsics, false, Normal, "What Object.prototype, Array.prototype, Math and the like have when a realm is made stays as it is: see JSGlobalObject::makeIntrinsicsImmutable()."_s) \
-    v(Bool, useTypeTags, false, Normal, "The text of a program may say something of a token that is no part of the language: a byte that is 1, and six characters that are a number (Lexer::readTypeTag()). It is what whoever made the text knows of the types there."_s) \
-    v(Bool, useSoundTypes, false, Normal, "compile $$t(value, <integer literal mask>) calls to op_check_type instead of a call"_s) \
-    v(Bool, reportSoundTypeViolations, false, Normal, "A type check that fails says so, once for each place, instead of throwing. Not for code from the static compiler, which relies on the checks."_s) \
+    v(Unsigned, aotCacheMissesPerEightSlotsBeforeOwnData, 8, Normal, "A cold-start function gets its own inline cache storage after this many cache misses for every eight slots it has, ..."_s) \
+    v(Unsigned, aotExtraCacheMissesBeforeOwnData, 4, Normal, "... plus this many."_s) \
+    v(Unsigned, aotQuoteCompressionBlockSize, 65536, Normal, "Source text that error messages may quote is compressed in blocks of this many bytes. Tests use a small value to get more than one block."_s) \
+    v(Bool, useAOTSourceQuotes, false, Normal, "An image stores the source text that error messages may quote, for programs built without source text."_s) \
+    v(Bool, omitBytecodeFromStaticHeap, false, Normal, "When building: the static heap omits the bytecode it was built from and keeps only the source position information."_s) \
+    v(Bool, useImmutableIntrinsics, false, Normal, "Freeze the initial properties of built-in objects such as Object.prototype, Array.prototype and Math when a realm is created. See JSGlobalObject::makeIntrinsicsImmutable()."_s) \
+    v(Bool, useTypeTags, false, Normal, "Allow type tags in source text: a 0x01 byte followed by six characters that encode a number (Lexer::readTypeTag()), attached to the next token. The bundler emits them to convey static types."_s) \
+    v(Bool, useSoundTypes, false, Normal, "Compile $$t(value, <integer literal mask>) to op_check_type instead of a call."_s) \
+    v(Bool, reportSoundTypeViolations, false, Normal, "Log a failed type check once per location instead of throwing. Not valid for AOT-compiled code, which relies on the checks."_s) \
     v(Bool, useBytecodeOptimizer, false, Normal, "run the whole-function bytecode optimizer on all generated bytecode (bytecode-cache image generation runs it when the embedder passes OptimizeBytecode::Yes)") \
     v(Bool, useBytecodeOptimizerCopyPropagation, true, Normal, "bytecode optimizer: copy propagation / destination coalescing") \
     v(Bool, useBytecodeOptimizerTDZ, true, Normal, "bytecode optimizer: redundant TDZ check elimination") \
@@ -702,7 +702,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useArrayAllocationProfiling, true, Normal, "If true, we will use our normal array allocation profiling. If false, the allocation profile will always claim to be undecided."_s) \
     v(Bool, forcePolyProto, false, Normal, "If true, create_this will always create an object with a poly proto structure."_s) \
     v(Bool, forceMiniVMMode, false, Normal, "If true, it will force mini VM mode on."_s) \
-    v(Bool, useMiniVMModeWithoutJIT, true, Normal, "Having no JIT is taken to mean that memory matters more than speed. Not so where the code comes compiled."_s) \
+    v(Bool, useMiniVMModeWithoutJIT, true, Normal, "Treat the absence of a JIT as a request to favor memory over speed. Disabled when running AOT-compiled code."_s) \
     v(Bool, useTracePoints, false, Normal, nullptr) \
     v(Bool, useCompilerSignpost, false, Normal, nullptr) \
     v(Bool, useGCSignpost, false, Normal, nullptr) \

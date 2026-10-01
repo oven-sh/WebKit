@@ -40,7 +40,7 @@ class TypeTable {
 public:
     TypeTable() = default;
 
-    // Loads the file named by Options::aotTypeTable(). Call before compilation starts, on the thread that owns the program's identifiers.
+    // Loads the file named by Options::aotTypeTablePath(). Call before compilation starts, on the thread that owns the program's identifiers.
     JS_EXPORT_PRIVATE static void load(VM&);
     static const TypeTable* shared(); // Null if no table was loaded.
 
@@ -121,7 +121,7 @@ public:
     // layout IDs. Every field of a layout has a slot in every object with that layout; the slot is empty if the object lacks the property.
     bool tableHasTypedFields() const { return m_hasTypedFields; }
     static bool hasTypedFields() { return shared() && shared()->tableHasTypedFields(); }
-    static bool typedFieldsAreEnforced() { return hasTypedFields() && !Options::aotAuditsTypes(); }
+    static bool typedFieldsAreEnforced() { return hasTypedFields() && !Options::auditAOTTypedFields(); }
     unsigned numberOfTypedLayouts() const { return m_typedLayouts.size() - 1; }
     struct LayoutField {
         UniquedStringImpl* name;

@@ -261,7 +261,7 @@ struct TypedLayoutTable {
     }
     static PropertyOffset offsetOfSlot(unsigned slot, unsigned inlineSlots) { return slot < inlineSlots ? static_cast<PropertyOffset>(slot) : firstOutOfLineOffset + static_cast<PropertyOffset>(slot - inlineSlots); }
     static PropertyOffset offsetInLayout(uint16_t typedLayoutID, unsigned slot) { return offsetOfSlot(slot, inlineSlots(typedLayoutID)); }
-    // The program was compiled with Options::aotAuditsTypes(): rejected stores are logged and allowed.
+    // The program was compiled with Options::auditAOTTypedFields(): rejected stores are logged and allowed.
     static bool isAuditing() { return s_isAuditing; }
     JS_EXPORT_PRIVATE static void reportViolation(ASCIILiteral what, uint16_t layoutID, JSValue);
     JS_EXPORT_PRIVATE static ASCIILiteral s_lastConversionFailure; // Why the most recent conversion failed.

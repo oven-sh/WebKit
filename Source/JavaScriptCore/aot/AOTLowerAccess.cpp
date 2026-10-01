@@ -367,12 +367,12 @@ void Lowering::lowerGetById(Node* node)
         lowerReadOfBuiltin(node, baseNode);
         return;
     }
-    // (With Options::aotAssertsTypes() that is for the guards of the first copy. What gets here is the other.)
-    if (auto field = (Options::aotShapes() & 2) && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
+    // (With Options::useAOTFunctionSplitting() that is for the guards of the first copy. What gets here is the other.)
+    if (auto field = (Options::aotShapeOptimizations() & 2) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
         // An object that a literal of the program made says how it is laid out, and the type says which layouts have the property, and
         // where. Whatever else the base may be, in spite of its type, is dealt with as if nothing had been said.
         LValue base = lowJSValue(baseNode);
-        if (Options::aotTypesFields() && TypeTable::hasTypedFields() && field->id) {
+        if (Options::useAOTTypedFields() && TypeTable::hasTypedFields() && field->id) {
             // The slots of the family are verified: it is for the object's Structure to say whether the field is in its slot. Whatever is known of the object.
             bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
             Stub stub = static_cast<Stub>(static_cast<unsigned>(allowsUndefined ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
@@ -429,7 +429,7 @@ void Lowering::lowerGetById(Node* node)
             recordAvailableField(baseNode, *field, value, Rep::JSValue, value, false);
             return;
         }
-        if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
+        if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
             // The property is in its slot, or the object has none.
             auto [storageOfBase, mayStandForSomethingElse] = fieldStorageFor(node, baseNode, base, field->first);
             if (!mayStandForSomethingElse) {
@@ -486,9 +486,9 @@ void Lowering::lowerGetById(Node* node)
             recordAvailableField(baseNode, *field, node->lowered, node->rep(), whatIsThere, false);
             return;
         }
-        bool resultIsTyped = Options::aotTypesFields() && field->fieldType.isConstrained();
+        bool resultIsTyped = Options::useAOTTypedFields() && field->fieldType.isConstrained();
         // (undefined has to be something the field is said to hold.)
-        bool testsForLack = field->firstWithout && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics() && (!resultIsTyped || (field->fieldType.kinds & MaskUndefined));
+        bool testsForLack = field->firstWithout && (Options::aotShapeOptimizations() & 8) && Options::useImmutableIntrinsics() && (!resultIsTyped || (field->fieldType.kinds & MaskUndefined));
         LBasicBlock has = m_out.newBlock();
         LBasicBlock hasNot = m_out.newBlock();
         LBasicBlock mayLack = m_out.newBlock();
@@ -620,13 +620,13 @@ void Lowering::lowerPutById(Node* node)
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
     // (A field of a family whose slots are verified is stored to like any property: whoever does that is held to what the name holds, and remembers where it went.)
-    if (auto field = (Options::aotShapes() & 4) && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {
+    if (auto field = (Options::aotShapeOptimizations() & 4) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {
         // As for a read. A property of such a layout is one that can be written, like any that a literal makes.
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock has = m_out.newBlock();
-        LBasicBlock otherwise = Options::aotTypesFields() && TypeTable::hasTypedFields() ? newColdBlock() : m_out.newBlock();
+        LBasicBlock otherwise = Options::useAOTTypedFields() && TypeTable::hasTypedFields() ? newColdBlock() : m_out.newBlock();
         afterTypedStore = m_out.newBlock();
-        if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
+        if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
             auto [storageOfBase, mayStandForSomethingElse] = fieldStorageFor(node, baseNode, base, field->first);
             // What the slot does not hold goes the long way, where it is made to be that or refused. So does what makes the object have a property it did not have.
             bool mayBeRejected = branchUnlessAccepted(valueNode, value, field->fieldType, otherwise);
@@ -680,7 +680,7 @@ void Lowering::lowerPutById(Node* node)
         m_out.branch(isOneOf(layoutOf(base), field->first, field->last), usually(has), rarely(otherwise));
         m_out.appendTo(has, otherwise);
         // (What the slot does not hold is stored the long way, which takes the property out of the slot.)
-        if (Options::aotTypesFields())
+        if (Options::useAOTTypedFields())
             branchUnlessAccepted(valueNode, value, field->fieldType.kindsOnly(), otherwise);
         m_out.store64(value, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
         if (mayBe(valueNode->type, TCell))
@@ -731,7 +731,7 @@ void Lowering::lowerPutById(Node* node)
 
     m_out.appendTo(hit, transition);
     LValue secondWord = m_out.load64(slotWord(slot, 1));
-    if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
+    if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
         // (Slot::held: there is looking at the value to be done. The runtime does that.)
         LBasicBlock isPlain = m_out.newBlock();
         m_out.branch(m_out.isZero64(m_out.lShr(secondWord, m_out.constInt32(32))), usually(isPlain), rarely(slowCase));
@@ -824,7 +824,7 @@ void Lowering::lowerGetByVal(Node* node)
     bool isOfArray = isSubtype(baseNode->type, TArray);
     // (Of what is not known for an array, nothing is made of there being nothing where an element would be kept: it is asked.)
     bool missingMeansAbsent = allowsEmpty && isOfArray;
-    if (allowsEmpty && !isOfArray && Options::aotVerbose()) [[unlikely]] {
+    if (allowsEmpty && !isOfArray && Options::verboseAOTCompilation()) [[unlikely]] {
         dataLog("AOT: LEAN an element is read from what is not known for an array: ");
         baseNode->dump(WTF::dataFile());
         dataLogLn(m_block->isGeneric ? " (in the second copy of a loop)" : "", m_block->isInLoop ? " (in a loop)" : "");

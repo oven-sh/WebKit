@@ -108,7 +108,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject* gl
             if (JSObject* copy = tryCreateObjectViaCloning(vm, globalObject, asObject(source)))
                 OPERATION_RETURN(scope, copy);
         }
-        if (Options::aotVerbose()) [[unlikely]]
+        if (Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: a copy that is to be of family ", layoutID, " is of what was born as ", structure->typedLayoutID(), " and is made bit by bit");
     }
     OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source, Instance::newObjectOf(vm, Instance::ensure(globalObject).emptyStructureForLayout(safeCast<uint16_t>(layoutID)))));
@@ -141,7 +141,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     Vector<unsigned, 32> identifiers;
     unsigned inlineCapacityInBytecode;
     uint32_t shape = function.siteConstantOf(cache);
-    if (Options::aotVerbose()) [[unlikely]]
+    if (Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("AOT: a literal of ", count, " is made by function ", function.index, " as shape ", shape, SharedData::contains(cache) ? " (with nobody's slots)" : "");
     std::span<const uint16_t> slots;
     if (shape)

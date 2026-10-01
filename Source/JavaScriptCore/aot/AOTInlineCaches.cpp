@@ -52,7 +52,7 @@ static void fill(VM& vm, Data* data, Slot* cache, Structure* structure, uint32_t
     WTF::storeStoreFence();
     cache->structureID = structure->id();
     didFillSlot(vm, data);
-    if (Options::aotVerbose()) [[unlikely]]
+    if (Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("AOT: slot ", RawPointer(cache), " filled: structure ", RawPointer(structure), " id ", structure->id().bits(), " offset and flags ", RawHex(cache->offset), " pointer ", RawPointer(pointer));
 }
 

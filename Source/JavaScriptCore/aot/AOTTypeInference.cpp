@@ -782,7 +782,7 @@ private:
             return typeOf(bytecode.m_value) & typeAcceptedByMask(bytecode.m_mask);
         }
         case op_type_tag:
-            if (Options::aotAuditsTypes()) [[unlikely]]
+            if (Options::auditAOTTypedFields()) [[unlikely]]
                 return node->uses[0].node->type;
             if (node->narrowedTo)
                 return node->uses[0].node->type & node->narrowedTo;
@@ -883,7 +883,7 @@ private:
         case op_new_object:
             if (uint16_t layoutID = Graph::layoutIDOfNewObject(node))
                 return typeOfObjectWithLayout(layoutID);
-            if (Options::aotTypesFields() && node->numberOfLiteralProperties) {
+            if (Options::useAOTTypedFields() && node->numberOfLiteralProperties) {
                 if (auto shape = m_graph.shapeOfLiteral(node); shape && shape->number) {
                     if (TypeTable::hasTypedFields())
                         return shape->layoutID ? typeOfObjectWithLayout(shape->layoutID) : TFinalObject;
@@ -894,7 +894,7 @@ private:
         case op_get_by_id:
             if (auto type = typeOfReturnValueReadBy(node))
                 return *type;
-            if (TypeTable::typedFieldsAreEnforced() && Options::aotTypesFields()) {
+            if (TypeTable::typedFieldsAreEnforced() && Options::useAOTTypedFields()) {
                 if (uint32_t method = Graph::closedMethodReadBy(node))
                     return typeOf(node->as<OpGetById>().m_base) ? typeOfFunction(method) : TNone;
                 // Of a struct: the slot holds that, and nothing else is looked at.
@@ -908,7 +908,7 @@ private:
                 return TypeTable::FieldType { guard->fieldTypeKinds, guard->fieldTypeFirst, guard->fieldTypeLast }.type() | (guard->firstWithout ? TUndefined : TNone);
             }
             // However it is read, it is that or the code does not go on (Lowering::lowerGetById()).
-            if (Options::aotTypesFields() && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() && (Options::aotShapes() & 2) && !node->guard && TypeTable::shared()) {
+            if (Options::useAOTTypedFields() && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() && (Options::aotShapeOptimizations() & 2) && !node->guard && TypeTable::shared()) {
                 if (uint32_t tag = Graph::typeTagOf(node)) {
                     if (auto field = TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); field && field->fieldType.isConstrained()) {
                         if (!typeOf(node->as<OpGetById>().m_base))

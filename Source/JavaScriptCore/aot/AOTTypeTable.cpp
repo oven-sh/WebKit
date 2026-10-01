@@ -27,9 +27,9 @@ const TypeTable* TypeTable::shared()
 // FIXME: Document the file format here. It is currently defined only by the script that generates the table.
 void TypeTable::load(VM& vm)
 {
-    if (s_shared || !Options::aotTypeTable())
+    if (s_shared || !Options::aotTypeTablePath())
         return;
-    auto contents = FileSystem::readEntireFile(String::fromUTF8(Options::aotTypeTable()));
+    auto contents = FileSystem::readEntireFile(String::fromUTF8(Options::aotTypeTablePath()));
     RELEASE_ASSERT_WITH_MESSAGE(contents, "The table of types cannot be read");
     auto bytes = contents->span();
     RELEASE_ASSERT(bytes.size() >= 12 && !(bytes.size() % 4) && !memcmp(bytes.data(), "TSTY", 4));
@@ -155,7 +155,7 @@ void TypeTable::finalizeAtomizedFields()
                 field[7] |= TypedLayoutTable::stringsAreAtoms;
         }
     }
-    if (Options::aotVerbose())
+    if (Options::verboseAOTCompilation())
         dataLogLn("AOT: ", names.size(), " fields that hold strings are compared with strings that the program spells out: the short strings there are atoms");
 }
 

@@ -97,7 +97,7 @@ struct StaticHeap::Header {
     uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::ImageFunction::index.
     uint64_t functionMetadataOffsets; // uint32_t[], likewise. Zero: the unlinked code of functions is here instead.
     uint64_t rowsOfFunctions; // RowOfFunction[], likewise. See rowOf().
-    // Options::staticHeapGuardsShortFunctionExecutables(): from here to there in Arena::Cells, every other page is not to be there.
+    // Options::useGuardPagesForShortFunctionExecutables(): from here to there in Arena::Cells, every other page is not to be there.
     uint64_t guardedFrom;
     uint64_t guardedTo;
     uint64_t numberOfFunctions;
@@ -1090,7 +1090,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
             continue;
         }
         char* copy;
-        if (Options::staticHeapGuardsShortFunctionExecutables()) [[unlikely]] {
+        if (Options::useGuardPagesForShortFunctionExecutables()) [[unlikely]] {
             // (A cell is halfway between two multiples of 16, so it cannot end where a page does. What is in between is no address.)
             auto* pages = static_cast<char*>(Region::allocate(Region::Arena::Cells, 2 * pageSizeOfImage, pageSizeOfImage));
             if (!header.guardedFrom)
@@ -1197,7 +1197,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     s_rowsOfFunctions = rows.data();
     for (auto& [reason, count] : why)
         dataLogLn("StaticHeap:     in full, ", reason, ": ", count);
-    if (Options::aotVerbose()) [[unlikely]]
+    if (Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("StaticHeap: of ", s_executablesInScratch.size(), " FunctionExecutables ", inShortForm.size(), " are in the short form, with ", shared.size(), " UnlinkedFunctionExecutables between them and ", rows.size_bytes(), " bytes of rows; ", inFull.size(), " are kept in full; ", foundBy, " more UnlinkedFunctionExecutables are kept for what finds a function by one; ", inFunctionsWithoutCode, " functions are in functions that there is no code for");
 }
 
@@ -1500,7 +1500,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     header.namesOfSources = std::bit_cast<uint64_t>(starts);
                     header.numberOfSources = namesOfSources.size();
                     header.hasPositionsOfCallSites = true;
-                    if (Options::aotVerbose()) [[unlikely]]
+                    if (Options::verboseAOTCompilation()) [[unlikely]]
                         dataLogLn("StaticHeap: ", s_numberOfPositions, " positions of call sites: ", s_bytesOfPositions, " bytes, in ", namesOfSources.size(), " sources whose names take ", sizeOfText);
                 }
                 s_positionsToKeep = nullptr;

@@ -157,7 +157,7 @@ void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Co
     jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
 }
 
-// Options::aotKeepsLoopsWhole(). Of a graph whose loops have not been split.
+// Options::preferUnsplitAOTLoops(). Of a graph whose loops have not been split.
 static bool loopsWillDoWhole(Graph& graph)
 {
     bool hasLoop = false;
@@ -207,7 +207,7 @@ static bool loopsWillDoWhole(Graph& graph)
 static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const CodeOfProgram* program, bool triesLoopsWhole = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
-    triesLoopsWhole &= Options::aotKeepsLoopsWhole() && Options::useImmutableIntrinsics() && !Options::aotAssertsTypes();
+    triesLoopsWhole &= Options::preferUnsplitAOTLoops() && Options::useImmutableIntrinsics() && !Options::useAOTFunctionSplitting();
     graph.loopsAreNotSplit = triesLoopsWhole;
     graph.setCalleeHints(hints);
     graph.setSummary(summary);
@@ -232,7 +232,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     inferTypes(graph);
     planMultiValueReturns(graph);
     // (With no loop split there is no choice to make: LoopOptimizer::viewArrays() looks at each loop by itself.)
-    if (triesLoopsWhole && Options::aotSplitLoops() && Options::aotLoopsToSplit() && !loopsWillDoWhole(graph))
+    if (triesLoopsWhole && Options::useAOTLoopSplitting() && Options::aotLoopSplittingPolicy() && !loopsWillDoWhole(graph))
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false);
     inferRanges(graph);
     optimizeLoops(graph);
@@ -242,7 +242,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     graph.findListsOfArguments();
     promoteEnvironments(graph);
     analyzeEscapes(graph);
-    if (Options::aotDumpGraph()) [[unlikely]] {
+    if (Options::dumpAOTGraph()) [[unlikely]] {
         static Lock lock;
         Locker locker { lock };
         dataLogLn("AOT graph:");
@@ -258,7 +258,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (!lowering.run())
         return declined();
     estimateFrequencies(proc);
-    if (Options::aotDumpB3()) [[unlikely]]
+    if (Options::dumpAOTB3Graph()) [[unlikely]]
         dataLogLn("AOT B3:\n", proc);
 
     // The code is going to run in another process, where nothing is where it is here. No lowering should have put an address in
@@ -387,7 +387,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         info.catchEntrypoints.append({ graph.catchEntrypoints[i]->bytecodeBegin, offsetOf(proc.code().entrypointLabel(i + 1)) });
 
 
-    MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::aotDumpDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
+    MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
 #if CPU(ARM64)
     // What the JIT's memory is handed out in multiples of is made up with these. One stays if what is before it is a call: where that
     // would come back to says whose frame it is, and what comes after the function is another function.
@@ -447,7 +447,7 @@ bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode&
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
     bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program);
-    if (!ok && Options::aotVerbose()) [[unlikely]]
+    if (!ok && Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("AOT: declined: ", reason, " ", reasonOpcode != op_nop ? opcodeNames[reasonOpcode] : ""_s);
     return ok;
 }

@@ -5925,7 +5925,7 @@ struct BytecodeLinkEncoder::Impl {
             add(WTF::move(module), BytecodeOrderNames { });
             ++added;
         });
-        if (Options::aotVerbose()) [[unlikely]]
+        if (Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: ", added, " of the engine's own functions are part of the link");
     }
 #endif
@@ -6303,11 +6303,11 @@ struct BytecodeLinkEncoder::Impl {
             variables += hintsOfModule->numberOfVariables();
             proven += hintsOfModule->numberOfSingleFunctionVariables();
         }
-        if (Options::aotVerbose()) [[unlikely]]
+        if (Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that the bundler tells of or that are given one");
 
         auto linkages = linkModules(hints);
-        unsigned numberOfThreads = Options::aotThreads() ? Options::aotThreads() : WTF::numberOfProcessorCores();
+        unsigned numberOfThreads = Options::numberOfAOTCompilerThreads() ? Options::numberOfAOTCompilerThreads() : WTF::numberOfProcessorCores();
         // The compiler reads unlinked code and allocates nothing in the heap; this thread, which has the heap, waits.
         DeferGC deferGC(vm);
         auto inParallel = [&](size_t count, const auto& functor) {
@@ -6644,7 +6644,7 @@ struct BytecodeLinkEncoder::Impl {
                 closed += function.summary->isNonEscaping;
                 neverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
             }
-            if (Options::aotVerbose()) [[unlikely]]
+            if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: of ", withCode, " functions that there is code to call, ", closed, " get nowhere that is not reckoned with (CLOSED), of which ", neverCalled, " are never seen to be called");
             if (Options::logAOTTypeInference()) [[unlikely]] {
                 // Once more, now that it is settled, for each to say what it goes by and what it adds.
@@ -6699,7 +6699,7 @@ struct BytecodeLinkEncoder::Impl {
                 if (const AOT::FunctionSummary* summary = summariesByCodeBlock.get(jobs[index].codeBlock); summary && !summary->isReached()) {
                     functionsNeverReached++;
                     bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
-                    if (Options::aotVerbose()) [[unlikely]]
+                    if (Options::verboseAOTCompilation()) [[unlikely]]
                         dataLogLn("AOT: left out: `", jobs[index].executable ? jobs[index].executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
                     continue;
                 }
@@ -6720,7 +6720,7 @@ struct BytecodeLinkEncoder::Impl {
                     bool isTopLevel = !(jobs[index].rank & 2);
                     // (An embedder's builtin has its text wherever the embedder has it.)
                     bool isOfProgram = isModuleOfProgram(jobs[index].module);
-                    if (Options::aotKeepsQuotes() && isOfProgram && (isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody))
+                    if (Options::useAOTSourceQuotes() && isOfProgram && (isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody))
                         AOT::collectQuotes(code.info, jobs[index].codeBlock, textOfModule(jobs[index].module), isTopLevel ? 0 : jobs[index].key.start);
                     if (auto* numbers = AOT::numbersOfIdentifiersOfProgram()) {
                         for (auto& identifier : jobs[index].codeBlock->identifiers())
@@ -6738,7 +6738,7 @@ struct BytecodeLinkEncoder::Impl {
         };
         // See AOT::NumbersOfIdentifiers. The ones that most functions have come first, so that theirs are the small numbers.
         AOT::NumbersOfIdentifiers numbersOfIdentifiers;
-        if (Options::staticHeapLeavesOutPayload()) {
+        if (Options::omitBytecodeFromStaticHeap()) {
             uint64_t inAll = 0;
             for (auto& job : jobs) {
                 for (auto& identifier : job.codeBlock->identifiers()) {

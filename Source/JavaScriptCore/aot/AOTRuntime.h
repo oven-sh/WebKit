@@ -535,7 +535,7 @@ struct Instance {
     JSCell* getterOfLengthOfTypedArrays { nullptr };
     static constexpr ptrdiff_t offsetOfGetterOfLengthOfTypedArrays() { return OBJECT_OFFSETOF(Instance, getterOfLengthOfTypedArrays); }
     const void* constantsOfProgram; // EncodedJSValue[]. See NumbersOfConstants. Code that uses it only runs in a realm that has it.
-    uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
+    uint32_t missesForEightSlots; // Options::aotCacheMissesPerEightSlotsBeforeOwnData()
     uint32_t missesToSpare;
     uintptr_t structureIDBase; // Added to a StructureID to get the Structure's address.
     const uint32_t* dispatch; // From the image. See ImageDispatchEntry.

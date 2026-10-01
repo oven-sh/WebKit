@@ -618,7 +618,7 @@ Vector<uint8_t> ImageBuilder::finish()
     for (auto& shape : shapes) {
         imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(slotsOfShapes.size() + 1), shape.layoutID, shape.reserved, shape.inlineSlots, 0 });
         slotsOfShapes.appendVector(shape.slots);
-        if (shape.layoutID && !shape.slots.isEmpty() && Options::aotTypesFields() && TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(shape.layoutID) && TypeTable::shared()->usesFieldIDs(shape.layoutID)) {
+        if (shape.layoutID && !shape.slots.isEmpty() && Options::useAOTTypedFields() && TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(shape.layoutID) && TypeTable::shared()->usesFieldIDs(shape.layoutID)) {
             imageShapes.last().hasIds = 1;
             for (uint32_t name : shape.names)
                 slotsOfShapes.append(TypeTable::shared()->idOfField(shape.layoutID, selectors[name]));
@@ -634,7 +634,7 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint32_t> fieldsOfSlot[Structure::numberOfSlotsWithFieldIDs]; // By id, from one: which of `named`.
     Vector<uint16_t> layoutIDsOfSlot[Structure::numberOfSlotsWithFieldIDs]; // Likewise: of which family.
     Vector<uint8_t> inlineSlotCounts;
-    if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
+    if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
         RELEASE_ASSERT_WITH_MESSAGE(numbersOfIdentifiers, "Structs go by the numbers of the program's identifiers");
         for (uint32_t number = 0; number <= TypeTable::shared()->numberOfTypedLayouts(); ++number) {
             auto layout = TypeTable::shared()->typedLayout(number);
@@ -675,13 +675,13 @@ Vector<uint8_t> ImageBuilder::finish()
             RELEASE_ASSERT(layout.inlineSlots < TypedLayoutTable::usesFieldIDsBit);
             inlineSlotCounts.append(static_cast<uint8_t>(layout.inlineSlots | (layout.usesFieldIDs ? TypedLayoutTable::usesFieldIDsBit : 0)));
         }
-    } else if (Options::aotTypesFields() && TypeTable::shared()) {
+    } else if (Options::useAOTTypedFields() && TypeTable::shared()) {
         for (uint32_t number = 0; number < shapes.size() && number <= TypeTable::shared()->numberOfLayouts(); ++number) {
             auto typesBySlot = shapes[number].names.isEmpty() ? Vector<TypeTable::FieldType, 8> { } : TypeTable::shared()->fieldTypesBySlot(number);
             RELEASE_ASSERT(typesBySlot.size() < 256 && slotTypes.size() < (1u << 24));
             slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | typesBySlot.size());
             for (auto& fieldType : typesBySlot)
-                slotTypes.append({ safeCast<uint16_t>(fieldType.kinds), Options::aotAssertsTypes() ? fieldType.first : uint16_t(0), Options::aotAssertsTypes() ? fieldType.last : uint16_t(0), 0 });
+                slotTypes.append({ safeCast<uint16_t>(fieldType.kinds), Options::useAOTFunctionSplitting() ? fieldType.first : uint16_t(0), Options::useAOTFunctionSplitting() ? fieldType.last : uint16_t(0), 0 });
         }
     }
     Vector<ImageSelector> imageSelectors;
@@ -734,7 +734,7 @@ Vector<uint8_t> ImageBuilder::finish()
     // A function that is only ever called by instructions that go straight to it, and that no such instruction is left for (what it does
     // having been made part of whoever called it), has no use for code. What there is to say about it stays: it is still what a stack
     // trace names.
-    if (Options::aotInlines()) {
+    if (Options::useAOTInlining()) {
         BitVector isCalled(m_functions.size());
         Vector<uint32_t> worklist;
         auto call = [&](size_t index) {
@@ -790,7 +790,7 @@ Vector<uint8_t> ImageBuilder::finish()
             code.info.inlineFrames.clear();
             code.info.catchEntrypoints.clear();
         }
-        dataLogLnIf(Options::aotVerbose(), "AOT: ", functions, " functions that nothing calls any more had ", bytes, " bytes of code");
+        dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", functions, " functions that nothing calls any more had ", bytes, " bytes of code");
     }
 
     // Where everything goes. The stubs come first, and again whenever the last copy is about to be out of reach.
@@ -826,7 +826,7 @@ Vector<uint8_t> ImageBuilder::finish()
                     continue;
                 size_t from = at[index] + call.offset;
                 size_t to = at[*target];
-                if (((from > to ? from - to : to - from) <= reachOfStubCall && !Options::aotForceVeneers()) || farCallees[index].contains(static_cast<uint32_t>(*target)))
+                if (((from > to ? from - to : to - from) <= reachOfStubCall && !Options::forceAOTVeneers()) || farCallees[index].contains(static_cast<uint32_t>(*target)))
                     continue;
                 farCallees[index].append(static_cast<uint32_t>(*target));
                 sizeOfVeneers += sizeOfVeneer + sizeof(uint32_t) + imageStubsAlignment;
@@ -859,9 +859,9 @@ Vector<uint8_t> ImageBuilder::finish()
     for (auto& [at, stubsForIt] : placement)
         startsOfFunctions.append(safeCast<uint32_t>(at));
     startsOfFunctions.append(std::numeric_limits<uint32_t>::max());
-    if (Options::aotWritesMap()) [[unlikely]] {
+    if (Options::aotMapFilePath()) [[unlikely]] {
         // For each function: its index, where its code starts, how long that is, and its key.
-        auto out = FilePrintStream::open(Options::aotWritesMap(), "w");
+        auto out = FilePrintStream::open(Options::aotMapFilePath(), "w");
         RELEASE_ASSERT(out);
         for (unsigned index = 0; index < m_functions.size(); ++index) {
             auto& function = m_functions[index];
@@ -1073,7 +1073,7 @@ Vector<uint8_t> ImageBuilder::finish()
         }
     }
     // Neither is looked at but to say what an error message says.
-    size_t sizeOfBlockOfEither = std::max(64u, Options::aotSizeOfBlocksOfQuotes());
+    size_t sizeOfBlockOfEither = std::max(64u, Options::aotQuoteCompressionBlockSize());
     uint32_t sizeOfBlockOfTextOfQuotes = 0;
     if (auto packed = packInBlocks(textOfQuotes.span(), sizeOfBlockOfEither)) {
         textOfQuotes = WTF::move(*packed);
@@ -1127,7 +1127,7 @@ Vector<uint8_t> ImageBuilder::finish()
     header.startOfFieldsOffset = place(startOfFields.sizeInBytes());
     header.fieldsOffset = place(fields.sizeInBytes());
     header.inlineSlotCountsOffset = place(inlineSlotCounts.sizeInBytes());
-    header.auditsTypes = Options::aotAuditsTypes();
+    header.auditsTypes = Options::auditAOTTypedFields();
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
     header.numberOfSelectors = selectors.size();
     header.rowsOfSelectorsOffset = place(rowOfSelector.sizeInBytes());
@@ -1908,14 +1908,14 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     } else {
         auto keyOfExecutable = imageKeyFor(executable, kind);
         if (!keyOfExecutable) {
-            if (Options::aotVerbose()) [[unlikely]]
+            if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: no key for ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL());
             return { };
         }
         key = *keyOfExecutable;
         std::tie(image, function) = Image::find(key);
         if (!function) {
-            if (Options::aotVerbose()) [[unlikely]]
+            if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: not in the image: ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " (module ", key.module, " start ", key.start, " kind ", key.kind, ")");
             return { };
         }
@@ -1940,13 +1940,13 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
 
     if (function->usesStaticImports) {
         if (!moduleIsLinkedAsCompiled(scope)) {
-            if (Options::aotVerbose()) [[unlikely]]
+            if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: the module of ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " is not linked the way it was compiled for");
             return { };
         }
     }
 
-    if (Options::aotVerbose()) [[unlikely]]
+    if (Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("AOT: ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") is at ", RawPointer(image->codeFor(*function)), " size ", image->sizeOfCodeOf(*function), " hash ", hashOfCode({ image->codeFor(*function), image->sizeOfCodeOf(*function) }));
     return { image, function };
 }

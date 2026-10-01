@@ -89,7 +89,7 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
 
 void Lowering::validateNewObject(Node* node, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown)
 {
-    if (!Options::aotTypesFields() || !layout || !TypeTable::shared())
+    if (!Options::useAOTTypedFields() || !layout || !TypeTable::shared())
         return;
     // (Of structs, `layout` is the family.)
     auto fieldTypes = fieldTypesIfKnown ? *fieldTypesIfKnown : TypeTable::hasTypedFields() ? TypeTable::shared()->fieldTypesBySlotOfLayout(layout) : TypeTable::shared()->fieldTypesBySlot(layout);
@@ -172,7 +172,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                     fieldTypesBySlot = fieldTypes;
                     fieldTypesAreKnown = shape->layoutID;
                     for (unsigned i = 0; i < count; ++i) {
-                        inSlots[shape->slots[i]] = shape->layoutID && Options::aotTypesFields() && shape->slots[i] < fieldTypes.size() ? toFieldRepresentation(inSlotsOfLayout[i], values[i], fieldTypes[shape->slots[i]]) : values[i];
+                        inSlots[shape->slots[i]] = shape->layoutID && Options::useAOTTypedFields() && shape->slots[i] < fieldTypes.size() ? toFieldRepresentation(inSlotsOfLayout[i], values[i], fieldTypes[shape->slots[i]]) : values[i];
                         nodesInSlots[shape->slots[i]] = inSlotsOfLayout[i];
                     }
                     values = WTF::move(inSlots);
@@ -235,7 +235,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 for (auto& property : plan.properties)
                     shape.names.append(code().codeBlock()->identifier(property.identifier).impl());
                 // The table of types says what a constructor makes where the first of its stores is. (In order: so far that is all it can be.)
-                if (uint32_t tag = node->graph->typeTagAt(plan.stores[0].offset); tag && (Options::aotShapes() & 1) && TypeTable::shared()) {
+                if (uint32_t tag = node->graph->typeTagAt(plan.stores[0].offset); tag && (Options::aotShapeOptimizations() & 1) && TypeTable::shared()) {
                     if (auto layout = TypeTable::shared()->layoutOf(tag); layout && layout->properties.size() == count) {
                         bool isAsWritten = true;
                         for (unsigned i = 0; i < count; ++i)

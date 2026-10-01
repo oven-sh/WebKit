@@ -58,7 +58,7 @@ struct ImageHeader {
     uint32_t shapesOffset; // ImageShape[], by shape number.
     uint32_t numberOfShapes; // Highest shape number plus one.
     uint32_t slotsOfShapesOffset; // uint16_t[]. See ImageShape::slots.
-    // Tables for TypedLayoutTable (Options::aotTypesFields()). See TypedLayoutTable::setSlotTypes() and setFields().
+    // Tables for TypedLayoutTable (Options::useAOTTypedFields()). See TypedLayoutTable::setSlotTypes() and setFields().
     // numberOfSlotRanges is zero if typed layouts are not used.
     uint32_t slotRangesOffset;
     uint32_t numberOfSlotRanges;
@@ -72,7 +72,7 @@ struct ImageHeader {
     uint32_t layoutIDsByFieldIDOffset;
     uint32_t largestFieldID; // Property name IDs (VM::aotPropertyNameIDs) start above this. Both kinds of ID are stored in Structure::m_fieldIDInSlot.
     uint32_t inlineSlotCountsOffset;
-    uint32_t auditsTypes; // Options::aotAuditsTypes()
+    uint32_t auditsTypes; // Options::auditAOTTypedFields()
     // If numberOfIdentifiersOfProgram is nonzero, a selector number is an identifier number and StaticHeap holds the strings.
     uint32_t selectorsOffset; // ImageSelector[], by selector number.
     uint32_t numberOfSelectors; // Highest selector number plus one.
