@@ -935,6 +935,9 @@ void AssemblyHelpers::emitRandomThunk(VM& vm, GPRReg scratch0, GPRReg scratch1, 
 void AssemblyHelpers::emitAllocateWithNonNullAllocator(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult)
 {
     if (Options::forceGCSlowPaths()) {
+        // Bun: the first invariant below holds here too. Code compiled ahead of time tests the result instead of having a slow path to jump to.
+        if (slowAllocationResult == SlowAllocationResult::ClearToNull)
+            move(TrustedImmPtr(nullptr), resultGPR);
         slowPath.append(jump());
         return;
     }

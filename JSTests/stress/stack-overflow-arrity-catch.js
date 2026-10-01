@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # Bun: asserts a stack overflow during arity fixup. Ahead-of-time compiled code with this many parameters is passed a list and does none.
 function shouldBe(actual, expected) {
     if (actual !== expected)
         throw new Error('bad value: ' + actual);
