@@ -353,6 +353,9 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setTransitionKind(TransitionKind::Unknown);
     setMayBePrototype(previous->mayBePrototype());
     setDidPreventExtensions(previous->didPreventExtensions());
+    setVectorElementsAreNonConfigurable(previous->vectorElementsAreNonConfigurable());
+    setVectorElementsAreReadOnly(previous->vectorElementsAreReadOnly());
+    setArrayLengthIsReadOnly(previous->arrayLengthIsReadOnly());
     setDidTransition(true);
     setStaticPropertiesReified(previous->staticPropertiesReified());
     setHasBeenDictionary(previous->hasBeenDictionary());
@@ -905,6 +908,11 @@ Structure* Structure::preventExtensionsTransition(VM& vm, Structure* structure, 
     return nonPropertyTransition(vm, structure, TransitionKind::PreventExtensions, deferred);
 }
 
+Structure* Structure::setArrayLengthReadOnlyTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
+{
+    return nonPropertyTransition(vm, structure, TransitionKind::SetArrayLengthReadOnly, deferred);
+}
+
 Structure* Structure::becomePrototypeTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
     return nonPropertyTransition(vm, structure, TransitionKind::BecomePrototype, deferred);
@@ -949,8 +957,24 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         transition->setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
     }
     
-    if (preventsExtensions(transitionKind))
+    if (preventsExtensions(transitionKind)) {
+        // A non-extensible object keeps its elements in the ArrayStorage vector with the
+        // SlowPutArrayStorage shape (JSObject::enterDictionaryIndexingMode runs before this transition).
+        ASSERT(!hasIndexedProperties(indexingModeIncludingHistory) || hasSlowPutArrayStorage(indexingModeIncludingHistory));
         transition->setDidPreventExtensions(true);
+    }
+
+    // Seal / Freeze also describe the elements kept in the ArrayStorage vector: the object was
+    // switched to SlowPutArrayStorage by JSObject::enterDictionaryIndexingMode before this transition,
+    // so the vector can only be written through the C++ paths that consult these bits.
+    if (setsDontDeleteOnAllProperties(transitionKind))
+        transition->setVectorElementsAreNonConfigurable(true);
+    if (setsReadOnlyOnNonAccessorProperties(transitionKind)) {
+        transition->setVectorElementsAreReadOnly(true);
+        transition->setArrayLengthIsReadOnly(true);
+    }
+    if (transitionKind == TransitionKind::SetArrayLengthReadOnly)
+        transition->setArrayLengthIsReadOnly(true);
 
     if (transitionKind == TransitionKind::BecomePrototype)
         transition->setMayBePrototype(true);
@@ -1809,6 +1833,9 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
         break;
     case TransitionKind::SetBrand:
         kindName = "SetBrand";
+        break;
+    case TransitionKind::SetArrayLengthReadOnly:
+        kindName = "SetArrayLengthReadOnly";
         break;
     }
 

@@ -193,11 +193,7 @@ protected:
 private:
     bool isLengthWritable()
     {
-        ArrayStorage* storage = arrayStorageOrNull();
-        if (!storage)
-            return true;
-        SparseArrayValueMap* map = storage->m_sparseMap.get();
-        return !map || !map->lengthIsReadOnly();
+        return !structure()->arrayLengthIsReadOnly();
     }
         
     bool shiftCountWithAnyIndexingType(JSGlobalObject*, unsigned& startIndex, unsigned count, unsigned shiftArrayStorageThreshold);

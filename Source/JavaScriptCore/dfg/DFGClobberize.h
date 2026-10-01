@@ -1381,14 +1381,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
 
         case Array::SlowPutArrayStorage:
-            if (mode.mayStoreToHole()) {
-                clobberTop();
-                return;
-            }
-            read(Butterfly_publicLength);
-            read(Butterfly_vectorLength);
-            read(IndexedArrayStorageProperties);
-            write(IndexedArrayStorageProperties);
+            // The store in bounds reads the structure and takes a slow path that throws when the
+            // object is frozen (Structure::vectorElementsAreReadOnly).
+            clobberTop();
             return;
 
         case Array::Int8Array:

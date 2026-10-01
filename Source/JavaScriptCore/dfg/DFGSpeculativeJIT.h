@@ -1392,7 +1392,8 @@ public:
     void compileDoublePutByVal(Node*);
     bool putByValWillNeedExtraRegister(ArrayMode arrayMode)
     {
-        return arrayMode.mayStoreToHole();
+        // A SlowPutArrayStorage store loads the structure to check Structure::vectorElementsAreReadOnly().
+        return arrayMode.mayStoreToHole() || arrayMode.isSlowPut();
     }
     GPRReg temporaryRegisterForPutByVal(GPRTemporary&, ArrayMode);
     GPRReg temporaryRegisterForPutByVal(GPRTemporary& temporary, Node* node)
