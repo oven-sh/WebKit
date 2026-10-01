@@ -27,6 +27,7 @@ class JSString;
 class PreciseAllocation;
 class FunctionExecutable;
 class Identifier;
+class JSGlobalObject;
 namespace AOT {
 struct FunctionInfo;
 struct ImageFunction;

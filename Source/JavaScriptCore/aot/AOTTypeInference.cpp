@@ -387,7 +387,7 @@ private:
             } else if (functionsOfProgram())
                 markEscaping(node->use(node->as<OpPutToScope>().m_value)->type, FunctionSummary::StoredToUnknownLocation);
             if (!m_graph.variableAccessedBy(node) && !m_graph.nameForLog().isNull()) [[unlikely]]
-                dataLogLn("AOT inference: put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` WHO KNOWS WHERE in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset());
+                dataLogLn("AOT inference: put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` at an unknown location in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset());
             return;
         case op_create_lexical_environment:
             noteInitialValue(node->as<OpCreateLexicalEnvironment>().m_initialValue);
