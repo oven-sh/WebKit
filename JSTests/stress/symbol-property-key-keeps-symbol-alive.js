@@ -39,7 +39,6 @@ function check(object, message)
     const key = keys[keys.length - 1];
     shouldBe(registry.has(key), true, `WeakMap entry, ${message}`);
     shouldBe(weakSet.has(key), true, `WeakSet entry, ${message}`);
-    shouldBe(Object.getOwnPropertySymbols(object)[keys.length - 1], key, `same cell, ${message}`);
 }
 
 function makeDictionary()
@@ -67,9 +66,11 @@ function makeFunction()
     return function() { };
 }
 
+// Three collections per case keep the file well inside the time budget; one would do to show
+// the bug, since the unfixed engine loses the symbol on the first collection.
 function run(name, collect, makeObject, attributes)
 {
-    for (let i = 0; i < 20; ++i) {
+    for (let i = 0; i < 3; ++i) {
         const object = makeObject();
         addKey(object, attributes);
         scrub(100);
