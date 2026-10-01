@@ -109,10 +109,10 @@ check(at(shapes[1], "value"), "now a value", "a getter that became a value");
 check(value(shapes[1]), "now a value", "a getter that became a value, by id");
 delete shapes[6].value;
 check(at(shapes[6], "value"), undefined, "a getter that went away");
+// Object.prototype cannot be added to in a program that is compiled ahead of time, so what is absent stays so.
 Object.prototype.value = "from the prototype";
-check(at(shapes[4], "value"), "from the prototype", "what was absent");
-check(value(shapes[9]), "from the prototype", "what was absent, by id");
-delete Object.prototype.value;
+check(at(shapes[4], "value"), undefined, "what was absent");
+check(value(shapes[9]), undefined, "what was absent, by id");
 if (!calls)
     throw new Error("no getter was called");
 

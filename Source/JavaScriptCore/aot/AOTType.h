@@ -34,6 +34,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/PrintStream.h>
 #include <atomic>
+#include <bit>
 
 namespace JSC { namespace AOT {
 
@@ -47,6 +48,8 @@ namespace JSC { namespace AOT {
 // one function is possible. For a layout number the positions that are 11 are unknown bits, which gives a lowest and a highest
 // possible value. 00 in any position means there is no such value. `&` computes the intersection.
 using Type = unsigned __int128;
+// (std::popcount() does not take it everywhere.)
+inline unsigned numberOfBitsIn(Type type) { return std::popcount(static_cast<uint64_t>(type)) + std::popcount(static_cast<uint64_t>(type >> 64)); }
 
 static constexpr Type TNone = 0;
 static constexpr Type TInt32 = Type(1) << 0; // A number that is encoded as an int32.

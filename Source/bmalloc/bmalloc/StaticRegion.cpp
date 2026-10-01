@@ -18,6 +18,10 @@
 #include "mimalloc.h"
 #endif
 
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0
+#endif
+
 namespace bmalloc {
 
 bool StaticRegion::s_isBuilding = false;

@@ -1,3 +1,4 @@
+//@ skip if $architecture != "arm64" # Whether an identifier is reused within the rounds below depends on the platform, and there is only something to test where there is a compiler.
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
 //@ $skipModes << :aot_validate # With every inferred type checked, no identifier of a dead structure is reused within the rounds below, so nothing would be tested.
 // A cache does not keep the structure it is for alive. When the structure dies the cache has to be emptied, whatever the ages of the

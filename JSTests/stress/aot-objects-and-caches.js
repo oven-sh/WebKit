@@ -45,15 +45,21 @@ function shouldThrow(f, type) {
 // A property that is nowhere, until it is.
 (function () {
     function getMissing(o) { return o.missing; }
-    const object = { a: 1 };
+    const prototype = { };
+    const object = Object.create(prototype);
+    object.a = 1;
     for (let i = 0; i < 10; ++i)
         shouldBe(getMissing(object), undefined);
-    Object.prototype.missing = 1;
+    prototype.missing = 1;
     for (let i = 0; i < 10; ++i)
         shouldBe(getMissing(object), 1);
-    delete Object.prototype.missing;
+    delete prototype.missing;
     for (let i = 0; i < 10; ++i)
         shouldBe(getMissing(object), undefined);
+    // Object.prototype cannot be added to in a program that is compiled ahead of time.
+    Object.prototype.missing = 1;
+    for (let i = 0; i < 10; ++i)
+        shouldBe(getMissing({ a: 1 }), undefined);
     shouldBe(getMissing(new Proxy({}, { get() { return 2; } })), 2);
     shouldThrow(() => getMissing(null), TypeError);
 })();
@@ -72,9 +78,11 @@ function shouldThrow(f, type) {
     Object.defineProperty(Point.prototype, "z", { value: 0, writable: false });
     shouldBe(setZ(new Point(1)), { x: 1, y: 2 });
     shouldThrow(() => { "use strict"; new Point(1).z = 3; }, TypeError);
-    Object.defineProperty(Object.prototype, "y", { set(v) { calls++; }, configurable: true });
+    Object.defineProperty(Point.prototype, "y", { set(v) { calls++; }, configurable: true });
     shouldBe(new Point(1), { x: 1 });
-    delete Object.prototype.y;
+    delete Point.prototype.y;
+    shouldBe(new Point(1), { x: 1, y: 2 });
+    shouldThrow(() => Object.defineProperty(Object.prototype, "y", { set(v) { calls++; }, configurable: true }), TypeError);
     shouldBe(new Point(1), { x: 1, y: 2 });
 })();
 
@@ -101,9 +109,8 @@ function shouldThrow(f, type) {
             shouldBe(getByVal(object, "p" + (i - 1)), i ? i - 1 : undefined);
         });
     }
-    Object.defineProperty(Object.prototype, "fresh", { set(v) { this._fresh = v; }, configurable: true });
-    objects.forEach(object => { putByVal(object, "fresh", 1); shouldBe(object._fresh, 1); shouldBe(Object.hasOwn(object, "fresh"), false); });
-    delete Object.prototype.fresh;
+    const withSetter = { set fresh(v) { this._fresh = v; } };
+    objects.forEach(object => { Object.setPrototypeOf(object, withSetter); putByVal(object, "fresh", 1); shouldBe(object._fresh, 1); shouldBe(Object.hasOwn(object, "fresh"), false); });
     shouldBe(getByVal([1, 2], "length"), 2);
     shouldBe(getByVal(function f(a) { }, "name"), "f");
     shouldBe(getByVal({ 1: "one" }, "1"), "one");

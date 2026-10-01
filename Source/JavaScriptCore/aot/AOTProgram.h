@@ -329,7 +329,7 @@ MultiValueReturnTable* multiValueReturnTable();
 JS_EXPORT_PRIVATE const MultiValueReturnTable::Names* registerReturnValuesOf(UnlinkedCodeBlock*, const FunctionSummary*);
 
 class CalleeHints;
-struct ModuleLinkage;
+class ModuleLinkage;
 // Lets the inliner look up what the driver knows about another function's code.
 class CodeOfProgram {
 public:
