@@ -6222,6 +6222,12 @@ struct BytecodeLinkEncoder::Impl {
             dataLogLn("AOT: the compiler needs all of the program's code: ", omittedFunctions[0], " functions have no bytecode (is the bytecode depth limited?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
             return { };
         }
+        // Typed fields are identified by the program-wide numbers of identifiers, which only exist if code does not share its
+        // identifiers with bytecode (see AOT::NumbersOfIdentifiers below).
+        if (Options::useAOTTypedFields() && AOT::TypeTable::hasTypedFields() && !Options::omitBytecodeFromStaticHeap()) {
+            dataLogLn("AOT: typed fields (useAOTTypedFields) require an executable without bytecode (omitBytecodeFromStaticHeap)");
+            return { };
+        }
         struct Job {
             AOT::ImageKey key;
             uint64_t rank;

@@ -1425,8 +1425,12 @@ void Structure::setCannotConvertToTypedLayout()
 
 void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, unsigned attributes)
 {
-    if (!TypedLayoutTable::usesFieldIDs(m_typedLayoutID))
+    if (!TypedLayoutTable::usesFieldIDs(m_typedLayoutID)) {
+        // (As in Structure::add() for a Structure with no typed layout.)
+        if (static_cast<unsigned>(offset) < numberOfSlotsWithFieldIDs && m_fieldIDInSlot[offset] == noPropertyNameID)
+            m_fieldIDInSlot[offset] = 0;
         return;
+    }
     auto* field = TypedLayoutTable::findField(m_typedLayoutID, name);
     if (!field || field->slot >= numberOfSlotsWithFieldIDs)
         return;
@@ -1450,8 +1454,8 @@ void Structure::setKnownShape(VM& vm, uint16_t shape)
         return;
     RELEASE_ASSERT(!m_knownShape);
     m_knownShape = shape;
-    // (Property name ids are only for a Structure with no layout class.)
-    if (!m_typedLayoutID)
+    // (The table may hold property name IDs, which must not be taken for field IDs.)
+    if (recordsPropertyNames() && TypedLayoutTable::usesFieldIDs(shape))
         zeroSpan(std::span { m_fieldIDInSlot });
     m_typedLayoutID = shape;
     if (!isWatchingReplacement())

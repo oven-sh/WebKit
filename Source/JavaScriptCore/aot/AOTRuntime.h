@@ -326,6 +326,10 @@ struct Slot {
     static constexpr uint32_t flagsMask = isIndirect | isGetter | pointerIsNotCell | pointerIsCell;
     static constexpr uint32_t polymorphicFlags = isIndirect | pointerIsNotCell;
     bool isPolymorphic() const { return !structureID && (offset & flagsMask) == polymorphicFlags; }
+    // op_get_by_id: the site has seen more than one Structure, all with the name at the same inline offset. structureID is zero, so
+    // that the stub's comparison of Structures fails for every object. All sites share that branch: it can be predicted if its
+    // outcome depends on the site, and cannot if it depends on the object.
+    bool isByNameOnly() const { return !structureID && !(offset & (flagsMask | attemptsMask)) && offset >> nameIDShift; }
 
     void clear()
     {
@@ -364,12 +368,54 @@ struct PolymorphicSlots {
     static constexpr ptrdiff_t offsetOfMisses() { return OBJECT_OFFSETOF(PolymorphicSlots, misses); }
     static constexpr ptrdiff_t offsetOfTimesLeftToLearnAtOnce() { return OBJECT_OFFSETOF(PolymorphicSlots, timesLeftToLearnAtOnce); }
     static constexpr ptrdiff_t offsetOfSlots() { return OBJECT_OFFSETOF(PolymorphicSlots, slots); }
+    static constexpr ptrdiff_t offsetOfByName() { return OBJECT_OFFSETOF(PolymorphicSlots, byName); }
+
+    // A plain property in one of an object's first inline slots is found by name instead. A Structure records which name is in each
+    // of those slots (Structure::fieldIDInSlot()), so one inline slot number covers every Structure that has the name there,
+    // however many there are.
+    // Bits 0 to 15: the property name ID. Bits 16 to 47: four inline slot numbers, of which the unused ones repeat the first.
+    // Bits 48 to 63: the value in a Structure's table for which the stub calls the slow path, to have the table filled in: zero,
+    // or a value that no table holds once the site has met too many Structures whose tables cannot be filled in.
+    static constexpr unsigned numberOfInlineSlotsByName = 4;
+    static constexpr unsigned shiftOfInlineSlotsByName = 16;
+    static constexpr unsigned shiftOfValueToFillInTableFor = 48;
+    static constexpr uint64_t initialByName = Structure::firstReservedPropertyNameID;
+    static constexpr uint8_t timesToTolerateTableThatCannotBeFilledIn = 16;
+    bool fillsInTables() const { return !(byName >> shiftOfValueToFillInTableFor); }
+    void noteTableThatCannotBeFilledIn()
+    {
+        if (!--timesLeftToTolerateTableThatCannotBeFilledIn)
+            byName |= static_cast<uint64_t>(Structure::firstReservedPropertyNameID) << shiftOfValueToFillInTableFor;
+    }
+    // Returns false if there is no room for another inline slot number.
+    bool addInlineSlotByName(uint16_t nameID, unsigned inlineSlot)
+    {
+        ASSERT(inlineSlot < Structure::numberOfSlotsWithFieldIDs && nameID && nameID < Structure::firstReservedPropertyNameID);
+        if (!numberOfInlineSlotsByNameInUse) {
+            byName = (byName >> shiftOfValueToFillInTableFor << shiftOfValueToFillInTableFor) | static_cast<uint64_t>(inlineSlot * 0x01010101u) << shiftOfInlineSlotsByName | nameID;
+            numberOfInlineSlotsByNameInUse = 1;
+            return true;
+        }
+        RELEASE_ASSERT(static_cast<uint16_t>(byName) == nameID);
+        for (unsigned i = 0; i < numberOfInlineSlotsByNameInUse; ++i) {
+            if ((byName >> (shiftOfInlineSlotsByName + i * 8) & 0xff) == inlineSlot)
+                return true;
+        }
+        if (numberOfInlineSlotsByNameInUse == numberOfInlineSlotsByName)
+            return false;
+        unsigned shift = shiftOfInlineSlotsByName + numberOfInlineSlotsByNameInUse++ * 8;
+        byName = (byName & ~(0xffull << shift)) | static_cast<uint64_t>(inlineSlot) << shift;
+        return true;
+    }
 
     UniquedStringImpl* name; // The property name.
     uint32_t misses; // Incremented by the stub.
     uint32_t timesLeftToLearnAtOnce;
     Data* owner;
     uint32_t next; // Index of the entry to evict next.
+    uint8_t numberOfInlineSlotsByNameInUse;
+    uint8_t timesLeftToTolerateTableThatCannotBeFilledIn;
+    uint64_t byName;
     Slot slots[numberOfSlots];
 };
 

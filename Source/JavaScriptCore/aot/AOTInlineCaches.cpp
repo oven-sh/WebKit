@@ -46,6 +46,9 @@ static void fill(VM& vm, Data* data, Slot* cache, Structure* structure, uint32_t
     uint32_t attempts = cache->offset & Slot::attemptsMask;
     if (offsetAndFlags & (Slot::isGetter | Slot::pointerIsCell | Slot::pointerIsNotCell))
         offsetAndFlags |= Slot::isIndirect;
+    // (The stub compares the name ID of a direct slot together with the bits above it: readByName().)
+    if (!(offsetAndFlags & Slot::flagsMask))
+        attempts = 0;
     cache->structureID = StructureID();
     WTF::storeStoreFence();
     cache->offset = offsetAndFlags | attempts;
@@ -107,7 +110,7 @@ static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
     auto result = table.ids.add(uid, 0);
     if (!result.isNewEntry)
         return result.iterator->value;
-    if (table.next >= Structure::ambiguousFieldID) {
+    if (table.next >= Structure::firstReservedPropertyNameID) {
         table.ids.remove(result.iterator);
         return 0;
     }
@@ -125,7 +128,7 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFieldIDs)
         return 0;
     // (A cell in the static heap that another VM reads has a Structure that belongs to the first VM.)
-    if (structure->isDictionary() || structure->typedLayoutID() || structure->cannotConvertToTypedLayout() || &structure->vm() != &vm)
+    if (structure->isDictionary() || !structure->recordsPropertyNames() || structure->cannotConvertToTypedLayout() || &structure->vm() != &vm)
         return 0;
     // The same conditions as in tryCacheGetById().
     if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
@@ -133,18 +136,74 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     uint16_t id = propertyNameID(vm, ident.impl());
     if (!id)
         return 0;
-    RELEASE_ASSERT(!structure->fieldIDInSlot(offset) || structure->fieldIDInSlot(offset) == id);
+    // (fillInTableOfPropertyNames() does not ask the object, so it records less.)
+    RELEASE_ASSERT(!structure->fieldIDInSlot(offset) || structure->fieldIDInSlot(offset) == Structure::noPropertyNameID || structure->fieldIDInSlot(offset) == id);
     structure->setPropertyNameIDInInlineSlot(offset, id);
     return id;
 }
 
-// Returns the slot that should cache accesses to objects with that structure: the site's own slot, until a second structure is
-// seen.
-static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, const Identifier& ident)
+// Fills in the Structure's table of the names of the properties in its first inline slots, so that none of its entries is zero.
+// Returns false if that is not possible.
+static bool fillInTableOfPropertyNames(VM& vm, Structure* structure)
 {
+    // (A cell in the static heap that another VM reads has a Structure that belongs to the first VM.)
+    if (!structure->recordsPropertyNames() || &structure->vm() != &vm)
+        return false;
+    if (structure->cannotConvertToTypedLayout())
+        return true;
+    bool isFilledIn = true;
+    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithFieldIDs; ++slot)
+        isFilledIn &= !!structure->fieldIDInSlot(slot);
+    if (isFilledIn)
+        return true;
+    uint16_t ids[Structure::numberOfSlotsWithFieldIDs];
+    std::ranges::fill(ids, Structure::noPropertyNameID);
+    // The first two conditions are the same as in tryCacheGetById(). The third: this does not ask the object, and only an object of
+    // a class that does not override getOwnPropertySlot() is certain to answer what its Structure says.
+    if (!structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint() && !structure->typeInfo().overridesGetOwnPropertySlot()) {
+        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            if (static_cast<unsigned>(entry.offset()) < Structure::numberOfSlotsWithFieldIDs && !entry.attributes()) {
+                if (uint16_t id = propertyNameID(vm, entry.key()))
+                    ids[entry.offset()] = id;
+            }
+            return true;
+        });
+    }
+    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithFieldIDs; ++slot) {
+        if (!structure->fieldIDInSlot(slot))
+            structure->setPropertyNameIDInInlineSlot(slot, ids[slot]);
+    }
+    return true;
+}
+
+// Returns true if the stub now finds the property by its name in objects with that Structure (PolymorphicSlots::byName).
+static bool cacheByName(VM& vm, PolymorphicSlots* several, JSCell* base, Structure* structure, const PropertySlot& slot)
+{
+    if (!fillInTableOfPropertyNames(vm, structure)) {
+        if (several->fillsInTables())
+            several->noteTableThatCannotBeFilledIn();
+        return false;
+    }
+    if (!slot.isCacheableValue() || slot.slotBase() != base || static_cast<unsigned>(slot.cachedOffset()) >= Structure::numberOfSlotsWithFieldIDs)
+        return false;
+    uint16_t id = structure->fieldIDInSlot(slot.cachedOffset());
+    return id < Structure::firstReservedPropertyNameID && several->addInlineSlotByName(id, slot.cachedOffset());
+}
+
+// Returns null while the site's own slot is the one to fill: until a second structure is seen.
+static PolymorphicSlots* slotsOfSite(VM& vm, Data* data, Slot* cache, Structure* structure, const Identifier& ident)
+{
+    if (cache->isByNameOnly()) {
+        PolymorphicSlots* several = data->instance->makeSlotsOfSite(data, ident.impl());
+        several->addInlineSlotByName(cache->offset >> Slot::nameIDShift, (cache->offset & Slot::directLocationMask) - JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue));
+        // (The collector ignores a slot without a Structure.)
+        cache->offset = Slot::polymorphicFlags;
+        cache->pointer = several;
+        didFillSlot(vm, data);
+    }
     if (!cache->isPolymorphic()) {
         if (!cache->structureID || cache->structureID == structure->id())
-            return cache;
+            return nullptr;
         PolymorphicSlots* several = data->instance->makeSlotsOfSite(data, ident.impl());
         // Move the existing entry, which is still valid. (The collector may read the slot at any time, and must never see a
         // structure together with a second word that belongs to another structure.)
@@ -159,8 +218,15 @@ static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, c
         cache->offset = Slot::polymorphicFlags;
         cache->pointer = several;
         didFillSlot(vm, data);
+        if (uint16_t id = first.offset >> Slot::nameIDShift; id && !(first.offset & Slot::flagsMask))
+            several->addInlineSlotByName(id, (first.offset & Slot::directLocationMask) - JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue));
     }
-    auto* several = static_cast<PolymorphicSlots*>(cache->pointer);
+    return static_cast<PolymorphicSlots*>(cache->pointer);
+}
+
+// Returns the entry that should cache accesses to objects with that structure.
+static Slot* entryToFill(Data* data, PolymorphicSlots* several, Structure* structure)
+{
     if (several->timesLeftToLearnAtOnce)
         several->timesLeftToLearnAtOnce--;
     for (Slot& slot : several->slots) {
@@ -184,16 +250,35 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
     if (SharedData::contains(cache))
         return;
     if (mayBePolymorphic && usesStubs && base.isCell() && base.asCell()->structure() == structureBefore) {
-        // The slot is monomorphic for another Structure that has the same name at the same offset. Now that this Structure records
-        // the name too, the stub hits for both, and the site stays monomorphic.
+        // Another Structure that has the same name at the same offset. Now that this Structure records the name too, the stub finds
+        // the property by its name (readByName()), and the site needs no entry for each Structure.
         if (uint16_t id = recordPropertyNameInStructure(globalObject->vm(), base.asCell(), structureBefore, ident, slot)) {
-            uint32_t sameAccess = *locationOfProperty(slot.cachedOffset()) | static_cast<uint32_t>(id) << Slot::nameIDShift;
-            if (cache->structureID && (cache->offset & ~Slot::attemptsMask) == sameAccess)
+            uint32_t location = *locationOfProperty(slot.cachedOffset());
+            uint32_t sameAccess = location | static_cast<uint32_t>(id) << Slot::nameIDShift;
+            if (cache->isByNameOnly() && cache->offset == sameAccess)
                 return;
+            // From now on the site goes by the name alone. (The stub fills a slot from the dispatch table, which does not have the
+            // name's ID.)
+            if (uint32_t cachedAccess = cache->offset & ~Slot::attemptsMask; cache->structureID && (cachedAccess == sameAccess || cachedAccess == location)) {
+                Structure* cached = cache->structureID.decode();
+                if (fillInTableOfPropertyNames(globalObject->vm(), cached) && cached->fieldIDInSlot(slot.cachedOffset()) == id) {
+                    cache->structureID = StructureID();
+                    cache->offset = sameAccess;
+                    data->slotEpoch++;
+                    return;
+                }
+            }
         }
     }
-    if (mayBePolymorphic && usesStubs && base.isCell())
-        cache = slotToFill(globalObject->vm(), data, cache, base.asCell()->structure(), ident);
+    if (mayBePolymorphic && usesStubs && base.isCell()) {
+        VM& vm = globalObject->vm();
+        Structure* structure = base.asCell()->structure();
+        if (PolymorphicSlots* several = slotsOfSite(vm, data, cache, structure, ident)) {
+            if (structure == structureBefore && cacheByName(vm, several, base.asCell(), structure, slot))
+                return;
+            cache = entryToFill(data, several, structure);
+        }
+    }
     if (!tryCacheGetById(globalObject, data, base, structureBefore, ident, slot, cache))
         countFailure(cache);
 }

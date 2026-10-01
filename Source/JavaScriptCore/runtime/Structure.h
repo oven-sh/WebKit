@@ -478,18 +478,21 @@ public:
     uint16_t typedLayoutID() const { return m_typedLayoutID; }
     JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layout); // The Structure must already have its initial properties.
     // The TypedLayoutTable::Field::id of the property at this inline offset. Zero means none of the layout's fields for this slot
-    // is present. ambiguousFieldID means the table cannot tell and the caller must do a full lookup. Always zero for layouts with
-    // fixed slots.
+    // is present. ambiguousFieldID means the table cannot tell and the caller must do a full lookup.
     //
-    // For a Structure with no typed layout, the same table holds property name IDs. See setPropertyNameIDInInlineSlot().
+    // For a Structure with no typed layout, or with one that has fixed slots, the same table holds property name IDs. See
+    // setPropertyNameIDInInlineSlot().
+    bool recordsPropertyNames() const { return !m_typedLayoutID || !TypedLayoutTable::usesFieldIDs(m_typedLayoutID); }
     static constexpr unsigned numberOfSlotsWithFieldIDs = 16;
     static constexpr uint16_t ambiguousFieldID = 0xffff;
     uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
-    // For a Structure with no typed layout. `id` comes from VM::aotPropertyNameIDs. Property additions copy the table; every other
-    // transition starts with an empty one.
+    // If recordsPropertyNames(). `id` comes from VM::aotPropertyNameIDs. Zero means that the slot has not been looked at.
+    // Property additions copy the table; every other transition starts with an empty one.
+    static constexpr uint16_t noPropertyNameID = 0xfffe; // The slot has been looked at, and holds no property that has a name ID.
+    static constexpr uint16_t firstReservedPropertyNameID = 0xfffd; // Never stored in the table.
     void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
     {
-        ASSERT(!m_typedLayoutID && !isDictionary() && slot < m_inlineCapacity);
+        ASSERT(recordsPropertyNames() && ((!isDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID));
         m_fieldIDInSlot[slot] = id;
     }
     JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs>); // For callers that already know the field IDs.

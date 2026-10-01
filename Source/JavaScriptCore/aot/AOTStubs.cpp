@@ -586,21 +586,27 @@ static void generateIsStringEqualTo(CCallHelpers& jit)
     CCallHelpers::JumpList isTrue;
     CCallHelpers::JumpList isFalse;
     CCallHelpers::JumpList slow;
-    isTrue.append(jit.branch64(CCallHelpers::Equal, A0, A1));
     isFalse.append(jit.branchIfNotCell(A0));
     jit.load8(Address(A0, JSCell::typeInfoTypeOffset()), T9);
     isFalse.append(jit.branch32(CCallHelpers::NotEqual, T9, TrustedImm32(StringType)));
     jit.loadPtr(Address(A0, JSString::offsetOfValue()), A2);
     jit.loadPtr(Address(A1, JSString::offsetOfValue()), A3);
-    jit.load32(Address(A3, StringImpl::lengthMemoryOffset()), A4);
     Jump isRope = jit.branchIfRopeStringImpl(A2);
-    isTrue.append(jit.branchPtr(CCallHelpers::Equal, A2, A3));
-    // The lengths usually differ, which settles it.
-    jit.load32(Address(A2, StringImpl::lengthMemoryOffset()), T9);
-    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T9, A4));
+    // Atoms are unique per content, so if the value is an atom, whether it is the same StringImpl is the answer. That answer is
+    // returned without branching on it. A branch here would be shared by every comparison in the program, so it could not be
+    // predicted, whereas the caller's own branch on the result can.
     jit.load32(Address(A2, StringImpl::flagsOffset()), T9);
-    // Atoms are unique per content.
-    isFalse.append(jit.branchTest32(CCallHelpers::NonZero, T9, TrustedImm32(StringImpl::flagIsAtom())));
+    jit.compare64(CCallHelpers::Equal, A2, A3, T11);
+    jit.and32(TrustedImm32(StringImpl::flagIsAtom()), T9, A4);
+    jit.or32(T11, A4);
+    Jump isAnotherStringThatIsNotAnAtom = jit.branchTest32(CCallHelpers::Zero, A4);
+    jit.move(T11, A0);
+    jit.ret();
+
+    isAnotherStringThatIsNotAnAtom.link(&jit);
+    jit.load32(Address(A3, StringImpl::lengthMemoryOffset()), A4);
+    jit.load32(Address(A2, StringImpl::lengthMemoryOffset()), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T11, A4));
     slow.append(jit.branchTest32(CCallHelpers::Zero, T9, TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
 
@@ -628,6 +634,7 @@ static void generateIsStringEqualTo(CCallHelpers& jit)
     jit.jump().linkTo(oneAtATime, &jit);
 
     isRope.link(&jit);
+    jit.load32(Address(A3, StringImpl::lengthMemoryOffset()), A4);
     jit.load32(Address(A0, JSRopeString::offsetOfLength()), T9);
     isFalse.append(jit.branch32(CCallHelpers::NotEqual, T9, A4));
     // A substring of an 8-bit string is compared in place, without resolving it. See JSRopeString::CompactFibers; the base string
@@ -1388,10 +1395,37 @@ static void generateGetByIdWith(CCallHelpers&, Entry);
 struct WaysOnOfGetById {
     CCallHelpers::Label isIndirect;
     CCallHelpers::Label isOfAnotherStructure;
+    // After isOfAnotherStructure, for operationAOTGetById: the two ways that readByName() fails.
+    CCallHelpers::Label isOfAnotherStructureAndIndirect;
+    CCallHelpers::Label isNotByName;
     CCallHelpers::Label miss;
 };
 static WaysOnOfGetById s_waysOnOfGetById[2];
 static WaysOnOfGetById& waysOnOfGetById(Entry operation) { return s_waysOnOfGetById[operation == Entry::operationAOTGetByIdWellKnown]; }
+
+// A direct slot with a property name ID: whether the base's Structure has that name at that inline offset. (Objects of a union have
+// the discriminant in the same place, and a Structure each.) For a base that does not have the Structure in the slot. A site that
+// has seen several has none in its slot (Slot::isByNameOnly()), so that it always gets here.
+// T11 = the slot's first word, T12 = the base's StructureID. Preserves both, and the base.
+static void readByName(CCallHelpers& jit, GPRReg base, CCallHelpers::JumpList& isIndirect, CCallHelpers::JumpList& isNotByName)
+{
+    ASSERT(base != T9 && base != T11 && base != T12 && base != T13 && base != T14);
+    // (Every slot that is not direct has this flag, a polymorphic site's among them: fill(), Slot::polymorphicFlags.)
+    isIndirect.append(jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32)));
+    // The name ID, with the number of attempts above it. In a direct slot with a name ID that is zero (fill()), and an entry of a
+    // Structure's table has 16 bits.
+    jit.urshift64(T11, TrustedImm32(32 + Slot::nameIDShift), T13);
+    isNotByName.append(jit.branchTest64(CCallHelpers::Zero, T13));
+    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T14);
+    jit.move(T12, T9);
+    static_assert(!(structureIDBaseOfImages & ~(0xffffull << 32)));
+    jit.m_assembler.movk<64>(T9, static_cast<uint16_t>(structureIDBaseOfImages >> 32), 32);
+    constexpr ptrdiff_t wordsBeforeInlineStorage = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue);
+    jit.load16(CCallHelpers::BaseIndex(T9, T14, CCallHelpers::TimesTwo, Structure::offsetOfFieldIDInSlot() - wordsBeforeInlineStorage * sizeof(uint16_t)), T9);
+    isNotByName.append(jit.branch32(CCallHelpers::NotEqual, T9, T13));
+    jit.load64(CCallHelpers::BaseIndex(base, T14, CCallHelpers::TimesEight), A0);
+    jit.ret();
+}
 
 // For acceptsOperandInAnyRegister(): the start of generateGetByIdWith() for a base in another register.
 static void generateGetByIdFrom(CCallHelpers& jit, Entry operation, GPRReg base)
@@ -1411,8 +1445,20 @@ static void generateGetByIdFrom(CCallHelpers& jit, Entry operation, GPRReg base)
     jit.move(base, A0);
     jit.jump().linkTo(waysOn.isIndirect, &jit);
     isOfAnotherStructure.link(&jit);
-    jit.move(base, A0);
-    jit.jump().linkTo(waysOn.isOfAnotherStructure, &jit);
+    if (operation == Entry::operationAOTGetById) {
+        CCallHelpers::JumpList isIndirectToo;
+        CCallHelpers::JumpList isNotByName;
+        readByName(jit, base, isIndirectToo, isNotByName);
+        isIndirectToo.link(&jit);
+        jit.move(base, A0);
+        jit.jump().linkTo(waysOn.isOfAnotherStructureAndIndirect, &jit);
+        isNotByName.link(&jit);
+        jit.move(base, A0);
+        jit.jump().linkTo(waysOn.isNotByName, &jit);
+    } else {
+        jit.move(base, A0);
+        jit.jump().linkTo(waysOn.isOfAnotherStructure, &jit);
+    }
     isNotCell.link(&jit);
     jit.move(base, A0);
     jit.jump().linkTo(waysOn.miss, &jit);
@@ -1556,31 +1602,57 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         constexpr GPRReg several = T13;
         constexpr GPRReg ownSlotOfSite = T14;
         {
-            // A direct slot with a property name id: the base's Structure may have the same name at the same inline offset (a base-class field in another subclass, say).
-            // T11 = the slot's first word, T12 = the base's StructureID.
-            Jump isIndirect = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
-            jit.extractUnsignedBitfield64(T11, TrustedImm32(32 + Slot::nameIDShift), TrustedImm32(16), T13);
-            Jump hasNoNameID = jit.branchTest32(CCallHelpers::Zero, T13);
-            jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T14);
-            jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T12);
-            constexpr ptrdiff_t wordsBeforeInlineStorage = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue);
-            jit.load16(CCallHelpers::BaseIndex(T12, T14, CCallHelpers::TimesTwo, Structure::offsetOfFieldIDInSlot() - wordsBeforeInlineStorage * sizeof(uint16_t)), T12);
-            Jump isAnotherName = jit.branch32(CCallHelpers::NotEqual, T12, T13);
-            jit.load64(CCallHelpers::BaseIndex(A0, T14, CCallHelpers::TimesEight), A0);
-            jit.ret();
-            isIndirect.link(&jit);
-            hasNoNameID.link(&jit);
-            isAnotherName.link(&jit);
+            CCallHelpers::JumpList isIndirectToo;
+            CCallHelpers::JumpList isNotByName;
+            readByName(jit, A0, isIndirectToo, isNotByName);
+            isNotByName.link(&jit);
+            waysOnOfGetById(operation).isNotByName = jit.label();
+            // A direct slot. Unless it is empty, it holds a different Structure, or a name that the base does not have at that
+            // offset: the site has to remember more.
+            missAndUpdateCache.append(jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(~(static_cast<uint64_t>(Slot::attemptsMask) << 32)))));
+            miss.append(jit.jump());
+            isIndirectToo.link(&jit);
+            waysOnOfGetById(operation).isOfAnotherStructureAndIndirect = jit.label();
         }
         // The slot holds a different Structure: this is the second one the site has seen.
         missAndUpdateCache.append(jit.branchTest32(CCallHelpers::NonZero, T11));
-        // The slot has no Structure. It is either empty or polymorphic (Slot::isPolymorphic()).
+        // The slot has no Structure. The site should be polymorphic (Slot::isPolymorphic()).
         jit.urshift64(T11, TrustedImm32(32), T12);
         jit.and32(TrustedImm32(Slot::flagsMask), T12);
         miss.append(jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(Slot::polymorphicFlags)));
         jit.loadPtr(slotWord(A1, 1), several);
         jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
         static_assert(!OBJECT_OFFSETOF(Slot, structureID));
+        // First by name (PolymorphicSlots::byName): whether the Structure's table has the name in one of up to four inline slots.
+        // The inline slot is selected without branches, for the reason given below.
+        constexpr GPRReg byName = T11;
+        constexpr GPRReg table = GPRInfo::argumentGPR6; // (Still needed after the entries have been looked at, which uses T9.)
+        constexpr GPRReg nameID = A5;
+        constexpr GPRReg inlineSlot = A2;
+        auto loadInlineSlotByName = [&](unsigned i, GPRReg result) {
+            jit.extractUnsignedBitfield64(byName, TrustedImm32(PolymorphicSlots::shiftOfInlineSlotsByName + i * 8), TrustedImm32(8), result);
+        };
+        jit.load64(Address(several, PolymorphicSlots::offsetOfByName()), byName);
+        jit.move(T12, table);
+        static_assert(!(structureIDBaseOfImages & ~(0xffffull << 32)));
+        jit.m_assembler.movk<64>(table, static_cast<uint16_t>(structureIDBaseOfImages >> 32), 32);
+        jit.addPtr(TrustedImm32(Structure::offsetOfFieldIDInSlot()), table);
+        jit.and32(TrustedImm32(0xffff), byName, nameID);
+        // (Whether a site has any depends on the site alone, so this branch can be predicted.)
+        Jump hasNoInlineSlotsByName = jit.branch32(CCallHelpers::Equal, nameID, TrustedImm32(Structure::firstReservedPropertyNameID));
+        loadInlineSlotByName(0, inlineSlot);
+        for (unsigned i = 1; i < PolymorphicSlots::numberOfInlineSlotsByName; ++i) {
+            loadInlineSlotByName(i, A3);
+            jit.load16(CCallHelpers::BaseIndex(table, A3, CCallHelpers::TimesTwo), A4);
+            jit.moveConditionally32(CCallHelpers::Equal, A4, nameID, A3, inlineSlot, inlineSlot);
+        }
+        jit.load16(CCallHelpers::BaseIndex(table, inlineSlot, CCallHelpers::TimesTwo), A4);
+        Jump isNotInThoseInlineSlots = jit.branch32(CCallHelpers::NotEqual, A4, nameID);
+        jit.load64(CCallHelpers::BaseIndex(A0, inlineSlot, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()), A0);
+        jit.ret();
+        isNotInThoseInlineSlots.link(&jit);
+        hasNoInlineSlotsByName.link(&jit);
+
         // The matching entry is selected without branches. A branch per entry would be shared by every polymorphic site of the
         // program, so it could not be predicted, and a misprediction costs more than the whole scan.
         jit.move(A1, ownSlotOfSite);
@@ -1595,6 +1667,18 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
 
         // No entry matches.
         jit.move(ownSlotOfSite, A1);
+        // If the Structure's table has not been filled in for one of those inline slots, the slow path does that. It happens once for
+        // each Structure. (A site that has no inline slots yet gets them when it learns, below.)
+        jit.load64(Address(several, PolymorphicSlots::offsetOfByName()), byName);
+        jit.and32(TrustedImm32(0xffff), byName, nameID);
+        Jump hasNoInlineSlotsToFillInTableFor = jit.branch32(CCallHelpers::Equal, nameID, TrustedImm32(Structure::firstReservedPropertyNameID));
+        jit.urshift64(byName, TrustedImm32(PolymorphicSlots::shiftOfValueToFillInTableFor), nameID);
+        for (unsigned i = 0; i < PolymorphicSlots::numberOfInlineSlotsByName; ++i) {
+            loadInlineSlotByName(i, A3);
+            jit.load16(CCallHelpers::BaseIndex(table, A3, CCallHelpers::TimesTwo), A4);
+            missAndUpdateCache.append(jit.branch32(CCallHelpers::Equal, A4, nameID));
+        }
+        hasNoInlineSlotsToFillInTableFor.link(&jit);
         missAndUpdateCache.append(jit.branchTest32(CCallHelpers::NonZero, Address(several, PolymorphicSlots::offsetOfTimesLeftToLearnAtOnce())));
         jit.load32(Address(several, PolymorphicSlots::offsetOfMisses()), T12);
         jit.add32(TrustedImm32(1), T12);

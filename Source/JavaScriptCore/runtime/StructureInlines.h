@@ -293,6 +293,8 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
 #if USE(BUN_JSC_ADDITIONS)
     if (m_typedLayoutID) [[unlikely]]
         noteFieldAdded(rep, newOffset, attributes);
+    else if (static_cast<unsigned>(newOffset) < numberOfSlotsWithFieldIDs && m_fieldIDInSlot[newOffset] == noPropertyNameID)
+        m_fieldIDInSlot[newOffset] = 0;
 #endif
     
     func(locker, newOffset, newMaxOffset);
@@ -481,6 +483,8 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
 #if USE(BUN_JSC_ADDITIONS)
     if (m_typedLayoutID) [[unlikely]]
         noteFieldAdded(rep, newOffset, newAttributes);
+    else if (static_cast<unsigned>(newOffset) < numberOfSlotsWithFieldIDs && m_fieldIDInSlot[newOffset] == noPropertyNameID)
+        m_fieldIDInSlot[newOffset] = 0;
 #endif
 
     func(locker, newOffset, newMaxOffset);

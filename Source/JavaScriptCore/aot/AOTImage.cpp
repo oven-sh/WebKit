@@ -653,7 +653,7 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint16_t> layoutIDsOfSlot[Structure::numberOfSlotsWithFieldIDs]; // Likewise: the typed layout that the field belongs to.
     Vector<uint8_t> inlineSlotCounts;
     if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
-        RELEASE_ASSERT_WITH_MESSAGE(numbersOfIdentifiers, "Structs go by the numbers of the program's identifiers");
+        RELEASE_ASSERT(numbersOfIdentifiers); // (The caller has checked: compileImage().)
         for (uint32_t number = 0; number <= TypeTable::shared()->numberOfTypedLayouts(); ++number) {
             auto layout = TypeTable::shared()->typedLayout(number);
             RELEASE_ASSERT(slotTypes.size() < (1u << 24) && fieldRecords.size() < (1u << 20));

@@ -1316,6 +1316,8 @@ PolymorphicSlots* Instance::makeSlotsOfSite(Data* owner, UniquedStringImpl* name
     several->name = name;
     several->owner = owner;
     several->timesLeftToLearnAtOnce = PolymorphicSlots::timesToLearnAtOnce;
+    several->byName = PolymorphicSlots::initialByName;
+    several->timesLeftToTolerateTableThatCannotBeFilledIn = PolymorphicSlots::timesToTolerateTableThatCannotBeFilledIn;
     collections->slotsOfSites.append(several);
     return several;
 }
