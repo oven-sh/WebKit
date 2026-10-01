@@ -274,6 +274,7 @@ static Vector<std::pair<void*, size_t>>& freeBlocks() WTF_REQUIRES_LOCK(s_blocks
 void* StaticHeap::allocateBlock(VM& vm, size_t size)
 {
     RELEASE_ASSERT(!(size % WTF::pageSize()));
+    RELEASE_ASSERT(Region::mapRestOfBss());
     Locker locker { s_blocksLock };
     void* result = nullptr;
     auto& free = freeBlocks();
@@ -1740,6 +1741,8 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, int64_t
     // object.
     AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
     if (!atoms->table().isEmpty())
+        return false;
+    if (!Region::mapRestOfBss())
         return false;
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
         uint64_t sizeInFile = header.arenaSize[i] - (static_cast<Region::Arena>(i) == Region::Arena::Data ? header.sizeOfHoleInData : 0);

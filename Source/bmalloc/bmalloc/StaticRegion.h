@@ -42,7 +42,14 @@ public:
     static constexpr unsigned numberOfArenas = 8;
     static constexpr unsigned numberOfArenasInFile = 5;
 
-    static constexpr uintptr_t base = 0x200000000000ULL; // Beyond where mimalloc asks for memory, and far from where the kernel puts things.
+#if BOS(DARWIN)
+    // Beyond where mimalloc asks for memory, and beyond ASAN's shadow memory, which goes into the first gap that is large enough.
+    static constexpr uintptr_t base = 0x200000000000ULL;
+#else
+    // 128 GB: within a 39-bit address space, which is the least that a kernel for ARM64 gives a process, below where mimalloc asks
+    // for memory (2 TB and up), and far from where the kernel puts executables, heaps, stacks and mappings.
+    static constexpr uintptr_t base = 0x2000000000ULL;
+#endif
     static constexpr size_t arenaReservation = 4ULL << 30;
     static constexpr size_t reservation = arenaReservation * numberOfArenas;
 
@@ -86,8 +93,10 @@ public:
 
     // ---- When it runs.
 
-    BEXPORT static void mapBss(); // Before anything else here. Crashes if the addresses are taken.
     // What every process has, whether or not it uses the other arenas: the part of Arena::Bss before offsetOfVTablesInBss.
+    BEXPORT static void mapBss(); // Before anything else here. The process does not start if the addresses are taken.
+    // The rest of Arena::Bss, for a process that builds the other arenas or runs with them. False if the addresses are taken.
+    BEXPORT static bool mapRestOfBss();
 #if BENABLE(STATIC_REGION)
     static BINLINE uintptr_t addressInBss(size_t offset) { return startOf(Arena::Bss) + offset; }
 #else
@@ -98,7 +107,7 @@ public:
     static constexpr size_t offsetOfEmptyStringInBss = 0; // WTF::StringImpl::empty()
     static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
     static constexpr size_t offsetOfEmbedderSymbolsInBss = 128 * 1024; // JSC::StaticHeap::embedderSymbols()
-    // The rest belongs to JSC::StaticHeap. Reserving address space is free: only pages that are touched are committed.
+    // The rest belongs to JSC::StaticHeap: mapRestOfBss(). Only pages that are touched are committed.
     static constexpr size_t offsetOfVTablesInBss = 256 * 1024;
     static constexpr size_t offsetOfVMInBss = 1 << 20;
     static constexpr size_t offsetOfGlobalObjectInBss = 2 << 20;
