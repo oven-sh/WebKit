@@ -12,8 +12,9 @@ forced 16-bit subjects, plus engine-independent metamorphic checks).
     node triage.mjs out node
 
 Profiles: mixed, lookbehind, alt, unicode, bm, deep, fold, small, strings, wide (see PROFILES in
-regex-fuzz.js). Configs: jit, interp (--useRegExpJIT=0), gatesoff, nolb, nofactor, nodispatch,
-nodfg, eager, asan (WebKitBuild/DebugASAN), base (a baseline jsc: $YARR_FUZZ_BASE_JSC), node.
+regex-fuzz.js). Configs: jit, interp (--useRegExpJIT=0), linear (--useRegExpLinearEngine=1),
+gatesoff, nolb, nofactor, nodispatch, nodfg, eager, asan (WebKitBuild/DebugASAN), base (a baseline
+jsc: $YARR_FUZZ_BASE_JSC), node.
 
 `regex-fuzz.js` also runs standalone: `jsc --useDollarVM=1 regex-fuzz.js -- <seed> <count> [profile]`
 or `node regex-fuzz.js <seed> <count> [profile]`; one JSON line per case, identical across engines

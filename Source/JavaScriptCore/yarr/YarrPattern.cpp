@@ -3869,7 +3869,10 @@ ErrorCode YarrPattern::compile(StringView patternString)
 
     constructor.recomputeStartsWithBOL();
     constructor.checkForTerminalParentheses();
-    constructor.optimizeDotStarWrappedExpressions();
+    // A DotStarEnclosure is matched by widening the match of what it wraps, which only the
+    // backtracking engines do. The non-backtracking matcher runs the .* terms themselves.
+    if (!Options::useRegExpLinearEngine())
+        constructor.optimizeDotStarWrappedExpressions();
     constructor.optimizeBOL();
     constructor.factorAndWrapAlternatives();
     constructor.optimizePossessiveQuantifiers();

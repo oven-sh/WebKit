@@ -42,6 +42,9 @@ namespace JSC {
 
 namespace Yarr {
 struct YarrPattern;
+#if USE(BUN_JSC_ADDITIONS)
+struct InterpretStatistics;
+#endif
 }
 
 struct RegExpRepresentation;
@@ -107,6 +110,13 @@ public:
     JS_EXPORT_PRIVATE MatchResult match(JSGlobalObject*, StringView, unsigned startOffset);
 
     bool matchConcurrently(VM&, StringView, unsigned startOffset, MatchResult&);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // For tests. Matches on the bytecode of this RegExp, which is where the non-backtracking
+    // matcher runs, and reports which engine that was and what the match cost. Returns the
+    // offset of the match, or -1.
+    JS_EXPORT_PRIVATE int matchBytecodeForTesting(VM&, StringView, unsigned startOffset, Yarr::InterpretStatistics&);
+#endif
 
     // Call these versions of the match functions if you're desperate for performance.
     template<Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>

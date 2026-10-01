@@ -3314,16 +3314,54 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
 
 std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useRegExpLinearEngine()) [[unlikely]] {
+        // Before the ByteCompiler: BytecodePattern takes the pattern's character classes.
+        LinearRefusal refusal = LinearRefusal::None;
+        auto linearProgram = compileLinear(pattern, refusal);
+        if (Options::dumpCompiledRegExpPatterns()) [[unlikely]] {
+            if (linearProgram)
+                linearProgram->dump(WTF::dataFile());
+            else
+                dataLogLn("The non-backtracking matcher refused this regular expression: ", linearRefusalName(refusal));
+        }
+        auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+        if (bytecode) {
+            bytecode->m_linearProgram = WTF::move(linearProgram);
+            bytecode->m_linearRefusal = refusal;
+        }
+        return bytecode;
+    }
+#endif
     return ByteCompiler(pattern).compile(allocator, lock, errorCode);
 }
 
 unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     SuperSamplerScope superSamplerScope(false);
+#if USE(BUN_JSC_ADDITIONS)
+    if (bytecode->m_linearProgram) [[unlikely]]
+        return bytecode->m_linearProgram->match(input, start, output);
+#endif
     if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, InterpretStatistics& statistics)
+{
+    statistics = { };
+    statistics.refusal = bytecode->m_linearRefusal;
+    if (bytecode->m_linearProgram) {
+        statistics.engine = InterpretStatistics::Engine::Linear;
+        statistics.programSize = bytecode->m_linearProgram->instructionCount();
+        statistics.maximumStepsPerPosition = bytecode->m_linearProgram->m_maximumStepsPerPosition;
+        return bytecode->m_linearProgram->match(input, start, output, &statistics.linear);
+    }
+    return interpret(bytecode, input, start, output);
+}
+#endif
 
 // These should be the same for both char16_t & Latin1Character.
 static_assert(sizeof(BackTrackInfoPatternCharacter) == (YarrStackSpaceForBackTrackInfoPatternCharacter * sizeof(uintptr_t)));
