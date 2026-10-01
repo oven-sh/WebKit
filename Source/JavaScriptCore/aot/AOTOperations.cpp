@@ -702,7 +702,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject*
     OPERATION_RETURN(scope);
 }
 
-// Options::aotVerifiesFacts()
+// Options::validateAOTInferredTypes()
 // That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
 {
@@ -733,7 +733,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlo
     NativeCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     scope.clearException();
-    dataLog("AOT: A FACT IS NOT ONE: what ");
+    dataLog("AOT: inferred type violation: ");
     if (which >= 1000000)
         dataLog(opcodeNames[which / 1000000], " at bc#", which % 1000000);
     else if (which % 100 == static_cast<unsigned>(NodeKind::Argument))
@@ -744,18 +744,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlo
         dataLog(" of `", identifierAt(globalObject, callFrame, identifierIndexPlusOne - 1).impl(), "`");
     if (scopeWhenCompiled)
         dataLog(" (scope ", RawPointer(std::bit_cast<void*>(static_cast<uintptr_t>(scopeWhenCompiled))), " offset ", scopeOffset, ")");
-    dataLog(" gives was found to be ");
+    dataLog(" was inferred to be ");
     if (!type)
-        dataLog("never reached");
+        dataLog("unreachable");
     else
         dumpType(WTF::dataFile(), type);
-    dataLog(" and is ");
+    dataLog(" but is ");
     dumpType(WTF::dataFile(), actual);
     if (auto* function = (actual & TFunctionTag) ? dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()) : nullptr; function && !function->isHostOrBuiltinFunction())
         dataLog(" (index ", function->jsExecutable()->aotIndexFor(CodeSpecializationKind::CodeForCall), ", entry ", RawHex(function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)), ")");
     dataLog(" (bits ", RawHex(static_cast<uint64_t>(encodedValue)));
     if (static_cast<uint64_t>(encodedValue) == std::bit_cast<uintptr_t>(&s_emptyTypedObject[0]))
-        dataLog(": the struct with nothing in it");
+        dataLog(": the empty typed object placeholder");
     else if (JSValue value = JSValue::decode(encodedValue); value && value.isCell())
         dataLog(", a cell of type ", static_cast<unsigned>(value.asCell()->type()), value.isObject() ? " " : "", value.isObject() ? asObject(value)->classInfo()->className : ""_s);
     dataLog(")");

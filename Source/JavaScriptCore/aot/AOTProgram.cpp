@@ -160,9 +160,9 @@ void MultiValueReturnTable::note(UnlinkedCodeBlock* code, Names&& names)
     m_names.set(code, WTF::move(names));
 }
 
-const MultiValueReturnTable::Names* registerReturnValuesOf(UnlinkedCodeBlock* code, const FunctionSummary* facts)
+const MultiValueReturnTable::Names* registerReturnValuesOf(UnlinkedCodeBlock* code, const FunctionSummary* summary)
 {
-    if (!s_multiValueReturnTable || !facts || !facts->isNonEscaping || facts->escapes.load(std::memory_order_relaxed) || facts->needsReturnObject.load(std::memory_order_relaxed))
+    if (!s_multiValueReturnTable || !summary || !summary->isNonEscaping || summary->escapes.load(std::memory_order_relaxed) || summary->needsReturnObject.load(std::memory_order_relaxed))
         return nullptr;
     return s_multiValueReturnTable->returnValueNamesOf(code);
 }
@@ -358,11 +358,11 @@ std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant)
     return number ? std::optional { number } : std::nullopt;
 }
 
-HowValuesArePassed howValuesArePassed(const FunctionSummary* facts, Convention convention)
+HowValuesArePassed howValuesArePassed(const FunctionSummary* summary, Convention convention)
 {
     HowValuesArePassed result;
     // (What is checked is what a value is when it is boxed.)
-    if (!facts || !facts->isNonEscaping || convention.signature != Signature::Registers || Options::aotVerifiesFacts())
+    if (!summary || !summary->isNonEscaping || convention.signature != Signature::Registers || Options::validateAOTInferredTypes())
         return result;
     auto repFor = [](Type type) {
         Rep rep = type ? repForType(type) : Rep::JSValue;
@@ -370,17 +370,17 @@ HowValuesArePassed howValuesArePassed(const FunctionSummary* facts, Convention c
     };
     static_assert(numberOfArgumentGPRs < FunctionSummary::mostParameters);
     for (unsigned i = 0; i < convention.numberOfParameters; ++i)
-        result.parameters[i] = repFor(facts->parameterTypes[i + 1].load());
-    result.result = repFor(facts->returnType.load());
+        result.parameters[i] = repFor(summary->parameterTypes[i + 1].load());
+    result.result = repFor(summary->returnType.load());
     return result;
 }
 
-Vector<Rep, 8> returnValueReps(const FunctionSummary* facts, unsigned count)
+Vector<Rep, 8> returnValueReps(const FunctionSummary* summary, unsigned count)
 {
-    bool asTheyAre = !Options::aotVerifiesFacts();
+    bool asTheyAre = !Options::validateAOTInferredTypes();
     Vector<Rep, 8> result;
     for (unsigned i = 0; i < count; ++i) {
-        Type type = facts->returnValueTypes[i].load();
+        Type type = summary->returnValueTypes[i].load();
         Rep rep = asTheyAre && type ? repForType(type) : Rep::JSValue;
         result.append(rep == Rep::Int32 || rep == Rep::Double || rep == Rep::Boolean ? rep : Rep::JSValue);
     }

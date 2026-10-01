@@ -89,9 +89,9 @@ private:
         Rep from = node->rep();
         bool canBe = rep == Rep::JSValue || from == Rep::JSValue || from == rep || (from != Rep::Boolean && rep != Rep::Boolean);
         if (!canBe) [[unlikely]] {
-            dataLog("AOT: A VALUE IS NOT WHAT IS PASSED THERE: ");
+            dataLog("AOT: incompatible representation for a parameter or result: ");
             node->dump(WTF::dataFile());
-            dataLogLn(" held as ", static_cast<unsigned>(from), " wanted as ", static_cast<unsigned>(rep), " at bc#", m_node ? m_node->bytecodeIndex.offset() : 0, " ", m_node ? opcodeNames[m_node->opcode] : "", " in ", m_graph.nameForLog());
+            dataLogLn(" has rep ", static_cast<unsigned>(from), ", expected rep ", static_cast<unsigned>(rep), " at bc#", m_node ? m_node->bytecodeIndex.offset() : 0, " ", m_node ? opcodeNames[m_node->opcode] : "", " in ", m_graph.nameForLog());
             RELEASE_ASSERT_NOT_REACHED();
         }
         // A node that is considered unreachable has the empty type and is represented as a JSValue.

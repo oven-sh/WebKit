@@ -95,14 +95,14 @@ struct StaticHeap::Header {
     uint64_t tdz; // StaticHeapTDZ[]
     uint64_t numberOfTDZ;
     uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::ImageFunction::index.
-    uint64_t factsOfFunctions; // uint32_t[], likewise. Zero: the unlinked code of functions is here instead.
+    uint64_t functionMetadataOffsets; // uint32_t[], likewise. Zero: the unlinked code of functions is here instead.
     uint64_t rowsOfFunctions; // RowOfFunction[], likewise. See rowOf().
     // Options::staticHeapGuardsShortFunctionExecutables(): from here to there in Arena::Cells, every other page is not to be there.
     uint64_t guardedFrom;
     uint64_t guardedTo;
     uint64_t numberOfFunctions;
     // See PositionsToKeep. If there are any, FunctionMetadata::ExpressionInfo is where the positions of a function's call sites are, and
-    // an odd number among factsOfFunctions is one more than where those of code that has no facts are.
+    // an odd number among functionMetadataOffsets is one more than where those of code that has no metadata are.
     uint64_t namesOfSources; // uint32_t[numberOfSources + 1]: where each starts in what follows them, which is UTF-8.
     uint64_t numberOfSources;
     uint64_t hasPositionsOfCallSites;
@@ -398,7 +398,7 @@ static void* addressOfSourceProvider(size_t moduleIndex)
 }
 
 // AOT::FunctionMetadata of a function whose code is not going to be here. What they refer to stays (UnlinkedCodeBlock::leaveToStaticHeap()).
-static std::span<uint32_t> s_factsBeingBuilt;
+static std::span<uint32_t> s_functionMetadataOffsetsBeingBuilt;
 static const StaticHeap::PositionsToKeep* s_positionsToKeep;
 static UncheckedKeyHashMap<CString, uint32_t>* s_sourcesBeingBuilt;
 static Vector<CString>* s_namesOfSourcesBeingBuilt;
@@ -508,51 +508,51 @@ static const uint8_t* copyInCommon(std::span<const uint8_t>, size_t alignment); 
 
 static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t entryOffsetOfModule)
 {
-    if (s_factsBeingBuilt.empty() || s_factsBeingBuilt[index])
+    if (s_functionMetadataOffsetsBeingBuilt.empty() || s_functionMetadataOffsetsBeingBuilt[index])
         return;
     if (codeBlock->codeType() != FunctionCode) {
         // The code of a module, whose UnlinkedCodeBlock is here to say everything else about it.
         if (s_positionsToKeep)
-            s_factsBeingBuilt[index] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(makePositions(index, codeBlock, 1, 1, entryOffsetOfModule)) - Region::startOf(Region::Arena::Data)) | 1;
+            s_functionMetadataOffsetsBeingBuilt[index] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(makePositions(index, codeBlock, 1, 1, entryOffsetOfModule)) - Region::startOf(Region::Arena::Data)) | 1;
         return;
     }
-    using Facts = AOT::FunctionMetadata;
+    using Metadata = AOT::FunctionMetadata;
     auto in = [](Region::Arena arena, const void* pointer) {
         uintptr_t offset = std::bit_cast<uintptr_t>(pointer) - Region::startOf(arena);
         RELEASE_ASSERT(offset && offset < Region::used(arena));
         return static_cast<uint32_t>(offset);
     };
-    RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Facts::shiftOfInstructionsSize)));
-    Vector<uint32_t, 10> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Facts::shiftOfInstructionsSize | (codeBlock->isBuiltinFunction() ? Facts::isBuiltinFunction : 0) };
+    RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Metadata::shiftOfInstructionsSize)));
+    Vector<uint32_t, 10> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Metadata::shiftOfInstructionsSize | (codeBlock->isBuiltinFunction() ? Metadata::isBuiltinFunction : 0) };
     if (s_positionsToKeep) {
         // (A constructor that nobody wrote has an executable of its own in every realm, and is nowhere in any source.)
         if (executable) {
-            words[0] |= Facts::ExpressionInfo;
+            words[0] |= Metadata::ExpressionInfo;
             words.append(in(Region::Arena::Data, makePositions(index, codeBlock, executable->firstLine(), executable->startColumn(), entryOffsetOfModule)));
         }
     } else if (const void* record = codeBlock->cachedExpressionInfo()) {
-        words[0] |= Facts::ExpressionInfo;
+        words[0] |= Metadata::ExpressionInfo;
         words.append(in(Region::Arena::Data, record));
     }
     if (size_t count = codeBlock->numberOfExceptionHandlers()) {
         auto* handlers = static_cast<UnlinkedHandlerInfo*>(Region::allocate(Region::Arena::Data, count * sizeof(UnlinkedHandlerInfo), alignof(UnlinkedHandlerInfo)));
         for (size_t i = 0; i < count; ++i)
             handlers[i] = codeBlock->exceptionHandler(i);
-        words[0] |= Facts::Handlers;
+        words[0] |= Metadata::Handlers;
         words.append(in(Region::Arena::Data, handlers));
         words.append(count);
     }
-    auto functions = [&](Facts::Fact fact, std::span<const WriteBarrier<UnlinkedFunctionExecutable>> all) {
+    auto functions = [&](Metadata::Section section, std::span<const WriteBarrier<UnlinkedFunctionExecutable>> all) {
         if (all.empty())
             return;
-        words[0] |= fact;
+        words[0] |= section;
         words.append(in(Region::Arena::Malloc, all.data()));
         words.append(all.size());
     };
-    functions(Facts::FunctionDecls, codeBlock->functionDecls());
-    functions(Facts::FunctionExprs, codeBlock->functionExprs());
+    functions(Metadata::FunctionDecls, codeBlock->functionDecls());
+    functions(Metadata::FunctionExprs, codeBlock->functionExprs());
     if (codeBlock->numberOfUnlinkedStringSwitchJumpTables()) {
-        words[0] |= Facts::StringSwitchJumpTables;
+        words[0] |= Metadata::StringSwitchJumpTables;
         words.append(in(Region::Arena::Malloc, &codeBlock->unlinkedStringSwitchJumpTable(0)));
     }
     if (!AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesAreShared::Yes)) {
@@ -565,7 +565,7 @@ static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExe
         list[1] = list.size() - 2;
         auto* copy = static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, list.sizeInBytes(), alignof(uint32_t)));
         memcpySpan(std::span { copy, list.size() }, list.span());
-        words[0] |= Facts::RealmConstants;
+        words[0] |= Metadata::RealmConstants;
         words.append(in(Region::Arena::Data, copy));
     }
     if (size_t count = codeBlock->numberOfUnlinkedSwitchJumpTables(); count && isAsyncFunctionBodyParseMode(codeBlock->parseMode())) {
@@ -575,11 +575,11 @@ static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExe
             list.append(offset ? offset : table.m_defaultOffset);
         auto* copy = static_cast<int32_t*>(Region::allocate(Region::Arena::Data, list.sizeInBytes(), alignof(int32_t)));
         memcpySpan(std::span { copy, list.size() }, list.span());
-        words[0] |= Facts::ResumePoints;
+        words[0] |= Metadata::ResumePoints;
         words.append(in(Region::Arena::Data, copy));
     }
     if (codeBlock->numberOfConstantIdentifierSets()) {
-        words[0] |= Facts::ConstantIdentifierSets;
+        words[0] |= Metadata::ConstantIdentifierSets;
         words.append(in(Region::Arena::Malloc, &codeBlock->constantIdentifierSets()[0]));
     }
     {
@@ -588,14 +588,14 @@ static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExe
             Region::AllocationScope notInRegion(false);
             scalars = scalarsToMakeFunctionCodeFrom(*codeBlock);
         }
-        words[0] |= Facts::Scalars;
+        words[0] |= Metadata::Scalars;
         words.append(in(Region::Arena::Data, copyInCommon(scalars.span(), 1)));
         Region::AllocationScope notInRegion(false);
         scalars = { };
     }
-    auto* facts = static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, words.sizeInBytes(), alignof(uint32_t)));
-    memcpySpan(std::span { facts, words.size() }, words.span());
-    s_factsBeingBuilt[index] = in(Region::Arena::Data, facts);
+    auto* metadata = static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, words.sizeInBytes(), alignof(uint32_t)));
+    memcpySpan(std::span { metadata, words.size() }, words.span());
+    s_functionMetadataOffsetsBeingBuilt[index] = in(Region::Arena::Data, metadata);
 }
 
 namespace {
@@ -905,9 +905,9 @@ std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfF
     return { uncheckedDowncast<FunctionExecutable>(info.executable()), info.kind() };
 }
 
-const uint32_t* StaticHeap::factsOfFunctions(VM& vm)
+const uint32_t* StaticHeap::functionMetadataOffsets(VM& vm)
 {
-    return hasExecutablesOfFunctions(vm) ? std::bit_cast<const uint32_t*>(s_header->factsOfFunctions) : nullptr;
+    return hasExecutablesOfFunctions(vm) ? std::bit_cast<const uint32_t*>(s_header->functionMetadataOffsets) : nullptr;
 }
 
 Ref<Decoder> StaticHeap::decoderForKeptPayload(VM& vm, Decoder& placed)
@@ -1058,7 +1058,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
             return function;
         return kept.ensure(function, [&] { return static_cast<UnlinkedFunctionExecutable*>(place(function, sizeof(UnlinkedFunctionExecutable))); }).iterator->value;
     };
-    std::span factsOfFunctions { std::bit_cast<const uint32_t*>(header.factsOfFunctions), static_cast<size_t>(header.numberOfFunctions) };
+    std::span functionMetadataOffsets { std::bit_cast<const uint32_t*>(header.functionMetadataOffsets), static_cast<size_t>(header.numberOfFunctions) };
 
     // The executables first, one after the other: they are what is looked at when a function is called.
     std::span<RowOfFunction> rows { static_cast<RowOfFunction*>(Region::allocate(Region::Arena::Data, header.numberOfFunctions * sizeof(RowOfFunction), pageSizeOfImage)), static_cast<size_t>(header.numberOfFunctions) };
@@ -1077,7 +1077,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
         uint32_t index = executable->aotIndexFor(hasCodeToCall ? CodeSpecializationKind::CodeForCall : CodeSpecializationKind::CodeForConstruct);
         size_t module = (std::bit_cast<uintptr_t>(executable->source().provider()) - std::bit_cast<uintptr_t>(addressOfSourceProvider(0))) / sizeOfPlaceForSourceProvider;
         auto saysWhereItStarts = [&] {
-            uint32_t at = factsOfFunctions[index];
+            uint32_t at = functionMetadataOffsets[index];
             return at && !(at & 1) && inData<AOT::FunctionMetadata>(at)->find(AOT::FunctionMetadata::ExpressionInfo);
         };
         bool canBeShort = hasCode && unlinked->canBeSharedByStaticExecutables() && saysWhereItStarts()
@@ -1157,12 +1157,12 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     size_t foundBy = kept.size() - ofExecutablesInFull;
 
     // And whatever refers to an executable refers to what has become of it.
-    for (uint32_t at : factsOfFunctions) {
+    for (uint32_t at : functionMetadataOffsets) {
         if (!at || at & 1)
             continue;
-        auto* facts = inData<AOT::FunctionMetadata>(at);
-        for (auto fact : { AOT::FunctionMetadata::FunctionDecls, AOT::FunctionMetadata::FunctionExprs }) {
-            const uint32_t* words = facts->find(fact);
+        auto* metadata = inData<AOT::FunctionMetadata>(at);
+        for (auto section : { AOT::FunctionMetadata::FunctionDecls, AOT::FunctionMetadata::FunctionExprs }) {
+            const uint32_t* words = metadata->find(section);
             if (!words)
                 continue;
             for (auto& entry : std::span { const_cast<uintptr_t*>(inMalloc<uintptr_t>(words[0])), static_cast<size_t>(words[1]) }) {
@@ -1351,9 +1351,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         zeroSpan(s_identifiersOfProgram);
                         header.identifiersOfProgram = std::bit_cast<uint64_t>(s_identifiersOfProgram.data());
                     }
-                    s_factsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
-                    zeroSpan(s_factsBeingBuilt);
-                    header.factsOfFunctions = std::bit_cast<uint64_t>(s_factsBeingBuilt.data());
+                    s_functionMetadataOffsetsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
+                    zeroSpan(s_functionMetadataOffsetsBeingBuilt);
+                    header.functionMetadataOffsets = std::bit_cast<uint64_t>(s_functionMetadataOffsetsBeingBuilt.data());
                     s_allocatesFunctionsInScratch = keptPayloadStart && positionsToKeep;
                     header.numberOfFunctions = infosOfFunctions.size();
                 }
@@ -1484,7 +1484,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     header.keysOfImage = std::bit_cast<uint64_t>(kept.data());
                     header.capacityOfKeysOfImage = capacity;
                 }
-                if (positionsToKeep && !s_factsBeingBuilt.empty()) {
+                if (positionsToKeep && !s_functionMetadataOffsetsBeingBuilt.empty()) {
                     size_t sizeOfText = 0;
                     for (auto& name : namesOfSources)
                         sizeOfText += name.length();
@@ -1512,7 +1512,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     arraysInCommon.clear();
                     s_arraysBeingBuilt = nullptr;
                 }
-                s_factsBeingBuilt = { };
+                s_functionMetadataOffsetsBeingBuilt = { };
                 // (See parentScopeTDZVariablesOf().)
                 if (keptPayloadStart) {
                     Region::AllocationScope notInRegion(false);
@@ -1607,7 +1607,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         });
     }
 
-    if (keptPayloadStart && header.payload && header.factsOfFunctions) {
+    if (keptPayloadStart && header.payload && header.functionMetadataOffsets) {
         uint64_t start = roundUpToMultipleOf<pageSizeOfImage>(header.payload);
         uint64_t end = (header.payload + keptPayloadStart) & ~static_cast<uint64_t>(pageSizeOfImage - 1);
         if (end > start) {
@@ -1826,7 +1826,7 @@ String StaticHeap::nameOfSource(uint32_t source)
 LineColumn StaticHeap::whereFunctionStarts(uint32_t indexOfFunction)
 {
     RELEASE_ASSERT(s_header && s_header->hasPositionsOfCallSites && indexOfFunction < s_header->numberOfFunctions);
-    uint32_t word = std::bit_cast<const uint32_t*>(s_header->factsOfFunctions)[indexOfFunction];
+    uint32_t word = std::bit_cast<const uint32_t*>(s_header->functionMetadataOffsets)[indexOfFunction];
     RELEASE_ASSERT(word && !(word & 1));
     const uint32_t* where = inData<AOT::FunctionMetadata>(word)->find(AOT::FunctionMetadata::ExpressionInfo);
     RELEASE_ASSERT(where);

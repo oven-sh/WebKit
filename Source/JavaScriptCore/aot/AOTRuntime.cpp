@@ -269,7 +269,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->collections->sizeOfInfos = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(FunctionInfo));
         instance->infos = static_cast<FunctionInfo*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfInfos, OSAllocator::FastMallocPages));
     }
-    instance->factsOfFunctions = environmentsSize ? StaticHeap::factsOfFunctions(vm) : nullptr;
+    instance->functionMetadataOffsets = environmentsSize ? StaticHeap::functionMetadataOffsets(vm) : nullptr;
     instance->constantsOfProgram = environmentsSize ? StaticHeap::constantsOfProgram(vm) : nullptr;
     instance->sharedData = SharedData::get();
     // (Nothing of it is there until it is looked at.)
@@ -551,7 +551,7 @@ static bool linkConstants(VM& vm, Data& data)
             data.constants = info.constants;
             return true;
         }
-        const uint32_t* list = StaticHeap::inData<uint32_t>(*data.function().facts()->find(FunctionMetadata::RealmConstants));
+        const uint32_t* list = StaticHeap::inData<uint32_t>(*data.function().metadata()->find(FunctionMetadata::RealmConstants));
         std::span constants { static_cast<const WriteBarrier<Unknown>*>(info.constants), list[0] };
         JSGlobalObject* globalObject = data.instance->globalObject;
         auto* copy = static_cast<WriteBarrier<Unknown>*>(fastZeroedMalloc(constants.size_bytes()));
@@ -866,25 +866,25 @@ static std::span<const uint8_t> zerosForInstructions(size_t size)
 // It is not going to be interpreted, and whoever asks for one does not ask what the instructions are.
 UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromMetadata() const
 {
-    auto* facts = this->facts();
-    const uint32_t* scalars = facts ? facts->find(FunctionMetadata::Scalars) : nullptr;
+    auto* metadata = this->metadata();
+    const uint32_t* scalars = metadata ? metadata->find(FunctionMetadata::Scalars) : nullptr;
     if (!scalars)
         return nullptr;
     PartsOfFunctionCode parts { };
     parts.scalars = StaticHeap::inData<uint8_t>(*scalars);
-    parts.instructions = zerosForInstructions(facts->instructionsSize());
+    parts.instructions = zerosForInstructions(metadata->instructionsSize());
     // (Where the program has one table of them, the code goes by where a name is in that: which of the function's own identifiers is
     // which is known to nobody. As with the instructions, whoever asks for one of these does not ask.)
     parts.identifiers = StaticHeap::hasIdentifiersOfProgram() ? nullptr : static_cast<const Identifier*>(info().identifiers);
     parts.constants = static_cast<const WriteBarrier<Unknown>*>(info().constants);
-    if (const uint32_t* word = facts->find(FunctionMetadata::RealmConstants)) {
+    if (const uint32_t* word = metadata->find(FunctionMetadata::RealmConstants)) {
         const uint32_t* list = StaticHeap::inData<uint32_t>(*word);
         parts.linkTimeConstants = { list + 2, list[1] };
     }
     // (Nor for the functions in it, which are asked for here: functionDecl(), functionExpr().)
-    if (const uint32_t* words = facts->find(FunctionMetadata::Handlers))
+    if (const uint32_t* words = metadata->find(FunctionMetadata::Handlers))
         parts.handlers = { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
-    if (const uint32_t* word = facts->find(FunctionMetadata::ExpressionInfo); word && !StaticHeap::hasPositionsOfCallSites())
+    if (const uint32_t* word = metadata->find(FunctionMetadata::ExpressionInfo); word && !StaticHeap::hasPositionsOfCallSites())
         parts.expressionInfo = StaticHeap::inData<uint8_t>(*word);
     return makeFunctionCodeFromParts(*instance->vm, parts);
 }
@@ -910,11 +910,11 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
     return result;
 }
 
-const FunctionMetadata* FunctionRef::facts() const
+const FunctionMetadata* FunctionRef::metadata() const
 {
-    if (!instance->factsOfFunctions)
+    if (!instance->functionMetadataOffsets)
         return nullptr;
-    uint32_t at = instance->factsOfFunctions[index];
+    uint32_t at = instance->functionMetadataOffsets[index];
     // (Odd: see reportedPositionFor().)
     return at && !(at & 1) ? StaticHeap::inData<FunctionMetadata>(at) : nullptr;
 }
@@ -933,13 +933,13 @@ static uint64_t readVarint(const uint8_t*& at)
 // What StaticHeap's makePositions() wrote.
 auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstruction ofConstruction) const -> std::optional<ReportedPosition>
 {
-    if (!instance->factsOfFunctions || !StaticHeap::hasPositionsOfCallSites())
+    if (!instance->functionMetadataOffsets || !StaticHeap::hasPositionsOfCallSites())
         return std::nullopt;
     const uint8_t* at = nullptr;
-    if (uint32_t word = instance->factsOfFunctions[index]; word & 1)
+    if (uint32_t word = instance->functionMetadataOffsets[index]; word & 1)
         at = StaticHeap::inData<uint8_t>(word - 1);
-    else if (auto* facts = this->facts()) {
-        if (const uint32_t* where = facts->find(FunctionMetadata::ExpressionInfo))
+    else if (auto* metadata = this->metadata()) {
+        if (const uint32_t* where = metadata->find(FunctionMetadata::ExpressionInfo))
             at = StaticHeap::inData<uint8_t>(*where);
     }
     if (!at)
@@ -985,20 +985,20 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
 
 CodeType FunctionRef::codeType() const
 {
-    return facts() ? FunctionCode : unlinkedCodeBlockIfThereIsOne()->codeType();
+    return metadata() ? FunctionCode : unlinkedCodeBlockIfThereIsOne()->codeType();
 }
 
 bool FunctionRef::isBuiltinFunction() const
 {
-    if (auto* facts = this->facts())
-        return facts->flagsAndInstructionsSize & FunctionMetadata::isBuiltinFunction;
+    if (auto* metadata = this->metadata())
+        return metadata->flagsAndInstructionsSize & FunctionMetadata::isBuiltinFunction;
     return unlinkedCodeBlockIfThereIsOne()->isBuiltinFunction();
 }
 
 unsigned FunctionRef::instructionsSize() const
 {
-    if (auto* facts = this->facts())
-        return facts->instructionsSize();
+    if (auto* metadata = this->metadata())
+        return metadata->instructionsSize();
     return unlinkedCodeBlockIfThereIsOne()->instructions().size();
 }
 
@@ -1014,10 +1014,10 @@ void* FunctionRef::addressOfCatchEntrypoint(unsigned bytecodeOffset) const
 
 const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) const
 {
-    auto* facts = this->facts();
-    if (!facts)
+    auto* metadata = this->metadata();
+    if (!metadata)
         return unlinkedCodeBlockIfThereIsOne()->handlerForIndex(bytecodeOffset, RequiredHandler::AnyHandler);
-    const uint32_t* words = facts->find(FunctionMetadata::Handlers);
+    const uint32_t* words = metadata->find(FunctionMetadata::Handlers);
     if (!words)
         return nullptr;
     std::span<const UnlinkedHandlerInfo> handlers { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
@@ -1026,18 +1026,18 @@ const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) cons
 
 const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned tableIndex) const
 {
-    auto* facts = this->facts();
-    if (!facts)
+    auto* metadata = this->metadata();
+    if (!metadata)
         return unlinkedCodeBlockIfThereIsOne()->unlinkedStringSwitchJumpTable(tableIndex);
-    return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*facts->find(FunctionMetadata::StringSwitchJumpTables))[tableIndex];
+    return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*metadata->find(FunctionMetadata::StringSwitchJumpTables))[tableIndex];
 }
 
 const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
 {
-    auto* facts = this->facts();
-    if (!facts)
+    auto* metadata = this->metadata();
+    if (!metadata)
         return ensureUnlinkedCodeBlock()->constantIdentifierSets()[index];
-    return StaticHeap::inMalloc<IdentifierSet>(*facts->find(FunctionMetadata::ConstantIdentifierSets))[index];
+    return StaticHeap::inMalloc<IdentifierSet>(*metadata->find(FunctionMetadata::ConstantIdentifierSets))[index];
 }
 
 BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
@@ -1045,8 +1045,8 @@ BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
     if (state <= 0)
         return BytecodeIndex(0);
     int32_t offset = 0;
-    if (auto* facts = this->facts()) {
-        if (const uint32_t* word = facts->find(FunctionMetadata::ResumePoints)) {
+    if (auto* metadata = this->metadata()) {
+        if (const uint32_t* word = metadata->find(FunctionMetadata::ResumePoints)) {
             const int32_t* table = StaticHeap::inData<int32_t>(*word);
             if (state >= table[0] && static_cast<uint32_t>(state - table[0]) < static_cast<uint32_t>(table[1]))
                 offset = table[2 + state - table[0]];
@@ -1056,9 +1056,9 @@ BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
     return BytecodeIndex(std::max(offset, 0));
 }
 
-static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(const FunctionMetadata& facts, FunctionMetadata::Fact which)
+static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(const FunctionMetadata& metadata, FunctionMetadata::Section which)
 {
-    const uint32_t* words = facts.find(which);
+    const uint32_t* words = metadata.find(which);
     if (!words)
         return { };
     return { StaticHeap::inMalloc<WriteBarrier<UnlinkedFunctionExecutable>>(words[0]), words[1] };
@@ -1066,15 +1066,15 @@ static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(con
 
 std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionDecls() const
 {
-    if (auto* facts = this->facts())
-        return functionsIn(*facts, FunctionMetadata::FunctionDecls);
+    if (auto* metadata = this->metadata())
+        return functionsIn(*metadata, FunctionMetadata::FunctionDecls);
     return unlinkedCodeBlockIfThereIsOne()->functionDecls();
 }
 
 std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionExprs() const
 {
-    if (auto* facts = this->facts())
-        return functionsIn(*facts, FunctionMetadata::FunctionExprs);
+    if (auto* metadata = this->metadata())
+        return functionsIn(*metadata, FunctionMetadata::FunctionExprs);
     return unlinkedCodeBlockIfThereIsOne()->functionExprs();
 }
 
@@ -1148,8 +1148,8 @@ LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
     ScriptExecutable* executable = this->executable();
     RELEASE_ASSERT(bytecodeIndex.offset() < instructionsSize());
     LineColumn lineColumn;
-    if (auto* facts = this->facts()) {
-        if (const uint32_t* word = facts->find(FunctionMetadata::ExpressionInfo))
+    if (auto* metadata = this->metadata()) {
+        if (const uint32_t* word = metadata->find(FunctionMetadata::ExpressionInfo))
             lineColumn = decodeBorrowedExpressionInfo(StaticHeap::inData<uint8_t>(*word))->lineColumnForInstPC(bytecodeIndex.offset());
     } else
         lineColumn = unlinkedCodeBlockIfThereIsOne()->lineColumnForBytecodeIndex(bytecodeIndex);

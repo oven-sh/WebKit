@@ -208,7 +208,7 @@ Node* Graph::addNode(NodeKind kind)
     Node& node = m_nodes.alloc();
     node.graph = this;
     node.kind = kind;
-    node.index = m_nodes.size() - 1 + m_numberOfNodesAdopted;
+    node.index = m_nodes.size() - 1 + m_numberOfInlinedNodes;
     return &node;
 }
 
@@ -1132,7 +1132,7 @@ Variable Graph::variableAccessedBy(const Node* node)
     return { };
 }
 
-void Graph::recordUntrackableVariableAccesses(VariableSummaries& facts)
+void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
 {
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
@@ -1153,7 +1153,7 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& facts)
                     isOnHolder = kind == DeclaredNamesLink::Resolution::Global || kind == DeclaredNamesLink::Resolution::Stable;
                 }
                 if (!isOnHolder)
-                    facts.giveUpOnName(name);
+                    summaries.giveUpOnName(name);
                 break;
             }
             case op_get_from_scope: {
@@ -1166,32 +1166,32 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& facts)
                 if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar && type != Dynamic && m_declaredNames)
                     isOnHolder = m_declaredNames->resolve(name).kind == DeclaredNamesLink::Resolution::Global;
                 if (!isOnHolder)
-                    facts.recordDynamicReadOfName(name);
+                    summaries.recordDynamicReadOfName(name);
                 break;
             }
             case op_create_scoped_arguments:
                 // An object by way of which the parameters that are in the record can be written.
                 if (const void* scope = identityOfScope(node->use(node->as<OpCreateScopedArguments>().m_scope)))
-                    facts.giveUpOnScope(scope);
+                    summaries.giveUpOnScope(scope);
                 else {
                     for (auto& identifier : m_codeBlock->identifiers())
-                        facts.giveUpOnName(identifier.impl());
+                        summaries.giveUpOnName(identifier.impl());
                 }
                 break;
             case op_call_direct_eval:
                 // Code that nobody has seen, which can write whatever is in sight of it.
                 if (m_declaredNames)
-                    m_declaredNames->forEachScope([&](const void* scope) { facts.giveUpOnScope(scope); });
+                    m_declaredNames->forEachScope([&](const void* scope) { summaries.giveUpOnScope(scope); });
                 for (BasicBlock* other : m_rpo) {
                     for (Node* made : other->nodes) {
                         if (made->isBytecode(op_create_lexical_environment) || made->isBytecode(op_create_generator_frame_environment)) {
                             if (const void* scope = identityOfScope(made))
-                                facts.giveUpOnScope(scope);
+                                summaries.giveUpOnScope(scope);
                         }
                     }
                 }
                 for (auto& identifier : m_codeBlock->identifiers())
-                    facts.giveUpOnName(identifier.impl());
+                    summaries.giveUpOnName(identifier.impl());
                 break;
             default:
                 break;
@@ -1200,7 +1200,7 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& facts)
     }
 }
 
-void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& factsOfExecutables)
+void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExecutable)
 {
     auto executableMadeBy = [&](Node* node) -> UnlinkedFunctionExecutable* {
         if (node->kind != NodeKind::Bytecode)
@@ -1214,10 +1214,10 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& factsOfExecutab
             return nullptr;
         }
     };
-    auto valueIsUsed = [&](FunctionSummary* facts, FunctionSummary::ValueUseReason why, Node* user) {
-        facts->valueIsUsed.store(true, std::memory_order_relaxed);
+    auto valueIsUsed = [&](FunctionSummary* summary, FunctionSummary::ValueUseReason why, Node* user) {
+        summary->valueIsUsed.store(true, std::memory_order_relaxed);
         uint32_t nothing = 0;
-        facts->valueUseReason.compare_exchange_strong(nothing, why | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8, std::memory_order_relaxed);
+        summary->valueUseReason.compare_exchange_strong(nothing, why | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8, std::memory_order_relaxed);
     };
     auto callsCallbackRepeatedly = [&](Node* user) {
         Node* callee = user->isBytecode(op_call) ? user->use(user->as<OpCall>().m_callee) : user->isBytecode(op_call_ignore_result) ? user->use(user->as<OpCallIgnoreResult>().m_callee) : nullptr;
@@ -1234,10 +1234,10 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& factsOfExecutab
     auto note = [&](BasicBlock* block, Node* user, const Use& use) {
         // Where it is made, it is on its way to the variable. Anywhere else it goes, it has got out before it got there.
         if (auto* executable = executableMadeBy(use.node)) {
-            if (auto* facts = factsOfExecutables.get(executable); facts && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value)) {
-                valueIsUsed(facts, FunctionSummary::AtCreationSite, user);
+            if (auto* summary = summariesByExecutable.get(executable); summary && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value)) {
+                valueIsUsed(summary, FunctionSummary::AtCreationSite, user);
                 if (callsCallbackRepeatedly(user))
-                    facts->isUsedInLoop.store(true, std::memory_order_relaxed);
+                    summary->isUsedInLoop.store(true, std::memory_order_relaxed);
             }
             return;
         }
@@ -1245,10 +1245,10 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& factsOfExecutab
             return;
         bool readIsExact = false;
         const KnownFunction* known = knownFunctionReadBy(use.node, &readIsExact);
-        if (!known || !known->facts)
+        if (!known || !known->summary)
             return;
         if (block->isInLoop || callsCallbackRepeatedly(user))
-            known->facts->isUsedInLoop.store(true, std::memory_order_relaxed);
+            known->summary->isUsedInLoop.store(true, std::memory_order_relaxed);
         // (`f?.()` asks whether there is anything to call.)
         if (user->isBytecode(op_check_tdz) || user->isBytecode(op_jundefined_or_null) || user->isBytecode(op_jnundefined_or_null))
             return;
@@ -1261,10 +1261,10 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& factsOfExecutab
             isCallee = use.reg == user->as<OpTailCall>().m_callee;
         // (What may be a read of some other variable of that name is no proof of anything, either way.)
         if (isCallee && readIsExact && known->forCall && knownCallee(user) == known && calleeIsExact(user)) {
-            known->facts->directCalls.fetch_add(1, std::memory_order_relaxed);
+            known->summary->directCalls.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        valueIsUsed(known->facts, !isCallee ? FunctionSummary::Operand : !readIsExact ? FunctionSummary::CalleeWithInexactRead : FunctionSummary::CalleeWithInexactCall, user);
+        valueIsUsed(known->summary, !isCallee ? FunctionSummary::Operand : !readIsExact ? FunctionSummary::CalleeWithInexactRead : FunctionSummary::CalleeWithInexactCall, user);
     };
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
@@ -1497,8 +1497,8 @@ bool Graph::isThisOfEscapingFunction(const Node* node)
         node = node->uses[0].node;
     if (node->kind != NodeKind::Argument || node->reg != virtualRegisterForArgumentIncludingThis(0))
         return false;
-    const FunctionSummary* facts = node->graph->facts();
-    return !facts || !facts->isNonEscaping;
+    const FunctionSummary* summary = node->graph->summary();
+    return !summary || !summary->isNonEscaping;
 }
 
 std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
@@ -1850,17 +1850,17 @@ void Graph::setLinkage(const ModuleLinkage* linkage, const DeclaredNamesLink* de
     }
 }
 
-void Graph::convertToTypedLayout(std::unique_ptr<Graph>&& other, InlineFrame frame)
+void Graph::adoptInlinee(std::unique_ptr<Graph>&& other, InlineFrame frame)
 {
-    RELEASE_ASSERT(isOutermost() && other->isOutermost() && other->m_adopted.isEmpty());
+    RELEASE_ASSERT(isOutermost() && other->isOutermost() && other->m_inlinees.isEmpty());
     if (inlineFrames.isEmpty())
         inlineFrames.append({ });
     other->m_inlineFrame = inlineFrames.size();
     inlineFrames.append(frame);
     other->m_outermost = this;
     for (auto& node : other->m_nodes)
-        node.index += m_nodes.size() + m_numberOfNodesAdopted;
-    m_numberOfNodesAdopted += other->m_nodes.size();
+        node.index += m_nodes.size() + m_numberOfInlinedNodes;
+    m_numberOfInlinedNodes += other->m_nodes.size();
     for (auto& block : other->blocks) {
         block->index = blocks.size();
         blocks.append(WTF::move(block));
@@ -1871,7 +1871,7 @@ void Graph::convertToTypedLayout(std::unique_ptr<Graph>&& other, InlineFrame fra
     makesCalls |= other->makesCalls;
     usesStaticImports |= other->usesStaticImports;
     numberOfIntrinsicReads += other->numberOfIntrinsicReads;
-    m_adopted.append(WTF::move(other));
+    m_inlinees.append(WTF::move(other));
 }
 
 void Graph::computeOrderOfBlocks()

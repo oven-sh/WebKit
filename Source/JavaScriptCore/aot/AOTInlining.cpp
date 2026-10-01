@@ -99,11 +99,11 @@ public:
     }
 
     // isCalledInLoop: or may be, for all that is known.
-    static bool isProfitable(UnlinkedCodeBlock* callee, const FunctionSummary* facts, bool isCalledInLoop = true)
+    static bool isProfitable(UnlinkedCodeBlock* callee, const FunctionSummary* summary, bool isCalledInLoop = true)
     {
         unsigned size = callee->instructionsSize();
         // There is going to be no other copy of it.
-        if (facts && facts->isNonEscaping && facts->directCalls.load(std::memory_order_relaxed) == 1)
+        if (summary && summary->isNonEscaping && summary->directCalls.load(std::memory_order_relaxed) == 1)
             return size <= Options::aotInlinesOnlyCallUpTo();
         // Every copy of it is that much more code, unless it is no longer than the call. That is worth it where it may be run over and over, which is all
         // that there is to go by. (In a big program: 5.4MB for what is between 30 and 60 bytes, and 0.07MB for what is up to 18.)
@@ -229,7 +229,7 @@ private:
         // (A closure that is called where it is made is as good as called from one place.)
         if (intrinsicToCheckFor && (!about || !canBePartOfAnother(callee)))
             return notTaken(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
-        if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::aotInlinesOnlyCallUpTo() : isProfitable(callee, about->facts, block->isInLoop)))
+        if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::aotInlinesOnlyCallUpTo() : isProfitable(callee, about->summary, block->isInLoop)))
             return intrinsicToCheckFor ? notTaken("it is too big"_s) : false;
         if (m_inlinedBytecodeSize + callee->instructionsSize() > Options::aotInlinesAtMost() || m_graph.inlineFrames.size() > PackedSite::mostInlineFrames)
             return intrinsicToCheckFor ? notTaken("the caller has taken over enough"_s) : false;
@@ -490,7 +490,7 @@ private:
             m_graph.callSites.append(call->bytecodeIndex.offset());
 
         Graph::InlineFrame frame { caller.inlineFrame(), CallSiteIndex(call->bytecodeIndex).bits(), m_graph.indexOfKnownCallee(about->key), call->opcode == op_tail_call };
-        m_graph.convertToTypedLayout(WTF::move(inlinee), frame);
+        m_graph.adoptInlinee(WTF::move(inlinee), frame);
         return true;
     }
 
@@ -575,9 +575,9 @@ void inlineCalls(Graph& graph, const CodeOfProgram& program)
     Inliner(graph, program).run();
 }
 
-bool mayBecomePartOfAnother(UnlinkedCodeBlock* codeBlock, const FunctionSummary* facts)
+bool mayBecomePartOfAnother(UnlinkedCodeBlock* codeBlock, const FunctionSummary* summary)
 {
-    return Options::aotInlines() && Inliner::isProfitable(codeBlock, facts) && Inliner::canBePartOfAnother(codeBlock);
+    return Options::aotInlines() && Inliner::isProfitable(codeBlock, summary) && Inliner::canBePartOfAnother(codeBlock);
 }
 
 } } // namespace JSC::AOT

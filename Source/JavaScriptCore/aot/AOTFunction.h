@@ -81,9 +81,9 @@ struct FunctionRef {
     const FunctionInfo& info() const;
     JS_EXPORT_PRIVATE Data* dataIfItHasAny() const;
     JS_EXPORT_PRIVATE ScriptExecutable* executable() const;
-    JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlockIfThereIsOne() const; // Non-null if there is no facts().
+    JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlockIfThereIsOne() const; // Non-null if there is no metadata().
     JS_EXPORT_PRIVATE CodeBlock* codeBlockIfThereIsOne() const;
-    const FunctionMetadata* facts() const;
+    const FunctionMetadata* metadata() const;
     // Properties of the unlinked code block, available whether or not it has been decoded.
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;

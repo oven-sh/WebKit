@@ -92,14 +92,14 @@ void Lowering::validateNewObject(Node* node, LValue object, uint32_t layout, con
     if (!Options::aotTypesFields() || !layout || !TypeTable::shared())
         return;
     // (Of structs, `layout` is the family.)
-    auto fieldType = fieldTypesIfKnown ? *fieldTypesIfKnown : TypeTable::hasTypedFields() ? TypeTable::shared()->fieldTypesBySlotOfLayout(layout) : TypeTable::shared()->fieldTypesBySlot(layout);
+    auto fieldTypes = fieldTypesIfKnown ? *fieldTypesIfKnown : TypeTable::hasTypedFields() ? TypeTable::shared()->fieldTypesBySlotOfLayout(layout) : TypeTable::shared()->fieldTypesBySlot(layout);
     LBasicBlock someIsNot = nullptr;
-    for (unsigned slot = 0; slot < inSlots.size() && slot < fieldType.size(); ++slot) {
-        if (!inSlots[slot] || !fieldType[slot].isConstrained())
+    for (unsigned slot = 0; slot < inSlots.size() && slot < fieldTypes.size(); ++slot) {
+        if (!inSlots[slot] || !fieldTypes[slot].isConstrained())
             continue;
         if (!someIsNot)
             someIsNot = newColdBlock();
-        branchUnlessAccepted(inSlots[slot], values[slot], fieldType[slot], someIsNot);
+        branchUnlessAccepted(inSlots[slot], values[slot], fieldTypes[slot], someIsNot);
     }
     if (!someIsNot)
         return;
@@ -168,11 +168,11 @@ bool Lowering::tryLowerAllocation(Node* node)
                     Vector<Node*, 8> nodesInSlots;
                     inSlots.fill(m_out.int64Zero, shape->numberOfSlots());
                     nodesInSlots.fill(nullptr, shape->numberOfSlots());
-                    auto fieldType = shape->layoutID ? TypeTable::shared()->fieldTypesBySlotOfLayout(shape->layoutID, shape->names.span(), shape->slots.span()) : Vector<TypeTable::FieldType, 8> { };
-                    fieldTypesBySlot = fieldType;
+                    auto fieldTypes = shape->layoutID ? TypeTable::shared()->fieldTypesBySlotOfLayout(shape->layoutID, shape->names.span(), shape->slots.span()) : Vector<TypeTable::FieldType, 8> { };
+                    fieldTypesBySlot = fieldTypes;
                     fieldTypesAreKnown = shape->layoutID;
                     for (unsigned i = 0; i < count; ++i) {
-                        inSlots[shape->slots[i]] = shape->layoutID && Options::aotTypesFields() && shape->slots[i] < fieldType.size() ? toFieldRepresentation(inSlotsOfLayout[i], values[i], fieldType[shape->slots[i]]) : values[i];
+                        inSlots[shape->slots[i]] = shape->layoutID && Options::aotTypesFields() && shape->slots[i] < fieldTypes.size() ? toFieldRepresentation(inSlotsOfLayout[i], values[i], fieldTypes[shape->slots[i]]) : values[i];
                         nodesInSlots[shape->slots[i]] = inSlotsOfLayout[i];
                     }
                     values = WTF::move(inSlots);

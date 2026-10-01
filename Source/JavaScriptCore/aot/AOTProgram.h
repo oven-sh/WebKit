@@ -195,7 +195,7 @@ struct KnownFunction {
     // If exact: the union of everything a call can return. Computed for all functions together, starting at bottom
     // (inferReturnTypeForImage()). Valid once the fixpoint has been reached.
     mutable AtomicType returnType;
-    mutable FunctionSummary* facts { nullptr }; // If exact, and the driver keeps summaries.
+    mutable FunctionSummary* summary { nullptr }; // If exact, and the driver keeps summaries.
 
     KnownFunction() = default;
     KnownFunction(const KnownFunction& other) { *this = other; }
@@ -213,7 +213,7 @@ struct KnownFunction {
         isVisibleFromOutside = other.isVisibleFromOutside;
         needsNoFunctionObject = other.needsNoFunctionObject.load(std::memory_order_relaxed);
         returnType = other.returnType;
-        facts = other.facts;
+        summary = other.summary;
         return *this;
     }
 
@@ -330,7 +330,7 @@ public:
     struct About {
         const CalleeHints* hints { nullptr };
         const ModuleLinkage* linkage { nullptr };
-        const FunctionSummary* facts { nullptr };
+        const FunctionSummary* summary { nullptr };
         ImageKey key;
     };
     virtual std::optional<About> about(UnlinkedCodeBlock*) const = 0; // Any thread.
@@ -429,7 +429,7 @@ struct StaticImport {
     const void* scope { nullptr }; // Variable::scope of the exporting module's environment.
 };
 
-// Facts about a module that hold because the whole program is linked at compile time. Unlike hints, compiled code relies on these
+// Properties of a module that hold because the whole program is linked at compile time. Unlike hints, compiled code relies on these
 // without checks. It only runs for a module whose record was verified to be linked the same way
 // (JSModuleRecord::isLinkedAsInImage()).
 class ModuleLinkage {

@@ -213,8 +213,8 @@ public:
     // The image's key table, if the image omits it: the keys of functions whose executables are created at run time.
     static std::span<const AOT::ImageKey> keysOfImage();
     static const AOT::ImageFunction* imageFunctionOfFunction(uint32_t index);
-    // AOT::Instance::factsOfFunctions. The offsets in AOT::FunctionMetadata are relative to an arena (inData(), inMalloc()).
-    static const uint32_t* factsOfFunctions(VM&);
+    // AOT::Instance::functionMetadataOffsets. The offsets in AOT::FunctionMetadata are relative to an arena (inData(), inMalloc()).
+    static const uint32_t* functionMetadataOffsets(VM&);
     template<typename T> static const T* inData(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Data) + offset); }
     template<typename T> static const T* inMalloc(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Malloc) + offset); }
     // For decoding a function's code from the kept payload. `placed` is the decoder passed to

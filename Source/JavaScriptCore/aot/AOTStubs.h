@@ -470,7 +470,7 @@ struct ListDescriptor {
 };
 static constexpr unsigned mostItemsInList = ListDescriptor::mostItems;
 
-// In a function with inlined callees (Graph::adopt()), a call site records which inline frame it is in, above its location in the
+// In a function with inlined callees (Graph::adoptInlinee()), a call site records which inline frame it is in, above its location in the
 // inlined callee's bytecode.
 struct PackedSite {
     static constexpr unsigned shift = 24;

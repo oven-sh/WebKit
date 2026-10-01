@@ -166,8 +166,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, aotInlinesOutsideLoopsUpTo, 18, Normal, "aotInlines: and how many where it is not called in a loop. (About what a call comes to.)"_s) \
     v(Unsigned, aotInlinesOnlyCallUpTo, 1200, Normal, "aotInlines: how many if it is called from one place, and by nothing else."_s) \
     v(Unsigned, aotInlinesAtMost, 4000, Normal, "aotInlines: how many bytes of bytecode one function takes over in all."_s) \
-    v(Bool, aotVerifiesFacts, false, Normal, "For testing the compiler: wherever a value is taken to be of some type without being looked at, it is looked at, and if it is not of that type the process ends."_s) \
-    v(Bool, aotLogsFacts, false, Normal, "For finding out why the compiler took something for a fact: once the whole of the program has been looked at, says what it found of each closed function and of each variable, and what it went by. Lines that start with FACTLOG."_s) \
+    v(Bool, validateAOTInferredTypes, false, Normal, "For testing the AOT compiler. Compiled code checks every value whose type was inferred rather than checked, and crashes if the type is wrong."_s) \
+    v(Bool, logAOTTypeInference, false, Normal, "After whole-program type inference, logs the result for each function and variable and what contributed to it. Lines start with \"AOT inference:\"."_s) \
     v(Unsigned, aotLoopsToSplit, 3, Normal, "Which loops aotSplitLoops is for. 1: all. 2: those with something in them that the fast copy does better (arithmetic, elements got at by index, a call that it does not make). 3: those in which no call is made. 4: both. 5: those in which no call is made, or that have a call that the fast copy does not make or an element got at by its index."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \

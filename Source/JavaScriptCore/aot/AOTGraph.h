@@ -43,79 +43,80 @@ struct Node;
 class CalleeHints;
 struct KnownFunction;
 
-// The static compiler's IR: the bytecode of one function in SSA form, with a proven Type on every value.
+// The ahead-of-time compiler's IR: the bytecode of one function in SSA form, with a proven Type on every value.
 //
-// A node is, for the most part, a bytecode instruction: its immediates are read from the instruction, and its inputs are
-// found by the virtual register the instruction names them by (Node::use()), so no opcode needs code of its own to get into
-// the IR (BytecodeUseDef says what every instruction reads and writes). What an opcode does need is a type rule
-// (AOTTypeInference.cpp; the default is "any value") and a lowering (AOTLowerToB3.cpp; a function that has an instruction
-// without one is left to the other tiers).
+// Most nodes are bytecode instructions. A node reads its immediates from the instruction and finds its inputs by the virtual
+// registers the instruction names (Node::use()), so an opcode needs no code of its own to enter the IR; BytecodeUseDef reports what
+// every instruction reads and writes. What an opcode does need is a type rule (AOTTypeInference.cpp; the default is "any value")
+// and a lowering (AOTLower*.cpp). A function that contains an instruction with no lowering is left to the other tiers.
 //
-// There is no speculation. A lowering picks its code by the types of the inputs, and where they say nothing it emits the
-// whole of the operation's semantics, out of line where that is long.
+// There is no speculation. A lowering selects code based on the proven types of its inputs. Where those are unknown it emits the
+// operation's full semantics, out of line if that is long.
 enum class NodeKind : uint8_t {
     Bytecode, // An instruction. Defines at most one register, or several through Proj nodes.
-    Constant, // A value known now: anything that is not a cell.
-    ConstantCell, // A constant register that holds a cell: loaded from the CodeBlock.
-    Intrinsic, // One of the realm's ImmutableIntrinsics that is a cell: loaded from the Instance.
-    LinkTimeConstant, // What the realm has for one of the things only the engine's own functions can name (`intrinsic` says which). It is made when it is first wanted, so this is where it is read.
+    Constant, // A compile-time constant that is not a cell.
+    ConstantCell, // A constant register that holds a cell. Loaded from the function's constants.
+    Intrinsic, // One of the realm's ImmutableIntrinsics that is a cell. Loaded from the Instance.
+    LinkTimeConstant, // A link-time constant of the realm (`intrinsic` says which). It is materialized on first use, so this node marks where it is read.
     Argument, // The value an argument register has on entry.
     Phi,
     Proj, // One of the registers defined by an instruction that defines several. uses[0] is the instruction.
-    GetStack, // Reads a register that lives in memory (see Graph::livesInFrame).
+    GetStack, // Reads a register that lives in the frame (see Graph::livesInFrame).
     SetStack, // Writes one. uses[0] is the value.
-    Guard, // Ends a block of a loop's fast copy (see BasicBlock::isGeneric). Reads what the instruction that comes next reads.
-    Narrow, // uses[0], on its way back into the fast copy of a loop, known to be what `target` is (see BasicBlock::isReentry).
+    Guard, // Ends a block of a loop's fast copy (see BasicBlock::isGeneric). Has the same uses as the instruction that follows it.
+    Narrow, // uses[0] re-entering the fast copy of a loop, with its type narrowed to that of `target` (see BasicBlock::isReentry).
 };
 
-// A call that there is a short way of making if the callee turns out to be the host function that the name it was found under
-// suggests. The name is a reason to have the code for it, and no more.
+// A call that has a fast path if the callee turns out to be the host function suggested by the property name it was read from. The
+// name only justifies emitting the fast path; the callee is still checked.
 enum class CallIntrinsic : uint8_t { None, MathSqrt, MathAbs, MathFloor, MathCeil, MathTrunc, MathFround, MathMin, MathMax, MathIMul, StringCharCodeAt, ArrayPush };
 inline bool hasNoEffects(CallIntrinsic intrinsic) { return intrinsic != CallIntrinsic::ArrayPush; }
 CallIntrinsic callIntrinsicFor(UniquedStringImpl* propertyName, unsigned argumentCountIncludingThis);
 
-// What a guard sees to. All but the first two are made by optimizeLoops().
+// What a guard checks. Created by optimizeLoops() unless noted otherwise.
 enum class GuardKind : uint8_t {
-    Whole, // The instruction.
-    Nothing, // It lets everything by.
-    Reentry, // That the values that the block's Narrow nodes are of are what those say.
-    Structure, // That the base (uses[0]) is of the structure that the cache of `site` is for.
-    SlotsAgree, // That the caches of `site` and `otherSite` are for the same structure.
-    SlotIsPlain, // That the cache of `site` is for a property in the base itself (not Slot::isIndirect).
-    // Around guards of those two kinds, which have nothing to go by but caches: skipped if none has changed since they last held.
+    Whole, // The whole instruction: everything its fast path requires.
+    Nothing, // Always passes.
+    Reentry, // The inputs of the block's Narrow nodes have the types those nodes claim.
+    Structure, // The base (uses[0]) has the Structure that the cache of `site` holds.
+    SlotsAgree, // The caches of `site` and `otherSite` hold the same Structure.
+    SlotIsPlain, // The cache of `site` is for a property stored in the base itself (not Slot::isIndirect).
+    // These bracket a run of SlotsAgree and SlotIsPlain guards, which depend only on caches. The run is skipped if no cache has
+    // changed since it last passed.
     BeginSlotChecks,
     EndSlotChecks,
-    Callee, // That the callee is what the call takes it for.
-    KnownCallee, // That the callee (uses[0]) is a closure of the function that the call was compiled for (Graph::knownCallee()).
-    TypedArrayStorage, // That the typed array (uses[0]) is of a fixed length. It is where the length and the storage are loaded.
-    IsIntrinsicOfArray, // IsIntrinsic, and that uses[1] is an array. Made by inlineCalls().
-    IsIntrinsic, // That uses[0] is the one of the realm's ImmutableIntrinsics that Node::intrinsic says. Made by inlineCalls().
-    // Options::aotAssertsTypes(). Of an op_get_by_id or an op_put_by_id whose base has a type (TypeTable): that the base was born with the property in
-    // Node::slotOfField (as one of firstLayout to lastLayout), and that it is still there. It does what the instruction does. After
-    // it the base is known for what it was born as (a Narrow with narrowedTo), so the next one has that much less to see to.
+    Callee, // The callee is what the call site expects.
+    KnownCallee, // The callee (uses[0]) is a closure of the function the call was compiled against (Graph::knownCallee()).
+    TypedArrayStorage, // The typed array (uses[0]) has a fixed length. Also loads its length and storage pointer.
+    IsIntrinsicOfArray, // IsIntrinsic, and uses[1] is an array. Created by inlineCalls().
+    IsIntrinsic, // uses[0] is the ImmutableIntrinsic numbered Node::intrinsic. Created by inlineCalls().
+    // With Options::aotAssertsTypes(). For an op_get_by_id or op_put_by_id whose base has a static type (TypeTable): the base was
+    // allocated with the property in Node::slotOfField (its layout is in [firstLayout, lastLayout]) and the property is still
+    // there. The guard also performs the access. Afterwards the base's layout is known (a Narrow with narrowedTo), so later guards
+    // on it check less.
     Field,
 };
 
-// What a constructor does first, as a rule, is give the new object its properties:
+// A constructor typically starts by initializing the new object's properties:
 //     constructor(a, b) { this.a = a; this.b = b; }
-// Until something other than a store gets hold of the object, nobody can tell in what state it is or, indeed, whether it is there. So
-// the object is made after the last of those stores, with everything in it.
+// Until something other than a store observes the object, its intermediate states are invisible. The allocation is therefore
+// deferred until after the last of those stores, and the object is created with all its properties in place.
 //
-// This is worked out from the bytecode alone, by the compiler and again by the operation that the compiled code falls back to.
+// Derived from the bytecode alone, by the compiler and again by the slow path operation.
 struct NewObjectPlan {
     struct Property {
         unsigned identifier;
-        bool isDefined; // By a store that makes a property, whatever the prototypes have to say. If not, it is up to them.
-        bool isStrict; // Whether it is an error if they say no.
+        bool isDefined; // The store defines the property regardless of the prototype chain. Otherwise setters and read-only properties on the chain apply.
+        bool isStrict; // Whether a rejected store throws.
     };
-    Vector<Property, 8> properties; // In the order they are added in.
+    Vector<Property, 8> properties; // In insertion order.
     struct Store {
-        unsigned offset; // Of the op_put_by_id.
-        unsigned property; // Which of the above.
+        unsigned offset; // Bytecode offset of the op_put_by_id.
+        unsigned property; // Index into `properties`.
     };
     Vector<Store, 8> stores;
 
-    // What stands for the register of a property's value, among the uses of the node.
+    // The pseudo-register under which a property's value appears among the node's uses.
     static VirtualRegister registerOf(unsigned property) { return VirtualRegister(0x20000000 + static_cast<int>(property)); }
 
     static NewObjectPlan forCreateThis(const JSInstructionStream&, unsigned offsetOfCreateThis);
@@ -125,12 +126,12 @@ class Graph;
 struct BasicBlock;
 struct Node;
 
-// What becomes of something that the function makes: whether anything can still get at it once the function has returned, and if so
-// the first thing that was seen to make that so (analyzeEscapes()).
+// The result of escape analysis for an allocation: whether it can still be reachable after the function returns and, if so, the
+// first reason found (analyzeEscapes()).
 enum class Escape : uint8_t {
     NotAnalyzed,
-    StaysHere, // Nothing sees it but the code of this function (and what has been made part of that).
-    IsOnlyLent, // It is passed to functions that are known, and known to be done with it when they return.
+    StaysHere, // Only this function's code (including inlined callees) sees it.
+    IsOnlyLent, // It is passed only to known functions that do not retain it.
     Returned,
     Thrown,
     StoredInProperty,
@@ -174,7 +175,7 @@ struct Use {
 };
 
 struct Node {
-    // Whose code it is of: the function that is being compiled, or one that has been made part of it (inlineCalls()).
+    // The graph the node came from: the function being compiled, or one that was inlined into it (inlineCalls()).
     Graph* graph { nullptr };
     NodeKind kind { NodeKind::Bytecode };
     OpcodeID opcode { op_nop };
@@ -186,37 +187,37 @@ struct Node {
     const JSInstruction* instruction { nullptr };
     BasicBlock* block { nullptr };
     Vector<Use, 4> uses;
-    JSValue constant; // Constant
+    JSValue constant; // NodeKind::Constant
     VirtualRegister reg; // ConstantCell, Argument, Proj, GetStack, SetStack, Phi (the register it merges)
-    Node* replacement { nullptr }; // Set while phis are simplified.
-    Node* guard { nullptr }; // An instruction that is only got to when this has found that there is a short way to do it.
-    Node* guarded { nullptr }; // The other way round.
-    Node* target { nullptr }; // NodeKind::Narrow: the phi of the loop's header that the value is on its way to.
-    bool checksNarrowedType { false }; // NodeKind::Narrow with narrowedTo: nothing has seen to it. It does, and what is not that is not let by (a TypeError).
-    Type narrowedTo { TNone }; // NodeKind::Narrow, if there is no target: what a GuardKind::Field found the value to be.
+    Node* replacement { nullptr }; // Set during phi simplification.
+    Node* guard { nullptr }; // For an instruction: the guard that must pass for its fast path to be reached.
+    Node* guarded { nullptr }; // For a guard: the instruction it guards.
+    Node* target { nullptr }; // NodeKind::Narrow: the loop header phi that the value flows into.
+    bool checksNarrowedType { false }; // NodeKind::Narrow with narrowedTo: nothing has checked the type yet, so this node checks it and throws a TypeError on failure.
+    Type narrowedTo { TNone }; // NodeKind::Narrow with no target: the type that a GuardKind::Field established.
     uint16_t slotOfField { 0 }; // GuardKind::Field
-    uint16_t firstLayout { 0 }; // Likewise, and the Narrow that comes after it.
+    uint16_t firstLayout { 0 }; // GuardKind::Field, and the Narrow that follows it.
     uint16_t lastLayout { 0 };
-    // GuardKind::Field, of a read: layouts that have no such property, of which it is undefined. 0, 0: none.
+    // GuardKind::Field on a read: layouts that lack the property, for which the result is undefined. 0, 0 means none.
     uint16_t firstWithout { 0 };
     uint16_t lastWithout { 0 };
-    // GuardKind::Field, with Options::aotTypesFields(): what the slot holds (TypeTable::Holds). No kinds: anything.
+    // GuardKind::Field with Options::aotTypesFields(): the field type (TypeTable::FieldType). Zero kinds means unconstrained.
     uint16_t fieldTypeKinds { 0 };
     uint16_t fieldTypeFirst { 0 };
     uint16_t fieldTypeLast { 0 };
-    // Whether the value is certain to have been born as one of those: by its type, or because it is what got past a test for no more than those.
+    // Whether the value is known to have a layout in [first, last], from its type or because it passed a check for a subrange.
     bool hasLayoutInRange(uint16_t first, uint16_t last) const
     {
         for (const Node* node = this; node->kind == NodeKind::Narrow && node->narrowedTo; node = node->uses[0].node) {
             if (node->firstLayout >= first && node->lastLayout <= last)
                 return true;
         }
-        // (Of a family that is open it says no such thing: Lowering::fieldStorageFor().)
+        // For an open layout the tag alone proves nothing. See Lowering::fieldStorageFor().
         if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::aotAuditsTypes() && isTrusted)
             return true;
         return type && isSubtype(type, TCell) && hasLayoutInRangeIfCell(first, last);
     }
-    // Likewise, if it is a cell at all: it may be undefined, or null, or a number.
+    // The same, provided the value is a cell. It may also be undefined, null or a number.
     bool hasLayoutInRangeIfCell(uint16_t first, uint16_t last) const
     {
         if (Type cells = type & TCell; cells && isSubtype(cells, TFinalObject)) {
@@ -224,7 +225,7 @@ struct Node {
             if (layouts.lowest >= first && layouts.highest <= last)
                 return true;
         }
-        // What was read from a slot says exactly. (A type says what the numbers have in common.)
+        // A field type gives the exact range, whereas a Type can only express the high-order bits the range has in common.
         const Node* node = this;
         while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz))
             node = node->uses[0].node;
@@ -233,51 +234,58 @@ struct Node {
         constexpr unsigned notCells = MaskUndefined | MaskNull | MaskBoolean | MaskNumber;
         return !(node->guard->fieldTypeKinds & ~(notCells | MaskOtherObject)) && node->guard->fieldTypeFirst >= first && node->guard->fieldTypeLast <= last;
     }
-    unsigned expectedMask { 0 }; // op_get_by_val: the mask of the op_check_type that what it gets goes to next, if it does.
+    unsigned expectedMask { 0 }; // op_get_by_val: the mask of the op_check_type that immediately consumes the result, if any.
     GuardKind guardKind { GuardKind::Whole };
-    uint16_t intrinsic { 0 }; // NodeKind::Intrinsic: its number.
-    // A call: the function of the language that it is a call of, by its number (ImmutableIntrinsics), if what it is made on is a Receiver of that kind. (None: whatever it is made on.)
-    // The read of what is called: likewise. See Graph::findBuiltinsCalled().
+    uint16_t intrinsic { 0 }; // NodeKind::Intrinsic: its index.
+    // For a call: the built-in function being called, by its ImmutableIntrinsics index, provided the receiver is the given kind of
+    // Receiver (none means any receiver). The same fields are set on the read of the callee. See Graph::findBuiltinsCalled().
     uint16_t builtinCalled { 0 };
     uint8_t receiverOfBuiltin { 0 };
-    bool structureIsChecked { false }; // A guard of a property access: another guard has seen to the base's structure.
-    bool slotIsPlain { false }; // Likewise: another guard has seen to that.
+    bool structureIsChecked { false }; // For a property access guard: another guard has already checked the base's Structure.
+    bool slotIsPlain { false }; // For a property access guard: another guard has already checked SlotIsPlain.
     bool calleeIsChecked { false };
-    bool wasInferredUnreachable { false }; // inferTypes(): nothing was found that it could give. For Options::aotVerifiesFacts().
-    bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
-    // An op_get_by_id of a closed method whose value nothing wants: all that is left of it is that it throws if there is no object to read from.
+    bool wasInferredUnreachable { false }; // inferTypes() found no value it could produce. For Options::validateAOTInferredTypes().
+    bool isElided { false }; // Its value is unused and computing it has no side effects. Not lowered.
+    // An op_get_by_id of a non-escaping method whose value is unused. All that remains is the throw if the base is null or
+    // undefined.
     bool isReadOnlyToBeCalled { false };
-    bool isTrusted { false }; // op_type_tag of a family: what it is given is of the family (TypeTable::isTrusted()). If not, it may be anything: Lowering::fieldStorageFor().
-    // promoteEnvironments(). An op_create_lexical_environment that is no object: its variables are the function's own.
+    bool isTrusted { false }; // op_type_tag with a typed layout: the operand is known to have the layout (TypeTable::isTrusted()). Otherwise it may be anything. See Lowering::fieldStorageFor().
+    // Set by promoteEnvironments(). An op_create_lexical_environment that allocates nothing: its variables become locals of the
+    // function.
     bool isPromoted { false };
-    // An op_get_from_scope or op_put_to_scope of a variable of such an environment: which, and where in it.
+    // An op_get_from_scope or op_put_to_scope on a variable of a promoted environment: the environment and the variable's offset.
     Node* promotedEnvironment { nullptr };
     unsigned offsetInEnvironment { 0 };
-    // An op_resolve_scope or op_get_parent_scope that gets to a scope that is an object by way of environments that are not: it is that many out from this.
+    // An op_resolve_scope or op_get_parent_scope that reaches a real scope object through promoted environments: the result is
+    // hopsFromThere scopes out from scopeToStartFrom.
     Node* scopeToStartFrom { nullptr };
     unsigned hopsFromThere { 0 };
-    // Of an op_resolve_scope: that is not what it gives, only where it starts looking, which is this many scopes out from where it says to. (Those are not there. What it looks for is in none of them.)
+    // For an op_resolve_scope, scopeToStartFrom is only where the search starts. This is the number of promoted environments
+    // skipped, none of which declares the name.
     unsigned environmentsPassedOver { 0 };
-    Escape escape { Escape::NotAnalyzed }; // If it makes something (kindOfAllocation()).
-    Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: guards of property accesses.
+    Escape escape { Escape::NotAnalyzed }; // For an allocation (kindOfAllocation()).
+    Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: the property access guards involved.
     Node* otherSite { nullptr };
-    // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
-    // op_create_this: how many properties the object is made with (NewObjectPlan). Their values are the uses at NewObjectPlan::registerOf().
+    // op_new_object: how many of Graph::storesOfLiteral() are folded into it.
+    // op_create_this: how many properties the object is created with (NewObjectPlan).
+    // In both cases the values are the uses at NewObjectPlan::registerOf().
     unsigned numberOfLiteralProperties { 0 };
-    // An op_call of a function that hands back that many things in registers (planMultiValueReturns()). Nothing wants what the call itself gives.
+    // An op_call to a function that returns this many values in registers (planMultiValueReturns()). The call's own result is
+    // unused.
     uint8_t numberOfReturnValues { 0 };
-    uint8_t returnValueIndex { 0 }; // A NodeKind::Proj of such a call, which was the op_get_by_id that read it: which of them.
-    // An op_get_by_val or op_get_length of an array, in a loop that changes no array: the header of the loop ahead of which the array is looked at (BasicBlock::arraysViewed).
+    uint8_t returnValueIndex { 0 }; // A NodeKind::Proj of such a call, replacing the op_get_by_id that read the property: which value.
+    // An op_get_by_val or op_get_length on an array, in a loop that modifies no array: the header of the loop before which the
+    // array's butterfly and length are loaded (BasicBlock::arraysViewed).
     BasicBlock* viewedAheadOf { nullptr };
-    Node* arrayViewed { nullptr }; // Which of those it is: what the base is, as it comes to the loop.
-    Node* storage { nullptr }; // A guard of an access to an element of a typed array: the GuardKind::TypedArrayStorage that goes for it.
+    Node* arrayViewed { nullptr }; // The corresponding entry in arraysViewed: the base as it enters the loop.
+    Node* storage { nullptr }; // For a guard on a typed array element access: its GuardKind::TypedArrayStorage.
 
     // Lowering state.
     B3::Value* lowered { nullptr };
-    B3::Value* loweredAsJSValue { nullptr }; // If that is how it came, and not how it is held (rep()).
+    B3::Value* loweredAsJSValue { nullptr }; // The boxed form, if that is how the value was produced and it differs from rep().
     B3::Value* loweredLength { nullptr }; // GuardKind::TypedArrayStorage
     unsigned useCount { 0 };
-    bool isHandled { false }; // A guard: it has done what the instruction does. If not, it lets everything by, and the instruction is on its own.
+    bool isHandled { false }; // For a guard: it performed the instruction's work. Otherwise it always passes and the instruction does the work itself.
 
     bool isBytecode(OpcodeID id) const { return kind == NodeKind::Bytecode && opcode == id; }
     bool isConstant() const { return kind == NodeKind::Constant; }
@@ -308,8 +316,8 @@ struct Node {
 
     template<typename Op> Op as() const { return instruction->as<Op>(); }
 
-    // Whether the value is certain to get past an op_check_type with that mask: by its type, or because it is what got past a check
-    // that let no more by. The types are too coarse to say that of every mask (see typeProvingMask()).
+    // Whether the value is guaranteed to pass an op_check_type with this mask, from its type or because it passed a check that is
+    // at least as strict. Types are too coarse to prove this for every mask (see typeProvingMask()).
     bool isKnownToPass(unsigned mask) const
     {
         if (isSubtype(type, typeProvingMask(mask)))
@@ -336,26 +344,27 @@ struct BasicBlock {
     bool isReachable { false };
     bool isLoopHeader { false };
     bool isInLoop { false };
-    // It is, but only for being part of a function that one of the engine's own calls each time round a loop of its own (inlineCalls()). How often that is is anybody's guess.
+    // In a loop only because it belongs to a callback that a built-in calls once per iteration of its own loop (inlineCalls()). The
+    // trip count is unknown.
     bool isOnlyInLoopOfBuiltin { false };
-    // There are two copies of the code of a loop. The fast one does not have the long way of doing anything in it: where that would
-    // be, a block ends in a guard, whose successors are the rest of the fast copy and the same instruction in the generic copy.
-    // So nothing that the long ways can do (which is anything) has to be reckoned with in the fast copy: what it has loaded and
-    // checked stays loaded and checked. The generic copy goes back to the fast one at the next loop header.
+    // A split loop has two copies. The fast copy contains no slow paths: where one would be, the block ends in a guard whose
+    // successors are the rest of the fast copy and the same instruction in the generic copy. The fast copy therefore never has to
+    // account for the effects of a slow path (which could be anything), so what it has loaded and checked stays valid. The generic
+    // copy returns to the fast copy at the next loop header.
     bool isGeneric { false };
     bool endsWithGuard { false };
-    // The way into the fast copy of a loop, from outside and from the generic copy: everything but the fast copy's own jumps back
-    // comes by here. Whatever stays the same for as long as control stays in the fast copy can be seen to here, once. It ends in a
-    // guard, whose other successor is the generic copy of the loop's header.
+    // The entry to a loop's fast copy, from outside the loop and from the generic copy. Everything except the fast copy's own back
+    // edges passes through it, so loop-invariant checks can be done here once. It ends in a guard whose other successor is the
+    // generic copy of the loop header.
     bool isPreHeader { false };
-    // How the generic copy of a loop gets back to the fast one: it comes before the pre-header. What a variable can be in the fast
-    // copy is a matter of what goes into the loop and of what the fast copy does to it. The generic copy knows less about its values,
-    // and if they counted, the fast copy would know no more. So they have to pass a test here (GuardKind::Reentry) and if one does
-    // not, it is another time round the generic copy.
+    // The path from a loop's generic copy back to the fast copy, placed before the pre-header. The types of variables in the fast
+    // copy depend only on what enters the loop and on what the fast copy does. The generic copy knows less about its values, and
+    // merging them in directly would widen the fast copy's types. Instead they must pass a check here (GuardKind::Reentry). If one
+    // fails, execution stays in the generic copy for another iteration.
     bool isReentry { false };
-    bool isSeldomReached { false }; // What is done if a GuardKind::IsIntrinsic does not hold.
+    bool isSeldomReached { false }; // The fallback for a failed GuardKind::IsIntrinsic.
 
-    // optimizeLoops()
+    // Computed by optimizeLoops().
     BasicBlock* immediateDominator { nullptr };
     unsigned rpoIndex { 0 };
     unsigned dominatorPreNumber { 0 };
@@ -366,38 +375,38 @@ struct BasicBlock {
     Vector<BasicBlock*, 2> predecessors;
     Vector<BasicBlock*, 2> successors; // For a conditional jump: taken, then not taken. For a switch: the cases in table order, then the default.
     BitVector liveIn; // Indexed by Graph::registerIndex().
-    // Of the registers that live in memory (Graph::livesInFrame()): those that a handler reads that something in the block can throw to; and
-    // those that some handler that can be got to from the end of the block reads, unless they are written first.
+    // For registers that live in the frame (Graph::livesInFrame()): those read by a handler that something in this block can throw
+    // to, and those read by a handler reachable from the end of this block before being overwritten.
     BitVector readByHandlersOfBlock;
     BitVector readByHandlersAfterBlock;
     Vector<Node*> valuesAtTail; // Indexed by Graph::registerIndex().
 
     B3::BasicBlock* lowered { nullptr };
-    // The header of a loop that is kept whole and changes no array: the arrays that it goes by, which are the same ones every time round. All ways in but the loop's own jumps back
-    // go by a block that looks at them.
+    // For the header of an unsplit loop that modifies no array: the loop-invariant arrays it accesses. Every entry to the loop
+    // except its own back edges passes through a block that loads their butterfly and length.
     Vector<Node*, 2> arraysViewed;
     BitVector bodyOfLoop; // By block index.
     B3::BasicBlock* loweredAhead { nullptr };
-    B3::BasicBlock* loweredTail { nullptr }; // The B3 block that the block's last code went to.
+    B3::BasicBlock* loweredTail { nullptr }; // The B3 block that received the last of this block's code.
 
     Node* terminal() const { return nodes.isEmpty() ? nullptr : nodes.last(); }
 };
 
-// Where a variable that a function does not declare itself is found: worked out from the scopes that statically enclose the
-// function, which are the same for every closure made from it.
+// How a free variable of a function is resolved, derived from the scopes that statically enclose the function. These are the same
+// for every closure created from it.
 struct ScopeChainEntry {
     enum Kind : uint8_t {
-        Lexical, // JSLexicalEnvironment (or the module's environment): symbolTable says what is in it.
+        Lexical, // JSLexicalEnvironment (or a module environment). symbolTable describes its contents.
         GlobalLexical,
         Global,
-        Opaque, // A with scope, or a scope that sloppy eval can add variables to: nothing beyond it can be resolved now.
-        Unknown, // Whatever the function is going to be closed over. All there is to go by is what its bytecode says.
+        Opaque, // A with scope, or a scope that sloppy eval can add variables to. Nothing beyond it can be resolved statically.
+        Unknown, // The enclosing scope is not known at compile time. Only the function's own bytecode is available.
     };
     Kind kind { Opaque };
     bool isModule { false };
     class JSC::SymbolTable* symbolTable { nullptr };
 };
-using ScopeChain = Vector<ScopeChainEntry, 4>; // From the scope a closure of the function captures, outwards.
+using ScopeChain = Vector<ScopeChainEntry, 4>; // From the scope that a closure of the function captures, outwards.
 
 class Graph {
     WTF_MAKE_NONCOPYABLE(Graph);
@@ -408,37 +417,39 @@ public:
     VM& vm() { return m_vm; }
     UnlinkedCodeBlock* codeBlock() { return m_codeBlock; }
 
-    // ---- A call of a function that is known can be done away with: what the function does is done where the call was (inlineCalls()).
-    // The function is parsed on its own, into a graph of its own, and the graph of the caller takes that over: its blocks are among the
-    // caller's from then on, and it stays what there is to ask about the code they are of. Whatever is asked of a graph about a node is
-    // answered by the graph the node is of. What comes of lowering (slots, sites, calls) is all the caller's.
+    // ---- Inlining (inlineCalls()). The callee is parsed into a graph of its own, which the caller's graph then takes over: the
+    // callee's blocks join the caller's, and the callee's graph remains the source of information about its own code. A query about
+    // a node is forwarded to the graph the node came from. Everything produced by lowering (slots, sites, calls) belongs to the
+    // outermost graph.
     Graph& outermost() { return *m_outermost; }
     bool isOutermost() const { return m_outermost == this; }
-    // Which of InlineFrames it is. None: the function that is being compiled.
+    // Index into inlineFrames. Zero for the function being compiled.
     unsigned inlineFrame() const { return m_inlineFrame; }
     struct InlineFrame {
-        unsigned parent; // Another of these, or none: what the call was in.
-        uint32_t callSite; // Where it was, there (CallSiteIndex::bits()).
-        unsigned knownCallee; // What was called: indexOfKnownCallee().
-        bool isTailCall { false }; // Whoever made it is gone by the time what was called runs, as far as anybody can tell.
+        unsigned parent; // The inline frame that contains the call, or zero.
+        uint32_t callSite; // The call's location there (CallSiteIndex::bits()).
+        unsigned knownCallee; // The callee: indexOfKnownCallee().
+        bool isTailCall { false }; // The caller's frame must appear to be gone once the callee runs.
     };
-    Vector<InlineFrame> inlineFrames; // From 1. Of the outermost.
-    // Everything that is left of the other but for what it knows.
-    void convertToTypedLayout(std::unique_ptr<Graph>&&, InlineFrame);
-    void computeOrderOfBlocks(); // m_rpo, after blocks have been added.
+    Vector<InlineFrame> inlineFrames; // Indexed from 1. Only used on the outermost graph.
+    // Takes over the other graph's blocks and nodes, and keeps it alive for queries about its code.
+    void adoptInlinee(std::unique_ptr<Graph>&&, InlineFrame);
+    void computeOrderOfBlocks(); // Recomputes m_rpo after blocks have been added.
     const ModuleLinkage* linkage() const { return m_linkage; }
-    // Of a closure that was made where its scope is at hand: that. It is what its op_get_scope gets (and is among that node's uses).
+    // For an inlined closure whose scope is available at the call site: that scope. It is the value of the closure's op_get_scope
+    // (and is among that node's uses).
     Node* scopeOfClosure { nullptr };
-    // What it returns is what the function that is being compiled returns, there and then: it is that function, or the call that it took
-    // the place of was a tail call in code of which the same goes. Then a tail call in it is one still.
+    // A return from this graph is a return from the function being compiled: either it is that function, or it was inlined at a
+    // tail call in a graph for which the same holds. A tail call in it is then still a tail call.
     bool isInTailPosition { true };
-    // Its loops are left as they are: what they call is going to be part of them (see BasicBlock::isGeneric).
+    // Its loops are not split, because callbacks will be inlined into them (see BasicBlock::isGeneric).
     bool loopsAreNotSplit { false };
-    Vector<UnlinkedFunctionExecutable*> functionsMade; // Of the outermost: what the code that comes of it makes a function object of.
-    // One of the forms of a method of arrays that are only ever part of a caller (builtins/ArrayPrototype.js): an op_get_by_val gives nothing at all (JSValue()) where there is no element.
+    Vector<UnlinkedFunctionExecutable*> functionsMade; // On the outermost graph: the functions that the generated code instantiates.
+    // An inline-only variant of an array method (builtins/ArrayPrototype.js): op_get_by_val yields the empty value (JSValue())
+    // where there is no element.
     bool readsElementsOrEmpty { false };
-    bool isInlinedBuiltin { false }; // One of the engine's own functions.
-    bool wasCalledInLoop { false }; // Part of a caller: the call was in a loop.
+    bool isInlinedBuiltin { false }; // One of JSC's own builtins.
+    bool wasCalledInLoop { false }; // Inlined at a call site that is in a loop.
     unsigned numberOfNodes() const { return m_nodes.size(); }
     Node* lastNode() { return &m_nodes.last(); }
     const ScopeChain& scopeChain() const { return m_scopeChain; }
@@ -467,11 +478,11 @@ public:
         return reg.isLocal() && static_cast<unsigned>(reg.toLocal()) < m_numLocals;
     }
 
-    // A register that is live into an exception handler lives in memory for the whole function: control gets to a handler
-    // from the unwinder, with nothing in machine registers.
+    // A register that is live into an exception handler lives in the frame for the whole function, because the unwinder transfers
+    // control to a handler with nothing in machine registers.
     bool livesInFrame(VirtualRegister reg) const { return m_homed.get(registerIndex(reg)); }
     bool hasFrameRegisters() const { return !m_homed.isEmpty(); }
-    // Where: they are next to each other in the frame, and this is which of them it is.
+    // Frame registers are contiguous in the frame. Returns the register's index among them.
     unsigned homeOf(VirtualRegister reg) const
     {
         ASSERT(livesInFrame(reg));
@@ -486,14 +497,15 @@ public:
     }
     unsigned numberOfFrameRegisters() const { return m_homed.bitCount(); }
     Convention convention() const { return m_convention; }
-    HowValuesArePassed howValuesArePassed() const { return AOT::howValuesArePassed(m_facts, m_convention); }
+    HowValuesArePassed howValuesArePassed() const { return AOT::howValuesArePassed(m_summary, m_convention); }
 
     Node* addNode(NodeKind);
     BasicBlock* addBlock();
 
     Node* constant(JSValue);
-    // With Options::useImmutableIntrinsics(). What the instruction reads, if it reads what cannot be anything else: a variable of the
-    // global object, or a property of `base`. (For an op_resolve_scope, the global object.) There is then no need for the instruction.
+    // With Options::useImmutableIntrinsics(). If the instruction reads something that cannot change (a global variable, or a
+    // property of `base`), returns its value. For an op_resolve_scope, returns the global object. The instruction is then
+    // unnecessary.
     Node* intrinsicReadBy(const JSInstruction*, Node* base);
     Node* intrinsic(unsigned number);
     unsigned numberOfIntrinsicReads { 0 };
@@ -505,117 +517,121 @@ public:
         VirtualRegister argument(unsigned indexIncludingThis) const { return VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + static_cast<int>(indexIncludingThis)); }
     };
     static CallOperands operandsOfCall(const JSInstruction*); // op_call or op_call_ignore_result
-    // What the source says of the instruction that is there (op_type_tag), or of the one that the node is. None: 0.
+    // The static type tag (op_type_tag) for the instruction at this offset, or for the node. Zero if there is none.
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
-    // TypeTable::tableHasTypedFields(): the field that an op_get_by_id or op_put_by_id gets at without asking, if it does.
+    // With TypeTable::tableHasTypedFields(): the field that an op_get_by_id or op_put_by_id accesses without a check, if any.
     static std::optional<TypeTable::Field> typedFieldAccessedBy(const Node*);
     static bool isThisOfEscapingFunction(const Node*);
-    // Of structs: the field of that name of the family that the value is proven to have been born into, if it is proven to have been born into one.
+    // With typed fields: the field with this name in the typed layout that `base` is proven to have, if any.
     static std::optional<TypeTable::Field> fieldOfTypedBase(const Node* base, UniquedStringImpl* name);
-    static uint16_t layoutIDOfNewObject(const Node*); // TypeTable::tableHasTypedFields(): what an op_new_object makes is born as that. Zero: nothing.
+    static uint16_t layoutIDOfNewObject(const Node*); // With TypeTable::tableHasTypedFields(): the typed layout of what an op_new_object allocates, or zero.
     // ---- Classes (ClassesOfProgram).
-    // A call of @noteClass: the type that says what class it is (TypeTable::isClass()). Zero: it is no such call, or nothing is said.
+    // For a call to @noteClass: the class's type (TypeTable::isClass()). Zero if the node is not such a call or the class has no
+    // type.
     static uint32_t classNotedBy(const Node*);
     void noteClassesDefined();
-    // An op_get_by_id that reads a closed method: the number of the function. It gives that and nothing else. Zero: it is not one.
+    // For an op_get_by_id that always reads one particular non-escaping method: that function's number. Otherwise zero.
     static uint32_t closedMethodReadBy(const Node*);
-    // What `this` is born as in this code, which is that of a constructor, a method or an initializer of a class. Zero: there is no telling.
+    // The typed layout of `this` in this code, which must be a constructor, method or initializer of a class. Zero if unknown.
     uint16_t layoutIDOfThis() const;
     Type typeOfThisOnEntry() const;
     static uint32_t typeTagOf(const Node* node) { return node->kind == NodeKind::Bytecode && node->instruction ? node->graph->typeTagAt(node->bytecodeIndex.offset()) : 0; }
-    // The properties that an object literal starts out with: functor(index of the identifier, register the value is in).
-    // An object literal: where the op_put_by_id are that make the object of an op_new_object what the literal says, as far as they
-    // are sure to be got to one after the other. Whatever is done in between to work out what to store knows nothing of the object,
-    // so that the object can be made, whole, where the last of them is.
+    // For an object literal: the offsets of the op_put_by_id instructions that initialize the object of an op_new_object, as far as
+    // they are certain to execute consecutively. The code between them that computes the stored values cannot observe the object,
+    // so the object can be allocated fully initialized at the last store.
     static Vector<unsigned, 16> storesOfLiteral(const JSInstructionStream&, unsigned offsetOfNewObject);
-    // Of an op_get_by_val or op_put_by_val or the guard of one: the type of typed array that the base is known to be, if it holds numbers.
+    // For an op_get_by_val or op_put_by_val, or its guard: the typed array type the base is known to have, if its elements are
+    // numbers.
     static std::optional<JSType> typedArrayAccessed(const Node*);
-    // The array that the node puts an element in, and the element: op_put_by_val, or a call that is taken for one of Array.prototype.push.
+    // The array that the node stores an element into, and the element. Applies to op_put_by_val and to calls assumed to be
+    // Array.prototype.push.
     std::pair<Node*, Node*> arrayAndElementStored(const Node*) const;
-    // An array that the function makes itself: what it puts in it is a good guess at what is in it.
+    // An array allocated by this function. What the function stores in it is a good prediction of its contents.
     static bool isArrayMadeHere(const Node* node) { return node->isBytecode(op_new_array) || node->isBytecode(op_new_array_with_size); }
-    // The function that the call or construction is probably of, if there is any telling.
+    // The function that the call or construct probably targets, if that can be determined.
     const KnownFunction* knownCallee(const Node*, bool* isExact = nullptr) const;
     const KnownFunction* knownCalleeIgnoringSummaries(const Node*, bool* isExact) const;
     bool calleeIsExact(const Node*) const; // See KnownFunction::isExact.
-    // Before there is a graph to tell which scope a read is from: unless the code has a variable of its own of that name, there.
+    // For use before the graph exists and scopes can be resolved. Valid unless the code declares a variable with the same name.
     const KnownFunction* probablyFunctionInVariableOfModule(unsigned identifier, unsigned scopeOffset) const;
     const KnownFunction* knownFunctionReadBy(const Node* getFromScope, bool* isExact = nullptr) const;
-    // A call of a function that wants nothing of the object it is called as (KnownFunction::needsNoFunctionObject). None is passed.
+    // A call to a function that never uses its callee (KnownFunction::needsNoFunctionObject). The callee is not passed.
     bool passesNoFunctionObject(const Node* call);
-    // Whether this function is one of those, and whether its scope is where the module's environment is.
+    // Whether this function needs its callee, and whether its scope is the module environment.
     bool needsFunctionObject() const { return m_needsFunctionObject; }
     bool scopeIsEnvironmentOfModule() const { return m_scopeIsEnvironmentOfModule; }
     uint32_t distanceOfEnvironmentOfModule();
-    // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
+    // Elides reads whose value is only used as the callee of calls that do not pass it (Node::isElided).
     void elideReadsOfCalleesNotPassed();
-    // array[Symbol.iterator] === something, and nothing else is done with it: the read is not made (Node::isElided), and whoever compares sees to it (Lowering::lowerEquality()).
+    // For `array[Symbol.iterator] === something` where the read has no other use: elides the read (Node::isElided).
+    // Lowering::lowerEquality() handles the comparison.
     void elideReadsOfIteratorMethodsOfArrays();
     static bool isReadOfIteratorMethodOfArray(const Node*);
-    static bool methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read); // Whether some class of the program that extends that one may have the method for itself.
-    static bool isIteratorMethodOfAnyArray(const Node*); // Array.prototype.values, which is Array.prototype[Symbol.iterator].
-    void findBuiltinsCalled(); // Node::directMethod. Once the types are known.
-    bool hasTwoCopiesOfAll { false }; // Options::aotAssertsTypes(): not just of its loops.
+    static bool methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read); // Whether a program class that extends this built-in class may override the method.
+    static bool isIteratorMethodOfAnyArray(const Node*); // Array.prototype.values, which is also Array.prototype[Symbol.iterator].
+    void findBuiltinsCalled(); // Sets Node::builtinCalled. Requires types.
+    bool hasTwoCopiesOfAll { false }; // With Options::aotAssertsTypes(): the whole function has two copies, not just its loops.
     // See FunctionSummary.
     void recordUsesOfKnownFunctions(const FunctionSummaryMap&);
     void noteFieldsComparedWithStrings(); // TypeTable::noteComparedWithString()
-    // f(a, ...b), f.apply(o, arguments): what the callee is passed is put together from where it is (Stub::CallVarargs, Stub::CallList).
-    // What would have been made only to be copied from, right before the call, is not (Node::isElided). Nor is an array of the rest of
-    // the arguments, or an arguments object, that nothing is done with but that: it says nothing that what this function was passed
-    // does not say.
+    // For f(a, ...b) and f.apply(o, arguments): the callee's arguments are assembled directly from their sources
+    // (Stub::CallVarargs, Stub::CallList). An array that would be built only to be copied from immediately before the call is
+    // elided (Node::isElided). So is a rest array or arguments object with no other use, since it only duplicates this function's
+    // own arguments.
     void findListsOfArguments();
-    // The list, if the node is a call that takes one and takes all of it.
+    // The argument list, if the node is a call that takes one and passes all of it.
     static Node* listOfArgumentsOf(const Node*);
-    // One of the things that only the engine's own functions can name, and that nobody can put anything else in the place of.
+    // A link-time constant: a value that only builtins can name and that user code cannot replace.
     static std::optional<LinkTimeConstant> linkTimeConstantOf(const Node*);
-    // An op_get_from_scope or an op_put_to_scope: how far below the Instance the environment is that has the variable, if it is
-    // one of a module, whose place is known (ImageEnvironment::distance). Then the scope that the instruction names is not needed.
+    // For an op_get_from_scope or op_put_to_scope: the distance below the Instance of the environment that holds the variable, if
+    // it is a module environment with a fixed location (ImageEnvironment::distance). The instruction's scope operand is then
+    // unused.
     std::optional<uint32_t> distanceOfEnvironmentAccessed(const Node*);
-    std::optional<uint32_t> distanceOfEnvironmentResolvedTo(const Node*); // Likewise, an op_resolve_scope.
+    std::optional<uint32_t> distanceOfEnvironmentResolvedTo(const Node*); // The same for an op_resolve_scope.
     static bool isThatManyScopesOut(const Node* scope, unsigned hops);
-    // A scope that stands for `this` in a call of what was found in it, which is how a call of a variable is made in case the scope
-    // is that of a `with`: and this one is not, so that whoever is called makes undefined of it, or the global `this`.
+    // A scope passed as `this` in a call to a variable found in it. Calls to variables are compiled that way in case the scope is a
+    // with scope. This one is not, so the callee sees undefined or the global `this`.
     bool isScopeThatStandsForNoThis(const Node*);
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
-    // What the program says of the function that this is the code of, for a call.
-    void setFacts(const FunctionSummary* facts) { m_facts = facts; }
-    const FunctionSummary* facts() const { return m_facts; }
-    // reader: who is to look again if there turns out to be more to what it has read (VariableSummaries::read()).
-    void setVariableSummaries(VariableSummaries* facts, unsigned reader = VariableSummaries::nobody)
+    // The interprocedural summary for this function's call code block.
+    void setSummary(const FunctionSummary* summary) { m_summary = summary; }
+    const FunctionSummary* summary() const { return m_summary; }
+    // reader: the unit to reanalyze if a variable it read later widens (VariableSummaries::read()).
+    void setVariableSummaries(VariableSummaries* summaries, unsigned reader = VariableSummaries::nobody)
     {
-        m_variableSummaries = facts;
+        m_variableSummaries = summaries;
         m_summaryReader = reader;
     }
     VariableSummaries* variableSummaries() const { return m_variableSummaries; }
-    // Options::aotLogsFacts(): what to call the code, when it comes to saying what it contributes.
+    // With Options::logAOTTypeInference(): the name to use for this code in the log.
     void setNameForLog(const String& name) { m_nameForLog = name; }
     const String& nameForLog() const { return m_nameForLog; }
     unsigned summaryReader() const { return m_summaryReader; }
-    // Which scope of the source the value is an environment record of (Variable::scope). Null: there is no telling.
+    // Which source scope the value is an environment record for (Variable::scope). Null if unknown.
     const void* identityOfScope(const Node*, unsigned depth = 0);
-    // op_get_from_scope, op_put_to_scope. None: it is not in an environment record, or there is no telling which.
+    // For op_get_from_scope and op_put_to_scope. Empty if the variable is not in an environment record or cannot be identified.
     Variable variableAccessedBy(const Node*);
-    // What has to be known of variables before anything is said of what they hold: see VariableSummaries.
+    // Collects what must be known about variables before their types are tracked. See VariableSummaries.
     void recordUntrackableVariableAccesses(VariableSummaries&);
     Type typeOfArgumentOnEntry(unsigned indexIncludingThis) const
     {
-        if (!m_facts || !m_facts->isNonEscaping || indexIncludingThis >= FunctionSummary::mostParameters)
+        if (!m_summary || !m_summary->isNonEscaping || indexIncludingThis >= FunctionSummary::mostParameters)
             return TTop;
         if (!indexIncludingThis)
-            return m_facts->thisType.load();
-        return m_facts->parameterTypes[indexIncludingThis].load();
+            return m_summary->thisType.load();
+        return m_summary->parameterTypes[indexIncludingThis].load();
     }
     const CalleeHints* calleeHints() const { return m_hints; }
     unsigned indexOfKnownCallee(const ImageKey&);
     Vector<ImageKey> knownCallees;
-    bool callsItself { false }; // As good as a loop.
-    unsigned numberOfRegisterReturnValues { 0 }; // By this function. None: it returns what it returns.
-    UncheckedKeyHashMap<Node*, Vector<Node*, 8>> returnValueReads; // By the call: Node::returnValueIndex.
-    bool makesCalls { false }; // Of functions, in frames of their own.
-    bool emitsCalls { false }; // There may be an instruction in the code that calls something, if only a stub. (A jump is not one.)
-    bool alwaysEmitsCalls { false }; // And there is no telling by looking at what the code has come to.
-    mutable std::optional<bool> callsAreLeft; // hasNoFrame()
-    // Integers of the program's that are as big as addresses are (see the check for those in AOTCompiler.cpp).
+    bool callsItself { false }; // Treated like a loop.
+    unsigned numberOfRegisterReturnValues { 0 }; // Number of values this function returns in registers. Zero for an ordinary return.
+    UncheckedKeyHashMap<Node*, Vector<Node*, 8>> returnValueReads; // Keyed by the call. See Node::returnValueIndex.
+    bool makesCalls { false }; // Calls functions that have their own frames.
+    bool emitsCalls { false }; // The generated code may contain a call instruction, if only to a stub. A jump does not count.
+    bool alwaysEmitsCalls { false }; // It does, in a way that inspecting the generated code cannot detect.
+    mutable std::optional<bool> callsAreLeft; // Cache for hasNoFrame().
+    // Integer constants in the program that are large enough to look like addresses (see the check in AOTCompiler.cpp).
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> wideIntegerConstants;
 
     void fail(ASCIILiteral reason, OpcodeID = op_nop);
@@ -632,9 +648,9 @@ public:
     Vector<BasicBlock*> catchEntrypoints;
     Vector<BasicBlock*> m_rpo;
     Vector<BasicBlock*> blockForOffset; // Indexed by bytecode offset; null unless a block starts there.
-    Vector<BasicBlock*> genericTargetForOffset; // Where a jump from the generic copy of a loop goes instead, if not null.
-    Vector<BasicBlock*> headerForOffset; // Where a jump back in the fast copy of a loop goes: blockForOffset has the pre-header.
-    UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> jumpsBack; // The end of the block that jumps, and above it where to.
+    Vector<BasicBlock*> genericTargetForOffset; // If non-null, where a jump from the generic copy of a loop goes instead.
+    Vector<BasicBlock*> headerForOffset; // Where a back edge in the fast copy of a loop goes. blockForOffset holds the pre-header.
+    UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> jumpsBack; // (target offset << 32) | end offset of the jumping block.
     bool hasGuards() const { return !genericTargetForOffset.isEmpty(); }
     BasicBlock* targetFrom(BasicBlock* from, unsigned offset) const
     {
@@ -650,40 +666,40 @@ public:
 
     struct StaticVariable {
         enum Kind : uint8_t {
-            Closure, // In the scope that is `depth` out, at `offset`.
-            Import, // Of the module whose environment is `depth` out, and known to be at `offset` in the environment that is in that one's `import.slot`.
-            ModuleImport, // Of the module whose environment is `depth` out. What it is bound to is found out when it is read.
-            Unresolved, // Not in a scope that eval or with can add to, and that is all.
+            Closure, // In the scope `depth` levels out, at `offset`.
+            Import, // An import of the module whose environment is `depth` levels out, known to be at `offset` in the environment held in that module's `import.slot`.
+            ModuleImport, // An import of the module whose environment is `depth` levels out. Its binding is resolved when it is first read.
+            Unresolved, // Known only not to be in a scope that eval or with can extend.
             Dynamic,
         } kind { Dynamic };
         unsigned depth { 0 };
         ScopeOffset offset;
         bool inModule { false };
         bool isReadOnly { false };
-        bool isInGlobalScopes { false }; // Unresolved: none of the scopes of the code around the function has it.
-        bool isGlobal { false }; // Likewise, however that is known.
-        bool isInOutermostEnvironment { false }; // Closure: it is a variable of the module itself.
+        bool isInGlobalScopes { false }; // Unresolved: no scope enclosing the function declares it.
+        bool isGlobal { false }; // The same, however it was established.
+        bool isInOutermostEnvironment { false }; // Closure: a top-level variable of the module.
         StaticImport import;
 
-        // op_resolve_scope: the answer is that many scopes out. (For an import that is not linked, the module that imports it.)
+        // op_resolve_scope: the result is `depth` scopes out. For an unlinked import, that is the importing module.
         bool isAtStaticDepth() const { return kind == Closure || kind == ModuleImport; }
-        // op_get_from_scope: where it is gets looked up once, and kept in a Slot.
+        // op_get_from_scope: the location is looked up once and cached in a Slot.
         bool isCachedInSlot() const { return kind == Unresolved || kind == ModuleImport; }
     };
     StaticVariable resolveStatically(unsigned identifierIndex, unsigned localScopeDepth, ResolveType);
-    // What the operations are told about the instruction other than the name (Site).
+    // The extra bits passed to the operations through the Site, besides the identifier.
     unsigned extraOfResolveScope(const OpResolveScope&);
     unsigned extraOfGetFromScope(const OpGetFromScope&);
     void setLinkage(const ModuleLinkage*, const DeclaredNamesLink*);
-    bool usesStaticImports { false }; // The code is only good for a module that is linked as its ModuleLinkage says.
+    bool usesStaticImports { false }; // The code is only valid for a module linked as its ModuleLinkage describes.
     bool startsCold { false }; // CompiledFunctionInfo::startsCold
     bool m_needsFunctionObject { true };
     bool m_scopeIsEnvironmentOfModule { false };
     BitVector m_homed;
-    Vector<Type> homedTypes; // Indexed by registerIndex(): everything that is ever stored to a homed register.
+    Vector<Type> homedTypes; // Indexed by registerIndex(): the union of everything stored to each frame register.
     unsigned numICSlots { 0 };
-    Vector<Site> sites; // Of the slots that have one; the rest are past the end, or blank.
-    // CompiledFunctionInfo's.
+    Vector<Site> sites; // For slots that have one. The rest are blank or past the end.
+    // See the fields of the same names in CompiledFunctionInfo.
     Vector<uint32_t> siteConstants;
     Vector<UniquedStringImpl*> selectors;
     Vector<KnownShape> shapes;
@@ -693,8 +709,9 @@ public:
     Vector<uint32_t> callSites; // CompiledFunctionInfo::callSites
     Vector<SiteOfSpread> sitesOfSpreads; // CompiledFunctionInfo::sitesOfSpreads
     Vector<uint32_t> plans;
-    void notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words); // AllocationPlan
-    // An op_new_object that is made whole (Node::numberOfLiteralProperties): what with. Nothing, if it is not a shape to be known by.
+    void notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words); // See AllocationPlan.
+    // For an op_new_object that is allocated fully initialized (Node::numberOfLiteralProperties): its shape. Nullopt if the shape
+    // cannot be numbered.
     std::optional<KnownShape> shapeOfLiteral(const Node*) const;
     StubCalls stubCalls;
     IndexReferences indexReferences;
@@ -704,7 +721,7 @@ private:
     UnlinkedCodeBlock* m_codeBlock;
     ScopeChain m_scopeChain;
     const CalleeHints* m_hints { nullptr };
-    const FunctionSummary* m_facts { nullptr };
+    const FunctionSummary* m_summary { nullptr };
     VariableSummaries* m_variableSummaries { nullptr };
     String m_nameForLog;
     unsigned m_summaryReader { VariableSummaries::nobody };
@@ -712,8 +729,8 @@ private:
     bool m_hasStoresToFrameRegisters { false };
     const ModuleLinkage* m_linkage { nullptr };
     const DeclaredNamesLink* m_declaredNames { nullptr };
-    BitVector m_namesAssignedTo; // By index of the identifier: op_put_to_scope by name.
-    UncheckedKeyHashMap<unsigned, uint32_t, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_typeTags; // By where the instruction is.
+    BitVector m_namesAssignedTo; // By identifier index: assigned by an op_put_to_scope that resolves by name.
+    UncheckedKeyHashMap<unsigned, uint32_t, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_typeTags; // By bytecode offset.
     unsigned m_numArguments;
     unsigned m_numLocals;
     Convention m_convention;
@@ -725,11 +742,11 @@ private:
     OpcodeID m_failureOpcode { op_nop };
     Graph* m_outermost { this };
     unsigned m_inlineFrame { 0 };
-    unsigned m_numberOfNodesAdopted { 0 };
-    Vector<std::unique_ptr<Graph>> m_adopted;
+    unsigned m_numberOfInlinedNodes { 0 };
+    Vector<std::unique_ptr<Graph>> m_inlinees;
 };
 
-// Who uses what each node gives.
+// The users of each node's value.
 class UsersOfNodes {
 public:
     explicit UsersOfNodes(Graph&);
@@ -738,34 +755,35 @@ public:
         auto it = m_users.find(node);
         return it == m_users.end() ? std::span<Node* const> { } : it->value.span();
     }
-    // What is done with an object that has just been made with plain properties of those names, if all that is done with it is to read them.
+    // The uses of a freshly allocated object with plain properties of these names, if it is only ever read.
     struct OnlyRead {
-        Vector<Node*, 4> handedOn; // The object, and whatever else is the object: a check that it got past, and the like.
-        Vector<std::pair<Node*, unsigned>, 8> reads; // Which op_get_by_id reads which of the names.
-        Vector<Node*, 2> tests; // Whether it is null or undefined. It is not.
+        Vector<Node*, 4> handedOn; // The object and its aliases (checks it passed through, and so on).
+        Vector<std::pair<Node*, unsigned>, 8> reads; // Each op_get_by_id and the index of the name it reads.
+        Vector<Node*, 2> tests; // Null or undefined checks, which are always false.
     };
-    // family: what it was born as, if anything.
+    // layoutID: the object's typed layout, or zero.
     std::optional<OnlyRead> isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t layoutID) const;
 
 private:
     UncheckedKeyHashMap<Node*, Vector<Node*, 2>> m_users;
 };
 
-// Phases. Each returns false (and Graph::failed() says why) if the function is not for the static compiler.
+// Phases. Each returns false (with the reason in Graph::failureReason()) if the function cannot be compiled ahead of time.
 bool parseBytecode(Graph&);
-// What the function returns. calleesRead: the functions whose KnownFunction::returnType that went by.
-// calleesWithWidenedInputs: the closed functions that it calls with something that nobody was known to pass them (FunctionSummary::parameterTypes).
+// Returns the function's return type.
+// calleesRead: the functions whose KnownFunction::returnType was used.
+// calleesWithWidenedInputs: the non-escaping callees whose FunctionSummary::parameterTypes this function widened.
 Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesRead = nullptr, Vector<const KnownFunction*>* calleesWithWidenedInputs = nullptr);
 void inferRanges(Graph&);
 void optimizeLoops(Graph&);
 void simplify(Graph&);
 void inlineCalls(Graph&, const CodeOfProgram&);
-void analyzeEscapes(Graph&); // Node::escape
-void promoteEnvironments(Graph&); // Node::isPromoted
-void scalarReplaceReadOnlyObjects(Graph&); // Before the types are worked out.
-void recordReturnedLiterals(Graph&); // MultiValueReturnTable::note(). Of code as it is written.
-void planMultiValueReturns(Graph&); // Once the types are worked out, and before anything is made of them.
-// FunctionSummary::escapingParameters, going by what is said so far of the functions it calls (calleesRead).
+void analyzeEscapes(Graph&); // Sets Node::escape.
+void promoteEnvironments(Graph&); // Sets Node::isPromoted.
+void scalarReplaceReadOnlyObjects(Graph&); // Runs before type inference.
+void recordReturnedLiterals(Graph&); // Feeds MultiValueReturnTable::note(). Runs on the code before any transformation.
+void planMultiValueReturns(Graph&); // Runs after type inference and before anything depends on the types.
+// Computes FunctionSummary::escapingParameters from the current summaries of its callees (calleesRead).
 uint32_t escapingParameters(Graph&, Vector<const KnownFunction*>* calleesRead);
 
 } } // namespace JSC::AOT

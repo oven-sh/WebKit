@@ -628,7 +628,7 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint32_t> slotRanges;
     Vector<TypedLayoutTable::FieldType> slotTypes;
     Vector<uint32_t> fieldRanges;
-    Vector<TypedLayoutTable::Field> field;
+    Vector<TypedLayoutTable::Field> fieldRecords;
     Vector<TypedLayoutTable::FieldType> fieldTypes;
     Vector<uint16_t> fieldLayoutIDs;
     Vector<uint32_t> fieldsOfSlot[Structure::numberOfSlotsWithFieldIDs]; // By id, from one: which of `named`.
@@ -638,12 +638,12 @@ Vector<uint8_t> ImageBuilder::finish()
         RELEASE_ASSERT_WITH_MESSAGE(numbersOfIdentifiers, "Structs go by the numbers of the program's identifiers");
         for (uint32_t number = 0; number <= TypeTable::shared()->numberOfTypedLayouts(); ++number) {
             auto layout = TypeTable::shared()->typedLayout(number);
-            RELEASE_ASSERT(slotTypes.size() < (1u << 24) && field.size() < (1u << 20));
+            RELEASE_ASSERT(slotTypes.size() < (1u << 24) && fieldRecords.size() < (1u << 20));
             slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | layout.capacity);
             size_t start = slotTypes.size();
             for (unsigned slot = 0; slot < layout.capacity; ++slot)
                 slotTypes.append({ 0, 0, 0, 0 });
-            size_t firstFieldOfLayout = field.size();
+            size_t firstFieldOfLayout = fieldRecords.size();
             for (auto& name : layout.fields) {
                 // (Of a verified family it goes by the name, and the slot says nothing.)
                 if (!layout.usesFieldIDs)
@@ -665,22 +665,22 @@ Vector<uint8_t> ImageBuilder::finish()
             std::ranges::stable_sort(inOrder, [](auto* a, auto* b) { return a->name->existingHash() < b->name->existingHash(); });
             for (auto* name : inOrder) {
                 if (name->id)
-                    fieldsOfSlot[name->slot][name->id - 1] = safeCast<uint32_t>(field.size());
-                field.append({ numbersOfIdentifiers->get(name->name), safeCast<uint8_t>(name->slot), name->mayBeAbsent, name->id });
+                    fieldsOfSlot[name->slot][name->id - 1] = safeCast<uint32_t>(fieldRecords.size());
+                fieldRecords.append({ numbersOfIdentifiers->get(name->name), safeCast<uint8_t>(name->slot), name->mayBeAbsent, name->id });
                 fieldTypes.append({ name->fieldType.packedKinds(), name->fieldType.first, name->fieldType.last, 0 });
                 fieldLayoutIDs.append(safeCast<uint16_t>(number));
             }
-            RELEASE_ASSERT(field.size() - firstFieldOfLayout < (1u << 12));
-            fieldRanges.append(static_cast<uint32_t>(firstFieldOfLayout) << 12 | (field.size() - firstFieldOfLayout));
+            RELEASE_ASSERT(fieldRecords.size() - firstFieldOfLayout < (1u << 12));
+            fieldRanges.append(static_cast<uint32_t>(firstFieldOfLayout) << 12 | (fieldRecords.size() - firstFieldOfLayout));
             RELEASE_ASSERT(layout.inlineSlots < TypedLayoutTable::usesFieldIDsBit);
             inlineSlotCounts.append(static_cast<uint8_t>(layout.inlineSlots | (layout.usesFieldIDs ? TypedLayoutTable::usesFieldIDsBit : 0)));
         }
     } else if (Options::aotTypesFields() && TypeTable::shared()) {
         for (uint32_t number = 0; number < shapes.size() && number <= TypeTable::shared()->numberOfLayouts(); ++number) {
-            auto fieldType = shapes[number].names.isEmpty() ? Vector<TypeTable::FieldType, 8> { } : TypeTable::shared()->fieldTypesBySlot(number);
-            RELEASE_ASSERT(fieldType.size() < 256 && slotTypes.size() < (1u << 24));
-            slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | fieldType.size());
-            for (auto& fieldType : fieldType)
+            auto typesBySlot = shapes[number].names.isEmpty() ? Vector<TypeTable::FieldType, 8> { } : TypeTable::shared()->fieldTypesBySlot(number);
+            RELEASE_ASSERT(typesBySlot.size() < 256 && slotTypes.size() < (1u << 24));
+            slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | typesBySlot.size());
+            for (auto& fieldType : typesBySlot)
                 slotTypes.append({ safeCast<uint16_t>(fieldType.kinds), Options::aotAssertsTypes() ? fieldType.first : uint16_t(0), Options::aotAssertsTypes() ? fieldType.last : uint16_t(0), 0 });
         }
     }
@@ -847,7 +847,7 @@ Vector<uint8_t> ImageBuilder::finish()
             codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + stubs.bytes.size());
         }
         placement.append({ codeSize, stubsAt.isEmpty() ? 0 : stubsAt.last() });
-        if (Options::aotLogsFacts()) [[unlikely]]
+        if (Options::logAOTTypeInference()) [[unlikely]]
             dataLogLn("PLACED @", m_functions[placement.size() - 1].key.module, ":", m_functions[placement.size() - 1].key.start, ":", m_functions[placement.size() - 1].key.kind, " ", codeSize);
         codeSize += sizeWithVeneers(indexOfFunction);
     }
@@ -1108,7 +1108,7 @@ Vector<uint8_t> ImageBuilder::finish()
     header.numberOfSlotRanges = slotRanges.size();
     header.slotTypesOffset = place(slotTypes.sizeInBytes());
     header.fieldRangesOffset = fieldRanges.isEmpty() ? 0 : place(fieldRanges.sizeInBytes());
-    header.namedOffset = place(field.sizeInBytes());
+    header.fieldRecordsOffset = place(fieldRecords.sizeInBytes());
     header.fieldTypesOffset = place(fieldTypes.sizeInBytes());
     header.fieldLayoutIDsOffset = place(fieldLayoutIDs.sizeInBytes());
     Vector<uint32_t> startOfFields;
@@ -1148,7 +1148,7 @@ Vector<uint8_t> ImageBuilder::finish()
     for (auto& function : m_functions)
         numbersOfFunctions.append(function.code.info.numberOfFunction);
     // (Nobody else asks.)
-    if (!Options::aotVerifiesFacts())
+    if (!Options::validateAOTInferredTypes())
         numbersOfFunctions.clear();
     header.numbersOfFunctionsOffset = place(numbersOfFunctions.sizeInBytes());
     header.startsOfFunctionsOffset = place(startsOfFunctions.sizeInBytes());
@@ -1217,7 +1217,7 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.slotTypesOffset, slotTypes.span().data(), slotTypes.sizeInBytes());
     if (header.fieldRangesOffset) {
         memcpy(base + header.fieldRangesOffset, fieldRanges.span().data(), fieldRanges.sizeInBytes());
-        memcpy(base + header.namedOffset, field.span().data(), field.sizeInBytes());
+        memcpy(base + header.fieldRecordsOffset, fieldRecords.span().data(), fieldRecords.sizeInBytes());
         memcpy(base + header.fieldTypesOffset, fieldTypes.span().data(), fieldTypes.sizeInBytes());
         memcpy(base + header.fieldLayoutIDsOffset, fieldLayoutIDs.span().data(), fieldLayoutIDs.sizeInBytes());
         memcpy(base + header.startOfFieldsOffset, startOfFields.span().data(), startOfFields.sizeInBytes());
@@ -1425,7 +1425,7 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     if (header.numberOfSlotRanges)
         TypedLayoutTable::setSlotTypes({ image->at<uint32_t>(header.slotRangesOffset), header.numberOfSlotRanges }, image->at<TypedLayoutTable::FieldType>(header.slotTypesOffset));
     if (header.fieldRangesOffset)
-        TypedLayoutTable::setFields(image->at<uint32_t>(header.fieldRangesOffset), image->at<TypedLayoutTable::Field>(header.namedOffset), image->at<TypedLayoutTable::FieldType>(header.fieldTypesOffset), image->at<uint16_t>(header.fieldLayoutIDsOffset),
+        TypedLayoutTable::setFields(image->at<uint32_t>(header.fieldRangesOffset), image->at<TypedLayoutTable::Field>(header.fieldRecordsOffset), image->at<TypedLayoutTable::FieldType>(header.fieldTypesOffset), image->at<uint16_t>(header.fieldLayoutIDsOffset),
             image->at<uint8_t>(header.inlineSlotCountsOffset), image->at<uint32_t>(header.startOfFieldsOffset), image->at<uint32_t>(header.fieldsOffset), image->at<uint16_t>(header.layoutIDsByFieldIDOffset), Instance::convertToTypedLayout, header.auditsTypes);
     return image;
 }
@@ -1959,7 +1959,7 @@ Ref<JITCode> codeFromImage(ImageCode code, UnlinkedCodeBlock* unlinkedCodeBlock)
 
 bool canRunWithoutUnlinkedCode(JSGlobalObject* globalObject, ImageCode code)
 {
-    return !!FunctionRef { &Instance::ensure(globalObject), code.function->index }.facts();
+    return !!FunctionRef { &Instance::ensure(globalObject), code.function->index }.metadata();
 }
 
 Ref<JITCode> codeOfFunctionFromImage(ImageCode code, CodeSpecializationKind kind)

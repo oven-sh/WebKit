@@ -64,7 +64,7 @@ struct ImageHeader {
     uint32_t numberOfSlotRanges;
     uint32_t slotTypesOffset;
     uint32_t fieldRangesOffset; // Zero if there are no typed fields.
-    uint32_t namedOffset;
+    uint32_t fieldRecordsOffset;
     uint32_t fieldTypesOffset;
     uint32_t fieldLayoutIDsOffset;
     uint32_t startOfFieldsOffset;
@@ -96,7 +96,7 @@ struct ImageHeader {
     uint32_t numberOfRegExps;
     uint32_t textOfRegExpsOffset;
     // For mapping a code address to a function (classifyAddress()).
-    uint32_t numbersOfFunctionsOffset; // uint32_t[], by function index: the function's number in a Type (typeOfFunction()). Only used by Options::aotVerifiesFacts().
+    uint32_t numbersOfFunctionsOffset; // uint32_t[], by function index: the function's number in a Type (typeOfFunction()). Only used by Options::validateAOTInferredTypes().
     uint32_t startsOfFunctionsOffset; // uint32_t[], by function index (which is code order): the code offset of each function, plus a final sentinel.
     uint32_t granulesOfCodeOffset; // uint32_t[]: for each 1 << shiftOfGranuleOfCode bytes of code, the last function that starts at or before them.
     uint32_t callSitesOffset; // See callSiteAt().

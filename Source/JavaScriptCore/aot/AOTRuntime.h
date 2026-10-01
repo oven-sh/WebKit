@@ -522,7 +522,7 @@ struct Instance {
     Collections* collections; // Bookkeeping for the Datas.
     FunctionInfo* infos; // By function index.
     Data* sharedData; // SharedData::get()
-    const uint32_t* factsOfFunctions; // By function index: StaticHeap::factsAt(), or zero. Null if no function has metadata.
+    const uint32_t* functionMetadataOffsets; // By function index: the offset of its FunctionMetadata in Arena::Data, or zero. Null if no function has metadata.
     // For mapping a code address to a function (loadIndexOfFunctionAt(), Image::classifyAddress()): the start of the image's code;
     // for each granule of code, the last function that starts at or before it; and the start of every function but the first.
     const uint8_t* code;
@@ -715,7 +715,7 @@ struct Data {
 // UnlinkedCodeBlock, which stays undecoded in the payload (FunctionRef::ensureUnlinkedCodeBlock()). The layout is one header word
 // followed by one or two words for each item present, in enum order.
 struct FunctionMetadata {
-    enum Fact : uint32_t {
+    enum Section : uint32_t {
         ExpressionInfo = 1 << 0, // Offset of the record to decode (decodeBorrowedExpressionInfo()).
         Handlers = 1 << 1, // UnlinkedHandlerInfo: offset and count.
         FunctionDecls = 1 << 2, // WriteBarrier<UnlinkedFunctionExecutable>: offset and count.
@@ -732,16 +732,16 @@ struct FunctionMetadata {
     };
     static constexpr uint32_t isBuiltinFunction = 1 << 9; // A flag only. It has no data word.
     static constexpr unsigned shiftOfInstructionsSize = 10;
-    static unsigned wordsFor(Fact fact) { return fact == Handlers || fact == FunctionDecls || fact == FunctionExprs ? 2 : 1; }
+    static unsigned wordsFor(Section section) { return section == Handlers || section == FunctionDecls || section == FunctionExprs ? 2 : 1; }
 
-    const uint32_t* find(Fact fact) const
+    const uint32_t* find(Section section) const
     {
-        if (!(flagsAndInstructionsSize & fact))
+        if (!(flagsAndInstructionsSize & section))
             return nullptr;
         const uint32_t* word = &flagsAndInstructionsSize + 1;
-        for (uint32_t earlier = 1; earlier < fact; earlier <<= 1) {
+        for (uint32_t earlier = 1; earlier < section; earlier <<= 1) {
             if (flagsAndInstructionsSize & earlier)
-                word += wordsFor(static_cast<Fact>(earlier));
+                word += wordsFor(static_cast<Section>(earlier));
         }
         return word;
     }

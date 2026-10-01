@@ -247,7 +247,7 @@ bool Lowering::run()
     // Runs on every way in, so what it computes may only depend on the frame pointer and on what is in the same register throughout.
     m_howValuesArePassed = m_graph.howValuesArePassed();
     if (unsigned count = m_graph.numberOfRegisterReturnValues) {
-        m_returnValueReps = returnValueReps(m_graph.facts(), count);
+        m_returnValueReps = returnValueReps(m_graph.summary(), count);
         m_registerReturnValues.grow(count);
     }
     m_callFrame = m_out.framePointer();
@@ -953,13 +953,13 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
     // What a lowering makes may be less specific than what the node is known to be, never the other way around.
     // (Is it what it is known to be? As it comes: once it has been made into what a value of that type is held as, it looks the part.)
     // (What was taken never to be reached added nothing to what is known of anything else: so it had better not be.)
-    if (Options::aotVerifiesFacts() && rep == Rep::JSValue && (node->wasInferredUnreachable || (node->type && !isSubtype(TAll, node->type)))) [[unlikely]] {
+    if (Options::validateAOTInferredTypes() && rep == Rep::JSValue && (node->wasInferredUnreachable || (node->type && !isSubtype(TAll, node->type)))) [[unlikely]] {
         Type expected = node->wasInferredUnreachable ? TNone : node->type;
         unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
         if (node->kind == NodeKind::Argument)
             which += 100 * node->reg.toArgument();
         unsigned identifierPlusOne = 0;
-        // Where it came from, if that is a variable: as Options::aotLogsFacts() has it, to look up what was seen to be put there.
+        // Where it came from, if that is a variable: as Options::logAOTTypeInference() has it, to look up what was seen to be put there.
         const Node* origin = node;
         for (unsigned depth = 0; depth < 4; ++depth) {
             if (origin->isBytecode(op_check_type))
@@ -989,9 +989,9 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
         }
     }
     if (Rep to = node->rep(); rep != to && rep != Rep::JSValue && to != Rep::JSValue && (rep == Rep::Boolean || to == Rep::Boolean)) [[unlikely]] {
-        dataLog("AOT: WHAT WAS MADE IS NOT WHAT THE NODE IS KNOWN TO BE: ");
+        dataLog("AOT: lowered representation does not match the node: ");
         node->dump(WTF::dataFile());
-        dataLogLn(" made as ", static_cast<unsigned>(rep), " held as ", static_cast<unsigned>(to), ", inline frame ", node->graph->inlineFrame(), " in ", m_graph.nameForLog());
+        dataLogLn(" lowered as rep ", static_cast<unsigned>(rep), ", expected rep ", static_cast<unsigned>(to), ", inline frame ", node->graph->inlineFrame(), " in ", m_graph.nameForLog());
         for (auto& use : node->uses) {
             dataLog("    uses ");
             use.node->dump(WTF::dataFile());

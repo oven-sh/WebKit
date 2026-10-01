@@ -178,7 +178,6 @@ public:
         unsigned inlineSlots { 0 };
         unsigned capacity { 0 }; // Index of the last slot, plus one.
         Vector<std::pair<UniquedStringImpl*, uint16_t>, 8> properties; // In insertion order.
-        Vector<FieldType, 8> fieldType; // Parallel to `properties`.
     };
     // `type` must be the tag on an object literal.
     std::optional<Layout> layoutOf(uint32_t type) const;

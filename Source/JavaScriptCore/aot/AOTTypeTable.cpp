@@ -24,7 +24,7 @@ const TypeTable* TypeTable::shared()
     return s_shared;
 }
 
-// See ~/code/tmp/aot/tsfacts/totypes.ts for the format, for now.
+// FIXME: Document the file format here. It is currently defined only by the script that generates the table.
 void TypeTable::load(VM& vm)
 {
     if (s_shared || !Options::aotTypeTable())
@@ -262,7 +262,6 @@ std::optional<TypeTable::Layout> TypeTable::layoutOf(uint32_t type) const
     for (unsigned i = 0; i < layout[1]; ++i) {
         auto property = layout.subspan(wordsBeforePropertiesOfLayout() + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
         result.properties.append({ m_names[property[0]].impl(), safeCast<uint16_t>(property[1]) });
-        result.fieldType.append(FieldType::from(property[2], property[3]));
     }
     return result;
 }

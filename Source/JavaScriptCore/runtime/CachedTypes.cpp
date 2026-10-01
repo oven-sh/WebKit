@@ -6325,11 +6325,11 @@ struct BytecodeLinkEncoder::Impl {
         };
 
         // What becomes of each function that is proven: see AOT::FunctionSummary.
-        Vector<std::unique_ptr<AOT::FunctionSummary>> factsOfFunctions;
-        AOT::FunctionSummaryMap factsOfExecutables;
-        UncheckedKeyHashMap<UnlinkedCodeBlock*, const AOT::FunctionSummary*> factsOfCode; // Of the code for a call.
-        AOT::VariableSummaries factsOfAllVariables;
-        AOT::VariableSummaries* variableSummaries = &factsOfAllVariables;
+        Vector<std::unique_ptr<AOT::FunctionSummary>> functionSummaries;
+        AOT::FunctionSummaryMap summariesByExecutable;
+        UncheckedKeyHashMap<UnlinkedCodeBlock*, const AOT::FunctionSummary*> summariesByCodeBlock; // Of the code for a call.
+        AOT::VariableSummaries allVariableSummaries;
+        AOT::VariableSummaries* variableSummaries = &allVariableSummaries;
         if (variableSummaries) {
             // What gets into the variables of a module other than by its code putting it there.
             for (unsigned index = 0; index < modules.size(); ++index) {
@@ -6358,7 +6358,7 @@ struct BytecodeLinkEncoder::Impl {
             for (auto& variable : variablesWrittenNativelyOfLink)
                 variableSummaries->join(variable, AOT::TAll);
         }
-        // Every function has a number, and a summary is kept for each.
+        // Every function has a number, and a unit is kept for each.
         Vector<unsigned> modulesOfNumberedFunctions { 0 };
         auto moduleOfFunctionNumbered = [&](uint32_t number) { return modulesOfNumberedFunctions[number]; };
         AOT::FunctionsOfProgram functionsOfProgram;
@@ -6370,18 +6370,18 @@ struct BytecodeLinkEncoder::Impl {
                 known.executable = function.executable;
                 RELEASE_ASSERT(describe(function.executable, known));
                 known.isExact = true;
-                factsOfFunctions.append(makeUnique<AOT::FunctionSummary>());
-                known.facts = factsOfFunctions.last().get();
+                functionSummaries.append(makeUnique<AOT::FunctionSummary>());
+                known.summary = functionSummaries.last().get();
                 result.first->second = functionsOfProgram.add(known);
-                known.facts->number = result.first->second;
+                known.summary->number = result.first->second;
                 modulesOfNumberedFunctions.append(function.module);
             }
             uint32_t number = result.first->second;
             functionsOfProgram.isAlso(number, function.executable);
-            AOT::FunctionSummary* facts = functionsOfProgram.function(number)->facts;
-            factsOfExecutables.add(function.executable, facts);
+            AOT::FunctionSummary* summary = functionsOfProgram.function(number)->summary;
+            summariesByExecutable.add(function.executable, summary);
             if (function.forCall)
-                factsOfCode.add(function.forCall, facts);
+                summariesByCodeBlock.add(function.forCall, summary);
         }
         AOT::setFunctionsOfProgram(&functionsOfProgram);
         auto forgetFunctionsOfProgram = makeScopeExit([] { AOT::setFunctionsOfProgram(nullptr); });
@@ -6397,19 +6397,19 @@ struct BytecodeLinkEncoder::Impl {
                 if (!hintsOfModule)
                     continue;
                 hintsOfModule->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
-                    auto result = factsOfExecutables.add(function.executable, nullptr);
+                    auto result = summariesByExecutable.add(function.executable, nullptr);
                     if (result.isNewEntry) {
-                        factsOfFunctions.append(makeUnique<AOT::FunctionSummary>());
-                        result.iterator->value = factsOfFunctions.last().get();
+                        functionSummaries.append(makeUnique<AOT::FunctionSummary>());
+                        result.iterator->value = functionSummaries.last().get();
                     }
-                    function.facts = result.iterator->value;
+                    function.summary = result.iterator->value;
                     if (function.forCall)
-                        factsOfCode.add(function.forCall, function.facts);
+                        summariesByCodeBlock.add(function.forCall, function.summary);
                 });
             }
             std::atomic<unsigned> unreadable { 0 };
             inParallel(jobs.size(), [&](size_t index) {
-                if (!AOT::recordUsesOfKnownFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfExecutables, variableSummaries))
+                if (!AOT::recordUsesOfKnownFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, variableSummaries))
                     unreadable++;
             });
             AOT::TypeTable::finalizeAtomizedFields();
@@ -6463,22 +6463,22 @@ struct BytecodeLinkEncoder::Impl {
                 hintsOfModule->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
                     uint32_t number = functionsOfProgram.numberOf(function.executable);
                     if (function.isVisibleFromOutside)
-                        function.facts->markEscaping(AOT::FunctionSummary::ReportedByBundler);
+                        function.summary->markEscaping(AOT::FunctionSummary::ReportedByBundler);
                     else if (function.isDeclaration)
                         isMadeWhereItCanBeSeen.set(number);
                 });
             }
             for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
                 const AOT::KnownFunction& function = *functionsOfProgram.function(number);
-                function.facts->isNonEscaping = !!function.forCall;
+                function.summary->isNonEscaping = !!function.forCall;
                 if (!function.forCall)
-                    function.facts->markEscaping(AOT::FunctionSummary::NotCallable);
+                    function.summary->markEscaping(AOT::FunctionSummary::NotCallable);
                 else if (!isModuleOfProgram(moduleOfFunctionNumbered(number)))
-                    function.facts->markEscaping(AOT::FunctionSummary::ExternalFunction);
+                    function.summary->markEscaping(AOT::FunctionSummary::ExternalFunction);
                 else if (!isMadeWhereItCanBeSeen.get(number))
-                    function.facts->markEscaping(AOT::FunctionSummary::CreationSiteUnknown);
+                    function.summary->markEscaping(AOT::FunctionSummary::CreationSiteUnknown);
                 else if (AOT::mayReferenceItself(function.forCall))
-                    function.facts->markEscaping(AOT::FunctionSummary::ReferencesItself);
+                    function.summary->markEscaping(AOT::FunctionSummary::ReferencesItself);
             }
         }
 
@@ -6487,15 +6487,15 @@ struct BytecodeLinkEncoder::Impl {
         {
             // And what the closed ones are passed, which goes by what whoever calls them has in hand: so every piece of code there is.
             using SetOfUnits = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
-            struct Summary {
+            struct AnalysisUnit {
                 Vector<const AOT::KnownFunction*, 1> functions; // That this is the code of, for a call.
-                const AOT::FunctionSummary* facts { nullptr };
+                const AOT::FunctionSummary* summary { nullptr };
                 SetOfUnits dependents;
                 Vector<const AOT::KnownFunction*> callees;
                 Vector<const AOT::KnownFunction*> calleesWithWidenedInputs;
                 bool changed { false };
             };
-            Vector<Summary> summaries(jobs.size());
+            Vector<AnalysisUnit> units(jobs.size());
             UncheckedKeyHashMap<UnlinkedCodeBlock*, unsigned> summaryOfCode;
             for (unsigned i = 0; i < jobs.size(); ++i)
                 summaryOfCode.add(jobs[i].codeBlock, i);
@@ -6510,8 +6510,8 @@ struct BytecodeLinkEncoder::Impl {
                     if (it == summaryOfCode.end())
                         return;
                     indexOfSummary.add(&function, it->value);
-                    summaries[it->value].functions.append(&function);
-                    summaries[it->value].facts = function.facts;
+                    units[it->value].functions.append(&function);
+                    units[it->value].summary = function.summary;
                 });
             }
             for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
@@ -6522,11 +6522,11 @@ struct BytecodeLinkEncoder::Impl {
                 if (it == summaryOfCode.end())
                     continue;
                 indexOfSummary.add(function, it->value);
-                summaries[it->value].functions.append(function);
-                summaries[it->value].facts = function->facts;
+                units[it->value].functions.append(function);
+                units[it->value].summary = function->summary;
             }
             Vector<unsigned> worklist;
-            for (unsigned i = 0; i < summaries.size(); ++i)
+            for (unsigned i = 0; i < units.size(); ++i)
                 worklist.append(i);
             MonotonicTime before = MonotonicTime::now();
             unsigned rounds = 0;
@@ -6543,19 +6543,19 @@ struct BytecodeLinkEncoder::Impl {
                     mix(static_cast<uint64_t>(type));
                     mix(static_cast<uint64_t>(type >> 64));
                 };
-                for (auto& summary : summaries) {
-                    if (summary.facts) {
-                        mix(summary.facts->escapes.load());
-                        for (auto& type : summary.facts->parameterTypes)
+                for (auto& unit : units) {
+                    if (unit.summary) {
+                        mix(unit.summary->escapes.load());
+                        for (auto& type : unit.summary->parameterTypes)
                             mixType(type.load());
-                        mixType(summary.facts->thisType.load());
-                        mixType(summary.facts->returnType.load());
-                        mix(summary.facts->escapingParameters.load());
-                        mix(summary.facts->needsReturnObject.load());
-                        for (auto& type : summary.facts->returnValueTypes)
+                        mixType(unit.summary->thisType.load());
+                        mixType(unit.summary->returnType.load());
+                        mix(unit.summary->escapingParameters.load());
+                        mix(unit.summary->needsReturnObject.load());
+                        for (auto& type : unit.summary->returnValueTypes)
                             mixType(type.load());
                     }
-                    for (auto* function : summary.functions)
+                    for (auto* function : unit.functions)
                         mixType(function->returnType.load());
                 }
                 uint64_t variables = 0;
@@ -6579,39 +6579,39 @@ struct BytecodeLinkEncoder::Impl {
                 inferences += worklist.size();
                 inParallel(worklist.size(), [&](size_t at) {
                     unsigned index = worklist[at];
-                    Summary& summary = summaries[index];
-                    summary.callees.shrink(0);
-                    summary.calleesWithWidenedInputs.shrink(0);
+                    AnalysisUnit& unit = units[index];
+                    unit.callees.shrink(0);
+                    unit.calleesWithWidenedInputs.shrink(0);
                     uint32_t escaping = 0;
-                    AOT::Type type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableSummaries, index, summary.callees, summary.calleesWithWidenedInputs, escaping);
-                    summary.changed = false;
-                    if (summary.facts) {
-                        uint32_t old = summary.facts->escapingParameters.fetch_or(escaping, std::memory_order_relaxed);
-                        summary.changed |= (old | escaping) != old;
-                        summary.changed |= summary.facts->returnValueTypesChanged.exchange(false, std::memory_order_relaxed);
+                    AOT::Type type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), unit.summary, variableSummaries, index, unit.callees, unit.calleesWithWidenedInputs, escaping);
+                    unit.changed = false;
+                    if (unit.summary) {
+                        uint32_t old = unit.summary->escapingParameters.fetch_or(escaping, std::memory_order_relaxed);
+                        unit.changed |= (old | escaping) != old;
+                        unit.changed |= unit.summary->returnValueTypesChanged.exchange(false, std::memory_order_relaxed);
                     }
-                    for (auto* function : summary.functions) {
+                    for (auto* function : unit.functions) {
                         AOT::Type old = function->returnType.join(type);
-                        summary.changed |= (type | old) != old;
+                        unit.changed |= (type | old) != old;
                     }
-                    if (summary.facts)
-                        summary.facts->returnType.join(type);
+                    if (unit.summary)
+                        unit.summary->returnType.join(type);
                 });
                 SetOfUnits next;
                 for (unsigned index : worklist) {
-                    for (auto* callee : summaries[index].callees) {
+                    for (auto* callee : units[index].callees) {
                         if (auto it = indexOfSummary.find(callee); it != indexOfSummary.end())
-                            summaries[it->value].dependents.add(index);
+                            units[it->value].dependents.add(index);
                     }
                 }
                 for (unsigned index : worklist) {
-                    for (auto* callee : summaries[index].calleesWithWidenedInputs) {
+                    for (auto* callee : units[index].calleesWithWidenedInputs) {
                         if (auto it = indexOfSummary.find(callee); it != indexOfSummary.end())
                             next.add(it->value);
                     }
-                    if (!std::exchange(summaries[index].changed, false))
+                    if (!std::exchange(units[index].changed, false))
                         continue;
-                    for (unsigned dependent : summaries[index].dependents)
+                    for (unsigned dependent : units[index].dependents)
                         next.add(dependent);
                 }
                 if (variableSummaries) {
@@ -6631,7 +6631,7 @@ struct BytecodeLinkEncoder::Impl {
             digestBefore = digest;
             ++fullReanalysisCount;
             isReanalyzingAll = true;
-            for (unsigned i = 0; i < summaries.size(); ++i)
+            for (unsigned i = 0; i < units.size(); ++i)
                 worklist.append(i);
             }
             unsigned withCode = 0;
@@ -6639,31 +6639,31 @@ struct BytecodeLinkEncoder::Impl {
             unsigned neverCalled = 0;
             for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
                 const AOT::KnownFunction& function = *functionsOfProgram.function(number);
-                function.facts->isNonEscaping = function.forCall && !function.facts->escapes.load();
+                function.summary->isNonEscaping = function.forCall && !function.summary->escapes.load();
                 withCode += !!function.forCall;
-                closed += function.facts->isNonEscaping;
-                neverCalled += function.facts->isNonEscaping && !function.facts->parameterTypes[0].load();
+                closed += function.summary->isNonEscaping;
+                neverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
             }
             if (Options::aotVerbose()) [[unlikely]]
                 dataLogLn("AOT: of ", withCode, " functions that there is code to call, ", closed, " get nowhere that is not reckoned with (CLOSED), of which ", neverCalled, " are never seen to be called");
-            if (Options::aotLogsFacts()) [[unlikely]] {
+            if (Options::logAOTTypeInference()) [[unlikely]] {
                 // Once more, now that it is settled, for each to say what it goes by and what it adds.
                 auto nameOfJob = [&](unsigned index) {
                     auto* executable = jobs[index].executable;
                     return makeString('`', executable ? executable->name().string() : "(top level)"_s, "` @"_s, jobs[index].key.module, ':', jobs[index].key.start);
                 };
-                for (unsigned index = 0; index < summaries.size(); ++index) {
-                    Summary& summary = summaries[index];
-                    if (summary.facts) {
+                for (unsigned index = 0; index < units.size(); ++index) {
+                    AnalysisUnit& unit = units[index];
+                    if (unit.summary) {
                         StringPrintStream out;
                         for (unsigned p = 1; p < std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::FunctionSummary::mostParameters); ++p)
-                            out.print(" ", AOT::TypeDump(summary.facts->parameterTypes[p].load()));
-                        dataLogLn("FACTLOG function ", nameOfJob(index), summary.facts->isNonEscaping ? " CLOSED, is passed" : " open", summary.facts->isNonEscaping ? out.toString() : String(), ", returns ", AOT::TypeDump(summary.functions[0]->returnType.load()), ", direct calls ", summary.facts->directCalls.load());
+                            out.print(" ", AOT::TypeDump(unit.summary->parameterTypes[p].load()));
+                        dataLogLn("AOT inference: function ", nameOfJob(index), unit.summary->isNonEscaping ? " CLOSED, is passed" : " open", unit.summary->isNonEscaping ? out.toString() : String(), ", returns ", AOT::TypeDump(unit.functions[0]->returnType.load()), ", direct calls ", unit.summary->directCalls.load());
                     }
                     Vector<const AOT::KnownFunction*> ignored;
                     Vector<const AOT::KnownFunction*> ignoredToo;
                     uint32_t ignoredAsWell = 0;
-                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableSummaries, AOT::VariableSummaries::nobody, ignored, ignoredToo, ignoredAsWell, nameOfJob(index));
+                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), unit.summary, variableSummaries, AOT::VariableSummaries::nobody, ignored, ignoredToo, ignoredAsWell, nameOfJob(index));
                 }
             }
         }
@@ -6690,13 +6690,13 @@ struct BytecodeLinkEncoder::Impl {
         CodeOfThisProgram codeOfProgram;
         codeOfProgram.builtins = &builtinsOfEngine;
         for (auto& job : jobs)
-            codeOfProgram.all.add(job.codeBlock, AOT::CodeOfProgram::About { hints[job.module].get(), linkages[job.module].get(), factsOfCode.get(job.codeBlock), job.key });
+            codeOfProgram.all.add(job.codeBlock, AOT::CodeOfProgram::About { hints[job.module].get(), linkages[job.module].get(), summariesByCodeBlock.get(job.codeBlock), job.key });
         std::atomic<uint64_t> functionsNeverReached { 0 };
         std::atomic<uint64_t> bytecodeNeverReached { 0 };
         auto work = [&] {
             for (size_t index = next++; index < jobs.size(); index = next++) {
                 // Whoever calls a closed function is known, all of them. One that nobody calls has no use for code.
-                if (const AOT::FunctionSummary* facts = factsOfCode.get(jobs[index].codeBlock); facts && !facts->isReached()) {
+                if (const AOT::FunctionSummary* summary = summariesByCodeBlock.get(jobs[index].codeBlock); summary && !summary->isReached()) {
                     functionsNeverReached++;
                     bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
                     if (Options::aotVerbose()) [[unlikely]]
@@ -6704,7 +6704,7 @@ struct BytecodeLinkEncoder::Impl {
                     continue;
                 }
                 AOT::CompiledCode code;
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfCode.get(jobs[index].codeBlock), variableSummaries, &codeOfProgram)) {
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, &codeOfProgram)) {
                     // (A function's key says where its source starts, if it is a function that somebody wrote.)
                     {
                         auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
@@ -6712,7 +6712,7 @@ struct BytecodeLinkEncoder::Impl {
                         bool startIsKnown = isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody;
                         AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? textOfModule(jobs[index].module) : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
                     }
-                    if (Options::aotLogsFacts()) [[unlikely]] {
+                    if (Options::logAOTTypeInference()) [[unlikely]] {
                         auto* executable = jobs[index].executable;
                         dataLogLn("CODESIZE `", executable ? executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, " ", code.bytes.size());
                     }

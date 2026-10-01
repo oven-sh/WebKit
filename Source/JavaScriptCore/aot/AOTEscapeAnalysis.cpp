@@ -304,10 +304,10 @@ private:
 
         bool isExact = false;
         const KnownFunction* known = call->graph->knownCallee(call, &isExact);
-        if (known && isExact && known->forCall && known->facts) {
+        if (known && isExact && known->forCall && known->summary) {
             if (m_calleesConsulted && !m_calleesConsulted->contains(known))
                 m_calleesConsulted->append(known);
-            uint32_t mask = known->facts->escapingParameters.load(std::memory_order_relaxed);
+            uint32_t mask = known->summary->escapingParameters.load(std::memory_order_relaxed);
             unsigned parameters = std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::maxTrackedEscapingParameters);
             bool letsItOut = static_cast<unsigned>(index) < parameters ? mask >> index & 1 : mask & FunctionSummary::whatIsPassedBeyondParametersEscapes;
             if (letsItOut)
@@ -892,7 +892,7 @@ void planMultiValueReturns(Graph& graph)
 {
     if (!multiValueReturnTable())
         return;
-    if (auto* names = registerReturnValuesOf(graph.codeBlock(), graph.facts())) {
+    if (auto* names = registerReturnValuesOf(graph.codeBlock(), graph.summary())) {
         for (BasicBlock* block : graph.m_rpo) {
             for (Node* node : block->nodes) {
                 if (!node->isBytecode(op_ret) || node->graph != &graph)
@@ -913,7 +913,7 @@ void planMultiValueReturns(Graph& graph)
             const KnownFunction* known = graph.knownCallee(node, &isExact);
             if (!known || !isExact || !known->forCall)
                 continue;
-            auto* names = registerReturnValuesOf(known->forCall, known->facts);
+            auto* names = registerReturnValuesOf(known->forCall, known->summary);
             if (!names)
                 continue;
             if (!users)

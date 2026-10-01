@@ -107,7 +107,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     if (!known || !isExact || !(isConstruct ? known->forConstruct : known->forCall))
         return false;
     // Nothing gets here, going by the types; and nothing gets to the function from anywhere else, so there is no code for it. What does get here has been lied to.
-    if (known->facts && !known->facts->isReached()) {
+    if (known->summary && !known->summary->isReached()) {
         coldCall(node, Entry::operationAOTCheckType, m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt32(MaskOtherObject));
         m_out.unreachable();
         m_out.appendTo(m_out.newBlock());
@@ -126,7 +126,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     unsigned index = m_graph.indexOfKnownCallee(known->keyFor(isConstruct));
     bool passesCallee = !m_graph.passesNoFunctionObject(node);
     bool takesList = convention.signature == Signature::List;
-    HowValuesArePassed how = isConstruct ? HowValuesArePassed { } : howValuesArePassed(known->facts, convention);
+    HowValuesArePassed how = isConstruct ? HowValuesArePassed { } : howValuesArePassed(known->summary, convention);
     // (What the callee hands back goes to whoever called this function, as it is.)
     if ((takesList || how.result != m_howValuesArePassed.result) && mode == CallMode::TailCall)
         mode = CallMode::Call;
@@ -177,7 +177,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     Vector<Rep, 8> things;
     if (node->numberOfReturnValues) {
         RELEASE_ASSERT(mode == CallMode::Call);
-        things = returnValueReps(known->facts, node->numberOfReturnValues);
+        things = returnValueReps(known->summary, node->numberOfReturnValues);
     }
     auto typeFor = [](Rep rep) -> LType { return rep == Rep::JSValue ? Int64 : rep == Rep::Double ? Double : Int32; };
     LType typeOfResult = mode == CallMode::TailCall ? Void : typeFor(how.result);
