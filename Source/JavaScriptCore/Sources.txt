@@ -799,6 +799,7 @@ python/PythonLifecycle.cpp
 python/PythonListSort.cpp
 python/PythonLsprofModule.cpp
 python/PythonLocale.cpp
+python/PythonJSONModule.cpp
 python/PythonJavaScript.cpp
 python/PythonJavaScriptModules.cpp
 python/PythonLexer.cpp

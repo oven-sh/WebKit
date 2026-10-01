@@ -306,7 +306,8 @@ bool isGoneThroughAsDict(JSGlobalObject* globalObject, JSValue value)
 }
 
 // PyMapping_Keys()
-JSValue keysOfMapping(JSGlobalObject* globalObject, JSValue mapping)
+// method_output_as_list()
+static JSValue methodOutputAsList(JSGlobalObject* globalObject, JSValue mapping, ASCIILiteral name)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -321,6 +322,26 @@ JSValue keysOfMapping(JSGlobalObject* globalObject, JSValue mapping)
         return { };
     }
     RELEASE_AND_RETURN(scope, listFromIterable(globalObject, iterator));
+}
+
+JSValue keysOfMapping(JSGlobalObject* globalObject, JSValue mapping)
+{
+    if (isExactly(globalObject, mapping, globalObject->pyRealm()->typeDict()))
+        return listFromIterable(globalObject, mapping);
+    return methodOutputAsList(globalObject, mapping, "keys"_s);
+}
+
+JSValue itemsOfMapping(JSGlobalObject* globalObject, JSValue mapping)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!isExactly(globalObject, mapping, globalObject->pyRealm()->typeDict()))
+        RELEASE_AND_RETURN(scope, methodOutputAsList(globalObject, mapping, "items"_s));
+    MarkedArgumentBuffer items;
+    asDict(mapping)->forEach(globalObject, [&] (JSValue key, JSValue value) {
+        items.append(PyTuple::create(globalObject, { key, value }));
+        return true;
+    });
+    RELEASE_AND_RETURN(scope, newList(globalObject, items));
 }
 
 // dict_update_arg(): from a mapping, or from what gives pairs.

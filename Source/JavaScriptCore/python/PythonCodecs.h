@@ -206,6 +206,16 @@ public:
     // PyUnicode_KIND() == PyUnicode_1BYTE_KIND, and PyUnicode_IS_ASCII(). It is what is in it that counts, and not how it is kept.
     bool isLatin1() const { return m_isLatin1; }
     bool isASCII() const { return m_isASCII; }
+    // Calls the function with all of them, as a span of whatever they are kept as, for what goes through a great many and is not to ask which each time.
+    template<typename Function>
+    decltype(auto) withSpan(const Function& function) const
+    {
+        if (m_characters8)
+            return function(std::span<const Latin1Character>(m_characters8, m_size));
+        if (m_characters16)
+            return function(std::span<const char16_t>(m_characters16, m_size));
+        return function(m_expanded.span());
+    }
 
 private:
     String m_string;

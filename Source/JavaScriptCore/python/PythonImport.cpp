@@ -296,6 +296,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "cmath"_s, createCMathModule },
     { "_symtable"_s, createSymtableModule },
     { "_suggestions"_s, createSuggestionsModule },
+    { "_json"_s, createJSONModule },
     { "_csv"_s, createCSVModule },
     { "_tokenize"_s, createTokenizeModule },
     { "_io"_s, createIOModule },

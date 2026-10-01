@@ -1,0 +1,840 @@
+Encoder {} True True None ': ' ', ' False False False
+set a member -> 'AttributeError: readonly attribute'
+markers: a list -> 'TypeError: make_encoder() argument 1 must be dict or None, not list'
+markers: a dict subclass -> ('[1]',)
+key_separator: bytes -> 'TypeError: make_encoder() argument 5 must be str, not bytes'
+key_separator: None -> 'TypeError: make_encoder() argument 5 must be str, not None'
+item_separator: int -> 'TypeError: make_encoder() argument 6 must be str, not int'
+separators of a subclass -> ('{"a"=[1;2]}',)
+flags are anything -> (True, False)
+a flag that raises -> 'ZeroDivisionError: bool'
+eight arguments -> "TypeError: make_encoder() missing required argument 'allow_nan' (pos 9)"
+by keyword -> ('[1,a]',)
+call: none -> "TypeError: _iterencode() missing required argument 'obj' (pos 1)"
+call: one -> "TypeError: _iterencode() missing required argument '_current_indent_level' (pos 2)"
+call: three -> 'TypeError: _iterencode() takes at most 2 arguments (3 given)'
+call: keywords -> ('[1]',)
+call: unknown keyword -> "TypeError: _iterencode() missing required argument '_current_indent_level' (pos 2)"
+level 0 -> ('[1, [2]]',)
+level 0, indented -> ('[\n  1, \n  [\n    2\n  ], \n  {\n    "a": {}\n  }\n]',)
+level 1 -> ('[1, [2]]',)
+level 1, indented -> ('[\n    1, \n    [\n      2\n    ], \n    {\n      "a": {}\n    }\n  ]',)
+level 3 -> ('[1, [2]]',)
+level 3, indented -> ('[\n        1, \n        [\n          2\n        ], \n        {\n          "a": {}\n        }\n      ]',)
+level -1 -> ('[1, [2]]',)
+level -1, indented -> ('[\n  1, \n  [\n    2\n  ], \n  {\n    "a": {}\n  }\n]',)
+level 1180591620717411303424 -> 'OverflowError: Python int too large to convert to C ssize_t'
+level 1180591620717411303424, indented -> 'OverflowError: Python int too large to convert to C ssize_t'
+level 1.5 -> "TypeError: 'float' object cannot be interpreted as an integer"
+level 1.5, indented -> "TypeError: 'float' object cannot be interpreted as an integer"
+level '0' -> "TypeError: 'str' object cannot be interpreted as an integer"
+level '0', indented -> "TypeError: 'str' object cannot be interpreted as an integer"
+level None -> "TypeError: 'NoneType' object cannot be interpreted as an integer"
+level None, indented -> "TypeError: 'NoneType' object cannot be interpreted as an integer"
+level True -> ('[1, [2]]',)
+level True, indented -> ('[\n    1, \n    [\n      2\n    ], \n    {\n      "a": {}\n    }\n  ]',)
+===== values
+===== plain
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('"a\\n\\u00e9\\u20ac\\ud83d\\ude00"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[1]',)
+(1,) -> ('[1]',)
+L -> ('[1, 2]',)
+T -> ('[1, 2]',)
+N -> ('[1, 2]',)
+L2 -> ('[9, 9]',)
+nested -> ('[1, [2, [3, [], {}]], {"a": [], "b": {}}]',)
+dict -> ('{"a": 1, "b": [2]}',)
+D -> ('{"a": 1}',)
+D2 -> ('{"x": 1, "y": 2}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{"b": 1, "a": 2}',)
+defaultdict -> ('{"a": 1}',)
+Counter -> ('{"a": 2, "b": 1}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== indent
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('"a\\n\\u00e9\\u20ac\\ud83d\\ude00"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[\n  1\n]',)
+(1,) -> ('[\n  1\n]',)
+L -> ('[\n  1, \n  2\n]',)
+T -> ('[\n  1, \n  2\n]',)
+N -> ('[\n  1, \n  2\n]',)
+L2 -> ('[\n  9, \n  9\n]',)
+nested -> ('[\n  1, \n  [\n    2, \n    [\n      3, \n      [], \n      {}\n    ]\n  ], \n  {\n    "a": [], \n    "b": {}\n  }\n]',)
+dict -> ('{\n  "a": 1, \n  "b": [\n    2\n  ]\n}',)
+D -> ('{\n  "a": 1\n}',)
+D2 -> ('{\n  "x": 1, \n  "y": 2\n}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{\n  "b": 1, \n  "a": 2\n}',)
+defaultdict -> ('{\n  "a": 1\n}',)
+Counter -> ('{\n  "a": 2, \n  "b": 1\n}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== not ascii
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('"a\\n\xe9\u20ac\U0001f600"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[1]',)
+(1,) -> ('[1]',)
+L -> ('[1, 2]',)
+T -> ('[1, 2]',)
+N -> ('[1, 2]',)
+L2 -> ('[9, 9]',)
+nested -> ('[1, [2, [3, [], {}]], {"a": [], "b": {}}]',)
+dict -> ('{"a": 1, "b": [2]}',)
+D -> ('{"a": 1}',)
+D2 -> ('{"x": 1, "y": 2}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{"b": 1, "a": 2}',)
+defaultdict -> ('{"a": 1}',)
+Counter -> ('{"a": 2, "b": 1}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== no nan
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> 'ValueError: Out of range float values are not JSON compliant: nan'
+inf -> 'ValueError: Out of range float values are not JSON compliant: inf'
+-inf -> 'ValueError: Out of range float values are not JSON compliant: -inf'
+F nan -> 'ValueError: Out of range float values are not JSON compliant: nan'
+str -> ('"a\\n\\u00e9\\u20ac\\ud83d\\ude00"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[1]',)
+(1,) -> ('[1]',)
+L -> ('[1, 2]',)
+T -> ('[1, 2]',)
+N -> ('[1, 2]',)
+L2 -> ('[9, 9]',)
+nested -> ('[1, [2, [3, [], {}]], {"a": [], "b": {}}]',)
+dict -> ('{"a": 1, "b": [2]}',)
+D -> ('{"a": 1}',)
+D2 -> ('{"x": 1, "y": 2}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{"b": 1, "a": 2}',)
+defaultdict -> ('{"a": 1}',)
+Counter -> ('{"a": 2, "b": 1}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== markers
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('"a\\n\\u00e9\\u20ac\\ud83d\\ude00"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[1]',)
+(1,) -> ('[1]',)
+L -> ('[1, 2]',)
+T -> ('[1, 2]',)
+N -> ('[1, 2]',)
+L2 -> ('[9, 9]',)
+nested -> ('[1, [2, [3, [], {}]], {"a": [], "b": {}}]',)
+dict -> ('{"a": 1, "b": [2]}',)
+D -> ('{"a": 1}',)
+D2 -> ('{"x": 1, "y": 2}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{"b": 1, "a": 2}',)
+defaultdict -> ('{"a": 1}',)
+Counter -> ('{"a": 2, "b": 1}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== sorted
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('"a\\n\\u00e9\\u20ac\\ud83d\\ude00"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[1]',)
+(1,) -> ('[1]',)
+L -> ('[1, 2]',)
+T -> ('[1, 2]',)
+N -> ('[1, 2]',)
+L2 -> ('[9, 9]',)
+nested -> ('[1, [2, [3, [], {}]], {"a": [], "b": {}}]',)
+dict -> ('{"a": 1, "b": [2]}',)
+D -> ('{"a": 1}',)
+D2 -> ('{"x": 1, "y": 2}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{"a": 2, "b": 1}',)
+defaultdict -> ('{"a": 1}',)
+Counter -> ('{"a": 2, "b": 1}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== compact
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('"a\\n\\u00e9\\u20ac\\ud83d\\ude00"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[1]',)
+(1,) -> ('[1]',)
+L -> ('[1,2]',)
+T -> ('[1,2]',)
+N -> ('[1,2]',)
+L2 -> ('[9,9]',)
+nested -> ('[1,[2,[3,[],{}]],{"a":[],"b":{}}]',)
+dict -> ('{"a":1,"b":[2]}',)
+D -> ('{"a":1}',)
+D2 -> ('{"x":1,"y":2}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{"b":1,"a":2}',)
+defaultdict -> ('{"a":1}',)
+Counter -> ('{"a":2,"b":1}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== tabs, sorted
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('"a\\n\\u00e9\\u20ac\\ud83d\\ude00"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[\n\t1\n]',)
+(1,) -> ('[\n\t1\n]',)
+L -> ('[\n\t1,\n\t2\n]',)
+T -> ('[\n\t1,\n\t2\n]',)
+N -> ('[\n\t1,\n\t2\n]',)
+L2 -> ('[\n\t9,\n\t9\n]',)
+nested -> ('[\n\t1,\n\t[\n\t\t2,\n\t\t[\n\t\t\t3,\n\t\t\t[],\n\t\t\t{}\n\t\t]\n\t],\n\t{\n\t\t"a": [],\n\t\t"b": {}\n\t}\n]',)
+dict -> ('{\n\t"a": 1,\n\t"b": [\n\t\t2\n\t]\n}',)
+D -> ('{\n\t"a": 1\n}',)
+D2 -> ('{\n\t"x": 1,\n\t"y": 2\n}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{\n\t"a": 2,\n\t"b": 1\n}',)
+defaultdict -> ('{\n\t"a": 1\n}',)
+Counter -> ('{\n\t"a": 2,\n\t"b": 1\n}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== empty indent
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('"a"',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('"a\\n\\u00e9\\u20ac\\ud83d\\ude00"',)
+S -> ('"s"',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[\n1\n]',)
+(1,) -> ('[\n1\n]',)
+L -> ('[\n1, \n2\n]',)
+T -> ('[\n1, \n2\n]',)
+N -> ('[\n1, \n2\n]',)
+L2 -> ('[\n9, \n9\n]',)
+nested -> ('[\n1, \n[\n2, \n[\n3, \n[], \n{}\n]\n], \n{\n"a": [], \n"b": {}\n}\n]',)
+dict -> ('{\n"a": 1, \n"b": [\n2\n]\n}',)
+D -> ('{\n"a": 1\n}',)
+D2 -> ('{\n"x": 1, \n"y": 2\n}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{\n"b": 1, \n"a": 2\n}',)
+defaultdict -> ('{\n"a": 1\n}',)
+Counter -> ('{\n"a": 2, \n"b": 1\n}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== own encoder
+None -> ('null',)
+True -> ('true',)
+False -> ('false',)
+0 -> ('0',)
+-1 -> ('-1',)
+big -> ('1267650600228229401496703205376',)
+-big -> ('-1267650600228229401496703205376',)
+2**31 -> ('2147483648',)
+2**63 -> ('9223372036854775808',)
+I -> ('5',)
+I2 -> ('5',)
+IntEnum -> ('1',)
+IntFlag -> ('3',)
+StrEnum -> ('<a>',)
+1.0 -> ('1.0',)
+-0.0 -> ('-0.0',)
+1e100 -> ('1e+100',)
+1e-7 -> ('1e-07',)
+0.1 -> ('0.1',)
+1e16 -> ('1e+16',)
+1e22 -> ('1e+22',)
+F -> ('1.5',)
+F2 -> ('1.5',)
+nan -> ('NaN',)
+inf -> ('Infinity',)
+-inf -> ('-Infinity',)
+F nan -> ('NaN',)
+str -> ('<a\n\xe9\u20ac\U0001f600>',)
+S -> ('<s>',)
+[] -> ('[]',)
+() -> ('[]',)
+{} -> ('{}',)
+L() -> ('[]',)
+T() -> ('[]',)
+D() -> ('{}',)
+[1] -> ('[1]',)
+(1,) -> ('[1]',)
+L -> ('[1, 2]',)
+T -> ('[1, 2]',)
+N -> ('[1, 2]',)
+L2 -> ('[9, 9]',)
+nested -> ('[1, [2, [3, [], {}]], {<a>: [], <b>: {}}]',)
+dict -> ('{<a>: 1, <b>: [2]}',)
+D -> ('{<a>: 1}',)
+D2 -> ('{<x>: 1, <y>: 2}',)
+D2 empty -> ('{}',)
+D3 -> 'ValueError: items must return 2-tuples'
+D4 -> 'TypeError: D4.items() returned a non-iterable (type int)'
+D5 -> 'ValueError: items must return 2-tuples'
+D6 -> "TypeError: 'NoneType' object is not callable"
+OrderedDict -> ('{<b>: 1, <a>: 2}',)
+defaultdict -> ('{<a>: 1}',)
+Counter -> ('{<a>: 2, <b>: 1}',)
+set -> 'TypeError: default: set'
+bytes -> 'TypeError: default: bytes'
+complex -> 'TypeError: default: complex'
+Decimal -> 'TypeError: default: Decimal'
+Fraction -> 'TypeError: default: Fraction'
+object -> 'TypeError: default: type'
+range -> 'TypeError: default: range'
+generator -> 'TypeError: default: generator'
+deque -> 'TypeError: default: deque'
+UserDict -> 'TypeError: default: UserDict'
+mappingproxy -> 'TypeError: default: mappingproxy'
+in a list -> 'TypeError: default: set | when serializing list item 1'
+in a dict -> "TypeError: default: set | when serializing dict item 'j' | when serializing list item 1 | when serializing dict item 'k'"
+in a tuple -> 'TypeError: default: bytes | when serializing tuple item 1 | when serializing tuple item 1'
+Ellipsis -> 'TypeError: default: ellipsis'
+NotImplemented -> 'TypeError: default: NotImplementedType'
+bytearray -> 'TypeError: default: bytearray'
+dict keys -> 'TypeError: default: dict_keys'
+===== keys
+str -> ('{"a": 1}',)
+str, skipped -> ('{"a": 1, "z": 2}',)
+str, skipped and indented -> ('{\n "a": 1\n}',)
+str, no nan -> ('{"a": 1}',)
+S -> ('{"a": 1}',)
+S, skipped -> ('{"a": 1, "z": 2}',)
+S, skipped and indented -> ('{\n "a": 1\n}',)
+S, no nan -> ('{"a": 1}',)
+StrEnum -> ('{"a": 1}',)
+StrEnum, skipped -> ('{"a": 1, "z": 2}',)
+StrEnum, skipped and indented -> ('{\n "a": 1\n}',)
+StrEnum, no nan -> ('{"a": 1}',)
+int -> ('{"1": 1}',)
+int, skipped -> ('{"1": 1, "z": 2}',)
+int, skipped and indented -> ('{\n "1": 1\n}',)
+int, no nan -> ('{"1": 1}',)
+big -> ('{"1180591620717411303424": 1}',)
+big, skipped -> ('{"1180591620717411303424": 1, "z": 2}',)
+big, skipped and indented -> ('{\n "1180591620717411303424": 1\n}',)
+big, no nan -> ('{"1180591620717411303424": 1}',)
+I2 -> ('{"1": 1}',)
+I2, skipped -> ('{"1": 1, "z": 2}',)
+I2, skipped and indented -> ('{\n "1": 1\n}',)
+I2, no nan -> ('{"1": 1}',)
+IntEnum -> ('{"1": 1}',)
+IntEnum, skipped -> ('{"1": 1, "z": 2}',)
+IntEnum, skipped and indented -> ('{\n "1": 1\n}',)
+IntEnum, no nan -> ('{"1": 1}',)
+float -> ('{"1.5": 1}',)
+float, skipped -> ('{"1.5": 1, "z": 2}',)
+float, skipped and indented -> ('{\n "1.5": 1\n}',)
+float, no nan -> ('{"1.5": 1}',)
+F2 -> ('{"1.5": 1}',)
+F2, skipped -> ('{"1.5": 1, "z": 2}',)
+F2, skipped and indented -> ('{\n "1.5": 1\n}',)
+F2, no nan -> ('{"1.5": 1}',)
+nan -> ('{"NaN": 1}',)
+nan, skipped -> ('{"NaN": 1, "z": 2}',)
+nan, skipped and indented -> ('{\n "NaN": 1\n}',)
+nan, no nan -> 'ValueError: Out of range float values are not JSON compliant: nan'
+inf -> ('{"Infinity": 1}',)
+inf, skipped -> ('{"Infinity": 1, "z": 2}',)
+inf, skipped and indented -> ('{\n "Infinity": 1\n}',)
+inf, no nan -> 'ValueError: Out of range float values are not JSON compliant: inf'
+True -> ('{"true": 1}',)
+True, skipped -> ('{"true": 1, "z": 2}',)
+True, skipped and indented -> ('{\n "true": 1\n}',)
+True, no nan -> ('{"true": 1}',)
+False -> ('{"false": 1}',)
+False, skipped -> ('{"false": 1, "z": 2}',)
+False, skipped and indented -> ('{\n "false": 1\n}',)
+False, no nan -> ('{"false": 1}',)
+None -> ('{"null": 1}',)
+None, skipped -> ('{"null": 1, "z": 2}',)
+None, skipped and indented -> ('{\n "null": 1\n}',)
+None, no nan -> ('{"null": 1}',)
+tuple -> 'TypeError: keys must be str, int, float, bool or None, not tuple'
+tuple, skipped -> ('{"z": 2}',)
+tuple, skipped and indented -> ('{}',)
+tuple, no nan -> 'TypeError: keys must be str, int, float, bool or None, not tuple'
+bytes -> 'TypeError: keys must be str, int, float, bool or None, not bytes'
+bytes, skipped -> ('{"z": 2}',)
+bytes, skipped and indented -> ('{}',)
+bytes, no nan -> 'TypeError: keys must be str, int, float, bool or None, not bytes'
+frozenset -> 'TypeError: keys must be str, int, float, bool or None, not frozenset'
+frozenset, skipped -> ('{"z": 2}',)
+frozenset, skipped and indented -> ('{}',)
+frozenset, no nan -> 'TypeError: keys must be str, int, float, bool or None, not frozenset'
+complex -> 'TypeError: keys must be str, int, float, bool or None, not complex'
+complex, skipped -> ('{"z": 2}',)
+complex, skipped and indented -> ('{}',)
+complex, no nan -> 'TypeError: keys must be str, int, float, bool or None, not complex'
+object -> 'TypeError: keys must be str, int, float, bool or None, not type'
+object, skipped -> ('{"z": 2}',)
+object, skipped and indented -> ('{}',)
+object, no nan -> 'TypeError: keys must be str, int, float, bool or None, not type'
+all skipped -> ('{}',)
+all skipped, indented -> ('{}',)
+first skipped -> ('{\n  "a": 2, \n  "b": 4\n}',)
+sorted, mixed -> "TypeError: '<' not supported between instances of 'str' and 'int'"
+sorted, ints -> ('{"true": 4, "1.5": 3, "9": 2, "10": 1}',)
+sorted by value when the keys are equal -> ('{"x": 1, "y": 2}',)
+1 and '1' -> ('{"1": "c", "1": "b"}',)

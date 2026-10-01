@@ -1332,6 +1332,18 @@ out that it was to be.
 
 `Dialect()` takes its arguments apart by something that does not say what it is called, so what is wrong with them is said of "function", or of "this function". A signature says so with `?` for the name.
 
+### `_json`
+
+`PythonJSONModule.cpp` is `Modules/_json.c`, function for function. `json` is written in Python besides and does without, twenty times slower.
+
+- **Where things are is counted in characters**, in what `raw_decode()` returns and what `JSONDecodeError` says. So what is gone through is `CodePoints`: the string as it is kept, unless there are surrogate pairs in it. What
+  reads is a template over what the characters are kept as (`CodePoints::withSpan()`), so that it is asked once and not for each.
+- A str that is read is a copy, so that one word kept does not keep all of what it was read from.
+- What is written goes straight into what is being built when the encoder is one of the two that are here, as CPython's `fast_encode` does, and what is beyond sixteen bits is already the two halves that `\uXXXX` wants.
+- An int of up to eighteen digits is added up where it stands. The rest go the way of `int()`, with its limit on how many digits.
+
+`programs/json-strings-written-and-read.py`, `json-read-by-the-scanner.py`, `json-written-by-the-encoder.py` and `json-as-programs-use-it.py` are 1,500 lines of what CPython does with each.
+
 ### `_suggestions`
 
 One function, in `PythonSignatures.cpp` beside what it calls, which is what says "Did you mean" of a keyword argument. `traceback.py` asks it which keyword a name that is in the way may have been meant for, and tries that

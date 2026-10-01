@@ -578,6 +578,7 @@ int64_t length(JSGlobalObject*, JSValue);
 bool isGoneThroughAsDict(JSGlobalObject*, JSValue);
 void updateDictFrom(JSGlobalObject*, PyDict*, JSValue mappingOrPairs);
 JSValue keysOfMapping(JSGlobalObject*, JSValue); // PyMapping_Keys(): a list
+JSValue itemsOfMapping(JSGlobalObject*, JSValue); // PyMapping_Items(): a list
 
 // ---- Iteration
 

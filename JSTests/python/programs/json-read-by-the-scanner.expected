@@ -1,0 +1,339 @@
+===== the scanner
+Scanner True None None <class 'float'> <class 'int'> True
+set a member -> 'AttributeError: readonly attribute'
+delete a member -> 'AttributeError: readonly attribute'
+another attribute -> "AttributeError: '_json.Scanner' object has no attribute 'zzz' and no __dict__ for setting new attributes"
+a context with nothing -> "AttributeError: 'object' object has no attribute 'strict'"
+without strict -> "AttributeError: 'types.SimpleNamespace' object has no attribute 'strict'"
+without object_hook -> "AttributeError: 'types.SimpleNamespace' object has no attribute 'object_hook'"
+without object_pairs_hook -> "AttributeError: 'types.SimpleNamespace' object has no attribute 'object_pairs_hook'"
+without parse_float -> "AttributeError: 'types.SimpleNamespace' object has no attribute 'parse_float'"
+without parse_int -> "AttributeError: 'types.SimpleNamespace' object has no attribute 'parse_int'"
+without parse_constant -> "AttributeError: 'types.SimpleNamespace' object has no attribute 'parse_constant'"
+by keyword -> 'Scanner'
+call: none -> "TypeError: scan_once() missing required argument 'string' (pos 1)"
+call: one -> "TypeError: scan_once() missing required argument 'idx' (pos 2)"
+call: three -> 'TypeError: scan_once() takes at most 2 arguments (3 given)'
+call: keywords -> (2, 2)
+call: unknown keyword -> "TypeError: scan_once() missing required argument 'idx' (pos 2)"
+call: bytes -> 'TypeError: first argument must be a string, not bytes'
+call: subclass -> ([1], 3)
+idx -1 -> 'ValueError: idx cannot be negative'
+idx 0 -> (12, 2)
+idx 1 -> (2, 2)
+idx 2 -> 'StopIteration: 2'
+idx 3 -> 'StopIteration: 3'
+idx 100 -> 'StopIteration: 100'
+idx 1180591620717411303424 -> 'OverflowError: Python int too large to convert to C ssize_t'
+idx 1.5 -> "TypeError: 'float' object cannot be interpreted as an integer"
+idx '0' -> "TypeError: 'str' object cannot be interpreted as an integer"
+idx None -> "TypeError: 'NoneType' object cannot be interpreted as an integer"
+idx True -> (2, 2)
+scan '1' -> (1, 1)
+   loads -> 1
+scan '-1' -> (-1, 2)
+   loads -> -1
+scan '0' -> (0, 1)
+   loads -> 0
+scan '-0' -> (0, 2)
+   loads -> 0
+scan '01' -> (0, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '-' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '--1' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '+1' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '1.' -> (1, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '1.5' -> (1.5, 3)
+   loads -> 1.5
+scan '.5' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '1e5' -> (100000.0, 3)
+   loads -> 100000.0
+scan '1E5' -> (100000.0, 3)
+   loads -> 100000.0
+scan '1e+5' -> (100000.0, 4)
+   loads -> 100000.0
+scan '1e-5' -> (1e-05, 4)
+   loads -> 1e-05
+scan '1e' -> (1, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '1e+' -> (1, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '1.5e' -> (1.5, 3)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 4 (char 3)'
+scan '1.5e3x' -> (1500.0, 5)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 6 (char 5)'
+scan '-0.0' -> (-0.0, 4)
+   loads -> -0.0
+scan '1e400' -> (inf, 5)
+   loads -> inf
+scan '-1e400' -> (-inf, 6)
+   loads -> -inf
+scan '1e-400' -> (0.0, 6)
+   loads -> 0.0
+scan '123456789012345678' -> (123456789012345678, 18)
+   loads -> 123456789012345678
+scan '1234567890123456789' -> (1234567890123456789, 19)
+   loads -> 1234567890123456789
+scan '-1234567890123456789' -> (-1234567890123456789, 20)
+   loads -> -1234567890123456789
+scan '9223372036854775807' -> (9223372036854775807, 19)
+   loads -> 9223372036854775807
+scan '9223372036854775808' -> (9223372036854775808, 19)
+   loads -> 9223372036854775808
+scan '-9223372036854775808' -> (-9223372036854775808, 20)
+   loads -> -9223372036854775808
+scan '1111111111111111111111111111111111111111' -> (1111111111111111111111111111111111111111, 40)
+   loads -> 1111111111111111111111111111111111111111
+scan '0.1' -> (0.1, 3)
+   loads -> 0.1
+scan '1.7976931348623157e308' -> (1.7976931348623157e+308, 22)
+   loads -> 1.7976931348623157e+308
+scan '5e-324' -> (5e-324, 6)
+   loads -> 5e-324
+scan '2.5e-324' -> (5e-324, 8)
+   loads -> 5e-324
+scan '123456789.123456789' -> (123456789.12345679, 19)
+   loads -> 123456789.12345679
+scan 'null' -> (None, 4)
+   loads -> None
+scan 'nul' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan 'nulll' -> (None, 4)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 5 (char 4)'
+scan 'true' -> (True, 4)
+   loads -> True
+scan 'tru' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan 'false' -> (False, 5)
+   loads -> False
+scan 'fals' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan 'NaN' -> (nan, 3)
+   loads -> nan
+scan 'Na' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan 'Infinity' -> (inf, 8)
+   loads -> inf
+scan 'Infinit' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '-Infinity' -> (-inf, 9)
+   loads -> -inf
+scan '-Infinit' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '-I' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan 'nan' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan 'None' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan 'True' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '""' -> ('', 2)
+   loads -> ''
+scan '"a"' -> ('a', 3)
+   loads -> 'a'
+scan '"' -> 'JSONDecodeError: Unterminated string starting at: line 1 column 1 (char 0)'
+   loads -> 'JSONDecodeError: Unterminated string starting at: line 1 column 1 (char 0)'
+scan '[]' -> ([], 2)
+   loads -> []
+scan '[ ]' -> ([], 3)
+   loads -> []
+scan '[1]' -> ([1], 3)
+   loads -> [1]
+scan '[1,2]' -> ([1, 2], 5)
+   loads -> [1, 2]
+scan '[1, 2 ]' -> ([1, 2], 7)
+   loads -> [1, 2]
+scan '[1,]' -> 'JSONDecodeError: Illegal trailing comma before end of array: line 1 column 3 (char 2)'
+   loads -> 'JSONDecodeError: Illegal trailing comma before end of array: line 1 column 3 (char 2)'
+scan '[,1]' -> 'StopIteration: 1'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 2 (char 1)'
+scan '[1 2]' -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 4 (char 3)"
+   loads -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 4 (char 3)"
+scan '[' -> 'StopIteration: 1'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 2 (char 1)'
+scan '[1' -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 3 (char 2)"
+   loads -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 3 (char 2)"
+scan '[1,' -> 'StopIteration: 3'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 4 (char 3)'
+scan '[1, ' -> 'StopIteration: 4'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 5 (char 4)'
+scan '[[' -> 'StopIteration: 2'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 3 (char 2)'
+scan '[]]' -> ([], 2)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 3 (char 2)'
+scan '{}' -> ({}, 2)
+   loads -> {}
+scan '{ }' -> ({}, 3)
+   loads -> {}
+scan '{"a":1}' -> ({'a': 1}, 7)
+   loads -> {'a': 1}
+scan '{"a" : 1 , "b":2}' -> ({'a': 1, 'b': 2}, 17)
+   loads -> {'a': 1, 'b': 2}
+scan '{"a":1,}' -> 'JSONDecodeError: Illegal trailing comma before end of object: line 1 column 7 (char 6)'
+   loads -> 'JSONDecodeError: Illegal trailing comma before end of object: line 1 column 7 (char 6)'
+scan '{,}' -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'
+   loads -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'
+scan '{"a"}' -> "JSONDecodeError: Expecting ':' delimiter: line 1 column 5 (char 4)"
+   loads -> "JSONDecodeError: Expecting ':' delimiter: line 1 column 5 (char 4)"
+scan '{"a":}' -> 'StopIteration: 5'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 6 (char 5)'
+scan '{"a":1' -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 7 (char 6)"
+   loads -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 7 (char 6)"
+scan '{"a":1 ' -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 8 (char 7)"
+   loads -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 8 (char 7)"
+scan '{"a":1,' -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 8 (char 7)'
+   loads -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 8 (char 7)'
+scan '{"a"' -> "JSONDecodeError: Expecting ':' delimiter: line 1 column 5 (char 4)"
+   loads -> "JSONDecodeError: Expecting ':' delimiter: line 1 column 5 (char 4)"
+scan '{"a":' -> 'StopIteration: 5'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 6 (char 5)'
+scan '{' -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'
+   loads -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'
+scan '{1:2}' -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'
+   loads -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'
+scan "{'a':1}" -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'
+   loads -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'
+scan '{"a":1 "b":2}' -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 8 (char 7)"
+   loads -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 8 (char 7)"
+scan '{"a":1,"a":2}' -> ({'a': 2}, 13)
+   loads -> {'a': 2}
+scan '[{"a":[{"b":[]}]}]' -> ([{'a': [{'b': []}]}], 18)
+   loads -> [{'a': [{'b': []}]}]
+scan ' 1' -> 'StopIteration: 0'
+   loads -> 1
+scan '1 ' -> (1, 1)
+   loads -> 1
+scan '\t1' -> 'StopIteration: 0'
+   loads -> 1
+scan '\n[\n1\n,\n2\n]\n' -> 'StopIteration: 0'
+   loads -> [1, 2]
+scan '\x0b1' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '\xa01' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '[\xa0]' -> 'StopIteration: 1'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 2 (char 1)'
+scan '[1,\u20282]' -> 'StopIteration: 3'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 4 (char 3)'
+scan '' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan ' ' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 2 (char 1)'
+scan 'x' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '\ufeff1' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)'
+scan '"\U0001f600"' -> ('\U0001f600', 3)
+   loads -> '\U0001f600'
+scan '["\U0001f600", 1]' -> (['\U0001f600', 1], 8)
+   loads -> ['\U0001f600', 1]
+scan '["\U0001f600", x]' -> 'StopIteration: 6'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 7 (char 6)'
+scan '{"\U0001f600": "\U0001f600", "k": x}' -> 'StopIteration: 16'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 17 (char 16)'
+scan '["caf\xe9", x]' -> 'StopIteration: 9'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 10 (char 9)'
+scan '["\u20ac", x]' -> 'StopIteration: 6'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 7 (char 6)'
+scan '[1e5, 1E5, -1.5e-3]' -> ([100000.0, 100000.0, -0.0015], 19)
+   loads -> [100000.0, 100000.0, -0.0015]
+scan '\uff11' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '[\uff11]' -> 'StopIteration: 1'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 2 (char 1)'
+scan '1\uff11' -> (1, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '1.\uff11' -> (1, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '1e\uff11' -> (1, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '-\uff11' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '/' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '//' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '/* */1' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '[1] # c' -> ([1], 3)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 5 (char 4)'
+scan '1_000' -> (1, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '0x10' -> (0, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '0b1' -> (0, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '1j' -> (1, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan "'a'" -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '[Infinity, -Infinity, NaN]' -> ([inf, -inf, nan], 26)
+   loads -> [inf, -inf, nan]
+scan '[-]' -> 'StopIteration: 1'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 2 (char 1)'
+scan '[-,' -> 'StopIteration: 1'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 2 (char 1)'
+scan '-x' -> 'StopIteration: 0'
+   loads -> 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'
+scan '[0' -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 3 (char 2)"
+   loads -> "JSONDecodeError: Expecting ',' delimiter: line 1 column 3 (char 2)"
+scan '0]' -> (0, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '00' -> (0, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '-00' -> (0, 2)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 3 (char 2)'
+scan '0.' -> (0, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '0.e1' -> (0, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '0e0' -> (0.0, 3)
+   loads -> 0.0
+scan '0e' -> (0, 1)
+   loads -> 'JSONDecodeError: Extra data: line 1 column 2 (char 1)'
+scan '-0e-0' -> (-0.0, 5)
+   loads -> -0.0
+===== hooks
+object_hook -> [('a', 2), ('b', [1.5, [('c', nan), ('d', -inf)]]), ('e', [])]
+object_pairs_hook -> [('a', 1), ('b', [1.5, [('c', nan), ('d', -inf)]]), ('a', 2), ('e', [])]
+both -> ('pairs', 4)
+OrderedDict -> OrderedDict({'a': 2, 'b': [1.5, OrderedDict({'c': nan, 'd': -inf})], 'e': OrderedDict()})
+parse_float -> [Decimal('1.10'), Decimal('1E+5'), 1, Decimal('-0.0')]
+parse_float gets -> [('str', '1.10'), ('str', '1E+5'), ('str', '-0.0e0')]
+parse_int gets -> [('str', '1'), ('str', '-0'), ('str', '123456789012345678901234567890'), 1.5]
+parse_int is float -> [1.0, 2.5]
+parse_float is int -> "ValueError: invalid literal for int() with base 10: '1.5'"
+parse_constant gets -> [('str', 'NaN'), ('str', 'Infinity'), ('str', '-Infinity'), None, True]
+parse_constant raises -> 'ZeroDivisionError: division by zero'
+a hook that raises -> 'ZeroDivisionError: division by zero'
+a hook that is not callable -> "TypeError: 'int' object is not callable"
+a subclass of int for parse_int -> ['I']
+strict -> 'JSONDecodeError: Invalid control character at: line 1 column 3 (char 2)'
+not strict -> ['a\nb', {'c\td': '\x00\x00'}]
+the same key is the one str -> [True, True]
+values are not -> False
+raw_decode -> ({'a': 1}, 8)
+raw_decode from -> ([1, 2], 8)
+raw_decode astral -> ('\U0001f600\U0001f600', 4)
+raw_decode astral from -> ([1, '\U0001f600'], 9)
+extra data -> 'JSONDecodeError: Extra data: line 1 column 5 (char 4)'
+extra data, astral -> 'JSONDecodeError: Extra data: line 1 column 7 (char 6)'
+where -> ('Expecting value', 15, 3, 8, True)
+where, wide -> ('Expecting value', 15, 3, 8, True)
+digits -> 4300
+too many digits -> 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit'
+too many digits, negative -> 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit'
+many digits in a float -> inf
+many digits after the point -> 0.1111111111111111
+deep -> 1
+too deep, arrays -> 'while decoding a JSON array from a unicode string'
+too deep, objects -> 'while decoding a JSON object from a unicode string'
+bytes -> [1, '\xe9']
+utf-16 -> [1, '\xe9']
+types -> ['int', 'float', 'str', 'NoneType', 'bool', 'list', 'dict', 'float', 'int']

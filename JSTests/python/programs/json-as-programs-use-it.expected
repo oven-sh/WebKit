@@ -1,0 +1,99 @@
+plain -> '{"name": "caf\\u00e9 \\u20ac \\ud83d\\ude00", "n": [1, 2.5, -3, 1e+100, null, true, false], "nested": {"a": {"b": {"c": [[], {}, [{}]]}}}, "": "", "k\\n": "v\\t"}'
+plain, and back -> True
+plain, a piece at a time -> True
+plain, to a file -> True
+indent 2 -> '{\n  "name": "caf\\u00e9 \\u20ac \\ud83d\\ude00",\n  "n": [\n    1,\n    2.5,\n    -3,\n    1e+100,\n    null,\n    true,\n    false\n  ],\n  "nested": {\n    "a": {\n      "b": {\n        "c": [\n          [],\n          {},\n          [\n            {}\n          ]\n        ]\n      }\n    }\n  },\n  "": "",\n  "k\\n": "v\\t"\n}'
+indent 2, and back -> True
+indent 2, a piece at a time -> True
+indent 2, to a file -> True
+indent 0 -> '{\n"name": "caf\\u00e9 \\u20ac \\ud83d\\ude00",\n"n": [\n1,\n2.5,\n-3,\n1e+100,\nnull,\ntrue,\nfalse\n],\n"nested": {\n"a": {\n"b": {\n"c": [\n[],\n{},\n[\n{}\n]\n]\n}\n}\n},\n"": "",\n"k\\n": "v\\t"\n}'
+indent 0, and back -> True
+indent 0, a piece at a time -> True
+indent 0, to a file -> True
+indent -1 -> '{\n"name": "caf\\u00e9 \\u20ac \\ud83d\\ude00",\n"n": [\n1,\n2.5,\n-3,\n1e+100,\nnull,\ntrue,\nfalse\n],\n"nested": {\n"a": {\n"b": {\n"c": [\n[],\n{},\n[\n{}\n]\n]\n}\n}\n},\n"": "",\n"k\\n": "v\\t"\n}'
+indent -1, and back -> True
+indent -1, a piece at a time -> True
+indent -1, to a file -> True
+indent tab -> '{\n\t"name": "caf\\u00e9 \\u20ac \\ud83d\\ude00",\n\t"n": [\n\t\t1,\n\t\t2.5,\n\t\t-3,\n\t\t1e+100,\n\t\tnull,\n\t\ttrue,\n\t\tfalse\n\t],\n\t"nested": {\n\t\t"a": {\n\t\t\t"b": {\n\t\t\t\t"c": [\n\t\t\t\t\t[],\n\t\t\t\t\t{},\n\t\t\t\t\t[\n\t\t\t\t\t\t{}\n\t\t\t\t\t]\n\t\t\t\t]\n\t\t\t}\n\t\t}\n\t},\n\t"": "",\n\t"k\\n": "v\\t"\n}'
+indent tab, and back -> True
+indent tab, a piece at a time -> True
+indent tab, to a file -> True
+indent str -> '{\n--"name": "caf\\u00e9 \\u20ac \\ud83d\\ude00",\n--"n": [\n----1,\n----2.5,\n-----3,\n----1e+100,\n----null,\n----true,\n----false\n--],\n--"nested": {\n----"a": {\n------"b": {\n--------"c": [\n----------[],\n----------{},\n----------[\n------------{}\n----------]\n--------]\n------}\n----}\n--},\n--"": "",\n--"k\\n": "v\\t"\n}'
+indent str, and back -> 'JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column 1 (char 2)'
+indent str, a piece at a time -> True
+indent str, to a file -> True
+sorted -> '{"": "", "k\\n": "v\\t", "n": [1, 2.5, -3, 1e+100, null, true, false], "name": "caf\\u00e9 \\u20ac \\ud83d\\ude00", "nested": {"a": {"b": {"c": [[], {}, [{}]]}}}}'
+sorted, and back -> True
+sorted, a piece at a time -> True
+sorted, to a file -> True
+not ascii -> '{"name": "caf\xe9 \u20ac \U0001f600", "n": [1, 2.5, -3, 1e+100, null, true, false], "nested": {"a": {"b": {"c": [[], {}, [{}]]}}}, "": "", "k\\n": "v\\t"}'
+not ascii, and back -> True
+not ascii, a piece at a time -> True
+not ascii, to a file -> True
+separators -> '{"name":"caf\\u00e9 \\u20ac \\ud83d\\ude00","n":[1,2.5,-3,1e+100,null,true,false],"nested":{"a":{"b":{"c":[[],{},[{}]]}}},"":"","k\\n":"v\\t"}'
+separators, and back -> True
+separators, a piece at a time -> True
+separators, to a file -> True
+odd separators -> '{"name" = "caf\\u00e9 \\u20ac \\ud83d\\ude00" ; "n" = [1 ; 2.5 ; -3 ; 1e+100 ; null ; true ; false] ; "nested" = {"a" = {"b" = {"c" = [[] ; {} ; [{}]]}}} ; "" = "" ; "k\\n" = "v\\t"}'
+odd separators, and back -> "JSONDecodeError: Expecting ':' delimiter: line 1 column 9 (char 8)"
+odd separators, a piece at a time -> True
+odd separators, to a file -> True
+indent and separators -> '{\n "name":"caf\\u00e9 \\u20ac \\ud83d\\ude00",\n "n":[\n  1,\n  2.5,\n  -3,\n  1e+100,\n  null,\n  true,\n  false\n ],\n "nested":{\n  "a":{\n   "b":{\n    "c":[\n     [],\n     {},\n     [\n      {}\n     ]\n    ]\n   }\n  }\n },\n "":"",\n "k\\n":"v\\t"\n}'
+indent and separators, and back -> True
+indent and separators, a piece at a time -> True
+indent and separators, to a file -> True
+no check -> '{"name": "caf\\u00e9 \\u20ac \\ud83d\\ude00", "n": [1, 2.5, -3, 1e+100, null, true, false], "nested": {"a": {"b": {"c": [[], {}, [{}]]}}}, "": "", "k\\n": "v\\t"}'
+no check, and back -> True
+no check, a piece at a time -> True
+no check, to a file -> True
+all -> '{\n   "": "",\n   "k\\n": "v\\t",\n   "n": [\n      1,\n      2.5,\n      -3,\n      1e+100,\n      null,\n      true,\n      false\n   ],\n   "name": "caf\xe9 \u20ac \U0001f600",\n   "nested": {\n      "a": {\n         "b": {\n            "c": [\n               [],\n               {},\n               [\n                  {}\n               ]\n            ]\n         }\n      }\n   }\n}'
+all, and back -> True
+all, a piece at a time -> True
+all, to a file -> True
+===== circles
+a list in itself -> 'ValueError: Circular reference detected | when serializing list item 0'
+a dict in itself -> "ValueError: Circular reference detected | when serializing dict item 'b'"
+by way of others -> "ValueError: Circular reference detected | when serializing dict item 'x' | when serializing list item 0 | when serializing list item 0"
+the same twice is no circle -> '[[1], [1], {"a": [1]}]'
+default gives itself -> 'ValueError: Circular reference detected | when serializing Loop object'
+default gives what has it -> 'ValueError: Circular reference detected | when serializing list item 0 | when serializing Loop object'
+unchecked, a list -> ('RecursionError', True)
+unchecked, a dict -> ('RecursionError', True)
+unchecked, default -> ('RecursionError', True)
+deep -> 802
+markers are left empty -> (('[[1],{"a":[2]}]',), {})
+and not when it fails -> 3
+markers of a class derived from dict -> ('[[1]]',)
+===== default
+default -> '[{"x": 1, "y": [{"x": 2, "y": []}]}]'
+default gives a str -> '{"a": "set"}'
+default gives None -> '[null]'
+default raises -> "ZeroDivisionError: division by zero | when serializing dict item 'b' | when serializing list item 1 | when serializing dict item 'a'"
+no default -> "TypeError: Object of type set is not JSON serializable | when serializing tuple item 1 | when serializing dict item 'b' | when serializing list item 1 | when serializing dict item 'a'"
+default, then what cannot be -> "ValueError: Circular reference detected | when serializing dict item 'k' | when serializing set object | when serializing dict item 'k' | when serializing Loop object | when serializing list item 0"
+cls -> '[{"<set>": [1, 2]}, {"<frozenset>": ["a", "b"]}, {"k": {"<set>": [3]}}]'
+cls, and what it cannot -> 'TypeError: Object of type bytes is not JSON serializable | when serializing list item 1'
+a note for each level -> "TypeError: Object of type bytes is not JSON serializable | when serializing list item 0 | when serializing collections.OrderedDict item 'c' | when serializing dict item 'b' | when serializing tuple item 1 | when serializing list item 1 | when serializing dict item 'a'"
+a key whose repr raises -> 'TypeError: Object of type bytes is not JSON serializable | when serializing dict item 2 | when serializing dict item 1'
+===== meddling
+a list that shrinks -> '[1, "x"]'
+a list that grows -> '[1, "x", 2]'
+a dict that is cleared -> '{"a": "x"}'
+sorted, and cleared -> '{"a": "x", "b": 2, "c": 3}'
+===== odd encoders
+gives bytes -> 'TypeError: encoder() must return a string, not bytes | when serializing list item 0'
+gives None -> 'TypeError: encoder() must return a string, not NoneType'
+gives a subclass -> ('[<>, {<>: <>}]',)
+raises -> 'ZeroDivisionError: division by zero | when serializing list item 0 | when serializing list item 1'
+not callable -> "TypeError: 'int' object is not callable | when serializing list item 0"
+str -> ('[a, {1: b, null: 2.5}]',)
+the one in Python -> ('["a\\u00e9"]',)
+indent: an int -> 'TypeError: can only concatenate str (not "int") to str'
+indent: an int, at a level -> "TypeError: 'int' object can't be repeated"
+indent: an int, and nothing to indent -> ('1',)
+indent: an int, and empty -> ('[]',)
+indent: bytes -> 'TypeError: can only concatenate str (not "bytes") to str'
+indent: a subclass -> ('[\n....1, \n....[\n......2\n....]\n..]',)
+digits -> 4300
+too many digits -> 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit | when serializing list item 0'
+too many digits in a key -> 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit'

@@ -1,0 +1,219 @@
+True True True True True
+['encode_basestring', 'encode_basestring_ascii', 'make_encoder', 'make_scanner', 'scanstring'] json speedups
+
+<class '_json.Scanner'> Scanner Scanner _json JSON scanner object (<class '_json.Scanner'>, <class 'object'>) ['__call__', '__doc__', '__module__', '__new__', 'object_hook', 'object_pairs_hook', 'parse_constant', 'parse_float', 'parse_int', 'strict'] 0 64
+derive -> "TypeError: type '_json.Scanner' is not an acceptable base type"
+no arguments -> "TypeError: make_scanner() missing required argument 'context' (pos 1)"
+too many -> 'TypeError: make_scanner() takes at most 1 argument (12 given)'
+unknown keyword -> "TypeError: make_scanner() missing required argument 'context' (pos 1)"
+<class '_json.Encoder'> Encoder Encoder _json Encoder(markers, default, encoder, indent, key_separator, item_separator, sort_keys, skipkeys, allow_nan) (<class '_json.Encoder'>, <class 'object'>) ['__call__', '__doc__', '__module__', '__new__', 'default', 'encoder', 'indent', 'item_separator', 'key_separator', 'markers', 'skipkeys', 'sort_keys'] 0 80
+derive -> "TypeError: type '_json.Encoder' is not an acceptable base type"
+no arguments -> "TypeError: make_encoder() missing required argument 'markers' (pos 1)"
+too many -> 'TypeError: make_encoder() takes at most 9 arguments (12 given)'
+unknown keyword -> "TypeError: make_encoder() missing required argument 'markers' (pos 1)"
+===== strings written
+'' -> ('""', '""', True, True)
+'a' -> ('"a"', '"a"', True, True)
+'abc def' -> ('"abc def"', '"abc def"', True, True)
+'"' -> ('"\\""', '"\\""', True, True)
+'\\' -> ('"\\\\"', '"\\\\"', True, True)
+'/' -> ('"/"', '"/"', True, True)
+'\x08\x0c\n\r\t' -> ('"\\b\\f\\n\\r\\t"', '"\\b\\f\\n\\r\\t"', True, True)
+'\x00\x01\x1f\x7f\x80\xff' -> ('"\\u0000\\u0001\\u001f\\u007f\\u0080\\u00ff"', '"\\u0000\\u0001\\u001f\x7f\x80\xff"', True, True)
+'caf\xe9' -> ('"caf\\u00e9"', '"caf\xe9"', True, True)
+'\u2028\u2029' -> ('"\\u2028\\u2029"', '"\u2028\u2029"', True, True)
+'\u20ac' -> ('"\\u20ac"', '"\u20ac"', True, True)
+'\U0001f600' -> ('"\\ud83d\\ude00"', '"\U0001f600"', True, True)
+'a\U0001f600b' -> ('"a\\ud83d\\ude00b"', '"a\U0001f600b"', True, True)
+'\ud800' -> ('"\\ud800"', '"\ud800"', True, True)
+'\udc00' -> ('"\\udc00"', '"\udc00"', True, True)
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxx -> ('"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"', '"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"', True, True)
+'\ud800x' -> ('"\\ud800x"', '"\ud800x"', True, True)
+'~}|' -> ('"~}|"', '"~}|"', True, True)
+' ' -> ('" "', '" "', True, True)
+ascii of 1 -> 'TypeError: first argument must be a string, not int'
+plain of 1 -> 'TypeError: first argument must be a string, not int'
+ascii of b'a' -> 'TypeError: first argument must be a string, not bytes'
+plain of b'a' -> 'TypeError: first argument must be a string, not bytes'
+ascii of None -> 'TypeError: first argument must be a string, not NoneType'
+plain of None -> 'TypeError: first argument must be a string, not NoneType'
+ascii of ['a'] -> 'TypeError: first argument must be a string, not list'
+plain of ['a'] -> 'TypeError: first argument must be a string, not list'
+ascii of 'q\n' -> ('"q\\n"', 'str')
+plain of 'q\n' -> '"q\\n"'
+no arguments -> 'TypeError: _json.encode_basestring() takes exactly one argument (0 given)'
+two -> 'TypeError: _json.encode_basestring() takes exactly one argument (2 given)'
+keyword -> 'TypeError: _json.encode_basestring() takes no keyword arguments'
+===== scanstring
+'"' strict=True -> ('', 1)
+   as Python has it -> ('', 1)
+'"' strict=False -> ('', 1)
+   as Python has it -> ('', 1)
+'abc"' strict=True -> ('abc', 4)
+   as Python has it -> ('abc', 4)
+'abc"' strict=False -> ('abc', 4)
+   as Python has it -> ('abc', 4)
+'abc' strict=True -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+   as Python has it -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+'abc' strict=False -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+   as Python has it -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+'' strict=True -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+   as Python has it -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+'' strict=False -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+   as Python has it -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+'a\\nb"' strict=True -> ('a\nb', 5)
+   as Python has it -> ('a\nb', 5)
+'a\\nb"' strict=False -> ('a\nb', 5)
+   as Python has it -> ('a\nb', 5)
+'a\\' strict=True -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+   as Python has it -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+'a\\' strict=False -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+   as Python has it -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+'a\\x"' strict=True -> 'JSONDecodeError: Invalid \\escape: line 1 column 2 (char 1)'
+   as Python has it -> "JSONDecodeError: Invalid \\escape: 'x': line 1 column 3 (char 2)"
+'a\\x"' strict=False -> 'JSONDecodeError: Invalid \\escape: line 1 column 2 (char 1)'
+   as Python has it -> "JSONDecodeError: Invalid \\escape: 'x': line 1 column 3 (char 2)"
+'a\\u00e9"' strict=True -> ('a\xe9', 8)
+   as Python has it -> ('a\xe9', 8)
+'a\\u00e9"' strict=False -> ('a\xe9', 8)
+   as Python has it -> ('a\xe9', 8)
+'a\\u00e"' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+'a\\u00e"' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+'a\\u00' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+'a\\u00' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+'a\\uzzzz"' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+'a\\uzzzz"' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 3 (char 2)'
+'\\ud83d\\ude00"' strict=True -> ('\U0001f600', 13)
+   as Python has it -> ('\U0001f600', 13)
+'\\ud83d\\ude00"' strict=False -> ('\U0001f600', 13)
+   as Python has it -> ('\U0001f600', 13)
+'\\ud83d\\ude00' strict=True -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+   as Python has it -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+'\\ud83d\\ude00' strict=False -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+   as Python has it -> 'JSONDecodeError: Unterminated string starting at: line 1 column 0 (char -1)'
+'\\ud83d\\ude00"x' strict=True -> ('\U0001f600', 13)
+   as Python has it -> ('\U0001f600', 13)
+'\\ud83d\\ude00"x' strict=False -> ('\U0001f600', 13)
+   as Python has it -> ('\U0001f600', 13)
+'\\ud83d"' strict=True -> ('\ud83d', 7)
+   as Python has it -> ('\ud83d', 7)
+'\\ud83d"' strict=False -> ('\ud83d', 7)
+   as Python has it -> ('\ud83d', 7)
+'\\ud83dx"' strict=True -> ('\ud83dx', 8)
+   as Python has it -> ('\ud83dx', 8)
+'\\ud83dx"' strict=False -> ('\ud83dx', 8)
+   as Python has it -> ('\ud83dx', 8)
+'\\ud83d\\n"' strict=True -> ('\ud83d\n', 9)
+   as Python has it -> ('\ud83d\n', 9)
+'\\ud83d\\n"' strict=False -> ('\ud83d\n', 9)
+   as Python has it -> ('\ud83d\n', 9)
+'\\ud83d\\u0041"' strict=True -> ('\ud83dA', 13)
+   as Python has it -> ('\ud83dA', 13)
+'\\ud83d\\u0041"' strict=False -> ('\ud83dA', 13)
+   as Python has it -> ('\ud83dA', 13)
+'\\ud83d\\uzzzz"x' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 8 (char 7)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 8 (char 7)'
+'\\ud83d\\uzzzz"x' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 8 (char 7)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 8 (char 7)'
+'\\ude00\\ud83d"' strict=True -> ('\ude00\ud83d', 13)
+   as Python has it -> ('\ude00\ud83d', 13)
+'\\ude00\\ud83d"' strict=False -> ('\ude00\ud83d', 13)
+   as Python has it -> ('\ude00\ud83d', 13)
+'a\nb"' strict=True -> 'JSONDecodeError: Invalid control character at: line 1 column 2 (char 1)'
+   as Python has it -> "JSONDecodeError: Invalid control character '\\n' at: line 1 column 2 (char 1)"
+'a\nb"' strict=False -> ('a\nb', 4)
+   as Python has it -> ('a\nb', 4)
+'a\tb"' strict=True -> 'JSONDecodeError: Invalid control character at: line 1 column 2 (char 1)'
+   as Python has it -> "JSONDecodeError: Invalid control character '\\t' at: line 1 column 2 (char 1)"
+'a\tb"' strict=False -> ('a\tb', 4)
+   as Python has it -> ('a\tb', 4)
+'a\x00b"' strict=True -> 'JSONDecodeError: Invalid control character at: line 1 column 2 (char 1)'
+   as Python has it -> "JSONDecodeError: Invalid control character '\\x00' at: line 1 column 2 (char 1)"
+'a\x00b"' strict=False -> ('a\x00b', 4)
+   as Python has it -> ('a\x00b', 4)
+'\U0001f600"' strict=True -> ('\U0001f600', 2)
+   as Python has it -> ('\U0001f600', 2)
+'\U0001f600"' strict=False -> ('\U0001f600', 2)
+   as Python has it -> ('\U0001f600', 2)
+'\U0001f600\\n\U0001f600"tail' strict=True -> ('\U0001f600\n\U0001f600', 5)
+   as Python has it -> ('\U0001f600\n\U0001f600', 5)
+'\U0001f600\\n\U0001f600"tail' strict=False -> ('\U0001f600\n\U0001f600', 5)
+   as Python has it -> ('\U0001f600\n\U0001f600', 5)
+'caf\xe9"' strict=True -> ('caf\xe9', 5)
+   as Python has it -> ('caf\xe9', 5)
+'caf\xe9"' strict=False -> ('caf\xe9', 5)
+   as Python has it -> ('caf\xe9', 5)
+'\u20ac\\"\u20ac"' strict=True -> ('\u20ac"\u20ac', 5)
+   as Python has it -> ('\u20ac"\u20ac', 5)
+'\u20ac\\"\u20ac"' strict=False -> ('\u20ac"\u20ac', 5)
+   as Python has it -> ('\u20ac"\u20ac', 5)
+'\\/\\b\\f\\r\\t\\\\\\""' strict=True -> ('/\x08\x0c\r\t\\"', 15)
+   as Python has it -> ('/\x08\x0c\r\t\\"', 15)
+'\\/\\b\\f\\r\\t\\\\\\""' strict=False -> ('/\x08\x0c\r\t\\"', 15)
+   as Python has it -> ('/\x08\x0c\r\t\\"', 15)
+'\\U0001f600"' strict=True -> 'JSONDecodeError: Invalid \\escape: line 1 column 1 (char 0)'
+   as Python has it -> "JSONDecodeError: Invalid \\escape: 'U': line 1 column 2 (char 1)"
+'\\U0001f600"' strict=False -> 'JSONDecodeError: Invalid \\escape: line 1 column 1 (char 0)'
+   as Python has it -> "JSONDecodeError: Invalid \\escape: 'U': line 1 column 2 (char 1)"
+'\\u+123"' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u+123"' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u 123"' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u 123"' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u0x12"' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u0x12"' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u\uff11234"' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u\uff11234"' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u12\xe94"' strict=True -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+'\\u12\xe94"' strict=False -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+   as Python has it -> 'JSONDecodeError: Invalid \\uXXXX escape: line 1 column 2 (char 1)'
+end -1 -> 'ValueError: end is out of bounds'
+end -1, astral -> 'ValueError: end is out of bounds'
+end 0 -> ('ab', 3)
+end 0, astral -> ('\U0001f600b', 3)
+end 1 -> ('b', 3)
+end 1, astral -> ('b', 3)
+end 3 -> ('cd', 6)
+end 3, astral -> ('\U0001f600d', 6)
+end 4 -> ('d', 6)
+end 4, astral -> ('d', 6)
+end 5 -> ('', 6)
+end 5, astral -> ('', 6)
+end 6 -> 'JSONDecodeError: Unterminated string starting at: line 1 column 6 (char 5)'
+end 6, astral -> 'JSONDecodeError: Unterminated string starting at: line 1 column 6 (char 5)'
+end 100 -> 'ValueError: end is out of bounds'
+end 100, astral -> 'ValueError: end is out of bounds'
+end 1180591620717411303424 -> 'OverflowError: Python int too large to convert to C ssize_t'
+end 1180591620717411303424, astral -> 'OverflowError: Python int too large to convert to C ssize_t'
+end -1180591620717411303424 -> 'OverflowError: Python int too large to convert to C ssize_t'
+end -1180591620717411303424, astral -> 'OverflowError: Python int too large to convert to C ssize_t'
+end 1.0 -> "TypeError: 'float' object cannot be interpreted as an integer"
+end 1.0, astral -> "TypeError: 'float' object cannot be interpreted as an integer"
+end '1' -> "TypeError: 'str' object cannot be interpreted as an integer"
+end '1', astral -> "TypeError: 'str' object cannot be interpreted as an integer"
+end None -> "TypeError: 'NoneType' object cannot be interpreted as an integer"
+end None, astral -> "TypeError: 'NoneType' object cannot be interpreted as an integer"
+end True -> ('b', 3)
+end True, astral -> ('b', 3)
+not a str -> 'TypeError: first argument must be a string, not bytes'
+a str subclass -> ('a', 2)
+one argument -> 'TypeError: scanstring() takes at least 2 arguments (1 given)'
+four -> 'TypeError: scanstring() takes at most 3 arguments (4 given)'
+keyword -> 'TypeError: scanstring() takes no keyword arguments'
+strict is anything -> (('a\nb', 4), ('a\nb', 4))
+strict that raises -> 'ZeroDivisionError: bool'
+both wrong -> "TypeError: 'str' object cannot be interpreted as an integer"
