@@ -992,7 +992,7 @@ JSGlobalObject::~JSGlobalObject()
 
     if (m_debugger)
         m_debugger->detach(this, Debugger::GlobalObjectIsDestructing);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_aotInstance)
         AOT::Instance::destroy(m_aotInstance);
 #endif
@@ -2456,7 +2456,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     if (Options::alwaysHaveABadTime()) [[unlikely]]
         this->haveABadTime(vm);
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // Its builtin functions have AOT code (StaticHeap::engineBuiltinFor()), which finds the instance through the VM. Loading a module of
     // the program would make the instance, but a Worker may run without loading one.
     if (vm.m_firstRealm == this && vm.m_firstRealmHasBuiltinsOfStaticHeap)
@@ -2913,7 +2913,7 @@ void JSGlobalObject::haveABadTime(VM& vm)
     if (isHavingABadTime())
         return;
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_aotInstance)
         m_aotInstance->didHaveABadTime();
 #endif

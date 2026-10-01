@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTConvention.h"
 #include "CCallHelpers.h"
@@ -566,4 +566,4 @@ void writeVeneer(uint8_t* base, size_t veneer, size_t target); // Offsets from t
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

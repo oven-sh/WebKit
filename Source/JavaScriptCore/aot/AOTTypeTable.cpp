@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTTypeTable.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "JSCInlines.h"
 #include "Options.h"
@@ -369,4 +369,4 @@ Vector<TypeTable::FieldType, 8> TypeTable::fieldTypesBySlot(uint32_t number) con
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

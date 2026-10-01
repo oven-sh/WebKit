@@ -320,7 +320,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         RELEASE_ASSERT(kind == CodeSpecializationKind::CodeForCall);
         RELEASE_ASSERT(!executable->m_codeBlock);
         RELEASE_ASSERT(!function);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         if (AOT::Image::hasAny() || Options::aotImagePath()) {
             if (auto code = AOT::findInImage(executable, kind, executable->unlinkedCodeBlock(), scope)) {
                 ProgramCodeBlock* codeBlock = ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope, CodeBlock::LinkMode::ForCodeFromImage);
@@ -343,7 +343,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->getUnlinkedCodeBlock(globalObject);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         ASSERT(executable->unlinkedCodeBlock());
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         if (AOT::Image::hasAny() || Options::aotImagePath()) {
             if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
                 ModuleProgramCodeBlock* codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
@@ -382,7 +382,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
         pinCodeGenerationModeForResumableBody();
     }
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // What StaticHeap left in the payload stays there, if there is code and enough is known of it to run it.
     if (executable->m_unlinkedExecutable->isCached() && StaticHeap::contains(executable->m_unlinkedExecutable.get())) {
         if (auto code = AOT::findInImage(executable, kind, nullptr, scope); code && AOT::canRunWithoutUnlinkedCode(globalObject, code)) {
@@ -410,7 +410,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;
     }
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (AOT::Image::hasAny() || Options::aotImagePath()) {
         if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
             // Nothing, and no exception: it has code, which wants no CodeBlock.

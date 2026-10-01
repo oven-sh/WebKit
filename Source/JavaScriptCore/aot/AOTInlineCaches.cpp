@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTInlineCaches.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTOperationHelpers.h"
 #include "AOTSlotWatchpoint.h"
@@ -636,4 +636,4 @@ void fillAllocationCache(VM& vm, Data* data, Slot* cache, Structure* structure, 
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

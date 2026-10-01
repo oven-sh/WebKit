@@ -211,7 +211,7 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Call
 inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor) const
 {
     copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (CallFrame* adapter = visitor->aotAdapterFrame())
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
 #endif

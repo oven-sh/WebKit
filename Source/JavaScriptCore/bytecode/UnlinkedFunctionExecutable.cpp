@@ -83,7 +83,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     // For ahead-of-time compilation the link is kept: both specializations use it, and so does the compiler.
     // (BytecodeLinkEncoder takes it from the executable once all code has been generated.)
     RefPtr<DeclaredNamesLink> parentDeclaredNames = vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically ? executable->parentDeclaredNames() : executable->takeParentDeclaredNames();
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
         AOT::noteDeclaredNames(result, RefPtr { parentDeclaredNames });
 #endif

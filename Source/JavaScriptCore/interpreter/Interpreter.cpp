@@ -571,7 +571,7 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                 if (CodeBlock* codeBlock = executable->codeBlockForCall()) {
                     BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, currentGenerator);
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
                 } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall); function && function.info().executable() == executable) {
                     // AOT code has no CodeBlock, and does not need one for this. (What is known about the function is: from the
                     // start if it is in the static heap, where a call that goes straight to its code links nothing.)
@@ -696,7 +696,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                     break;
                 }
                 }
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
             } else if (AOT::FunctionRef function = visitor->aotFunction(); function && function.codeType() == FunctionCode && !function.codeBlockIfExists() && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
                 results.append(StackFrame(vm, owner, visitor->callee().asCell(), uncheckedDowncast<FunctionExecutable>(function.executable()), function.info().kind(), visitor->bytecodeIndex()));
 #endif
@@ -817,7 +817,7 @@ CatchInfo::CatchInfo(const HandlerInfo* handler, CodeBlock* codeBlock)
     }
 }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 CatchInfo::CatchInfo(const UnlinkedHandlerInfo* handler, const AOT::FunctionRef& function)
 {
     m_valid = !!handler;
@@ -891,7 +891,7 @@ public:
     }
 #endif
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // See StackVisitor::StackVisitor().
     void didSkipAOTAdapterAtTop(CallFrame* adapter) const
     {
@@ -904,7 +904,7 @@ public:
         visitor.unwindToMachineCodeBlockFrame();
         m_callFrame = visitor->callFrame();
         m_handler.m_valid = false;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         if (AOT::FunctionRef function = visitor->aotFunction()) {
             m_codeBlock = nullptr;
             // (What has been made part of another function has no handlers. The other's are looked at when it is its turn.)

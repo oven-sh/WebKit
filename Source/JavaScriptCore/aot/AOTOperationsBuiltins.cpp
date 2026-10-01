@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTOperationsBuiltins.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTOperationHelpers.h"
 #include "ArrayPrototypeInlines.h"
@@ -190,4 +190,4 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfValues, JSCell*, (JSGlobalObject*
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

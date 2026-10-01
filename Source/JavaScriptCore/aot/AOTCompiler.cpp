@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTCompiler.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTImage.h"
 #include "AOTLowering.h"
@@ -474,4 +474,4 @@ bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode&
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

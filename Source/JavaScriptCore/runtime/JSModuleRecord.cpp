@@ -464,7 +464,7 @@ JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject
     return environment;
 }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(AOT)
 bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
 {
     if (m_isLinkedAsInImage != TriState::Indeterminate)
@@ -501,6 +501,8 @@ bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const
     // Its functions are the ones that were created when the program was built, which is what compiled code assumes about its
     // callees.
     bool result = isPrelinked() && (m_moduleProgramExecutable ? m_moduleProgramExecutable->usesStaticExecutables() : m_gaveStaticExecutables);
+    if (!result && Options::verboseAOTCompilation()) [[unlikely]]
+        dataLogLn("AOT: ", moduleKey().impl(), isPrelinked() ? " does not have the functions that were made when the program was built" : " was not linked when the program was built");
     // Whether the environment is at the location that compiled code assumes, if it assumes one.
     auto environmentIsInItsPlace = [&](AbstractModuleRecord* record) {
         AOT::ImageEnvironment environment = AOT::Image::environmentOf(record->prelinkedIndex());
@@ -509,14 +511,19 @@ bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const
         AOT::Instance* instance = globalObject->aotInstance();
         return instance && instance->placeForEnvironment(environment) == record->moduleEnvironmentMayBeNull();
     };
-    if (result)
+    if (result) {
         result = environmentIsInItsPlace(this);
+        if (!result && Options::verboseAOTCompilation()) [[unlikely]]
+            dataLogLn("AOT: the variables of ", moduleKey().impl(), " are not where its code expects them");
+    }
     if (result) {
         for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
             if (import.resolution() != PrelinkedModuleGraph::ResolutionKind::Binding || import.isNamespace())
                 continue;
             AbstractModuleRecord* exporter = prelinkedRecordForResolution(globalObject, import.resolvedModule);
             if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull() || !environmentIsInItsPlace(exporter) || !mayImportFrom(uncheckedDowncast<JSModuleRecord>(exporter))) {
+                if (Options::verboseAOTCompilation()) [[unlikely]]
+                    dataLogLn("AOT: ", moduleKey().impl(), " imports from a module that is not linked the way it was compiled for");
                 result = false;
                 break;
             }

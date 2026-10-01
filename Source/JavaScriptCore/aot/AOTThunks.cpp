@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTThunks.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTOperations.h"
 #include "AOTRuntime.h"
@@ -551,4 +551,4 @@ void installOperationFrontEnds(VM&, void**) { }
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

@@ -8,7 +8,7 @@
 
 #include "AOTImage.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTInlineCaches.h"
 #include "AOTOperationHelpers.h"
@@ -885,4 +885,4 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToInt32, int32_t, (double va
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

@@ -588,7 +588,7 @@ public:
     SimpleJumpTable& baselineSwitchJumpTable(int tableIndex);
     StringJumpTable& baselineStringSwitchJumpTable(int tableIndex);
     void setBaselineJITData(std::unique_ptr<BaselineJITData>&&);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     void installAOTCode(Ref<AOT::JITCode>&&); // The code of a program or a module.
     void adoptAOTCode(AOT::JITCode&, AOT::Data*); // See AOT::Data::ensureCodeBlock().
     // For code that will not run again: releases the data that is only needed to run it now, instead of waiting for the collector.

@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTEmitter.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "B3ArgumentRegValue.h"
 #include "B3Generate.h"
@@ -744,4 +744,4 @@ void generateHelper(CCallHelpers& jit, Stub stub)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

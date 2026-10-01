@@ -34,14 +34,8 @@
 
 namespace JSC::B3 {
 
-#define FOR_EACH_ABSTRACT_HEAP(macro) \
-    macro(TypedArrayProperties) \
-    macro(JSCellHeaderAndNamedProperties) \
-    macro(OrderedHashTableData) \
-    macro(VM_heapState) \
-
-// macro(name, offset, mutability)
-#define FOR_EACH_ABSTRACT_FIELD(macro) \
+#if ENABLE(AOT)
+#define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro) \
     macro(AOTData_constants, AOT::Data::offsetOfConstants(), Mutability::Immutable) \
     macro(AOTData_identifiers, AOT::Data::offsetOfIdentifiers(), Mutability::Immutable) \
     macro(AOTData_slotEpoch, AOT::Data::offsetOfSlotEpoch(), Mutability::Mutable) \
@@ -52,7 +46,29 @@ namespace JSC::B3 {
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
     macro(AOTInstance_whatIsFixed, 0, Mutability::Immutable) \
-    macro(AOTInstance_mutableFields, 0, Mutability::Mutable) \
+    macro(AOTInstance_mutableFields, 0, Mutability::Mutable)
+#define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
+    macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
+    macro(AOTInstance_states, AOT::Instance::offsetOfStates(), sizeof(uint32_t)) \
+    macro(AOTConstants, 0, sizeof(EncodedJSValue)) \
+    macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
+    macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
+    macro(AOTIdentifiers, 0, sizeof(void*)) \
+    macro(AOTRuntimeTable, 0, sizeof(void*))
+#else
+#define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro)
+#define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro)
+#endif
+
+#define FOR_EACH_ABSTRACT_HEAP(macro) \
+    macro(TypedArrayProperties) \
+    macro(JSCellHeaderAndNamedProperties) \
+    macro(OrderedHashTableData) \
+    macro(VM_heapState) \
+
+// macro(name, offset, mutability)
+#define FOR_EACH_ABSTRACT_FIELD(macro) \
+    FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro) \
     macro(ArrayBuffer_data, ArrayBuffer::offsetOfData(), Mutability::Mutable) \
     macro(ArrayStorage_numValuesInVector, ArrayStorage::numValuesInVectorOffset(), Mutability::Mutable) \
     macro(Butterfly_arrayBuffer, Butterfly::offsetOfArrayBuffer(), Mutability::Mutable) \
@@ -220,13 +236,7 @@ namespace JSC::B3 {
     macro(Symbol_string, Symbol::offsetOfString(), Mutability::Mutable) \
 
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP(macro) \
-    macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
-    macro(AOTInstance_states, AOT::Instance::offsetOfStates(), sizeof(uint32_t)) \
-    macro(AOTConstants, 0, sizeof(EncodedJSValue)) \
-    macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
-    macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
-    macro(AOTIdentifiers, 0, sizeof(void*)) \
-    macro(AOTRuntimeTable, 0, sizeof(void*)) \
+    FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(ArrayStorage_vector, ArrayStorage::vectorOffset(), sizeof(WriteBarrier<Unknown>)) \
     macro(CompleteSubspace_allocatorForSizeStep, CompleteSubspace::offsetOfAllocatorForSizeStep(), sizeof(Allocator)) \
     macro(DirectArguments_storage, DirectArguments::storageOffset(), sizeof(EncodedJSValue)) \

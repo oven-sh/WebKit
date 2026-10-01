@@ -48,7 +48,7 @@ static CallFrame* callerOf(CallFrame* callFrame, EntryFrame*& entryFrame, void*&
     EntryFrame* entryFrameOfCallee = entryFrame;
     returnPC = callFrame->rawReturnPC();
     CallFrame* caller = callFrame->callerFrame(entryFrame);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // The frame above a VM entry frame is the one that called out of the VM, some distance up the stack.
     if (entryFrame != entryFrameOfCallee && caller && AOT::hasCode())
         returnPC = AOT::returnAddressForFrame(caller, entryFrameOfCallee);
@@ -61,7 +61,7 @@ static CallFrame* callerOf(CallFrame* callFrame, EntryFrame*& entryFrame, void*&
 // Returns the frame, unless it belongs to an AOT stub. Stub frames are skipped, and the first frame above them is returned.
 static CallFrame* skipFramesOfStubs(CallFrame* callFrame, EntryFrame*& entryFrame, void*& returnPC, CallFrame*& adapter)
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     while (callFrame) {
         switch (AOT::classifyAddress(removeCodePtrTag(returnPC)).kind) {
         case AOT::ImageAddressInfo::Stub:
@@ -103,7 +103,7 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
         if (topFrame) {
             m_previousReturnPC = vm.maybeReturnPC;
             bool isTheEnginesOwn = true;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
             // What kind of frame it is has to be known before anything is read from it.
             if (AOT::hasCode()) {
                 void* returnPC = AOT::returnAddressForFrame(topFrame, __builtin_frame_address(0));
@@ -153,7 +153,7 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 void StackVisitor::gotoNextFrame()
 {
     m_frame.m_index++;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_frame.m_aotInlineFrame) {
         auto location = m_frame.m_aotFunctionOfFrame.inlineCallSiteLocation(m_frame.m_aotInlineFrame);
         m_frame.m_aotFunction = location.function;
@@ -213,7 +213,7 @@ void StackVisitor::readFrame(CallFrame* callFrame)
         return;
     }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     {
         void* returnPC = m_frame.m_callFrame && m_frame.m_callFrame != callFrame ? m_frame.m_callerReturnPC : m_previousReturnPC;
         if (AOT::ImageAddressInfo what = AOT::classifyAddress(removeCodePtrTag(returnPC)); what.kind == AOT::ImageAddressInfo::Function) {
@@ -294,7 +294,7 @@ void StackVisitor::findCaller(CallFrame* callFrame)
     m_frame.m_aotAdapterFrame = adapter;
 }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t index)
 {
     // Whether the frame above is that of a callee that is actually running. (It is not if there is no frame above, or if that frame
@@ -474,7 +474,7 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
 
 CodeBlock* StackVisitor::Frame::makeCodeBlock() const
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     m_codeBlock = m_aotFunction.ensureData()->ensureCodeBlock();
 #endif
     return m_codeBlock;
@@ -482,7 +482,7 @@ CodeBlock* StackVisitor::Frame::makeCodeBlock() const
 
 ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_aotFunction)
         return m_aotFunction.executable();
 #endif
@@ -491,7 +491,7 @@ ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
 
 bool StackVisitor::Frame::isBuiltinFunction() const
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_aotFunction)
         return m_aotFunction.isBuiltinFunction();
 #endif
@@ -500,7 +500,7 @@ bool StackVisitor::Frame::isBuiltinFunction() const
 
 JSGlobalObject* StackVisitor::Frame::lexicalGlobalObject(VM& vm) const
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_aotFunction)
         return m_aotFunction.instance->globalObject;
 #endif
@@ -523,7 +523,7 @@ StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
     if (!hasCode())
         return CodeType::Native;
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     JSC::CodeType type = m_aotFunction ? m_aotFunction.codeType() : m_codeBlock->codeType();
 #else
     JSC::CodeType type = m_codeBlock->codeType();
@@ -569,7 +569,7 @@ const RegisterAtOffsetList* StackVisitor::Frame::calleeSaveRegistersForUnwinding
         return nullptr;
     }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_aotFunction)
         return AOT::calleeSaveRegistersOf(*m_aotFunctionOfFrame.info().function());
 #endif
@@ -713,7 +713,7 @@ LineColumn StackVisitor::Frame::computeLineAndColumn() const
         return { };
 
     ScriptExecutable* executable = ownerExecutable();
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     auto lineColumn = m_aotFunction ? m_aotFunction.lineColumnFor(bytecodeIndex()) : m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
 #else
     auto lineColumn = m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());

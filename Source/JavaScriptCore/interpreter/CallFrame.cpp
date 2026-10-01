@@ -435,7 +435,7 @@ bool isFromJSCode(void* returnAddress)
     if (isJITPC(returnAddress))
         return true;
 #endif
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (AOT::classifyAddress(returnAddress).kind != AOT::ImageAddressInfo::NotInImage)
         return true;
 #endif

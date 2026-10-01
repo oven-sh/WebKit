@@ -7,6 +7,9 @@
 
 #include "BAssert.h"
 #include "BPlatform.h"
+
+#if BENABLE(STATIC_REGION)
+
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -123,7 +126,7 @@ void StaticRegion::mapBss()
     RELEASE_BASSERT(result == wanted);
 }
 
-bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size_t size, size_t offsetInArena, bool isCode)
+bool StaticRegion::map(Arena arena, int fileDescriptor, int64_t offsetInFile, size_t size, size_t offsetInArena, bool isCode)
 {
     RELEASE_BASSERT(offsetInArena <= arenaReservation && size <= arenaReservation - offsetInArena);
     if (!size)
@@ -408,3 +411,33 @@ void StaticRegion::didFreeSlow(void* pointer)
 }
 
 } // namespace bmalloc
+
+#else // BENABLE(STATIC_REGION)
+
+namespace bmalloc {
+
+bool StaticRegion::s_isBuilding = false;
+alignas(16) char StaticRegion::s_bss[offsetOfVTablesInBss];
+
+bool StaticRegion::beginBuilding() { return false; }
+void StaticRegion::endBuilding() { }
+void* StaticRegion::allocate(Arena, size_t, size_t, size_t) { RELEASE_BASSERT_NOT_REACHED(); return nullptr; }
+size_t StaticRegion::used(Arena) { return 0; }
+StaticRegion::AllocationScope::AllocationScope(bool) : m_previous(false) { }
+StaticRegion::AllocationScope::~AllocationScope() { static_cast<void>(m_previous); }
+bool StaticRegion::isAllocatingOnThisThread() { return false; }
+StaticRegion::MutableScope::MutableScope() : m_previous(false) { }
+StaticRegion::MutableScope::~MutableScope() { static_cast<void>(m_previous); }
+bool StaticRegion::isAllocatingMutable() { return false; }
+void StaticRegion::mapBss() { }
+bool StaticRegion::map(Arena, int, int64_t, size_t, size_t, bool) { return false; }
+size_t StaticRegion::mallocSize(const void*) { return 0; }
+void* StaticRegion::reallocate(void*, size_t) { return nullptr; }
+void StaticRegion::didFreeSlow(void*) { }
+void* StaticRegion::tryMallocSlow(size_t, size_t) { return nullptr; }
+void StaticRegion::clearFreeLists() { }
+size_t StaticRegion::bytesThatAreFree() { return 0; }
+
+} // namespace bmalloc
+
+#endif // BENABLE(STATIC_REGION)

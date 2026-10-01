@@ -127,7 +127,7 @@ protected:
         CallSiteIndex callSiteIndex;
         CalleeBits unsafeCallee = m_callFrame->unsafeCallee();
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         switch (m_pcInfo.kind) {
         case AOT::ImageAddressInfo::Function: {
             AOT::FunctionRef function { m_vm.m_aotInstanceOfProgram ? m_vm.m_aotInstanceOfProgram : m_vm.m_aotInstances[0], m_pcInfo.index };
@@ -191,7 +191,7 @@ protected:
     SUPPRESS_ASAN
     void advanceToParentFrame()
     {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         void* pc = removeCodePtrTag(m_callFrame->rawReturnPC());
         if (m_pcInfo.kind == AOT::ImageAddressInfo::Function || m_pcInfo.kind == AOT::ImageAddressInfo::Stub) {
             m_callFrame = m_callFrame->callerFrame();
@@ -227,7 +227,7 @@ protected:
             return;
         }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         // The kind of frame determines which of its slots are meaningful.
         m_pcInfo = AOT::classifyAddress(m_pc);
         if (m_pcInfo.kind != AOT::ImageAddressInfo::NotInImage)
@@ -272,7 +272,7 @@ protected:
     VM& m_vm;
     CallFrame* m_callFrame;
     void* m_pc;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     AOT::ImageAddressInfo m_pcInfo { };
 #endif
     EntryFrame* m_entryFrame;
@@ -474,7 +474,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 topFrameIsLLInt = true;
                 // We're okay to take a normal stack trace when the PC
                 // is in LLInt code.
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
             } else if (AOT::classifyAddress(machinePC).kind != AOT::ImageAddressInfo::NotInImage) {
                 // Likewise. (The frame is that of the caller if the function has none, or has not made it yet: then the caller is left out.)
 #endif
@@ -489,7 +489,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             }
 
             void* pcOfFrame = machinePC;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
             if (callFrame != machineFrame && AOT::hasCode()) {
                 // (It is VM::topCallFrame.)
                 if (auto innermost = AOT::innermostFrame(machineFrame, machinePC, machineLinkRegister, callFrame, m_jscExecutionThread->stack())) {
@@ -775,7 +775,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
 #else
                 appendCodeBlockNoInlining();
 #endif
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
             } else if (AOT::FunctionRef function = unprocessedStackFrame.aotFunction) {
                 assertIsHeld(m_lock);
                 stackTrace.frames.append(StackFrame(function.executable()));

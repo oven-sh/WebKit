@@ -1466,7 +1466,7 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
             return moduleEnvironment->importSlot(offset.offset() - firstImportSlot).get();
     }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // AOT code writes to closure variables without firing watchpoints.
     if (AOT::Image::hasAny())
         return JSValue();

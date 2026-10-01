@@ -7,7 +7,7 @@
 #include "AOTLowering.h"
 
 // The back end is only written for ARM64 so far.
-#if ENABLE(FTL_JIT) && CPU(ARM64)
+#if ENABLE(AOT) && CPU(ARM64)
 
 #include "B3ValueInlines.h"
 #include "BytecodeStructs.h"
@@ -809,4 +809,4 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT) && CPU(ARM64)
+#endif // ENABLE(AOT) && CPU(ARM64)

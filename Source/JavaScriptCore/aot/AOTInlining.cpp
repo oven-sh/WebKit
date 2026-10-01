@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTGraph.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTCompiler.h"
 #include "AOTProgram.h"
@@ -594,4 +594,4 @@ bool mayBecomePartOfAnother(UnlinkedCodeBlock* codeBlock, const FunctionSummary*
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

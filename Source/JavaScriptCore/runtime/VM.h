@@ -510,7 +510,9 @@ public:
 
 #if ENABLE(JIT)
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
+#if ENABLE(AOT)
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
+#endif
     Vector<AOT::Instance*, 1> m_aotInstances; // Each is its global object's.
     void* m_staticHeapOfVM { nullptr }; // See StaticHeap::isUsedBy().
     // The realm that builtins are currently being created for, if known (BuiltinExecutables::staticExecutableFor()).
@@ -539,7 +541,9 @@ public:
     // compiles ahead of time sets it for itself, so that a build does not change the realms of the rest of its process.
     bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
     static constexpr ptrdiff_t offsetOfAOTInstanceOfProgram() { return OBJECT_OFFSETOF(VM, m_aotInstanceOfProgram); }
+#if ENABLE(AOT)
     static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); } // Which starts with its entries.
+#endif
 #endif
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }

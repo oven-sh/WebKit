@@ -808,7 +808,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 {
     CollectionScope collectionScope = this->collectionScope().value_or(CollectionScope::Full);
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     for (AOT::Instance* instance : vm().m_aotInstances)
         instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
     if (auto* cache = vm().megamorphicCache(); cache && !vm().m_aotInstances.isEmpty())
@@ -3827,7 +3827,7 @@ void Heap::addCoreConstraints()
         })),
         ConstraintVolatility::GreyedByExecution);
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     m_constraintSet->add(
         "Ao"_s, "Instances of Statically Compiled Code"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {

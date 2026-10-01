@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTProgram.h"
 #include "AOTStubs.h"
@@ -798,4 +798,4 @@ uint32_t escapingParameters(Graph&, Vector<const KnownFunction*>* calleesRead);
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

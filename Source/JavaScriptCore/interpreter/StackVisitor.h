@@ -231,7 +231,7 @@ private:
     void readInlinableNativeCalleeFrame(CallFrame*);
     void readNonInlinedFrame(CallFrame*, CodeOrigin* = nullptr);
     void findCaller(CallFrame*);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     void readAOTFrame(CallFrame*, void* returnPC, uint32_t index);
 #endif
 #if ENABLE(DFG_JIT)

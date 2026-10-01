@@ -345,6 +345,7 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
     auto* codeBlock = dynamicDowncast<CodeBlock>(owner);
     if (!codeBlock)
         return { };
+#if ENABLE(AOT)
     if (codeBlock->jitType() == JITType::AOTJIT) {
         // Every call site in AOT code uses the same CallLinkInfo. The stack identifies the call site.
         VM& vm = codeBlock->vm();
@@ -357,6 +358,7 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
         });
         return std::tuple { codeBlock, bytecodeIndex };
     }
+#endif
     CodeOrigin codeOrigin = this->codeOrigin();
     if (auto* baselineCodeBlock = codeOrigin.codeOriginOwner())
         return std::tuple { baselineCodeBlock, codeOrigin.bytecodeIndex() };
@@ -653,7 +655,7 @@ void DirectCallLinkInfo::setCallTarget(CodeBlock* codeBlock, CodeLocationLabel<J
             CCallHelpers::replaceWithNops(fastPathStart(), CCallHelpers::patchableJumpSize());
         }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         if (codeBlock && codeBlock->jitType() == JITType::AOTJIT)
             target = CodeLocationLabel<JSEntryPtrTag>(tagCodePtr<JSEntryPtrTag>(AOT::nearCallTargetFor(target.untaggedPtr())));
 #endif

@@ -7,7 +7,7 @@
 #include "AOTLowering.h"
 
 // The back end is only written for ARM64 so far.
-#if ENABLE(FTL_JIT) && CPU(ARM64)
+#if ENABLE(AOT) && CPU(ARM64)
 
 #include "AOTOperationsObjects.h"
 #include "B3ValueInlines.h"
@@ -1061,4 +1061,4 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT) && CPU(ARM64)
+#endif // ENABLE(AOT) && CPU(ARM64)

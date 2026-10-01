@@ -16,6 +16,8 @@
 #include <wtf/StackBounds.h>
 #include <wtf/text/WTFString.h>
 
+#if ENABLE(AOT)
+
 namespace JSC {
 
 class CallFrame;
@@ -219,3 +221,23 @@ JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 JS_EXPORT_PRIVATE CodeBlock* codeBlockOfCaller(const CallFrame*);
 
 } } // namespace JSC::AOT
+
+#else // ENABLE(AOT)
+
+namespace JSC { namespace AOT {
+
+struct Instance;
+
+// There is no such code, so a reference to a function of it is always empty.
+struct FunctionRef {
+    enum class OfConstruction : uint8_t { WhereItIs, WhereItStarts };
+    struct ReportedPosition {
+        LineColumn lineColumn;
+        uint32_t source { 0 };
+    };
+    explicit operator bool() const { return false; }
+};
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

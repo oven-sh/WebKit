@@ -6,6 +6,8 @@
 #include "config.h"
 #include "StaticHeap.h"
 
+#if ENABLE(AOT)
+
 #include "BuiltinExecutables.h"
 #include "AOTImage.h"
 #include "AOTRuntime.h"
@@ -1727,7 +1729,7 @@ std::optional<StaticHeap::Copies> StaticHeap::copiesIn(std::span<const uint8_t> 
     return Copies { *strings, static_cast<size_t>(header.stringsSize), payload.value_or(0), static_cast<size_t>(header.payloadSize), !payload, static_cast<uintptr_t>(header.payload), !!header.hasPositionsOfCallSites };
 }
 
-bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t offsetInFile)
+bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, int64_t offsetInFile)
 {
     if (s_header || image.size() < sizeof(Header))
         return false;
@@ -2036,3 +2038,72 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
 }
 
 } // namespace JSC
+
+#else // ENABLE(AOT)
+
+#include "CachedTypes.h"
+#include "FunctionExecutable.h"
+#include "VariableEnvironment.h"
+#include <wtf/text/SymbolRegistry.h>
+
+// There is no static heap: nothing is in it, and nothing can be built or mapped.
+
+namespace JSC {
+
+bool StaticHeap::s_isBuilding = false;
+const StaticHeap::RowOfFunction* StaticHeap::s_rowsOfFunctions = nullptr;
+VM* StaticHeap::s_vm = nullptr;
+bool StaticHeap::s_isShared = false;
+bool StaticHeap::s_hasNoCompilerThreads = false;
+const StaticHeap::Header* StaticHeap::s_header = nullptr;
+
+Vector<uint8_t> StaticHeap::build(VM&, std::span<const uint8_t>, std::span<const uint8_t>, std::span<const uint32_t>, std::span<const uint8_t>, size_t, const PositionsToKeep*, std::span<const ReportableSitesOfFunction>, std::span<const std::optional<Vector<uint32_t>>>) { return { }; }
+JSString* StaticHeap::emptyStringWhileBuilding(VM&) { RELEASE_ASSERT_NOT_REACHED(); }
+WTF::SymbolRegistry& StaticHeap::symbolRegistryWhileBuilding(bool) { RELEASE_ASSERT_NOT_REACHED(); }
+void StaticHeap::noteParentScopeTDZVariables(const UnlinkedFunctionExecutable&, const void*) { }
+bool StaticHeap::map(std::span<const uint8_t>, int, int64_t) { return false; }
+std::optional<StaticHeap::Copies> StaticHeap::copiesIn(std::span<const uint8_t>) { return std::nullopt; }
+void StaticHeap::prepareThread() { }
+void StaticHeap::install(VM&) { }
+void StaticHeap::willDestroy(VM&) { }
+bool StaticHeap::isUsedBy(VM&) { return false; }
+PreciseAllocation* StaticHeap::containerOfSlow(const void*) { RELEASE_ASSERT_NOT_REACHED(); }
+std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM&, std::span<const uint8_t>) { return nullptr; }
+UnlinkedCodeBlock* StaticHeap::codeFor(VM&, const SourceCodeKey&, const CachedBytecode&) { return nullptr; }
+bool StaticHeap::payloadIsOmitted() { return false; }
+bool StaticHeap::hasPositionsOfCallSites() { return false; }
+bool StaticHeap::hasIdentifiersOfProgram() { return false; }
+WTF::UniquedStringImpl* const* StaticHeap::identifiersOfProgram() { return nullptr; }
+String StaticHeap::nameOfSource(uint32_t) { return { }; }
+std::span<const uint8_t> StaticHeap::omittedPayload() { return { }; }
+FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject*, uint32_t, unsigned, const String&, const SourceOrigin&, const String&) { return nullptr; }
+FunctionExecutable* StaticHeap::engineBuiltinFor(JSGlobalObject*, unsigned, std::span<const Latin1Character>) { return nullptr; }
+RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&) { return nullptr; }
+LineColumn StaticHeap::whereFunctionStarts(uint32_t) { return { }; }
+bool StaticHeap::keepsNothingForGeneratingCode() { return false; }
+void* StaticHeap::tryAllocateCellSlow(VM&, size_t) { return nullptr; }
+void StaticHeap::placeNextCell(VM&, void*) { RELEASE_ASSERT_NOT_REACHED(); }
+void StaticHeap::didPlaceCell(VM&, JSCell*) { }
+void* StaticHeap::takePlaceForSourceProvider(VM&, size_t, size_t, SourceProvider*& made) { made = nullptr; return nullptr; }
+void StaticHeap::didMakeSourceProvider(void*) { }
+std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfFunction(uint32_t) { return { nullptr, CodeSpecializationKind::CodeForCall }; }
+bool StaticHeap::hasExecutablesOfFunctions(VM&) { return false; }
+AOT::FunctionInfo* StaticHeap::infosOfFunctions(VM&) { return nullptr; }
+const void* StaticHeap::constantsOfProgram(VM&) { return nullptr; }
+std::span<const AOT::ImageKey> StaticHeap::keysOfImage() { return { }; }
+const AOT::ImageFunction* StaticHeap::imageFunctionOfFunction(uint32_t) { return nullptr; }
+const uint32_t* StaticHeap::functionMetadataOffsets(VM&) { return nullptr; }
+Ref<Decoder> StaticHeap::decoderForKeptPayload(VM&, Decoder& placed) { return placed; }
+void StaticHeap::ensureDecoder(VM&, size_t, SourceProvider&) { }
+FunctionExecutable* StaticHeap::standInFor(VM&, FunctionExecutable* executable) { return executable; }
+UnlinkedFunctionCodeBlock* StaticHeap::codeOf(VM&, const UnlinkedFunctionExecutable&, CodeSpecializationKind) { return nullptr; }
+void StaticHeap::setCodeOf(VM&, const UnlinkedFunctionExecutable&, CodeSpecializationKind, UnlinkedFunctionCodeBlock*) { }
+ScriptExecutable*& StaticHeap::topLevelExecutableOfModuleInOtherVM(VM&, size_t) { RELEASE_ASSERT_NOT_REACHED(); }
+bool StaticHeap::canPlaceCellsOf(VM&) { return false; }
+void* StaticHeap::allocateBlock(VM&, size_t) { return nullptr; }
+void StaticHeap::freeBlock(void*, size_t) { }
+void StaticHeap::willAllocateUnlinkedFunctionSlow() { }
+
+} // namespace JSC
+
+#endif // ENABLE(AOT)

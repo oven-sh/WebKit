@@ -1141,7 +1141,7 @@ void installCompilers()
 #if ENABLE(WEBASSEMBLY_BBQJIT)
     g_compilerHooks.newBBQPlan = reinterpret_cast<void*>(&Wasm::BBQPlan::create);
 #endif
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     installImageCompiler();
 #endif
 }

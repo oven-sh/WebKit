@@ -7,9 +7,9 @@
 
 #include "BExport.h"
 #include "BInline.h"
+#include "BPlatform.h"
 #include <cstddef>
 #include <cstdint>
-#include <sys/types.h>
 
 namespace bmalloc {
 
@@ -19,6 +19,8 @@ namespace bmalloc {
 // stays file-backed and shared, and does not count as the process's private memory.
 //
 // Nothing in it is ever freed. It may be written to: the mapping is private.
+//
+// Without BENABLE(STATIC_REGION) there is no such memory: nothing is in it, and nothing can be built or mapped.
 class StaticRegion {
 public:
     enum class Arena : uint8_t {
@@ -44,7 +46,11 @@ public:
     static constexpr size_t arenaReservation = 4ULL << 30;
     static constexpr size_t reservation = arenaReservation * numberOfArenas;
 
+#if BENABLE(STATIC_REGION)
     static BINLINE bool contains(const void* pointer) { return reinterpret_cast<uintptr_t>(pointer) - base < reservation; }
+#else
+    static BINLINE bool contains(const void*) { return false; }
+#endif
     static constexpr uintptr_t startOf(Arena arena) { return base + static_cast<size_t>(arena) * arenaReservation; }
 
     // ---- When the program is built. One thread does it.
@@ -81,6 +87,13 @@ public:
     // ---- When it runs.
 
     BEXPORT static void mapBss(); // Before anything else here. Crashes if the addresses are taken.
+    // What every process has, whether or not it uses the other arenas: the part of Arena::Bss before offsetOfVTablesInBss.
+#if BENABLE(STATIC_REGION)
+    static BINLINE uintptr_t addressInBss(size_t offset) { return startOf(Arena::Bss) + offset; }
+#else
+    // Nothing in a file refers to it, so it is ordinary data.
+    static BINLINE uintptr_t addressInBss(size_t offset) { return reinterpret_cast<uintptr_t>(s_bss) + offset; }
+#endif
     // The layout of Arena::Bss.
     static constexpr size_t offsetOfEmptyStringInBss = 0; // WTF::StringImpl::empty()
     static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
@@ -95,24 +108,32 @@ public:
     static constexpr size_t offsetOfBlocksInBss = 256 << 20; // JSC::StaticHeap::allocateBlock()
 
     // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
-    BEXPORT static bool map(Arena, int fileDescriptor, off_t offsetInFile, size_t, size_t offsetInArena = 0, bool isCode = false);
+    BEXPORT static bool map(Arena, int fileDescriptor, int64_t offsetInFile, size_t, size_t offsetInArena = 0, bool isCode = false);
 
     // ---- For malloc.
 
+#if BENABLE(STATIC_REGION)
     static BINLINE void* tryMalloc(size_t size, size_t alignment = 16)
     {
         if (s_isBuilding) [[unlikely]]
             return tryMallocSlow(size, alignment);
         return nullptr;
     }
+#else
+    static BINLINE void* tryMalloc(size_t, size_t = 16) { return nullptr; }
+#endif
     BEXPORT static size_t mallocSize(const void*);
     BEXPORT static void* reallocate(void*, size_t); // For a pointer that tryMalloc() returned.
     // Likewise. At run time the memory is not reused. While building, freed memory is zeroed, so that the output is deterministic.
+#if BENABLE(STATIC_REGION)
     static BINLINE void didFree(void* pointer)
     {
         if (s_isBuilding) [[unlikely]]
             didFreeSlow(pointer);
     }
+#else
+    static BINLINE void didFree(void*) { }
+#endif
 
 private:
     BEXPORT static void didFreeSlow(void*);
@@ -123,6 +144,9 @@ public:
 private:
 
     BEXPORT static bool s_isBuilding;
+#if !BENABLE(STATIC_REGION)
+    BEXPORT alignas(16) static char s_bss[offsetOfVTablesInBss];
+#endif
 };
 
 } // namespace bmalloc

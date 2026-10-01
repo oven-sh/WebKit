@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "ObjectPropertyCondition.h"
 #include "PackedCellPtr.h"
@@ -66,4 +66,4 @@ void moveWatching(Data*, Slot* from, Slot* to); // What the one had is in the ot
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

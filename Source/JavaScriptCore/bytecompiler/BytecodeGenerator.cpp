@@ -378,7 +378,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     size = instructions().size();
     if (!m_codeBlock->finalize(m_writer.finalize())) [[unlikely]]
         return ParserError(ParserError::OutOfMemory);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (!m_functionAssignments.isEmpty()) [[unlikely]]
         AOT::recordFunctionAssignments(m_codeBlock->codeBlock(), WTF::move(m_functionAssignments));
 #endif
@@ -1271,7 +1271,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     // cloned in the code block linking. After that, to create the module environment, we retrieve
     // the cloned symbol table from the linked code block by using this offset.
     codeBlock->setModuleEnvironmentSymbolTableConstantRegisterOffset(constantSymbolTable->index());
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
         AOT::noteDeclaredNames(codeBlock, currentDeclaredNames());
 #endif

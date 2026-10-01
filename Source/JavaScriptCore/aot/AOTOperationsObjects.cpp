@@ -9,7 +9,7 @@
 #include "ObjectAllocationProfileInlines.h"
 #include "ObjectConstructorInlines.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTGraph.h"
 #include "AOTInlineCaches.h"
@@ -1397,4 +1397,4 @@ JSC_DEFINE_JIT_OPERATION(operationAOTEnumeratorHasOwnProperty, size_t, (JSGlobal
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

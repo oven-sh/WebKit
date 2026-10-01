@@ -5901,7 +5901,7 @@ struct BytecodeLinkEncoder::Impl {
             writeHead(index);
     }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // The engine's builtins that are written in JavaScript. Each is added the way an embedder's builtin would be, with its own
     // source text. At run time they are obtained from StaticHeap (BuiltinExecutables::staticExecutableFor()), so they are neither
     // parsed nor interpreted.
@@ -5949,7 +5949,7 @@ struct BytecodeLinkEncoder::Impl {
             omittedFunctions[1]++;
             return;
         }
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         if (compilesAheadOfTime) {
             if (auto key = orderFunctionKey(executable, source))
                 functionsToCompile.append({ module, *key, &executable, forCall, forConstruct });
@@ -5965,7 +5965,7 @@ struct BytecodeLinkEncoder::Impl {
         }
     }
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // Where each import that the embedder resolved to a variable of another module is: the modules are all here, so what their
     // environments are going to look like is known.
     Vector<std::unique_ptr<AOT::ModuleLinkage>> linkModules(const Vector<std::unique_ptr<AOT::ModuleHints>>& hints)
@@ -6990,7 +6990,7 @@ BytecodeLinkEncoder::BytecodeLinkEncoder(VM& vm, EncoderStringTable* strings, Hi
     // A function's record is written long after its module was added (with the body of the function around it, or when
     // the link is finished) from what its executable holds then.
     vm.keepUnlinkedCode();
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     m_impl->compilesAheadOfTime = hints.compileAheadOfTime;
 #endif
     m_impl->encoder.beginLink(hints.hotFunctions.span(), hints.knownFunctions.span());
@@ -7032,7 +7032,7 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
 void installImageCompiler()
 {
     // The back end is only written for ARM64 so far.
-#if ENABLE(FTL_JIT) && CPU(ARM64)
+#if ENABLE(AOT) && CPU(ARM64)
     g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };
 #endif
 }
@@ -7040,7 +7040,7 @@ void installImageCompiler()
 auto BytecodeLinkEncoder::finish() -> Result
 {
     static_assert(numberOfRegions == BytecodeLinkRegions::Count);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (m_impl->compilesAheadOfTime)
         m_impl->addEngineBuiltins();
 #endif
@@ -7069,7 +7069,7 @@ auto BytecodeLinkEncoder::finish() -> Result
     uint32_t payloadSize = safeCast<uint32_t>(encoder.currentOffset());
     for (auto& module : m_impl->modules)
         *module.entry->payloadSizeSlot() = payloadSize;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // While the code is still rooted, and now that every module has its number.
     if (m_impl->compilesAheadOfTime) {
         RELEASE_ASSERT_WITH_MESSAGE(g_compilerHooks.compileImage, "This executable was linked without the compilers: it cannot compile ahead of time.");
@@ -7089,7 +7089,9 @@ auto BytecodeLinkEncoder::finish() -> Result
         if (!module.isEngineBuiltin)
             result.entryOffsets.append(module.entryOffset);
         result.entryOffsetsOfModules.append(module.entryOffset);
+#if ENABLE(AOT)
         result.variablesExportedByModules.append(m_impl->variablesExportedBy(index));
+#endif
     }
     m_impl->modules.clear();
     m_impl->isFinished = true;

@@ -256,7 +256,7 @@ static_assert(bmalloc::StaticRegion::offsetOfSymbolsInBss + static_cast<size_t>(
 
 ALWAYS_INLINE SymbolImpl::StaticSymbolImpl& at(Index index)
 {
-    return reinterpret_cast<SymbolImpl::StaticSymbolImpl*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfSymbolsInBss)[static_cast<unsigned>(index)];
+    return reinterpret_cast<SymbolImpl::StaticSymbolImpl*>(bmalloc::StaticRegion::addressInBss(bmalloc::StaticRegion::offsetOfSymbolsInBss))[static_cast<unsigned>(index)];
 }
 
 #define DECLARE_BUILTIN_STATIC_SYMBOLS(name) [[maybe_unused]] static SymbolImpl::StaticSymbolImpl& name##Symbol = at(Index::name##Symbol);

@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTBuiltins.h"
 #include "AOTEmitter.h"
@@ -512,4 +512,4 @@ LValue Lowering::plainCall(LType type, Entry function, Args... args)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

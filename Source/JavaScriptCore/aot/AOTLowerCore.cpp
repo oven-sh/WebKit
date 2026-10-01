@@ -10,7 +10,7 @@
 #include "AOTCompiler.h"
 
 // The back end is only written for ARM64 so far.
-#if ENABLE(FTL_JIT) && CPU(ARM64)
+#if ENABLE(AOT) && CPU(ARM64)
 
 #include "AirCode.h"
 #include "B3PatchpointValue.h"
@@ -1383,4 +1383,4 @@ LBasicBlock Lowering::blockFor(Node* branch, int relativeOffset)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT) && CPU(ARM64)
+#endif // ENABLE(AOT) && CPU(ARM64)

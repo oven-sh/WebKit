@@ -8,7 +8,7 @@
 
 #include "AOTTypeTable.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTBuiltins.h"
 #include "AOTProgram.h"
@@ -3851,4 +3851,4 @@ bool parseBytecode(Graph& graph)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)
