@@ -488,7 +488,7 @@ void Lowering::lowerGetById(Node* node)
         }
         bool resultIsTyped = Options::useAOTTypedFields() && field->fieldType.isConstrained();
         // (undefined has to be something the field is said to hold.)
-        bool testsForLack = field->firstWithout && (Options::aotShapeOptimizations() & 8) && Options::useImmutableIntrinsics() && (!resultIsTyped || (field->fieldType.kinds & MaskUndefined));
+        bool testsForLack = field->firstWithout && (Options::aotShapeOptimizations() & 8) && (!resultIsTyped || (field->fieldType.kinds & MaskUndefined));
         LBasicBlock has = m_out.newBlock();
         LBasicBlock hasNot = m_out.newBlock();
         LBasicBlock mayLack = m_out.newBlock();

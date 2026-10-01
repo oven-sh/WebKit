@@ -119,6 +119,9 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     /* Called after the frame pointer is set up. T9 = frame size. Checks for stack overflow and sets the stack pointer. */ \
     /* Clobbers only T11 and T12. */ \
     v(Prologue) \
+    /* Where a Signature::List function returns to when Call called it: the frame in which Call put the list is given up. One */ \
+    /* place for all of Call's copies, so that Call can tell such a frame by its return address. */ \
+    v(ReturnFromCallWithList) \
     /* Generic call. calleeGPR = callee, thisGPR = this (for Construct: new.target), countGPR = argument count. Arguments are */ \
     /* in the registers in which a Signature::Registers function takes its parameters. Result in the return value register. */ \
     /* Jumping here with nothing of the caller's on the stack makes it a tail call. These stubs come first because other stubs */ \
@@ -136,6 +139,8 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     /* CallVarargs in tail position. The caller has restored its callee-saved registers but still has its frame. It calls this */ \
     /* stub, which does not return: the callee returns directly to the caller's caller, and the caller's frame is gone by then. */ \
     v(TailCallVarargs) \
+    /* CallList in tail position, under the same terms. The list is in the caller's frame. */ \
+    v(TailCallList) \
     /* Like Call, where the callee may be the function of a StubIntrinsic. T9 = which intrinsic. There is one thunk per */ \
     /* intrinsic, and the stub is only entered through them. */ \
     v(CallIntrinsic) \

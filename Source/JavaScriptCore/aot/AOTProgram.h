@@ -51,7 +51,7 @@ struct FunctionSummary {
     uint32_t number { 0 }; // Index in FunctionsOfProgram.
     // The first reason it escaped, for logging.
     enum EscapeReason : uint32_t {
-        DoesNotEscape, ReportedByBundler, CreationSiteUnknown, ReferencesItself, ExternalFunction, NotCallable,
+        DoesNotEscape, ReportedByBundler, CreationSiteUnknown, ReferencesItself, ExternalFunction, NotCallable, NumberDoesNotFitInTypes,
         UsedBy, // | (opcode, or 1000 + NodeKind) << 8
         PassedToUnknownCallee, PassedAsThis, PassedAsExtraArgument, CalledIndirectly, ReturnedToUnknownCaller,
         MergedInPhi, MergedInFrameRegister, MergedInVariable, MergedInParameter, MergedInReturn, LostThroughAlias,
@@ -82,6 +82,12 @@ struct FunctionSummary {
     std::array<AtomicType, mostParameters> parameterTypes { };
     // Same as KnownFunction::returnType, reachable from the function's own compilation.
     mutable AtomicType returnType;
+    // A tail call hands the callee's result to this function's caller as it is, so the two have to return it in the same representation.
+    // The functions this one is known to call in tail position, as of the last time its types were inferred.
+    mutable Vector<const FunctionSummary*> knownTailCallees;
+    // Set once the fixpoint is reached. The result is boxed whatever its type, because the function at the other end of a tail call
+    // returns it boxed.
+    mutable bool returnsBoxed { false };
     // Multi-value return. The function always returns a fresh object literal with the same property names (MultiValueReturnTable).
     // If it is non-escaping and every caller only reads those properties, the object is never allocated: each property value is
     // returned in a register.
@@ -230,7 +236,7 @@ bool readsCallee(UnlinkedCodeBlock*);
 // Whether the code can obtain a reference to its own function object.
 JS_EXPORT_PRIVATE bool mayReferenceItself(UnlinkedCodeBlock*);
 
-// Every function in the program, indexed by the number that represents it in a Type (typeOfFunction()).
+// Every function in the program, indexed by the number that represents it in a Type (typeOfFunction()), if it is small enough to.
 class FunctionsOfProgram {
     WTF_MAKE_TZONE_ALLOCATED(FunctionsOfProgram);
     WTF_MAKE_NONCOPYABLE(FunctionsOfProgram);
@@ -241,7 +247,6 @@ public:
     uint32_t add(const KnownFunction& function)
     {
         m_functions.append(makeUniqueWithoutFastMallocCheck<KnownFunction>(function));
-        RELEASE_ASSERT(m_functions.size() < (1u << bitsOfFunctionNumber));
         return m_functions.size();
     }
     // An inner function of a function with both call and construct code blocks has two executables.

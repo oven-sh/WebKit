@@ -60,6 +60,7 @@ public:
                     break;
                 case op_tail_call:
                     m_returnType |= resultOfCall(node);
+                    noteTailCall(node);
                     break;
                 case op_tail_call_varargs:
                     m_returnType |= TTop;
@@ -74,6 +75,8 @@ public:
                 }
             }
         }
+        if (calleesWithWidenedInputs && m_graph.summary())
+            m_graph.summary()->knownTailCallees = WTF::move(m_knownTailCallees);
         if (calleesWithWidenedInputs && functionsOfProgram() && isReached()) {
             for (BasicBlock* block : m_graph.m_rpo) {
                 for (Node* phi : block->phis)
@@ -106,6 +109,8 @@ public:
     std::optional<UsersOfNodes> m_users;
 
 private:
+    Vector<const FunctionSummary*> m_knownTailCallees;
+
     // ---- Function identity tracking.
 
     // The value gets somewhere that is not reckoned with.
@@ -123,6 +128,23 @@ private:
         for (Type passed : hadBeenPassed)
             markEscaping(passed, FunctionSummary::MergedInParameter);
         return true;
+    }
+
+    // See FunctionSummary::knownTailCallees.
+    void noteTailCall(Node* node)
+    {
+        if (!calleesWithWidenedInputs || !functionsOfProgram())
+            return;
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        if (!known || !isExact || !known->forCall || !known->summary)
+            return;
+        // Its arguments would be in this function's frame, which a tail call gives up. So the call is made as if the callee were not known
+        // (Lowering::lowerCallToKnownFunction()), which takes a function that can be called that way.
+        if (known->conventionForCall.signature == Signature::List)
+            markEscaping(typeOfFunction(known->summary->number), FunctionSummary::CalledIndirectly);
+        if (!m_knownTailCallees.contains(known->summary))
+            m_knownTailCallees.append(known->summary);
     }
 
     // It is now part of something of which it can no longer be told that it is there: nobody who gets it from there knows to say where it goes.

@@ -590,7 +590,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (JSGlobalO
         cell = RegExp::create(vm, uncheckedDowncast<RegExp>(cell)->pattern(), uncheckedDowncast<RegExp>(cell)->flags());
     auto* regExp = uncheckedDowncast<RegExp>(cell);
     // (The code takes what it finds there for good, which it is if nobody can put anything in the way of the builtin.)
-    if (!Options::useSharedRegExpLiteralObjects() || !Options::useImmutableIntrinsics() || !RegExpObject::canShareLiteralAsReceiver(globalObject, forTest))
+    if (!Options::useSharedRegExpLiteralObjects() || !RegExpObject::canShareLiteralAsReceiver(globalObject, forTest))
         OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
     RegExpObject* object = RegExpObject::createSharedLiteral(vm, globalObject->regExpStructure(), regExp);
     cacheObjectOfSite(vm, callerData(globalObject, callFrame), cache, object);

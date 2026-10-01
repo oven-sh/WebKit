@@ -520,7 +520,7 @@ private:
 
     unsigned likelyArrayMethod(Node* call, Node* calleeNode, unsigned argc, unsigned argv)
     {
-        if (!Options::useImmutableIntrinsics() || !calleeNode->isBytecode(op_get_by_id) || argc < 2)
+        if (!calleeNode->isBytecode(op_get_by_id) || argc < 2)
             return 0;
         const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
         if (!intrinsics) {

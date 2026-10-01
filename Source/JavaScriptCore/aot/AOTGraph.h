@@ -504,7 +504,7 @@ public:
     BasicBlock* addBlock();
 
     Node* constant(JSValue);
-    // With Options::useImmutableIntrinsics(). If the instruction reads something that cannot change (a global variable, or a
+    // With VM::useImmutableIntrinsics. If the instruction reads something that cannot change (a global variable, or a
     // property of `base`), returns its value. For an op_resolve_scope, returns the global object. The instruction is then
     // unnecessary.
     Node* intrinsicReadBy(const JSInstruction*, Node* base);

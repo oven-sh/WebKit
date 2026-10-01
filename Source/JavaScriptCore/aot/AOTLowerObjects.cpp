@@ -330,7 +330,7 @@ bool Lowering::tryLowerAllocation(Node* node)
         auto slowCase = [&] {
             return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread));
         };
-        if (!someHaveBeenSpread && Options::useImmutableIntrinsics())
+        if (!someHaveBeenSpread)
             setJSValue(node, withHelper(Stub::HelperNewArrayWithSpread, { values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread) }, slowCase));
         else
             setJSValue(node, slowCase());
@@ -341,7 +341,7 @@ bool Lowering::tryLowerAllocation(Node* node)
         LValue length = lowJSValue(node->use(bytecode.m_length));
         LValue array = lowCell(node->use(bytecode.m_array));
         auto slowCase = [&] { return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpecies, m_globalObject, length, array); };
-        setJSValue(node, Options::useImmutableIntrinsics() ? withHelper(Stub::HelperNewArrayWithSpecies, { length, array }, slowCase) : slowCase());
+        setJSValue(node, withHelper(Stub::HelperNewArrayWithSpecies, { length, array }, slowCase));
         return true;
     }
     case op_spread:
@@ -353,7 +353,7 @@ bool Lowering::tryLowerAllocation(Node* node)
     case op_new_reg_exp_shared: {
         // One object does for the site: nothing gets hold of it but the builtin it is the receiver of, which leaves it as it is.
         auto bytecode = node->as<OpNewRegExpShared>();
-        if (!Options::useImmutableIntrinsics() || !Options::useSharedRegExpLiteralObjects()) {
+        if (!Options::useSharedRegExpLiteralObjects()) {
             setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_globalObject, lowConstantRegister(bytecode.m_regexp)));
             return true;
         }

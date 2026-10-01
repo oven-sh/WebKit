@@ -29,6 +29,7 @@
 
 #include "JSCJSValue.h"
 #include "JSType.h"
+#include "Options.h"
 #include "SpeculatedType.h"
 #include <wtf/MathExtras.h>
 #include <wtf/PrintStream.h>
@@ -159,7 +160,15 @@ constexpr DualRailNumbers dualRailDecode(Type type, unsigned firstBit, unsigned 
     return result;
 }
 // Function and layout numbers start at 1.
-constexpr Type typeOfFunction(uint32_t number) { return TFunctionTag | dualRailEncode(number, firstBitOfFunctionNumber, bitsOfFunctionNumber); }
+// A program may have more functions than a type has numbers for. One beyond the limit is any function as far as types go. Where it
+// goes cannot be followed then, so it is treated as escaping (FunctionSummary::NumberDoesNotFitInTypes).
+inline uint32_t largestFunctionNumberInTypes()
+{
+    constexpr uint32_t largest = (1u << bitsOfFunctionNumber) - 1;
+    uint32_t forTesting = Options::largestAOTFunctionNumberInTypesForTesting();
+    return forTesting ? std::min(forTesting, largest) : largest;
+}
+inline Type typeOfFunction(uint32_t number) { return number <= largestFunctionNumberInTypes() ? TFunctionTag | dualRailEncode(number, firstBitOfFunctionNumber, bitsOfFunctionNumber) : TFunction; }
 constexpr Type typeOfObjectWithLayout(uint32_t layout) { return TFinalObjectTag | dualRailEncode(layout, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
 // A layout in [first, last]. The encoding can only express the high-order bits the two have in common, so the result may admit
 // other layouts as well.

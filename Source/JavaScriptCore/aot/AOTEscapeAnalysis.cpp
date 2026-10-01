@@ -494,7 +494,7 @@ private:
         case op_iterator_next:
         case op_iterator_close_check:
         case op_new_array_with_spread:
-            return isArrayMadeHere && Options::useImmutableIntrinsics() && user->opcode == op_spread ? Verdict { } : escapes(Escape::Iterated);
+            return isArrayMadeHere && user->opcode == op_spread ? Verdict { } : escapes(Escape::Iterated);
 
         case op_eq:
         case op_neq:

@@ -49,7 +49,7 @@ struct AddressOfLabel {
 };
 static Vector<AddressOfLabel>* s_addressesOfLabels;
 static CCallHelpers::Label s_callVarargsReturnAddress;
-static CCallHelpers::Label s_whereCallVarargsIsReturnedTo;
+static CCallHelpers::Label s_returnFromCallWithList;
 
 static void callStubFromStub(CCallHelpers& jit, Stub stub)
 {
@@ -2581,6 +2581,13 @@ static void callWhatCallIsBoundTo(CCallHelpers& jit)
     isNot.link(&jit);
 }
 
+static void generateReturnFromCallWithList(CCallHelpers& jit)
+{
+    s_returnFromCallWithList = jit.label();
+    jit.emitFunctionEpilogue();
+    jit.ret();
+}
+
 // See Stub::Call. count: the value of countGPR, if known statically.
 static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::optional<unsigned> count)
 {
@@ -2616,13 +2623,29 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
             jit.store64(argumentGPR(i), slotOfFrameBeingMade(CallFrameSlot::thisArgument, (i + 1) * sizeof(Register)));
     };
     takesList.link(&jit);
+#if CPU(ARM64)
+    // The list is put in a frame of this stub's, which lasts as long as the callee does. If this is a tail call by a function that was
+    // itself called that way, the frame that held its list has nothing left to do but return. It is given up first, or a loop
+    // of tail calls would run out of stack.
+    s_addressesOfLabels->append({ jit.label(), T11, s_returnFromCallWithList });
+    jit.m_assembler.adr(T11, 0);
+    Jump doesNotReturnIntoSuchAFrame = jit.branchPtr(CCallHelpers::NotEqual, ARM64Registers::lr, T11);
+    jit.emitFunctionEpilogue();
+    doesNotReturnIntoSuchAFrame.link(&jit);
+#endif
     spill();
     jit.move(countGPR, argumentGPR(0));
     jit.addPtr(TrustedImm32(slotOfFrameBeingMade(CallFrameSlot::thisArgument, sizeof(Register)).offset), CCallHelpers::stackPointerRegister, argumentGPR(1));
     jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), T12);
+#if CPU(ARM64)
+    s_addressesOfLabels->append({ jit.label(), ARM64Registers::lr, s_returnFromCallWithList });
+    jit.m_assembler.adr(ARM64Registers::lr, 0);
+    jit.farJump(T12, JSEntryPtrTag);
+#else
     jit.call(T12, JSEntryPtrTag);
     jit.emitFunctionEpilogue();
     jit.ret();
+#endif
 
     slowCase.link(&jit);
     if (kind == CodeSpecializationKind::CodeForCall)
@@ -2689,6 +2712,46 @@ static void generateCallListTo(CCallHelpers& jit, CodeSpecializationKind kind)
     throwStackOverflow(jit);
 }
 
+// In the frame of a stub that was called, in tail position, by a function that still has its frame. calleeGPR and thisGPR are set,
+// argumentGPR(0) = how many arguments, argumentGPR(1) = where they are. Does what Stub::CallList does, and returns to that function's caller.
+static void callListInTailPosition(CCallHelpers& jit)
+{
+    // The arguments are moved over the frame of the function that called this stub, directly below that frame's header, which
+    // doubles as the header of this stub's frame. If that function was itself called from a frame that holds a list
+    // (Stub::ReturnFromCallWithList), that frame is overwritten too.
+    constexpr GPRReg length = A0;
+    constexpr GPRReg to = A1;
+    constexpr GPRReg from = A2;
+    constexpr GPRReg frame = A3;
+    static_assert(length == argumentGPR(0) && to == argumentGPR(1));
+    jit.move(argumentGPR(1), from);
+    jit.loadPtr(Address(GPRInfo::callFrameRegister), frame);
+    s_addressesOfLabels->append({ jit.label(), T11, s_returnFromCallWithList });
+    jit.m_assembler.adr(T11, 0);
+    CCallHelpers::Label again = jit.label();
+    jit.loadPtr(Address(frame, sizeof(void*)), T12);
+    Jump isNotOfThisStub = jit.branchPtr(CCallHelpers::NotEqual, T12, T11);
+    jit.loadPtr(Address(frame), frame);
+    jit.jump().linkTo(again, &jit);
+    isNotOfThisStub.link(&jit);
+    jit.add64(TrustedImm32(1), length, T12);
+    jit.and64(TrustedImm32(~1), T12);
+    jit.lshift64(TrustedImm32(3), T12);
+    jit.subPtr(frame, T12, to);
+    // The destination is higher, so copy the last word first.
+    jit.move(length, T12);
+    Jump none = jit.branchTest64(CCallHelpers::Zero, T12);
+    CCallHelpers::Label next = jit.label();
+    jit.sub64(TrustedImm32(1), T12);
+    jit.load64(CCallHelpers::BaseIndex(from, T12, CCallHelpers::TimesEight), T13);
+    jit.store64(T13, CCallHelpers::BaseIndex(to, T12, CCallHelpers::TimesEight));
+    jit.branchTest64(CCallHelpers::NonZero, T12).linkTo(next, &jit);
+    none.link(&jit);
+    jit.move(frame, GPRInfo::callFrameRegister);
+    jit.move(to, CCallHelpers::stackPointerRegister);
+    jit.jump().linkTo(s_callVarargsReturnAddress, &jit);
+}
+
 // See Stub::CallVarargs.
 static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind, bool inTailPosition = false)
 {
@@ -2742,49 +2805,23 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
     jit.load64(local(offsetOfThis), thisGPR);
     jit.load64(local(offsetOfLength), argumentGPR(0));
     jit.move(CCallHelpers::stackPointerRegister, argumentGPR(1));
-    if (inTailPosition) {
-        // The arguments are moved over the frame of the function that called this stub, directly below that frame's header, which
-        // doubles as the header of this stub's frame. If that function was itself called from such a stub frame, that frame is
-        // overwritten too.
-        constexpr GPRReg length = A0;
-        constexpr GPRReg to = A1;
-        constexpr GPRReg from = A2;
-        constexpr GPRReg frame = A3;
-        static_assert(length == argumentGPR(0) && to == argumentGPR(1));
-        jit.move(argumentGPR(1), from);
-        jit.loadPtr(Address(GPRInfo::callFrameRegister), frame);
-        s_addressesOfLabels->append({ jit.label(), T11, s_whereCallVarargsIsReturnedTo });
-        jit.m_assembler.adr(T11, 0);
-        CCallHelpers::Label again = jit.label();
-        jit.loadPtr(Address(frame, sizeof(void*)), T12);
-        Jump isNotOfThisStub = jit.branchPtr(CCallHelpers::NotEqual, T12, T11);
-        jit.loadPtr(Address(frame), frame);
-        jit.jump().linkTo(again, &jit);
-        isNotOfThisStub.link(&jit);
-        jit.add64(TrustedImm32(1), length, T12);
-        jit.and64(TrustedImm32(~1), T12);
-        jit.lshift64(TrustedImm32(3), T12);
-        jit.subPtr(frame, T12, to);
-        // The destination is higher, so copy the last word first.
-        jit.move(length, T12);
-        Jump none = jit.branchTest64(CCallHelpers::Zero, T12);
-        CCallHelpers::Label next = jit.label();
-        jit.sub64(TrustedImm32(1), T12);
-        jit.load64(CCallHelpers::BaseIndex(from, T12, CCallHelpers::TimesEight), T13);
-        jit.store64(T13, CCallHelpers::BaseIndex(to, T12, CCallHelpers::TimesEight));
-        jit.branchTest64(CCallHelpers::NonZero, T12).linkTo(next, &jit);
-        none.link(&jit);
-        jit.move(frame, GPRInfo::callFrameRegister);
-        jit.move(to, CCallHelpers::stackPointerRegister);
-        jit.jump().linkTo(s_callVarargsReturnAddress, &jit);
-    } else {
-        if (kind == CodeSpecializationKind::CodeForCall)
+    if (inTailPosition)
+        callListInTailPosition(jit);
+    else {
+#if CPU(ARM64)
+        if (kind == CodeSpecializationKind::CodeForCall) {
+            // This frame holds the list, as the one that Stub::Call makes does, and is told by the same return address.
             s_callVarargsReturnAddress = jit.label();
-        callStubFromStub(jit, kind == CodeSpecializationKind::CodeForCall ? Stub::CallList : Stub::ConstructList);
-        if (kind == CodeSpecializationKind::CodeForCall)
-            s_whereCallVarargsIsReturnedTo = jit.label();
-        jit.emitFunctionEpilogue();
-        jit.ret();
+            s_addressesOfLabels->append({ jit.label(), ARM64Registers::lr, s_returnFromCallWithList });
+            jit.m_assembler.adr(ARM64Registers::lr, 0);
+            s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::CallList });
+        } else
+#endif
+        {
+            callStubFromStub(jit, kind == CodeSpecializationKind::CodeForCall ? Stub::CallList : Stub::ConstructList);
+            jit.emitFunctionEpilogue();
+            jit.ret();
+        }
     }
 
     exception.link(&jit);
@@ -2800,6 +2837,11 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
 static void generateCallVarargs(CCallHelpers& jit) { generateCallVarargsTo(jit, CodeSpecializationKind::CodeForCall); }
 static void generateConstructVarargs(CCallHelpers& jit) { generateCallVarargsTo(jit, CodeSpecializationKind::CodeForConstruct); }
 static void generateTailCallVarargs(CCallHelpers& jit) { generateCallVarargsTo(jit, CodeSpecializationKind::CodeForCall, true); }
+static void generateTailCallList(CCallHelpers& jit)
+{
+    jit.emitFunctionPrologue();
+    callListInTailPosition(jit);
+}
 static void generateCallList(CCallHelpers& jit) { generateCallListTo(jit, CodeSpecializationKind::CodeForCall); }
 static void generateConstructList(CCallHelpers& jit) { generateCallListTo(jit, CodeSpecializationKind::CodeForConstruct); }
 
@@ -2979,7 +3021,7 @@ static void generateIteratorOpen(CCallHelpers& jit)
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
     // An array with the realm's original Structure is iterated by index, with no iterator object. This matches the runtime's
     // IterationMode::FastArray.
-    if (Options::useImmutableIntrinsics() && Options::useUnboxedFastArrayIteration()) {
+    if (Options::useUnboxedFastArrayIteration()) {
         Jump isNotCell = jit.branchIfNotCell(A0);
         // Emitter::isOriginalArray()
         jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T11);

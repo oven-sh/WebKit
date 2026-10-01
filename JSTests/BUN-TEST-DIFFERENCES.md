@@ -159,6 +159,9 @@ Rules for an edit to an upstream test:
   inferred against the value at run time, and runs the B3 and Air validators on what the compiler emits and after every phase. Both are
   skipped wherever `lockdown` is: that is upstream's default mode with the JIT off, so a test that needs the JIT already skips it. To
   run only these modes: `--filter '\.aot(-validate)?$'`.
+- Built-in objects are immutable in these modes (`useAOT` implies `useImmutableIntrinsics`): ahead-of-time compiled code relies on it. The
+  204 tests that change one are listed in `JSTests/bun-tests-that-change-builtins.txt`, which the runner reads, instead of each
+  having a directive, so that they stay as upstream has them. They fail with `--useImmutableIntrinsics=1` in the plain interpreter too.
 - On a machine that is also used for something else, pass `--memory-limited`. It skips the 132 tests marked `//@ memoryHog!`, some of
   which allocate until allocation fails: `stress/typed-array-oom-in-buffer-accessor.js` takes about 130 GB on a machine that has it.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated

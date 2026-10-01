@@ -884,6 +884,12 @@ def addRunCommandConfig(config, *additionalEnv)
     if kind =~ /\Aaot(-|\z)/ and $skipModes.include?(:lockdown)
         return
     end
+    # Bun: built-in objects are immutable in the AOT modes. The tests that change one are listed in a file of the fork's, so that they stay
+    # as upstream has them.
+    if kind =~ /\Aaot(-|\z)/
+        $testsThatChangeBuiltins ||= Set.new((WEBKIT_PATH + "JSTests" + "bun-tests-that-change-builtins.txt").readlines.map(&:strip).reject { |line| line.empty? or line.start_with?("#") })
+        return if $testsThatChangeBuiltins.include?("#{$collectionName}/#{$benchmark}")
+    end
     $didAddRunCommand = true
     name = baseOutputName(config[:kind])
     if $filter and name !~ $filter

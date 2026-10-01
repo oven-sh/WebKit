@@ -371,8 +371,6 @@ Node* Graph::intrinsic(unsigned number)
 
 Node* Graph::intrinsicReadBy(const JSInstruction* instruction, Node* base)
 {
-    if (!Options::useImmutableIntrinsics())
-        return nullptr;
     const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
     if (!intrinsics)
         return nullptr;
@@ -810,6 +808,9 @@ bool Graph::passesNoFunctionObject(const Node* node)
     const KnownFunction* known = knownCallee(node, &isExact);
     if (!known || !isExact || !known->needsNoFunctionObject.load(std::memory_order_relaxed))
         return false;
+    // Made as if the callee were not known: Lowering::lowerCallToKnownFunction().
+    if (node->isBytecode(op_tail_call) && known->conventionForCall.signature == Signature::List)
+        return false;
     if (closedMethodReadBy(node->use(calleeRegister))) {
         usesStaticImports = true;
         return true;
@@ -830,7 +831,7 @@ uint32_t Graph::distanceOfEnvironmentOfModule()
 
 void Graph::findBuiltinsCalled()
 {
-    if (!Options::useImmutableIntrinsics() || !ImmutableIntrinsics::shared())
+    if (!ImmutableIntrinsics::shared())
         return;
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
@@ -891,7 +892,7 @@ void Graph::findBuiltinsCalled()
 
 bool Graph::isReadOfIteratorMethodOfArray(const Node* node)
 {
-    if (!node->isBytecode(op_get_by_id) || node->guard || !Options::useImmutableIntrinsics())
+    if (!node->isBytecode(op_get_by_id) || node->guard)
         return false;
     auto bytecode = node->as<OpGetById>();
     Type base = node->use(bytecode.m_base)->type;
@@ -1450,7 +1451,7 @@ void Graph::findListsOfArguments()
                     continue;
                 Node* spread = part->use(part->as<OpSpread>().m_argument);
                 // (Iterating over an array comes to what is in it for as long as nobody has said otherwise.)
-                if (spread->isBytecode(op_create_rest) && Options::useImmutableIntrinsics())
+                if (spread->isBytecode(op_create_rest))
                     ++numberOfAliasingUses.add(spread, 0).iterator->value;
             }
         }
@@ -2195,8 +2196,6 @@ private:
 
     std::pair<Node*, VirtualRegister> intrinsicReadBy(BasicBlock* block, const JSInstruction* instruction)
     {
-        if (!Options::useImmutableIntrinsics())
-            return { };
         switch (instruction->opcodeID()) {
         case op_resolve_scope:
             return { m_graph.intrinsicReadBy(instruction, nullptr), instruction->as<OpResolveScope>().m_dst };
@@ -3604,7 +3603,7 @@ private:
                 guard->slotOfField = field->slot;
                 guard->firstLayout = field->first;
                 guard->lastLayout = field->last;
-                if (guard->opcode == op_get_by_id && (Options::aotShapeOptimizations() & 8) && Options::useImmutableIntrinsics()) {
+                if (guard->opcode == op_get_by_id && (Options::aotShapeOptimizations() & 8)) {
                     guard->firstWithout = field->firstWithout;
                     guard->lastWithout = field->lastWithout;
                 }

@@ -2334,7 +2334,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 #endif // ENABLE(WEBASSEMBLY)
 
     // (Ahead of what follows, which would have to be told.)
-    if (Options::useImmutableIntrinsics()) [[unlikely]] {
+    if (vm.useImmutableIntrinsics) [[unlikely]] {
         makeIntrinsicsImmutable();
         for (JSObject* prototype : { static_cast<JSObject*>(arrayIteratorPrototype), static_cast<JSObject*>(mapIteratorPrototype), static_cast<JSObject*>(setIteratorPrototype), static_cast<JSObject*>(m_stringIteratorPrototype.get()) })
             prototype->fixProperties(this);
@@ -2452,6 +2452,13 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     if (Options::alwaysHaveABadTime()) [[unlikely]]
         this->haveABadTime(vm);
+
+#if ENABLE(FTL_JIT)
+    // Its builtin functions have AOT code (StaticHeap::builtinOfEngineFor()), which finds the instance through the VM. Loading a module of
+    // the program would make the instance, but a Worker may run without loading one.
+    if (vm.m_firstRealm == this && vm.m_firstRealmHasBuiltinsOfStaticHeap)
+        AOT::Instance::ensure(this);
+#endif
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

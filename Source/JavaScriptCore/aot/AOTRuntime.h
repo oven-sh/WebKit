@@ -561,7 +561,7 @@ struct Instance {
     EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
     // The Structure the realm gives new objects of each built-in class (Receiver). An object that still has it has no own
     // properties added and inherits from the realm's original prototype, which cannot change under
-    // Options::useImmutableIntrinsics(), so its methods are known. Zero if there is none.
+    // VM::useImmutableIntrinsics, so its methods are known. Zero if there is none.
     static constexpr unsigned numberOfReceivers = 16;
     uint32_t structureIDsOfReceivers[numberOfReceivers] { };
     static constexpr ptrdiff_t offsetOfStructureIDsOfReceivers() { return OBJECT_OFFSETOF(Instance, structureIDsOfReceivers); }

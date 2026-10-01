@@ -63,7 +63,6 @@ uint64_t imageStamp()
     mix(VM::offsetOfHeapBarrierThreshold());
     mix(CodeBlock::offsetOfJITData());
     mix(JSGlobalObject::offsetOfGlobalLexicalBindingEpoch());
-    mix(Options::useImmutableIntrinsics()); // What code takes for granted.
 #if CPU(ARM64)
     mix(1 | MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics() << 8);
 #elif CPU(X86_64)
@@ -800,6 +799,13 @@ Vector<uint8_t> ImageBuilder::finish()
 
     // Where everything goes. The stubs come first, and again whenever the last copy is about to be out of reach.
     const StubBlob& stubs = stubBlob();
+    size_t reach = reachOfStubCall;
+    if (unsigned copies = Options::numberOfAOTStubCopiesForTesting()) [[unlikely]] {
+        size_t sizeOfFunctions = 0;
+        for (auto& function : m_functions)
+            sizeOfFunctions += WTF::roundUpToMultipleOf<imageFunctionAlignment>(function.code.bytes.size());
+        reach = stubs.bytes.size() + imageStubsAlignment + sizeOfFunctions / copies;
+    }
     Vector<size_t> stubsAt;
     Vector<std::pair<size_t, size_t>> placement; // Of each function: where it is, and where the stubs it calls are.
     // After each function's code, a veneer for each function that it calls directly and that is out of reach. Which those are
@@ -815,7 +821,7 @@ Vector<uint8_t> ImageBuilder::finish()
         size_t lastStubs = std::numeric_limits<size_t>::max();
         for (auto& function : m_functions) {
             end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end);
-            if (lastStubs == std::numeric_limits<size_t>::max() || end + function.code.bytes.size() - lastStubs > reachOfStubCall) {
+            if (lastStubs == std::numeric_limits<size_t>::max() || end + function.code.bytes.size() - lastStubs > reach) {
                 end = lastStubs = WTF::roundUpToMultipleOf<imageStubsAlignment>(end);
                 end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + stubs.bytes.size());
             }
@@ -831,7 +837,7 @@ Vector<uint8_t> ImageBuilder::finish()
                     continue;
                 size_t from = at[index] + call.offset;
                 size_t to = at[*target];
-                if (((from > to ? from - to : to - from) <= reachOfStubCall && !Options::forceAOTVeneers()) || farCallees[index].contains(static_cast<uint32_t>(*target)))
+                if (((from > to ? from - to : to - from) <= reach && !Options::forceAOTVeneers()) || farCallees[index].contains(static_cast<uint32_t>(*target)))
                     continue;
                 farCallees[index].append(static_cast<uint32_t>(*target));
                 sizeOfVeneers += sizeOfVeneer + sizeof(uint32_t) + imageStubsAlignment;
@@ -846,7 +852,7 @@ Vector<uint8_t> ImageBuilder::finish()
         recordsSize += sizeof(ImageFunction) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + (numbersOfIdentifiers ? 0 : sizeof(uint32_t))) + function.code.info.knownCallees.size() * sizeof(uint32_t) + function.code.info.plans.sizeInBytes();
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
-        if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(indexOfFunction) - stubsAt.last() > reachOfStubCall)) {
+        if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(indexOfFunction) - stubsAt.last() > reach)) {
             codeSize = WTF::roundUpToMultipleOf<imageStubsAlignment>(codeSize);
             stubsAt.append(codeSize);
             codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + stubs.bytes.size());
@@ -1199,7 +1205,7 @@ Vector<uint8_t> ImageBuilder::finish()
     RELEASE_ASSERT(stubs.returnsIntoAdapters.size() == numberOfAdapters);
     for (unsigned i = 0; i < numberOfAdapters; ++i)
         header.returnsIntoAdapters[i] = stubs.returnsIntoAdapters[i];
-    header.hashOfIntrinsics = Options::useImmutableIntrinsics() && ImmutableIntrinsics::shared() ? ImmutableIntrinsics::shared()->hash() : 0;
+    header.hashOfIntrinsics = ImmutableIntrinsics::shared() ? ImmutableIntrinsics::shared()->hash() : 0;
     header.dispatchSize = safeCast<uint32_t>(dispatch.size());
     header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(endOfTables);
     header.codeSize = codeSize;
@@ -1409,6 +1415,9 @@ Registry& registry()
 
 Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
 {
+    // Its code was compiled on the assumption that the intrinsics cannot change.
+    if (!Options::useImmutableIntrinsics())
+        return nullptr;
     if (data.size() < sizeof(ImageHeader))
         return nullptr;
     auto& header = *reinterpret_cast<const ImageHeader*>(data.data());

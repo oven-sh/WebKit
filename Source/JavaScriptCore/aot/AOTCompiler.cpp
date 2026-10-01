@@ -207,7 +207,7 @@ static bool loopsWillDoWhole(Graph& graph)
 static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const CodeOfProgram* program, bool triesLoopsWhole = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
-    triesLoopsWhole &= Options::preferUnsplitAOTLoops() && Options::useImmutableIntrinsics() && !Options::useAOTFunctionSplitting();
+    triesLoopsWhole &= Options::preferUnsplitAOTLoops() && !Options::useAOTFunctionSplitting();
     graph.loopsAreNotSplit = triesLoopsWhole;
     graph.setCalleeHints(hints);
     graph.setSummary(summary);

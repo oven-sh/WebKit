@@ -6474,6 +6474,8 @@ struct BytecodeLinkEncoder::Impl {
                 function.summary->isNonEscaping = !!function.forCall;
                 if (!function.forCall)
                     function.summary->markEscaping(AOT::FunctionSummary::NotCallable);
+                else if (number > AOT::largestFunctionNumberInTypes())
+                    function.summary->markEscaping(AOT::FunctionSummary::NumberDoesNotFitInTypes);
                 else if (!isModuleOfProgram(moduleOfFunctionNumbered(number)))
                     function.summary->markEscaping(AOT::FunctionSummary::ExternalFunction);
                 else if (!isMadeWhereItCanBeSeen.get(number))
@@ -6644,6 +6646,22 @@ struct BytecodeLinkEncoder::Impl {
                 withCode += !!function.forCall;
                 closed += function.summary->isNonEscaping;
                 neverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
+            }
+            // See FunctionSummary::returnsBoxed. Where the two ends of a tail call differ, both box. That may make either differ from
+            // another function it is tied to, so until nothing changes.
+            for (bool changed = true; changed;) {
+                changed = false;
+                for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
+                    const AOT::KnownFunction& caller = *functionsOfProgram.function(number);
+                    for (const AOT::FunctionSummary* summaryOfCallee : caller.summary->knownTailCallees) {
+                        const AOT::KnownFunction& callee = *functionsOfProgram.function(summaryOfCallee->number);
+                        if (AOT::howValuesArePassed(caller.summary, caller.conventionForCall).result == AOT::howValuesArePassed(callee.summary, callee.conventionForCall).result)
+                            continue;
+                        caller.summary->returnsBoxed = true;
+                        callee.summary->returnsBoxed = true;
+                        changed = true;
+                    }
+                }
             }
             if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: ", withCode, " functions have code for calls, ", closed, " of them do not escape, ", neverCalled, " of those have no call site");

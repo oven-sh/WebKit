@@ -15,7 +15,7 @@
 namespace JSC { namespace AOT {
 
 // What is known of the functions of the language itself, where a program cannot put others in their place
-// (Options::useImmutableIntrinsics()). They go by their numbers: ImmutableIntrinsics.
+// (VM::useImmutableIntrinsics). They go by their numbers: ImmutableIntrinsics.
 
 struct BuiltinSignature {
     enum class Condition : uint8_t {

@@ -204,7 +204,7 @@ private:
     }
 
     Vector<Identifier> m_names;
-    // Properties every plain object inherits from Object.prototype. With Options::useImmutableIntrinsics() this set cannot change.
+    // Properties every plain object inherits from Object.prototype. With VM::useImmutableIntrinsics this set cannot change.
     Vector<Identifier> m_namesOfObjectPrototype;
     Vector<uint32_t> m_words;
     Vector<uint32_t> m_layouts; // Offset into m_words, by layout number.

@@ -60,7 +60,7 @@ public:
         uint16_t builtinCode { 0 };
     };
 
-    // Null until a realm has been made with Options::useImmutableIntrinsics().
+    // Null until a realm has been made with VM::useImmutableIntrinsics.
     JS_EXPORT_PRIVATE static const ImmutableIntrinsics* NODELETE shared();
 
     unsigned count() const { return m_entries.size(); }

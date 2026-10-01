@@ -244,7 +244,7 @@ LValue Emitter::isOriginalArray(LValue cell)
 }
 
 // [a, ...b, c]: what is to be spread is an array as the realm makes them, that keeps its elements as values. (Going through one of those is not something a program can
-// tell from copying: Options::useImmutableIntrinsics().)
+// tell from copying: VM::useImmutableIntrinsics.)
 LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue whichAreToBeSpread, LBasicBlock giveUp)
 {
     auto isToBeSpread = [&](LValue index) {

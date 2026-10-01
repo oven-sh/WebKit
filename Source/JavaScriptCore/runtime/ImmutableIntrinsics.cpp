@@ -45,7 +45,7 @@ const ImmutableIntrinsics* ImmutableIntrinsics::shared()
 
 void ImmutableIntrinsics::ensureShared(VM& vm)
 {
-    if (!Options::useImmutableIntrinsics() || shared())
+    if (!vm.useImmutableIntrinsics || shared())
         return;
     JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull()));
     RELEASE_ASSERT(shared());

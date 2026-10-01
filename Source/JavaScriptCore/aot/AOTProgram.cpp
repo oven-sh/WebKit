@@ -337,7 +337,7 @@ unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)
 
 std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant)
 {
-    if (static_cast<LinkTimeConstant>(constant.asInt32AsAnyInt()) != LinkTimeConstant::arrayProtoValues || !Options::useImmutableIntrinsics())
+    if (static_cast<LinkTimeConstant>(constant.asInt32AsAnyInt()) != LinkTimeConstant::arrayProtoValues)
         return std::nullopt;
     const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
     if (!intrinsics)
@@ -371,7 +371,8 @@ HowValuesArePassed howValuesArePassed(const FunctionSummary* summary, Convention
     static_assert(numberOfArgumentGPRs < FunctionSummary::mostParameters);
     for (unsigned i = 0; i < convention.numberOfParameters; ++i)
         result.parameters[i] = repFor(summary->parameterTypes[i + 1].load());
-    result.result = repFor(summary->returnType.load());
+    if (!summary->returnsBoxed)
+        result.result = repFor(summary->returnType.load());
     return result;
 }
 

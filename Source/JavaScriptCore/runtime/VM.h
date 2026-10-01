@@ -530,6 +530,11 @@ public:
         bool definePlainInstanceFieldsInConstructor { Options::definePlainInstanceFieldsInConstructor() };
     };
     BytecodeGenerationOptions bytecodeGenerationOptions;
+
+    // Whether the realms of this VM have immutable intrinsics (JSGlobalObject::makeIntrinsicsImmutable()). Code that is compiled ahead
+    // of time relies on it. Starts as the option of the same name, and is set before the VM's first realm is made. A VM that
+    // compiles ahead of time sets it for itself, so that a build does not change the realms of the rest of its process.
+    bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
     static constexpr ptrdiff_t offsetOfAOTInstanceOfProgram() { return OBJECT_OFFSETOF(VM, m_aotInstanceOfProgram); }
     static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); } // Which starts with its entries.
 #endif

@@ -236,6 +236,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     RELEASE_ASSERT(Instance::offsetOfVM() == JSWebAssemblyInstance::offsetOfVM());
 #endif
     VM& vm = globalObject->vm();
+    RELEASE_ASSERT(vm.useImmutableIntrinsics);
     Instance* instance;
     size_t environmentsSize = 0;
     size_t size;
@@ -288,17 +289,15 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     RELEASE_ASSERT_WITH_MESSAGE(!Image::withCode() || instance->structureIDBase == structureIDBaseOfImages, "Structures are not where the program's code takes them to be: the addresses were taken.");
     {
         auto idOf = [](Structure* structure) { return structure->id().bits(); };
-        if (Options::useImmutableIntrinsics()) {
-            auto ofReceiver = [&](Receiver receiver) -> uint32_t& { return instance->structureIDsOfReceivers[static_cast<unsigned>(receiver)]; };
-            ofReceiver(Receiver::Map) = idOf(globalObject->mapStructure());
-            ofReceiver(Receiver::Set) = idOf(globalObject->setStructure());
-            ofReceiver(Receiver::WeakMap) = idOf(globalObject->weakMapStructure());
-            ofReceiver(Receiver::WeakSet) = idOf(globalObject->weakSetStructure());
-            ofReceiver(Receiver::RegExp) = idOf(globalObject->regExpStructure());
-            ofReceiver(Receiver::Date) = idOf(globalObject->dateStructure());
-            for (IndexingType type : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
-                instance->structureIDsOfOriginalArrays[(type & (IndexingShapeMask | CopyOnWrite)) >> Instance::shiftOfKindOfArray] = idOf(globalObject->originalArrayStructureForIndexingType(type));
-        }
+        auto ofReceiver = [&](Receiver receiver) -> uint32_t& { return instance->structureIDsOfReceivers[static_cast<unsigned>(receiver)]; };
+        ofReceiver(Receiver::Map) = idOf(globalObject->mapStructure());
+        ofReceiver(Receiver::Set) = idOf(globalObject->setStructure());
+        ofReceiver(Receiver::WeakMap) = idOf(globalObject->weakMapStructure());
+        ofReceiver(Receiver::WeakSet) = idOf(globalObject->weakSetStructure());
+        ofReceiver(Receiver::RegExp) = idOf(globalObject->regExpStructure());
+        ofReceiver(Receiver::Date) = idOf(globalObject->dateStructure());
+        for (IndexingType type : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
+            instance->structureIDsOfOriginalArrays[(type & (IndexingShapeMask | CopyOnWrite)) >> Instance::shiftOfKindOfArray] = idOf(globalObject->originalArrayStructureForIndexingType(type));
         if (!globalObject->isHavingABadTime()) {
             instance->structureIDOfNewArrayWithInt32 = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32));
             instance->structureIDOfNewArrayWithContiguous = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));

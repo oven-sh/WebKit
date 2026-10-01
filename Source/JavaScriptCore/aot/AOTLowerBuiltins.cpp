@@ -170,11 +170,13 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     auto mustBeObject = [&](unsigned i) {
         return mustBe(i, TAnyObject, [&](LValue value) { return isCellAnd(nodeAt(i), value, [&](LValue cell) { return isObjectCell(cell); }); });
     };
-    // A regular expression as the realm makes them: with nothing of its own that says how it is to be matched.
+    // A regular expression as the realm makes them: with nothing of its own that says how it is to be matched. And lastIndex is a number:
+    // matching converts it with ToLength() even if the expression is not global, which runs the program's code if it is an object.
     auto mustBePlainRegExp = [&](unsigned i) {
-        if (i >= argc || !mayBe(typeAt(i), TRegExp))
+        if (i >= argc || !isSubtype(typeAt(i), TRegExp))
             return false;
         also(isSuchAReceiver(nullptr, nodeAt(i), arguments[i], Receiver::RegExp));
+        also(isNumber(m_out.load64(arguments[i], m_heaps.RegExpObject_lastIndex)));
         return true;
     };
     auto asDouble = [&](unsigned i) { return isSubtype(typeAt(i), TNumber) ? lowDouble(nodeAt(i)) : numberToDouble(arguments[i]); };
@@ -647,7 +649,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
             begin();
             return finishValue(vmCall(node, pointerType(), Entry::operationStringReplaceStringString, m_globalObject, thisValue, arguments[1], arguments[2]));
         }
-        if (!isSubtype(typeAt(1), TRegExp) || !mustBePlainRegExp(1))
+        if (!mustBePlainRegExp(1))
             return false;
         begin();
         return finishValue(vmCall(node, pointerType(), all ? Entry::operationStringProtoFuncReplaceAllRegExpString : Entry::operationStringProtoFuncReplaceRegExpString, m_globalObject, thisValue, arguments[1], arguments[2]));
@@ -662,14 +664,14 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
             begin();
             return finishValue(vmCall(node, pointerType(), Entry::operationStringSplit, m_globalObject, thisValue, arguments[1], limit));
         }
-        if (!isSubtype(typeAt(1), TRegExp) || !mustBePlainRegExp(1))
+        if (!mustBePlainRegExp(1))
             return false;
         begin();
         return finishValue(vmCall(node, Int64, Entry::operationStringSplitRegExp, m_globalObject, thisValue, arguments[1], limit));
     }
     case Builtin::StringMatch:
     case Builtin::StringSearch:
-        if (count != 1 || !isSubtype(typeAt(1), TRegExp) || !mustBePlainRegExp(1))
+        if (count != 1 || !mustBePlainRegExp(1))
             return false;
         begin();
         return finishValue(vmCall(node, Int64, builtin == Builtin::StringMatch ? Entry::operationStringMatchRegExp : Entry::operationStringSearchRegExp, m_globalObject, thisValue, arguments[1]));

@@ -60,7 +60,12 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
 {
     unsigned count = arguments.size() - 1;
     bool inMemory = count > numberOfArgumentGPRs;
-    RELEASE_ASSERT(mode != CallMode::TailCall || (!inMemory && m_howValuesArePassed.result == Rep::JSValue));
+    RELEASE_ASSERT(mode != CallMode::TailCall || m_howValuesArePassed.result == Rep::JSValue);
+    if (inMemory && mode == CallMode::TailCall) {
+        // (Stub::TailCallList is called.)
+        m_graph.emitsCalls = true;
+        m_graph.alwaysEmitsCalls = true;
+    }
     LValue list = inMemory ? storeArgumentsToScratch(arguments) : nullptr;
     LValue countInMemory = inMemory ? m_out.constIntPtr(count) : nullptr;
 
@@ -75,10 +80,16 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
             patchpoint->append(ConstrainedValue(arguments[i + 1], ValueRep::reg(argumentGPR(i))));
     }
     finishCall(patchpoint, mode);
-    CallSite site { mode == CallMode::TailCall ? StubCall::noCallSite : callSiteBitsOf(node) };
+    CallSite site { mode == CallMode::TailCall && !inMemory ? StubCall::noCallSite : callSiteBitsOf(node) };
     patchpoint->setGenerator([graph = &m_graph, count, inMemory, mode, intrinsic, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         StubCalls& stubCalls = graph->stubCalls;
+        if (inMemory && mode == CallMode::TailCall) {
+            emitRestoreBeforeLeaving(jit, *graph, params.code());
+            stubCalls.call(jit, Stub::TailCallList, site);
+            jit.breakpoint();
+            return;
+        }
         if (inMemory) {
             stubCalls.call(jit, mode == CallMode::Construct ? Stub::ConstructList : Stub::CallList, site);
             return;
@@ -126,9 +137,13 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     unsigned index = m_graph.indexOfKnownCallee(known->keyFor(isConstruct));
     bool passesCallee = !m_graph.passesNoFunctionObject(node);
     bool takesList = convention.signature == Signature::List;
+    // The list would be in this function's frame, which a tail call gives up.
+    if (takesList && node->isBytecode(op_tail_call))
+        return false;
     HowValuesArePassed how = isConstruct ? HowValuesArePassed { } : howValuesArePassed(known->summary, convention);
-    // (What the callee hands back goes to whoever called this function, as it is.)
-    if ((takesList || how.result != m_howValuesArePassed.result) && mode == CallMode::TailCall)
+    // What the callee returns goes to this function's caller as it is. With the whole program in view the two return it the same way
+    // (FunctionSummary::returnsBoxed).
+    if (how.result != m_howValuesArePassed.result && mode == CallMode::TailCall)
         mode = CallMode::Call;
 
     // (A method that is closed is there from when its class is: there is nothing to see to but that there is an object to read it from, which the read does.)
@@ -238,7 +253,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
 
 void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv, CallMode mode, bool hasResult)
 {
-    if (mode == CallMode::TailCall && (argc - 1 > numberOfArgumentGPRs || !node->graph->isInTailPosition))
+    if (mode == CallMode::TailCall && !node->graph->isInTailPosition)
         mode = CallMode::Call;
     Arguments arguments = lowerArguments(node, argc, argv);
     if (lowerCallToKnownFunction(node, calleeRegister, argv, arguments, mode, hasResult))
