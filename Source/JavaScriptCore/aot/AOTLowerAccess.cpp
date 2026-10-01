@@ -821,17 +821,21 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.appendTo(inBounds);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, view->butterfly, index));
         ValueFromBlock fast = m_out.anchor(element);
-        // (For an array with this indexing type, a hole means the element is absent. If its prototype chain had indexed properties,
-        // the array would use another indexing type.)
-        if (allowsEmpty)
-            m_out.jump(continuation);
-        else
+        std::optional<ValueFromBlock> absent;
+        if (allowsEmpty) {
+            // A hole means that the element is absent, unless arrays inherit elements.
+            LBasicBlock hole = newColdBlock();
+            m_out.branch(m_out.notZero64(element), usually(continuation), rarely(hole));
+            m_out.appendTo(hole);
+            absent = m_out.anchor(m_out.int64Zero);
+            m_out.branch(m_out.notZero32(changing32(Instance::offsetOfArraysInheritNoElements())), usually(continuation), rarely(slowCase));
+        } else
             m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
         m_out.appendTo(slowCase);
         ValueFromBlock slow = m_out.anchor(coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode), ColdCall::ChangesNothing));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
-        setJSValue(node, m_out.phi(Int64, fast, slow));
+        setJSValue(node, absent ? m_out.phi(Int64, fast, slow, *absent) : m_out.phi(Int64, fast, slow));
         return;
     }
 
@@ -886,9 +890,14 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.appendTo(inBounds, slowCase);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
         results.append(m_out.anchor(element));
-        if (missingMeansAbsent)
-            m_out.jump(continuation);
-        else
+        if (missingMeansAbsent) {
+            // Unless arrays inherit elements.
+            LBasicBlock hole = newColdBlock();
+            m_out.branch(m_out.notZero64(element), usually(continuation), rarely(hole));
+            m_out.appendTo(hole);
+            results.append(m_out.anchor(m_out.int64Zero));
+            m_out.branch(m_out.notZero32(changing32(Instance::offsetOfArraysInheritNoElements())), usually(continuation), rarely(slowCase));
+        } else
             m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
     } else
         m_out.jump(slowCase);

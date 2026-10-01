@@ -640,6 +640,12 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfStructureIDOfNewArrayWithContiguous() { return OBJECT_OFFSETOF(Instance, structureIDOfNewArrayWithContiguous); }
     static constexpr ptrdiff_t offsetOfStructureIDsOfNewCopyOnWriteArrays() { return OBJECT_OFFSETOF(Instance, structureIDsOfNewCopyOnWriteArrays); }
     static constexpr ptrdiff_t offsetOfStructureIDOfActivation() { return OBJECT_OFFSETOF(Instance, structureIDOfActivation); }
+    // What is so until the program adds a property to a prototype of arrays. Built-in objects being immutable does not rule that
+    // out: what they have cannot be changed, but they can be given more. Nonzero while it is so (AssumptionWatchpoint).
+    uint32_t arraysInheritNoIsConcatSpreadable { 0 }; // JSGlobalObject::arrayIsConcatSpreadableWatchpointSet()
+    uint32_t arraysInheritNoElements { 0 }; // JSGlobalObject::arrayPrototypeChainIsSaneWatchpointSet()
+    static constexpr ptrdiff_t offsetOfArraysInheritNoIsConcatSpreadable() { return OBJECT_OFFSETOF(Instance, arraysInheritNoIsConcatSpreadable); }
+    static constexpr ptrdiff_t offsetOfArraysInheritNoElements() { return OBJECT_OFFSETOF(Instance, arraysInheritNoElements); }
     // Allocators and shared cells owned by the VM. Their addresses are stable for the VM's lifetime.
     void* auxiliarySpace { nullptr }; // CompleteSubspace* for butterflies.
     void* spaceOfActivations { nullptr }; // CompleteSubspace*

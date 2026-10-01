@@ -16,6 +16,25 @@
 
 namespace JSC { namespace AOT {
 
+AssumptionWatchpoint::AssumptionWatchpoint()
+    : Watchpoint(Watchpoint::Type::AOTAssumption)
+{
+}
+
+void AssumptionWatchpoint::install(InlineWatchpointSet& set, uint32_t& flag)
+{
+    flag = set.isStillValid();
+    if (!flag)
+        return;
+    m_flag = &flag;
+    set.add(this);
+}
+
+void AssumptionWatchpoint::fireInternal(VM&, const FireDetail&)
+{
+    *m_flag = 0;
+}
+
 SlotWatchpoint::SlotWatchpoint()
     : Watchpoint(Watchpoint::Type::AOTSlot)
     , m_owner(nullptr)
