@@ -185,6 +185,10 @@ public:
     // (a sampling hook inside malloc): unlike expressionInfo() it never decodes. On the result use entryForInstPC(),
     // which does neither; lineColumnInTextForInstPC() fills a cache.
     ExpressionInfo* expressionInfoIfDecoded() const { return m_expressionInfo.get(); }
+    // StaticHeap keeps some of what a function's code has, and not the code: the record that the expression info is decoded from,
+    // and what this then no longer has (the identifiers, the constants, the functions and, if asked, the rare data).
+    const void* cachedExpressionInfo() const { return m_cachedExpressionInfo; }
+    void leaveToStaticHeap(bool rareDataToo, bool identifiersAndConstantsAreCopied);
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
@@ -263,6 +267,17 @@ public:
 
     size_t numberOfUnlinkedStringSwitchJumpTables() const { return m_rareData ? m_rareData->m_unlinkedStringSwitchJumpTables.size() : 0; }
     const UnlinkedStringJumpTable& unlinkedStringSwitchJumpTable(int tableIndex) const { ASSERT(m_rareData); return m_rareData->m_unlinkedStringSwitchJumpTables[tableIndex]; }
+
+    // In code created by StaticHeap, an entry with this bit set is not an UnlinkedFunctionExecutable but the function's
+    // FunctionExecutable, which is immortal (StaticHeap::retainNeededFunctionData()). Check this first.
+    static constexpr uintptr_t isExecutable = 1;
+    static FunctionExecutable* executableIn(const WriteBarrier<UnlinkedFunctionExecutable>& entry)
+    {
+        uintptr_t bits = std::bit_cast<uintptr_t>(entry);
+        return bits & isExecutable ? std::bit_cast<FunctionExecutable*>(bits - isExecutable) : nullptr;
+    }
+    FunctionExecutable* executableOfFunctionDecl(int index) const { return executableIn(m_functionDecls[index]); }
+    FunctionExecutable* executableOfFunctionExpr(int index) const { return executableIn(m_functionExprs[index]); }
 
     UnlinkedFunctionExecutable* functionDecl(int index)
     {

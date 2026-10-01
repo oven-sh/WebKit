@@ -528,6 +528,23 @@ StringView::UnderlyingString::UnderlyingString(const StringImpl& string)
 
 static Lock underlyingStringsLock;
 
+#if USE(BUN_JSC_ADDITIONS)
+// The table outlives a static region that this thread may be building, so neither its storage nor its values can be in that.
+class OutsideOfStaticRegion {
+public:
+    OutsideOfStaticRegion()
+    {
+        if (bmalloc::StaticRegion::isAllocatingOnThisThread())
+            m_scope.emplace(false);
+    }
+
+private:
+    std::optional<bmalloc::StaticRegion::AllocationScope> m_scope;
+};
+#else
+class OutsideOfStaticRegion { };
+#endif
+
 static HashMap<const StringImpl*, StringView::UnderlyingString*>& underlyingStrings() WTF_REQUIRES_LOCK(underlyingStringsLock)
 {
     static NeverDestroyed<HashMap<const StringImpl*, StringView::UnderlyingString*>> map;
@@ -539,6 +556,7 @@ void StringView::invalidate(const StringImpl& stringToBeDestroyed)
     UnderlyingString* underlyingString;
     {
         Locker locker { underlyingStringsLock };
+        OutsideOfStaticRegion outsideOfStaticRegion;
         underlyingString = underlyingStrings().take(&stringToBeDestroyed);
         if (!underlyingString)
             return;
@@ -556,6 +574,7 @@ void StringView::adoptUnderlyingString(UnderlyingString* underlyingString)
 {
     if (m_underlyingString) {
         Locker locker { underlyingStringsLock };
+        OutsideOfStaticRegion outsideOfStaticRegion;
         if (!--m_underlyingString->refCount) {
             if (m_underlyingString->isValid) {
                 underlyingStrings().remove(&m_underlyingString->string);
@@ -573,6 +592,7 @@ void StringView::setUnderlyingStringImpl(const StringImpl* string)
         underlyingString = nullptr;
     else {
         Locker locker { underlyingStringsLock };
+        OutsideOfStaticRegion outsideOfStaticRegion;
         auto result = underlyingStrings().add(string, nullptr);
         if (result.isNewEntry)
             result.iterator->value = new UnderlyingString(*string);

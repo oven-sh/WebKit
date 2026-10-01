@@ -30,6 +30,8 @@
 #include "config.h"
 #include "CodeBlock.h"
 
+#include "AOTRuntime.h"
+#include "HeapIterationScope.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -81,6 +83,7 @@
 #include "ProgramCodeBlock.h"
 #include "PropertyInlineCache.h"
 #include "ReduceWhitespace.h"
+#include "SamplingProfiler.h"
 #include "SlotVisitorInlines.h"
 #include "SourceProvider.h"
 #include "StackVisitor.h"
@@ -362,7 +365,7 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
     }
 }
 
-CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
+CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope, LinkMode linkMode)
     : JSCell(vm, structure)
     , m_globalObject(scope->realm(), WriteBarrierEarlyInit)
     , m_shouldAlwaysBeInlined(true)
@@ -383,7 +386,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     , m_ownerExecutable(ownerExecutable, WriteBarrierEarlyInit)
     , m_vm(&vm)
     , m_instructionsRawPointer(unlinkedCodeBlock->instructions().rawPointer())
-    , m_metadata(unlinkedCodeBlock->metadata().link())
+    , m_metadata(linkMode == LinkMode::Full ? unlinkedCodeBlock->metadata().link() : nullptr)
     , m_creationTime(ApproximateTime::now())
 #if ASSERT_ENABLED
     , m_magic(CODEBLOCK_MAGIC)
@@ -393,7 +396,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     ASSERT(m_scopeRegister.isLocal());
 
     ASSERT(source().provider());
-    constexpr bool allocateArgumentValueProfiles = true;
+    bool allocateArgumentValueProfiles = linkMode == LinkMode::Full;
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
@@ -416,7 +419,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
 // inside UnlinkedCodeBlock. Also, Baseline JIT code is shared between all CodeBlocks of an UnlinkedCodeBlock,
 // so the bytecode must remain the same between CodeBlocks sharing an UnlinkedCodeBlock.
 bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock,
-    JSScope* scope)
+    JSScope* scope, LinkMode linkMode)
 {
     Base::finishCreation(vm);
 
@@ -455,6 +458,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     if (!linkFunctionsEagerly)
         m_numberOfUnmaterializedFunctionExecutables = static_cast<unsigned>(m_functionDecls.size() - firstLazilyMaterializedFunctionDecl() + m_functionExprs.size());
     for (size_t count = linkFunctionsEagerly ? m_functionDecls.size() : 0, i = 0; i < count; ++i) {
+        if (FunctionExecutable* executable = unlinkedCodeBlock->executableOfFunctionDecl(i)) {
+            m_functionDecls[i].set(vm, this, executable);
+            continue;
+        }
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
@@ -463,6 +470,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     }
 
     for (size_t count = linkFunctionsEagerly ? m_functionExprs.size() : 0, i = 0; i < count; ++i) {
+        if (FunctionExecutable* executable = unlinkedCodeBlock->executableOfFunctionExpr(i)) {
+            m_functionExprs[i].set(vm, this, executable);
+            continue;
+        }
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
@@ -478,13 +489,21 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 const UnlinkedHandlerInfo& unlinkedHandler = unlinkedCodeBlock->exceptionHandler(i);
                 HandlerInfo& handler = m_rareData->m_exceptionHandlers[i];
 #if ENABLE(JIT)
-                auto& instruction = *instructions().at(unlinkedHandler.target).ptr();
-                handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(instruction.width()).code()));
+                // (AOT code locates its handlers through its own tables, and the instructions may not be available.)
+                OpcodeSize width = linkMode == LinkMode::ForCodeFromImage ? OpcodeSize::Narrow : instructions().at(unlinkedHandler.target).ptr()->width();
+                handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(width).code()));
 #else
                 handler.initialize(unlinkedHandler);
 #endif
             }
         }
+    }
+
+    if (linkMode == LinkMode::ForCodeFromImage) {
+        // The rest is about the instructions, which are not going to be run, or looked at.
+        initializeTemplateObjects(topLevelExecutable, templateObjectIndices);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        return true;
     }
 
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
@@ -918,11 +937,21 @@ FunctionExecutable* CodeBlock::linkFunctionExpr(unsigned index, UnlinkedFunction
 FunctionExecutable* CodeBlock::materializeFunctionDeclSlow(unsigned index)
 {
     ASSERT(index >= firstLazilyMaterializedFunctionDecl());
+    if (FunctionExecutable* executable = m_unlinkedCode->executableOfFunctionDecl(index)) {
+        m_functionDecls[index].set(vm(), this, executable);
+        m_numberOfUnmaterializedFunctionExecutables--;
+        return executable;
+    }
     return materializeFunctionExecutable(m_functionDecls[index], m_unlinkedCode->functionDecl(index));
 }
 
 FunctionExecutable* CodeBlock::materializeFunctionExprSlow(unsigned index)
 {
+    if (FunctionExecutable* executable = m_unlinkedCode->executableOfFunctionExpr(index)) {
+        m_functionExprs[index].set(vm(), this, executable);
+        m_numberOfUnmaterializedFunctionExecutables--;
+        return executable;
+    }
     if (codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables()) {
         ASSERT(!m_functionExprs[index] && m_numberOfUnmaterializedFunctionExecutables);
         RELEASE_ASSERT(!isCompilationThread());
@@ -1064,6 +1093,50 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 }
 #endif // ENABLE(JIT)
 
+#if ENABLE(FTL_JIT)
+void CodeBlock::adoptAOTCode(AOT::JITCode& jitCode, AOT::Data* data)
+{
+    ASSERT(!m_jitData);
+    setJITCode(Ref { jitCode });
+    WTF::storeStoreFence();
+    m_jitData = data;
+    m_shouldAlwaysBeInlined = false;
+}
+
+void CodeBlock::installAOTCode(Ref<AOT::JITCode>&& jitCode)
+{
+    RELEASE_ASSERT(codeType() != FunctionCode);
+    AOT::Instance& instance = AOT::Instance::ensure(globalObject());
+    jitCode->setInstance(instance);
+    AOT::Data* data = AOT::Data::create(instance, ownerExecutable(), unlinkedCodeBlock(), jitCode.get(), this);
+    adoptAOTCode(jitCode.get(), data);
+}
+
+void CodeBlock::releaseAOTData()
+{
+    // The collector looks at it, from its own threads. It does not start doing so behind the back of code that allocates nothing.
+    if (vm().heap.collectionScope())
+        return;
+    if (auto* data = aotData(); data && data->codeBlock == this) {
+#if ENABLE(SAMPLING_PROFILER)
+        // Samples that have not been looked at yet say which code a frame was of by pointing at this.
+        if (SamplingProfiler* profiler = vm().samplingProfiler()) [[unlikely]] {
+            DeferGCForAWhile deferGC(vm());
+            Locker locker { profiler->getLock() };
+            HeapIterationScope heapIterationScope(vm().heap);
+            profiler->processUnverifiedStackTraces();
+        }
+#endif
+        m_jitData = nullptr;
+        AOT::Data::destroy(data);
+        // Nothing runs this again, and it may be a long while before it is swept.
+        m_constantRegisters.clear();
+        m_functionDecls = { };
+        m_functionExprs = { };
+    }
+}
+#endif
+
 CodeBlock::~CodeBlock()
 {
     auto& cc = checker();
@@ -1083,9 +1156,9 @@ CodeBlock::~CodeBlock()
         static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = vm.heap.lastGCBoundaryTime();
 #endif
 
-    if (JITCode::isBaselineCode(jitType())) {
+    if (JITCode::isBaselineCode(jitType()) || jitType() == JITType::AOTJIT) {
 #if ENABLE(JIT)
-        if (cc.isEnabled && m_jitData) {
+        if (cc.isEnabled && m_jitData && jitType() != JITType::AOTJIT) {
             RELEASE_ASSERT(cc.get(CrashChecker::BaselineJITData) == cc.hash(this, m_jitData),
                 CrashChecker::BaselineJITData, cc.value(), cc.hash(this, m_jitData), this, m_jitData);
             auto propertyCacheCount = std::bit_cast<BaselineJITData*>(m_jitData)->propertyInlineCaches().size();
@@ -1154,6 +1227,11 @@ CodeBlock::~CodeBlock()
     // m_incomingCalls linked lists through the execution of the ~CallLinkInfo
     // destructors.
 
+#if ENABLE(FTL_JIT)
+    // (The Data is the Instance's.)
+    if (aotData())
+        m_jitData = nullptr;
+#endif
 #if ENABLE(JIT)
     if (cc.isEnabled && m_jitData) {
         if (JSC::JITCode::isOptimizingJIT(jitType())) {
@@ -1294,7 +1372,7 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
         if (uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable())->isAsync())
             resumableCodeOwner = ownerExecutable();
     } else if (m_unlinkedCode->codeType() == FunctionCode && isGeneratorOrAsyncFunctionBodyParseMode(m_unlinkedCode->parseMode()))
-        resumableCodeOwner = uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable();
+        resumableCodeOwner = ownerExecutable()->isShortForm() ? static_cast<JSCell*>(ownerExecutable()) : uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable(); // (An object that belongs to the function alone.)
 
     for (size_t i = 0; i < count; i++) {
         JSValue constant = constants[i].get();
@@ -1315,7 +1393,7 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
                             ConcurrentJSLocker locker(symbolTable->m_lock);
                             symbolTable->prepareForTypeProfiling(locker);
                         }
-                        if (i == moduleEnvironmentSymbolTableIndex)
+                        if (i == moduleEnvironmentSymbolTableIndex || symbolTable->isSharedAcrossRealms())
                             break;
 
                         // We have to make sure to use a single code block for constant watchpointing.
@@ -2147,6 +2225,7 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 
     // Called for all live CodeBlocks.
     // We do not need to call updateAllPredictions for DFG / FTL since the same thing happens in LLInt / Baseline CodeBlock for them.
+    // Nor for AOT code, which does no profiling.
     if (JITCode::isBaselineCode(jitType()))
         updateAllPredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::KeepIfLive : ValueProfileSamples::Record);
 
@@ -2388,7 +2467,7 @@ CodeBlock* CodeBlock::baselineAlternative()
     if (result->alternative())
         result = result->alternative();
     RELEASE_ASSERT(result);
-    RELEASE_ASSERT(JITCode::isBaselineCode(result->jitType()) || result->jitType() == JITType::None);
+    RELEASE_ASSERT(JITCode::isBaselineCode(result->jitType()) || result->jitType() == JITType::None || result->jitType() == JITType::AOTJIT);
     return result;
 #else
     return this;
@@ -2399,7 +2478,7 @@ CodeBlock* CodeBlock::baselineVersion()
 {
 #if ENABLE(JIT)
     JITType selfJITType = jitType();
-    if (JITCode::isBaselineCode(selfJITType))
+    if (JITCode::isBaselineCode(selfJITType) || selfJITType == JITType::AOTJIT)
         return this;
     CodeBlock* result = replacement();
     if (!result) {
@@ -2575,6 +2654,13 @@ void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSi
 
 LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
+#if ENABLE(FTL_JIT)
+    // Code that was compiled ahead of time may have another way of saying.
+    if (auto function = AOT::FunctionRef::of(const_cast<CodeBlock*>(this))) {
+        if (auto position = function.reportedPositionFor(bytecodeIndex))
+            return position->lineColumn;
+    }
+#endif
     RELEASE_ASSERT(bytecodeIndex.offset() < instructions().size());
     SourceProvider& provider = *source().provider();
     return provider.documentLineColumn(m_unlinkedCode->lineColumnInTextForBytecodeIndex(bytecodeIndex, provider, sourceOffset()));
@@ -2587,6 +2673,15 @@ LineColumn CodeBlock::lineColumnForBytecodeIndexConcurrently(BytecodeIndex bytec
 
 ExpressionInfo::Entry CodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
+#if ENABLE(FTL_JIT)
+    if (auto function = AOT::FunctionRef::of(const_cast<CodeBlock*>(this))) {
+        if (auto position = function.reportedPositionFor(bytecodeIndex)) {
+            ExpressionInfo::Entry entry;
+            entry.instPC = bytecodeIndex.offset();
+            return entry;
+        }
+    }
+#endif
     auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);
     entry.divot += sourceOffset();
     return entry;
@@ -3774,6 +3869,8 @@ void CodeBlock::tallyFrequentExitSites()
 
 void CodeBlock::notifyLexicalBindingUpdate()
 {
+    if (!m_metadata)
+        return; // LinkMode::ForCodeFromImage: the instructions are not what runs.
     JSGlobalObject* globalObject = m_globalObject.get();
     JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(globalObject->globalScope());
     SymbolTable* symbolTable = globalLexicalEnvironment->symbolTable();
@@ -3843,6 +3940,10 @@ unsigned CodeBlock::frameRegisterCount()
     case JITType::FTLJIT:
         return jitCode()->dfgCommon()->frameRegisterCount;
 #endif // ENABLE(DFG_JIT)
+#if ENABLE(FTL_JIT)
+    case JITType::AOTJIT:
+        return static_cast<AOT::JITCode*>(jitCode().get())->frameSizeInBytes() / sizeof(Register);
+#endif
         
     default:
         RELEASE_ASSERT_NOT_REACHED();

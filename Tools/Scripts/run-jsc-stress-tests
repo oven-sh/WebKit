@@ -879,6 +879,17 @@ def addRunCommandConfig(config, *additionalEnv)
     if $skipModes.include?(kind.to_sym) or $skipModes.include?(kind.gsub('-', '_').to_sym)
         return
     end
+    # Bun: lockdown is upstream's default mode with the JIT off, so a test that needs the JIT (it counts compiles, say) already skips it.
+    # The AOT modes run with the JIT off too.
+    if kind =~ /\Aaot(-|\z)/ and $skipModes.include?(:lockdown)
+        return
+    end
+    # Bun: built-in objects are immutable in the AOT modes. The tests that change one are listed in a file of the fork's, so that they stay
+    # as upstream has them.
+    if kind =~ /\Aaot(-|\z)/
+        $testsThatChangeBuiltins ||= Set.new((WEBKIT_PATH + "JSTests" + "bun-tests-that-change-builtins.txt").readlines.map(&:strip).reject { |line| line.empty? or line.start_with?("#") })
+        return if $testsThatChangeBuiltins.include?("#{$collectionName}/#{$benchmark}")
+    end
     $didAddRunCommand = true
     name = baseOutputName(config[:kind])
     if $filter and name !~ $filter
@@ -1386,6 +1397,28 @@ BASE_MODES = [
             "--useJIT=false",
         ]
     ],
+    # Bun: the main script is compiled ahead of time, in-process, and runs that code. The JIT is off, as it is in an executable built
+    # with AOT. Code the compiler never saw (eval, new Function, other scripts that are loaded) runs in the interpreter.
+    [
+        "AOT",
+        "aot",
+        [
+            "--compileMainScriptAheadOfTime=true",
+            "--useJIT=false",
+        ]
+    ],
+    # Bun: the same, every type the compiler inferred is checked against the value at run time, and the B3 and Air validators run on what
+    # the compiler emits and after every phase.
+    [
+        "AOTValidate",
+        "aot-validate",
+        [
+            "--compileMainScriptAheadOfTime=true",
+            "--useJIT=false",
+            "--validateAOTInferredTypes=true",
+            "--validateGraphAtEachPhase=true",
+        ]
+    ],
     [
         # NOTE: Tests rely on this using scribbleFreeCells.
         "NoCJITValidate",
@@ -1572,6 +1605,10 @@ def defaultRunConfig(config, subsetOptions, *optionalTestSpecificOptions)
         runBytecodeCacheConfig(config, *optionalTestSpecificOptions)
         runMiniModeConfig(config, *optionalTestSpecificOptions) unless $skipMiniMode
         runLockdownConfig(config, *optionalTestSpecificOptions) unless $skipLockdown
+        if $isFTLPlatform and $architecture == "arm64"
+            runAOTConfig(config, *optionalTestSpecificOptions)
+            runAOTValidateConfig(config, *optionalTestSpecificOptions)
+        end
         if $jitTests
             if not subsetOptions.has_key?(:skipNoLLInt)
                 runNoLLIntConfig(config, *optionalTestSpecificOptions)

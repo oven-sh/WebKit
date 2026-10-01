@@ -253,6 +253,14 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             && block->successorBlock(0) == code.findNextBlock(block))
             continue;
 
+#if USE(BUN_JSC_ADDITIONS)
+        // In code that is compiled ahead of time, an Oops follows every call that does not return, which is half a million times in
+        // a large program. It is only needed after the last block, so that the return address of that call is still inside the
+        // function.
+        if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && code.findNextBlock(block))
+            continue;
+#endif
+
         if (isReturn(block->last().kind.opcode)) {
             // We currently don't represent the full prologue/epilogue in Air, so we need to
             // have this override.

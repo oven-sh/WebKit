@@ -50,6 +50,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 #if ENABLE(DFG_JIT)
+namespace AOT {
+class JITCode;
+struct Data;
+}
 namespace DFG {
 class JITData;
 } // namespace DFG
@@ -106,6 +110,9 @@ class CodeBlock : public JSCell {
 public:
 
     enum CopyParsedBlockTag { CopyParsedBlock };
+    // ForCodeFromImage: the block is going to run AOT code (installAOTCode), which does not need what linking the bytecode creates.
+    // There is no metadata table, and there are no profiles.
+    enum class LinkMode : uint8_t { Full, ForCodeFromImage };
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
@@ -122,10 +129,10 @@ public:
 
 protected:
     CodeBlock(VM&, Structure*, CopyParsedBlockTag, CodeBlock& other);
-    CodeBlock(VM&, Structure*, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
+    CodeBlock(VM&, Structure*, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*, LinkMode = LinkMode::Full);
 
     void finishCreation(VM&, CopyParsedBlockTag, CodeBlock& other);
-    bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
+    bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*, LinkMode = LinkMode::Full);
 
     WriteBarrier<JSGlobalObject> m_globalObject;
 
@@ -581,9 +588,21 @@ public:
     SimpleJumpTable& baselineSwitchJumpTable(int tableIndex);
     StringJumpTable& baselineStringSwitchJumpTable(int tableIndex);
     void setBaselineJITData(std::unique_ptr<BaselineJITData>&&);
+#if ENABLE(FTL_JIT)
+    void installAOTCode(Ref<AOT::JITCode>&&); // The code of a program or a module.
+    void adoptAOTCode(AOT::JITCode&, AOT::Data*); // See AOT::Data::ensureCodeBlock().
+    // For code that will not run again: releases the data that is only needed to run it now, instead of waiting for the collector.
+    void releaseAOTData();
+    AOT::Data* aotData()
+    {
+        if (jitType() == JITType::AOTJIT)
+            return std::bit_cast<AOT::Data*>(m_jitData);
+        return nullptr;
+    }
+#endif
     BaselineJITData* baselineJITData()
     {
-        if (!JSC::JITCode::isOptimizingJIT(jitType()))
+        if (!JSC::JITCode::isOptimizingJIT(jitType()) && jitType() != JITType::AOTJIT)
             return std::bit_cast<BaselineJITData*>(m_jitData);
         return nullptr;
     }
@@ -1126,6 +1145,13 @@ static_assert(sizeof(CodeBlock) <= 224, "Keep it small for memory saving");
 template <typename ExecutableType>
 void ScriptExecutable::prepareForExecution(VM& vm, JSFunction* function, JSScope* scope, CodeSpecializationKind kind, CodeBlock*& resultCodeBlock)
 {
+    if constexpr (std::same_as<ExecutableType, FunctionExecutable>) {
+        // There is nothing to prepare, here: see AOT::generateEnterStaticFunction().
+        if (uncheckedDowncast<ExecutableType>(this)->aotEntryFor(kind)) {
+            resultCodeBlock = nullptr;
+            return;
+        }
+    }
     if (hasJITCodeFor(kind)) {
         if constexpr (std::same_as<ExecutableType, EvalExecutable>)
             resultCodeBlock = uncheckedDowncast<ExecutableType>(this)->codeBlock();

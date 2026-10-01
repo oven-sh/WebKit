@@ -115,6 +115,16 @@ JSFunction::JSFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* glo
     ASSERT(structure->realm() == globalObject);
 }
 
+void JSFunction::replaceExecutable(VM& vm, FunctionExecutable* executable)
+{
+    if (m_executableOrRareData & rareDataTag)
+        std::bit_cast<FunctionRareData*>(m_executableOrRareData & ~rareDataTag)->replaceExecutable(vm, executable);
+    else {
+        m_executableOrRareData = std::bit_cast<uintptr_t>(executable);
+        vm.writeBarrier(this, executable);
+    }
+}
+
 FunctionRareData* JSFunction::allocateRareData(VM& vm)
 {
     uintptr_t executableOrRareData = m_executableOrRareData;

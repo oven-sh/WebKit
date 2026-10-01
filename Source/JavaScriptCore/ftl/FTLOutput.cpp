@@ -50,6 +50,11 @@ Output::Output(State& state)
 {
 }
 
+Output::Output(B3::Procedure& proc)
+    : m_proc(proc)
+{
+}
+
 Output::~Output() = default;
 
 void Output::initialize(AbstractHeapRepository& heaps)

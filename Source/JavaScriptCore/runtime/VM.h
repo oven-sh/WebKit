@@ -182,6 +182,10 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 #endif
 
 #if ENABLE(FTL_JIT)
+namespace AOT {
+class RuntimeTable;
+struct Instance;
+}
 namespace FTL {
 class Thunks;
 }
@@ -253,8 +257,22 @@ private:
 enum VMIdentifierType { };
 using VMIdentifier = AtomicObjectIdentifier<VMIdentifierType>;
 
+class VM;
+class MakingBuiltinsFor {
+    WTF_MAKE_NONCOPYABLE(MakingBuiltinsFor);
+public:
+    inline MakingBuiltinsFor(VM&, JSGlobalObject*);
+    inline ~MakingBuiltinsFor();
+private:
+    VM& m_vm;
+    JSGlobalObject* m_before;
+};
+
 class VM : public ThreadSafeRefCountedWithSuppressingSaferCPPChecking<VM> {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VM, VM);
+public:
+    // The first of a process that has a StaticHeap mapped is where that says.
+    JS_EXPORT_PRIVATE void* operator new(size_t);
+    JS_EXPORT_PRIVATE void operator delete(void*);
 public:
     // WebCore has a one-to-one mapping of threads to VMs;
     // create() should only be called once
@@ -311,6 +329,8 @@ public:
     bool isEntered() const { return !!entryScope; }
 
     inline CallFrame* topJSCallFrame() const;
+    // The realm of the code running in the top call frame, or the realm that entered the VM if there is no frame. Null if neither exists.
+    JS_EXPORT_PRIVATE JSGlobalObject* topFrameGlobalObject();
 
     // Global object in which execution began.
     JS_EXPORT_PRIVATE JSGlobalObject* NODELETE deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
@@ -490,6 +510,36 @@ public:
 
 #if ENABLE(JIT)
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
+    std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
+    Vector<AOT::Instance*, 1> m_aotInstances; // Each is its global object's.
+    void* m_staticHeapOfVM { nullptr }; // See StaticHeap::isUsedBy().
+    // The realm that builtins are currently being created for, if known (BuiltinExecutables::staticExecutableFor()).
+    JSGlobalObject* m_realmForBuiltins { nullptr };
+    JSGlobalObject* m_firstRealm { nullptr }; // Not kept alive by this, and never dereferenced.
+    bool m_firstRealmHasBuiltinsOfStaticHeap { false };
+    Vector<FunctionExecutable*> m_builtinsOfStaticHeap; // What it has been given, by BuiltinCodeIndex. The collector has nothing to do with them.
+    AOT::Instance* m_aotInstanceOfProgram { nullptr }; // The one that has the environments of the program's modules in their places.
+
+    // How this VM's parser and bytecode generator shape the code they produce. Each starts as the option of the same name. A VM that
+    // generates bytecode to be compiled ahead of time sets them for itself, so that a build does not change how the rest of its process
+    // compiles anything.
+    struct BytecodeGenerationOptions {
+        bool useSoundTypes { Options::useSoundTypes() };
+        bool resolveAllScopeSlotsStatically { Options::resolveAllScopeSlotsStatically() };
+        bool evaluateObjectLiteralValuesFirst { Options::evaluateObjectLiteralValuesFirst() };
+        bool definePlainInstanceFieldsInConstructor { Options::definePlainInstanceFieldsInConstructor() };
+        // However short the source is (SourceProvider::minimumLengthToHaveLineStartsWithTheCode). What is built from the code
+        // may have no text to scan.
+        bool keepLineStartsOfEverySource { false };
+    };
+    BytecodeGenerationOptions bytecodeGenerationOptions;
+
+    // Whether the realms of this VM have immutable intrinsics (JSGlobalObject::makeIntrinsicsImmutable()). Code that is compiled ahead
+    // of time relies on it. Starts as the option of the same name, and is set before the VM's first realm is made. A VM that
+    // compiles ahead of time sets it for itself, so that a build does not change the realms of the rest of its process.
+    bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
+    static constexpr ptrdiff_t offsetOfAOTInstanceOfProgram() { return OBJECT_OFFSETOF(VM, m_aotInstanceOfProgram); }
+    static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); } // Which starts with its entries.
 #endif
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }
@@ -552,6 +602,7 @@ public:
     WriteBarrier<Structure> evalExecutableStructure;
     WriteBarrier<Structure> programExecutableStructure;
     WriteBarrier<Structure> functionExecutableStructure;
+    WriteBarrier<Structure> shortFunctionExecutableStructure;
 #if ENABLE(WEBASSEMBLY)
     WriteBarrier<Structure> pinballCompletionStructure;
     WriteBarrier<Structure> webAssemblyCalleeGroupStructure;
@@ -652,6 +703,18 @@ public:
     Ref<StringImpl> lastAtomizedIdentifierStringImpl { *StringImpl::empty() };
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
     JSONAtomStringCache jsonAtomStringCache;
+    // Of the last big result of JSON.stringify. A program that makes one is likely to make another much like it.
+    struct {
+        uint32_t length { 0 };
+        bool isWide { false };
+    } jsonStringifyHints;
+    // 16-bit ids for property names, assigned on first use by AOT::cacheGetById(). A Structure without a layout class records the id of the plain data property in each of its
+    // first inline slots (Structure::fieldIDInSlot()), so that a monomorphic inline cache also hits on other Structures that have the same name at the same offset.
+    // Per VM because objects cross realms. A name with an id is kept alive, so that its address is not reused by another name.
+    struct {
+        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint16_t> ids;
+        uint32_t next { 0 };
+    } aotPropertyNameIDs;
     KeyAtomStringCache keyAtomStringCache;
     // Bytecode-cache decode: one lazy [class(c0)<<6|class(c1)] -> atom table for the bulk of minified identifiers, shared by every Decoder. The 64 classes are the ASCII identifier characters (Decoder::atomForInlineString).
     static constexpr unsigned cachedBytecodeTwoCharacterAtomsSize = 64 * 64;
@@ -696,6 +759,7 @@ public:
     {
         return m_orderedHashTableSentinel.get();
     }
+    static constexpr ptrdiff_t offsetOfOrderedHashTableDeletedValue() { return OBJECT_OFFSETOF(VM, m_orderedHashTableDeletedValue); }
 
     Structure* sentinelStructure() { return m_sentinelStructure.get(); }
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
@@ -769,7 +833,7 @@ public:
     static JS_EXPORT_PRIVATE bool canUseAssembler();
     static bool isInMiniMode()
     {
-        return !Options::useJIT() || Options::forceMiniVMMode();
+        return (!Options::useJIT() && Options::useMiniVMModeWithoutJIT()) || Options::forceMiniVMMode();
     }
 
     static bool useUnlinkedCodeBlockJettisoning()
@@ -1556,6 +1620,19 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
+
+
+inline MakingBuiltinsFor::MakingBuiltinsFor(VM& vm, JSGlobalObject* realm)
+    : m_vm(vm)
+    , m_before(vm.m_realmForBuiltins)
+{
+    vm.m_realmForBuiltins = realm;
+}
+
+inline MakingBuiltinsFor::~MakingBuiltinsFor()
+{
+    m_vm.m_realmForBuiltins = m_before;
+}
 
 } // namespace JSC
 

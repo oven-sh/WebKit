@@ -600,6 +600,7 @@ public:
         case CheckDetached:
         case CheckIsConstant:
         case CheckNotEmpty:
+        case CheckSoundType:
         case CheckBadValue:
         case CheckInBounds:
         case CheckInBoundsInt52:
@@ -2461,6 +2462,17 @@ public:
     unsigned typeInfoOperand()
     {
         ASSERT(hasTypeInfoOperand() && m_opInfo.as<uint32_t>() <= static_cast<uint32_t>(UCHAR_MAX));
+        return m_opInfo.as<uint32_t>();
+    }
+
+    bool hasSoundTypeMask()
+    {
+        return op() == CheckSoundType;
+    }
+
+    unsigned soundTypeMask()
+    {
+        ASSERT(hasSoundTypeMask());
         return m_opInfo.as<uint32_t>();
     }
 

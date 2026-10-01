@@ -1214,6 +1214,12 @@ op :put_internal_field,
 
 op :nop
 
+# With Options::useTypeTags(): carries the type tag that the source attached to the next instruction (JSToken::m_typeTag). It does nothing when executed.
+op :type_tag,
+    args: {
+        tag: unsigned,
+    }
+
 op :super_sampler_begin
 
 op :wide16
@@ -1269,6 +1275,12 @@ op :check_tdz,
     args: {
         targetVirtualRegister: VirtualRegister,
         identifier?: VirtualRegister,
+    }
+
+op :check_type,
+    args: {
+        value: VirtualRegister,
+        mask: unsigned,
     }
 
 op :new_array_with_spread,

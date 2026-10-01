@@ -101,6 +101,9 @@ ElementType* LazyProperty<OwnerType, ElementType>::callFunc(const Initializer& i
 
     DeferTerminationForAWhile deferTerminationForAWhile { initializer.vm };
     initializer.property.m_pointer |= initializingTag;
+    std::optional<MakingBuiltinsFor> makingBuiltinsFor;
+    if constexpr (std::is_same_v<OwnerType, JSGlobalObject>)
+        makingBuiltinsFor.emplace(initializer.vm, initializer.owner);
     callStatelessLambda<void, Func>(initializer);
     RELEASE_ASSERT(!(initializer.property.m_pointer & lazyTag));
     RELEASE_ASSERT(!(initializer.property.m_pointer & initializingTag));

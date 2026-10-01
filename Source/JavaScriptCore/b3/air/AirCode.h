@@ -206,6 +206,8 @@ public:
     {
         return m_prologueGenerators[entrypointIndex];
     }
+    // In place of what emitEpilogue() does.
+    void setEpilogueGenerator(RefPtr<PrologueGenerator>&& generator) { m_epilogueGenerator = WTF::move(generator); }
 
     void setNumEntrypoints(unsigned);
 
@@ -409,6 +411,7 @@ private:
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.
     Vector<Ref<PrologueGenerator>, 1> m_prologueGenerators;
+    RefPtr<PrologueGenerator> m_epilogueGenerator;
     RefPtr<WasmBoundsCheckGenerator> m_wasmBoundsCheckGenerator;
     const char* m_lastPhaseName;
     std::unique_ptr<Disassembler> m_disassembler;

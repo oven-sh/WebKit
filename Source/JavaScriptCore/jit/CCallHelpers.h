@@ -578,8 +578,12 @@ public:
         return InvalidGPRReg;
     }
 
-    void prepareForTailCallSlow(RegisterSet preserved = { })
+    // numParameters: where the number of parameters of the function whose frame this is has been put, by code whose frames
+    // have no CodeBlock to say (aot/).
+    void prepareForTailCallSlow(RegisterSet preserved = { }, GPRReg numParameters = InvalidGPRReg)
     {
+        if (numParameters != InvalidGPRReg)
+            preserved.add(numParameters, IgnoreVectors);
         GPRReg temp1 = selectScratchGPR(preserved);
         preserved.add(temp1, IgnoreVectors);
         GPRReg temp2 = selectScratchGPR(preserved);
@@ -603,7 +607,9 @@ public:
 
                 {
                     GPRReg numParametersGPR = temp1;
-                    {
+                    if (numParameters != InvalidGPRReg)
+                        move(numParameters, numParametersGPR);
+                    else {
                         GPRReg codeBlockGPR = numParametersGPR;
                         loadPtr(Address(framePointerRegister, CallFrameSlot::codeBlock * static_cast<int>(sizeof(Register))), codeBlockGPR);
                         load32(Address(codeBlockGPR, CodeBlock::offsetOfNumParameters()), numParametersGPR);

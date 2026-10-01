@@ -55,6 +55,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class MegamorphicCache;
+
 typedef void (*V_DebugOperation_EPP)(CallFrame*, void*, void*);
 
 class AssemblyHelpers : public MacroAssembler {
@@ -189,11 +191,23 @@ public:
     void loadProperty(GPRReg objectGPR, GPRReg offsetGPR, GPRReg resultGPR);
     void storeProperty(GPRReg valueGPR, GPRReg objectGPR, GPRReg offsetGPR, GPRReg scratchGPR);
 
-    JumpList loadMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
-    JumpList loadMegamorphicGetterSetter(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    // Where the VM's MegamorphicCache is: known now, or, for code that does not know which VM it is going to run in, in a register,
+    // which is left as it was.
+    struct MegamorphicCacheLocation {
+        MegamorphicCacheLocation(VM&);
+        explicit MegamorphicCacheLocation(GPRReg gpr)
+            : gpr(gpr)
+        {
+        }
+
+        MegamorphicCache* cache { nullptr };
+        GPRReg gpr { InvalidGPRReg };
+    };
+    JumpList loadMegamorphicProperty(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList loadMegamorphicGetterSetter(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
-    JumpList findMegamorphicCacheEntry(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
-    std::tuple<JumpList, JumpList> storeMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList findMegamorphicCacheEntry(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    std::tuple<JumpList, JumpList> storeMegamorphicProperty(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList hasMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList loadCacheableIdentifierImpl(GPRReg propertyGPR, GPRReg destGPR, bool propertyIsString, bool propertyIsSymbol, bool canBeRope = true);
 
@@ -1592,6 +1606,12 @@ public:
     }
 
     enum LazyGlobalObjectLoadTag { LazyBaselineGlobalObject };
+    // Falls through when the value has one of the tags in mask (see SoundTypeMask in SpeculatedType.h). Jumps to fail when it
+    // definitely has none of them, and to undecided when only soundTypeTag() can tell: an object that overrides getCallData
+    // and is neither a JSFunction nor an InternalFunction, under a mask that tells functions from other objects.
+    // The value must not be empty.
+    void emitSoundTypeCheck(GPRReg valueGPR, GPRReg scratchGPR, unsigned mask, JumpList& fail, JumpList& undecided);
+
     JumpList branchIfValue(VM&, GPRReg, GPRReg scratch, GPRReg scratchIfShouldCheckMasqueradesAsUndefined, FPRReg, FPRReg, bool shouldCheckMasqueradesAsUndefined, Variant<JSGlobalObject*, GPRReg, LazyGlobalObjectLoadTag>, bool negateResult);
     JumpList branchIfTruthy(VM& vm, GPRReg value, GPRReg scratch, GPRReg scratchIfShouldCheckMasqueradesAsUndefined, FPRReg scratchFPR0, FPRReg scratchFPR1, bool shouldCheckMasqueradesAsUndefined, Variant<JSGlobalObject*, GPRReg, LazyGlobalObjectLoadTag> globalObject)
     {

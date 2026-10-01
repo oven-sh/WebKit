@@ -41,10 +41,8 @@ namespace JSC {
 
 const ClassInfo SetPrototype::s_info = { "Set"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SetPrototype) };
 
-static JSC_DECLARE_HOST_FUNCTION(setProtoFuncAdd);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncClear);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncDelete);
-static JSC_DECLARE_HOST_FUNCTION(setProtoFuncHas);
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncValues);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncEntries);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncIntersection);

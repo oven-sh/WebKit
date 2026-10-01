@@ -42,6 +42,17 @@ namespace JSC::B3 {
 
 // macro(name, offset, mutability)
 #define FOR_EACH_ABSTRACT_FIELD(macro) \
+    macro(AOTData_constants, AOT::Data::offsetOfConstants(), Mutability::Immutable) \
+    macro(AOTData_identifiers, AOT::Data::offsetOfIdentifiers(), Mutability::Immutable) \
+    macro(AOTData_slotEpoch, AOT::Data::offsetOfSlotEpoch(), Mutability::Mutable) \
+    macro(AOTInstance_infos, AOT::Instance::offsetOfInfos(), Mutability::Immutable) \
+    macro(AOTInstance_constantsOfProgram, AOT::Instance::offsetOfConstantsOfProgram(), Mutability::Immutable) \
+    macro(AOTInstance_sharedData, AOT::Instance::offsetOfSharedData(), Mutability::Immutable) \
+    macro(AOTInstance_globalObject, AOT::Instance::offsetOfGlobalObject(), Mutability::Immutable) \
+    macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
+    macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
+    macro(AOTInstance_whatIsFixed, 0, Mutability::Immutable) \
+    macro(AOTInstance_mutableFields, 0, Mutability::Mutable) \
     macro(ArrayBuffer_data, ArrayBuffer::offsetOfData(), Mutability::Mutable) \
     macro(ArrayStorage_numValuesInVector, ArrayStorage::numValuesInVectorOffset(), Mutability::Mutable) \
     macro(Butterfly_arrayBuffer, Butterfly::offsetOfArrayBuffer(), Mutability::Mutable) \
@@ -49,6 +60,8 @@ namespace JSC::B3 {
     macro(Butterfly_vectorLength, Butterfly::offsetOfVectorLength(), Mutability::Mutable) \
     macro(CallFrame_callerFrame, CallFrame::callerFrameOffset(), Mutability::Mutable) \
     macro(ClassInfo_parentClass, ClassInfo::offsetOfParentClass(), Mutability::Immutable) \
+    macro(CodeBlock_instructionsRawPointer, CodeBlock::offsetOfInstructionsRawPointer(), Mutability::Immutable) \
+    macro(CodeBlock_jitData, CodeBlock::offsetOfJITData(), Mutability::Immutable) \
     macro(ClonedArguments_callee, ClonedArguments::offsetOfCallee(), Mutability::Mutable) \
     macro(ConcatKeyAtomStringCache_quickCache0_key, ConcatKeyAtomStringCache::offsetOfQuickCache0() + ConcatKeyAtomStringCache::CacheEntry::offsetOfKey(), Mutability::Mutable) \
     macro(ConcatKeyAtomStringCache_quickCache0_value, ConcatKeyAtomStringCache::offsetOfQuickCache0() + ConcatKeyAtomStringCache::CacheEntry::offsetOfValue(), Mutability::Mutable) \
@@ -96,6 +109,8 @@ namespace JSC::B3 {
     macro(JSCell_typeInfoFlags, JSCell::typeInfoFlagsOffset(), Mutability::Mutable) \
     macro(JSCell_typeInfoType, JSCell::typeInfoTypeOffset(), Mutability::Immutable) \
     macro(JSCell_usefulBytes, JSCell::indexingTypeAndMiscOffset(), Mutability::Mutable) \
+    macro(JSGlobalObject_globalLexicalBindingEpoch, JSGlobalObject::offsetOfGlobalLexicalBindingEpoch(), Mutability::Mutable) \
+    macro(NativeExecutable_function, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall), Mutability::Immutable) \
     macro(JSFunction_executableOrRareData, JSFunction::offsetOfExecutableOrRareData(), Mutability::Mutable) \
     macro(JSGlobalObject_regExpGlobalData_cachedResult_lastRegExp, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfLastRegExp(), Mutability::Mutable) \
     macro(JSGlobalObject_regExpGlobalData_cachedResult_lastInput, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfLastInput(), Mutability::Mutable) \
@@ -205,6 +220,13 @@ namespace JSC::B3 {
     macro(Symbol_string, Symbol::offsetOfString(), Mutability::Mutable) \
 
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP(macro) \
+    macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
+    macro(AOTInstance_states, AOT::Instance::offsetOfStates(), sizeof(uint32_t)) \
+    macro(AOTConstants, 0, sizeof(EncodedJSValue)) \
+    macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
+    macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
+    macro(AOTIdentifiers, 0, sizeof(void*)) \
+    macro(AOTRuntimeTable, 0, sizeof(void*)) \
     macro(ArrayStorage_vector, ArrayStorage::vectorOffset(), sizeof(WriteBarrier<Unknown>)) \
     macro(CompleteSubspace_allocatorForSizeStep, CompleteSubspace::offsetOfAllocatorForSizeStep(), sizeof(Allocator)) \
     macro(DirectArguments_storage, DirectArguments::storageOffset(), sizeof(EncodedJSValue)) \

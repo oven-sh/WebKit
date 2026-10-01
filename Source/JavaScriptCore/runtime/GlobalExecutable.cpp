@@ -87,6 +87,9 @@ bool GlobalExecutable::canReleaseLinkedCodeNow(VM& vm)
     CodeBlock* codeBlock = this->codeBlock();
     if (!codeBlock)
         return true;
+    // AOT code never tiers up.
+    if (codeBlock->jitType() == JITType::AOTJIT)
+        return true;
     if (codeBlock->jitType() != JITType::InterpreterThunk)
         return false;
 #if ENABLE(JIT)

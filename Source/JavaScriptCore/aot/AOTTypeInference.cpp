@@ -1,0 +1,1147 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTGraph.h"
+
+#if ENABLE(FTL_JIT)
+
+#include "AOTBuiltins.h"
+#include "AOTTypeTable.h"
+#include "ImmutableIntrinsics.h"
+#include "BytecodeStructs.h"
+#include "JSCInlines.h"
+#include "UnlinkedCodeBlock.h"
+#include "UnlinkedFunctionCodeBlock.h"
+
+namespace JSC { namespace AOT {
+
+namespace {
+
+// Values that ToNumeric converts to a number without running any code, and never to a BigInt.
+constexpr Type TNumberLike = TNumber | TBoolean | TOther;
+
+class TypeInference {
+public:
+    TypeInference(Graph& graph)
+        : m_graph(graph)
+    {
+    }
+
+    void run()
+    {
+        // Every type starts as None ("not reached yet") and only grows, and every transfer function is monotonic, so this
+        // terminates at the least fixpoint.
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (BasicBlock* block : m_graph.m_rpo) {
+                for (Node* phi : block->phis)
+                    changed |= update(phi);
+                for (Node* node : block->nodes)
+                    changed |= update(node);
+            }
+            changed |= std::exchange(m_elementTypesChanged, false);
+            // An array that this function never stores to must have been filled by other code, so its elements are untyped. This is
+            // only applied once the fixpoint is reached, because what is stored in an array may depend on what is read from it.
+            if (!changed && !std::exchange(m_treatsEmptyArraysAsUntyped, true))
+                changed = true;
+        }
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (node->kind != NodeKind::Bytecode)
+                    continue;
+                switch (node->opcode) {
+                case op_ret:
+                    m_returnType |= node->use(node->as<OpRet>().m_value)->type;
+                    recordReturnValueTypesOf(node);
+                    break;
+                case op_tail_call:
+                    m_returnType |= resultOfCall(node);
+                    noteTailCall(node);
+                    break;
+                case op_tail_call_varargs:
+                    m_returnType |= TTop;
+                    break;
+                default:
+                    break;
+                }
+                if (calleesWithWidenedInputs && isReached()) {
+                    noteArgumentsOf(node);
+                    noteStoresToVariables(node);
+                    recordWhetherReturnObjectIsNeededBy(node);
+                }
+            }
+        }
+        if (calleesWithWidenedInputs && m_graph.summary())
+            m_graph.summary()->knownTailCallees = WTF::move(m_knownTailCallees);
+        if (calleesWithWidenedInputs && functionsOfProgram() && isReached()) {
+            for (BasicBlock* block : m_graph.m_rpo) {
+                for (Node* phi : block->phis)
+                    noteEscapesThrough(phi);
+                for (Node* node : block->nodes) {
+                    noteEscapesThrough(node);
+                }
+            }
+        }
+        // A node whose type is still None is never reached with a value. It is compiled anyway.
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* phi : block->phis) {
+                if (!phi->type)
+                    phi->type = TAll;
+            }
+            for (Node* node : block->nodes) {
+                if (!node->type) {
+                    node->type = TAll;
+                    node->wasInferredUnreachable = true;
+                }
+            }
+        }
+    }
+
+    // Whether any call is known to reach the function so far. If not, the function contributes nothing yet, and it is analyzed
+    // again if a call is found.
+    bool isReached() const { return !m_graph.summary() || m_graph.summary()->isReached(); }
+    Type returnType() const { return m_returnType; }
+    Vector<const KnownFunction*>* calleesRead { nullptr };
+    Vector<const KnownFunction*>* calleesWithWidenedInputs { nullptr };
+    std::optional<UsersOfNodes> m_users;
+
+private:
+    Vector<const FunctionSummary*> m_knownTailCallees;
+
+    // ---- Function identity tracking.
+
+    // Records that the function escapes: its value reaches a place that the analysis does not track. Returns whether that is new
+    // information.
+    bool markEscaping(Type type, uint32_t why)
+    {
+        const KnownFunction* function = functionsOfProgram()->function(functionNumberOf(type));
+        if (!function || !function->summary)
+            return false;
+        Vector<Type, FunctionSummary::mostParameters + 1> hadBeenPassed;
+        if (!function->summary->markEscaping(why, [&](Type passed) { hadBeenPassed.append(passed); }))
+            return false;
+        if (!calleesWithWidenedInputs->contains(function))
+            calleesWithWidenedInputs->append(function);
+        for (Type passed : hadBeenPassed)
+            markEscaping(passed, FunctionSummary::MergedInParameter);
+        return true;
+    }
+
+    // See FunctionSummary::knownTailCallees.
+    void noteTailCall(Node* node)
+    {
+        if (!calleesWithWidenedInputs || !functionsOfProgram())
+            return;
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        if (!known || !isExact || !known->forCall || !known->summary)
+            return;
+        // The arguments would be in this function's frame, which a tail call releases. So the call is lowered like a call to an
+        // unknown callee (Lowering::lowerCallToKnownFunction()), and the callee has to be callable that way.
+        if (known->conventionForCall.signature == Signature::List)
+            markEscaping(typeOfFunction(known->summary->number), FunctionSummary::CalledIndirectly);
+        if (!m_knownTailCallees.contains(known->summary))
+            m_knownTailCallees.append(known->summary);
+    }
+
+    // The function has been merged into a type that no longer identifies it, so later uses of the value cannot be tracked.
+    void noteMergedInto(Type whole, Type part, uint32_t why)
+    {
+        if (uint32_t function = functionNumberOf(part); function && functionNumberOf(whole) != function)
+            markEscaping(part, why);
+    }
+    void noteJoin(Type before, Type added, uint32_t why)
+    {
+        noteMergedInto(before | added, before, why);
+        noteMergedInto(before | added, added, why);
+    }
+    static uint32_t usedBy(Node* user) { return FunctionSummary::UsedBy | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8; }
+
+    void markOperandsEscaping(Node* user)
+    {
+        for (auto& use : user->uses)
+            markEscaping(use.node->type, usedBy(user));
+    }
+
+    void noteEscapingArguments(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv)
+    {
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        // (Only the arguments that noteArgumentsOf() propagates are tracked. The others escape.)
+        unsigned followed = known && isExact && known->forCall && known->summary && known->summary->isNonEscaping ? std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::mostParameters) : 0;
+        for (auto& use : node->uses) {
+            // Being called does not make a function escape, except to itself.
+            if (use.reg == calleeRegister && use.reg.offset() != firstArgument) {
+                if (!followed)
+                    recordIndirectCall(use.node->type);
+                continue;
+            }
+            int index = use.reg.offset() - firstArgument;
+            if (index >= 1 && static_cast<unsigned>(index) < followed && static_cast<unsigned>(index) < argc)
+                continue;
+            markEscaping(use.node->type, !followed ? FunctionSummary::PassedToUnknownCallee : !index ? FunctionSummary::PassedAsThis : FunctionSummary::PassedAsExtraArgument);
+        }
+    }
+
+    // A call that is not lowered as a direct call to that function, so its arguments are unknown.
+    void recordIndirectCall(Type callee) { markEscaping(callee, FunctionSummary::CalledIndirectly); }
+
+    void noteEscapesThrough(Node* user)
+    {
+        switch (user->kind) {
+        case NodeKind::Phi:
+        case NodeKind::Narrow:
+            for (auto& use : user->uses)
+                noteMergedInto(user->type, use.node->type, FunctionSummary::MergedInPhi);
+            return;
+        case NodeKind::SetStack:
+            noteMergedInto(m_graph.frameRegisterTypes[m_graph.registerIndex(user->reg)], user->uses[0].node->type, FunctionSummary::MergedInFrameRegister);
+            // An op_new_array may read it from there (Graph::readsOperandsFromFrame()). The node does not list it as an operand, so this is
+            // where it escapes, as the operand of a smaller op_new_array does.
+            if (m_graph.isArrayOperandRegister(user->reg))
+                markEscaping(user->uses[0].node->type, usedBy(user));
+            return;
+        // (A guard only inspects the value. The node that it guards is a user in its own right.)
+        case NodeKind::Guard:
+        // (One of the results of a node with several results.)
+        case NodeKind::Proj:
+            return;
+        case NodeKind::Bytecode:
+            break;
+        default:
+            markOperandsEscaping(user);
+            return;
+        }
+        auto markOperandsEscapingExcept = [&](VirtualRegister harmless) {
+            for (auto& use : user->uses) {
+                if (use.reg != harmless)
+                    markEscaping(use.node->type, usedBy(user));
+            }
+        };
+        switch (user->opcode) {
+        // ---- Uses that only inspect the value.
+        case op_get_by_id:
+        case op_get_by_id_direct:
+        case op_get_length:
+        case op_in_by_id:
+        case op_del_by_id:
+        case op_get_prototype_of:
+        case op_typeof:
+        case op_typeof_is_undefined:
+        case op_typeof_is_object:
+        case op_typeof_is_function:
+        case op_is_empty:
+        case op_is_undefined_or_null:
+        case op_is_boolean:
+        case op_is_number:
+        case op_is_big_int:
+        case op_is_object:
+        case op_is_callable:
+        case op_is_constructor:
+        case op_is_cell_with_type:
+        case op_has_structure_with_flags:
+        case op_eq_null:
+        case op_neq_null:
+        case op_not:
+        case op_stricteq:
+        case op_nstricteq:
+        case op_jstricteq:
+        case op_jnstricteq:
+        case op_jtrue:
+        case op_jfalse:
+        case op_jeq_null:
+        case op_jneq_null:
+        case op_jundefined_or_null:
+        case op_jnundefined_or_null:
+        case op_jeq_ptr:
+        case op_jneq_ptr:
+        case op_get_parent_scope:
+        case op_set_function_name:
+        case op_instanceof:
+        case op_check_tdz:
+            return;
+        case op_get_from_scope: {
+            // The function that the read probably returns, when that is not certain. The type of the result then does not identify
+            // the function, so the function escapes.
+            bool isExact = false;
+            if (const KnownFunction* known = m_graph.knownFunctionReadBy(user, &isExact); known && !isExact)
+                markEscaping(typeOfClosureOf(known->executable), FunctionSummary::ReadInexactly);
+            return;
+        }
+        case op_get_by_val:
+            return markOperandsEscapingExcept(user->as<OpGetByVal>().m_base);
+        case op_in_by_val:
+            return markOperandsEscapingExcept(user->as<OpInByVal>().m_base);
+        case op_del_by_val:
+            return markOperandsEscapingExcept(user->as<OpDelByVal>().m_base);
+        case op_put_by_id:
+            return markOperandsEscapingExcept(user->as<OpPutById>().m_base);
+        case op_put_by_val:
+            return markOperandsEscapingExcept(user->as<OpPutByVal>().m_base);
+        case op_put_by_val_direct:
+            return markOperandsEscapingExcept(user->as<OpPutByValDirect>().m_base);
+        case op_define_data_property:
+            // A method that is only ever obtained by reads that identify it (Graph::closedMethodReadBy()).
+            if (auto* classes = classesOfProgram(); classes && classes->isNonEscapingMethod(functionNumberOf(user->use(user->as<OpDefineDataProperty>().m_value)->type)))
+                return markOperandsEscapingExcept(user->as<OpDefineDataProperty>().m_value);
+            markOperandsEscaping(user);
+            return;
+
+        // ---- Uses whose result is the same value, if the result's type still identifies it.
+        case op_check_type:
+        case op_type_tag:
+        case op_to_this:
+        case op_to_object:
+        case op_identity_with_profile:
+        case op_resolve_scope:
+            for (auto& use : user->uses)
+                noteMergedInto(user->type, use.node->type, FunctionSummary::LostThroughAlias | static_cast<uint32_t>(user->opcode) << 8);
+            return;
+
+        // ---- Scopes are not values. (For what is stored in them, see noteStoresToVariables().)
+        case op_put_to_scope:
+        case op_create_lexical_environment:
+        case op_new_func:
+        case op_new_func_exp:
+        case op_new_generator_func:
+        case op_new_generator_func_exp:
+        case op_new_async_func:
+        case op_new_async_func_exp:
+        case op_new_async_generator_func:
+        case op_new_async_generator_func_exp:
+            return;
+
+        // ---- Uses that pass the value on.
+        case op_call:
+            return noteEscapingArguments(user, user->as<OpCall>().m_callee, user->as<OpCall>().m_argc, user->as<OpCall>().m_argv);
+        case op_call_ignore_result:
+            return noteEscapingArguments(user, user->as<OpCallIgnoreResult>().m_callee, user->as<OpCallIgnoreResult>().m_argc, user->as<OpCallIgnoreResult>().m_argv);
+        case op_tail_call: {
+            noteEscapingArguments(user, user->as<OpTailCall>().m_callee, user->as<OpTailCall>().m_argc, user->as<OpTailCall>().m_argv);
+            noteWhatIsReturned(resultOfCall(user));
+            return;
+        }
+        case op_ret:
+            return noteWhatIsReturned(user->use(user->as<OpRet>().m_value)->type);
+        default:
+            markOperandsEscaping(user);
+            return;
+        }
+    }
+
+    void noteWhatIsReturned(Type type)
+    {
+        const FunctionSummary* summary = m_graph.summary();
+        if (!summary || !summary->isNonEscaping || summary->escapes.load(std::memory_order_relaxed)) {
+            markEscaping(type, FunctionSummary::ReturnedToUnknownCaller);
+            return;
+        }
+        noteJoin(summary->returnType.join(type & TTop), type, FunctionSummary::MergedInReturn);
+    }
+
+    Type typeOfClosureOf(UnlinkedFunctionExecutable* executable)
+    {
+        if (!functionsOfProgram())
+            return TFunction;
+        uint32_t number = functionsOfProgram()->numberOf(executable);
+        return number ? typeOfFunction(number) : TFunction;
+    }
+
+    void noteStoresToVariables(Node* node)
+    {
+        VariableSummaries* summaries = m_graph.variableSummaries();
+        if (!summaries)
+            return;
+        auto noteInitialValue = [&](VirtualRegister initialValue) {
+            if (const void* scope = m_graph.identityOfScope(node))
+                summaries->join({ scope, Variable::initialValue }, node->use(initialValue)->type);
+        };
+        switch (node->opcode) {
+        case op_put_to_scope:
+            if (Variable variable = m_graph.variableAccessedBy(node)) {
+                Type put = node->use(node->as<OpPutToScope>().m_value)->type;
+                Type before = summaries->join(variable, put);
+                if (functionsOfProgram()) {
+                    UniquedStringImpl* name = node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl();
+                    // A module's variable can be accessed from outside the module in ways that are not reads of the variable,
+                    // unless the bundler says otherwise.
+                    const CalleeHints* hints = m_graph.calleeHints();
+                    const KnownFunction* known = hints && hints->scopeOfVariables() == variable.scope ? hints->find(name, variable.offset) : nullptr;
+                    bool isScopeOfAnyModule = summaries->isScopeOfModule(variable.scope);
+                    if (summaries->isUntracked(variable, name))
+                        markEscaping(put, FunctionSummary::StoredInUntrackedVariable);
+                    else if (summaries->isDynamicallyRead(name))
+                        markEscaping(put, FunctionSummary::StoredInDynamicallyReadVariable);
+                    else if (isScopeOfAnyModule && (!known || known->isVisibleFromOutside))
+                        markEscaping(put, FunctionSummary::StoredInModuleVariable);
+                    else
+                        noteJoin(before, put, FunctionSummary::MergedInVariable);
+                }
+                if (!m_graph.nameForLog().isNull()) [[unlikely]]
+                    dataLogLn("AOT inference: put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` scope ", RawPointer(variable.scope), " offset ", variable.offset, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), ": ", TypeDump(node->use(node->as<OpPutToScope>().m_value)->type));
+            } else if (functionsOfProgram())
+                markEscaping(node->use(node->as<OpPutToScope>().m_value)->type, FunctionSummary::StoredToUnknownLocation);
+            if (!m_graph.variableAccessedBy(node) && !m_graph.nameForLog().isNull()) [[unlikely]]
+                dataLogLn("AOT inference: put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` WHO KNOWS WHERE in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset());
+            return;
+        case op_create_lexical_environment:
+            noteInitialValue(node->as<OpCreateLexicalEnvironment>().m_initialValue);
+            return;
+        case op_create_generator_frame_environment:
+            noteInitialValue(node->as<OpCreateGeneratorFrameEnvironment>().m_initialValue);
+            return;
+        default:
+            return;
+        }
+    }
+
+    void noteArgumentsOf(Node* node)
+    {
+        unsigned argc;
+        unsigned argv;
+        switch (node->opcode) {
+        case op_call:
+            argc = node->as<OpCall>().m_argc;
+            argv = node->as<OpCall>().m_argv;
+            break;
+        case op_call_ignore_result:
+            argc = node->as<OpCallIgnoreResult>().m_argc;
+            argv = node->as<OpCallIgnoreResult>().m_argv;
+            break;
+        case op_tail_call:
+            argc = node->as<OpTailCall>().m_argc;
+            argv = node->as<OpTailCall>().m_argv;
+            break;
+        default:
+            return;
+        }
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        if (!known || !isExact || !known->forCall || !known->summary || !known->summary->isNonEscaping)
+            return;
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        // A call that is not known to be reached so far passes nothing so far.
+        for (unsigned i = 0; i < argc; ++i) {
+            if (!node->use(VirtualRegister(firstArgument + i))->type) {
+                if (!m_graph.nameForLog().isNull()) [[unlikely]]
+                    dataLogLn("AOT inference: call of `", known->executable->name().impl(), "` @", known->key.module, ":", known->key.start, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), " IS NOT REACHED: argument ", i, " is nothing");
+                return;
+            }
+        }
+        if (!m_graph.nameForLog().isNull()) [[unlikely]] {
+            StringPrintStream out;
+            for (unsigned i = 1; i < argc; ++i)
+                out.print(" ", TypeDump(node->use(VirtualRegister(firstArgument + i))->type));
+            dataLogLn("AOT inference: call of `", known->executable->name().impl(), "` @", known->key.module, ":", known->key.start, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), " passes", out.toString());
+        }
+        bool widensInputs = false;
+        unsigned count = std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::mostParameters);
+        for (unsigned i = 1; i < count; ++i) {
+            Type type = i < argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
+            Type before = known->summary->parameterTypes[i].join(type);
+            widensInputs |= (before | type) != before;
+            if (functionsOfProgram())
+                noteJoin(before, type, FunctionSummary::MergedInParameter);
+        }
+        {
+            Type type = node->use(VirtualRegister(firstArgument))->type & TTop;
+            Type before = known->summary->thisType.join(type);
+            widensInputs |= (before | type) != before;
+        }
+        // (This marks a callee without parameters as reached too.)
+        Type before = known->summary->parameterTypes[0].join(TTop);
+        widensInputs |= before != TTop;
+        if (widensInputs && !calleesWithWidenedInputs->contains(known))
+            calleesWithWidenedInputs->append(known);
+    }
+
+    // The result type of a call to a built-in function, if the callee is certain to be one.
+    std::optional<Type> resultOfCallOfBuiltin(Node* node)
+    {
+        VirtualRegister calleeRegister;
+        unsigned argc;
+        unsigned argv;
+        if (node->isBytecode(op_call)) {
+            auto bytecode = node->as<OpCall>();
+            calleeRegister = bytecode.m_callee;
+            argc = bytecode.m_argc;
+            argv = bytecode.m_argv;
+        } else if (node->isBytecode(op_tail_call)) {
+            auto bytecode = node->as<OpTailCall>();
+            calleeRegister = bytecode.m_callee;
+            argc = bytecode.m_argc;
+            argv = bytecode.m_argv;
+        } else
+            return std::nullopt;
+        Node* callee = node->use(calleeRegister);
+        if (argc == 1 && node->opcode == op_call && Graph::linkTimeConstantOf(callee) == LinkTimeConstant::cloneObject) {
+            uint16_t layoutID = Graph::layoutIDOfNewObject(node);
+            return layoutID ? typeOfObjectWithLayout(layoutID) : TFinalObject;
+        }
+        if (argc == 2 && Graph::linkTimeConstantOf(callee) == LinkTimeConstant::toLength) {
+            Type argument = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1))->type;
+            if (!argument)
+                return TNone;
+            return isSubtype(argument, TInt32) ? TInt32 : TNumber;
+        }
+        unsigned number = 0;
+        if (callee->kind == NodeKind::Intrinsic)
+            number = callee->intrinsic;
+        else if (callee->isBytecode(op_get_by_id)) {
+            auto bytecode = callee->as<OpGetById>();
+            Type base = callee->use(bytecode.m_base)->type;
+            if (!base)
+                return TNone;
+            number = intrinsicFoundOnPrimitive(base, *callee->graph->codeBlock()->identifier(bytecode.m_property).impl());
+        }
+        if (!number)
+            return std::nullopt;
+        auto signature = signatureOfIntrinsic(number);
+        if (!signature)
+            return std::nullopt;
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        switch (signature->condition) {
+        case BuiltinSignature::Condition::Always:
+            break;
+        case BuiltinSignature::Condition::IfFirstArgumentIsNotObject: {
+            if (argc < 2)
+                break;
+            Type first = node->use(VirtualRegister(firstArgument + 1))->type;
+            if (!first)
+                return TNone;
+            if (!isSubtype(first, TPrimitive))
+                return std::nullopt;
+            break;
+        }
+        case BuiltinSignature::Condition::IfThisIsHolder: {
+            Node* thisValue = node->use(VirtualRegister(firstArgument));
+            const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
+            if (thisValue->kind != NodeKind::Intrinsic || thisValue->intrinsic != intrinsics->at(intrinsics->at(number).holder).canonical)
+                return std::nullopt;
+            break;
+        }
+        }
+        return signature->result;
+    }
+
+    // ---- For FunctionSummary::returnValueTypes and needsReturnObject.
+    const UsersOfNodes& users()
+    {
+        if (!m_users)
+            m_users.emplace(m_graph);
+        return *m_users;
+    }
+
+    void recordReturnValueTypesOf(Node* node)
+    {
+        const FunctionSummary* summary = m_graph.summary();
+        if (!calleesWithWidenedInputs || node->graph != &m_graph)
+            return;
+        auto* names = registerReturnValuesOf(m_graph.codeBlock(), summary);
+        if (!names)
+            return;
+        Node* object = node->use(node->as<OpRet>().m_value);
+        RELEASE_ASSERT(object->isBytecode(op_new_object) && object->numberOfLiteralProperties == names->size());
+        for (unsigned i = 0; i < names->size(); ++i) {
+            Type type = object->use(NewObjectPlan::registerOf(i))->type;
+            Type old = summary->returnValueTypes[i].join(type);
+            if ((old | type) != old)
+                summary->returnValueTypesChanged.store(true, std::memory_order_relaxed);
+        }
+    }
+
+    void recordWhetherReturnObjectIsNeededBy(Node* node)
+    {
+        if (!multiValueReturnTable() || (node->opcode != op_call && node->opcode != op_tail_call))
+            return;
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        if (!known || !isExact || !known->forCall || !known->summary)
+            return;
+        auto* names = multiValueReturnTable()->returnValueNamesOf(known->forCall);
+        if (!names || (node->opcode == op_call && users().isOnlyRead(node, names->span(), 0)))
+            return;
+        if (known->summary->needsReturnObject.exchange(true, std::memory_order_relaxed))
+            return;
+        known->summary->returnValueTypesChanged.store(true, std::memory_order_relaxed);
+        if (!calleesWithWidenedInputs->contains(known))
+            calleesWithWidenedInputs->append(known);
+    }
+
+    // For an op_get_by_id that reads one of the values that a call returned in registers.
+    std::optional<Type> typeOfReturnValueReadBy(Node* read)
+    {
+        if (!multiValueReturnTable())
+            return std::nullopt;
+        Node* call = read->use(read->as<OpGetById>().m_base);
+        while (call->kind == NodeKind::Narrow || call->isBytecode(op_check_type) || call->isBytecode(op_check_tdz) || call->isBytecode(op_type_tag))
+            call = call->uses[0].node;
+        if (!call->isBytecode(op_call))
+            return std::nullopt;
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(call, &isExact);
+        if (!known || !isExact || !known->forCall)
+            return std::nullopt;
+        auto* names = registerReturnValuesOf(known->forCall, known->summary);
+        if (!names)
+            return std::nullopt;
+        size_t index = names->find(read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl());
+        if (index == notFound || !users().isOnlyRead(call, names->span(), 0))
+            return std::nullopt;
+        if (calleesRead && !calleesRead->contains(known))
+            calleesRead->append(known);
+        return known->summary->returnValueTypes[index].load();
+    }
+
+    Type resultOfCall(Node* node)
+    {
+        if (auto result = resultOfCallOfBuiltin(node))
+            return *result;
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        if (!known || !isExact || !known->forCall)
+            return TTop;
+        if (calleesRead && !calleesRead->contains(known))
+            calleesRead->append(known);
+        return known->returnType.load();
+    }
+
+    bool update(Node* node)
+    {
+        Type type = node->type | compute(node);
+        if (type == node->type)
+            return false;
+        node->type = type;
+        return true;
+    }
+
+    static Type arithResult(Type left, Type right)
+    {
+        // sub, mul, div, mod, pow: ToNumeric on both sides.
+        if (!left || !right)
+            return TNone;
+        if (isSubtype(left | right, TNumberLike | TString))
+            return TNumber;
+        return TNumber | TBigInt;
+    }
+
+    static Type bitResult(Type left, Type right)
+    {
+        if (!left || !right)
+            return TNone;
+        if (isSubtype(left | right, TNumberLike | TString))
+            return TInt32;
+        return TInt32 | TBigInt;
+    }
+
+    static Type unaryArithResult(Type operand)
+    {
+        if (!operand)
+            return TNone;
+        if (isSubtype(operand, TNumberLike | TString))
+            return TNumber;
+        return TNumber | TBigInt;
+    }
+
+    Type compute(Node* node)
+    {
+        switch (node->kind) {
+        case NodeKind::Constant:
+        case NodeKind::ConstantCell:
+        case NodeKind::Intrinsic:
+        case NodeKind::LinkTimeConstant:
+        case NodeKind::Argument:
+            return node->type;
+        case NodeKind::Phi: {
+            Type type = TNone;
+            for (auto& use : node->uses)
+                type |= use.node->type;
+            return type;
+        }
+        case NodeKind::GetStack:
+            return m_graph.frameRegisterTypes[m_graph.registerIndex(node->reg)];
+        case NodeKind::SetStack: {
+            Type& homed = m_graph.frameRegisterTypes[m_graph.registerIndex(node->reg)];
+            homed |= node->uses[0].node->type;
+            return homed; // The merged type, so that a change is detected.
+        }
+        case NodeKind::Guard:
+            return TNone;
+        case NodeKind::Narrow:
+            if (node->narrowedTo)
+                return node->uses[0].node->type & node->narrowedTo;
+            return node->target ? node->uses[0].node->type & node->target->type : node->uses[0].node->type;
+        case NodeKind::Proj:
+            // (A node with several results has no type of its own.)
+            return computeProj(node);
+        case NodeKind::Bytecode:
+            return computeBytecode(node);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+        return TAll;
+    }
+
+    Type computeProj(Node* node)
+    {
+        Node* parent = node->uses[0].node;
+        switch (parent->opcode) {
+        case op_instanceof:
+            if (node->reg == parent->as<OpInstanceof>().m_dst)
+                return TBoolean;
+            return TAll;
+        case op_iterator_next: {
+            auto bytecode = parent->as<OpIteratorNext>();
+            if (node->reg == bytecode.m_done)
+                return TBoolean; // The `done` property of the iterator result can be any value. It is converted (see lowerIteratorNext()).
+            if (node->reg == bytecode.m_next) {
+                // Either the `next` method, unchanged, or the index into an array that is iterated without an iterator.
+                Type next = parent->use(bytecode.m_next)->type;
+                return next ? next | TNumber : TNone;
+            }
+            return TAll; // Empty once the iteration is done.
+        }
+        case op_iterator_open:
+            if (node->reg == parent->as<OpIteratorOpen>().m_iterator)
+                return TAnyObject | TCellOther; // Or the sentinel that means there is no iterator.
+            return TTop;
+        case op_async_iterator_open:
+            if (node->reg == parent->as<OpAsyncIteratorOpen>().m_iterator)
+                return TAnyObject;
+            return TTop;
+        case op_enumerator_next: {
+            auto bytecode = parent->as<OpEnumeratorNext>();
+            if (node->reg == bytecode.m_propertyName)
+                return TString;
+            if (node->reg == bytecode.m_mode)
+                return TInt32;
+            return TNumber;
+        }
+        case op_catch:
+            if (node->reg == parent->as<OpCatch>().m_exception)
+                return TCellOther;
+            return TAll;
+        default:
+            return TAll;
+        }
+    }
+
+    Type computeBytecode(Node* node)
+    {
+        auto typeOf = [&](VirtualRegister reg) {
+            return node->use(reg)->type;
+        };
+
+        if (auto [array, element] = m_graph.arrayAndElementStored(node); array && Graph::isLocallyAllocatedArray(array) && !node->block->isGeneric) {
+            Type& elements = m_elementTypes.add(array, TNone).iterator->value;
+            if (element->type & ~elements) {
+                elements |= element->type;
+                m_elementTypesChanged = true;
+            }
+        }
+
+        switch (node->opcode) {
+        case op_add: {
+            auto bytecode = node->as<OpAdd>();
+            Type left = typeOf(bytecode.m_lhs);
+            Type right = typeOf(bytecode.m_rhs);
+            if (!left || !right)
+                return TNone;
+            if (isSubtype(left | right, TNumberLike))
+                return TNumber;
+            if (isSubtype(left, TString) || isSubtype(right, TString)) {
+                // The other side is converted to a string, unless it is a symbol, which throws.
+                return TString;
+            }
+            Type result = TNone;
+            if (mayBe(left | right, TString | TAnyObject))
+                result |= TString;
+            if (mayBe(left, TBigInt | TAnyObject) && mayBe(right, TBigInt | TAnyObject))
+                result |= TBigInt;
+            if (mayBe(left, TNumberLike | TAnyObject) && mayBe(right, TNumberLike | TAnyObject))
+                result |= TNumber;
+            return result ? result : TAll; // The operation always throws, so any type will do.
+        }
+        case op_sub: {
+            auto bytecode = node->as<OpSub>();
+            return arithResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_mul: {
+            auto bytecode = node->as<OpMul>();
+            return arithResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_div: {
+            auto bytecode = node->as<OpDiv>();
+            return arithResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_mod: {
+            auto bytecode = node->as<OpMod>();
+            return arithResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_pow: {
+            auto bytecode = node->as<OpPow>();
+            return arithResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_bitand: {
+            auto bytecode = node->as<OpBitand>();
+            return bitResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_bitor: {
+            auto bytecode = node->as<OpBitor>();
+            return bitResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_bitxor: {
+            auto bytecode = node->as<OpBitxor>();
+            return bitResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_lshift: {
+            auto bytecode = node->as<OpLshift>();
+            return bitResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_rshift: {
+            auto bytecode = node->as<OpRshift>();
+            return bitResult(typeOf(bytecode.m_lhs), typeOf(bytecode.m_rhs));
+        }
+        case op_check_type: {
+            auto bytecode = node->as<OpCheckType>();
+            return typeOf(bytecode.m_value) & typeAcceptedByMask(bytecode.m_mask);
+        }
+        case op_type_tag:
+            if (Options::auditAOTTypedFields()) [[unlikely]]
+                return node->uses[0].node->type;
+            if (node->narrowedTo)
+                return node->uses[0].node->type & node->narrowedTo;
+            // A value whose type has an open typed layout may be any object with the right properties, created by any code. So the
+            // type is not narrowed.
+            if (!node->isTrusted)
+                return node->uses[0].node->type;
+            return node->uses[0].node->type & typeOfObjectWithLayout(node->firstLayout);
+        case op_urshift:
+            return TInt32; // The result as 32 bits. The op_unsigned that follows converts it to a number. A BigInt throws.
+        case op_unsigned:
+            return TNumber;
+        case op_bitnot: {
+            Type operand = typeOf(node->as<OpBitnot>().m_operand);
+            return bitResult(operand, operand);
+        }
+        case op_negate:
+            return unaryArithResult(typeOf(node->as<OpNegate>().m_operand));
+        case op_inc:
+            return unaryArithResult(typeOf(node->as<OpInc>().m_srcDst));
+        case op_dec:
+            return unaryArithResult(typeOf(node->as<OpDec>().m_srcDst));
+        case op_to_number: {
+            Type operand = typeOf(node->as<OpToNumber>().m_operand);
+            if (!operand)
+                return TNone;
+            if (isSubtype(operand, TNumber))
+                return operand;
+            return TNumber;
+        }
+        case op_to_numeric: {
+            Type operand = typeOf(node->as<OpToNumeric>().m_operand);
+            if (!operand)
+                return TNone;
+            if (isSubtype(operand, TNumber | TBigInt))
+                return operand;
+            return unaryArithResult(operand);
+        }
+        case op_typeof:
+            return TAtomString; // From SmallStrings.
+        case op_to_string: {
+            // (A string converts to itself.)
+            Type operand = typeOf(node->as<OpToString>().m_operand);
+            if (!operand)
+                return TNone;
+            return isSubtype(operand, TString) ? operand : TString;
+        }
+        case op_strcat:
+            return TString;
+        case op_to_primitive: {
+            Type operand = typeOf(node->as<OpToPrimitive>().m_src);
+            if (!operand)
+                return TNone;
+            if (isSubtype(operand, TPrimitive))
+                return operand;
+            return TPrimitive;
+        }
+        case op_to_property_key:
+            return TString | TSymbol;
+        case op_to_property_key_or_number:
+            return TString | TSymbol | TNumber;
+
+        case op_eq:
+        case op_neq:
+        case op_stricteq:
+        case op_nstricteq:
+        case op_less:
+        case op_lesseq:
+        case op_greater:
+        case op_greatereq:
+        case op_below:
+        case op_beloweq:
+        case op_eq_null:
+        case op_neq_null:
+        case op_not:
+        case op_is_empty:
+        case op_typeof_is_undefined:
+        case op_typeof_is_object:
+        case op_typeof_is_function:
+        case op_is_undefined_or_null:
+        case op_is_boolean:
+        case op_is_number:
+        case op_is_big_int:
+        case op_is_object:
+        case op_is_callable:
+        case op_is_constructor:
+        case op_is_cell_with_type:
+        case op_has_structure_with_flags:
+        case op_in_by_id:
+        case op_in_by_val:
+        case op_has_private_name:
+        case op_has_private_brand:
+        case op_del_by_id:
+        case op_del_by_val:
+        case op_enumerator_in_by_val:
+        case op_enumerator_has_own_property:
+            return TBoolean;
+
+        case op_new_object:
+            if (uint16_t layoutID = Graph::layoutIDOfNewObject(node))
+                return typeOfObjectWithLayout(layoutID);
+            if (Options::useAOTTypedFields() && node->numberOfLiteralProperties) {
+                if (auto shape = m_graph.shapeOfLiteral(node); shape && shape->number) {
+                    if (TypeTable::hasTypedFields())
+                        return shape->layoutID ? typeOfObjectWithLayout(shape->layoutID) : TFinalObject;
+                    return typeOfObjectWithLayout(shape->number);
+                }
+            }
+            return TFinalObject;
+        case op_get_by_id:
+            if (auto type = typeOfReturnValueReadBy(node))
+                return *type;
+            if (TypeTable::typedFieldsAreEnforced() && Options::useAOTTypedFields()) {
+                if (uint32_t method = Graph::closedMethodReadBy(node))
+                    return typeOf(node->as<OpGetById>().m_base) ? typeOfFunction(method) : TNone;
+                // With a typed layout, the value comes from the slot and has the field's type.
+                if (auto field = Graph::typedFieldAccessedBy(node); field && field->fieldType.isConstrained())
+                    return typeOf(node->as<OpGetById>().m_base) ? field->fieldType.type() | (field->isOptional ? TUndefined : TNone) : TNone;
+            }
+            // After the guard, the value has the field's type, or the property does not exist.
+            if (Node* guard = node->guard; guard && guard->guardKind == GuardKind::Field && guard->fieldTypeKinds) {
+                if (!typeOf(node->as<OpGetById>().m_base))
+                    return TNone;
+                return TypeTable::FieldType { guard->fieldTypeKinds, guard->fieldTypeFirst, guard->fieldTypeLast }.type() | (guard->firstWithout ? TUndefined : TNone);
+            }
+            // On every path, the result has the field's type or the access throws (Lowering::lowerGetById()).
+            if (Options::useAOTTypedFields() && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() && (Options::aotShapeOptimizations() & 2) && !node->guard && TypeTable::shared()) {
+                if (uint32_t tag = Graph::typeTagOf(node)) {
+                    if (auto field = TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); field && field->fieldType.isConstrained()) {
+                        if (!typeOf(node->as<OpGetById>().m_base))
+                            return TNone;
+                        // (With a typed layout, the value comes from the slot and has the field's type.)
+                        if (TypeTable::hasTypedFields())
+                            return field->fieldType.type() | (field->isOptional ? TUndefined : TNone);
+                        return field->fieldType.kindsOnly().type();
+                    }
+                }
+            }
+            return TAll;
+        case op_new_reg_exp:
+        case op_new_reg_exp_shared:
+            return TRegExp;
+        case op_new_promise:
+        case op_create_promise:
+            return TPromise;
+        case op_create_this:
+            if (uint16_t layoutID = node->graph->layoutIDOfThis())
+                return typeOfObjectWithLayout(layoutID);
+            return TObject;
+        case op_create_direct_arguments:
+        case op_create_scoped_arguments:
+        case op_create_cloned_arguments:
+        case op_new_generator:
+        case op_new_async_function_generator:
+        case op_create_generator:
+        case op_create_async_generator:
+        case op_get_scope:
+        case op_get_parent_scope:
+        case op_create_lexical_environment:
+        case op_create_generator_frame_environment:
+        case op_push_with_scope:
+            return TObject;
+        case op_resolve_scope:
+            // Inside `with (x)`, the result may be x itself (JSScope::objectAtScope()), which can be any object.
+            return node->as<OpResolveScope>().m_resolveType == Dynamic ? TAnyObject : TObject;
+        case op_construct:
+            if (Node* callee = node->use(node->as<OpConstruct>().m_callee); callee->kind == NodeKind::Intrinsic) {
+                if (auto result = resultOfConstructingIntrinsic(callee->intrinsic))
+                    return *result;
+            }
+            return TAnyObject;
+        case op_to_object: {
+            // An object converts to itself.
+            Type operand = typeOf(node->as<OpToObject>().m_operand);
+            if (!operand)
+                return TNone;
+            return isSubtype(operand, TAnyObject) ? operand : TAnyObject;
+        }
+        case op_super_construct:
+        case op_super_construct_varargs:
+            if (uint16_t layoutID = node->graph->layoutIDOfThis())
+                return typeOfObjectWithLayout(layoutID);
+            return TAnyObject;
+        case op_construct_varargs:
+            return TAnyObject;
+        case op_new_array:
+        case op_new_array_buffer:
+        case op_new_array_with_size:
+        case op_new_array_with_spread:
+        case op_create_rest:
+            return TArray;
+        case op_new_array_with_species:
+            return TAnyObject;
+        case op_new_func:
+            return typeOfClosureOf(node->graph->codeBlock()->functionDecl(node->as<OpNewFunc>().m_functionDecl));
+        case op_new_func_exp:
+            return typeOfClosureOf(node->graph->codeBlock()->functionExpr(node->as<OpNewFuncExp>().m_functionDecl));
+        case op_new_generator_func:
+            return typeOfClosureOf(node->graph->codeBlock()->functionDecl(node->as<OpNewGeneratorFunc>().m_functionDecl));
+        case op_new_generator_func_exp:
+            return typeOfClosureOf(node->graph->codeBlock()->functionExpr(node->as<OpNewGeneratorFuncExp>().m_functionDecl));
+        case op_new_async_func:
+            return typeOfClosureOf(node->graph->codeBlock()->functionDecl(node->as<OpNewAsyncFunc>().m_functionDecl));
+        case op_new_async_func_exp:
+            return typeOfClosureOf(node->graph->codeBlock()->functionExpr(node->as<OpNewAsyncFuncExp>().m_functionDecl));
+        case op_new_async_generator_func:
+            return typeOfClosureOf(node->graph->codeBlock()->functionDecl(node->as<OpNewAsyncGeneratorFunc>().m_functionDecl));
+        case op_new_async_generator_func_exp:
+            return typeOfClosureOf(node->graph->codeBlock()->functionExpr(node->as<OpNewAsyncGeneratorFuncExp>().m_functionDecl));
+        case op_spread:
+        case op_get_property_enumerator:
+            return TCellOther;
+        case op_argument_count:
+            return TInt32;
+        case op_get_by_val:
+            // In the fast copy of a loop, the guard only passes elements that are present.
+            {
+                auto bytecode = node->as<OpGetByVal>();
+                if (!typeOf(bytecode.m_base) || !typeOf(bytecode.m_property))
+                    return TNone;
+                if (auto type = Graph::typedArrayAccessed(node)) {
+                    Type element = *type == Float32ArrayType || *type == Float64ArrayType || *type == Uint32ArrayType ? TNumber : TInt32;
+                    if (node->guard)
+                        return element;
+                    // Elsewhere: for a numeric index, a typed array returns the element or undefined.
+                    if (isSubtype(typeOf(bytecode.m_property), TNumber))
+                        return element | TUndefined;
+                }
+                // In the fast copy of a loop, an array that probably holds numbers only yields numbers. Anything else leaves for
+                // the generic copy. (See Lowering::guardGetByVal().)
+                if (node->guard && isSubtype(typeOf(bytecode.m_base), TArray)) {
+                    Node* array = node->use(bytecode.m_base);
+                    if (Graph::isLocallyAllocatedArray(array)) {
+                        Type elements = m_elementTypes.get(array);
+                        if (array->opcode == op_new_array) {
+                            for (auto& use : array->uses)
+                                elements |= use.node->type;
+                        }
+                        if (!elements && !m_treatsEmptyArraysAsUntyped)
+                            return TNone;
+                        if (elements && isSubtype(elements, TNumber))
+                            return TNumber;
+                    }
+                    if (node->expectedMask && isSubtype(typeAcceptedByMask(node->expectedMask), TNumber | TOther) && (node->expectedMask & MaskNumber))
+                        return TNumber;
+                }
+            }
+            return node->graph->readsElementsOrEmpty ? TAll | TEmpty : TAll;
+        case op_call:
+            // In the fast copy of a loop, the guard only passes the expected callee.
+            if (node->guard) {
+                switch (m_graph.intrinsicOfCall(node)) {
+                case CallIntrinsic::None:
+                    break;
+                case CallIntrinsic::MathIMul:
+                case CallIntrinsic::StringCharCodeAt:
+                case CallIntrinsic::ArrayPush:
+                    return TInt32;
+                default:
+                    return TNumber;
+                }
+            }
+            return resultOfCall(node);
+        case op_tail_call:
+            return resultOfCall(node);
+        case op_get_length: {
+            Type base = typeOf(node->as<OpGetLength>().m_base);
+            if (!base)
+                return TNone;
+            // In the fast copy of a loop, the guard only passes an int32 length.
+            if (isSubtype(base, TString) || node->guard)
+                return TInt32;
+            if (isSubtype(base, TString | TArray | TTypedArray))
+                return TNumber;
+            return TTop;
+        }
+        case op_to_this: {
+            auto bytecode = node->as<OpToThis>();
+            Type operand = typeOf(bytecode.m_srcDst);
+            if (!operand)
+                return TNone;
+            // Strict code leaves every value unchanged, except for a scope object, which becomes undefined.
+            if (bytecode.m_ecmaMode.isStrict())
+                return operand | (mayBe(operand, TOtherObject) ? TUndefined : TNone);
+            return isSubtype(operand, TAnyObject & ~TOtherObject) ? operand : TAnyObject;
+        }
+        case op_iterator_close_check: {
+            Type iterator = typeOf(node->as<OpIteratorCloseCheck>().m_iterator);
+            return iterator ? iterator | TObject : TNone;
+        }
+        case op_resolve_scope_for_hoisting_func_decl_in_eval:
+            return TObject | TUndefined;
+        case op_get_from_scope: {
+            bool isExact = false;
+            if (const KnownFunction* known = m_graph.knownFunctionReadBy(node, &isExact); known && isExact)
+                return known->isDeclaration ? typeOfClosureOf(known->executable) : typeOfClosureOf(known->executable) | TUndefined | TEmpty;
+            if (VariableSummaries* summaries = m_graph.variableSummaries()) {
+                if (Variable variable = m_graph.variableAccessedBy(node)) {
+                    auto bytecode = node->as<OpGetFromScope>();
+                    Type type = summaries->read(variable, node->graph->codeBlock()->identifier(bytecode.m_var).impl(), m_graph.summaryReader());
+                    // (A function that a module declares is instantiated lazily, by the first read.)
+                    return bytecode.m_getPutInfo.resolveType() == ResolvedLazyClosureVar ? type | TFunction : type;
+                }
+            }
+            return TAll;
+        }
+        default:
+            // Including the empty value, which get_from_scope, get_internal_field and others can produce.
+            return TAll;
+        }
+    }
+
+    Graph& m_graph;
+    Type m_returnType { TNone };
+    UncheckedKeyHashMap<Node*, Type> m_elementTypes; // For each array that the function creates, the union of the types that it stores in it.
+    bool m_elementTypesChanged { false };
+    bool m_treatsEmptyArraysAsUntyped { false };
+};
+
+} // anonymous namespace
+
+Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesRead, Vector<const KnownFunction*>* calleesWithWidenedInputs)
+{
+    TypeInference inference(graph);
+    inference.calleesRead = calleesRead;
+    inference.calleesWithWidenedInputs = calleesWithWidenedInputs;
+    inference.run();
+    return inference.returnType();
+}
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(FTL_JIT)

@@ -104,6 +104,8 @@ void freeLargeVirtual(void* object, size_t size, HeapKind kind)
 #elif BUSE(MIMALLOC)
     BUNUSED(size);
     BUNUSED(kind);
+    if (StaticRegion::contains(object)) [[unlikely]]
+        return StaticRegion::didFree(object);
     mi_free(object);
 #else
     BUNUSED(size);

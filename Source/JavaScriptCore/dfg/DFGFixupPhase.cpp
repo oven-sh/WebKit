@@ -2604,6 +2604,11 @@ private:
             break;
         }
 
+        case CheckSoundType: {
+            fixupCheckSoundType(node);
+            break;
+        }
+
         case ObjectCreate: {
             if (node->child1()->shouldSpeculateObject()) {
                 fixEdge<ObjectUse>(node->child1());
@@ -4060,6 +4065,70 @@ private:
             ASSERT(!node->child3());
             node->convertToIdentity();
         }
+    }
+
+    void fixupCheckSoundType(Node* node)
+    {
+        // A mask that accepts exactly the values some UseKind accepts becomes Check(child: ThatUse), which every phase
+        // already knows how to prove, hoist and eliminate. Any other mask keeps the node and its own bit tests.
+        constexpr unsigned other = SoundTypeUndefined | SoundTypeNull;
+        constexpr unsigned notCell = other | SoundTypeBoolean | SoundTypeNumber;
+        [[maybe_unused]] constexpr unsigned cell = SoundTypeAll & ~notCell;
+        Edge& child = node->child1();
+        switch (node->soundTypeMask()) {
+        case other:
+            fixEdge<OtherUse>(child);
+            break;
+        case SoundTypeBoolean:
+            fixEdge<BooleanUse>(child);
+            break;
+        case other | SoundTypeBoolean:
+            fixEdge<MiscUse>(child);
+            break;
+        case SoundTypeNumber:
+            fixEdge<NumberUse>(child);
+            break;
+        case notCell:
+            fixEdge<NotCellNorBigIntUse>(child);
+            break;
+        case SoundTypeString:
+            fixEdge<StringUse>(child);
+            break;
+        case SoundTypeString | other:
+            fixEdge<StringOrOtherUse>(child);
+            break;
+        case SoundTypeSymbol:
+            fixEdge<SymbolUse>(child);
+            break;
+        case SoundTypeAll & ~SoundTypeSymbol:
+            fixEdge<NotSymbolUse>(child);
+            break;
+        case SoundTypeBigInt:
+#if USE(BIGINT32)
+            fixEdge<AnyBigIntUse>(child);
+#else
+            fixEdge<HeapBigIntUse>(child);
+#endif
+            break;
+        case SoundTypeAnyObject:
+            fixEdge<ObjectUse>(child);
+            break;
+        case SoundTypeAnyObject | other:
+            fixEdge<ObjectOrOtherUse>(child);
+            break;
+#if !USE(BIGINT32)
+        case cell:
+            fixEdge<CellUse>(child);
+            break;
+        case cell | other:
+            fixEdge<CellOrOtherUse>(child);
+            break;
+#endif
+        default:
+            fixEdge<UntypedUse>(child);
+            return;
+        }
+        node->remove(m_graph);
     }
 
     void fixupIsCellWithType(Node* node)

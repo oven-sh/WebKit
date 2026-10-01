@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "LLIntSlowPaths.h"
+#include "CompilerHooks.h"
 
 #include "AbortReason.h"
 #include "ArrayConstructor.h"
@@ -408,8 +409,7 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     }
 
     if (worklistState == JITWorklist::NotKnown) {
-        Ref<BaselineJITPlan> plan = adoptRef(*new BaselineJITPlan(codeBlock));
-        JITWorklist::ensureGlobalWorklist().enqueue(WTF::move(plan));
+        g_compilerHooks.enqueueBaselinePlan(codeBlock);
         return codeBlock->jitType() == JITType::BaselineJIT;
     }
 
@@ -648,7 +648,7 @@ static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame,
     CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
     functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *codeBlockSlot);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    ArityCheckMode arity = calleeFrame->argumentCountIncludingThis() < static_cast<size_t>((*codeBlockSlot)->numParameters()) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
+    ArityCheckMode arity = !*codeBlockSlot || calleeFrame->argumentCountIncludingThis() < static_cast<size_t>((*codeBlockSlot)->numParameters()) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
     return functionExecutable->entrypointFor(kind, arity).taggedPtr();
 }
 
@@ -2244,10 +2244,9 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
         LLINT_CALL_CHECK_EXCEPTION(globalObject);
 
         CodeBlock* codeBlock = *codeBlockSlot;
-        ASSERT(codeBlock);
 
         ArityCheckMode arity;
-        if (calleeFrame->argumentCountIncludingThis() < static_cast<size_t>(codeBlock->numParameters()))
+        if (!codeBlock || calleeFrame->argumentCountIncludingThis() < static_cast<size_t>(codeBlock->numParameters()))
             arity = ArityCheckMode::MustCheckArity;
         else
             arity = ArityCheckMode::ArityCheckNotRequired;
@@ -2996,13 +2995,8 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_array_sort_comparator_return(CallFr
 
 extern "C" UGPRPair SYSV_ABI llint_throw_stack_overflow_error(VM* vm, ProtoCallFrame* protoFrame)
 {
-    CallFrame* callFrame = vm->topCallFrame;
     auto scope = DECLARE_THROW_SCOPE(*vm);
-    JSGlobalObject* globalObject = nullptr;
-    if (callFrame)
-        globalObject = callFrame->lexicalGlobalObject(*vm);
-    else
-        globalObject = protoFrame->callee()->realm();
+    JSGlobalObject* globalObject = vm->topCallFrame ? vm->topFrameGlobalObject() : protoFrame->callee()->realm();
     throwStackOverflowError(globalObject, scope);
     return encodeResult(nullptr, nullptr);
 }

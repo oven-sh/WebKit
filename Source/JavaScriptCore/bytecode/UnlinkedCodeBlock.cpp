@@ -182,6 +182,30 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
     return *m_expressionInfo;
 }
 
+void UnlinkedCodeBlock::leaveToStaticHeap(bool rareDataToo, bool identifiersAndConstantsAreCopied)
+{
+    auto forget = [](auto& vector) {
+        new (NotNull, &vector) std::remove_reference_t<decltype(vector)>();
+    };
+    // Frees the memory without destroying the elements, which the copy now owns.
+    auto free = [&](auto& vector) {
+        static_assert(sizeof(vector) == sizeof(void*));
+        void* storage = *std::bit_cast<void**>(&vector);
+        forget(vector);
+        if (storage && identifiersAndConstantsAreCopied)
+            fastFree(storage);
+    };
+    free(m_identifiers);
+    free(m_constantRegisters);
+    forget(m_functionDecls);
+    forget(m_functionExprs);
+    // (Or it goes now: it may refer to strings of the static heap, which is not going to be there when this is collected.)
+    if (rareDataToo)
+        (void)m_rareData.release();
+    else
+        m_rareData = nullptr;
+}
+
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
     return expressionInfo().entryForInstPC(bytecodeIndex.offset());

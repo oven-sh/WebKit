@@ -187,6 +187,18 @@ public:
     void setSourceMappingURLDirective(const String& sourceMappingURLDirective) { m_sourceMappingURLDirective = sourceMappingURLDirective; }
     void setSourceTaintedOrigin(SourceTaintedOrigin taintedness) { m_taintedness = taintedness; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The ID that an AOT::Image uses for this source. Zero: none.
+    uint32_t aotModuleID() const { return m_aotModuleID; }
+    void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
+    // Makes the provider immutable and immortal, and its strings static, so that it can be shared between threads.
+    JS_EXPORT_PRIVATE void becomeShareableBetweenThreads();
+    // A program that was compiled ahead of time can be built without its source text. source() then has the length of the original
+    // text, so that offsets into it stay valid, but its contents must not be read.
+    bool hasNoText() const { return m_hasNoText; }
+    void setHasNoText() { m_hasNoText = true; }
+#endif
+
     SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedness; }
     bool couldBeTainted() const { return m_taintedness != SourceTaintedOrigin::Untainted; }
 
@@ -253,6 +265,7 @@ public:
             && !m_lineStartTable.isBuilt();
     }
     LineStarts lineStartsIfBuilt() const { return m_lineStartTable.lineStartsIfBuilt(); }
+    LineStarts lineStarts() { return m_lineStartTable.lineStarts(source()); }
     // A builtin with a source of its own is parsed as a function, which is not all of the source.
     LineStarts lineStartsForBytecode()
     {
@@ -280,6 +293,10 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_aotModuleID { 0 };
+    bool m_hasNoText { false };
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;

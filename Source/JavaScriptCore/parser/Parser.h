@@ -1558,6 +1558,7 @@ private:
         JSTokenLocation lastTokenLocation;
         bool hasLineTerminatorBeforeToken;
         JSTokenType lastTokenType;
+        uint32_t typeTag; // (It comes before where the token starts, which is where it is read again from.)
     };
 
     struct SavePoint {
@@ -2026,6 +2027,7 @@ private:
         // So getting this flag and setting it before lexing this token is right.
         result.hasLineTerminatorBeforeToken = m_lexer->hasLineTerminatorBeforeToken();
         result.lastTokenType = m_lastTokenType;
+        result.typeTag = m_token.m_typeTag;
         return result;
     }
 
@@ -2039,6 +2041,7 @@ private:
         m_token.m_startPosition.offset = lexerState.lastTokenLocation.startOffset;
         m_token.m_endPosition.offset = lexerState.lastTokenLocation.endOffset;
         nextWithoutClearingLineTerminator();
+        m_token.m_typeTag = lexerState.typeTag;
     }
 
     template <class TreeBuilder>
@@ -2262,6 +2265,13 @@ std::unique_ptr<ParsedNode> parse(
     bool isInsideOrdinaryFunction = false)
 {
     ASSERT(!source.provider()->source().isNull());
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (source.provider()->hasNoText()) [[unlikely]] {
+        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
+        return nullptr;
+    }
+#endif
 
     MonotonicTime before;
     if (Options::reportParseTimes()) [[unlikely]]

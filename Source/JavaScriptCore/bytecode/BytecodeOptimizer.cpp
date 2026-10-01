@@ -1339,7 +1339,8 @@ bool BytecodeOptimizerAccess::resolveScopesStatically()
                     auto resolution = link->resolve(m_codeBlock->identifier(bytecode.m_var).impl());
                     // A slot past 255 would force the instruction wide (+8 bytes) just to save one link-time lookup;
                     // not worth the bytes unless the instruction is wide already.
-                    bool fits = resolution.offset <= UINT8_MAX || insn.instruction->isWide16() || insn.instruction->isWide32();
+                    // Unless it is going to be compiled ahead of time, where it is a load instead of a lookup by name.
+                    bool fits = resolution.offset <= UINT8_MAX || insn.instruction->isWide16() || insn.instruction->isWide32() || m_codeBlock->vm().bytecodeGenerationOptions.resolveAllScopeSlotsStatically;
                     if (resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.hops == it->value.hops && fits) {
                         insn.staticScopeOffset = resolution.offset;
                         insn.staticScopeOffsetIsLazyFunctionSlot = resolution.isLazyFunctionSlot;
@@ -1708,7 +1709,8 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                     auto bytecode = insn.instruction->as<OpResolveScope>();
                     ScopeValue base = scopeValueOf(mappedUse(insn, bytecode.m_scope));
                     bool singleDst = insn.defs.size() == 1 || (insn.defs.size() == 2 && insn.copyTo.isValid());
-                    bool resolvesToEnvironmentRecord = insn.staticOuterHops || (bytecode.m_resolveType == GlobalProperty && link && link->resolve(m_codeBlock->identifier(bytecode.m_var).impl()).kind != DeclaredNamesLink::Resolution::Dynamic);
+                    auto isInEnvironmentRecord = [](DeclaredNamesLink::Resolution::Kind kind) { return kind == DeclaredNamesLink::Resolution::Stable || kind == DeclaredNamesLink::Resolution::Slot; };
+                    bool resolvesToEnvironmentRecord = insn.staticOuterHops || (bytecode.m_resolveType == GlobalProperty && link && isInEnvironmentRecord(link->resolve(m_codeBlock->identifier(bytecode.m_var).impl()).kind));
                     if (base.via == UINT_MAX && singleDst && resolvesToEnvironmentRecord) {
                         unsigned via = insn.staticOuterHops ? environmentVia(bytecode.m_localScopeDepth, *insn.staticOuterHops) : bytecode.m_var;
                         newScope = { { insn.defs[0].offset(), ScopeValue { base.base, via } } };

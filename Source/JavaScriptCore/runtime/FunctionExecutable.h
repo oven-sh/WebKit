@@ -58,9 +58,24 @@ public:
 
     static void destroy(JSCell*);
         
+    // The short form. A function that was compiled when the program was built, and that has no other code and never will, needs
+    // very little of this class: there is nothing to parse, compile or watch, and nothing changes. Its executable, which StaticHeap
+    // creates, ends where ExecutableBase's m_jitCodeForCallWithArityCheck would be, and is identified by its JSType. Calls only use
+    // the fields before that point, and code that recognizes a FunctionExecutable by FunctionExecutableType in order to reach its
+    // CodeBlock does not match it. Everything else about the function is in a table (StaticHeap::rowOf()), which the accessors here
+    // consult: its name, its parameter count, its module, and an UnlinkedFunctionExecutable for the remaining properties, which it
+    // shares with every function that has the same ones.
+    static constexpr size_t sizeOfShortForm = 32;
+    inline static Structure* createStructureOfShortForm(VM&, JSGlobalObject*, JSValue);
+
+    const FunctionExecutable* inFull() const { return WTF::opaque(this); }
+    FunctionExecutable* inFull() { return WTF::opaque(this); }
+
     UnlinkedFunctionExecutable* unlinkedExecutable() const
     {
-        return m_unlinkedExecutable.get();
+        if (isShortForm()) [[unlikely]]
+            return StaticHeap::unlinkedFunctionOf(StaticHeap::rowOf(indexOfShortForm()));
+        return inFull()->m_unlinkedExecutable.get();
     }
 
     // Returns either call or construct bytecode. This can be appropriate
@@ -80,7 +95,7 @@ public:
 
     FunctionCodeBlock* codeBlockForCall() const
     {
-        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForCall.get());
+        return isShortForm() ? nullptr : std::bit_cast<FunctionCodeBlock*>(inFull()->m_codeBlockForCall.get());
     }
 
     bool isGeneratedForConstruct() const
@@ -90,7 +105,7 @@ public:
 
     FunctionCodeBlock* codeBlockForConstruct() const
     {
-        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForConstruct.get());
+        return isShortForm() ? nullptr : std::bit_cast<FunctionCodeBlock*>(inFull()->m_codeBlockForConstruct.get());
     }
         
     bool isGeneratedFor(CodeSpecializationKind kind)
@@ -126,13 +141,13 @@ public:
         return rareData.m_returnStatementTypeSet;
     }
         
-    FunctionMode functionMode() { return m_unlinkedExecutable->functionMode(); }
-    ImplementationVisibility implementationVisibility() const { return m_unlinkedExecutable->implementationVisibility(); }
-    bool isBuiltinFunction() const { return m_unlinkedExecutable->isBuiltinFunction(); }
-    bool isPrivateBuiltinFunction() const { return isBuiltinFunction() && (!m_source.provider() || !m_source.provider()->sourceURL()); }
-    ConstructAbility constructAbility() const { return m_unlinkedExecutable->constructAbility(); }
-    InlineAttribute inlineAttribute() const { return m_unlinkedExecutable->inlineAttribute(); }
-    bool isClass() const { return m_unlinkedExecutable->isClass(); }
+    FunctionMode functionMode() { return unlinkedExecutable()->functionMode(); }
+    ImplementationVisibility implementationVisibility() const { return unlinkedExecutable()->implementationVisibility(); }
+    bool isBuiltinFunction() const { return unlinkedExecutable()->isBuiltinFunction(); }
+    bool isPrivateBuiltinFunction() const { return isBuiltinFunction() && (!sourceProvider() || !sourceProvider()->sourceURL()); }
+    ConstructAbility constructAbility() const { return unlinkedExecutable()->constructAbility(); }
+    InlineAttribute inlineAttribute() const { return unlinkedExecutable()->inlineAttribute(); }
+    bool isClass() const { return unlinkedExecutable()->isClass(); }
     bool isArrowFunction() const { return parseMode() == SourceParseMode::ArrowFunctionMode; }
     bool isGetter() const { return parseMode() == SourceParseMode::GetterMode; }
     bool isSetter() const { return parseMode() == SourceParseMode::SetterMode; }
@@ -151,19 +166,36 @@ public:
             SourceParseMode::AsyncGeneratorBodyMode
         ).contains(parseMode()) || isClass();
     }
-    DerivedContextType derivedContextType() const { return m_unlinkedExecutable->derivedContextType(); }
-    bool isClassConstructorFunction() const { return m_unlinkedExecutable->isClassConstructorFunction(); }
-    const Identifier& name() { return m_unlinkedExecutable->name(); }
-    const Identifier& ecmaName() { return m_unlinkedExecutable->ecmaName(); }
+    DerivedContextType derivedContextType() const { return unlinkedExecutable()->derivedContextType(); }
+    bool isClassConstructorFunction() const { return unlinkedExecutable()->isClassConstructorFunction(); }
+    const Identifier& name()
+    {
+        if (isShortForm()) [[unlikely]]
+            return unlinkedExecutable()->hasName() ? ecmaName() : unlinkedExecutable()->name();
+        return inFull()->m_unlinkedExecutable->name();
+    }
+    const Identifier& ecmaName()
+    {
+        if (isShortForm()) [[unlikely]]
+            return StaticHeap::rowOf(indexOfShortForm()).name();
+        return inFull()->m_unlinkedExecutable->ecmaName();
+    }
     // Unlike name() / ecmaName(), also callable from the collector's end phase (ErrorInstance::computeErrorInfo's stack traces).
-    String nameWithoutGC() { return m_unlinkedExecutable->nameWithoutGC(); }
-    String ecmaNameWithoutGC() { return m_unlinkedExecutable->ecmaNameWithoutGC(); }
-    const Identifier* tryGetEcmaNameConcurrently() { return m_unlinkedExecutable->tryGetEcmaNameConcurrently(); } // null while the name is still only in the bytecode cache; otherwise &ecmaName() (which may itself be a null Identifier)
+    String nameWithoutGC() { return isShortForm() ? (unlinkedExecutable()->hasName() ? ecmaNameWithoutGC() : String()) : inFull()->m_unlinkedExecutable->nameWithoutGC(); }
+    String ecmaNameWithoutGC() { return isShortForm() ? ecmaName().string() : inFull()->m_unlinkedExecutable->ecmaNameWithoutGC(); }
+    const Identifier* tryGetEcmaNameConcurrently() { return isShortForm() ? &ecmaName() : inFull()->m_unlinkedExecutable->tryGetEcmaNameConcurrently(); } // null while the name is still only in the bytecode cache; otherwise &ecmaName() (which may itself be a null Identifier)
     UTF8CString inferredNameForTools(); // dumps and debug info; callable from compiler / GC threads, where a name still in the bytecode cache prints as a placeholder
-    unsigned parameterCount() const { return m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!
-    SourceParseMode parseMode() const { return m_unlinkedExecutable->parseMode(); }
-    JSParserScriptMode scriptMode() const { return m_unlinkedExecutable->scriptMode(); }
-    SourceCode classSource() const { return m_unlinkedExecutable->classSource(); }
+    unsigned parameterCount() const { return isShortForm() ? StaticHeap::rowOf(indexOfShortForm()).parameterCount : inFull()->m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!
+    SourceParseMode parseMode() const { return unlinkedExecutable()->parseMode(); }
+    JSParserScriptMode scriptMode() const { return unlinkedExecutable()->scriptMode(); }
+    SourceCode classSource() const
+    {
+        // (The source of a default class constructor belongs to the engine. The class is in the module's source.)
+        if (isShortForm()) [[unlikely]]
+            return unlinkedExecutable()->classSource(*sourceProvider());
+        bool isInTopLevelSource = inFull()->m_unlinkedExecutable->isBuiltinDefaultClassConstructor() && inFull()->m_topLevelExecutable;
+        return inFull()->m_unlinkedExecutable->classSource(*(isInTopLevelSource ? inFull()->m_topLevelExecutable->source() : source()).provider());
+    }
 
     DECLARE_VISIT_CHILDREN;
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
@@ -173,8 +205,8 @@ public:
     void setOverrideLineNumber(int overrideLineNumber)
     {
         if (overrideLineNumber == overrideLineNumberNotFound) {
-            if (m_rareData) [[unlikely]]
-                m_rareData->m_overrideLineNumber = std::nullopt;
+            if (auto* rareData = this->rareData()) [[unlikely]]
+                rareData->m_overrideLineNumber = std::nullopt;
             return;
         }
         ensureRareData().m_overrideLineNumber = overrideLineNumber;
@@ -182,22 +214,24 @@ public:
 
     std::optional<int> overrideLineNumber() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_overrideLineNumber;
+        if (auto* rareData = this->rareData()) [[unlikely]]
+            return rareData->m_overrideLineNumber;
         return std::nullopt;
     }
 
     LineStartTable::PositionInfo sourceStartInfo() const
     {
+        auto& source = inFull()->m_source; // (Not for the short form.)
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
-        return m_source.provider()->positionInfoForOffset(m_source.startOffset());
+        return source.provider()->positionInfoForOffset(source.startOffset());
     }
 
     // endOffset() is one past the closing brace, but a reported end column names the brace itself.
     LineStartTable::PositionInfo sourceEndInfo() const
     {
+        auto& source = inFull()->m_source; // (Not for the short form.)
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
-        return m_source.provider()->positionInfoForOffset(m_source.endOffset() - 1);
+        return source.provider()->positionInfoForOffset(source.endOffset() - 1);
     }
 
     // Deliberately not cached in RareData: the only callers are the debugger and a debug assertion,
@@ -205,18 +239,23 @@ public:
     // web-reachable Function.prototype.toString path.
     int lineCount() const
     {
+        if (isShortForm()) [[unlikely]]
+            return 0; // (Without source text, the end position is meaningless.)
         return static_cast<int>(sourceEndInfo().line0Based) - static_cast<int>(sourceStartInfo().line0Based);
     }
 
     int endColumn() const
     {
+        if (isShortForm()) [[unlikely]]
+            return startColumn();
+        auto& source = inFull()->m_source;
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
-        return m_source.provider()->documentLineColumnForOffset(m_source.endOffset() - 1).column;
+        return source.provider()->documentLineColumnForOffset(source.endOffset() - 1).column;
     }
 
     int firstLine() const
     {
-        return source().firstLine().oneBasedInt();
+        return ScriptExecutable::firstLine();
     }
 
     int lastLine() const
@@ -226,32 +265,40 @@ public:
 
     unsigned functionEnd() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_functionEnd;
-        return m_unlinkedExecutable->unlinkedFunctionEnd();
+        if (auto* rareData = this->rareData()) [[unlikely]]
+            return rareData->m_functionEnd;
+        if (isShortForm()) [[unlikely]]
+            return 0;
+        return inFull()->m_unlinkedExecutable->unlinkedFunctionEnd();
     }
 
     unsigned functionStart() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_functionStart;
-        return m_unlinkedExecutable->unlinkedFunctionStart();
+        if (auto* rareData = this->rareData()) [[unlikely]]
+            return rareData->m_functionStart;
+        if (isShortForm()) [[unlikely]]
+            return 0;
+        return inFull()->m_unlinkedExecutable->unlinkedFunctionStart();
     }
 
     unsigned parametersStartOffset() const
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_parametersStartOffset;
-        return m_unlinkedExecutable->parametersStartOffset();
+        if (auto* rareData = this->rareData()) [[unlikely]]
+            return rareData->m_parametersStartOffset;
+        if (isShortForm()) [[unlikely]]
+            return 0;
+        return inFull()->m_unlinkedExecutable->parametersStartOffset();
     }
 
     void overrideInfo(const FunctionOverrideInfo&);
 
     DECLARE_EXPORT_INFO;
 
+    bool singletonHasBeenInvalidated() const { return isShortForm() || inFull()->m_singleton.hasBeenInvalidated(); }
     InferredValue<JSFunction>& singleton()
     {
-        return m_singleton;
+        RELEASE_ASSERT(!isShortForm());
+        return inFull()->m_singleton;
     }
 
     void notifyCreation(VM&, JSFunction*, const char* reason);
@@ -259,8 +306,8 @@ public:
     // Cached poly proto structure for the result of constructing this executable.
     Structure* cachedPolyProtoStructure()
     {
-        if (m_rareData) [[unlikely]]
-            return m_rareData->m_cachedPolyProtoStructureID.get();
+        if (auto* rareData = this->rareData()) [[unlikely]]
+            return rareData->m_cachedPolyProtoStructureID.get();
         return nullptr;
     }
     void setCachedPolyProtoStructure(VM& vm, Structure* structure)
@@ -270,14 +317,37 @@ public:
 
     InlineWatchpointSet& ensurePolyProtoWatchpoint()
     {
-        if (!m_polyProtoWatchpoint)
-            m_polyProtoWatchpoint = Box<InlineWatchpointSet>::create(IsWatched);
-        return *m_polyProtoWatchpoint;
+        RareData& rareData = ensureRareData();
+        if (!rareData.m_polyProtoWatchpoint)
+            rareData.m_polyProtoWatchpoint = Box<InlineWatchpointSet>::create(IsWatched);
+        return *rareData.m_polyProtoWatchpoint;
     }
 
-    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
+    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return rareData() ? rareData()->m_polyProtoWatchpoint : nullptr; }
 
-    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND { return m_topLevelExecutable.get(); }
+    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND
+    {
+        if (isShortForm())
+            return topLevelExecutableOfStaticExecutable();
+        if (ScriptExecutable* result = inFull()->m_topLevelExecutable.get()) [[likely]]
+            return result;
+        return topLevelExecutableOfStaticExecutable();
+    }
+
+    // For an executable in the static heap, which is read-only: the entry word of the code that was compiled for it, and the index
+    // of that function (AOT::ImageFunction::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which read these.
+    uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; } // An AOT::EntryWord.
+    uint32_t aotIndexFor(CodeSpecializationKind kind) const { return m_aotIndex[static_cast<unsigned>(kind)]; }
+    void setUnlinkedExecutableWhileStaticHeapIsBuilt(UnlinkedFunctionExecutable* unlinked) { inFull()->m_unlinkedExecutable.setWithoutWriteBarrier(unlinked); }
+    JS_EXPORT_PRIVATE void becomeStatic(VM&);
+    JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, void* stub, uint64_t entry, uint32_t index);
+    // There is code to call it with and none to construct with, and to construct is to make an object, call it, and see what
+    // comes back (AOT::Stub::ConstructByCalling, which is then what aotEntryFor() is). That will do for a function that has no way
+    // of telling: see generateUnlinkedCodeBlockForFunctions().
+    static constexpr uint32_t aotIndexOfWhatConstructsByCalling = std::numeric_limits<uint32_t>::max();
+    bool constructsByCalling() const { return m_aotIndex[static_cast<unsigned>(CodeSpecializationKind::CodeForConstruct)] == aotIndexOfWhatConstructsByCalling; }
+    static constexpr ptrdiff_t offsetOfAOTEntryFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotEntry) + static_cast<unsigned>(kind) * sizeof(void*); }
+    static constexpr ptrdiff_t offsetOfAOTIndexFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotIndex) + static_cast<unsigned>(kind) * sizeof(uint32_t); }
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
@@ -286,9 +356,9 @@ public:
     JSString* toString(JSGlobalObject*);
     JSString* asStringConcurrently() const
     {
-        if (!m_rareData)
+        if (!rareData())
             return nullptr;
-        return m_rareData->m_asString.get();
+        return rareData()->m_asString.get();
     }
 
     static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(FunctionExecutable, m_rareData); }
@@ -320,6 +390,7 @@ public:
         WriteBarrier<JSString> m_asString;
         unsigned m_functionStart { UINT_MAX };
         unsigned m_functionEnd { UINT_MAX };
+        Box<InlineWatchpointSet> m_polyProtoWatchpoint;
     };
 
 private:
@@ -330,10 +401,12 @@ private:
 
     friend class ScriptExecutable;
 
+    RareData* rareData() const { return isShortForm() ? nullptr : inFull()->m_rareData.get(); }
     RareData& ensureRareData()
     {
-        if (m_rareData) [[likely]]
-            return *m_rareData;
+        RELEASE_ASSERT(!isShortForm());
+        if (inFull()->m_rareData) [[likely]]
+            return *inFull()->m_rareData;
         return ensureRareDataSlow();
     }
     RareData& ensureRareDataSlow();
@@ -349,7 +422,8 @@ private:
     WriteBarrier<CodeBlock> m_codeBlockForCall;
     WriteBarrier<CodeBlock> m_codeBlockForConstruct;
     InferredValue<JSFunction> m_singleton;
-    Box<InlineWatchpointSet> m_polyProtoWatchpoint;
+
+    JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOfStaticExecutable() const;
 };
 
 } // namespace JSC

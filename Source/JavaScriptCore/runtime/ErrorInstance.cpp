@@ -21,6 +21,7 @@
 #include "config.h"
 #include "ErrorInstance.h"
 
+#include "AOTRuntime.h"
 #include "CodeBlock.h"
 #include "ErrorInstanceInlines.h"
 #include "InlineCallFrame.h"
@@ -83,7 +84,15 @@ ErrorInstance* ErrorInstance::create(JSGlobalObject* globalObject, Structure* st
 
 String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, const String& message, RuntimeType type, ErrorInstance::SourceAppender appender)
 {
-    if (!codeBlock->hasExpressionInfo() || message.isNull())
+    if (message.isNull())
+        return message;
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasNoText = codeBlock->source().provider()->hasNoText();
+#else
+    bool hasNoText = false;
+#endif
+    // (A program without its source text uses the quotes in the image instead.)
+    if (!codeBlock->hasExpressionInfo() && !hasNoText)
         return message;
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -92,6 +101,19 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
     // build, so that a message does not depend on the build and does not name the builtin's internals.
     if (auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()); executable && executable->isPrivateBuiltinFunction())
         return message;
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (hasNoText) {
+#if ENABLE(FTL_JIT)
+        // What it said, as far as that was kept, is with the code.
+        if (auto function = AOT::FunctionRef::of(codeBlock)) {
+            if (auto quote = function.quoteAt(bytecodeIndex))
+                return appender(message, quote->first, type, quote->second ? ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource : ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource);
+        }
+#endif
+        return message;
+    }
 #endif
 
     auto info = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex);
@@ -199,8 +221,14 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     String messageWithSource = message;
 
     if (m_stackTrace && !m_stackTrace->isEmpty() && hasSourceAppender()) {
-        auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.topCallFrame);
-        if (codeBlock) {
+        if (auto quote = quoteSourceWithoutText(vm, vm.topCallFrame)) {
+            ErrorInstance::SourceAppender appender = sourceAppender();
+            clearSourceAppender();
+            RuntimeType type = runtimeTypeForCause();
+            clearRuntimeTypeForCause();
+            if (!quote->text.isNull() && !message.isNull())
+                messageWithSource = appender(message, quote->text, type, quote->isExact ? SourceTextWhereErrorOccurred::FoundExactSource : SourceTextWhereErrorOccurred::FoundApproximateSource);
+        } else if (auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.topCallFrame); codeBlock) {
             ErrorInstance::SourceAppender appender = sourceAppender();
             clearSourceAppender();
             RuntimeType type = runtimeTypeForCause();

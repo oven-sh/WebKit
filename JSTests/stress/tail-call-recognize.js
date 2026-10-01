@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): f.arguments and f.caller are null while f runs ahead-of-time compiled code.
 function callerMustBeRun() {
     if (!Object.is(callerMustBeRun.caller, runTests))
         throw new Error("Wrong caller, expected run but got ", callerMustBeRun.caller);

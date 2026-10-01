@@ -102,7 +102,9 @@ void generateToAir(Procedure& procedure)
             inferSwitches(procedure);
 
         if (Options::useB3TailDup())
-            duplicateTails(procedure);
+            // Code that is compiled once for all is compiled for size as much as for speed.
+            if (!procedure.positionIndependent())
+                duplicateTails(procedure);
         fixSSA(procedure);
         foldPathConstants(procedure);
         if (procedure.usesWasmGCStructAllocations() && Options::useB3EliminateWasmGCAllocations())

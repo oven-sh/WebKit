@@ -330,6 +330,28 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
     }
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_type)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpCheckType>();
+    unsigned tag = soundTypeTag(GET_C(bytecode.m_value).jsValue());
+    if (soundTypeMaskAccepts(bytecode.m_mask, GET_C(bytecode.m_value).jsValue())) [[likely]]
+        END();
+    if (Options::reportSoundTypeViolations()) [[unlikely]] {
+        // For finding out what a program would have to change: every place once, and on it goes as if types were erased.
+        static Lock lock;
+        static NeverDestroyed<UncheckedKeyHashSet<std::pair<UnlinkedCodeBlock*, unsigned>>> reported;
+        Locker locker { lock };
+        BytecodeIndex index = codeBlock->bytecodeIndex(pc);
+        if (reported.get().add({ codeBlock->unlinkedCodeBlock(), index.offset() + 1 }).isNewEntry) {
+            auto lineColumn = codeBlock->lineColumnForBytecodeIndex(index);
+            dataLogLn("[sound-types] expected ", SoundTypeMaskDump(bytecode.m_mask), ", got ", SoundTypeMaskDump(tag), " in ", codeBlock->inferredName(), " at ", codeBlock->ownerExecutable()->sourceURL(), ":", lineColumn.line, ":", lineColumn.column);
+        }
+        END();
+    }
+    THROW(createTypeError(globalObject, makeString("Type check failed: expected "_s, toString(SoundTypeMaskDump(bytecode.m_mask)), ", got "_s, toString(SoundTypeMaskDump(tag)))));
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_throw_strict_mode_readonly_property_write_error)
 {
     BEGIN();

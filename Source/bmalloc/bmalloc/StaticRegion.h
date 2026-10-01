@@ -1,0 +1,128 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#include "BExport.h"
+#include "BInline.h"
+#include <cstddef>
+#include <cstdint>
+#include <sys/types.h>
+
+namespace bmalloc {
+
+// Memory that is at the same address in every process. Data that a program needs regardless of how it is run is created once, when
+// the program is built, by the same code that would otherwise create it at every start. The memory is written to the program's
+// file, and mapped from there when the program runs. Pointers within the region stay valid, and a page that is never written to
+// stays file-backed and shared, and does not count as the process's private memory.
+//
+// Nothing in it is ever freed. It may be written to: the mapping is private.
+class StaticRegion {
+public:
+    enum class Arena : uint8_t {
+        Data, // Raw bytes placed by the code that builds the region.
+        Malloc, // What malloc returns while the region is being built.
+        Cells, // For the garbage collector's clients. See JSC::StaticHeap.
+        // Like the previous two, but for objects that a running program is likely to write to. Keeping them apart avoids dirtying
+        // the other arenas' pages.
+        MutableCells,
+        MutableMalloc,
+        // Not in the file. Zero-filled at process start, in every process, whether or not the program uses the other arenas. It is
+        // for objects that have to be created at run time but are referred to by objects created at build time.
+        Bss,
+        // The program's machine code and what goes with it (JSC::AOT::Image), from the file as well, but not built here.
+        Image,
+        // Exists only while the region is being built, and is not written to any file. It is for temporary objects.
+        Scratch,
+    };
+    static constexpr unsigned numberOfArenas = 8;
+    static constexpr unsigned numberOfArenasInFile = 5;
+
+    static constexpr uintptr_t base = 0x200000000000ULL; // Beyond where mimalloc asks for memory, and far from where the kernel puts things.
+    static constexpr size_t arenaReservation = 4ULL << 30;
+    static constexpr size_t reservation = arenaReservation * numberOfArenas;
+
+    static BINLINE bool contains(const void* pointer) { return reinterpret_cast<uintptr_t>(pointer) - base < reservation; }
+    static constexpr uintptr_t startOf(Arena arena) { return base + static_cast<size_t>(arena) * arenaReservation; }
+
+    // ---- When the program is built. One thread does it.
+
+    BEXPORT static bool beginBuilding(); // False if the addresses are taken.
+    BEXPORT static void endBuilding();
+    // The result is `misalignment` past a multiple of `alignment`. Zeroed.
+    BEXPORT static void* allocate(Arena, size_t, size_t alignment, size_t misalignment = 0);
+    BEXPORT static size_t used(Arena);
+
+    // While there is one, what this thread mallocs is in the region.
+    class AllocationScope {
+    public:
+        BEXPORT explicit AllocationScope(bool inRegion = true); // (False: not, for a while, inside of one.)
+        BEXPORT ~AllocationScope();
+        AllocationScope(const AllocationScope&) = delete;
+
+    private:
+        bool m_previous;
+    };
+    BEXPORT static bool isAllocatingOnThisThread();
+    // While there is one as well, it is in Arena::MutableMalloc.
+    class MutableScope {
+    public:
+        BEXPORT MutableScope();
+        BEXPORT ~MutableScope();
+        MutableScope(const MutableScope&) = delete;
+
+    private:
+        bool m_previous;
+    };
+    BEXPORT static bool isAllocatingMutable();
+
+    // ---- When it runs.
+
+    BEXPORT static void mapBss(); // Before anything else here. Crashes if the addresses are taken.
+    // The layout of Arena::Bss.
+    static constexpr size_t offsetOfEmptyStringInBss = 0; // WTF::StringImpl::empty()
+    static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
+    static constexpr size_t offsetOfEmbedderSymbolsInBss = 128 * 1024; // JSC::StaticHeap::embedderSymbols()
+    // The rest belongs to JSC::StaticHeap. Reserving address space is free: only pages that are touched are committed.
+    static constexpr size_t offsetOfVTablesInBss = 256 * 1024;
+    static constexpr size_t offsetOfVMInBss = 1 << 20;
+    static constexpr size_t offsetOfGlobalObjectInBss = 2 << 20;
+    static constexpr size_t offsetOfDecodersInBss = 16 << 20; // One per module, like the next few.
+    static constexpr size_t offsetOfSourceProvidersInBss = 64 << 20;
+    static constexpr size_t offsetOfTopLevelExecutablesInBss = 128 << 20;
+    static constexpr size_t offsetOfBlocksInBss = 256 << 20; // JSC::StaticHeap::allocateBlock()
+
+    // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
+    BEXPORT static bool map(Arena, int fileDescriptor, off_t offsetInFile, size_t, size_t offsetInArena = 0, bool isCode = false);
+
+    // ---- For malloc.
+
+    static BINLINE void* tryMalloc(size_t size, size_t alignment = 16)
+    {
+        if (s_isBuilding) [[unlikely]]
+            return tryMallocSlow(size, alignment);
+        return nullptr;
+    }
+    BEXPORT static size_t mallocSize(const void*);
+    BEXPORT static void* reallocate(void*, size_t); // For a pointer that tryMalloc() returned.
+    // Likewise. At run time the memory is not reused. While building, freed memory is zeroed, so that the output is deterministic.
+    static BINLINE void didFree(void* pointer)
+    {
+        if (s_isBuilding) [[unlikely]]
+            didFreeSlow(pointer);
+    }
+
+private:
+    BEXPORT static void didFreeSlow(void*);
+    BEXPORT static void* tryMallocSlow(size_t, size_t alignment);
+public:
+    BEXPORT static void clearFreeLists(); // Call this once the region is complete.
+    BEXPORT static size_t bytesThatAreFree(); // Before that: memory that was freed but still takes up space in the file.
+private:
+
+    BEXPORT static bool s_isBuilding;
+};
+
+} // namespace bmalloc

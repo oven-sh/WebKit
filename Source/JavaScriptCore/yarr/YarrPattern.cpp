@@ -3631,10 +3631,46 @@ public:
             return false;
         };
 
+        // ^(?:word|word|...)$, e.g. a parser's keyword list. Without the multiline, sticky and ignoreCase flags (excluded above) it matches
+        // exactly when the whole input is one of the words.
+        auto tryExtractAnchoredWordList = [&]() -> bool {
+            auto& alternatives = m_pattern.m_body->m_alternatives;
+            if (alternatives.size() != 1)
+                return false;
+            auto& terms = alternatives[0]->m_terms;
+            if (terms.size() != 3 || terms[0].type != PatternTerm::Type::AssertionBOL || terms[2].type != PatternTerm::Type::AssertionEOL)
+                return false;
+            auto& group = terms[1];
+            if (group.type != PatternTerm::Type::ParenthesesSubpattern || group.capture() || group.invert())
+                return false;
+            if (group.quantityType != QuantifierType::FixedCount || group.quantityMaxCount != 1 || group.m_matchDirection != MatchDirection::Forward)
+                return false;
+            Vector<String> words;
+            for (auto& alternative : group.parentheses.disjunction->m_alternatives) {
+                if (alternative->m_terms.isEmpty())
+                    return false;
+                StringBuilder builder;
+                for (auto& term : alternative->m_terms) {
+                    if (term.type != PatternTerm::Type::PatternCharacter || term.quantityType != QuantifierType::FixedCount || term.quantityMaxCount != 1)
+                        return false;
+                    if (U16_LENGTH(term.patternCharacter) != 1 || term.m_matchDirection != MatchDirection::Forward)
+                        return false;
+                    builder.append(static_cast<char16_t>(term.patternCharacter));
+                }
+                words.append(builder.toString());
+            }
+            m_pattern.m_anchoredWords = WTF::move(words);
+            m_pattern.m_specificPattern = SpecificPattern::AnchoredWordList;
+            return true;
+        };
+
         if (tryExtractAtom())
             return;
 
         if (m_pattern.eitherUnicode())
+            return;
+
+        if (tryExtractAnchoredWordList())
             return;
 
         if (tryExtractSpaces())

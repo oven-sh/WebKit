@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "Options.h"
+#include "CompilerHooks.h"
 
 #include "CPU.h"
 #include "JITOperationValidation.h"
@@ -728,6 +729,8 @@ static inline void NODELETE disableAllWasmOptions()
     Options::useWasmTailCalls() = false;
 }
 
+CompilerHooks g_compilerHooks;
+
 static inline void NODELETE disableAllJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
@@ -806,6 +809,20 @@ void Options::notifyOptionsChanged()
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
 
+    if (Options::compileMainScriptAheadOfTime())
+        Options::useAOT() = true;
+
+    // AOT code is compiled on the assumption that the intrinsics cannot change.
+    if (Options::useAOT())
+        Options::useImmutableIntrinsics() = true;
+
+    // AOT code only matches the bytecode it was compiled from, so the run must generate bytecode the same way.
+    if (Options::aotImagePath() || Options::compileMainScriptAheadOfTime()) {
+        Options::resolveAllScopeSlotsStatically() = true;
+        Options::evaluateObjectLiteralValuesFirst() = true;
+        Options::definePlainInstanceFieldsInConstructor() = true;
+    }
+
 #if !ENABLE(OFFLINE_ASM_ALT_ENTRY)
     if (Options::useGdbJITInfo())
         dataLogLn("useGdbJITInfo should be used with OFFLINE_ASM_ALT_ENTRY");
@@ -877,8 +894,19 @@ void Options::notifyOptionsChanged()
     // At initialization time, we may decide that useJIT should be false for any
     // number of reasons (including failing to allocate JIT memory), and therefore,
     // will / should not be able to enable any JIT related services.
+#if USE(BUN_JSC_ADDITIONS)
+    if (!g_compilerHooks.areInstalled())
+        Options::useJIT() = false;
+    // A program that was compiled ahead of time runs with the JIT off. But the build has not seen a pattern that is put together at
+    // run time, and the Yarr interpreter is about five times slower, so those are still compiled. That takes executable memory
+    // (VM::canUseAssembler()) and nothing else: to the rest of the engine, the JIT is off.
+    bool useRegExpJITWithoutJIT = Options::useAOT() && Options::useRegExpJIT() && g_compilerHooks.compileRegExp;
+#else
+    bool useRegExpJITWithoutJIT = false;
+#endif
     if (!Options::useJIT()) {
         disableAllJITOptions();
+        Options::useRegExpJIT() = useRegExpJITWithoutJIT;
 #if OS(DARWIN)
         // If we don't know what the sandbox policy is on mach exception handler use is, we'll
         // take the default behavior of blocking its use if the JIT is disabled. JIT disablement

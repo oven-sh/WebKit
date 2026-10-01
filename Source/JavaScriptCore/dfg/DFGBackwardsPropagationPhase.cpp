@@ -310,6 +310,11 @@ private:
         case Check:
         case CheckVarargs:
             break;
+
+        case CheckSoundType:
+            // Every number has the same tag, so this only tells numbers from other things.
+            node->child1()->mergeFlags(NodeBytecodeUsesAsOther);
+            break;
             
         case ValueBitNot:
         case ArithBitNot: {

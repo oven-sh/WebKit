@@ -58,6 +58,9 @@ public:
         processInvariants();
 
         propagateToFixpoint();
+
+        while (seedPredictionsFromSoundTypeChecks())
+            propagateToFixpoint();
         
         m_pass = RareCasePass;
         propagateToFixpoint();
@@ -82,6 +85,23 @@ public:
     }
     
 private:
+    // A value that profiling says nothing about, and that flows into a sound type check, is predicted to be what the check
+    // lets through. This runs on a fixpoint so that it never widens a prediction that profiling or propagation can provide.
+    bool seedPredictionsFromSoundTypeChecks()
+    {
+        bool changed = false;
+        for (Node* check : m_soundTypeChecks) {
+            Node* value = check->child1().node();
+            if (value->prediction() != SpecNone)
+                continue;
+            SpeculatedType type = speculationFromSoundTypeMask(check->soundTypeMask());
+            if (value->op() == GetLocal)
+                changed |= value->variableAccessData()->predict(type);
+            changed |= value->predict(type);
+        }
+        return changed;
+    }
+
     void propagateToFixpoint()
     {
         unsigned counter = 0;
@@ -1707,6 +1727,11 @@ private:
             break;
         }
             
+        case CheckSoundType: {
+            m_soundTypeChecks.append(m_currentNode);
+            break;
+        }
+
         case AtomicsIsLockFree: {
             setPrediction(SpecBoolean);
             break;
@@ -1963,6 +1988,7 @@ private:
     }
 
     Vector<Node*> m_dependentNodes;
+    Vector<Node*> m_soundTypeChecks;
     Vector<SpeculatedType, 16> m_tupleSpeculations;
     Node* m_currentNode;
     bool m_changed { false };

@@ -117,7 +117,15 @@ void StringStats::printStats()
 
 DEFINE_COMPACT_ALLOCATOR_WITH_HEAP_IDENTIFIER(StringImpl);
 
-StringImpl::StaticStringImpl StringImpl::s_emptyAtomString("", StringImpl::StringAtom);
+void StringImpl::constructEmpty()
+{
+    static bool isConstructed = false;
+    if (isConstructed)
+        return;
+    isConstructed = true;
+    bmalloc::StaticRegion::mapBss();
+    new (NotNull, emptyAsStaticStringImpl()) StaticStringImpl("", StringAtom);
+}
 
 StringImpl::~StringImpl()
 {

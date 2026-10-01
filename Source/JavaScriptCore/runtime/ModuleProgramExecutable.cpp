@@ -26,11 +26,14 @@
 #include "config.h"
 #include "ModuleProgramExecutable.h"
 
+#include "AOTImage.h"
 #include "CodeCache.h"
 #include "Debugger.h"
 #include "Error.h"
 #include "FunctionExecutable.h"
 #include "JSModuleRecord.h"
+#include "ModuleProgramCodeBlock.h"
+#include "StaticHeap.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakInlines.h"
@@ -96,6 +99,15 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     }
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
+#if ENABLE(FTL_JIT)
+    if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables()
+        && AOT::Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
+        if (auto*& slot = StaticHeap::topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
+            slot = this;
+            setUsesStaticExecutables();
+        }
+    }
+#endif
     // The symbol table and the function declarations' executables are made once and stay for as long as the executable
     // does, whatever happens to its code (ScriptExecutable::clearCode, releaseUnlinkedCodeIfRecoverable). The
     // declarations' code is shared by every record of the executable and the optimizing tiers treat the scope of a symbol
@@ -107,14 +119,14 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     if (SymbolTable* clone = m_moduleEnvironmentSymbolTable.get()) {
         // It is the clone of the constant of the code that was fetched again from now on (as for the other scopes of a
         // body that can be suspended, CodeBlock::setConstantRegisters). The environment is laid out by it either way.
-        if (clone->clonedFrom() != symbolTable) {
+        if (clone != symbolTable && clone->clonedFrom() != symbolTable) {
             if (clone->isCloneOfScopePartOf(*symbolTable))
                 clone->adoptOriginal(vm, *symbolTable);
             else
                 clone->invalidateInferencesOfAbandonedClone(vm);
         }
     } else {
-        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->isSharedAcrossRealms() ? symbolTable : symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
         m_codeGenerationMode = codeGenerationMode;
         Locker locker { cellLock() };
         m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
@@ -157,6 +169,8 @@ bool ModuleProgramExecutable::ImportedBinding::operator==(const ImportedBinding&
 FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigned index)
 {
     if (FunctionExecutable* executable = m_functionDeclarations[index].get())
+        return executable;
+    if (FunctionExecutable* executable = unlinkedCodeBlock()->executableOfFunctionDecl(index))
         return executable;
     return linkFunctionDeclaration(vm, index, unlinkedCodeBlock()->functionDecl(index));
 }
@@ -212,6 +226,10 @@ void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
         return;
     if (!Options::useRunOnceCodeRelease() || !canReleaseLinkedCodeNow(vm))
         return;
+#if ENABLE(FTL_JIT)
+    if (CodeBlock* codeBlock = this->codeBlock())
+        codeBlock->releaseAOTData();
+#endif
     clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()), ClearCode::KeepWhatNeedsParsing);
 }
 
@@ -229,6 +247,8 @@ void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
 
 void ModuleProgramExecutable::destroy(JSCell* cell)
 {
+    if (auto* executable = static_cast<ModuleProgramExecutable*>(cell); executable->usesStaticExecutables())
+        StaticHeap::topLevelExecutableOfModuleWithProvider(executable->vm(), executable->source().provider()) = nullptr;
     static_cast<ModuleProgramExecutable*>(cell)->ModuleProgramExecutable::~ModuleProgramExecutable();
 }
 

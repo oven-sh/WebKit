@@ -32,6 +32,8 @@
 #include "config.h"
 #include "JSGlobalObject.h"
 
+#include "AOTRuntime.h"
+
 #include "AggregateError.h"
 #include "SuppressedError.h"
 #include "InternalFieldTuple.h"
@@ -96,6 +98,7 @@
 #include "GetterSetter.h"
 #include "GlobalObjectMethodTable.h"
 #include "HeapIterationScope.h"
+#include "ImmutableIntrinsics.h"
 #include "ImportMap.h"
 #include "IntlCache.h"
 #include "IntlCollator.h"
@@ -989,6 +992,10 @@ JSGlobalObject::~JSGlobalObject()
 
     if (m_debugger)
         m_debugger->detach(this, Debugger::GlobalObjectIsDestructing);
+#if ENABLE(FTL_JIT)
+    if (m_aotInstance)
+        AOT::Instance::destroy(m_aotInstance);
+#endif
 }
 
 void JSGlobalObject::destroy(JSCell* cell)
@@ -1098,6 +1105,9 @@ void JSGlobalObject::init(VM& vm)
     ASSERT(vm.traps().isDeferringTermination());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!vm.m_firstRealm)
+        vm.m_firstRealm = this;
+    MakingBuiltinsFor makingBuiltinsFor(vm, this);
 
     convertToDictionary(vm);
 
@@ -1468,6 +1478,7 @@ void JSGlobalObject::init(VM& vm)
     m_regExpStringIteratorStructure.set(vm, this, JSRegExpStringIterator::createStructure(vm, this, regExpStringIteratorPrototype));
 
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::sentinelString)].set(vm, this, vm.smallStrings.sentinelString());
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::orderedHashTableSentinel)].set(vm, this, vm.orderedHashTableSentinel());
 
     JSFunction* defaultPromiseThen = JSFunction::create(vm, this, 2, vm.propertyNames->then.impl(), promiseProtoFuncThen, ImplementationVisibility::Public, PromisePrototypeThenIntrinsic);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::defaultPromiseThen)].set(vm, this, defaultPromiseThen);
@@ -2021,6 +2032,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::cloneObject)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "cloneObject"_s, globalFuncCloneObject, ImplementationVisibility::Private));
         });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::noteClass)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "noteClass"_s, globalFuncNoteClass, ImplementationVisibility::Private));
+        });
 #if USE(BUN_JSC_ADDITIONS)
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::enqueueJob)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "enqueueJob"_s, enqueueJob, ImplementationVisibility::Public));
@@ -2122,6 +2136,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::typedArrayFromFast)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "typedArrayViewTypedArrayFromFast"_s, typedArrayViewPrivateFuncTypedArrayFromFast, ImplementationVisibility::Private));
         });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::arrayProtoValues)].initLater([] (const Initializer<JSCell>& init) {
+        init.set(init.owner->arrayProtoValuesFunction());
+    });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::arrayFromFastWithoutMapFn)].initLater([] (const Initializer<JSCell>& init) {
         init.set(JSFunction::create(init.vm, init.owner, 2, "arrayFromFastWithoutMapFn"_s, arrayConstructorPrivateFromFastWithoutMapFn, ImplementationVisibility::Private));
     });
@@ -2319,6 +2336,13 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 #endif // ENABLE(WEBASSEMBLY)
 
+    // (This has to come before what follows, which depends on the resulting structures.)
+    if (vm.useImmutableIntrinsics) [[unlikely]] {
+        makeIntrinsicsImmutable();
+        for (JSObject* prototype : { static_cast<JSObject*>(arrayIteratorPrototype), static_cast<JSObject*>(mapIteratorPrototype), static_cast<JSObject*>(setIteratorPrototype), static_cast<JSObject*>(m_stringIteratorPrototype.get()) })
+            prototype->makePropertiesImmutable(this);
+    }
+
     // Detect property change.
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, arrayIteratorPrototype, vm.propertyNames->next), m_arrayIteratorProtocolWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, this->arrayPrototype(), vm.propertyNames->iteratorSymbol), m_arrayIteratorProtocolWatchpointSet);
@@ -2431,6 +2455,13 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     if (Options::alwaysHaveABadTime()) [[unlikely]]
         this->haveABadTime(vm);
+
+#if ENABLE(FTL_JIT)
+    // Its builtin functions have AOT code (StaticHeap::engineBuiltinFor()), which finds the instance through the VM. Loading a module of
+    // the program would make the instance, but a Worker may run without loading one.
+    if (vm.m_firstRealm == this && vm.m_firstRealmHasBuiltinsOfStaticHeap)
+        AOT::Instance::ensure(this);
+#endif
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -2881,6 +2912,11 @@ void JSGlobalObject::haveABadTime(VM& vm)
 
     if (isHavingABadTime())
         return;
+
+#if ENABLE(FTL_JIT)
+    if (m_aotInstance)
+        m_aotInstance->didHaveABadTime();
+#endif
 
     DeferGC deferGC(vm);
 
@@ -3439,6 +3475,46 @@ void JSGlobalObject::tryInstallSpeciesWatchpoint(JSObject* prototype, JSObject* 
     speciesWatchpoint->install(vm);
 }
 
+void JSGlobalObject::makeIntrinsicsImmutable()
+{
+    VM& vm = this->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    static constexpr ASCIILiteral names[] = {
+        "Object"_s, "Function"_s, "Array"_s, "String"_s, "Number"_s, "Boolean"_s, "Symbol"_s, "RegExp"_s, "Promise"_s, "Map"_s, "Set"_s,
+        "Math"_s, "JSON"_s, "Reflect"_s, "Date"_s, "WeakMap"_s, "WeakSet"_s, "ArrayBuffer"_s,
+        // Of these, only the variable. (Programs do assign to Error.stackTraceLimit and Error.prepareStackTrace.)
+        "Error"_s, "TypeError"_s, "RangeError"_s, "SyntaxError"_s, "ReferenceError"_s, "EvalError"_s, "URIError"_s, "AggregateError"_s,
+        "Uint8Array"_s, "DataView"_s, "Proxy"_s, "WeakRef"_s, "BigInt"_s, "parseInt"_s, "parseFloat"_s, "isNaN"_s, "isFinite"_s,
+        "encodeURIComponent"_s, "decodeURIComponent"_s, "encodeURI"_s, "decodeURI"_s,
+    };
+    constexpr unsigned numberWhoseObjectsAreFixed = 18;
+    RELEASE_ASSERT(names[numberWhoseObjectsAreFixed - 1] == "ArrayBuffer"_s);
+    for (unsigned i = 0; i < std::size(names); ++i) {
+        Identifier identifier = Identifier::fromString(vm, names[i]);
+        JSValue value = get(this, identifier);
+        scope.assertNoException();
+        JSObject* object = value.getObject();
+        RELEASE_ASSERT(object);
+        if (i < numberWhoseObjectsAreFixed) {
+            object->makePropertiesImmutable(this);
+            JSValue prototype = object->isCallable() ? object->get(this, vm.propertyNames->prototype) : JSValue();
+            scope.assertNoException();
+            if (JSObject* prototypeObject = prototype ? prototype.getObject() : nullptr)
+                prototypeObject->makePropertiesImmutable(this);
+        }
+        putDirect(vm, identifier, value, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+    }
+    m_iteratorPrototype->makePropertiesImmutable(this);
+    // (Without JSObject::preventExtensions()'s way of seeing to it that no element is added, which every array would pay for. One
+    // that has no elements to begin with asks whether it may have any.)
+    JSObject* objectPrototype = this->objectPrototype();
+    Structure* oldStructure = objectPrototype->structure();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    objectPrototype->setStructure(vm, Structure::preventExtensionsTransition(vm, oldStructure, &deferred));
+
+    m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names);
+}
+
 void JSGlobalObject::installSaneChainWatchpoints()
 {
     ASSERT(!arrayPrototype()->structure()->mayInterceptIndexedAccesses());
@@ -3803,10 +3879,10 @@ static bool incumbentRealmIs(VM& vm, JSGlobalObject* target)
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         if (visitor->isNativeCalleeFrame())
             return IterationStatus::Continue;
-        if (auto* codeBlock = visitor->codeBlock()) {
-            if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()); functionExecutable && functionExecutable->isBuiltinFunction())
+        if (visitor->hasCode()) {
+            if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(visitor->ownerExecutable()); functionExecutable && functionExecutable->isBuiltinFunction())
                 return IterationStatus::Continue;
-            if (codeBlock->globalObject() == target) {
+            if (visitor->lexicalGlobalObject(vm) == target) {
                 result = true;
                 return IterationStatus::Done;
             }

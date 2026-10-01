@@ -469,6 +469,14 @@ private:
                 break;
             }
 
+            case CheckSoundType: {
+                if (!m_state.forNode(node->child1()).provesSoundTypeMask(node->soundTypeMask()))
+                    break;
+                node->remove(m_graph);
+                eliminated = true;
+                break;
+            }
+
             case CheckIdent: {
                 UniquedStringImpl* uid = node->uidOperand();
                 const UniquedStringImpl* constantUid = nullptr;

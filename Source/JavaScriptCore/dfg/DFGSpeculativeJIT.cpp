@@ -10612,6 +10612,51 @@ void SpeculativeJIT::compileCheckNotEmpty(Node* node)
     noResult(node);
 }
 
+void SpeculativeJIT::compileCheckSoundType(Node* node)
+{
+    JSValueOperand value(this, node->child1());
+    GPRTemporary scratch(this);
+    GPRReg valueGPR = value.gpr();
+    GPRReg scratchGPR = scratch.gpr();
+
+    unsigned mask = node->soundTypeMask();
+    if (soundTypeMaskNamesTypedArray(mask)) {
+        silentSpillAllRegisters(scratchGPR);
+        callOperationWithoutExceptionCheck(operationSoundTypeMaskAccepts, scratchGPR, valueGPR, TrustedImm32(mask));
+        silentFillAllRegisters();
+        speculationCheck(BadType, JSValueSource(), nullptr, branchTest32(Zero, scratchGPR));
+        noResult(node);
+        return;
+    }
+
+    // There is no need to test for a tag that the value is known not to have.
+    SpeculatedType provenType = m_state.forNode(node->child1()).m_type;
+    for (unsigned tag = 1; tag < SoundTypeAll; tag <<= 1) {
+        if (!(provenType & speculationFromSoundTypeMask(tag)))
+            mask &= ~tag;
+    }
+    if (!mask) {
+        terminateSpeculativeExecution(BadType, JSValueSource(valueGPR), node->child1());
+        noResult(node);
+        return;
+    }
+
+    JumpList fail;
+    JumpList undecided;
+    emitSoundTypeCheck(valueGPR, scratchGPR, mask, fail, undecided);
+    speculationCheck(BadType, JSValueSource(valueGPR), node->child1(), fail);
+    if (!undecided.empty()) {
+        Jump done = jump();
+        undecided.link(this);
+        silentSpillAllRegisters(scratchGPR);
+        callOperationWithoutExceptionCheck(operationSoundTypeTag, scratchGPR, valueGPR);
+        silentFillAllRegisters();
+        speculationCheck(BadType, JSValueSource(valueGPR), node->child1(), branchTest32(Zero, scratchGPR, TrustedImm32(mask)));
+        done.link(this);
+    }
+    noResult(node);
+}
+
 void SpeculativeJIT::compileCheckStructure(Node* node)
 {
     switch (node->child1().useKind()) {
@@ -11259,6 +11304,7 @@ void SpeculativeJIT::compileFunctionToString(Node* node)
 
     getExecutable(*this, function.gpr(), executable.gpr());
     Jump isNativeExecutable = branch8(Equal, Address(executable.gpr(), JSCell::typeInfoTypeOffset()), TrustedImm32(NativeExecutableType));
+    slowCases.append(branch8(Equal, Address(executable.gpr(), JSCell::typeInfoTypeOffset()), TrustedImm32(ShortFunctionExecutableType)));
 
     loadPtr(Address(executable.gpr(), FunctionExecutable::offsetOfRareData()), result.gpr());
     slowCases.append(branchTestPtr(Zero, result.gpr()));

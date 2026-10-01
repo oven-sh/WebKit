@@ -29,6 +29,7 @@
 #include "config.h"
 #include "VM.h"
 
+#include "AOTRuntime.h"
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"
@@ -210,7 +211,7 @@ JSLock& VM::apiLock() { return m_apiLock.get(); }
 #if ENABLE(ASSEMBLER)
 static bool enableAssembler()
 {
-    if (!Options::useJIT())
+    if (!Options::useJIT() && !Options::useRegExpJIT())
         return false;
 
     auto canUseJITString = unsafeSpan(getenv("JavaScriptCoreUseJIT"));
@@ -371,6 +372,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     evalExecutableStructure.setWithoutWriteBarrier(EvalExecutable::createStructure(*this, nullptr, jsNull()));
     programExecutableStructure.setWithoutWriteBarrier(ProgramExecutable::createStructure(*this, nullptr, jsNull()));
     functionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructure(*this, nullptr, jsNull()));
+    shortFunctionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructureOfShortForm(*this, nullptr, jsNull()));
 #if ENABLE(WEBASSEMBLY)
     pinballCompletionStructure.setWithoutWriteBarrier(PinballCompletion::createStructure(*this, nullptr, jsNull()));
     webAssemblyStreamingContextStructure.setWithoutWriteBarrier(JSWebAssemblyStreamingContext::createStructure(*this, nullptr, jsNull()));
@@ -417,6 +419,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     evalCodeBlockStructure.setWithoutWriteBarrier(EvalCodeBlock::createStructure(*this, nullptr, jsNull()));
     functionCodeBlockStructure.setWithoutWriteBarrier(FunctionCodeBlock::createStructure(*this, nullptr, jsNull()));
     bigIntStructure.setWithoutWriteBarrier(JSBigInt::createStructure(*this, nullptr, jsNull()));
+    StaticHeap::install(*this); // Does nothing but in the first VM of a process that has one mapped.
     m_orderedHashTableDeletedValue.setWithoutWriteBarrier(JSOrderedHashMap::createDeletedValue(*this));
     m_orderedHashTableSentinel.setWithoutWriteBarrier(JSOrderedHashMap::createSentinel(*this));
     m_sortScratchSentinel.setWithoutWriteBarrier(JSCellButterfly::create(*this, CopyOnWriteArrayWithContiguous, 0));
@@ -571,6 +574,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // ENABLE(FTL_JIT)
         m_sharedJITStubs = makeUnique<SharedJITStubSet>();
         getBoundFunction(/* isJSFunction */ true, SourceTaintedOrigin::Untainted);
+    } else if (Options::useRegExpJIT()) {
+        // The code of a regular expression calls thunks of its own, which are made when they are first asked for. (So this leaves
+        // out initialize(), which makes the thunks that compiled JavaScript uses.)
+        jitStubs = makeUnique<JITThunks>();
     }
 #endif // ENABLE(JIT)
 
@@ -680,6 +687,7 @@ VM::~VM()
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
     heap.lastChanceToFinalize();
+    StaticHeap::willDestroy(*this);
 
     while (!m_microtaskQueues.isEmpty())
         m_microtaskQueues.begin()->remove();
@@ -767,6 +775,21 @@ void VM::setLastStackTop(const Thread& thread)
     m_lastStackTop = thread.savedLastStackTop();
     auto& stack = thread.stack();
     RELEASE_ASSERT(stack.contains(m_lastStackTop), 0x5510, m_lastStackTop, stack.origin(), stack.end());
+}
+
+void* VM::operator new(size_t size)
+{
+    static std::atomic<bool> isTaken { false };
+    static_assert(sizeof(VM) <= bmalloc::StaticRegion::offsetOfGlobalObjectInBss - bmalloc::StaticRegion::offsetOfVMInBss);
+    if (StaticHeap::isMapped() && !isTaken.exchange(true))
+        return StaticHeap::addressOfVM();
+    return fastMalloc(size);
+}
+
+void VM::operator delete(void* pointer)
+{
+    if (!StaticHeap::contains(pointer))
+        fastFree(pointer);
 }
 
 Ref<VM> VM::createContextGroup(HeapType heapType)
@@ -2096,6 +2119,18 @@ void VM::executeEntryScopeServicesOnExit()
     clearScratchBuffers();
 }
 
+JSGlobalObject* VM::topFrameGlobalObject()
+{
+    JSGlobalObject* globalObject = nullptr;
+    StackVisitor::visit(topCallFrame, *this, [&](StackVisitor& visitor) {
+        globalObject = visitor->lexicalGlobalObject(*this);
+        return IterationStatus::Done;
+    });
+    if (!globalObject && entryScope)
+        globalObject = entryScope->globalObject();
+    return globalObject;
+}
+
 JSGlobalObject* VM::deprecatedVMEntryGlobalObject(JSGlobalObject* globalObject) const
 {
     if (entryScope)
@@ -2194,6 +2229,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(evalExecutableStructure);
     visitor.append(programExecutableStructure);
     visitor.append(functionExecutableStructure);
+    visitor.append(shortFunctionExecutableStructure);
 #if ENABLE(WEBASSEMBLY)
     visitor.append(pinballCompletionStructure);
     visitor.append(webAssemblyCalleeGroupStructure);

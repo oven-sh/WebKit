@@ -54,7 +54,7 @@ void MicrotaskCall::relink(VM& vm, JSFunction* function)
     auto* newCodeBlock = vm.interpreter.prepareForMicrotaskCall(*this, function);
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
     m_codeBlock = newCodeBlock;
-    m_numParameters = newCodeBlock->numParameters();
+    m_numParameters = newCodeBlock ? newCodeBlock->numParameters() : function->jsExecutable()->parameterCount() + 1;
 }
 
 void MicrotaskCall::unlinkOrUpgradeImpl(VM&, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock)

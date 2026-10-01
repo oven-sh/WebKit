@@ -25,6 +25,9 @@
 
 #include "config.h"
 
+#include "AOTCompiler.h"
+#include "AOTImage.h"
+#include "CompilerHooks.h"
 #include "CodeBlock.h"
 #include "CompilationResult.h"
 #include "Debugger.h"
@@ -42,6 +45,7 @@
 #include "ModuleProgramCodeBlock.h"
 #include "ParserError.h"
 #include "ProgramCodeBlock.h"
+#include "StaticHeap.h"
 #include "VMInlines.h"
 
 namespace JSC {
@@ -90,6 +94,8 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
     };
 
     switch (type()) {
+    case ShortFunctionExecutableType:
+        RELEASE_ASSERT_NOT_REACHED();
     case FunctionExecutableType: {
         FunctionExecutable* executable = static_cast<FunctionExecutable*>(this);
         executable->m_codeBlockForCall.clear();
@@ -202,11 +208,14 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
         break;
     }
 
-    auto& clearableCodeSet = Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace());
-    if (hasClearableCode())
-        clearableCodeSet.add(this);
-    else
-        clearableCodeSet.remove(this);
+    // (An executable that was made when the program was built is in no set of cells of the collector's: its code stays.)
+    if (!StaticHeap::contains(this)) {
+        auto& clearableCodeSet = Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace());
+        if (hasClearableCode())
+            clearableCodeSet.add(this);
+        else
+            clearableCodeSet.remove(this);
+    }
 
     if (genericCodeBlock) {
         RELEASE_ASSERT(genericCodeBlock->ownerExecutable() == this);
@@ -230,12 +239,31 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
     vm.writeBarrier(this);
 }
 
+void ScriptExecutable::installAOTCode(VM& vm, CodeSpecializationKind kind, Ref<JITCode>&& code)
+{
+    ASSERT(type() == FunctionExecutableType && !uncheckedDowncast<FunctionExecutable>(this)->codeBlockFor(kind));
+    switch (kind) {
+    case CodeSpecializationKind::CodeForCall:
+        m_jitCodeForCall = WTF::move(code);
+        m_jitCodeForCallWithArityCheck = nullptr;
+        break;
+    case CodeSpecializationKind::CodeForConstruct:
+        m_jitCodeForConstruct = WTF::move(code);
+        m_jitCodeForConstructWithArityCheck = nullptr;
+        break;
+    }
+    Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()).add(this);
+    vm.writeBarrier(this);
+}
+
 bool ScriptExecutable::hasClearableCode() const
 {
-    if (m_jitCodeForCall
-        || m_jitCodeForConstruct
-        || m_jitCodeForCallWithArityCheck
-        || m_jitCodeForConstructWithArityCheck)
+    if (isShortForm())
+        return false;
+    if (inFull()->m_jitCodeForCall
+        || inFull()->m_jitCodeForConstruct
+        || inFull()->m_jitCodeForCallWithArityCheck
+        || inFull()->m_jitCodeForConstructWithArityCheck)
         return true;
 
     if (structure()->classInfoForCells() == FunctionExecutable::info()) {
@@ -292,6 +320,17 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         RELEASE_ASSERT(kind == CodeSpecializationKind::CodeForCall);
         RELEASE_ASSERT(!executable->m_codeBlock);
         RELEASE_ASSERT(!function);
+#if ENABLE(FTL_JIT)
+        if (AOT::Image::hasAny() || Options::aotImagePath()) {
+            if (auto code = AOT::findInImage(executable, kind, executable->unlinkedCodeBlock(), scope)) {
+                ProgramCodeBlock* codeBlock = ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope, CodeBlock::LinkMode::ForCodeFromImage);
+                RETURN_IF_EXCEPTION(throwScope, nullptr);
+                if (codeBlock)
+                    codeBlock->installAOTCode(AOT::codeFromImage(code, executable->unlinkedCodeBlock()));
+                return codeBlock;
+            }
+        }
+#endif
         RELEASE_AND_RETURN(throwScope, ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope));
     }
 
@@ -304,6 +343,22 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->getUnlinkedCodeBlock(globalObject);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         ASSERT(executable->unlinkedCodeBlock());
+#if ENABLE(FTL_JIT)
+        if (AOT::Image::hasAny() || Options::aotImagePath()) {
+            if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
+                ModuleProgramCodeBlock* codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
+                RETURN_IF_EXCEPTION(throwScope, nullptr);
+                if (codeBlock)
+                    codeBlock->installAOTCode(AOT::codeFromImage(code, unlinkedCodeBlock));
+                return codeBlock;
+            }
+        }
+#endif
+        // Running it in another tier requires the instructions, which are not available.
+        if (StaticHeap::contains(unlinkedCodeBlock) && StaticHeap::payloadIsOmitted()) [[unlikely]] {
+            throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and the executable was built without its bytecode. The compiled code cannot be used in this context, and there is no other code to run."_s));
+            return nullptr;
+        }
         RELEASE_AND_RETURN(throwScope, ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
     }
 
@@ -311,6 +366,14 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     RELEASE_ASSERT(function);
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
+    // The constructor of a class is compiled ahead of time to construct with. All that its code to be called with does is throw this.
+    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->unlinkedExecutable()) && StaticHeap::payloadIsOmitted()) [[unlikely]] {
+        String name = executable->name().string();
+        throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
+        return nullptr;
+    }
+    // An executable in the short form only has its AOT code.
+    RELEASE_ASSERT(!executable->isShortForm());
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
     // We continue using the same CodeGenerationMode for Generators because live generator objects can
@@ -319,6 +382,20 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
         pinCodeGenerationModeForResumableBody();
     }
+#if ENABLE(FTL_JIT)
+    // What StaticHeap left in the payload stays there, if there is code and enough is known of it to run it.
+    if (executable->m_unlinkedExecutable->isCached() && StaticHeap::contains(executable->m_unlinkedExecutable.get())) {
+        if (auto code = AOT::findInImage(executable, kind, nullptr, scope); code && AOT::canRunWithoutUnlinkedCode(globalObject, code)) {
+            executable->recordParse(
+                executable->m_unlinkedExecutable->features(),
+                executable->m_unlinkedExecutable->lexicallyScopedFeatures(),
+                executable->m_unlinkedExecutable->hasCapturedVariables());
+            throwScope.release();
+            AOT::install(vm, executable, kind, nullptr, globalObject, AOT::codeOfFunctionFromImage(code, kind));
+            return nullptr;
+        }
+    }
+#endif
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = 
         executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
             vm, executable->source(), kind, codeGenerationMode, error, 
@@ -333,6 +410,16 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;
     }
+#if ENABLE(FTL_JIT)
+    if (AOT::Image::hasAny() || Options::aotImagePath()) {
+        if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
+            // Nothing, and no exception: it has code, which wants no CodeBlock.
+            throwScope.release();
+            AOT::install(vm, executable, kind, unlinkedCodeBlock, globalObject, AOT::codeFromImage(code, unlinkedCodeBlock));
+            return nullptr;
+        }
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
 }
 
@@ -391,7 +478,7 @@ static void setupLLInt(CodeBlock* codeBlock)
 static void setupJIT(VM& vm, CodeBlock* codeBlock)
 {
 #if ENABLE(JIT)
-    CompilationResult result = JIT::compileSync(vm, codeBlock, JITCompilationMustSucceed);
+    CompilationResult result = g_compilerHooks.compileBaselineNow(vm, codeBlock, JITCompilationMustSucceed);
     RELEASE_ASSERT(result == CompilationResult::CompilationSuccessful);
 #else
     UNUSED_PARAM(vm);
@@ -414,15 +501,19 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     CodeBlock* codeBlock = newCodeBlockFor(kind, function, scope);
     RETURN_IF_EXCEPTION(throwScope, void());
 
-    ASSERT(codeBlock);
     resultCodeBlock = codeBlock;
+    if (!codeBlock) {
+        ASSERT(hasJITCodeFor(kind));
+        return;
+    }
 
     if (Options::validateBytecode())
         codeBlock->validate();
 
-    bool installedUnlinkedBaselineCode = false;
+    // newCodeBlockFor() found it code in an image.
+    bool installedUnlinkedBaselineCode = codeBlock->jitType() == JITType::AOTJIT;
 #if ENABLE(JIT)
-    if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
+    if (RefPtr<BaselineJITCode> baselineRef = installedUnlinkedBaselineCode ? nullptr : codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
         codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
         installedUnlinkedBaselineCode = true;
     }
@@ -440,6 +531,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 ScriptExecutable* ScriptExecutable::topLevelExecutable()
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->topLevelExecutable();
     default:
@@ -479,6 +571,7 @@ auto ScriptExecutable::ensureTemplateObjectMapImpl(std::unique_ptr<TemplateObjec
 auto ScriptExecutable::ensureTemplateObjectMap(VM& vm) -> TemplateObjectMap&
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return static_cast<FunctionExecutable*>(this)->ensureTemplateObjectMap(vm);
     case EvalExecutableType:
@@ -526,6 +619,7 @@ unsigned ScriptExecutable::typeProfilingEndOffset() const
 int ScriptExecutable::lastLine() const
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->lastLine();
     default:
@@ -537,6 +631,7 @@ int ScriptExecutable::lastLine() const
 unsigned ScriptExecutable::endColumn() const
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->endColumn();
     default:

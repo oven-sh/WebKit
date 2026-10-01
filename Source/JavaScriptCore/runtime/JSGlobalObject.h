@@ -236,11 +236,16 @@ FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(DECLARE_SIMPLE_BUILTIN_TYPE)
 
 #undef DECLARE_SIMPLE_BUILTIN_TYPE
 
+namespace AOT {
+struct Instance;
+}
+
 class JSGlobalObject : public JSSegmentedVariableObject {
 private:
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* const m_vm;
+    AOT::Instance* m_aotInstance { nullptr }; // The per-realm data of AOT code. Created when there is such code.
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
@@ -703,6 +708,7 @@ public:
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
+    Vector<EncodedJSValue> m_immutableIntrinsics;
     WeakPtr<ConsoleClient> m_consoleClient;
     Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
     
@@ -1148,11 +1154,15 @@ public:
 
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
     static constexpr ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpointSet); }
     static constexpr ptrdiff_t offsetOfArrayIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_arrayIteratorProtocolWatchpointSet); }
+    static constexpr ptrdiff_t offsetOfOriginalArrayStructureForIndexingShape() { return OBJECT_OFFSETOF(JSGlobalObject, m_originalArrayStructureForIndexingShape); }
     static constexpr ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpointSet); }
     static constexpr ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
     static constexpr ptrdiff_t offsetOfPerformProxyObjectHasFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_performProxyObjectHasFunction); }
@@ -1270,6 +1280,15 @@ public:
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
     bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
+    // For VM::useImmutableIntrinsics. Makes the initial properties of the language's built-in objects immutable, together with the
+    // global variables that hold those objects. A program that is compiled ahead of time can then rely on the identity of
+    // Math.floor or [].push. New properties can still be added to every object except Object.prototype, so that polyfills for newer
+    // language features work. Object.prototype is not extensible, which guarantees that a property that no object on a prototype
+    // chain has is really absent.
+    JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
+    // The values that it made immutable, indexed by their ImmutableIntrinsics numbers. (The objects stay reachable through their
+    // properties, so this does not have to keep them alive.)
+    std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();
 
     bool isRegExpRecompiled() const

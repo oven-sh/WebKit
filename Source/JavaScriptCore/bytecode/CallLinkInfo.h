@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AOTFunction.h"
 #include "ArrayProfile.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrame.h"
@@ -564,6 +565,12 @@ inline JSCell* CallLinkInfo::ownerForSlowPath(CallFrame* calleeFrame)
 {
     if (m_owner)
         return m_owner;
+
+#if ENABLE(FTL_JIT)
+    // (Between the two there is the frame of a stub, which has nothing to say.)
+    if (CodeBlock* codeBlock = AOT::codeBlockOfCaller(calleeFrame))
+        return std::bit_cast<JSCell*>(codeBlock);
+#endif
 
     // Right now, IC (Getter, Setter, Proxy IC etc.) / WasmToJS sets nullptr intentionally since we would like to share IC / WasmToJS thunk eventually.
     // However, in that case, each IC's data side will have CallLinkInfo.

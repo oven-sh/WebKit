@@ -28,8 +28,18 @@
 #include "ObjectAllocationProfile.h"
 
 #include "JSFunctionInlines.h"
+#include "StaticHeap.h"
 
 namespace JSC {
+
+template<typename Derived>
+inline void ObjectAllocationProfileBase<Derived>::replaceStructure(VM& vm, JSCell* owner, Structure* structure)
+{
+    ASSERT(m_structure && !structure->hasPolyProto());
+    m_allocator = subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator);
+    WTF::storeStoreFence();
+    m_structure.set(vm, owner, structure);
+}
 
 template<typename Derived>
 ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& vm, JSGlobalObject* globalObject, JSCell* owner, JSObject* prototype, unsigned inferredInlineCapacity, JSFunction* constructor, FunctionRareData* functionRareData)
@@ -50,7 +60,12 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
         // https://bugs.webkit.org/show_bug.cgi?id=177792
 
         executable = constructor->jsExecutable();
-
+    }
+    // What follows counts, in the executable, the prototypes that its functions create objects with. An executable in the static
+    // heap is read-only.
+    if (executable && StaticHeap::contains(executable))
+        executable = nullptr;
+    if (executable) {
         if (Structure* structure = executable->cachedPolyProtoStructure()) {
             RELEASE_ASSERT(structure->typeInfo().type() == FinalObjectType);
             m_allocator = Allocator();

@@ -56,7 +56,7 @@ std::pair<SourceTaintedOrigin, URL> sourceTaintedOriginFromStack(VM& vm, CallFra
     URL sourceURL;
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) -> IterationStatus {
 #if ENABLE(WEBASSEMBLY)
-        if (visitor->callFrame()->callee().isNativeCallee() && visitor->callFrame()->wasmInstance()) {
+        if (visitor->isNativeCalleeFrame() && visitor->callFrame()->wasmInstance()) {
             JSWebAssemblyInstance* instance = std::bit_cast<JSWebAssemblyInstance*>(*visitor->callFrame()->addressOfCodeBlock());
             result = std::max(result, instance->taintedness());
             if (result != SourceTaintedOrigin::KnownTainted)
@@ -90,7 +90,7 @@ SourceTaintedOrigin computeNewSourceTaintedOriginFromStack(VM& vm, CallFrame* ca
     SourceTaintedOrigin result = SourceTaintedOrigin::IndirectlyTaintedByHistory;
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) -> IterationStatus {
 #if ENABLE(WEBASSEMBLY)
-        if (visitor->callFrame()->callee().isNativeCallee() && visitor->callFrame()->wasmInstance()) {
+        if (visitor->isNativeCalleeFrame() && visitor->callFrame()->wasmInstance()) {
             JSWebAssemblyInstance* instance = std::bit_cast<JSWebAssemblyInstance*>(*visitor->callFrame()->addressOfCodeBlock());
             if (instance->taintedness() >= SourceTaintedOrigin::IndirectlyTainted) {
                 result = SourceTaintedOrigin::IndirectlyTainted;

@@ -309,6 +309,7 @@ namespace JSC { namespace DFG {
     macro(RecordRegExpCachedResult, NodeMustGenerate | NodeHasVarArgs) \
     macro(CheckIsConstant, NodeMustGenerate) \
     macro(CheckNotEmpty, NodeMustGenerate) \
+    macro(CheckSoundType, NodeMustGenerate) \
     macro(AssertNotEmpty, NodeMustGenerate) \
     macro(CheckBadValue, NodeMustGenerate) \
     macro(AssertInBounds, NodeMustGenerate) \

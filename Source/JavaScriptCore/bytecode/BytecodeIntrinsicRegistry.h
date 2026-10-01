@@ -62,6 +62,7 @@ enum class LinkTimeConstant : int32_t;
     macro(isCallable) \
     macro(isConstructor) \
     macro(isJSArray) \
+    macro(isEmpty) \
     macro(isProxyObject) \
     macro(isDerivedArray) \
     macro(isGenerator) \
@@ -155,8 +156,9 @@ enum class LinkTimeConstant : int32_t;
     macro(InternalMicrotaskAsyncFromSyncIteratorDone) \
 
 
-#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro) \
-    macro(orderedHashTableSentinel)
+// (Empty: a constant that is a cell belongs to one VM, so code that embeds it cannot be shared with another. See
+// LinkTimeConstant::orderedHashTableSentinel.)
+#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro)
 
 class BytecodeIntrinsicRegistry {
     WTF_MAKE_NONCOPYABLE(BytecodeIntrinsicRegistry);

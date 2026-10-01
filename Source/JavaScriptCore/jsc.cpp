@@ -22,6 +22,7 @@
 
 #include "config.h"
 
+#include "AOTFunction.h"
 #include "APICast.h"
 #include "ArrayBuffer.h"
 #include "AtomicsObject.h"
@@ -527,6 +528,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
 static JSC_DECLARE_HOST_FUNCTION(functionNoOSRExitFuzzing);
 static JSC_DECLARE_HOST_FUNCTION(functionOptimizeNextInvocation);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfDFGCompiles);
+static JSC_DECLARE_HOST_FUNCTION(functionIsAOTCompiled);
 static JSC_DECLARE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled);
 static JSC_DECLARE_HOST_FUNCTION(functionJSCOptions);
 static JSC_DECLARE_HOST_FUNCTION(functionReoptimizationRetryCount);
@@ -552,6 +554,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionFinalizationRegistryLiveCount);
 static JSC_DECLARE_HOST_FUNCTION(functionFinalizationRegistryDeadCount);
 static JSC_DECLARE_HOST_FUNCTION(functionIs32BitPlatform);
 static JSC_DECLARE_HOST_FUNCTION(functionCheckModuleSyntax);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTCompileAll);
 static JSC_DECLARE_HOST_FUNCTION(functionCheckScriptSyntax);
 static JSC_DECLARE_HOST_FUNCTION(functionPlatformSupportsSamplingProfiler);
 static JSC_DECLARE_HOST_FUNCTION(functionGenerateHeapSnapshot);
@@ -900,6 +903,7 @@ private:
         addFunction(vm, "noFTL"_s, functionNoFTL, 1);
         addFunction(vm, "noOSRExitFuzzing"_s, functionNoOSRExitFuzzing, 1);
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
+        addFunction(vm, "isAOTCompiled"_s, functionIsAOTCompiled, 1);
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
         addFunction(vm, "jscOptions"_s, functionJSCOptions, 0);
         addFunction(vm, "optimizeNextInvocation"_s, functionOptimizeNextInvocation, 1);
@@ -952,6 +956,7 @@ private:
         addFunction(vm, "is32BitPlatform"_s, functionIs32BitPlatform, 0);
 
         addFunction(vm, "checkModuleSyntax"_s, functionCheckModuleSyntax, 1);
+        addFunction(vm, "aotCompileAll"_s, functionAOTCompileAll, 2);
         addFunction(vm, "checkScriptSyntax"_s, functionCheckScriptSyntax, 1);
 
         addFunction(vm, "platformSupportsSamplingProfiler"_s, functionPlatformSupportsSamplingProfiler, 0);
@@ -1746,7 +1751,13 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
     }
 #endif
 
-    auto sourceCode = JSSourceCode::create(vm, jscSource(stringFromUTF(buffer), SourceOrigin { moduleURL }, WTF::move(moduleKey), TextPosition(), SourceProviderSourceType::Module));
+    SourceCode moduleSource = jscSource(stringFromUTF(buffer), SourceOrigin { moduleURL }, WTF::move(moduleKey), TextPosition(), SourceProviderSourceType::Module);
+#if ENABLE(FTL_JIT)
+    // Only the first module fetched (the entry point) gets an image. The modules it imports are interpreted.
+    if (Options::compileMainScriptAheadOfTime())
+        aotCompileAndRegisterImage(vm, moduleSource, true);
+#endif
+    auto sourceCode = JSSourceCode::create(vm, WTF::move(moduleSource));
     scope.release();
     promise->resolve(globalObject, vm, sourceCode);
     return promise;
@@ -2963,6 +2974,19 @@ JSC_DEFINE_HOST_FUNCTION(functionNumberOfDFGCompiles, (JSGlobalObject* globalObj
     return JSValue::encode(numberOfDFGCompiles(globalObject, callFrame));
 }
 
+// Whether calls to a function run AOT code. The function must have been called at least once.
+JSC_DEFINE_HOST_FUNCTION(functionIsAOTCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+#if ENABLE(FTL_JIT)
+    if (auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0)); function && !function->isHostFunction())
+        return JSValue::encode(jsBoolean(!!AOT::FunctionRef::of(globalObject->vm(), function->jsExecutable(), CodeSpecializationKind::CodeForCall)));
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+#endif
+    return JSValue::encode(jsBoolean(false));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -3765,6 +3789,29 @@ JSC_DEFINE_HOST_FUNCTION(functionCheckModuleSyntax, (JSGlobalObject* globalObjec
     return JSValue::encode(jsNumber(stopWatch.getElapsedMS()));
 }
 
+// aotCompileAll(source, isModule): [functions, compiled, bytes of code, bytes of bytecode], or undefined for a syntax error.
+JSC_DEFINE_HOST_FUNCTION(functionAOTCompileAll, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String source = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    bool isModule = callFrame->argument(1).toBoolean(globalObject);
+
+    auto result = aotCompileAllFunctions(vm, jscSource(source, { }, String(), TextPosition(), isModule ? SourceProviderSourceType::Module : SourceProviderSourceType::Program), isModule);
+    if (!result)
+        return JSValue::encode(jsUndefined());
+    JSArray* array = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    array->putDirectIndex(globalObject, 0, jsNumber(result->functions));
+    array->putDirectIndex(globalObject, 1, jsNumber(result->compiled));
+    array->putDirectIndex(globalObject, 2, jsNumber(result->codeBytes));
+    array->putDirectIndex(globalObject, 3, jsNumber(result->bytecodeBytes));
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    return JSValue::encode(array);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionCheckScriptSyntax, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -4525,7 +4572,13 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
             vm.drainMicrotasks();
         } else {
             NakedPtr<Exception> evaluationException;
-            JSValue returnValue = evaluate(globalObject, jscSource(scriptBuffer, sourceOrigin , fileName), JSValue(), evaluationException);
+            SourceCode source = jscSource(scriptBuffer, sourceOrigin, fileName);
+#if ENABLE(FTL_JIT)
+            // Only the first script gets an image. Later scripts, and code from load(), eval and Function, are interpreted.
+            if (Options::compileMainScriptAheadOfTime())
+                aotCompileAndRegisterImage(vm, source, false);
+#endif
+            JSValue returnValue = evaluate(globalObject, source, JSValue(), evaluationException);
             scope.assertNoException();
             if (evaluationException)
                 returnValue = evaluationException->value();
@@ -5190,6 +5243,9 @@ int jscmain(int argc, char** argv)
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
+    // This has to come before any option is set: Options::notifyOptionsChanged() permanently turns useJIT off if the compilers are
+    // not installed yet.
+    JSC::installCompilers();
     mainCommandLine.construct(argc, argv);
 
 #if OS(WINDOWS)

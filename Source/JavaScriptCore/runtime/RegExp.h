@@ -69,6 +69,7 @@ public:
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
+    static RegExp* createFromCacheWithoutCaching(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
     static void destroy(JSCell*);
     static size_t estimatedSize(JSCell*, VM&);
     DECLARE_VISIT_CHILDREN;
@@ -211,6 +212,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
     bool hasValidAtom() const { return !m_atom.isNull(); }
+    bool isAnchoredWord(StringView) const; // Yarr::SpecificPattern::AnchoredWordList
     const String& atom() const LIFETIME_BOUND { return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
 
@@ -250,6 +252,15 @@ private:
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
+    // With the JIT, a pattern is compiled to machine code before its first match. A program that was compiled ahead of time
+    // (Options::notifyOptionsChanged()) has started quickly, and most of the patterns that it puts together at run time match a few
+    // short strings. Compiling one takes about as long as the interpreter loses over 8000 characters. So there a pattern is
+    // interpreted until it has done about that much work: one unit for each match, and one for each 32 characters of the subject.
+    static constexpr uint16_t workBeforeJIT = 256; // m_workInInterpreter has this value when the next match is to compile.
+    static constexpr uint16_t jitWasConsidered = std::numeric_limits<uint16_t>::max();
+    bool interpretsAtFirst(std::optional<StringView> subject) const;
+    void noteWorkInInterpreter(unsigned lengthOfSubject);
+
     static uint8_t currentUseEpoch(VM&);
     template<Yarr::MatchFrom> void noteUse(VM&);
 
@@ -271,6 +282,10 @@ private:
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
         WriteBarrierStructureID m_cachedGroupsStructureID;
+
+        // Yarr::SpecificPattern::AnchoredWordList: the words sorted by length. Those of length n are at [m_firstWordOfLength[n], m_firstWordOfLength[n + 1]).
+        FixedVector<String> m_anchoredWords;
+        FixedVector<unsigned> m_firstWordOfLength;
     };
 
     String m_patternString;
@@ -280,6 +295,7 @@ private:
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
+    uint16_t m_workInInterpreter { 0 }; // See interpretsAtFirst().
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;

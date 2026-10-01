@@ -25,6 +25,7 @@
 #include "config.h"
 #include "JSGlobalObjectFunctions.h"
 
+#include "AOTFunction.h"
 #include "CallFrame.h"
 #include "GlobalObjectMethodTable.h"
 #include "ImportMap.h"
@@ -884,10 +885,17 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     std::optional<IdentifierSet> newlyCreatedSet;
     if (callFrame->argumentCount() > 1) {
         int32_t setIndex = callFrame->uncheckedArgument(1).asUInt32AsAnyInt();
-        CodeBlock* codeBlock = getCallerCodeBlock(callFrame);
-        ASSERT(codeBlock);
-        unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-        excludedSet = &unlinkedCodeBlock->constantIdentifierSets()[setIndex];
+#if ENABLE(FTL_JIT)
+        // AOT code has no CodeBlock, and does not need one for this.
+        if (AOT::FunctionRef caller = AOT::callerFunction(callFrame))
+            excludedSet = &caller.constantIdentifierSet(setIndex);
+#endif
+        if (!excludedSet) {
+            CodeBlock* codeBlock = getCallerCodeBlock(callFrame);
+            ASSERT(codeBlock);
+            unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
+            excludedSet = &unlinkedCodeBlock->constantIdentifierSets()[setIndex];
+        }
         if (callFrame->argumentCount() > 2) {
             newlyCreatedSet.emplace(*excludedSet);
             for (unsigned index = 2; index < callFrame->argumentCount(); ++index) {
@@ -988,14 +996,24 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     return JSValue::encode(target);
 }
 
+// What a class that the text says something of (ClassExprNode::typeTag()) calls once it is defined. It is for code that is compiled ahead of time, which does not call this.
+JSC_DEFINE_HOST_FUNCTION(globalFuncNoteClass, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(cloneObjectForSpread(globalObject, callFrame->thisValue()));
+}
+
+JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue, JSObject* into)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue sourceValue = callFrame->thisValue();
     if (sourceValue.isUndefinedOrNull())
-        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyObject(globalObject)));
+        RELEASE_AND_RETURN(scope, into ? into : constructEmptyObject(globalObject));
 
     JSObject* source = sourceValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1006,12 +1024,14 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
     }
 
     Structure* sourceStructure = source->structure();
-    if (sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
+    // (An object with a typed layout has one of the program's types. The copy's layout depends on how the copy is used, which only
+    // the caller knows: see Structure::typedLayoutID().)
+    if (!into && !sourceStructure->typedLayoutID() && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
-            return JSValue::encode(cloned);
+            return cloned;
     }
 
-    JSObject* target = constructEmptyObject(globalObject);
+    JSObject* target = into ? into : constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (canPerformFastPropertyEnumerationForCopyDataProperties(sourceStructure)) [[likely]] {
@@ -1042,7 +1062,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
 
         target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
 
-        return JSValue::encode(target);
+        return target;
     }
 
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
@@ -1068,7 +1088,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
         target->putDirectMayBeIndex(globalObject, propertyName, value);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return JSValue::encode(target);
+    return target;
 }
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncHandleNegativeProxyHasTrapResult, (JSGlobalObject* globalObject, CallFrame* callFrame))

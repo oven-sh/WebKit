@@ -708,6 +708,12 @@ public:
 
     static constexpr bool useShortCopyTier = bufferMode == BufferMode::DynamicBuffer;
 
+    // A string that is at least so long is gone through once, escaping as it goes, so much at a time. (A shorter one is copied in the hope that there is nothing to escape.)
+    static constexpr unsigned lengthOfLongString = 64;
+    static constexpr unsigned pieceOfLongString = bufferMode == BufferMode::StaticBuffer ? 256 : 4096;
+    // VM::jsonStringifyHints
+    static constexpr unsigned lengthOfBigResult = 128 * 1024;
+
 private:
     explicit FastStringifier(JSGlobalObject&);
     template<HasGap hasGap> void append(JSValue);
@@ -754,6 +760,7 @@ private:
     std::array<Latin1Character, maxGapLength> m_gap;
     bool m_checkedObjectPrototype { false };
     bool m_checkedArrayPrototype { false };
+    bool m_hasSeenWideString { false };
     std::optional<FailureReason> m_failureReason;
     Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
     uint8_t* m_stackLimit { nullptr };
@@ -932,7 +939,18 @@ inline String FastStringifier<CharType, bufferMode>::result()
     logOutcome("success"_s);
 #endif
     if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+        if (m_dynamicBuffer.size() > lengthOfBigResult) {
+            m_vm.jsonStringifyHints.length = m_length;
+            m_vm.jsonStringifyHints.isWide = sizeof(CharType) == 2 && m_hasSeenWideString;
+        }
+        // (It was taken for wide because the last one was.)
+        if constexpr (sizeof(CharType) == 2) {
+            if (!m_hasSeenWideString)
+                return String::make8Bit(std::span { static_cast<const FastStringifier*>(this)->buffer(), m_length });
+        }
         m_dynamicBuffer.shrink(m_length);
+        if (m_dynamicBuffer.capacity() / 2 > m_length)
+            m_dynamicBuffer.shrinkToFit();
         return StringImpl::adopt(WTF::move(m_dynamicBuffer));
     }
     return std::span { static_cast<const FastStringifier*>(this)->buffer(), m_length };
@@ -978,6 +996,10 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
         return true;
     } else {
         size_t newSize = std::max<size_t>(m_dynamicBuffer.size() * 2, m_dynamicBuffer.size() + size);
+        if (newSize > lengthOfBigResult) {
+            size_t lengthOfLast = m_vm.jsonStringifyHints.length;
+            newSize = std::max<size_t>(newSize, lengthOfLast + lengthOfLast / 8 + pieceOfLongString * 6);
+        }
         if (!StringImpl::isValidLength<CharType>(newSize)) [[unlikely]]
             return false;
 
@@ -1418,6 +1440,24 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             return;
         }
         buffer()[m_length] = '"';
+        if (!string.data.is8Bit())
+            m_hasSeenWideString = true;
+        else if (stringLength >= lengthOfLongString) {
+            ++m_length;
+            for (auto rest = string.data.span8(); !rest.empty();) {
+                auto piece = rest.first(std::min<size_t>(rest.size(), pieceOfLongString));
+                if (!hasRemainingCapacity(piece.size() * 6 + 1)) [[unlikely]] {
+                    recordBufferFull();
+                    return;
+                }
+                auto output = bufferSpan().subspan(m_length);
+                WTF::appendEscapedJSONStringContent(output, piece);
+                m_length = output.data() - buffer();
+                rest = rest.subspan(piece.size());
+            }
+            buffer()[m_length++] = '"';
+            return;
+        }
 
         if constexpr (std::same_as<CharType, Latin1Character>) {
             if (string.data.is8Bit()) [[likely]] {
@@ -1469,7 +1509,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 bool success = WTF::appendEscapedJSONStringContent(output, string.data.span16());
                 if (!success) [[unlikely]] {
                     if constexpr (bufferMode == BufferMode::DynamicBuffer)
-                        recordFailure(FailureReason::Unknown, "16-bit string, "_s);
+                        recordFailure(FailureReason::Found16BitLate, "16-bit string, "_s);
                     else
                         recordFailure(m_length < (m_capacity / 2) ? FailureReason::Found16BitEarly : FailureReason::Found16BitLate, "16-bit string, "_s);
                     return;
@@ -1622,7 +1662,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 // Inlining String case here since it is too common.
                 if (value.isCell() && value.asCell()->type() == StringType) [[likely]] {
                     auto valueString = asString(value.asCell())->tryGetValue();
-                    if (!valueString.data.isNull() && valueString.data.is8Bit()) [[likely]] {
+                    if (!valueString.data.isNull() && valueString.data.is8Bit() && valueString.data.length() < lengthOfLongString) [[likely]] {
                         unsigned valueLength = valueString.data.length();
                         if (!hasRemainingCapacity(1 + valueLength + 1)) [[unlikely]] {
                             recordBufferFull();
@@ -1863,7 +1903,18 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
             }
         } else if (failureReason == FailureReason::BufferFull) {
             failureReason = std::nullopt;
-            if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+            // Wrongly guessing 16-bit costs a conversion to 8-bit at the end. Wrongly guessing 8-bit costs all of the work done
+            // before the first 16-bit character.
+            if (vm.jsonStringifyHints.isWide) {
+                if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+                    return result;
+            } else if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+                return result;
+        }
+        // However much work is thrown away, retrying with 16-bit characters is still much faster than the generic path.
+        if (failureReason == FailureReason::Found16BitLate) {
+            failureReason = std::nullopt;
+            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
                 return result;
         }
     }

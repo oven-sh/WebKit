@@ -924,6 +924,51 @@ llintOp(op_check_tdz, OpCheckTdz, macro (size, get, dispatch)
 end)
 
 
+# Computes the tag of the common kinds of values inline. Anything else, and every failure, is left to the slow path, which
+# classifies the value completely and returns or throws.
+llintOp(op_check_type, OpCheckType, macro (size, get, dispatch)
+    get(m_value, t0)
+    loadConstantOrVariable(size, t0, t1)
+    getu(size, OpCheckType, m_mask, t2)
+    bia t2, (constexpr SoundTypeAll), .opCheckTypeSlow
+    btqz t1, numberTag, .opCheckTypeNotNumber
+    move (constexpr SoundTypeNumber), t3
+    jmp .opCheckTypeTest
+
+.opCheckTypeNotNumber:
+    btqnz t1, notCellMask, .opCheckTypeNotCell
+    btqz t1, .opCheckTypeSlow
+    loadb JSCell::m_type[t1], t0
+    move (constexpr SoundTypeString), t3
+    bbeq t0, StringType, .opCheckTypeTest
+    move (constexpr SoundTypeOtherObject), t3
+    bbeq t0, FinalObjectType, .opCheckTypeTest
+    move (constexpr SoundTypeFunction), t3
+    bbeq t0, JSFunctionType, .opCheckTypeTest
+    move (constexpr SoundTypeArray), t3
+    bbeq t0, ArrayType, .opCheckTypeTest
+    jmp .opCheckTypeSlow
+
+.opCheckTypeNotCell:
+    move (constexpr SoundTypeUndefined), t3
+    bqeq t1, ValueUndefined, .opCheckTypeTest
+    move (constexpr SoundTypeNull), t3
+    bqeq t1, ValueNull, .opCheckTypeTest
+    move (constexpr SoundTypeBoolean), t3
+    xorq ValueFalse, t1
+    btqnz t1, ~1, .opCheckTypeSlow
+
+.opCheckTypeTest:
+    btinz t2, t3, .opCheckTypeDone
+
+.opCheckTypeSlow:
+    callSlowPath(_slow_path_check_type)
+
+.opCheckTypeDone:
+    dispatch()
+end)
+
+
 llintOpWithReturn(op_mov, OpMov, macro (size, get, dispatch, return)
     get(m_src, t1)
     loadConstantOrVariable(size, t1, t2)

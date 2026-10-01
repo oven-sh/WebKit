@@ -29,6 +29,7 @@
 #include "InferredValueInlines.h"
 #include "ScriptExecutableInlines.h"
 #include "StructureCreateInlines.h"
+#include "StaticHeap.h"
 
 namespace JSC {
 
@@ -37,16 +38,23 @@ inline Structure* FunctionExecutable::createStructure(VM& vm, JSGlobalObject* gl
     return Structure::create(vm, globalObject, proto, TypeInfo(FunctionExecutableType, StructureFlags), info());
 }
 
+inline Structure* FunctionExecutable::createStructureOfShortForm(VM& vm, JSGlobalObject* globalObject, JSValue proto)
+{
+    return Structure::create(vm, globalObject, proto, TypeInfo(ShortFunctionExecutableType, StructureFlags), info());
+}
+
 inline void FunctionExecutable::notifyCreation(VM& vm, JSFunction* function, const char* reason)
 {
-    m_singleton.notifyWrite(vm, this, function, reason);
-    if (m_singleton.hasBeenInvalidated())
-        m_unlinkedExecutable->setSingletonHasBeenInvalidated();
+    if (isShortForm())
+        return;
+    inFull()->m_singleton.notifyWrite(vm, this, function, reason);
+    if (inFull()->m_singleton.hasBeenInvalidated() && !inFull()->m_unlinkedExecutable->singletonHasBeenInvalidated())
+        inFull()->m_unlinkedExecutable->setSingletonHasBeenInvalidated();
 }
 
 inline void FunctionExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
 {
-    m_singleton.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
+    inFull()->m_singleton.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
     jettisonCodeBlockEdgeIfDead(vm, m_codeBlockForCall);
     jettisonCodeBlockEdgeIfDead(vm, m_codeBlockForConstruct);
     vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(this);
@@ -54,19 +62,23 @@ inline void FunctionExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, Collectio
 
 inline FunctionCodeBlock* FunctionExecutable::replaceCodeBlockWith(VM& vm, CodeSpecializationKind kind, CodeBlock* newCodeBlock)
 {
+    RELEASE_ASSERT(!isShortForm());
     if (kind == CodeSpecializationKind::CodeForCall) {
         FunctionCodeBlock* oldCodeBlock = codeBlockForCall();
-        m_codeBlockForCall.setMayBeNull(vm, this, newCodeBlock);
+        inFull()->m_codeBlockForCall.setMayBeNull(vm, this, newCodeBlock);
         return oldCodeBlock;
     }
     ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
     FunctionCodeBlock* oldCodeBlock = codeBlockForConstruct();
-    m_codeBlockForConstruct.setMayBeNull(vm, this, newCodeBlock);
+    inFull()->m_codeBlockForConstruct.setMayBeNull(vm, this, newCodeBlock);
     return oldCodeBlock;
 }
 
 inline JSString* FunctionExecutable::toString(JSGlobalObject* globalObject)
 {
+    // (An executable in the static heap is read-only, so the result is not cached.)
+    if (!rareData() && StaticHeap::contains(this))
+        return toStringSlow(globalObject);
     RareData& rareData = ensureRareData();
     if (!rareData.m_asString)
         return toStringSlow(globalObject);

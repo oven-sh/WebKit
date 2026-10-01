@@ -35,6 +35,17 @@ namespace JSC {
 // scope chain right then. Only built while generating with OptimizeBytecode::Yes; the bytecode optimizer uses it to
 // locate free variables statically and to tell environment-record bindings (stable for the lifetime of an
 // activation) from names that fall through to the global object.
+// `const f = function () { }`, `g = () => { }`, `class C { }`: the statement stores the function that it creates in the variable.
+// Recorded by the bytecode generator, from the syntax tree.
+struct FunctionAssignment {
+    unsigned identifier { 0 }; // Of the variable: UnlinkedCodeBlock::identifier().
+    unsigned functionExpr { 0 }; // UnlinkedCodeBlock::functionExpr(). Of a class, its constructor.
+    // If it is a variable of the code's own: the constant that has the symbol table of its scope, and where it is in that.
+    bool isOwn { false };
+    int symbolTableConstantIndex { 0 };
+    unsigned scopeOffset { 0 };
+};
+
 class DeclaredNamesLink : public RefCounted<DeclaredNamesLink> {
 public:
     // Names an enclosing module binds stably without giving them an environment slot of its own (imports). Every
@@ -55,35 +66,46 @@ public:
     struct Frame : public RefCounted<Frame> {
         using Slots = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash>; // name -> ScopeOffset | lazyFunctionSlotFlag
         static constexpr unsigned lazyFunctionSlotFlag = 1u << 31; // a module's function declaration: read it with ResolvedLazyClosureVar
-        static Ref<Frame> create(bool isBarrier, Slots&& slots, RefPtr<Frame> next) { return adoptRef(*new Frame { isBarrier, WTF::move(slots), WTF::move(next) }); }
+        static constexpr unsigned readOnlySlotFlag = 1u << 30; // storing to it, other than to initialize it, throws
+        static Ref<Frame> create(bool isBarrier, Slots&& slots, RefPtr<Frame> next, const void* identity = nullptr) { return adoptRef(*new Frame { isBarrier, WTF::move(slots), WTF::move(next), identity }); }
         bool isBarrier;
         Slots slots;
         RefPtr<Frame> next;
+        // Which scope of the source the record is for: the same for every Frame there is for it (there is another whenever a name has
+        // been added to it), and for the code that makes the record: it is the SymbolTable among its constants that it makes it from.
+        const void* identity;
 
     private:
-        Frame(bool isBarrier, Slots&& slots, RefPtr<Frame> next)
+        Frame(bool isBarrier, Slots&& slots, RefPtr<Frame> next, const void* identity)
             : isBarrier(isBarrier)
             , slots(WTF::move(slots))
             , next(WTF::move(next))
+            , identity(identity)
         {
         }
     };
 
-    static Ref<DeclaredNamesLink> create(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
+    // isOutermost: for the code of a module or a program, which is only enclosed by the global scopes. (A function's link may lack
+    // a parent simply because none was provided.)
+    static Ref<DeclaredNamesLink> create(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, bool isOutermost, RefPtr<DeclaredNamesLink> parent)
     {
-        return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, WTF::move(parent)));
+        return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, isOutermost, WTF::move(parent)));
     }
 
     struct Resolution {
         enum Kind : uint8_t {
-            Dynamic, // may resolve differently at run time (globals, eval/with in the way): leave alone
-            Stable, // always the same binding for a given starting scope, but no static slot (e.g. an import)
+            Dynamic, // may resolve differently at run time (eval/with in the way): leave alone
+            Stable, // always the same binding for a given starting scope, but no static slot (an import of the module whose environment is |hops| records out)
             Slot, // lives |hops| environment records out from the function's own scope, at |offset|
+            Global, // in none of the environment records of the code around the function: which global scope has it, if any, may change
         };
         Kind kind { Dynamic };
         unsigned hops { 0 };
         unsigned offset { 0 };
         bool isLazyFunctionSlot { false };
+        bool isInOutermostEnvironment { false }; // Slot: it is a variable of the module (or the program) itself.
+        const void* scope { nullptr }; // Slot: Frame::identity of the record.
+        bool isReadOnly { false };
     };
 
     // Resolve |name| as seen from a function created at this point (i.e. starting from that function's [[Scope]]).
@@ -96,26 +118,58 @@ public:
                     return { };
                 auto it = frame->slots.find(name);
                 if (it != frame->slots.end())
-                    return { Resolution::Slot, hops, it->value & ~Frame::lazyFunctionSlotFlag, !!(it->value & Frame::lazyFunctionSlotFlag) };
+                    return { Resolution::Slot, hops, it->value & ~(Frame::lazyFunctionSlotFlag | Frame::readOnlySlotFlag), !!(it->value & Frame::lazyFunctionSlotFlag), link->m_isOutermost && !frame->next, frame->identity, !!(it->value & Frame::readOnlySlotFlag) };
                 ++hops;
             }
+            // The link that has names is a module's, and the last of its frames the module's environment.
             if (link->m_names && link->m_names->names.contains(name))
-                return { Resolution::Stable, 0, 0 };
+                return { Resolution::Stable, hops ? hops - 1 : 0, 0 };
             if (link->m_isDynamicBarrier)
                 return { };
+            if (link->m_isOutermost)
+                return { Resolution::Global, hops, 0 };
         }
         return { };
     }
+
+    // Frame::identity of the record that is that many out from the [[Scope]] of a function created at this point. Null: there is no telling.
+    const void* identityOfScope(unsigned hops) const
+    {
+        for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
+            for (const Frame* frame = link->m_frames.get(); frame; frame = frame->next.get()) {
+                if (frame->isBarrier)
+                    return nullptr;
+                if (!hops--)
+                    return frame->identity;
+            }
+            if (link->m_isDynamicBarrier)
+                return nullptr;
+        }
+        return nullptr;
+    }
+    template<typename Functor> void forEachScope(const Functor& functor) const
+    {
+        for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
+            for (const Frame* frame = link->m_frames.get(); frame; frame = frame->next.get()) {
+                if (frame->identity)
+                    functor(frame->identity);
+            }
+        }
+    }
+
+    // Whether the [[Scope]] of a function created at this point is the environment of the module (or the program) itself.
+    bool scopeIsOutermostEnvironment() const { return m_isOutermost && m_frames && !m_frames->isBarrier && !m_frames->next; }
 
     Names* names() const { return m_names.get(); }
     Frame* frames() const { return m_frames.get(); }
 
 private:
-    DeclaredNamesLink(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
+    DeclaredNamesLink(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, bool isOutermost, RefPtr<DeclaredNamesLink> parent)
         : m_names(WTF::move(names))
         , m_frames(WTF::move(frames))
         , m_parent(WTF::move(parent))
         , m_isDynamicBarrier(isDynamicBarrier)
+        , m_isOutermost(isOutermost)
     {
     }
 
@@ -123,6 +177,7 @@ private:
     RefPtr<Frame> m_frames;
     RefPtr<DeclaredNamesLink> m_parent;
     bool m_isDynamicBarrier;
+    bool m_isOutermost;
 };
 
 } // namespace JSC

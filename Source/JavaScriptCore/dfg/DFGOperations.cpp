@@ -3209,6 +3209,16 @@ JSC_DEFINE_JIT_OPERATION(operationObjectIsCallable, size_t, (JSGlobalObject* glo
     OPERATION_RETURN(scope, object->isCallable());
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeTag, size_t, (EncodedJSValue value))
+{
+    return soundTypeTag(JSValue::decode(value));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeMaskAccepts, size_t, (EncodedJSValue value, uint32_t mask))
+{
+    return soundTypeMaskAccepts(mask, JSValue::decode(value));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationIsConstructor, size_t, (JSGlobalObject* globalObject, EncodedJSValue value))
 {
     VM& vm = globalObject->vm();
@@ -3974,7 +3984,9 @@ JSC_DEFINE_JIT_OPERATION(operationStringLocaleCompare, UCPUStrictInt32, (JSGloba
             OPERATION_RETURN(scope, toUCPUStrictInt32(*result));
     }
 
+    // Made now, if this is the first use of it. (Code from the DFG gets here after String.prototype.localeCompare has run. Code that was compiled ahead of time need not.)
     auto* collator = globalObject->defaultCollator();
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
 
     OPERATION_RETURN(scope, toUCPUStrictInt32(collator->compareStrings(globalObject, string, that)));
 }
@@ -6438,7 +6450,7 @@ JSC_DEFINE_JIT_OPERATION(operationLinkDirectCall, void, (DirectCallLinkInfo* cal
         OPERATION_RETURN_IF_EXCEPTION(scope);
 
         unsigned argumentStackSlots = callLinkInfo->maxArgumentCountIncludingThis();
-        if (argumentStackSlots < static_cast<size_t>(codeBlock->numParameters()))
+        if (!codeBlock || argumentStackSlots < static_cast<size_t>(codeBlock->numParameters()))
             codePtr = functionExecutable->entrypointFor(kind, ArityCheckMode::MustCheckArity);
         else
             codePtr = functionExecutable->entrypointFor(kind, ArityCheckMode::ArityCheckNotRequired);

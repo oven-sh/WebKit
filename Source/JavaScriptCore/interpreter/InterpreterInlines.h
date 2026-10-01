@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "AOTFunction.h"
 #include "CachedCall.h"
 #include "Exception.h"
 #include "FrameTracers.h"
@@ -182,12 +183,9 @@ inline UnwindFunctorBase::UnwindFunctorBase(VM& vm)
 {
 }
 
-inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor) const
+inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(CallFrame* callFrame, const RegisterAtOffsetList* currentCalleeSaves) const
 {
 #if ENABLE(ASSEMBLER)
-    CallFrame* callFrame = visitor->callFrame();
-    const RegisterAtOffsetList* currentCalleeSaves = visitor->calleeSaveRegistersForUnwinding();
-
     if (!currentCalleeSaves)
         return;
 
@@ -205,7 +203,17 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Stac
         record->calleeSaveRegistersBuffer[bufferSlot] = *(frame + currentEntry.offsetAsIndex());
     }
 #else
-    UNUSED_PARAM(visitor);
+    UNUSED_PARAM(callFrame);
+    UNUSED_PARAM(currentCalleeSaves);
+#endif
+}
+
+inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor) const
+{
+    copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
+#if ENABLE(FTL_JIT)
+    if (CallFrame* adapter = visitor->aotAdapterFrame())
+        copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
 #endif
 }
 

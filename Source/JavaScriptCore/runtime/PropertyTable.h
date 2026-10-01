@@ -118,6 +118,9 @@ public:
     // Remove a value from the table.
     std::tuple<PropertyOffset, unsigned> take(VM&, const KeyType&);
     PropertyOffset updateAttributeIfExists(const KeyType&, unsigned attributes);
+    // The property is somewhere else from now on, and is otherwise what it was: where it comes among the others, for one thing. Where it was is
+    // as good as where a property has been taken out of.
+    void moveToOffset(VM&, const KeyType&, PropertyOffset);
 
     PropertyOffset renumberPropertyOffsets(JSObject*, unsigned inlineCapacity, Vector<JSValue>&);
 
@@ -133,6 +136,7 @@ public:
 
     void seal();
     void freeze();
+    void fix(); // As freeze(), for objects that may have properties that native code stands behind: those go on being asked.
 
     bool isSealed() const;
     bool isFrozen() const;
@@ -152,7 +156,9 @@ public:
     PropertyOffset takeDeletedOffset();
     void addDeletedOffset(PropertyOffset);
     
-    PropertyOffset nextOffset(PropertyOffset inlineCapacity);
+    // reusesOffsetsInObject: see Structure::typedLayoutID().
+    PropertyOffset nextOffset(PropertyOffset inlineCapacity, bool reusesOffsetsInObject = true, bool reusesOffsetsOutside = true);
+    bool takeDeletedOffset(PropertyOffset wanted); // False: that is not one of them.
 
     // Copy this PropertyTable, ensuring the copy has at least the capacity provided.
     PropertyTable* copy(VM&, unsigned newCapacity);
@@ -438,6 +444,20 @@ inline PropertyOffset PropertyTable::updateAttributeIfExists(const KeyType& key,
     });
 }
 
+inline void PropertyTable::moveToOffset(VM& vm, const KeyType& key, PropertyOffset newOffset)
+{
+    if (isCompact() && newOffset > UINT8_MAX)
+        rehash(vm, m_keyCount, false);
+    PropertyOffset oldOffset = withIndexVector([&](auto* vector) -> PropertyOffset {
+        auto* table = tableFromIndexVector(vector);
+        FindResult result = findImpl(vector, table, key);
+        RELEASE_ASSERT(result.offset != invalidOffset);
+        table[result.entryIndex - 1].setOffset(newOffset);
+        return result.offset;
+    });
+    addDeletedOffset(oldOffset);
+}
+
 // returns the number of values in the hashtable.
 inline unsigned PropertyTable::size() const
 {
@@ -477,12 +497,33 @@ inline void PropertyTable::addDeletedOffset(PropertyOffset offset)
     m_deletedOffsets->append(offset);
 }
 
-inline PropertyOffset PropertyTable::nextOffset(PropertyOffset inlineCapacity)
+inline bool PropertyTable::takeDeletedOffset(PropertyOffset wanted)
 {
-    if (hasDeletedOffset())
-        return takeDeletedOffset();
+    if (!m_deletedOffsets)
+        return false;
+    size_t index = m_deletedOffsets->find(wanted);
+    if (index == notFound)
+        return false;
+    m_deletedOffsets->removeAt(index);
+    return true;
+}
 
-    return offsetForPropertyNumber(size(), inlineCapacity);
+inline PropertyOffset PropertyTable::nextOffset(PropertyOffset inlineCapacity, bool reusesOffsetsInObject, bool reusesOffsetsOutside)
+{
+    if (hasDeletedOffset()) {
+        if (reusesOffsetsInObject) [[likely]]
+            return takeDeletedOffset();
+        for (size_t i = reusesOffsetsOutside ? m_deletedOffsets->size() : 0; i--;) {
+            PropertyOffset offset = m_deletedOffsets->at(i);
+            if (isOutOfLineOffset(offset)) {
+                m_deletedOffsets->removeAt(i);
+                return offset;
+            }
+        }
+    }
+
+    // (After everything there is or has been.)
+    return offsetForPropertyNumber(propertyStorageSize(), inlineCapacity);
 }
 
 inline PropertyTable* PropertyTable::copy(VM& vm, unsigned newCapacity)

@@ -700,6 +700,31 @@ public:
 
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
+    // Code is linked against clones because of what the optimizing compilers infer about one realm's scopes. Without those
+    // compilers, a table in the static heap can be used directly: it has what a clone has, infers nothing, and costs nothing.
+    // For a table that is created when a program is built: drops the names that nothing will ever look up. (The code that uses a
+    // scope knows the offsets of its variables.)
+    void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
+    {
+        keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry&) { return names.contains(name); });
+    }
+    void keepOnly(const Invocable<bool(UniquedStringImpl*, const SymbolTableEntry&)> auto& isKept)
+    {
+        Map kept;
+        unsigned count = 0;
+        for (auto& entry : m_map)
+            count += isKept(entry.key.get(), entry.value);
+        if (count == m_map.size())
+            return;
+        if (count)
+            kept.reserveInitialCapacity(count);
+        for (auto& entry : m_map) {
+            if (isKept(entry.key.get(), entry.value))
+                kept.add(entry.key, WTF::move(entry.value));
+        }
+        m_map = WTF::move(kept);
+    }
+    bool isSharedAcrossRealms() const { return StaticHeap::needsNoLocking(this); }
 
     // For a clone, when the code it was made for has been generated or decoded again (CodeBlock::setConstantRegisters):
     // true if cloneScopePart() of `original` would describe the same scope, so environments made by the new code can go

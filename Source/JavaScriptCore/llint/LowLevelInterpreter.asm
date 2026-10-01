@@ -632,6 +632,7 @@ const DerivedArrayType = constexpr DerivedArrayType
 const ProxyObjectType = constexpr ProxyObjectType
 const HeapBigIntType = constexpr HeapBigIntType
 const FunctionExecutableType = constexpr FunctionExecutableType
+const ShortFunctionExecutableType = constexpr ShortFunctionExecutableType
 
 # The typed array types need to be numbered in a particular order because of the manually written
 # switch statement in get_by_val and put_by_val.
@@ -2527,6 +2528,11 @@ llintOp(op_nop, OpNop, macro (unused, unused, dispatch)
 end)
 
 
+llintOp(op_type_tag, OpTypeTag, macro (unused, unused, dispatch)
+    dispatch()
+end)
+
+
 # we can't use callOp because we can't pass `call` as the opcode name, since it's an instruction name
 commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCall)
@@ -2753,13 +2759,15 @@ end
 
 # t0 is callee
 # t2 is CallLinkInfo*
-macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internalFunctionTrampoline, slowCase)
+# which: 0 to call, 1 to construct
+macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internalFunctionTrampoline, slowCase)
     btqnz t0, NotCellMask, slowCase
     bbneq JSCell::m_type[t0], JSFunctionType, .notJSFunction
     loadp JSFunction::m_executableOrRareData[t0], t5
     btpz t5, (constexpr JSFunction::rareDataTag), .isExecutable
     loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t5], t5
 .isExecutable:
+    bbeq JSCell::m_type[t5], ShortFunctionExecutableType, .isShortForm
     loadp offsetOfJITCodeWithArityCheck[t5], t4
     btpz t4, slowCase # When jumping to slowCase, t0, t1, t2, needs to be unmodified.
     move t4, t1
@@ -2769,6 +2777,18 @@ macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internal
 .callCode:
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
+.isShortForm:
+    # It does not say how to get in, which is the same for all of them: ExecutableBase::entrypointOfShortForm().
+    loadp (ExecutableBase::m_aotEntry + which * 8)[t5], t4
+    btpz t4, slowCase
+    move t4, t1
+    move 0, t0
+    # FunctionExecutable::aotIndexOfWhatConstructsByCalling: then that is the way in. (No function that is called has such an index.)
+    loadi (ExecutableBase::m_aotIndex + which * 4)[t5], t5
+    bieq t5, -1, .callCode
+    leap _g_aotStaticFunctionEntrypoints, t1
+    loadp (which * 8)[t1], t1
+    jmp .callCode
 .notJSFunction:
     bbneq JSCell::m_type[t0], InternalFunctionType, slowCase
     jmp internalFunctionTrampoline
@@ -2789,7 +2809,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_call_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
+    virtualThunkFor(0, ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2797,7 +2817,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_construct_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase)
+    virtualThunkFor(1, ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2805,7 +2825,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_tail_call_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
+    virtualThunkFor(0, ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)

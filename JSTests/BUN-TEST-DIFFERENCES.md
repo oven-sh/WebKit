@@ -126,6 +126,8 @@ Rules for an edit to an upstream test:
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
 | `stress/function-toString-native-one-line.js` | none; test fixed | its walker was a top-level `function`, so a property of `globalThis`, and its own source contains the `[native code]` it looks for. It is a `const` |
+| `stress/lazy-catch-liveness-tier-up.js` | `$skipModes << :aot << :aot_validate` | it asserts that the DFG compiled a function; these modes run with the JIT off |
+| `stress/stack-overflow-arrity-catch.js` | `$skipModes << :aot << :aot_validate` | it asserts a stack overflow during arity fixup; ahead-of-time compiled code with 340 parameters is passed a list of arguments and does no fixup, so the call succeeds |
 
 `$asan` and `slow!` are fork additions to the runner, see D.
 
@@ -138,6 +140,11 @@ Rules for an edit to an upstream test:
 | `microbenchmarks/parse-line-comment.js`, `stress/class-subclassing-function.js` | `SourceCodeKey::operator==` does not compare source text (3186362fe1a8). Two sources of the same length, flags, name and host whose 24-bit `StringImpl::hash()` collide share a code cache entry, and the second runs the first's code. 3 collisions in 20,000 same-length sources measured |
 | `microbenchmarks/regexp-buffer-boundary-anchor-start.js`, `-anchor-end.js`, `stress/regexp-boundary-assertions.js`, `stress/regexp-buffer-boundaries-anchoring.js` | upstream's RegExp buffer boundaries (`\A \z \Z`, 2f66f5ed23f9). Sync #455 brought the tests but not the `yarr/` changes: no feature, no `--useRegExpBufferBoundaries` |
 | `stress/module-loader-promise-then-tampered.js` | `globalFuncImportModule()` wraps the loader's promise and resolves the wrapper through `resolve()`, which looks up `Promise.prototype.then`. The fast path that avoided it (8a5ce3999589) is unreachable since the loader rewrite (4a638109b905) |
+| `stress/`: `assign-argument-in-inlined-call`, `cloned-arguments-should-visit-callee-during-gc`, `dfg-tail-calls`, `exit-from-ftl-when-caller-passed-extra-args-then-use-function-dot-arguments`, `ftl-function-dot-arguments-with-callee-saves`, `function-bind-caller`, `function-caller-cross-realm-via-call-apply`, `function-hidden-as-caller`, `get-stack-mapping`, `get-stack-mapping-with-dead-get-stack`, `inline-varargs-get-arguments`, `iteration-helper-hidden`, `regress-114860483`, `tail-call-recognize`, `weird-put-stack-varargs` (modes `aot`, `aot-validate`) | `f.arguments` and `f.caller` are `null` while a sloppy function `f` runs ahead-of-time compiled code. Its frame keeps neither the callee nor the arguments. **Decided, not an oversight:** keeping the callee is not one store. A call to a known function that does not use its callee elides the read of the callee too (for a method, a property lookup), and with `useLazyModuleFunctionDeclarations` a declaration that is only ever called that way never gets a function object at all. Keeping the callee would create all of them. |
+| `stress/sampling-profiler-display-name.js` (modes `aot`, `aot-validate`) | The same gap: `displayName` is a property of the callee, which the frame does not keep. The profiler reports the function's own name. |
+| `stress/sampling-profiler-bound-function-name.js` (modes `aot`, `aot-validate`) | Ahead-of-time compiled code calls the target of a bound function directly, so no frame is named `bound f`. |
+| `stress/dfg-to-string-on-string-object-does-not-gc.js` (modes `aot`, `aot-validate`) | `ShadowChicken::update()` calls `CallFrame::bytecodeIndex()` on every frame. A frame of ahead-of-time compiled code has no call site index slot. |
+| `stress/tail-call-eval-identifier-resolving-to-non-eval-function.js` (modes `aot`, `aot-validate`) | `return eval(x)` in strict code, where `eval` is an ordinary function, is compiled as a call, not a tail call. |
 
 ---
 
@@ -147,6 +154,16 @@ Rules for an edit to an upstream test:
   also runs wherever `--jsc-only` is given (so the JSCOnly port can be tested on macOS and Windows, where `jsc` is
   `<root>/bin/jsc`).
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
+  Two modes, `aot` and `aot-validate`, are part of the default run on arm64: the main script is compiled ahead of time, in-process
+  (`--compileMainScriptAheadOfTime=true`), and runs that code with the JIT off. `aot-validate` also checks every type the compiler
+  inferred against the value at run time, and runs the B3 and Air validators on what the compiler emits and after every phase. Both are
+  skipped wherever `lockdown` is: that is upstream's default mode with the JIT off, so a test that needs the JIT already skips it. To
+  run only these modes: `--filter '\.aot(-validate)?$'`.
+- Built-in objects are immutable in these modes (`useAOT` implies `useImmutableIntrinsics`): ahead-of-time compiled code relies on it. The
+  204 tests that change one are listed in `JSTests/bun-tests-that-change-builtins.txt`, which the runner reads, instead of each
+  having a directive, so that they stay as upstream has them. They fail with `--useImmutableIntrinsics=1` in the plain interpreter too.
+- On a machine that is also used for something else, pass `--memory-limited`. It skips the 132 tests marked `//@ memoryHog!`, some of
+  which allocate until allocation fails: `stress/typed-array-oom-in-buffer-accessor.js` takes about 130 GB on a machine that has it.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated
   x64 perl on Windows-on-ARM reports `AMD64`); `ARM64` as cmake on Windows spells it is `arm64`.
 

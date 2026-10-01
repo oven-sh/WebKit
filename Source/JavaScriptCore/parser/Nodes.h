@@ -205,6 +205,7 @@ namespace JSC {
         virtual bool isBoolean() const { return false; }
         virtual bool isThisNode() const { return false; }
         virtual bool isSpreadExpression() const { return false; }
+        virtual bool isSoundTypeCheckNode() const { return false; }
         virtual bool isSuperNode() const { return false; }
         virtual bool isRegExpNode() const { return false; }
         virtual bool isImportNode() const { return false; }
@@ -227,6 +228,10 @@ namespace JSC {
 
         ResultType resultDescriptor() const { return m_resultType; }
 
+        // JSToken::m_typeTag of the token that made an expression of this: the name of the property, the brace of the literal.
+        uint32_t typeTag() const { return m_typeTag; }
+        void setTypeTag(uint32_t tag) { m_typeTag = tag; }
+
         bool isOptionalChainBase() const { return m_isOptionalChainBase; }
         void setIsOptionalChainBase() { m_isOptionalChainBase = true; }
 
@@ -237,6 +242,7 @@ namespace JSC {
 
     private:
         ResultType m_resultType;
+        uint32_t m_typeTag { 0 };
         bool m_isOptionalChainBase { false };
         bool m_isParenthesized { false };
     };
@@ -779,6 +785,8 @@ namespace JSC {
             return m_node->isInstanceClassField();
         }
         bool NODELETE hasInstanceFields() const;
+        // The names of the instance fields, if each of them is a name and nothing else. Otherwise none.
+        Vector<Identifier> plainInstanceFieldNames() const;
 
         bool isStaticClassField() const
         {
@@ -1185,6 +1193,23 @@ namespace JSC {
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
         ExpressionNode* m_expr;
+    };
+
+    // $$t(expr, mask) under Options::useSoundTypes(). See SoundTypeMask in SpeculatedType.h.
+    class SoundTypeCheckNode final : public ExpressionNode, public ThrowableExpressionData {
+    public:
+        SoundTypeCheckNode(const JSTokenLocation&, ExpressionNode*, unsigned mask, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+
+        unsigned mask() const { return m_mask; }
+
+    private:
+        bool isSoundTypeCheckNode() const final { return true; }
+        // The SyntaxChecker sees a call, and sloppy mode code may have a call where an assignment target goes.
+        bool isFunctionCall() const final { return true; }
+        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+
+        ExpressionNode* m_expr;
+        unsigned m_mask;
     };
 
     class PrefixNode : public ExpressionNode, public ThrowablePrefixedSubExpressionData {
@@ -2270,6 +2295,10 @@ namespace JSC {
             m_needsClassFieldInitializer = value;
         }
 
+        // A constructor: see Options::definePlainInstanceFieldsInConstructor(). Empty if that is not for this class.
+        const Vector<Identifier>& plainInstanceFieldNames() const LIFETIME_BOUND { return m_plainInstanceFieldNames; }
+        void setPlainInstanceFieldNames(Vector<Identifier>&& names) { m_plainInstanceFieldNames = WTF::move(names); }
+
         bool isSloppyModeHoistedFunction() const { return m_isSloppyModeHoistedFunction; }
         void setIsSloppyModeHoistedFunction() { m_isSloppyModeHoistedFunction = true; }
 
@@ -2297,6 +2326,7 @@ namespace JSC {
         SourceCode m_classSource;
         int m_startStartOffset;
         unsigned m_parameterCount;
+        Vector<Identifier> m_plainInstanceFieldNames;
     };
 
     class FunctionNode final : public ScopeNode {
@@ -2315,9 +2345,14 @@ namespace JSC {
 
         FunctionMode functionMode() const { return m_functionMode; }
 
+        // Information that is only available where the function is created (FunctionMetadataNode::plainInstanceFieldNames()).
+        const FixedVector<Identifier>* plainInstanceFieldNames() const { return m_plainInstanceFieldNames; }
+        void setPlainInstanceFieldNames(const FixedVector<Identifier>* names) { m_plainInstanceFieldNames = names; }
+
         static constexpr bool scopeIsFunction = true;
 
     private:
+        const FixedVector<Identifier>* m_plainInstanceFieldNames { nullptr };
         Identifier m_ident;
         FunctionMode m_functionMode;
         FunctionParameters* m_parameters;
@@ -2421,6 +2456,7 @@ namespace JSC {
 
         bool hasStaticProperty(const Identifier& propName) { return m_classElements && m_classElements->hasStaticallyNamedProperty(propName); }
         bool hasInstanceFields() const { return m_classElements && m_classElements->hasInstanceFields(); }
+        ExpressionNode* constructorExpression() const { return m_constructorExpression; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -2494,14 +2530,14 @@ namespace JSC {
             Element,
             RestElement
         };
-        void appendEntry(const JSTokenLocation&, const Identifier& identifier, bool wasString, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
+        void appendEntry(const JSTokenLocation&, const Identifier& identifier, bool wasString, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType, uint32_t typeTag = 0)
         {
-            m_targetPatterns.append(Entry{ identifier, nullptr, wasString, pattern, defaultValue, bindingType });  
+            m_targetPatterns.append(Entry{ identifier, nullptr, wasString, pattern, defaultValue, bindingType, typeTag });
         }
 
         void appendEntry(VM& vm, const JSTokenLocation&, ExpressionNode* propertyExpression, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
         {
-            m_targetPatterns.append(Entry{ vm.propertyNames->nullIdentifier, propertyExpression, false, pattern, defaultValue, bindingType });
+            m_targetPatterns.append(Entry{ vm.propertyNames->nullIdentifier, propertyExpression, false, pattern, defaultValue, bindingType, 0 });
         }
         
         void setContainsRestElement(bool containsRestElement)
@@ -2525,6 +2561,7 @@ namespace JSC {
             DestructuringPatternNode* pattern;
             ExpressionNode* defaultValue;
             BindingType bindingType;
+            uint32_t typeTag; // JSToken::m_typeTag of the property name: the type tag for a.b also applies to { b } = a.
         };
         bool m_containsRestElement { false };
         bool m_containsComputedProperty { false };

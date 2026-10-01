@@ -122,6 +122,16 @@
 
 #endif // ENABLE(JIT_OPERATION_VALIDATION) || ENABLE(JIT_OPERATION_DISASSEMBLY)
 
+#if USE(BUN_JSC_ADDITIONS)
+// Every caller gets an operation's address from something that the linker can see: a compiler that embeds it in code, or a table.
+// So an operation that nothing refers to can be dropped, together with whatever only it refers to. That is how an executable can be
+// linked without the compilers (JavaScriptCore/runtime/CompilerHooks.h). Operations have external linkage, so they are emitted
+// regardless.
+#define JIT_OPERATION_REFERENCED_FROM_ASM
+#else
+#define JIT_OPERATION_REFERENCED_FROM_ASM REFERENCED_FROM_ASM
+#endif
+
 #define JSC_DEFINE_JIT_OPERATION_WITHOUT_VARIABLE_IMPL(functionName, returnType, parameters) \
     returnType JIT_OPERATION_ATTRIBUTES functionName parameters
 
@@ -133,7 +143,7 @@
     JSC_DEFINE_JIT_OPERATION_WITH_ATTRIBUTES_IMPL(functionName, , returnType, parameters)
 
 #define JSC_DECLARE_JIT_OPERATION_WITH_ATTRIBUTES_IMPL(functionName, attributes, returnType, parameters) \
-    extern "C" attributes returnType JIT_OPERATION_ATTRIBUTES functionName parameters REFERENCED_FROM_ASM WTF_INTERNAL; \
+    extern "C" attributes returnType JIT_OPERATION_ATTRIBUTES functionName parameters JIT_OPERATION_REFERENCED_FROM_ASM WTF_INTERNAL; \
     JSC_DECLARE_JIT_OPERATION_VALIDATION(functionName) \
 
 #define JSC_DECLARE_JIT_OPERATION_IMPL(functionName, returnType, parameters) \

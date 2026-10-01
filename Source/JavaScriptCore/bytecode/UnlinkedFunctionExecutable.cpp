@@ -26,6 +26,7 @@
 #include "config.h"
 #include "UnlinkedFunctionExecutable.h"
 
+#include "AOTProgram.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeGenerator.h"
 #include "CachedBytecode.h"
@@ -69,14 +70,23 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     }
 
     function->finishParsing(executable->name(), executable->functionMode());
-    executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
+    function->setPlainInstanceFieldNames(executable->plainInstanceFieldNames());
+    // (An executable in the static heap already has this information, and is read-only.)
+    if (!StaticHeap::contains(executable))
+        executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
 
     bool isClassContext = executable->superBinding() == SuperBinding::Needed || executable->parseMode() == SourceParseMode::ClassFieldInitializerMode;
 
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, executable->evalContextType(), executable->isBuiltinDefaultClassConstructor()), codeGenerationMode);
 
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
-    RefPtr<DeclaredNamesLink> parentDeclaredNames = executable->takeParentDeclaredNames();
+    // For ahead-of-time compilation the link is kept: both specializations use it, and so does the compiler.
+    // (BytecodeLinkEncoder takes it from the executable once all code has been generated.)
+    RefPtr<DeclaredNamesLink> parentDeclaredNames = vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically ? executable->parentDeclaredNames() : executable->takeParentDeclaredNames();
+#if ENABLE(FTL_JIT)
+    if (vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
+        AOT::noteDeclaredNames(result, RefPtr { parentDeclaredNames });
+#endif
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames = executable->generatorOrAsyncWrapperFunctionParameterNames();
     const PrivateNameEnvironment* parentPrivateNameEnvironment = executable->parentPrivateNameEnvironment();
     error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, parentPrivateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
@@ -209,6 +219,9 @@ SourceCode UnlinkedFunctionExecutable::linkedSourceCode(const SourceCode& passed
 
 FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* topLevelExecutable, const SourceCode& passedParentSource, std::optional<int> overrideLineNumber, Intrinsic intrinsic, bool isInsideOrdinaryFunction)
 {
+    if (m_staticExecutable && topLevelExecutable && topLevelExecutable->usesStaticExecutables() && !overrideLineNumber) [[likely]]
+        return m_staticExecutable;
+
     SourceCode source = linkedSourceCode(passedParentSource);
     FunctionOverrides::OverrideInfo overrideInfo;
     bool hasFunctionOverride = false;
@@ -255,6 +268,29 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // An executable in the static heap is shared by all VMs and is read-only, so the code that a VM decodes for it is kept by the
+    // VM.
+    if (m_isCached && StaticHeap::contains(this) && !StaticHeap::isBuilding()) [[unlikely]] {
+        if (UnlinkedFunctionCodeBlock* kept = StaticHeap::codeOf(vm, *this, specializationKind))
+            return kept;
+        UnlinkedFunctionCodeBlock* result = nullptr;
+        if (StaticHeap::payloadIsOmitted() && source.provider()->hasNoText()) {
+            dataLogLn("AOT: there is no code to run `", name().string(), "` from (it starts at ", source.startOffset(), ", for ", isCall(specializationKind) ? "a call" : "construction", ")");
+            error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
+            return nullptr;
+        }
+        if (!StaticHeap::payloadIsOmitted() && (isCall(specializationKind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset))
+            result = decodeCodeFromKeptPayload(vm, specializationKind, vm.structureStructure.get());
+        else {
+            result = generateUnlinkedFunctionCodeBlock(vm, this, source, specializationKind, codeGenerationMode, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, error, parseMode, optimize);
+            if (error.isValid())
+                return nullptr;
+        }
+        StaticHeap::setCodeOf(vm, *this, specializationKind, result);
+        return result;
+    }
+#endif
     if (m_isCached) {
 #if USE(BUN_JSC_ADDITIONS)
         // Code of a payload that outlives the program, about to be run: what a payload order file is about. (Not what
@@ -301,7 +337,9 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         break;
     }
     // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
-    vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
+    // (The set is of those whose code may be thrown away. One of StaticHeap keeps what it gets.)
+    if (!StaticHeap::contains(this)) [[likely]]
+        vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;
 }
 
@@ -314,6 +352,32 @@ std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> UnlinkedFuncti
 }
 #endif
 
+void UnlinkedFunctionExecutable::leaveCodeInPayload(Decoder& decoder, std::pair<int32_t, int32_t> offsets)
+{
+    RELEASE_ASSERT(!m_isCached && decoder.isForStaticHeap());
+    m_unlinkedCodeBlockForCall.clear();
+    m_unlinkedCodeBlockForConstruct.clear();
+    new (NotNull, &m_decoder) RefPtr<Decoder>(&decoder);
+    m_cachedCodeBlockForCallOffset = offsets.first;
+    m_cachedCodeBlockForConstructOffset = offsets.second;
+    m_isCached = true;
+}
+
+UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::decodeCodeFromKeptPayload(VM& vm, CodeSpecializationKind kind, JSCell* owner)
+{
+    RELEASE_ASSERT(m_isCached && m_decoder->isForStaticHeap() && !StaticHeap::isBuilding());
+    int32_t offset = isCall(kind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset;
+    RELEASE_ASSERT(offset);
+    Ref decoder = StaticHeap::decoderForKeptPayload(vm, *m_decoder);
+    DeferGC deferGC(vm);
+    WriteBarrier<UnlinkedFunctionCodeBlock> result;
+    if (offset > 0)
+        decodeFunctionCodeBlock(decoder.get(), offset, result, owner);
+    else
+        decodeFunctionCodeBlockFromRecord(decoder.get(), -static_cast<int64_t>(offset), result, owner);
+    return result.get();
+}
+
 void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
 {
     ASSERT(m_isCached);
@@ -321,6 +385,9 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     ASSERT(m_cachedCodeBlockForCallOffset || m_cachedCodeBlockForConstructOffset);
 
     RefPtr<Decoder> decoder = WTF::move(m_decoder);
+    // (What is decoded now does not belong to the static heap.)
+    if (decoder->isForStaticHeap() && !StaticHeap::isBuilding()) [[unlikely]]
+        decoder = StaticHeap::decoderForKeptPayload(vm, *decoder);
     int32_t cachedCodeBlockForCallOffset = m_cachedCodeBlockForCallOffset;
     int32_t cachedCodeBlockForConstructOffset = m_cachedCodeBlockForConstructOffset;
 

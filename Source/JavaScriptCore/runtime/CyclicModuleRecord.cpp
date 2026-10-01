@@ -26,6 +26,10 @@
 #include "config.h"
 #include "CyclicModuleRecord.h"
 
+#include "AOTImage.h"
+#include "AOTRuntime.h"
+#include "StaticHeap.h"
+
 #include "BuiltinNames.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
@@ -227,7 +231,32 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
+#if ENABLE(FTL_JIT)
+        // Code that was compiled with the whole program in front of it finds the variables of a module without looking for the
+        // module: see AOT::Instance::placeForEnvironment().
+        void* place = nullptr;
+        if (isPrelinked() && AOT::Image::environmentsSize()) {
+            AOT::ImageEnvironment environment = AOT::Image::environmentOf(prelinkedIndex());
+            if (environment.distance && environment.size == JSModuleEnvironment::allocationSize(symbolTable, jsModule->importSlotCount())) {
+                place = AOT::Instance::ensure(globalObject).placeForEnvironment(environment);
+                // (Linked a second time, after the first came to nothing.)
+                if (place && *static_cast<uint64_t*>(place))
+                    place = nullptr;
+            }
+        }
+        // (Nothing else is to be allocated in between.)
+        globalObject->moduleEnvironmentStructure();
+        JSScope* scopeOfModules = moduleLoader()->moduleScope();
+        if (place)
+            StaticHeap::placeNextCell(vm, place);
+        env = JSModuleEnvironment::create(vm, globalObject, scopeOfModules, symbolTable, jsTDZValue(), this);
+#else
         env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
+#endif
+#if ENABLE(FTL_JIT)
+        if (place)
+            StaticHeap::didPlaceCell(vm, env);
+#endif
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);
@@ -444,7 +473,31 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 19. Let varDeclarations be the VarScopedDeclarations of code.
     // 20. Let declaredVarNames be a new empty List.
     // 21. For each element d of varDeclarations, do
+    // While the symbol table's entries are still in the bytecode cache nothing watches them, and where the variables are is known
+    // without their names.
+    // (Likewise with a table that was made when the program was built. That may not so much as have the names: StaticHeap keeps those that something can ask for.
+    // With compiler threads about, the environment's table is a clone of it in the ordinary heap, with the same layout: SymbolTable::isSharedAcrossRealms().)
+    bool isTableOfStaticHeap = StaticHeap::contains(unlinkedCodeBlock);
+    bool initializeVarsByOffset = symbolTable->hasCachedEntriesPending() || isTableOfStaticHeap;
+    if (initializeVarsByOffset) {
+        for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)
+            env->variableAt(ScopeOffset(unlinkedCodeBlock->firstVarScopeOffset() + i)).setUndefined();
+        if (Options::validatePrelinkedModuleInfo() && !isTableOfStaticHeap) [[unlikely]] {
+            unsigned found = 0;
+            for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
+                SymbolTableEntry::Fast entry = symbolTable->get(variable.key.get());
+                if (entry.isNull() || entry.varOffset().isStack())
+                    continue;
+                unsigned offset = entry.scopeOffset().offset();
+                RELEASE_ASSERT(offset >= unlinkedCodeBlock->firstVarScopeOffset() && offset - unlinkedCodeBlock->firstVarScopeOffset() < unlinkedCodeBlock->numberOfVarScopeOffsets(), offset, unlinkedCodeBlock->firstVarScopeOffset(), unlinkedCodeBlock->numberOfVarScopeOffsets());
+                found++;
+            }
+            RELEASE_ASSERT(found == unlinkedCodeBlock->numberOfVarScopeOffsets(), found, unlinkedCodeBlock->numberOfVarScopeOffsets());
+        }
+    }
     for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
+        if (initializeVarsByOffset)
+            break;
         // 21.a. For each element dn of the BoundNames of d, do
         // 21.a.i. If declaredVarNames does not contain dn, then
         // 21.a.i.1. Perform ! env.CreateMutableBinding(dn, false).
@@ -479,13 +532,17 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 24.a.i.1. Perform ! env.CreateImmutableBinding(dn, true).
         // 24.a.ii. Else,
         // 24.a.ii.1. Perform ! env.CreateMutableBinding(dn, false).
-        UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
-        SymbolTableEntry::Fast entry = symbolTable->get(unlinkedFunctionExecutable->name().impl());
-        VarOffset offset = entry.varOffset();
+        FunctionExecutable* staticExecutable = unlinkedCodeBlock->executableOfFunctionDecl(i);
+        UnlinkedFunctionExecutable* unlinkedFunctionExecutable = staticExecutable ? nullptr : unlinkedCodeBlock->functionDecl(i);
+        const Identifier& name = staticExecutable ? staticExecutable->name() : unlinkedFunctionExecutable->name();
+        std::optional<ScopeOffset> whereItIs;
+        if (auto* slots = isTableOfStaticHeap ? unlinkedCodeBlock->heapAllocatedFunctionDeclSlots() : nullptr; slots && i < slots->size())
+            whereItIs = slots->at(i);
+        VarOffset offset = whereItIs ? VarOffset(*whereItIs) : symbolTable->get(name.impl()).varOffset();
         ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         if (!offset.isStack()) {
-            ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
-            if (vm.typeProfiler() || vm.controlFlowProfiler()) {
+            ASSERT(!name.isEmpty());
+            if (unlinkedFunctionExecutable && (vm.typeProfiler() || vm.controlFlowProfiler())) {
                 vm.functionHasExecutedCache()->insertUnexecutedRange(moduleProgramExecutable->sourceID(),
                     unlinkedFunctionExecutable->unlinkedFunctionStart(),
                     unlinkedFunctionExecutable->unlinkedFunctionEnd());
@@ -505,8 +562,12 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 function = JSFunction::create(vm, globalObject, executable, env);
             RETURN_IF_EXCEPTION(scope, void());
             // 24.a.iii.2. Perform ! env.InitializeBinding(dn, fo).
+            if (whereItIs) {
+                env->variableAt(*whereItIs).set(vm, env, function);
+                continue;
+            }
             bool putResult = false;
-            symbolTablePutTouchWatchpointSet(env, globalObject, unlinkedFunctionExecutable->name(), function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+            symbolTablePutTouchWatchpointSet(env, globalObject, name, function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }

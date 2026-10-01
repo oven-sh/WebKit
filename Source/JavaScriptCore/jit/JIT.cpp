@@ -29,7 +29,13 @@
 
 #include "JIT.h"
 
+#include "AOTStubs.h"
 #include "BaselineJITPlan.h"
+#include "CompilerHooks.h"
+#include "InitializeThreading.h"
+#include "JITWorklist.h"
+#include "WasmBBQPlan.h"
+#include "YarrJIT.h"
 #include "BytecodeGraph.h"
 #include "CodeBlock.h"
 #include "CodeBlockWithJITType.h"
@@ -296,6 +302,7 @@ void JIT::privateCompileMainPass()
         DEFINE_OP(op_get_argument)
         DEFINE_OP(op_argument_count)
         DEFINE_OP(op_check_tdz)
+        DEFINE_OP(op_check_type)
         DEFINE_OP(op_identity_with_profile)
         DEFINE_OP(op_debug)
         DEFINE_OP(op_del_by_id)
@@ -368,6 +375,7 @@ void JIT::privateCompileMainPass()
         DEFINE_OP(op_loop_hint)
         DEFINE_OP(op_check_traps)
         DEFINE_OP(op_nop)
+        DEFINE_OP(op_type_tag)
         DEFINE_OP(op_super_sampler_begin)
         DEFINE_OP(op_super_sampler_end)
         DEFINE_OP(op_lshift)
@@ -608,6 +616,7 @@ void JIT::privateCompileSlowCases()
         DEFINE_SLOWCASE_SLOW_OP(nstricteq)
         DEFINE_SLOWCASE_SLOW_OP(get_prototype_of)
         DEFINE_SLOWCASE_SLOW_OP(check_tdz)
+        DEFINE_SLOWCASE_SLOW_OP(check_type)
         DEFINE_SLOWCASE_SLOW_OP(to_property_key)
         DEFINE_SLOWCASE_SLOW_OP(to_property_key_or_number)
         DEFINE_SLOWCASE_SLOW_OP(typeof_is_function)
@@ -1112,6 +1121,29 @@ void JIT::exceptionCheck(Jump jumpToHandler)
 void JIT::exceptionCheck()
 {
     exceptionCheck(emitExceptionCheck(vm()));
+}
+
+// See CompilerHooks.h. Nothing else is to name any of these.
+void installRegExpCompiler()
+{
+#if ENABLE(YARR_JIT)
+    g_compilerHooks.compileRegExp = reinterpret_cast<void*>(&Yarr::jitCompile);
+#endif
+}
+
+void installCompilers()
+{
+    installRegExpCompiler();
+    g_compilerHooks.enqueueBaselinePlan = [](CodeBlock* codeBlock) {
+        JITWorklist::ensureGlobalWorklist().enqueue(adoptRef(*new BaselineJITPlan(codeBlock)));
+    };
+    g_compilerHooks.compileBaselineNow = &JIT::compileSync;
+#if ENABLE(WEBASSEMBLY_BBQJIT)
+    g_compilerHooks.newBBQPlan = reinterpret_cast<void*>(&Wasm::BBQPlan::create);
+#endif
+#if ENABLE(FTL_JIT)
+    installImageCompiler();
+#endif
 }
 
 } // namespace JSC

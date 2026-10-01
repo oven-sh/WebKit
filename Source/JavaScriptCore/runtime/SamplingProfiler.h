@@ -29,6 +29,7 @@
 
 #if ENABLE(SAMPLING_PROFILER)
 
+#include "AOTFunction.h"
 #include "CallFrame.h"
 #include "CodeBlockHash.h"
 #include "JITCode.h"
@@ -46,6 +47,10 @@
 #include <wtf/WeakRandom.h>
 
 namespace JSC {
+
+namespace AOT {
+struct Data;
+}
 
 class VM;
 class ExecutableBase;
@@ -70,6 +75,7 @@ public:
         const void* cCodePC { nullptr };
         CalleeBits unverifiedCallee;
         CodeBlock* verifiedCodeBlock { nullptr };
+        AOT::FunctionRef aotFunction; // Set instead for a frame of AOT code, which has no CodeBlock unless one is requested.
         CallSiteIndex callSiteIndex;
         NativeCallee::Category nativeCalleeCategory { NativeCallee::Category::InlineCache };
 #if ENABLE(WEBASSEMBLY)

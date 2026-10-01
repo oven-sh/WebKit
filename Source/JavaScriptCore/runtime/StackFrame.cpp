@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StackFrame.h"
 
+#include "AOTRuntime.h"
 #include "CodeBlock.h"
 #include "DebuggerPrimitives.h"
 #include "FunctionExecutable.h"
@@ -72,6 +73,74 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 {
 }
 
+StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, FunctionExecutable* executable, CodeSpecializationKind kind, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
+    : m_frameData(JSFrameData {
+        callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>(),
+        WriteBarrier<CodeBlock>(),
+        bytecodeIndex,
+        isAsyncFrame,
+        kind,
+        WriteBarrier<FunctionExecutable>(vm, owner, executable)
+    })
+{
+}
+
+CodeBlock* StackFrame::makeCodeBlock() const
+{
+#if ENABLE(FTL_JIT)
+    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+    VM& vm = jsFrame.aotExecutable->vm();
+    if (vm.heap.mutatorState() != MutatorState::Running)
+        return nullptr;
+    if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, jsFrame.aotExecutable.get(), jsFrame.aotKind))
+        return function.ensureCodeBlock();
+#endif
+    return nullptr;
+}
+
+static ScriptExecutable* ownerExecutableOf(const JSFrameData& jsFrame)
+{
+    if (jsFrame.aotExecutable)
+        return jsFrame.aotExecutable.get();
+    return jsFrame.codeBlock ? jsFrame.codeBlock->ownerExecutable() : nullptr;
+}
+
+ScriptExecutable* StackFrame::ownerExecutable() const
+{
+    auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
+    return jsFrame ? ownerExecutableOf(*jsFrame) : nullptr;
+}
+
+CodeType StackFrame::codeType() const
+{
+    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+    return jsFrame.aotExecutable ? FunctionCode : jsFrame.codeBlock->codeType();
+}
+
+bool StackFrame::isConstructor() const
+{
+    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+    return jsFrame.aotExecutable ? jsFrame.aotKind == CodeSpecializationKind::CodeForConstruct : jsFrame.codeBlock->isConstructor();
+}
+
+bool StackFrame::isBuiltinFunction() const
+{
+    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+    return jsFrame.aotExecutable ? jsFrame.aotExecutable->isBuiltinFunction() : jsFrame.codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
+}
+
+JSGlobalObject* StackFrame::globalObjectOfCode() const
+{
+    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+#if ENABLE(FTL_JIT)
+    if (jsFrame.aotExecutable) {
+        AOT::FunctionRef function = AOT::FunctionRef::of(jsFrame.aotExecutable->vm(), jsFrame.aotExecutable.get(), jsFrame.aotKind);
+        return function ? function.instance->globalObject : nullptr;
+    }
+#endif
+    return jsFrame.codeBlock->globalObject();
+}
+
 StackFrame::StackFrame(Wasm::IndexOrName indexOrName)
     : m_frameData(WasmFrameData { WTF::move(indexOrName), 0 })
 {
@@ -114,6 +183,8 @@ void StackFrame::visitAggregate(Visitor& visitor)
                 visitor.append(jsFrame.callee);
             if (jsFrame.codeBlock)
                 visitor.append(jsFrame.codeBlock);
+            if (jsFrame.aotExecutable)
+                visitor.append(jsFrame.aotExecutable);
         },
         [](const WasmFrameData&) { }
     );
@@ -125,7 +196,7 @@ bool StackFrame::isMarked(VM& vm) const
 {
     return WTF::switchOn(m_frameData,
         [&vm](const JSFrameData& jsFrame) {
-            return (!jsFrame.callee || vm.heap.isMarked(jsFrame.callee.get())) && (!jsFrame.codeBlock || vm.heap.isMarked(jsFrame.codeBlock.get()));
+            return (!jsFrame.callee || vm.heap.isMarked(jsFrame.callee.get())) && (!jsFrame.codeBlock || vm.heap.isMarked(jsFrame.codeBlock.get())) && (!jsFrame.aotExecutable || vm.heap.isMarked(jsFrame.aotExecutable.get()));
         },
         [](const WasmFrameData&) { return true; }
     );
@@ -134,9 +205,8 @@ bool StackFrame::isMarked(VM& vm) const
 SourceID StackFrame::sourceID() const
 {
     if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData)) {
-        if (!jsFrame->codeBlock)
-            return noSourceID;
-        return jsFrame->codeBlock->ownerExecutable()->sourceID();
+        ScriptExecutable* executable = ownerExecutableOf(*jsFrame);
+        return executable ? executable->sourceID() : noSourceID;
     }
     return noSourceID;
 }
@@ -165,9 +235,12 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURL(), allowOverride);
             }
 
-            if (!jsFrame.codeBlock)
+            ScriptExecutable* executable = ownerExecutableOf(jsFrame);
+            if (!executable)
                 return "[native code]"_s;
-            return processSourceURL(vm, *this, jsFrame.codeBlock->ownerExecutable()->sourceURL(), allowOverride);
+            if (auto position = reportedPosition(); position && position->source)
+                return StaticHeap::nameOfSource(position->source);
+            return processSourceURL(vm, *this, executable->sourceURL(), allowOverride);
         },
         [](const WasmFrameData& wasmFrame) -> String {
             auto moduleName = wasmFrame.functionIndexOrName.moduleName();
@@ -189,9 +262,10 @@ String StackFrame::sourceURLStripped(VM& vm) const
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURLStripped());
             }
 
-            if (!jsFrame.codeBlock)
+            ScriptExecutable* executable = ownerExecutableOf(jsFrame);
+            if (!executable)
                 return "[native code]"_s;
-            return processSourceURL(vm, *this, jsFrame.codeBlock->ownerExecutable()->sourceURLStripped());
+            return processSourceURL(vm, *this, executable->sourceURLStripped());
         },
         [](const WasmFrameData& wasmFrame) -> String {
             auto moduleName = wasmFrame.functionIndexOrName.moduleName();
@@ -221,10 +295,8 @@ String StackFrame::functionName(VM& vm) const
             String name;
             if (jsFrame.callee && jsFrame.callee->isObject())
                 name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee.get())).impl();
-            else if (jsFrame.codeBlock) {
-                if (auto* executable = dynamicDowncast<FunctionExecutable>(jsFrame.codeBlock->ownerExecutable()))
-                    name = executable->ecmaNameWithoutGC();
-            }
+            else if (auto* executable = dynamicDowncast<FunctionExecutable>(ownerExecutableOf(jsFrame)))
+                name = executable->ecmaNameWithoutGC();
 
             if (name.isNull())
                 return emptyString();
@@ -244,15 +316,41 @@ String StackFrame::functionName(VM& vm) const
     );
 }
 
+std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(AOT::FunctionRef::OfConstruction ofConstruction) const
+{
+#if ENABLE(FTL_JIT)
+    auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
+    if (!jsFrame || !StaticHeap::hasPositionsOfCallSites())
+        return std::nullopt;
+    AOT::FunctionRef function;
+    if (jsFrame->aotExecutable)
+        function = AOT::FunctionRef::of(jsFrame->aotExecutable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind);
+    else if (jsFrame->codeBlock)
+        function = AOT::FunctionRef::of(jsFrame->codeBlock.get());
+    if (function)
+        return function.reportedPositionFor(jsFrame->bytecodeIndex, ofConstruction);
+#else
+    UNUSED_PARAM(ofConstruction);
+#endif
+    return std::nullopt;
+}
+
 LineColumn StackFrame::computeLineAndColumn() const
 {
     if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData)) {
-        if (!jsFrame->codeBlock)
+        ScriptExecutable* executable = ownerExecutableOf(*jsFrame);
+        if (!executable)
             return { };
-        auto lineColumn = jsFrame->codeBlock->lineColumnForBytecodeIndex(jsFrame->bytecodeIndex);
+        LineColumn lineColumn;
+#if ENABLE(FTL_JIT)
+        if (jsFrame->aotExecutable) {
+            if (AOT::FunctionRef function = AOT::FunctionRef::of(executable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind))
+                lineColumn = function.lineColumnFor(jsFrame->bytecodeIndex);
+        } else
+#endif
+            lineColumn = jsFrame->codeBlock->lineColumnForBytecodeIndex(jsFrame->bytecodeIndex);
 
-        ScriptExecutable* executable = jsFrame->codeBlock->ownerExecutable();
-        if (std::optional<int> overrideLineNumber = executable->overrideLineNumber(jsFrame->codeBlock->vm()))
+        if (std::optional<int> overrideLineNumber = executable->overrideLineNumber(executable->vm()))
             lineColumn.line = overrideLineNumber.value();
 
         return lineColumn;

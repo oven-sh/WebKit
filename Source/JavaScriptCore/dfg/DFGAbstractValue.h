@@ -325,6 +325,15 @@ struct AbstractValue {
         return !(m_type & ~desiredType);
     }
 
+    // True if every value this describes passes CheckSoundType with the given mask.
+    bool provesSoundTypeMask(unsigned mask) const
+    {
+        if (isType(speculationProvingSoundTypeMask(mask)))
+            return true;
+        // SpecOther cannot tell undefined from null, but a constant can.
+        return m_value && !m_value.isCell() && soundTypeMaskAccepts(mask, m_value);
+    }
+
     // Filters the value using the given structure set. If the admittedTypes argument is not passed, this
     // implicitly filters by the types implied by the structure set, which are usually a subset of
     // SpecCell. Hence, after this call, the value will no longer have any non-cell members. But, you can

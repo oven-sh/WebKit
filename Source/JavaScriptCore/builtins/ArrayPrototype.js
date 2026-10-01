@@ -345,3 +345,134 @@ function at(index)
 
     return (k >= 0 && k < length) ? array[k] : @undefined;
 }
+
+// ---- Versions of the above that the AOT compiler inlines into their callers (AOT::Inliner). Nothing else ever runs them. |this|
+// is an array, and the only argument is a function, so there is nothing to convert or check, and no thisArg. In these functions,
+// and only when compiled by that compiler, reading a missing element yields the empty value (Graph::readsElementsOrEmpty), so
+// presence does not have to be tested separately.
+
+@overriddenName="forEach"
+function forEachOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+@overriddenName="map"
+function mapOfArrayForEffect(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+@overriddenName="filter"
+function filterOfArrayForEffect(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+@overriddenName="map"
+function mapOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    var result = @newArrayWithSpecies(length, this);
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        @putByValDirect(result, i, callback(value, i, this));
+    }
+    return result;
+}
+
+@overriddenName="filter"
+function filterOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    var result = @newArrayWithSpecies(0, this);
+    var nextIndex = 0;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (callback(value, i, this)) {
+            @putByValDirect(result, nextIndex, value);
+            ++nextIndex;
+        }
+    }
+    return result;
+}
+
+@overriddenName="some"
+function someOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (callback(value, i, this))
+            return true;
+    }
+    return false;
+}
+
+@overriddenName="every"
+function everyOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (!callback(value, i, this))
+            return false;
+    }
+    return true;
+}
+
+@overriddenName="reduce"
+function reduceOfArray(callback, initialValue)
+{
+    "use strict";
+
+    var length = this.length;
+    var accumulator = initialValue;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        accumulator = callback(accumulator, value, i, this);
+    }
+    return accumulator;
+}

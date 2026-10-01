@@ -68,6 +68,13 @@ JS_EXPORT_PRIVATE JSObject* createError(JSGlobalObject*, ErrorTypeWithExtension,
 
 std::unique_ptr<Vector<StackFrame>> getStackTrace(VM&, JSObject*, bool useCurrentFrame, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, JSCell* subclassCaller = nullptr);
 std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM&, CallFrame*);
+// If what getBytecodeIndex() would find is in a program that was built without its text (SourceProvider::hasNoText()): what the
+// source said there, as far as that was kept. A null string: it was not.
+struct SourceQuote {
+    String text;
+    bool isExact { true };
+};
+std::optional<SourceQuote> quoteSourceWithoutText(VM&, CallFrame*);
 bool getLineColumnAndSource(VM&, Vector<StackFrame>* stackTrace, LineColumn&, String& sourceURL);
 bool addErrorInfo(VM&, Vector<StackFrame>*, JSObject*);
 JS_EXPORT_PRIVATE void addErrorInfo(JSGlobalObject*, JSObject*, bool);
