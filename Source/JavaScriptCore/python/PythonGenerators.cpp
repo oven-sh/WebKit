@@ -86,12 +86,16 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
             setState(static_cast<int32_t>(JSGenerator::State::Executing));
             JSValue returnedToIt;
             bool isForThisOne = false;
+            PyRealm* realm = globalObject->pyRealm();
+            PyRealm::WaitingGenerator waiting { generator, state, vm.topCallFrame, true, realm->innermostWaitingGenerator() };
+            realm->setInnermostWaitingGenerator(&waiting);
             JSValue yielded = stepIterator(globalObject, waitingOn, sent, true, returnedToIt, &isForThisOne);
+            realm->setInnermostWaitingGenerator(waiting.outer);
             setState(state);
             Exception* raised = scope.exception();
             if (!raised && yielded)
                 return yielded;
-            if (raised && vm.isTerminationException(raised))
+            if (raised && (isForThisOne || vm.isTerminationException(raised)))
                 return { };
             JSValue thrownHere;
             if (isForThisOne && !raised) {
@@ -229,12 +233,20 @@ JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue rec
     bool isExit = wasThrown && (isClass(thrownType) ? asType(thrownType)->isSubtypeOf(realm->typeGeneratorExit()) : isInstance(globalObject, thrownType, realm->typeGeneratorExit()));
 
     if (isExit) {
+        // gen_close_iter() is called with nothing linked in.
+        if (isForWhatWaits)
+            realm->innermostWaitingGenerator()->isLinked = false;
         // Whatever is iterating it is being closed, so it is too.
         if (generator)
             generatorClose(globalObject, generator);
         else {
+            // gen_close_iter(): what goes wrong with asking whether it can be closed is nobody's to catch.
             JSValue close = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "close"_s));
-            RETURN_IF_EXCEPTION(scope, { });
+            if (scope.exception()) [[unlikely]] {
+                reportUnraisableShowing(globalObject, "Exception ignored while closing generator"_s, iterator);
+                RETURN_IF_EXCEPTION(scope, { });
+                close = { };
+            }
             if (close)
                 call(globalObject, close);
         }
@@ -247,7 +259,12 @@ JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue rec
 
     if (wasThrown) {
         JSValue method = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "throw"_s));
-        RETURN_IF_EXCEPTION(scope, { });
+        if (scope.exception()) [[unlikely]] {
+            // Nothing has been thrown into anything, and what is waiting goes on waiting.
+            if (isForWhatWaits)
+                *isForWhatWaits = true;
+            return { };
+        }
         if (!method)
             return throwHere();
         MarkedArgumentBuffer arguments;

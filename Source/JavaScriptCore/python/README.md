@@ -685,6 +685,10 @@ loop. It is `_gen_throw()` of CPython's `Objects/genobject.c`, and is in `resume
   that returned or raised, which `yieldFromStep()` takes for what it is. So what is watching sees the frames that CPython goes into and no others.
 - **If it cannot be thrown, the generator is left as it was.** If making the exception goes wrong, what went wrong is what is thrown, as `PyErr_NormalizeException()` has it.
 - What JavaScript throws in, with the `throw()` that a generator of JavaScript's has, wakes the generator, and the loop catches it and passes it on.
+- **It is running all the same, and its frame is in the stack.** `_gen_throw()` links the frame in between the one that threw and the one that is thrown into, "to enable complete backtraces", so that what catches a cancellation at the
+  bottom of a chain of `await`s sees the whole chain. The engine has no frame for it then, and the generator cannot say where it will go on from while it says that it is running. So there is a `PyRealm::WaitingGenerator` on
+  the stack of C++ for as long as it lasts, which has both, and `PyFrame` asks it. Closing what is waited on links nothing in, as in CPython. Asking such a frame what line it is on used to bring the process down.
+  `programs/frames-while-a-generator-is-thrown-through.py`.
 
 `programs/throwing-into-what-is-waited-on.py` has it with nothing watching, traced and monitored.
 

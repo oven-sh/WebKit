@@ -394,6 +394,8 @@ PYTHON_NATIVE(frameClear)
     case PyFrame::State::Running:
         return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "cannot clear an executing frame"_s));
     case PyFrame::State::Suspended:
+        if (frame->isWaitingWhileSaidToRun())
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "cannot clear an executing frame"_s));
         return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "cannot clear a suspended frame"_s));
     case PyFrame::State::NotStarted:
         // It never will be. It keeps what it was called with.
@@ -426,11 +428,19 @@ PYTHON_NATIVE(sysGetFrame)
         depth = *index;
     }
     CallFrame* frame = callerOf(callFrame);
-    for (int64_t i = 0; i < depth && frame; ++i)
-        frame = callerOf(frame);
-    if (!frame)
+    PyFrame* result = nullptr;
+    if (realm->innermostWaitingGenerator()) [[unlikely]] {
+        // There are frames that the engine has none for.
+        result = frame ? PyFrame::forCallFrame(vm, frame) : nullptr;
+        for (int64_t i = 0; i < depth && result; ++i)
+            result = result->back(vm);
+    } else {
+        for (int64_t i = 0; i < depth && frame; ++i)
+            frame = callerOf(frame);
+        result = frame ? PyFrame::forCallFrame(vm, frame) : nullptr;
+    }
+    if (!result)
         return JSValue::encode(raiseValueError(globalObject, scope, "call stack is not deep enough"_s));
-    PyFrame* result = PyFrame::forCallFrame(vm, frame);
     if (!audit(globalObject, "sys._getframe"_s, result))
         return { };
     return JSValue::encode(result);

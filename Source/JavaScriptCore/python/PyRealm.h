@@ -386,6 +386,19 @@ public:
     // As it was thrown, so that a bare `raise` throws that again, and not a copy that has forgotten where it was first thrown.
     // They are kept where what resumes a generator can get at them, which is written in JavaScript as what resumes one of JavaScript's is: pythonGeneratorNext() in builtins/GeneratorPrototype.js. Undefined is none.
     Exception* handledThrown() const { return ownHandledException() ? ownHandledException() : outerHandledException(); }
+
+    // A generator that is waiting on another, with `yield from` or `await`, is not woken for something to be thrown into that one, or for it to be closed. So it has no frame of the engine's meanwhile. To Python it is running all
+    // the same, and if it is a throw its frame comes between the frame that threw and the one that is thrown into: _gen_throw() links it in, "to enable complete backtraces". There is one of these for each, on the stack of
+    // C++, for as long as that goes on.
+    struct WaitingGenerator {
+        JSGenerator* generator;
+        int32_t state; // Where it will go on from, which the generator cannot say while it says that it is running
+        CallFrame* topCallFrame; // The innermost frame when this began
+        bool isLinked; // Not if what it waits on is being closed.
+        WaitingGenerator* outer;
+    };
+    WaitingGenerator* innermostWaitingGenerator() const { return m_innermostWaitingGenerator; }
+    void setInnermostWaitingGenerator(WaitingGenerator* waiting) { m_innermostWaitingGenerator = waiting; }
     JSValue handledException() const { return handledThrown() ? handledThrown()->value() : JSValue(); }
     Exception* ownHandledException() const { return handled(InternalFieldTuple::Field::Slot0); }
     void setOwnHandledException(VM& vm, Exception* exception) { setHandled(vm, InternalFieldTuple::Field::Slot0, exception); }
@@ -457,6 +470,7 @@ private:
     WriteBarrier<Unknown> m_returnValue;
     JSObject* m_awaitableBeingRun { nullptr };
     bool m_hasAsyncio { false };
+    WaitingGenerator* m_innermostWaitingGenerator { nullptr };
 };
 
 } // namespace JSC

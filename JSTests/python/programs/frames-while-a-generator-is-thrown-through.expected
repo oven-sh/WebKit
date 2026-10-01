@@ -1,0 +1,70 @@
+send -> StopIteration: 
+throw -> [('started', ['inner', 'middle', 'outer', 'run', '<lambda>', 'attempt']), ('thrown', ['inner', 'middle', 'outer', '<lambda>', 'run', '<lambda>', 'attempt'])]
+close -> [('started', ['inner', 'middle', 'outer', 'run', '<lambda>', 'attempt']), ('finally', ['inner', '<lambda>', 'run', '<lambda>', 'attempt'])]
+next -> StopIteration: 
+custom, send None -> [('next', ['__next__', 'over', 'run2', '<lambda>', 'attempt']), ('next', ['__next__', 'over', '<lambda>', 'run2', '<lambda>', 'attempt'])]
+custom, send 1 -> [('next', ['__next__', 'over', 'run2', '<lambda>', 'attempt']), ('send', ['send', 'over', '<lambda>', 'run2', '<lambda>', 'attempt'])]
+custom, throw -> [('next', ['__next__', 'over', 'run2', '<lambda>', 'attempt']), ('throw', ['throw', 'over', '<lambda>', 'run2', '<lambda>', 'attempt'])]
+custom, close -> [('next', ['__next__', 'over', 'run2', '<lambda>', 'attempt']), ('close', ['close', '<lambda>', 'run2', '<lambda>', 'attempt'])]
+custom, next -> [('next', ['__next__', 'over', 'run2', '<lambda>', 'attempt']), ('next', ['__next__', 'over', 'run2', '<lambda>', 'attempt'])]
+coroutines -> [('thrown in a coroutine', ['leaf', 'mid', 'top', 'run3', 'attempt'])]
+the traceback -> [('tb', 6), ('o', 0), ('m', 0), ('i', 1)]
+===== what can be asked of one meanwhile
+depth 1
+   thrown: [('link', True, False, 2, True, ['depth', 'inner', 'mine'], '<lambda>', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True)]
+   by depth: ['leaf', 'link', '<lambda>']
+   extract_stack: ['<lambda>', 'link', 'leaf']
+   inspect.stack: ['leaf', 'link', '<lambda>']
+   throw -> caught
+   afterwards -> StopIteration: ('changed', None)
+   to the end -> []
+   closed: [('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True)]
+   close -> None
+   afterwards -> [(None, False)]
+depth 2
+   thrown: [('link', True, False, 2, True, ['depth', 'inner', 'mine'], '<lambda>', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], 'link', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True)]
+   by depth: ['leaf', 'link', 'link', '<lambda>']
+   extract_stack: ['<lambda>', 'link', 'link', 'leaf']
+   inspect.stack: ['leaf', 'link', 'link', '<lambda>']
+   throw -> caught
+   afterwards -> StopIteration: ('changed', (0, None))
+   to the end -> []
+   closed: [('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True)]
+   close -> None
+   afterwards -> [(None, False), (None, False)]
+depth 3
+   thrown: [('link', True, False, 2, True, ['depth', 'inner', 'mine'], '<lambda>', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], 'link', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], 'link', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True)]
+   by depth: ['leaf', 'link', 'link', 'link', '<lambda>']
+   extract_stack: ['<lambda>', 'link', 'link', 'link', 'leaf']
+   inspect.stack: ['leaf', 'link', 'link', 'link', '<lambda>']
+   throw -> caught
+   afterwards -> StopIteration: ('changed', (1, (0, None)))
+   to the end -> []
+   closed: [('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True)]
+   close -> None
+   afterwards -> [(None, False), (None, False), (None, False)]
+depth 6
+   thrown: [('link', True, False, 2, True, ['depth', 'inner', 'mine'], '<lambda>', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], 'link', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], 'link', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], 'link', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], 'link', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], 'link', 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True)]
+   by depth: ['leaf', 'link', 'link', 'link', 'link', 'link', 'link', '<lambda>']
+   extract_stack: ['<lambda>', 'link', 'link', 'link', 'link', 'link', 'link', 'leaf']
+   inspect.stack: ['leaf', 'link', 'link', 'link', 'link', 'link', 'link', '<lambda>']
+   throw -> caught
+   afterwards -> StopIteration: ('changed', (4, (3, (2, (1, (0, None))))))
+   to the end -> []
+   closed: [('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True), ('link', True, False, 2, True, ['depth', 'inner', 'mine'], None, 'cannot clear an executing frame', 'generator already executing', 'generator already executing', 'generator already executing', True)]
+   close -> None
+   afterwards -> [(None, False), (None, False), (None, False), (None, False), (None, False), (None, False)]
+===== one throw inside another
+   ['inner_b', 'outer_b', 'inner_a', 'outer_a', '<lambda>', 'attempt']
+nested -> 2
+===== what comes out
+raised in the leaf -> (['out', 'through', 'through', 'raiser'], 'RuntimeError', None, False)
+not caught -> ['not_caught', 'through', 'through', 'plain']
+===== coroutines and asynchronous generators
+   thrown: [('co_link', True, False, 0, True, ['c'], 'run_coros', 'cannot clear an executing frame')] ['co_leaf', 'co_link', 'run_coros', '<lambda>', 'attempt']
+coroutines, 1 -> caught
+   thrown: [('co_link', True, False, 0, True, ['c'], 'run_coros', 'cannot clear an executing frame'), ('co_link', True, False, 0, True, ['c'], 'co_link', 'cannot clear an executing frame'), ('co_link', True, False, 0, True, ['c'], 'co_link', 'cannot clear an executing frame')] ['co_leaf', 'co_link', 'co_link', 'co_link', 'run_coros', '<lambda>', 'attempt']
+coroutines, 3 -> caught
+   in an asynchronous generator: ['agen', 'uses', 'drive', '<lambda>', 'attempt']
+athrow -> 2
+done

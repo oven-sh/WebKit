@@ -110,9 +110,24 @@ static JSGenerator* generatorOf(CallFrame* callFrame)
     return uncheckedDowncast<JSGenerator>(callFrame->uncheckedArgument(static_cast<int>(JSGenerator::Argument::Generator) - 1).asCell());
 }
 
+static PyRealm::WaitingGenerator* waitingEntryOf(JSGenerator* generator)
+{
+    for (auto* waiting = generator->globalObject()->pyRealm()->innermostWaitingGenerator(); waiting; waiting = waiting->outer) {
+        if (waiting->generator == generator)
+            return waiting;
+    }
+    return nullptr;
+}
+
+// Where it is, which is where it will go on from if it is at a yield. One that is waiting while something is thrown into what it waits on is at a yield too, though it says that it is running.
 static int32_t generatorStateOf(JSGenerator* generator)
 {
-    return generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).get().asInt32();
+    int32_t state = generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).get().asInt32();
+    if (state == static_cast<int32_t>(JSGenerator::State::Executing)) {
+        if (auto* waiting = waitingEntryOf(generator)) [[unlikely]]
+            return waiting->state;
+    }
+    return state;
 }
 
 PyFrame* PyFrame::forCallFrameIfExists(VM& vm, CallFrame* callFrame)
@@ -183,6 +198,8 @@ PyFrame::State PyFrame::state() const
         return State::NotStarted;
     return State::Suspended;
 }
+
+bool PyFrame::isWaitingWhileSaidToRun() const { return m_generator && waitingEntryOf(m_generator.get()); }
 
 CallFrame* PyFrame::callFrame(VM& vm) const
 {
@@ -358,13 +375,42 @@ void PyFrame::setExtraLocals(VM& vm, PyDict* extra)
     m_extraLocals.set(vm, this, extra);
 }
 
+// The frame that Python has outside a frame of the engine's, or at it if `includesIt`. It is that of the next of Python's frames out, unless a generator has been linked in before that. Only those outside `within` are looked at.
+static PyFrame* nextFrameOut(VM& vm, CallFrame* from, bool includesIt, PyRealm::WaitingGenerator* candidates)
+{
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    bool hasBegun = false;
+    for (CallFrame* frame = vm.topCallFrame; frame; frame = frame->callerFrame(entryFrame)) {
+        if (!hasBegun) {
+            if (frame != from)
+                continue;
+            hasBegun = true;
+            if (!includesIt)
+                continue;
+        }
+        for (auto* waiting = candidates; waiting; waiting = waiting->outer) {
+            if (waiting->topCallFrame == frame && waiting->isLinked)
+                return PyFrame::forGenerator(waiting->generator->globalObject(), waiting->generator);
+        }
+        if (isFrameToPython(frame, frame->bytecodeIndex()))
+            return PyFrame::forCallFrame(vm, frame);
+    }
+    return nullptr;
+}
+
 PyFrame* PyFrame::back(VM& vm)
 {
     if (m_isOver)
         return m_back.get();
+    if (m_generator) {
+        if (auto* waiting = waitingEntryOf(m_generator.get())) [[unlikely]]
+            return waiting->isLinked ? nextFrameOut(vm, waiting->topCallFrame, true, waiting->outer) : nullptr;
+    }
     CallFrame* frame = callFrame(vm);
     if (!frame)
         return nullptr;
+    if (auto* waiting = globalObject()->pyRealm()->innermostWaitingGenerator()) [[unlikely]]
+        return nextFrameOut(vm, frame, false, waiting);
     CallFrame* caller = callerOf(frame);
     return caller ? forCallFrame(vm, caller) : nullptr;
 }

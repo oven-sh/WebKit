@@ -82,6 +82,8 @@ public:
         Over,
     };
     State state() const;
+    // It is at a yield, and its generator says that it is running: see PyRealm::WaitingGenerator.
+    bool isWaitingWhileSaidToRun() const;
 
     JSFunction* function() const { return m_function.get(); }
     FunctionExecutable* executable() const;

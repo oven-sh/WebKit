@@ -1,0 +1,9 @@
+send -> ZeroDivisionError: division by zero
+   [] False False False
+throw -> ZeroDivisionError: division by zero
+   [] True False True
+close -> None
+   [('ZeroDivisionError', 'Exception ignored while closing generator <Broken>', None)] False False False
+throw GeneratorExit -> GeneratorExit: 
+   [('ZeroDivisionError', 'Exception ignored while closing generator <Broken>', None)] False False False
+done
