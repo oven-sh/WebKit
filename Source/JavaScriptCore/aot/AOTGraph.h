@@ -574,7 +574,7 @@ public:
     void findBuiltinsCalled(); // Sets Node::builtinCalled. Requires types.
     bool hasTwoCopiesOfAll { false }; // With Options::useAOTFunctionSplitting(): the whole function has two copies, not just its loops.
     // See FunctionSummary.
-    void recordUsesOfKnownFunctions(const FunctionSummaryMap&);
+    void recordUsesOfKnownFunctions(const FunctionSummaryMap&, const FunctionSummary* ofThisFunction);
     void noteFieldsComparedWithStrings(); // TypeTable::noteComparedWithString()
     // For f(a, ...b) and f.apply(o, arguments): the callee's arguments are assembled directly from their sources
     // (Stub::CallVarargs, Stub::CallList). An array that would be built only to be copied from immediately before the call is
@@ -598,6 +598,7 @@ public:
     // The interprocedural summary for this function's call code block.
     void setSummary(const FunctionSummary* summary) { m_summary = summary; }
     const FunctionSummary* summary() const { return m_summary; }
+    bool isCalledRepeatedly() const { return m_summary && m_summary->isCalledRepeatedly.load(std::memory_order_relaxed); }
     // reader: the unit to reanalyze if a variable it read later widens (VariableSummaries::read()).
     void setVariableSummaries(VariableSummaries* summaries, unsigned reader = VariableSummaries::nobody)
     {

@@ -35,6 +35,14 @@ struct FunctionSummary {
     // something other than a direct call. If false, all of its callers are known.
     std::atomic<bool> valueIsUsed { false };
     std::atomic<uint32_t> directCalls { 0 };
+    // The function is likely to run many times: it is called in a loop, it is passed to a method that calls its argument for each
+    // element of a collection, or a function of which that is true calls it. Besides loops, this is the only indication of which
+    // code is hot that is available ahead of time. The inliner treats a call in such a function like a call in a loop.
+    std::atomic<bool> isCalledRepeatedly { false };
+    // The functions that this one calls directly outside its loops (Graph::recordUsesOfKnownFunctions()). (Two code blocks may share
+    // a summary.)
+    mutable Lock directCalleesLock;
+    mutable Vector<FunctionSummary*> directCallees WTF_GUARDED_BY_LOCK(directCalleesLock);
 
     // Valid once valueIsUsed is final. Only direct calls can reach this function.
     bool isNonEscaping { false };

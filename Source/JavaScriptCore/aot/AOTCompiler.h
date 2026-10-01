@@ -26,7 +26,7 @@ namespace AOT {
 // VM's heap meanwhile. Returns false if the code cannot be compiled ahead of time.
 struct CompiledCode;
 // See FunctionSummary. Can run on any thread, under the same condition. Returns false if the code cannot be analyzed.
-JS_EXPORT_PRIVATE bool recordUsesOfKnownFunctionsForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FunctionSummaryMap&, VariableSummaries*);
+JS_EXPORT_PRIVATE bool recordUsesOfKnownFunctionsForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FunctionSummaryMap&, const FunctionSummary*, VariableSummaries*);
 // See KnownFunction::returnType. Any thread, likewise.
 JS_EXPORT_PRIVATE Type inferReturnTypeForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FunctionSummary*, VariableSummaries*, unsigned summaryReader, Vector<const KnownFunction*>& calleesRead, Vector<const KnownFunction*>& calleesWithWidenedInputs, uint32_t& escapingParameters, const String& nameForLog = String());
 JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, const CalleeHints* = nullptr, const ModuleLinkage* = nullptr, const FunctionSummary* = nullptr, VariableSummaries* = nullptr, const CodeOfProgram* = nullptr);

@@ -1230,8 +1230,33 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
     }
 }
 
-void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExecutable)
+void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* ofThisFunction)
 {
+    auto calleeRegisterOf = [](Node* user) -> std::optional<VirtualRegister> {
+        if (user->isBytecode(op_call))
+            return user->as<OpCall>().m_callee;
+        if (user->isBytecode(op_call_ignore_result))
+            return user->as<OpCallIgnoreResult>().m_callee;
+        if (user->isBytecode(op_tail_call))
+            return user->as<OpTailCall>().m_callee;
+        return std::nullopt;
+    };
+    // collection.method(function), for the methods of arrays, maps and sets that call their argument for each element. (By name
+    // only: whatever the receiver is, a method with such a name is likely to do the same.)
+    auto isPassedToBeCalledForEachElement = [&](Node* user, const Use& use) {
+        auto calleeRegister = calleeRegisterOf(user);
+        if (!calleeRegister || use.reg == *calleeRegister)
+            return false;
+        Node* callee = user->use(*calleeRegister);
+        if (!callee->isBytecode(op_get_by_id))
+            return false;
+        StringView name { m_codeBlock->identifier(callee->as<OpGetById>().m_property).impl() };
+        for (ASCIILiteral method : { "map"_s, "filter"_s, "some"_s, "every"_s, "find"_s, "findIndex"_s, "findLast"_s, "findLastIndex"_s, "forEach"_s, "reduce"_s, "reduceRight"_s, "flatMap"_s, "sort"_s, "toSorted"_s }) {
+            if (name == method)
+                return true;
+        }
+        return false;
+    };
     auto executableCreatedBy = [&](Node* node) -> UnlinkedFunctionExecutable* {
         if (node->kind != NodeKind::Bytecode)
             return nullptr;
@@ -1244,12 +1269,17 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExec
             return nullptr;
         }
     };
-    auto note = [&](Node* user, const Use& use) {
+    auto note = [&](BasicBlock* block, Node* user, const Use& use) {
         // At its creation site, the only use that does not count is the store that initializes its variable. Any other use lets the
         // function object escape before it reaches the variable.
         if (auto* executable = executableCreatedBy(use.node)) {
-            if (auto* summary = summariesByExecutable.get(executable); summary && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value))
+            auto* summary = summariesByExecutable.get(executable);
+            if (!summary)
+                return;
+            if (!(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value))
                 summary->valueIsUsed.store(true, std::memory_order_relaxed);
+            if (isPassedToBeCalledForEachElement(user, use) || (block->isInLoop && calleeRegisterOf(user) == use.reg))
+                summary->isCalledRepeatedly.store(true, std::memory_order_relaxed);
             return;
         }
         if (!use.node->isBytecode(op_get_from_scope))
@@ -1261,13 +1291,16 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExec
         // (`f?.()` tests the callee for undefined and null.)
         if (user->isBytecode(op_check_tdz) || user->isBytecode(op_jundefined_or_null) || user->isBytecode(op_jnundefined_or_null))
             return;
-        bool isCallee = false;
-        if (user->isBytecode(op_call))
-            isCallee = use.reg == user->as<OpCall>().m_callee;
-        else if (user->isBytecode(op_call_ignore_result))
-            isCallee = use.reg == user->as<OpCallIgnoreResult>().m_callee;
-        else if (user->isBytecode(op_tail_call))
-            isCallee = use.reg == user->as<OpTailCall>().m_callee;
+        bool isCallee = calleeRegisterOf(user) == use.reg;
+        if (isCallee) {
+            if (block->isInLoop)
+                known->summary->isCalledRepeatedly.store(true, std::memory_order_relaxed);
+            else if (ofThisFunction) {
+                Locker locker { ofThisFunction->directCalleesLock };
+                ofThisFunction->directCallees.append(known->summary);
+            }
+        } else if (isPassedToBeCalledForEachElement(user, use))
+            known->summary->isCalledRepeatedly.store(true, std::memory_order_relaxed);
         // (An inexact read may be of another variable with the same name, so it does not count as a direct call.)
         if (isCallee && readIsExact && known->forCall && knownCallee(user) == known && calleeIsExact(user)) {
             known->summary->directCalls.fetch_add(1, std::memory_order_relaxed);
@@ -1278,11 +1311,11 @@ void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& summariesByExec
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
             for (auto& use : node->uses)
-                note(node, use);
+                note(block, node, use);
         }
         for (Node* phi : block->phis) {
             for (auto& use : phi->uses)
-                note(phi, use);
+                note(block, phi, use);
         }
     }
 }

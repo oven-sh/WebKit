@@ -232,7 +232,7 @@ private:
         // (A closure that is called where it is created effectively has a single call site.)
         if (intrinsicToCheckFor && (!about || !canBeInlinedIntoCaller(callee)))
             return declineToInline(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
-        if (!about || !canBeInlinedIntoCaller(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : isProfitable(callee, about->summary, block->isInLoop)))
+        if (!about || !canBeInlinedIntoCaller(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : isProfitable(callee, about->summary, block->isInLoop || m_graph.isCalledRepeatedly())))
             return intrinsicToCheckFor ? declineToInline("it is too big"_s) : false;
         if (m_inlinedBytecodeSize + callee->instructionsSize() > Options::maximumAOTInliningCallerBytecodeCost() || m_graph.inlineFrames.size() > PackedSite::mostInlineFrames)
             return intrinsicToCheckFor ? declineToInline("the caller has taken over enough"_s) : false;

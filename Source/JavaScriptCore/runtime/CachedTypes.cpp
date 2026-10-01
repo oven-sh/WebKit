@@ -6422,9 +6422,33 @@ struct BytecodeLinkEncoder::Impl {
             }
             std::atomic<unsigned> unreadable { 0 };
             inParallel(jobs.size(), [&](size_t index) {
-                if (!AOT::recordUsesOfKnownFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, variableSummaries))
+                if (!AOT::recordUsesOfKnownFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries))
                     unreadable++;
             });
+            {
+                // What a function that is called repeatedly calls is called repeatedly too. Two levels down: with each level it is
+                // less certain that the call is on the path taken.
+                Vector<AOT::FunctionSummary*> calledRepeatedly;
+                for (auto& summary : functionSummaries) {
+                    if (summary->isCalledRepeatedly.load(std::memory_order_relaxed))
+                        calledRepeatedly.append(summary.get());
+                }
+                unsigned found = calledRepeatedly.size();
+                for (unsigned level = 0; level < 2; ++level) {
+                    Vector<AOT::FunctionSummary*> callees;
+                    for (auto* summary : calledRepeatedly) {
+                        Locker locker { summary->directCalleesLock };
+                        for (auto* callee : summary->directCallees) {
+                            if (!callee->isCalledRepeatedly.exchange(true, std::memory_order_relaxed))
+                                callees.append(callee);
+                        }
+                    }
+                    found += callees.size();
+                    calledRepeatedly = WTF::move(callees);
+                }
+                if (Options::verboseAOTCompilation()) [[unlikely]]
+                    dataLogLn("AOT: ", found, " of ", functionSummaries.size(), " functions are called repeatedly");
+            }
             AOT::TypeTable::finalizeAtomizedFields();
             RELEASE_ASSERT(!unreadable.load());
             classesOfProgram.forEachNonEscapingMethod([&](uint32_t number) {

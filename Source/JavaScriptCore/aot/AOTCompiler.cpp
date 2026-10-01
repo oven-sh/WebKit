@@ -413,14 +413,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     return true;
 }
 
-bool recordUsesOfKnownFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& summariesByExecutable, VariableSummaries* variableSummaries)
+bool recordUsesOfKnownFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* summary, VariableSummaries* variableSummaries)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     if (!parseBytecode(graph))
         return false;
-    graph.recordUsesOfKnownFunctions(summariesByExecutable);
+    graph.recordUsesOfKnownFunctions(summariesByExecutable, summary);
     graph.noteFieldsComparedWithStrings();
     recordReturnedLiterals(graph);
     graph.noteClassesDefined();
