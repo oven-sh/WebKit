@@ -848,6 +848,7 @@ python/PythonSelectModule.cpp
 python/PythonSequences.cpp
 python/PythonSignals.cpp
 python/PythonSignatures.cpp
+python/PythonStatModule.cpp
 python/PythonStrType.cpp
 python/PythonStrings.cpp
 python/PythonStructMember.cpp

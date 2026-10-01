@@ -922,6 +922,65 @@ void updateSysFlagsFromConfiguration(JSGlobalObject* globalObject, JSObject* mod
     module->putDirect(vm, Identifier::fromString(vm, "flags"_s), newStructSequence(globalObject, realm->typeSysFlags(), flags));
 }
 
+// ---- _sysconfig: Modules/_sysconfig.c
+
+// config_vars()
+PYTHON_NATIVE(sysconfigConfigVars)
+{
+    NATIVE_PROLOGUE();
+    PyDict* config = PyDict::create(globalObject);
+    config->set(globalObject, jsNontrivialString(vm, "Py_GIL_DISABLED"_s), jsNumber(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    config->set(globalObject, jsNontrivialString(vm, "Py_DEBUG"_s), jsNumber(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(config);
+}
+
+JSObject* createSysconfigModule(JSGlobalObject* globalObject)
+{
+    JSObject* module = newBuiltinModule(globalObject, "_sysconfig"_s);
+    addFunction(globalObject, module, "config_vars"_s, sysconfigConfigVars);
+    return module;
+}
+
+// ---- _types: Modules/_typesmodule.c. What types.py would otherwise find by making one of each and asking what it is.
+
+JSObject* createTypesModule(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    JSObject* module = newBuiltinModule(globalObject, "_types"_s);
+    auto add = [&] (ASCIILiteral name, PyType* type) { module->putDirect(vm, Identifier::fromString(vm, name), type->object()); };
+    add("AsyncGeneratorType"_s, realm->type(BuiltinType::AsyncGenerator));
+    add("BuiltinFunctionType"_s, realm->type(BuiltinType::BuiltinFunction));
+    add("BuiltinMethodType"_s, realm->type(BuiltinType::BuiltinFunction));
+    add("CapsuleType"_s, typeOfCapsules(globalObject));
+    add("CellType"_s, realm->type(BuiltinType::Cell));
+    add("ClassMethodDescriptorType"_s, realm->type(BuiltinType::ClassMethodDescriptor));
+    add("CodeType"_s, realm->type(BuiltinType::Code));
+    add("CoroutineType"_s, realm->type(BuiltinType::Coroutine));
+    add("EllipsisType"_s, realm->type(BuiltinType::Ellipsis));
+    add("FrameType"_s, realm->type(BuiltinType::Frame));
+    add("FunctionType"_s, realm->type(BuiltinType::Function));
+    add("GeneratorType"_s, realm->type(BuiltinType::Generator));
+    add("GenericAlias"_s, realm->type(BuiltinType::GenericAlias));
+    add("GetSetDescriptorType"_s, realm->type(BuiltinType::GetSetDescriptor));
+    add("LambdaType"_s, realm->type(BuiltinType::Function));
+    add("MappingProxyType"_s, realm->type(BuiltinType::MappingProxy));
+    add("MemberDescriptorType"_s, realm->type(BuiltinType::MemberDescriptor));
+    add("MethodDescriptorType"_s, realm->type(BuiltinType::MethodDescriptor));
+    add("MethodType"_s, realm->type(BuiltinType::Method));
+    add("MethodWrapperType"_s, realm->type(BuiltinType::MethodWrapper));
+    add("ModuleType"_s, realm->type(BuiltinType::Module));
+    add("NoneType"_s, realm->type(BuiltinType::NoneType));
+    add("NotImplementedType"_s, realm->type(BuiltinType::NotImplementedType));
+    add("SimpleNamespace"_s, realm->type(BuiltinType::SimpleNamespace));
+    add("TracebackType"_s, realm->type(BuiltinType::Traceback));
+    add("UnionType"_s, realm->type(BuiltinType::Union));
+    add("WrapperDescriptorType"_s, realm->type(BuiltinType::WrapperDescriptor));
+    return module;
+}
+
 JSObject* createSysModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();

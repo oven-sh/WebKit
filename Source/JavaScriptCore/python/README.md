@@ -1349,6 +1349,12 @@ out that it was to be.
 
 `programs/json-strings-written-and-read.py`, `json-read-by-the-scanner.py`, `json-written-by-the-encoder.py` and `json-as-programs-use-it.py` are 1,500 lines of what CPython does with each.
 
+### `_stat`, `_statistics`, `_sysconfig` and `_types`
+
+Each is what a module of the library takes in place of what it has written in Python, if it is there. `_stat` (`PythonStatModule.cpp`) has the system's numbers, where `stat.py` has the usual ones. `_statistics` is one
+function, in `PythonMathModule.cpp` so as to be rounded as CPython's is: see *One rounding or two*. `_types` has the classes that `types.py` would otherwise find by making one of each and asking what it is, and
+`_sysconfig` says that this is not a debug build and has a lock. Both are in `PythonSysModule.cpp`. `programs/four-small-modules-of-the-library.py`.
+
 ### `_suggestions`
 
 One function, in `PythonSignatures.cpp` beside what it calls, which is what says "Did you mean" of a keyword argument. `traceback.py` asks it which keyword a name that is in the way may have been meant for, and tries that

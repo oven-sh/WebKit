@@ -67,7 +67,7 @@ PYTHON_NATIVE(capsuleRepr)
     RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<capsule object \""_s, stateOf<CapsuleState>(args[0]).name, "\" at "_s, addressOf(args[0].asCell()), '>'))));
 }
 
-JSValue newCapsule(JSGlobalObject* globalObject, ASCIILiteral name, const void* pointer)
+PyType* typeOfCapsules(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
@@ -78,7 +78,12 @@ JSValue newCapsule(JSGlobalObject* globalObject, ASCIILiteral name, const void* 
         state.type.set(vm, realm, type);
         addMethods(globalObject, type, { { "__repr__"_s, capsuleRepr } });
     }
-    return PyStateObject::create(vm, state.type->instanceStructure(), makeUnique<CapsuleState>(name, pointer));
+    return state.type.get();
+}
+
+JSValue newCapsule(JSGlobalObject* globalObject, ASCIILiteral name, const void* pointer)
+{
+    return PyStateObject::create(globalObject->vm(), typeOfCapsules(globalObject)->instanceStructure(), makeUnique<CapsuleState>(name, pointer));
 }
 
 const void* capsulePointer(JSValue value, ASCIILiteral name)

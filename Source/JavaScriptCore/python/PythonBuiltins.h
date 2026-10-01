@@ -215,6 +215,10 @@ JSObject* createCMathModule(JSGlobalObject*);
 JSObject* createSymtableModule(JSGlobalObject*);
 JSObject* createSuggestionsModule(JSGlobalObject*);
 JSObject* createJSONModule(JSGlobalObject*);
+JSObject* createStatModule(JSGlobalObject*);
+JSObject* createStatisticsModule(JSGlobalObject*);
+JSObject* createSysconfigModule(JSGlobalObject*);
+JSObject* createTypesModule(JSGlobalObject*);
 JSObject* createCSVModule(JSGlobalObject*);
 void updateSysFromConfiguration(JSGlobalObject*, JSObject* sysModule);
 // The part of that which is sys.flags: config_set_sys_flag()
@@ -238,6 +242,7 @@ JSValue getObjectState(JSGlobalObject*, JSValue); // _PyObject_GetState()
 // {Py_tp_getattro, PyObject_GenericGetAttr}: the class has a __getattribute__ in its own name, which does what object's does.
 // PyCapsule_New(). What is pointed at is to last as long as the realm.
 JSValue newCapsule(JSGlobalObject*, ASCIILiteral name, const void* pointer = nullptr);
+PyType* typeOfCapsules(JSGlobalObject*);
 // PyCapsule_GetPointer(), if PyCapsule_IsValid(): null unless it is a capsule of that name.
 const void* capsulePointer(JSValue, ASCIILiteral name);
 void addGenericGetAttribute(JSGlobalObject*, PyType*);
