@@ -145,18 +145,13 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotDumpB3, false, Normal, "Dump the B3 the static compiler produces."_s) \
     v(Bool, aotDumpDisassembly, false, Normal, "Dump the machine code the static compiler produces."_s) \
     v(OptionString, aotWritesMap, nullptr, Normal, "When compiling: a file to write what is where in the image to (functions, the calls of stubs in them, and what was known at each place in the bytecode), for making sense of a profile."_s) \
-    v(Bool, aotReportStats, false, Normal, "At exit, report how many functions the static compiler compiled and the reasons it declined the others."_s) \
     v(Bool, aotForceVeneers, false, Normal, "In an image, make every direct call from one function to another the way one that is out of reach is made. For testing."_s) \
-    v(OptionString, aotFilter, nullptr, Normal, "Only functions whose name contains this string are compiled by the static compiler."_s) \
-    v(Unsigned, aotB3OptLevel, 2, Normal, "B3 optimization level for the static compiler."_s) \
     v(OptionString, aotImagePath, nullptr, Normal, "An image of code from the static compiler: functions it has code for run that code."_s) \
-    v(Unsigned, aotReportSlowPaths, 0, Normal, "If not zero: every that many times an operation of the static compiler's that keeps count is called, say which were called most, and for what."_s) \
     v(Bool, definePlainInstanceFieldsInConstructor, false, Normal, "The constructor of a class all of whose instance fields are a name and nothing else (class C { a; b; }) defines them itself, instead of calling a function that does."_s) \
     v(Bool, evaluateObjectLiteralValuesFirst, false, Normal, "The values of the properties of an object literal are all worked out before the object is made, where nobody can tell: making the object and giving it its properties is then one run of instructions."_s) \
     v(Bool, resolveAllScopeSlotsStatically, false, Normal, "The bytecode optimizer gives get_from_scope the slot of a variable it can prove the place of even where that makes the instruction wider."_s) \
     v(Unsigned, aotThreads, 0, Normal, "How many threads compile an image. Zero: as many as there are processors."_s) \
-    v(Unsigned, aotLimit, 0, Normal, "If not zero, the static compiler only compiles this many functions."_s) \
-    v(Unsigned, aotDisableFastPaths, 0, Normal, "For debugging the static compiler. 1: get_by_id cache, 2: put_by_id replace, 4: put_by_id transition, 8: get_by_val, 16: put_by_val, 32: scope caches, 64: closure variable stores, 128: tail calls (made as calls), 256: get_by_id on the prototype chain, 512: put_by_id transitions that are not direct, 1024: the megamorphic cache, 2048: allocation without the runtime, 4096: the equality thunks., 8192: literals made all at once (they are given what they have bit by bit, as when the register lives in memory)"_s) \
+    v(Bool, useAOTInlineFastPathsInLoops, false, Normal, "The ahead-of-time compiler emits fast paths inline, instead of calls to shared stubs, in loops and in functions that call themselves. Faster where code is hot; about a tenth more code."_s) \
     v(Bool, aotSplitLoops, false, Normal, "The static compiler makes two copies of every loop: one that only does what is quick, and leaves for the other when it cannot."_s) \
     v(Bool, staticHeapGuardsShortFunctionExecutables, false, Normal, "For testing. Each FunctionExecutable in the short form is the last thing on a page, and there is nothing at the addresses of the page after it: whatever takes one for more than it is crashes."_s) \
     v(Bool, staticHeapMakesShortFunctionExecutables, true, Normal, "In a static heap that goes without bytecode, the FunctionExecutable of a function that there is nothing out of the ordinary to say about is in the short form."_s) \
@@ -168,7 +163,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotPassesValuesUnboxed, true, Normal, "With aotTypesParametersOfClosedFunctions: a closed function is passed what is always a number or a boolean as that, and hands such a thing back as that."_s) \
     v(Bool, aotCompilesBuiltins, true, Normal, "The image has code for the engine's own functions that are written in JavaScript."_s) \
     v(Unsigned, additionsBeforeLoneObjectIsDictionary, 0, Normal, "An object that has been given that many properties one after the other, none of which any other object was given after the same ones, becomes a dictionary: it is not given a Structure for each of the rest. Zero: never."_s) \
-    v(Bool, aotCountsAllocations, false, Normal, "TEMPORARY. When compiling: code counts what it makes, by what the compiler made of what becomes of it (Escape)."_s) \
     v(OptionString, aotTypeTable, nullptr, Normal, "When compiling: the types of the program (AOT::TypeTable), which its text refers to by number (useTypeTags)."_s) \
     v(Unsigned, aotShapes, 15, Normal, "What is made of the shapes in the table of types. 1: literals are laid out as it says. 2: reads go by it. 4: so do writes. 8: what a layout is known not to have is undefined."_s) \
     v(Bool, aotAssertsTypes, false, Normal, "When compiling: there are two copies of a function that gets at properties through types. In the first, what an object was born as is tested once, and from then on it is known; whatever does not pass goes on in the other copy, which takes nothing for granted, and stays there."_s) \
@@ -196,9 +190,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, aotFacts, 0, Normal, "EXPERIMENT, for sizing; what comes of it does not run. $$t(value, n) with n >= 1 << 28 is no check: n is something a type checker would have told the compiler. A bit for each thing done with them: 1 fields at fixed offsets, 2 what fields and elements hold, 4 direct calls, 8 builtins without a lookup, 16 for-of over arrays, 32 elements, 64 nothing (they are taken out, that is all)."_s) \
     v(Bool, aotStoresHomedRegistersOnlyWhereRead, true, Normal, "A register that a handler reads is written to memory only where such a handler can be got to before it is written again, rather than everywhere in the function."_s) \
     v(Bool, aotCallIntrinsics, true, Normal, "A call of what may be one of the functions that the static compiler's stubs know a quick way with goes by way of a stub that finds out (AOT::StubIntrinsic)."_s) \
-    v(Unsigned, aotCallIntrinsicsMustBeRight, 0, Normal, "For testing. A bit for each StubIntrinsic: a call that its stub cannot see to itself is a trap."_s) \
     v(Unsigned, aotLoopsToSplit, 3, Normal, "Which loops aotSplitLoops is for. 1: all. 2: those with something in them that the fast copy does better (arithmetic, elements got at by index, a call that it does not make). 3: those in which no call is made. 4: both. 5: those in which no call is made, or that have a call that the fast copy does not make or an element got at by its index."_s) \
-    v(Unsigned, aotSkip, 0, Normal, "If not zero, the static compiler leaves out the function that would be this many-th."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
@@ -211,9 +203,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotStartFunctionsCold, true, Normal, "A function from an image that can do without gets nothing of its own until it has been run a few times: see AOT::SharedData."_s) \
     v(Unsigned, aotMissesForEightSlots, 8, Normal, "How often a slot may fail a function that started with none of its own before it gets them: this many times for every eight slots it would have, ..."_s) \
     v(Unsigned, aotMissesToSpare, 4, Normal, "... and this many more."_s) \
+    v(Unsigned, aotSizeOfBlocksOfQuotes, 65536, Normal, "What an error message may quote is compressed in blocks of this many bytes. Small, for a test whose program would otherwise have one block."_s) \
     v(Bool, aotKeepsQuotes, false, Normal, "An image says what the source says wherever an error message may quote it, for a program that is built without its text."_s) \
     v(Bool, useStaticHeapInEveryVM, true, Normal, "VMs other than the first of a process refer to what is in its static heap too, and run the program's code from its image the way the first does."_s) \
-    v(Unsigned, staticHeapModuleToRefuseOtherVMs, 0, Normal, "For testing: VMs other than the first load this module of the static heap (counting from one) as if it were not there."_s) \
     v(Bool, staticHeapHasBuiltinFunctions, true, Normal, "When a program is built, the embedder's builtin functions that are linked with it are made ahead of time as its modules are."_s) \
     v(Bool, staticHeapLeavesOutPayload, false, Normal, "When a program is built, its static heap has none of the bytecode it was built from, only what says where in the source each instruction came from."_s) \
     v(Bool, aotNumbersIdentifiersOfProgram, true, Normal, "The code of a program that goes without its bytecode says which name it means by a number that is the same in all of its functions."_s) \
@@ -227,7 +219,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useSoundTypes, false, Normal, "compile $$t(value, <integer literal mask>) calls to op_check_type instead of a call"_s) \
     v(Bool, iterateCheckedArraysByIndex, true, Normal, "With useSoundTypes and useImmutableIntrinsics: for (x of $$t(e, array)) goes through the array by index, having seen to it that iterating over it is what it is for any array."_s) \
     v(Bool, reportSoundTypeViolations, false, Normal, "A type check that fails says so, once for each place, instead of throwing. Not for code from the static compiler, which relies on the checks."_s) \
-    v(Bool, ignoreArgumentProfilesForTesting, false, Normal, "the DFG treats the value profiles of arguments as empty, as if the function had never been called"_s) \
     v(Bool, useBytecodeOptimizer, false, Normal, "run the whole-function bytecode optimizer on all generated bytecode (bytecode-cache image generation runs it when the embedder passes OptimizeBytecode::Yes)") \
     v(Bool, useBytecodeOptimizerCopyPropagation, true, Normal, "bytecode optimizer: copy propagation / destination coalescing") \
     v(Bool, useBytecodeOptimizerTDZ, true, Normal, "bytecode optimizer: redundant TDZ check elimination") \

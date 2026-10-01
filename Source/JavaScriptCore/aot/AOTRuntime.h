@@ -512,8 +512,6 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfDispatch() { return OBJECT_OFFSETOF(Instance, dispatch); }
     static constexpr ptrdiff_t offsetOfRowsOfSelectors() { return OBJECT_OFFSETOF(Instance, rowsOfSelectors); }
 
-    JS_EXPORT_PRIVATE void dumpSlotStatistics(PrintStream&); // TEMPORARY-SLOT-STATS
-    static void noteView(ASCIILiteral whatCameOfIt); // TEMPORARY-SHAPE-COUNTS: operationAOTViewAs()
 
     void** runtimeTable;
     JSGlobalObject* globalObject;
@@ -636,31 +634,12 @@ struct Instance {
     // SiteInPlaceOfCallSite
     const void* returnAddressWithSiteInPlace { nullptr };
     uint32_t siteInPlace { 0 };
-    // TEMPORARY-ESCAPE-STATS: Options::aotCountsAllocations(). By AllocationKind and Escape: how many, and how many bytes.
-    static constexpr unsigned numberOfAllocationCounts = 4 * 32 * 2;
-    uint64_t allocationCounts[numberOfAllocationCounts] { };
-    static constexpr ptrdiff_t offsetOfAllocationCounts() { return OBJECT_OFFSETOF(Instance, allocationCounts); }
-    // TEMPORARY-SHAPE-COUNTS: likewise. What became of the accesses that go by a type.
-    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, AssertionMade, ServedWithoutAssertion, ExitTaken, AssertionRepeated, TakenOutAtBirth, ExitBaseIsNoCell, ExitBaseIsNoPlainObject, ExitBaseWasNeverBorn, ExitBaseWasNeverBornAndHasNoRoom, ExitBaseWasBornOtherwise, ExitSlotIsEmpty, ExitOther, Adopted, NumberOfShapeCounts };
-    uint64_t shapeCounts[NumberOfShapeCounts] { };
-    uint64_t readsForReason[1024] { };
-    uint64_t pathsOfStubs[32] { }; // TEMPORARY: BUN_AOT_COUNTS_STUB_PATHS
-    static constexpr ptrdiff_t offsetOfPathsOfStubs() { return OBJECT_OFFSETOF(Instance, pathsOfStubs); }
-    static constexpr unsigned numberOfCountsOfSites = 8192; // TEMPORARY-SITE-COUNTS: kindOfSite()
-    uint64_t countsOfSites[numberOfCountsOfSites] { };
-    static constexpr ptrdiff_t offsetOfCountsOfSites() { return OBJECT_OFFSETOF(Instance, countsOfSites); }
-    static constexpr ptrdiff_t offsetOfReadsForReason() { return OBJECT_OFFSETOF(Instance, readsForReason); }
-    static constexpr ptrdiff_t offsetOfShapeCounts() { return OBJECT_OFFSETOF(Instance, shapeCounts); }
     // By the index of the function. Reading one is enough to have the page it is on, so they are small.
     //     Less than leastStateWithData: it has no Data of its own (SharedData). The low half is how often a slot has failed it, and
     //     isLinkedWithoutData whether it has been linked in this realm: one that only those call who know what they are calling need not be.
     //     From there up: it has been linked, and its Data is that many times sixteen bytes from the Instance.
     uint32_t states[0];
 };
-
-// TEMPORARY-SHAPE-STATS: structures whose layout the compiler could have known. 1: of an object literal. 2: what a constructor's stores end in.
-void noteKnownShape(Structure*, uint8_t kind);
-uint8_t kindOfKnownShape(Structure*);
 
 // Whether the constants of the unlinked code will do for any realm as they are. A SymbolTable does if it is one that was made when the
 // program was built (SymbolTable::isItsOwnClone()), which is not for the compiler to say: it comes first.
@@ -838,7 +817,6 @@ struct CompiledFunctionInfo {
     Vector<Quote> quotes; // And what it says at each that it says anything at, for a program that goes without its text (collectQuotes()).
     Vector<UniquedStringImpl*> selectors;
     Vector<KnownShape> shapes;
-    Vector<std::pair<uint32_t, CString>> notesOfSites; // Options::aotWritesMap()
 };
 
 struct ImageCatchEntrypoint {

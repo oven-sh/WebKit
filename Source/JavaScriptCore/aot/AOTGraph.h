@@ -167,7 +167,6 @@ inline ASCIILiteral nameOf(AllocationKind kind)
     return names[static_cast<unsigned>(kind)];
 }
 std::optional<AllocationKind> kindOfAllocation(const Node*);
-unsigned bytesOfAllocation(const Node*);
 
 struct Use {
     VirtualRegister reg;
@@ -798,7 +797,6 @@ void noteThingsReturned(Graph&); // ThingsReturnedByFunctions::note(). Of code a
 void findThingsReturnedInRegisters(Graph&); // Once the types are worked out, and before anything is made of them.
 // ProgramFacts::parametersThatEscape, going by what is said so far of the functions it calls (calleesConsulted).
 uint32_t parametersThatEscape(Graph&, Vector<const KnownFunction*>* calleesConsulted);
-void reportEscapeStatistics();
 
 } } // namespace JSC::AOT
 

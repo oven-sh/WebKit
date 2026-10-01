@@ -3383,7 +3383,7 @@ private:
             case op_new_object: {
                 VirtualRegister reg = instruction->as<OpNewObject>().m_dst;
                 // A register that lives in memory is written where the instruction is.
-                if (!m_graph.isTracked(reg) || m_graph.isHomed(reg) || (Options::aotDisableFastPaths() & 8192))
+                if (!m_graph.isTracked(reg) || m_graph.isHomed(reg))
                     break;
                 auto stores = Graph::storesOfLiteral(m_instructions, offset);
                 while (!stores.isEmpty() && stores.last() >= block->bytecodeEnd)

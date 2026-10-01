@@ -72,25 +72,6 @@ std::optional<TypeTable::Field> Lowering::fieldAccessedBy(Node* node, unsigned i
     return Graph::fieldOfWhatIsBornAs(node->use(node->opcode == op_get_by_id ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base), name);
 }
 
-// TEMPORARY-SHAPE-COUNTS
-static std::atomic<uint64_t> s_shapeSites[Instance::NumberOfShapeCounts];
-void reportShapeStatistics()
-{
-    dataLogLn("AOT: sites that go by a type: ", s_shapeSites[Instance::ReadHas].load(), " reads (", s_shapeSites[Instance::ReadLacks].load(), " of which also know what lacks it) of ", s_shapeSites[Instance::ReadHas].load() + s_shapeSites[Instance::ReadUntyped].load(),
-        ", ", s_shapeSites[Instance::WriteHas].load(), " writes of ", s_shapeSites[Instance::WriteHas].load() + s_shapeSites[Instance::WriteUntyped].load(),
-        "; ", s_shapeSites[Instance::LiteralWithLayout].load(), " literals of ", s_shapeSites[Instance::LiteralWithLayout].load() + s_shapeSites[Instance::LiteralWithout].load());
-    dataLogLn("AOT: accesses in first copies: ", s_shapeSites[Instance::AssertionMade].load(), " test what the object was born as, ", s_shapeSites[Instance::ServedWithoutAssertion].load(), " know");
-}
-void noteShapeSite(Instance::ShapeCount which) { s_shapeSites[which].fetch_add(1, std::memory_order_relaxed); }
-
-void Lowering::countShape(Instance::ShapeCount which)
-{
-    if (!Options::aotCountsAllocations()) [[likely]]
-        return;
-    TypedPointer count = m_out.address(m_heaps.root, m_instance, Instance::offsetOfShapeCounts() + which * sizeof(uint64_t));
-    m_out.store64(m_out.add(m_out.load64(count), m_out.constInt64(1)), count);
-}
-
 LValue Lowering::layoutOf(LValue cell)
 {
     return m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(cell), Structure::offsetOfKnownShape()));
@@ -139,9 +120,6 @@ auto Lowering::fieldInHand(Node* base, const TypeTable::Field& field) const -> c
 
 void Lowering::noteFieldInHand(Node* base, const TypeTable::Field& field, LValue value, Rep rep, LValue asJSValue, bool isWritten)
 {
-    // TEMPORARY: for telling whether something is this one's doing.
-    if (isWithout(WithoutFieldsInHand))
-        return;
     base = whatIsHandedOn(base);
     // (Two values may be the one object. An object is of one family for life.)
     m_fieldsInHand.removeAllMatching([&](auto& inHand) {
@@ -273,10 +251,7 @@ bool Lowering::isThisOfWhatAnybodyMayCall(Node* node)
 void Lowering::assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family)
 {
     // Only what is born gets to be of the type, going by the text of the program. Whoever gets here has not been able to prove it, so it is looked into: what code without types puts into
-    // an array that it was handed, say, is not in that text. TEMPORARY: BUN_AOT_TAKES_TYPES_AT_THEIR_WORD=1, as it used to be, for finding out what this costs.
-    static const bool takesTypesAtTheirWord = [] { const char* text = getenv("BUN_AOT_TAKES_TYPES_AT_THEIR_WORD"); return text && !strcmp(text, "1"); }();
-    if (takesTypesAtTheirWord && !isThisOfWhatAnybodyMayCall(valueNode))
-        return;
+    // an array that it was handed, say, is not in that text.
     LBasicBlock isNot = newColdBlock();
     LBasicBlock is = m_out.newBlock();
     if (!isSubtype(valueNode->type, TCell)) {
@@ -389,7 +364,6 @@ void Lowering::lowerGetById(Node* node)
         return;
     }
     if (node->builtinCalled) {
-        isLoweredThisWay(3);
         lowerReadOfBuiltin(node, baseNode);
         return;
     }
@@ -398,10 +372,8 @@ void Lowering::lowerGetById(Node* node)
         // An object that a literal of the program made says how it is laid out, and the type says which layouts have the property, and
         // where. Whatever else the base may be, in spite of its type, is dealt with as if nothing had been said.
         LValue base = lowJSValue(baseNode);
-        noteShapeSite(Instance::ReadHas);
         if (Options::aotTypesFields() && TypeTable::areStructs() && field->id) {
             // The slots of the family are verified: it is for the object's Structure to say whether the field is in its slot. Whatever is known of the object.
-            isLoweredThisWay(2);
             bool undefinedWillDo = field->isOptional || !field->holds.saysSomething() || (field->holds.kinds & MaskUndefined);
             Stub stub = static_cast<Stub>(static_cast<unsigned>(undefinedWillDo ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
             auto throughStub = [&]() -> LValue {
@@ -429,8 +401,7 @@ void Lowering::lowerGetById(Node* node)
                 noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
                 return;
             }
-            countShape(Instance::ReadHas);
-            if (!readsFieldsInPlace()) {
+            if (isCompact()) {
                 LValue value = throughStub();
                 setJSValue(node, value);
                 noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
@@ -461,8 +432,6 @@ void Lowering::lowerGetById(Node* node)
         if (Options::aotTypesFields() && TypeTable::areStructs()) {
             // The property is in its slot, or the object has none.
             auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
-            isLoweredThisWay(mayStandForSomethingElse ? 2 : 1);
-            countShape(Instance::ReadHas);
             if (!mayStandForSomethingElse) {
                 m_nodeLeavesFieldsAlone = true;
                 if (const FieldInHand* inHand = fieldInHand(baseNode, *field)) {
@@ -526,16 +495,10 @@ void Lowering::lowerGetById(Node* node)
         LBasicBlock otherwise = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         if (baseNode->isKnownToBeBornWithin(field->first, field->last)) {
-            noteShapeSite(Instance::ServedWithoutAssertion);
-            countShape(Instance::ServedWithoutAssertion);
             m_out.jump(has);
         } else {
-            noteShapeSite(Instance::AssertionMade);
-            countShape(Instance::AssertionMade);
             // What it was born as, whatever has become of it since: the property is where it was then, or nothing is (Structure::bornAs()).
             LValue layout = layoutBornAsOrNone(baseNode, base);
-            if (testsForLack)
-                noteShapeSite(Instance::ReadLacks);
             if (!testsForLack)
                 m_out.branch(isOneOf(layout, field->first, field->last), usually(has), rarely(otherwise));
             else {
@@ -551,7 +514,6 @@ void Lowering::lowerGetById(Node* node)
         LBasicBlock isThere = m_out.newBlock();
         m_out.branch(m_out.notZero64(whatIsThere), usually(isThere), rarely(otherwise));
         m_out.appendTo(isThere);
-        countShape(Instance::ReadHas);
         ValueFromBlock found = m_out.anchor(whatIsThere);
         m_out.jump(continuation);
         // (Such an object inherits from Object.prototype, which has what it had to begin with: TypeTable::fieldOf() has seen to that.)
@@ -562,11 +524,9 @@ void Lowering::lowerGetById(Node* node)
         else
             m_out.unreachable();
         m_out.appendTo(hasNot, otherwise);
-        countShape(Instance::ReadLacks);
         ValueFromBlock lacking = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
         m_out.jump(continuation);
         m_out.appendTo(otherwise, continuation);
-        countShape(Instance::ReadOther);
         LValue readTheLongWay = getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property);
         if (resultIsTyped) {
             // What comes next takes it for what the field is said to hold.
@@ -594,13 +554,6 @@ void Lowering::lowerGetById(Node* node)
         LValue address = m_out.add(m_globalObject, m_out.constIntPtr(1024 + 8 * (node->fact & 1023)));
         setJSValue(node, m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), address)));
         return;
-    }
-    noteShapeSite(Instance::ReadUntyped);
-    countShape(Instance::ReadUntyped);
-    if (Options::aotCountsAllocations()) [[unlikely]] {
-        uint32_t tag = Graph::typeTagOf(node);
-        TypedPointer count = m_out.address(m_heaps.root, m_instance, Instance::offsetOfReadsForReason() + (tag && TypeTable::shared() ? TypeTable::shared()->reasonOf(tag) : 0) * sizeof(uint64_t));
-        m_out.store64(m_out.add(m_out.load64(count), m_out.constInt64(1)), count);
     }
     setJSValue(node, getByIdCached(node, lowJSValue(baseNode), baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
 }
@@ -686,7 +639,6 @@ void Lowering::lowerPutById(Node* node)
         afterTypedStore = m_out.newBlock();
         if (Options::aotTypesFields() && TypeTable::areStructs()) {
             auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
-            isLoweredThisWay(mayStandForSomethingElse ? 2 : 1);
             // What the slot does not hold goes the long way, where it is made to be that or refused. So does what makes the object have a property it did not have.
             bool mayNotBeHeld = branchUnlessHeld(valueNode, value, field->holds, otherwise);
             TypedPointer slotOfField = slotOfStruct(structOfBase, *field);
@@ -704,7 +656,7 @@ void Lowering::lowerPutById(Node* node)
             if (field->isOptional || field->mayBeEmpty || mayStandForSomethingElse) {
                 RELEASE_ASSERT(!mayStandForSomethingElse || field->isInObject());
                 LBasicBlock isThere = m_out.newBlock();
-                LBasicBlock isEmpty = (field->isOptional || field->mayBeEmpty) && field->isInObject() && !isWithout(WithoutAddsOfFields) ? m_out.newBlock() : nullptr;
+                LBasicBlock isEmpty = (field->isOptional || field->mayBeEmpty) && field->isInObject() ? m_out.newBlock() : nullptr;
                 m_out.branch(m_out.notZero64(m_out.load64(slotOfField)), unsure(isThere), isEmpty ? unsure(isEmpty) : rarely(otherwise));
                 if (isEmpty) {
                     // The object is given the field. What it is of afterwards is what the last of its kind to be given it was (Instance::addsOfFields).
@@ -721,8 +673,6 @@ void Lowering::lowerPutById(Node* node)
                 }
                 m_out.appendTo(isThere);
             }
-            noteShapeSite(Instance::WriteHas);
-            countShape(Instance::WriteHas);
             m_out.store64(valueAsHeld, slotOfField);
             if (mayBe(valueNode->type, TCell))
                 storeBarrier(base);
@@ -732,7 +682,6 @@ void Lowering::lowerPutById(Node* node)
             m_out.appendTo(has);
             m_out.unreachable();
             m_out.appendTo(otherwise, afterTypedStore);
-            countShape(Instance::WriteOther);
         } else {
         if (isSubtype(baseNode->type, TCell))
             m_out.jump(cellCase);
@@ -744,18 +693,12 @@ void Lowering::lowerPutById(Node* node)
         // (What the slot does not hold is stored the long way, which takes the property out of the slot.)
         if (Options::aotTypesFields())
             branchUnlessHeld(valueNode, value, field->holds.kindsOnly(), otherwise);
-        noteShapeSite(Instance::WriteHas);
-        countShape(Instance::WriteHas);
         m_out.store64(value, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
         if (mayBe(valueNode->type, TCell))
             storeBarrier(base);
         m_out.jump(afterTypedStore);
         m_out.appendTo(otherwise, afterTypedStore);
-        countShape(Instance::WriteOther);
         }
-    } else {
-        noteShapeSite(Instance::WriteUntyped);
-        countShape(Instance::WriteUntyped);
     }
     if (!afterTypedStore && !bytecode.m_flags.isDirect() && mayBe(baseNode->type, TArray) && mayBe(valueNode->type, TInt32) && code().codeBlock()->identifier(bytecode.m_property).impl() == m_graph.vm().propertyNames->length.impl()) {
         LBasicBlock otherwise = m_out.newBlock();
@@ -907,7 +850,7 @@ void Lowering::lowerGetByVal(Node* node)
     bool isOfArray = isSubtype(baseNode->type, TArray);
     // (Of what is not known for an array, nothing is made of there being nothing where an element would be kept: it is asked.)
     bool nothingKeptIsNothingThere = emptyWillDo && isOfArray;
-    if (emptyWillDo && !isOfArray && (Options::aotVerbose() || Options::aotReportStats())) [[unlikely]] {
+    if (emptyWillDo && !isOfArray && Options::aotVerbose()) [[unlikely]] {
         dataLog("AOT: LEAN an element is read from what is not known for an array: ");
         baseNode->dump(WTF::dataFile());
         dataLogLn(m_block->isGeneric ? " (in the second copy of a loop)" : "", m_block->isInLoop ? " (in a loop)" : "");
@@ -917,7 +860,7 @@ void Lowering::lowerGetByVal(Node* node)
     Vector<ValueFromBlock, 3> results;
 
     // An in-bounds, non-hole element of an array-like with contiguous or int32 storage.
-    if (!(Options::aotDisableFastPaths() & 8) && mayBe(baseNode->type, TAnyObject) && mayBe(propertyNode->type, TNumber)) {
+    if (mayBe(baseNode->type, TAnyObject) && mayBe(propertyNode->type, TNumber)) {
         LBasicBlock haveIndex = m_out.newBlock();
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock rightShape = m_out.newBlock();
@@ -989,7 +932,7 @@ void Lowering::lowerPutByVal(Node* node)
     LBasicBlock continuation = m_out.newBlock();
 
     // An element for which there is room in contiguous storage. Growing that and every other shape are the runtime's.
-    if (!(Options::aotDisableFastPaths() & 16) && mayBe(baseNode->type, TAnyObject) && mayBe(propertyNode->type, TNumber)) {
+    if (mayBe(baseNode->type, TAnyObject) && mayBe(propertyNode->type, TNumber)) {
         LBasicBlock haveIndex = m_out.newBlock();
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock rightShape = m_out.newBlock();

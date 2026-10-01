@@ -757,37 +757,6 @@ std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdent
 std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
 }
 
-// TEMPORARY-ARRAY-STATS
-namespace {
-struct ArrayStats {
-    uint64_t arrays { 0 };
-    uint64_t empty { 0 };
-    uint64_t bytes { 0 };
-    uint64_t distinctArrays { 0 };
-    uint64_t distinctBytes { 0 };
-    UncheckedKeyHashSet<uint64_t> seen;
-    void add(std::span<const uint8_t> content)
-    {
-        if (content.empty()) {
-            ++empty;
-            return;
-        }
-        ++arrays;
-        bytes += content.size();
-        uint64_t hash = 1469598103934665603ull;
-        for (uint8_t byte : content)
-            hash = (hash ^ byte) * 1099511628211ull;
-        if (seen.add(hash | 1).isNewEntry) {
-            ++distinctArrays;
-            distinctBytes += content.size();
-        }
-    }
-};
-ArrayStats* s_statsOfIdentifiers;
-ArrayStats* s_statsOfConstants;
-uint64_t s_kindsOfConstants[6];
-}
-
 static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, CodeSpecializationKind kind)
 {
     // (Its SymbolTables are being made here and now.)
@@ -840,15 +809,6 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
             inTable = name;
         }
         info.identifiers = s_identifiersOfProgram.data();
-    }
-    if (s_statsOfIdentifiers) [[unlikely]] {
-        Region::AllocationScope notInRegion(false);
-        s_statsOfIdentifiers->add(asBytes(codeBlock->identifiers().span()));
-        s_statsOfConstants->add(asBytes(codeBlock->constantRegisters().span()));
-        for (auto& constant : codeBlock->constantRegisters()) {
-            JSValue value = constant.get();
-            s_kindsOfConstants[!value ? 0 : !value.isCell() ? (value.isNumber() ? 1 : 2) : value.isString() ? 3 : dynamicDowncast<SymbolTable>(value.asCell()) ? 4 : 5]++;
-        }
     }
     info.sites = function.sites;
     info.setExecutable(executable, kind, constantsWillDo);
@@ -1170,8 +1130,6 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
     size_t index = std::ranges::lower_bound(modules, entryOffset, { }, &StaticHeapModule::entryOffset) - modules.begin();
     if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock)
         return nullptr;
-    if (Options::staticHeapModuleToRefuseOtherVMs() == index + 1 && !isFirst(vm)) [[unlikely]]
-        return nullptr;
     void* place = addressOfSourceProvider(index);
     StateOfPlace& state = statesOfPlaces(modules.size())[index];
     uint64_t maker = 0;
@@ -1239,8 +1197,6 @@ void StaticHeap::keepWhatIsWantedOfFunctions(VM& vm, Header& header)
             && executable->derivedContextType() == unlinked->derivedContextType() && executable->lexicallyScopedFeatures() == unlinked->lexicallyScopedFeatures();
         if (!canBeShort) {
             inFull.append(executable);
-            if (Options::aotReportStats()) [[unlikely]] // TEMPORARY-SHORT-FORM-STATS
-                why.add(!hasCode ? "no code"_s : !unlinked->canBeSharedByStaticExecutables() ? unlinked->whyItCannotBeSharedByStaticExecutables() : !saysWhereItStarts() ? "does not say where it starts"_s : "something else"_s, 0).iterator->value++;
             continue;
         }
         char* copy;
@@ -1351,7 +1307,7 @@ void StaticHeap::keepWhatIsWantedOfFunctions(VM& vm, Header& header)
     s_rowsOfFunctions = rows.data();
     for (auto& [reason, count] : why)
         dataLogLn("StaticHeap:     in full, ", reason, ": ", count);
-    if (Options::aotReportStats()) [[unlikely]]
+    if (Options::aotVerbose()) [[unlikely]]
         dataLogLn("StaticHeap: of ", s_executablesInScratch.size(), " FunctionExecutables ", inShortForm.size(), " are in the short form, with ", shared.size(), " UnlinkedFunctionExecutables between them and ", rows.size_bytes(), " bytes of rows; ", inFull.size(), " are kept in full; ", foundBy, " more UnlinkedFunctionExecutables are kept for what finds a function by one; ", inFunctionsWithoutCode, " functions are in functions that there is no code for");
 }
 
@@ -1392,8 +1348,6 @@ static void keepOneOfEachSymbolTable()
             }
         }
     }
-    if (Options::aotReportStats()) [[unlikely]]
-        dataLogLn("StaticHeap: of ", tables.size(), " tables of the variables of scopes ", kept.size(), " are kept, and ", references, " references go to those");
 }
 
 Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> whatTheCompilerSaysOfFunctions, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
@@ -1424,13 +1378,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     s_tablesSeenTo = &tablesSeenTo;
     ArraysInCommon arraysInCommon;
     s_arraysBeingBuilt = nullptr;
-    ArrayStats statsOfIdentifiers;
-    ArrayStats statsOfConstants;
-    if (Options::aotReportStats()) [[unlikely]] {
-        s_statsOfIdentifiers = &statsOfIdentifiers;
-        s_statsOfConstants = &statsOfConstants;
-        zeroSpan(std::span { s_kindsOfConstants });
-    }
     if (!Region::beginBuilding())
         return { };
     PreciseAllocation* containerBefore = PreciseAllocation::containerOfStaticCells();
@@ -1526,15 +1473,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 uint64_t numberOfSymbolTables = 0;
                 uint64_t numberOfSymbolTablesWithNames = 0;
                 auto reportExecutables = makeScopeExit([&] {
-                    if (Options::aotReportStats()) [[unlikely]] {
-                        size_t known = 0, cold = 0;
-                        for (auto& info : infosOfFunctions) {
-                            known += !!info.sites;
-                            cold += !!(info.flags & AOT::FunctionInfo::startsCold);
-                        }
-                        dataLogLn("StaticHeap: of ", numberOfSymbolTables, " tables of the variables of scopes that are not modules', ", numberOfSymbolTablesWithNames, " have a name in them that may be looked up");
-                        dataLogLn("StaticHeap: ", numberOfExecutables, " executables of functions; of the image's ", infosOfFunctions.size(), " functions ", known, " are known, and ", cold, " start cold");
-                    }
                 });
                 Vector<StaticHeapTDZ> tdz;
                 s_tdzBeingBuilt = &tdz;
@@ -1657,8 +1595,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     }
                     header.keysOfImage = std::bit_cast<uint64_t>(kept.data());
                     header.capacityOfKeysOfImage = capacity;
-                    if (Options::aotReportStats()) [[unlikely]]
-                        dataLogLn("StaticHeap: ", count, " functions of the image are looked up when the program runs: ", kept.size_bytes(), " bytes");
                 }
                 if (positionsToKeep && !s_factsBeingBuilt.empty()) {
                     size_t sizeOfText = 0;
@@ -1676,7 +1612,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     header.namesOfSources = std::bit_cast<uint64_t>(starts);
                     header.numberOfSources = namesOfSources.size();
                     header.hasPositionsOfCallSites = true;
-                    if (Options::aotReportStats()) [[unlikely]]
+                    if (Options::aotVerbose()) [[unlikely]]
                         dataLogLn("StaticHeap: ", s_numberOfPositions, " positions of call sites: ", s_bytesOfPositions, " bytes, in ", namesOfSources.size(), " sources whose names take ", sizeOfText);
                 }
                 s_positionsToKeep = nullptr;
@@ -1687,15 +1623,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     tablesSeenTo.clear();
                     arraysInCommon.clear();
                     s_arraysBeingBuilt = nullptr;
-                    if (s_statsOfIdentifiers) [[unlikely]] {
-                        for (auto [name, stats] : { std::pair { "identifiers", &statsOfIdentifiers }, std::pair { "constants", &statsOfConstants } }) {
-                            dataLogLn("StaticHeap: arrays of ", name, ": ", stats->arrays, " (and ", stats->empty, " empty) with ", stats->bytes, " bytes in them; distinct: ", stats->distinctArrays, " with ", stats->distinctBytes);
-                            stats->seen.clear();
-                        }
-                        dataLogLn("StaticHeap: constants: ", s_kindsOfConstants[0], " empty, ", s_kindsOfConstants[1], " numbers, ", s_kindsOfConstants[2], " other immediates, ", s_kindsOfConstants[3], " strings, ", s_kindsOfConstants[4], " symbol tables, ", s_kindsOfConstants[5], " other cells");
-                        s_statsOfIdentifiers = nullptr;
-                        s_statsOfConstants = nullptr;
-                    }
                 }
                 s_factsBeingBuilt = { };
                 // (See parentScopeTDZVariablesOf().)
@@ -1711,8 +1638,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     tdz = { };
                 }
             }
-            if (Options::aotReportStats()) [[unlikely]]
-                dataLogLn("StaticHeap: ", atoms->table().size() - numberOfAtomsOfStrings, " atoms that are not in the table of strings");
             s_isBuilding = false;
             vm.heap.m_placeOfNextCell = nullptr;
         }
@@ -1740,8 +1665,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         }
         for (auto* registry : s_symbolRegistriesBeingBuilt)
             registry->becomeStatic();
-        if (Options::aotReportStats()) [[unlikely]]
-            dataLogLn("StaticHeap: ", s_symbolRegistriesBeingBuilt[0]->size(), " registered symbols, ", s_symbolRegistriesBeingBuilt[1]->size(), " private ones");
     }
 
     if (s_functionsAreMadeInScratch) {
@@ -1763,11 +1686,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             ok = false;
         }
     }
-#if OS(DARWIN)
-    if (getenv("BUN_STATIC_HEAP_AUDIT")) [[unlikely]]
-        reportWhatMayPointOut();
-    Region::dumpMallocAudit(); // TEMPORARY-MALLOC-AUDIT
-#endif
 
     // Cells are as they would be in the VM that is going to have them, after a collection that found them.
     auto structures = structuresOf(vm);
@@ -1778,11 +1696,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         forEachCell(arena, [&](void* pointer, size_t size) {
             auto* cell = static_cast<JSCell*>(pointer);
             uint32_t id = cell->structureID().bits();
-            if (Options::aotReportStats()) [[unlikely]] {
-                auto& tally = byClass.add(String::fromLatin1(cell->classInfo()->className.characters()), std::pair<uint64_t, uint64_t> { }).iterator->value;
-                tally.first++;
-                tally.second += size;
-            }
             uint32_t translated = idInFirstVM.ensure(id, [&]() -> uint32_t {
                 if ((id & ~static_cast<uint32_t>(MarkedBlock::blockSize - 1)) != blockOfStructures || header.numberOfStructures == Header::maxStructures)
                     return 0;
@@ -1812,8 +1725,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         if (end > start) {
             header.holeInData = start - Region::startOf(Region::Arena::Data);
             header.sizeOfHoleInData = end - start;
-            if (Options::aotReportStats()) [[unlikely]]
-                reportWhatPointsInto(start, end, { std::bit_cast<const uint32_t*>(header.factsOfFunctions), static_cast<size_t>(header.numberOfFunctions) });
         }
     }
 
@@ -1823,10 +1734,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             bigInt->hash();
     });
 
-    if (Options::aotReportStats()) [[unlikely]]
-        dataLogLn("StaticHeap: ", Region::bytesThatAreFree(), " bytes of what was allocated were freed and not used again");
-    if (Options::aotReportStats()) [[unlikely]]
-        dataLogLn("StaticHeap: ", Region::bytesThatAreFree(), " bytes of what was allocated were freed and not used again");
     Region::forgetWhatIsFree();
     Vector<uint8_t> image;
     if (ok) {
@@ -1851,11 +1758,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         }
         for (unsigned i = header.sizeOfHoleInData ? 1 : 0; i < Region::numberOfArenasInFile; ++i)
             memcpy(image.mutableSpan().data() + header.arenaOffset[i], reinterpret_cast<void*>(Region::startOf(static_cast<Region::Arena>(i))), Region::used(static_cast<Region::Arena>(i)));
-    }
-    if (Options::aotReportStats()) [[unlikely]] {
-        dataLogLn("StaticHeap: ", ok ? "" : "FAILED ", image.size(), " bytes: data ", Region::used(Region::Arena::Data), ", malloc ", Region::used(Region::Arena::Malloc), ", cells ", Region::used(Region::Arena::Cells), ", mutable cells ", Region::used(Region::Arena::MutableCells), ", mutable malloc ", Region::used(Region::Arena::MutableMalloc), "; ", header.numberOfModules, " modules, ", numberOfCodeBlocksFailed, " not decoded");
-        for (auto& entry : byClass)
-            dataLogLn("StaticHeap:     ", entry.key, ": ", entry.value.first, " cells, ", entry.value.second, " bytes");
     }
 
     PreciseAllocation::setContainerOfStaticCells(containerBefore);

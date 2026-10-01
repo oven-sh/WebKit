@@ -721,19 +721,9 @@ public:
 
 } // anonymous namespace
 
-bool isWithout(Without what)
-{
-    static const unsigned mask = [] {
-        const char* text = getenv("BUN_AOT_WITHOUT");
-        return text ? static_cast<unsigned>(strtoul(text, nullptr, 0)) : 0u;
-    }();
-    return mask & what;
-}
-
 void generateHelper(CCallHelpers& jit, Stub stub)
 {
     Procedure proc(/* usesSIMD = */ false);
-    proc.setOptLevel(Options::aotB3OptLevel());
     proc.setPositionIndependent();
     proc.pinRegister(instanceGPR);
     proc.pinRegister(GPRInfo::numberTagRegister);

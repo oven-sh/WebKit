@@ -103,33 +103,6 @@ std::optional<AllocationKind> kindOfAllocation(const Node* node)
     }
 }
 
-// Roughly.
-unsigned bytesOfAllocation(const Node* node)
-{
-    switch (node->opcode) {
-    case op_new_object:
-        return roundUpToMultipleOf<16>(16 + std::max<unsigned>(node->as<OpNewObject>().m_inlineCapacity, node->numberOfLiteralProperties) * 8);
-    case op_new_array:
-        return 16 + roundUpToMultipleOf<16>(8 + std::max<unsigned>(node->as<OpNewArray>().m_argc, 3) * 8);
-    case op_new_array_buffer:
-        return 16;
-    case op_new_array_with_size:
-    case op_new_array_with_spread:
-    case op_create_rest:
-        return 16 + 48;
-    case op_new_func:
-    case op_new_func_exp:
-        return 32;
-    case op_create_lexical_environment: {
-        JSValue table = node->graph->codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable);
-        unsigned variables = table.isCell() ? uncheckedDowncast<SymbolTable>(table.asCell())->scopeSize() : 1;
-        return roundUpToMultipleOf<16>(24 + variables * 8);
-    }
-    default:
-        return 0;
-    }
-}
-
 // Nothing that the code does hands on the scope it was closed over: it makes no closure of its own, which would have that scope for
 // its own or further out, and nothing else gets at a scope as a value. Plain from the bytecode.
 static bool keepsItsScopeToItself(UnlinkedCodeBlock* code)
@@ -249,14 +222,6 @@ private:
 
     void noteUsesBy(Node* user)
     {
-        // What goes by something that nothing ever is (inferTypes()) is never got to.
-        static const bool isOff = !getenv("BUN_AOT_NOTHING_FOR_NOTHING"); // TEMPORARY
-        if (user->kind != NodeKind::Phi && !isOff) {
-            for (auto& use : user->uses) {
-                if (use.node->wasTakenNeverToBeReached)
-                    return;
-            }
-        }
         for (auto& use : user->uses)
             m_users.add(use.node, Vector<User, 4> { }).iterator->value.append({ user, use.reg });
     }
@@ -792,7 +757,6 @@ void promoteEnvironments(Graph& graph)
     Promoter(graph).run();
 }
 
-// TEMPORARY-ESCAPE-STATS
 UsersOfNodes::UsersOfNodes(Graph& graph)
 {
     auto note = [&](Node* user) {
@@ -923,8 +887,6 @@ void noteThingsReturned(Graph& graph)
         all->note(code, WTF::move(*names));
 }
 
-static std::atomic<uint64_t> s_functionsThatReturnThings;
-static std::atomic<uint64_t> s_callsThatAreHandedThings;
 
 void findThingsReturnedInRegisters(Graph& graph)
 {
@@ -941,7 +903,6 @@ void findThingsReturnedInRegisters(Graph& graph)
             }
         }
         graph.numberOfThingsReturnedInRegisters = names->size();
-        s_functionsThatReturnThings.fetch_add(1, std::memory_order_relaxed);
     }
     std::optional<UsersOfNodes> users;
     for (BasicBlock* block : graph.m_rpo) {
@@ -979,19 +940,13 @@ void findThingsReturnedInRegisters(Graph& graph)
                 if (alias != node)
                     alias->isElided = true;
             }
-            s_callsThatAreHandedThings.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }
 
-static std::atomic<uint64_t> s_objectsNotMade;
 
 void doWithoutObjectsThatAreOnlyRead(Graph& graph)
 {
-    // TEMPORARY: for telling whether something is this one's doing.
-    static const bool isOff = [] { const char* text = getenv("BUN_AOT_MAKES_ALL_OBJECTS"); return text && !strcmp(text, "1"); }();
-    if (isOff)
-        return;
     auto resolve = [](Node* node) {
         while (node->replacement)
             node = node->replacement;
@@ -1034,7 +989,6 @@ void doWithoutObjectsThatAreOnlyRead(Graph& graph)
                 }
                 for (Node* alias : onlyRead->handedOn)
                     alias->isElided = true;
-                s_objectsNotMade.fetch_add(1, std::memory_order_relaxed);
                 changed = true;
             }
         }
@@ -1053,37 +1007,15 @@ void doWithoutObjectsThatAreOnlyRead(Graph& graph)
     }
 }
 
-static std::atomic<uint64_t> s_sites[numberOfAllocationKinds][static_cast<unsigned>(Escape::NumberOfThem)];
-
 void analyzeEscapes(Graph& graph)
 {
     EscapeAnalysis analysis(graph, nullptr);
     analysis.lookAtWhatIsMade();
-    if (Options::aotReportStats()) [[unlikely]] {
-        for (BasicBlock* block : graph.m_rpo) {
-            for (Node* node : block->nodes) {
-                if (auto kind = kindOfAllocation(node); kind && !node->isElided)
-                    s_sites[static_cast<unsigned>(*kind)][static_cast<unsigned>(node->escape)].fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    }
 }
 
 uint32_t parametersThatEscape(Graph& graph, Vector<const KnownFunction*>* calleesConsulted)
 {
     return EscapeAnalysis(graph, calleesConsulted).parametersThatEscape();
-}
-
-void reportEscapeStatistics()
-{
-    dataLogLn("  NOTMADE ", s_objectsNotMade.load(), " objects that are only read (counted each time the code they are in is looked at)");
-    dataLogLn("  NOTMADE ", thingsReturnedByFunctions() ? thingsReturnedByFunctions()->size() : 0, " functions return a literal with the same names every time; ", s_functionsThatReturnThings.load(), " hand them back in registers, to ", s_callsThatAreHandedThings.load(), " calls");
-    for (unsigned kind = 0; kind < numberOfAllocationKinds; ++kind) {
-        for (unsigned escape = 0; escape < static_cast<unsigned>(Escape::NumberOfThem); ++escape) {
-            if (uint64_t count = s_sites[kind][escape].load())
-                dataLogLn("  ESCAPESITES ", nameOf(static_cast<AllocationKind>(kind)), " ", count, " ", nameOf(static_cast<Escape>(escape)));
-        }
-    }
 }
 
 } } // namespace JSC::AOT

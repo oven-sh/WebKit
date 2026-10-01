@@ -528,29 +528,22 @@ void installOperationFrontEnds(VM& vm, void** entries)
         entries[static_cast<unsigned>(entry)] = tagCodePtr<OperationPtrTag>(addressOfStub(stub));
     };
 #define AOT_INSTALL_FRONT_END(name) install(Entry::operationAOT##name, Entry::Raw##name, Stub::FrontEnd##name);
-    unsigned disabled = Options::aotDisableFastPaths();
-    if (!(disabled & 1024)) {
-        entries[static_cast<unsigned>(Entry::MegamorphicCache)] = &vm.ensureMegamorphicCache();
-        AOT_INSTALL_FRONT_END(GetById)
-        AOT_INSTALL_FRONT_END(GetByVal)
-        AOT_INSTALL_FRONT_END(PutById)
-        AOT_INSTALL_FRONT_END(PutByVal)
-        AOT_INSTALL_FRONT_END(InById)
-    }
-    if (!(disabled & 2048)) {
-        AOT_INSTALL_FRONT_END(NewObject)
-        AOT_INSTALL_FRONT_END(NewObjectLiteral)
-        AOT_INSTALL_FRONT_END(CreateThis)
-        AOT_INSTALL_FRONT_END(CreateThisWithProperties)
-        AOT_INSTALL_FRONT_END(NewFunction)
+    entries[static_cast<unsigned>(Entry::MegamorphicCache)] = &vm.ensureMegamorphicCache();
+    AOT_INSTALL_FRONT_END(GetById)
+    AOT_INSTALL_FRONT_END(GetByVal)
+    AOT_INSTALL_FRONT_END(PutById)
+    AOT_INSTALL_FRONT_END(PutByVal)
+    AOT_INSTALL_FRONT_END(InById)
+    AOT_INSTALL_FRONT_END(NewObject)
+    AOT_INSTALL_FRONT_END(NewObjectLiteral)
+    AOT_INSTALL_FRONT_END(CreateThis)
+    AOT_INSTALL_FRONT_END(CreateThisWithProperties)
+    AOT_INSTALL_FRONT_END(NewFunction)
 #define AOT_INSTALL_HELPER(name, operation) install(Entry::operation, Entry::Behind##name, Stub::AheadOf##name);
-        FOR_EACH_AOT_OPERATION_BEHIND_HELPER(AOT_INSTALL_HELPER)
+    FOR_EACH_AOT_OPERATION_BEHIND_HELPER(AOT_INSTALL_HELPER)
 #undef AOT_INSTALL_HELPER
-    }
-    if (!(disabled & 4096)) {
-        AOT_INSTALL_FRONT_END(CompareStrictEq)
-        AOT_INSTALL_FRONT_END(CompareEq)
-    }
+    AOT_INSTALL_FRONT_END(CompareStrictEq)
+    AOT_INSTALL_FRONT_END(CompareEq)
 #undef AOT_INSTALL_FRONT_END
 }
 

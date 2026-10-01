@@ -2231,39 +2231,6 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     if (JITCode::isBaselineCode(jitType()))
         updateAllPredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::KeepIfLive : ValueProfileSamples::Record);
 
-#if ENABLE(FTL_JIT)
-    // TEMPORARY-SLOT-STATS
-    if (auto* data = aotData(); data && Options::aotReportStats()) {
-        static uint64_t version, blocks, total[numOpcodeIDs], filled[numOpcodeIDs], instructionBytes, constants, identifiers;
-        uint64_t now = vm.heap.objectSpace().markingVersion();
-        if (now != version) {
-            if (blocks) {
-                dataLogLn("SLOTSTATS blocks=", blocks, " instructionBytes=", instructionBytes, " constants=", constants, " identifiers=", identifiers);
-                for (unsigned i = 0; i < numOpcodeIDs; ++i) {
-                    if (total[i])
-                        dataLogLn("SLOTSTATS ", opcodeNames[i], " total=", total[i], " filled=", filled[i]);
-                }
-            }
-            version = now; blocks = 0; instructionBytes = 0; constants = 0; identifiers = 0;
-            for (unsigned i = 0; i < numOpcodeIDs; ++i)
-                total[i] = filled[i] = 0;
-        }
-        blocks++;
-        instructionBytes += instructions().size();
-        constants += constantRegisters().size();
-        identifiers += unlinkedCodeBlock()->identifiers().size();
-        OpcodeID last = op_nop;
-        for (unsigned i = 0; i < data->numSlots; ++i) {
-            OpcodeID opcode = last; // (A site no longer says which instruction it is of.)
-            last = opcode;
-            total[opcode]++;
-            auto* words = reinterpret_cast<uint64_t*>(&data->slots[i]);
-            if (words[0] || words[1])
-                filled[opcode]++;
-        }
-    }
-#endif
-
     if (JITCode::couldBeInterpreted(jitType())) {
         reconcileLLIntInlineCachesAtGCEnd();
         // If the CodeBlock is DFG or FTL, CallLinkInfo in metadata is not related.

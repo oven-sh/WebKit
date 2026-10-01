@@ -155,7 +155,7 @@ void TypeTable::settleWhichStringsAreAtoms()
                 field[7] |= SlotsOfBornObjects::stringsAreAtoms;
         }
     }
-    if (Options::aotVerbose() || Options::aotReportStats())
+    if (Options::aotVerbose())
         dataLogLn("AOT: ", names.size(), " fields that hold strings are compared with strings that the program spells out: the short strings there are atoms");
 }
 

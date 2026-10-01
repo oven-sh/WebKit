@@ -499,10 +499,6 @@ private:
     // The form of a method of arrays that will do for an array as the realm makes them, if all that it is passed is a function (builtins/ArrayPrototype.js). argc counts `this`.
     static std::optional<BuiltinCodeIndex> leanFormOf(UniquedStringImpl* name, unsigned argc, bool resultIsWanted)
     {
-        // TEMPORARY: for telling whether something is this one's doing.
-        static const bool isOff = [] { const char* text = getenv("BUN_AOT_LEAN_BUILTINS"); return text && !strcmp(text, "0"); }();
-        if (isOff)
-            return std::nullopt;
         StringView method { name };
         if (argc == 3)
             return method == "reduce"_s ? std::optional { BuiltinCodeIndex::arrayPrototypeReduceOfArrayCode } : std::nullopt;

@@ -238,13 +238,11 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
 
 void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv, CallMode mode, bool hasResult)
 {
-    if (mode == CallMode::TailCall && ((Options::aotDisableFastPaths() & 128) || argc - 1 > numberOfArgumentGPRs || !node->graph->isInTailPosition))
+    if (mode == CallMode::TailCall && (argc - 1 > numberOfArgumentGPRs || !node->graph->isInTailPosition))
         mode = CallMode::Call;
     Arguments arguments = lowerArguments(node, argc, argv);
-    isLoweredThisWay(1);
     if (lowerCallToKnownFunction(node, calleeRegister, argv, arguments, mode, hasResult))
         return;
-    isLoweredThisWay(0);
     // (Whatever else is called hands back a boxed value.)
     if (m_howValuesArePassed.result != Rep::JSValue && mode == CallMode::TailCall)
         mode = CallMode::Call;
@@ -341,7 +339,7 @@ LBasicBlock Lowering::leaveIfFunction(Node* calleeNode, LValue callee)
 // f(...list), f.apply(o, list): a stub asks how long the list is, makes room, has it copied there, and makes the call (Stub::CallVarargs).
 void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, VirtualRegister thisRegister, VirtualRegister argumentsRegister, int firstVarArg, CallMode mode)
 {
-    if (mode == CallMode::TailCall && ((Options::aotDisableFastPaths() & 128) || m_howValuesArePassed.result != Rep::JSValue || !node->graph->isInTailPosition))
+    if (mode == CallMode::TailCall && (m_howValuesArePassed.result != Rep::JSValue || !node->graph->isInTailPosition))
         mode = CallMode::Call;
     LValue callee = lowJSValue(node->use(calleeRegister));
     LValue thisValue = lowJSValue(node->use(thisRegister));

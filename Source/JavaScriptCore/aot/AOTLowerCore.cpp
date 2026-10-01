@@ -1227,15 +1227,9 @@ void Lowering::lowerBlock(BasicBlock* block)
     if (terminal && terminal->kind != NodeKind::Guard && !(terminal->kind == NodeKind::Bytecode && (isBranch(terminal->opcode) || isTerminal(terminal->opcode) || isThrow(terminal->opcode))))
         terminal = nullptr;
 
-    // The origin of a B3 value is the opcode it was made for, plus one: for saying what the code's bytes went to.
-    auto setOrigin = [&](Node* node) {
+    auto setCurrentNode = [&](Node* node) {
         m_node = node && node->instruction ? node : nullptr;
         m_code = node ? node->graph : block->graph;
-        // (What is for no node in particular, but is the lowering's doing: one more than there are kinds. Above that: which sort of block.)
-        unsigned tag = !node ? numOpcodeIDs + 13 : node->kind == NodeKind::Bytecode ? node->opcode + 1 : numOpcodeIDs + 1 + static_cast<unsigned>(node->kind);
-        tag |= (block->isGeneric ? 2 : block->isInLoop ? 1 : 0) << 12;
-        m_tagOfOrigin = tag;
-        m_out.setOrigin(std::bit_cast<DFG::Node*>(static_cast<uintptr_t>(tag) << 4));
     };
     for (m_nodeIndex = 0; m_nodeIndex < block->nodes.size(); ++m_nodeIndex) {
         Node* node = block->nodes[m_nodeIndex];
@@ -1243,7 +1237,7 @@ void Lowering::lowerBlock(BasicBlock* block)
             break;
         if (node->isElided)
             continue;
-        setOrigin(node);
+        setCurrentNode(node);
         m_nodeLeavesFieldsAlone = false;
         lowerNode(node);
         if (m_graph.failed())
@@ -1256,18 +1250,18 @@ void Lowering::lowerBlock(BasicBlock* block)
     if (!m_fieldsInHand.isEmpty())
         m_fieldsInHandAtEndOf.set(block, m_fieldsInHand);
     if (terminal && terminal->kind == NodeKind::Guard) {
-        setOrigin(terminal);
+        setCurrentNode(terminal);
         lowerGuard(block, terminal);
-        setOrigin(nullptr);
+        setCurrentNode(nullptr);
         return;
     }
     if (auto chain = m_chainsByFirstBlock.find(block); chain != m_chainsByFirstBlock.end()) {
-        setOrigin(terminal);
+        setCurrentNode(terminal);
         lowerChainOfComparisons(block, m_chains[chain->value]);
-        setOrigin(nullptr);
+        setCurrentNode(nullptr);
         return;
     }
-    setOrigin(nullptr);
+    setCurrentNode(nullptr);
     // What a successor's phis are given is given on the way there. Ahead of a branch, a loop would do on every turn what is only wanted
     // when it ends; and of two moves of one value, to a phi at the top of the loop and to one past the end, only one can be done
     // away with.
@@ -1280,9 +1274,9 @@ void Lowering::lowerBlock(BasicBlock* block)
         if (!successor->phis.isEmpty() && edgeTo(successor) == wayInto(successor))
             m_edges.append({ successor, m_out.newBlock() });
     }
-    setOrigin(terminal);
+    setCurrentNode(terminal);
     lowerTerminalOrFallThrough(block, terminal);
-    setOrigin(nullptr);
+    setCurrentNode(nullptr);
     for (auto& [successor, edge] : std::exchange(m_edges, { })) {
         m_out.appendTo(edge);
         emitUpsilons(block, successor);
@@ -1372,11 +1366,6 @@ void Lowering::lowerNode(Node* node)
 
 void Lowering::lowerBytecode(Node* node)
 {
-    // TEMPORARY-SITE-COUNTS
-    if (Options::aotCountsAllocations()) [[unlikely]] {
-        TypedPointer count = m_out.address(m_heaps.root, m_instance, Instance::offsetOfCountsOfSites() + kindOfSite(node, isCompact()) * sizeof(uint64_t));
-        m_out.store64(m_out.add(m_out.load64(count), m_out.constInt64(1)), count);
-    }
     if (node->guard && node->guard->isHandled) {
         lowerGuarded(node);
         return;

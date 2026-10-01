@@ -40,12 +40,8 @@ void emitEpilogueBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
 void emitRestoreBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
 bool hasNoFrame(const Graph&, B3::Air::Code&); // Once the code is what it is going to be.
 
-void reportStatistics();
-JS_EXPORT_PRIVATE void setOriginForStatistics(ASCIILiteral); // TEMPORARY-PROVABILITY-STATS
 
 struct Node;
-unsigned kindOfSite(Node*, bool isCompact); // TEMPORARY-SITE-COUNTS
-JS_EXPORT_PRIVATE void dumpKindsOfSites();
 
 } } // namespace JSC::AOT
 

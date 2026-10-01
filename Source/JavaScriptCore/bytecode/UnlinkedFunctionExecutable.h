@@ -422,27 +422,6 @@ public:
         return !m_nameIsDeferred && !m_membersAreDeferred && !m_scalarsAreDeferred && !m_members.live().rareData && !m_members.live().parentScopeTDZVariables
             && !m_isBuiltinFunction && !m_isBuiltinDefaultClassConstructor;
     }
-    ASCIILiteral whyItCannotBeSharedByStaticExecutables() const // TEMPORARY-SHORT-FORM-STATS
-    {
-        if (m_nameIsDeferred || m_membersAreDeferred || m_scalarsAreDeferred)
-            return "something is deferred"_s;
-        if (m_isBuiltinFunction || m_isBuiltinDefaultClassConstructor)
-            return "builtin"_s;
-        if (auto* rareData = m_members.live().rareData.get()) {
-            if (!rareData->m_classSource.isNull())
-                return "rare data: source of a class"_s;
-            if (rareData->m_classElementDefinitions.size())
-                return "rare data: class elements"_s;
-            if (rareData->m_plainInstanceFieldNames.size())
-                return "rare data: names of fields"_s;
-            if (rareData->m_parentPrivateNameEnvironment.size())
-                return "rare data: private names"_s;
-            return "rare data: something else"_s;
-        }
-        if (m_members.live().parentScopeTDZVariables)
-            return "variables that may not be initialized"_s;
-        return "nothing"_s;
-    }
     std::array<uint8_t, 104> whatIsSharedByStaticExecutables() const
     {
         static_assert(sizeof(UnlinkedFunctionExecutable) == 104);

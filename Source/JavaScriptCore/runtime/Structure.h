@@ -293,16 +293,12 @@ struct SlotsOfBornObjects {
         if (!held)
             return Says::Nothing;
         bool isAdmitted = admits(*held, value);
-        (isAdmitted ? s_timesAdmitted : s_timesRefused)++;
         if (!isAdmitted && s_audits) [[unlikely]] {
             audit("a slot is given what it does not hold"_s, bornAs, value);
             return Says::Nothing;
         }
         return isAdmitted ? Says::Admits : Says::Refuses;
     }
-    // TEMPORARY-SHAPE-COUNTS: stores that were looked at by whoever does not know the types.
-    JS_EXPORT_PRIVATE static uint64_t s_timesAdmitted;
-    JS_EXPORT_PRIVATE static uint64_t s_timesRefused;
 
 private:
     JS_EXPORT_PRIVATE static const uint32_t* s_index; // By layout: where its slots start among s_held << 8 | how many it has.

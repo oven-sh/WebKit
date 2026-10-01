@@ -117,7 +117,6 @@ private:
     BEXPORT static void didFreeSlow(void*);
     BEXPORT static void* tryMallocSlow(size_t, size_t alignment);
 public:
-    BEXPORT static void dumpMallocAudit(); // TEMPORARY-MALLOC-AUDIT
     BEXPORT static void forgetWhatIsFree(); // When all is built.
     BEXPORT static size_t bytesThatAreFree(); // Before that: what was freed and is in the file all the same.
 private:

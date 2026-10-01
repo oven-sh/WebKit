@@ -5450,23 +5450,11 @@ CodeBlockType* CachedCodeBlock<CodeBlockType>::makeFromParts(VM& vm, const Parts
     return result;
 }
 
-// TEMPORARY-PAYLOAD-STATS: what a payload is made of.
-enum PayloadPart : unsigned { PartSteps, PartInstructions, PartConstantsRepresentation, PartConstants, PartIdentifiers, PartSlots, PartExtras, PartRecord, PartExpressionInfo, PartOwnMembers, NumberOfPayloadParts };
-static std::atomic<size_t> s_payloadStats[NumberOfPayloadParts];
-static std::atomic<size_t> s_payloadCodeBlocks;
-static constexpr ASCIILiteral namesOfPayloadParts[NumberOfPayloadParts] = { "metadata steps"_s, "instructions"_s, "representations of constants"_s, "constants"_s, "identifiers"_s, "slots of children"_s, "extras (handlers, jump tables, ...)"_s, "records and tails"_s, "expression info"_s, "own members"_s };
-
 template<typename CodeBlockType>
 auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockType& codeBlock) -> Record*
 {
     ptrdiff_t regionStart = encoder.currentOffset();
     Layout layout;
-    ptrdiff_t statsFrom = regionStart;
-    auto statsTo = [&](PayloadPart part) {
-        s_payloadStats[part] += encoder.currentOffset() - statsFrom;
-        statsFrom = encoder.currentOffset();
-    };
-    ++s_payloadCodeBlocks;
     auto place = [&](Array& array, unsigned count, auto&& write) {
         array.count = count;
         if (count)
@@ -5483,18 +5471,13 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             auto steps = CachedMetadataSteps::compute(metadata);
             place(layout.steps, steps.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, steps); });
         }
-        statsTo(PartSteps);
         const JSInstructionStream& instructions = *codeBlock.m_instructions;
         RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
         place(layout.instructions, instructions.m_instructions.size(), [&] { return encodeArrayForTail<uint8_t>(encoder, instructions.m_instructions); });
-        statsTo(PartInstructions);
         place(layout.constantsSourceCodeRepresentation, codeBlock.m_constantsSourceCodeRepresentation.size(), [&] { return encodeArrayForTail<SourceCodeRepresentation>(encoder, codeBlock.m_constantsSourceCodeRepresentation); });
     }
-    statsTo(PartConstantsRepresentation);
     place(layout.constants, codeBlock.m_constantRegisters.size(), [&] { return CachedJSValuePool::encode(encoder, codeBlock.m_constantRegisters.span()); });
-    statsTo(PartConstants);
     place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
-    statsTo(PartIdentifiers);
     // The children's slots are part of this block's bytes; the records they point at are written after the region.
     auto allocateSlots = [&](unsigned count) {
         auto result = encoder.malloc(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count, alignof(CachedWriteBarrier<CachedFunctionExecutable>));
@@ -5504,7 +5487,6 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     };
     place(layout.functionDecls, codeBlock.m_functionDecls.size(), [&] { return allocateSlots(codeBlock.m_functionDecls.size()); });
     place(layout.functionExprs, codeBlock.m_functionExprs.size(), [&] { return allocateSlots(codeBlock.m_functionExprs.size()); });
-    statsTo(PartSlots);
     if (CachedCodeBlockExtras::isNeeded(codeBlock)) {
         layout.flags |= LayoutHasExtras;
         auto result = encoder.malloc(sizeof(CachedCodeBlockExtras), alignof(CachedCodeBlockExtras));
@@ -5513,7 +5495,6 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         (new (result.buffer()) CachedCodeBlockExtras())->encode(encoder, codeBlock);
     }
 
-    statsTo(PartExtras);
     VarintWriter writer;
     // The tail holds the record's own offset in the region as a varint, so its size is settled where it is placed.
     auto result = encoder.mallocPlaced(alignof(Record), [&](ptrdiff_t offset) {
@@ -5526,7 +5507,6 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     static_assert(PayloadType<Record>);
     Record* record = new (result.buffer()) Record();
     writer.copyTo(record->tailBytes());
-    statsTo(PartRecord);
     encoder.deferCold([record, &encoder, &codeBlock] {
         // Position-independent, so an identical one written earlier is reused.
         auto bytes = CachedExpressionInfo::pack(codeBlock.expressionInfo());
@@ -5536,16 +5516,13 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             at = *existing;
         else {
             auto allocation = encoder.malloc(bytes.size(), alignof(CachedExpressionInfo));
-            s_payloadStats[PartExpressionInfo] += bytes.size();
             memcpySpan(std::span { allocation.buffer(), bytes.size() }, bytes.span());
             encoder.registerArray(hash, allocation.offset(), bytes.size());
             at = allocation.offset();
         }
         record->m_expressionInfo.pointAtPayloadOffset(encoder, at);
     });
-    statsFrom = encoder.currentOffset();
     record->encodeOwnMembers(encoder, codeBlock);
-    statsTo(PartOwnMembers);
 
     auto encodeChildren = [&](const Array& slots, const auto& executables) {
         if (!slots.count)
@@ -5948,7 +5925,7 @@ struct BytecodeLinkEncoder::Impl {
             add(WTF::move(module), BytecodeOrderNames { });
             ++added;
         });
-        if (Options::aotVerbose() || Options::aotReportStats()) [[unlikely]]
+        if (Options::aotVerbose()) [[unlikely]]
             dataLogLn("AOT: ", added, " of the engine's own functions are part of the link");
     }
 #endif
@@ -6065,8 +6042,6 @@ struct BytecodeLinkEncoder::Impl {
             }
             result[importer.index] = WTF::move(linkage);
         }
-        if (Options::aotReportStats()) [[unlikely]]
-            dataLogLn("AOT: ", namesOfLinkage.size(), " of ", graphImports.size(), " imports are variables of other modules, of ", graphModules.size());
 
         // The bundler has seen to who can get at what a module exports. But what it took for an import of a variable is only that here
         // if it has been resolved, above, to the variable itself. Anything else is read some other way, as a value like any other.
@@ -6136,8 +6111,6 @@ struct BytecodeLinkEncoder::Impl {
             for (unsigned i = 0; i < module.starExportCount; ++i)
                 everyExportEscapes(requested(graphStarExports[module.firstStarExport + i]));
         }
-        if (Options::aotReportStats()) [[unlikely]]
-            dataLogLn("AOT: ", importsReadSomeOtherWay, " imports from modules of the program are read some other way than as the variable");
         return result;
     }
     Vector<AOT::Variable> variablesWrittenNativelyOfLink;
@@ -6247,7 +6220,7 @@ struct BytecodeLinkEncoder::Impl {
             uint64_t rank;
             UnlinkedCodeBlock* codeBlock;
             unsigned module;
-            UnlinkedFunctionExecutable* executableForStatistics { nullptr }; // TEMPORARY-IMAGE-STATS
+            UnlinkedFunctionExecutable* executable { nullptr };
         };
         Vector<Job> jobs;
         for (unsigned index = 0; index < modules.size(); ++index) {
@@ -6353,7 +6326,7 @@ struct BytecodeLinkEncoder::Impl {
             variables += hintsOfModule->numberOfVariables();
             proven += hintsOfModule->numberProven();
         }
-        if (Options::aotReportStats()) [[unlikely]]
+        if (Options::aotVerbose()) [[unlikely]]
             dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that the bundler tells of or that are given one");
 
         auto linkages = linkModules(hints);
@@ -6442,9 +6415,7 @@ struct BytecodeLinkEncoder::Impl {
         AOT::setClassesOfProgram(&classesOfProgram);
         auto forgetClassesOfProgram = makeScopeExit([] { AOT::setClassesOfProgram(nullptr); });
         AOT::ThingsReturnedByFunctions thingsReturnedByFunctions;
-        // TEMPORARY: BUN_AOT_RETURNS_OBJECTS=1, for telling whether something is this one's doing.
-        if (const char* text = getenv("BUN_AOT_RETURNS_OBJECTS"); !text || strcmp(text, "1"))
-            AOT::setThingsReturnedByFunctions(&thingsReturnedByFunctions);
+        AOT::setThingsReturnedByFunctions(&thingsReturnedByFunctions);
         auto forgetThingsReturnedByFunctions = makeScopeExit([] { AOT::setThingsReturnedByFunctions(nullptr); });
         {
             MonotonicTime before = MonotonicTime::now();
@@ -6468,40 +6439,6 @@ struct BytecodeLinkEncoder::Impl {
                     unreadable++;
             });
             AOT::TypeTable::settleWhichStringsAreAtoms();
-            if (Options::aotReportStats()) [[unlikely]] {
-                std::array<unsigned, 4> functions { };
-                std::array<uint64_t, 4> calls { };
-                for (auto& hintsOfModule : hints) {
-                    if (!hintsOfModule)
-                        continue;
-                    hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
-                        unsigned bucket = !function.forCall ? 0 : function.escapes ? 1 : function.facts->valueIsUsed.load() ? 2 : 3;
-                        functions[bucket]++;
-                        calls[bucket] += function.facts->directCalls.load();
-                    });
-                }
-                static constexpr ASCIILiteral names[] = { "has no code for a call"_s, "escapes"_s, "does not escape, but some code that is compiled names it other than to call it"_s, "CLOSED"_s };
-                dataLogLn("AOT: what becomes of ", factsOfFunctions.size(), " proven functions, from ", jobs.size(), " pieces of code (", unreadable.load(), " unreadable), ", (MonotonicTime::now() - before).milliseconds(), " ms");
-                for (unsigned i = 0; i < 4; ++i)
-                    dataLogLn("  FACTS ", functions[i], " functions, ", calls[i], " direct calls: ", names[i]);
-                UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reasons;
-                for (auto& hintsOfModule : hints) {
-                    if (!hintsOfModule)
-                        continue;
-                    hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
-                        if (function.forCall && !function.escapes && function.facts->valueIsUsed.load())
-                            reasons.add(function.facts->whyValueIsUsed.load(), 0).iterator->value++;
-                    });
-                }
-                static constexpr ASCIILiteral whys[] = { "?"_s, "where it is made, it goes to"_s, "the callee, but the read is not proven, of"_s, "the callee, but the call is not proven, of"_s, "an operand of"_s };
-                for (auto& entry : reasons) {
-                    uint32_t user = entry.key >> 8;
-                    if (user < 1000)
-                        dataLogLn("  NAMED ", entry.value, " ", whys[entry.key & 0xff], " ", opcodeNames[user]);
-                    else
-                        dataLogLn("  NAMED ", entry.value, " ", whys[entry.key & 0xff], " a node of kind ", user - 1000);
-                }
-            }
             RELEASE_ASSERT(!unreadable.load());
             if (followsFunctions) {
                 classesOfProgram.forEachClosedMethod([&](uint32_t number) {
@@ -6724,39 +6661,18 @@ struct BytecodeLinkEncoder::Impl {
                             next.add(reader);
                     }
                 }
-                if (std::exchange(isLookingAtAllAgain, false) && Options::aotReportStats()) [[unlikely]] {
-                    // TEMPORARY: who had more to say, with nothing having been noticed that it goes by.
-                    unsigned late = 0;
-                    for (unsigned index = 0; index < summaries.size(); ++index) {
-                        auto& summary = summaries[index];
-                        if (summary.calleesGivenMore.isEmpty())
-                            continue;
-                        if (++late > 12)
-                            continue;
-                        auto* executable = jobs[index].executableForStatistics;
-                        StringPrintStream out;
-                        for (auto* callee : summary.calleesGivenMore)
-                            out.print(" #", callee->facts ? callee->facts->number : 0, callee->facts && callee->facts->isExposed.load() ? " (exposed: " : " (", callee->facts ? callee->facts->whyExposed.load() & 0xff : 0, ")");
-                        dataLogLn("AOT: LATE unit ", index, " `", executable ? executable->name().string() : "(top level)"_s, "` @", jobs[index].key.module, ":", jobs[index].key.start, " gave more to", out.toString());
-                    }
-                    dataLogLn("AOT: LATE ", late, " had more to give; ", next.size(), " to look at again");
-                }
                 worklist = copyToVector(next);
             }
             // Nothing that is known to go by something that has grown is left. If that is all there is to know, looking at everything again adds nothing.
             uint64_t digest = digestOfFacts();
             if (timesAllWasLookedAtAgain && digest == digestBefore)
                 break;
-            if (Options::aotReportStats()) [[unlikely]]
-                dataLogLn("AOT: FACTS ", RawHex(digest), " after ", rounds, " rounds, ", inferences, " inferences, having looked at all of it again ", timesAllWasLookedAtAgain, " times");
             digestBefore = digest;
             ++timesAllWasLookedAtAgain;
             isLookingAtAllAgain = true;
             for (unsigned i = 0; i < summaries.size(); ++i)
                 worklist.append(i);
             }
-            if (Options::aotReportStats()) [[unlikely]]
-                dataLogLn("AOT: FACTS ", RawHex(digestBefore), " is closed under every rule: looked at all of it again ", timesAllWasLookedAtAgain, " times");
             if (followsFunctions) {
                 unsigned withCode = 0;
                 unsigned closed = 0;
@@ -6768,53 +6684,13 @@ struct BytecodeLinkEncoder::Impl {
                     closed += function.facts->isClosed;
                     neverCalled += function.facts->isClosed && !function.facts->parameterTypes[0].load();
                 }
-                if (Options::aotReportStats() && AOT::thingsReturnedByFunctions()) [[unlikely]] {
-                    unsigned exposed = 0, wanted = 0, never = 0, inRegisters = 0;
-                    for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
-                        const AOT::KnownFunction& function = *functionsOfProgram.function(number);
-                        if (!function.forCall || !AOT::thingsReturnedByFunctions()->namesOfThingsReturnedBy(function.forCall))
-                            continue;
-                        if (!function.facts->isClosed)
-                            exposed++;
-                        else if (!function.facts->parameterTypes[0].load())
-                            never++;
-                        else if (function.facts->objectReturnedIsWanted.load())
-                            wanted++;
-                        else
-                            inRegisters++;
-                    }
-                    dataLogLn("  NOTMADE of the functions that return a literal with the same names every time: ", exposed, " get somewhere that is not reckoned with, ", never, " are never called, of ", wanted, " somebody wants the object, ", inRegisters, " hand the things back in registers");
-                }
-                if (Options::aotReportStats()) [[unlikely]] {
-                    static constexpr ASCIILiteral whys[] = { "?"_s, "the bundler says it escapes"_s, "is not made where it can be seen"_s, "may get hold of itself"_s, "is not of the program"_s, "has no code for a call"_s,
-                        "used by"_s, "passed to who knows what"_s, "passed as this"_s, "passed beyond the parameters"_s, "called in some other way (a list of arguments, or the callee may be something else)"_s, "returned to who knows whom"_s,
-                        "one of several in a phi"_s, "one of several in a homed register"_s, "one of several in a variable"_s, "one of several in a parameter"_s, "one of several returned"_s, "lost by what hands it on"_s,
-                        "put in a variable of a module that can be got at"_s, "put in a variable that was given up on"_s, "put who knows where"_s, "put in a variable of a name that is read from who knows where"_s, "read in a way that is not proven"_s };
-                    AOT::dumpWhatFunctionsArePassedTo();
-                    UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reasons;
-                    for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
-                        if (uint32_t why = functionsOfProgram.function(number)->facts->whyExposed.load())
-                            reasons.add(why, 0).iterator->value++;
-                    }
-                    for (auto& entry : reasons) {
-                        uint32_t user = entry.key >> 8;
-                        if ((entry.key & 0xff) == AOT::ProgramFacts::LostByWhatHandsItOn)
-                            dataLogLn("  EXPOSED ", entry.value, " lost by ", opcodeNames[user]);
-                        else if ((entry.key & 0xff) != AOT::ProgramFacts::UsedBy)
-                            dataLogLn("  EXPOSED ", entry.value, " ", whys[entry.key & 0xff]);
-                        else if (user < 1000)
-                            dataLogLn("  EXPOSED ", entry.value, " used by ", opcodeNames[user]);
-                        else
-                            dataLogLn("  EXPOSED ", entry.value, " used by a node of kind ", user - 1000);
-                    }
-                }
-                if (Options::aotReportStats()) [[unlikely]]
+                if (Options::aotVerbose()) [[unlikely]]
                     dataLogLn("AOT: of ", withCode, " functions that there is code to call, ", closed, " get nowhere that is not reckoned with (CLOSED), of which ", neverCalled, " are never seen to be called");
             }
             if (Options::aotLogsFacts()) [[unlikely]] {
                 // Once more, now that it is settled, for each to say what it goes by and what it adds.
                 auto nameOfJob = [&](unsigned index) {
-                    auto* executable = jobs[index].executableForStatistics;
+                    auto* executable = jobs[index].executable;
                     return makeString('`', executable ? executable->name().string() : "(top level)"_s, "` @"_s, jobs[index].key.module, ':', jobs[index].key.start);
                 };
                 for (unsigned index = 0; index < summaries.size(); ++index) {
@@ -6831,114 +6707,6 @@ struct BytecodeLinkEncoder::Impl {
                     AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, AOT::VariableFacts::nobody, ignored, ignoredToo, ignoredAsWell, nameOfJob(index));
                 }
             }
-            if (Options::aotReportStats()) [[unlikely]] {
-                dataLogLn("AOT: ", scopesNeverMade, " scopes are read from and never seen to be made");
-                {
-                    // TEMPORARY-ESCAPE-STATS
-                    uint64_t functions = 0, parameters = 0, thatStay = 0, functionsAllOfWhoseStay = 0;
-                    for (unsigned index = 0; index < summaries.size(); ++index) {
-                        auto& summary = summaries[index];
-                        if (!summary.facts)
-                            continue;
-                        functions++;
-                        uint32_t mask = summary.facts->parametersThatEscape.load();
-                        unsigned count = std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::ProgramFacts::mostParametersToldOfEscaping);
-                        bool all = count > 1;
-                        for (unsigned p = 1; p < count; ++p) {
-                            parameters++;
-                            thatStay += !(mask >> p & 1);
-                            all &= !(mask >> p & 1);
-                        }
-                        functionsAllOfWhoseStay += all;
-                    }
-                    dataLogLn("AOT: of ", parameters, " parameters of ", functions, " proven functions, ", thatStay, " do not escape; all of them for ", functionsAllOfWhoseStay, " functions");
-                }
-                UncheckedKeyHashMap<uint64_t, unsigned, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> byType;
-                for (auto& summary : summaries) {
-                    if (!summary.functions.isEmpty())
-                        byType.add(summary.functions[0]->returnType.load(), 0).iterator->value++;
-                }
-                dataLogLn("AOT: return types of ", summaries.size(), " functions in ", rounds, " rounds, ", inferences, " inferences, ", (MonotonicTime::now() - before).milliseconds(), " ms");
-                for (auto& entry : byType) {
-                    if (entry.value >= 100)
-                        dataLogLn("  RETURNS ", entry.value, " ", RawHex(entry.key));
-                }
-                // TEMPORARY
-                if (getenv("BUN_AOT_STOPS_AFTER_FACTS"))
-                    _exit(0);
-                // What the closed ones are passed.
-                using namespace AOT;
-                auto nameOf = [](Type type) -> ASCIILiteral {
-                    if (!type)
-                        return "nothing"_s;
-                    bool orNothing = type & TOther;
-                    Type rest = type & ~TOther;
-                    if (!rest)
-                        return "only undefined or null"_s;
-                    if (isSubtype(rest, TInt32))
-                        return orNothing ? "int32?"_s : "int32"_s;
-                    if (isSubtype(rest, TNumber))
-                        return orNothing ? "number?"_s : "number"_s;
-                    if (isSubtype(rest, TString))
-                        return orNothing ? "string?"_s : "string"_s;
-                    if (isSubtype(rest, TBoolean))
-                        return orNothing ? "boolean?"_s : "boolean"_s;
-                    if (isSubtype(rest, TFunction))
-                        return orNothing ? "function?"_s : "function"_s;
-                    if (isSubtype(rest, TArray))
-                        return orNothing ? "array?"_s : "array"_s;
-                    if (isSubtype(rest, TFinalObject))
-                        return orNothing ? "plain object?"_s : "plain object"_s;
-                    if (isSubtype(rest, TMap | TSet | TWeakMap | TWeakSet))
-                        return orNothing ? "map or set?"_s : "map or set"_s;
-                    if (isSubtype(rest, TRegExp))
-                        return orNothing ? "regexp?"_s : "regexp"_s;
-                    if (isSubtype(rest, TPromise))
-                        return orNothing ? "promise?"_s : "promise"_s;
-                    if (isSubtype(rest, TObject & ~TOtherObject))
-                        return orNothing ? "objects of known kinds?"_s : "objects of known kinds"_s;
-                    if (isSubtype(rest, TObject))
-                        return orNothing ? "an object that is no function or array?"_s : "an object that is no function or array"_s;
-                    if (isSubtype(rest, TAnyObject))
-                        return orNothing ? "some object?"_s : "some object"_s;
-                    if (isSubtype(rest, TPrimitive))
-                        return "primitives of several kinds"_s;
-                    return (type & TTop) == TTop ? "anything"_s : "a mixture"_s;
-                };
-                UncheckedKeyHashMap<ASCIILiteral, unsigned> parameters;
-                unsigned closed = 0;
-                unsigned neverCalled = 0;
-                uint64_t bytecodeNeverCalled = 0;
-                for (unsigned i = 0; i < summaries.size(); ++i) {
-                    auto* facts = summaries[i].facts;
-                    if (!facts || !facts->isClosed)
-                        continue;
-                    ++closed;
-                    if (!facts->parameterTypes[0].load()) {
-                        ++neverCalled;
-                        bytecodeNeverCalled += jobs[i].codeBlock->instructionsSize();
-                        continue;
-                    }
-                    for (unsigned p = 1; p < std::min<unsigned>(jobs[i].codeBlock->numParameters(), ProgramFacts::mostParameters); ++p)
-                        parameters.add(nameOf(facts->parameterTypes[p].load()), 0).iterator->value++;
-                }
-                dataLogLn("AOT: ", closed, " closed functions, of which nothing that is reached calls ", neverCalled, " (", bytecodeNeverCalled, " bytes of bytecode)");
-                for (auto& entry : parameters)
-                    dataLogLn("  PARAMETER ", entry.value, " ", entry.key);
-                if (variableFacts) {
-                    UncheckedKeyHashMap<ASCIILiteral, unsigned> variables;
-                    unsigned count = 0;
-                    variableFacts->forEach([&](Variable variable, uint64_t type) {
-                        if (variable.offset == Variable::initialValue)
-                            return;
-                        ++count;
-                        variables.add(nameOf(type & TTop), 0).iterator->value++;
-                    });
-                    dataLogLn("AOT: ", count, " variables in environment records that something is known of");
-                    for (auto& entry : variables)
-                        dataLogLn("  VARIABLE ", entry.value, " ", entry.key);
-                }
-            }
         }
 
         AOT::ImageBuilder builder;
@@ -6946,23 +6714,6 @@ struct BytecodeLinkEncoder::Impl {
         std::atomic<size_t> next { 0 };
         Lock declinedLock;
         UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
-        // TEMPORARY-PROVABILITY-STATS: whose code each function is, by the comment the bundler puts in front of each file's.
-        Vector<Vector<std::pair<unsigned, ASCIILiteral>>> origins(modules.size());
-        if (Options::aotReportStats()) [[unlikely]] {
-            for (unsigned index = 0; index < modules.size(); ++index) {
-                StringView text = modules[index].source.provider()->source();
-                for (size_t at = text.find("\n// "_s); at != notFound; at = text.find("\n// "_s, at + 1)) {
-                    size_t end = text.find('\n', at + 1);
-                    if (end == notFound)
-                        break;
-                    StringView path = text.substring(at + 4, end - at - 4);
-                    if (path.contains(' ') || !(path.endsWith(".ts"_s) || path.endsWith(".tsx"_s) || path.endsWith(".js"_s) || path.endsWith(".mjs"_s) || path.endsWith(".cjs"_s) || path.endsWith(".jsx"_s)))
-                        continue;
-                    bool isTypeScript = path.endsWith(".ts"_s) || path.endsWith(".tsx"_s);
-                    origins[index].append({ static_cast<unsigned>(at), path.contains("node_modules"_s) ? (isTypeScript ? "dep-ts"_s : "dep-js"_s) : (isTypeScript ? "own-ts"_s : "own-js"_s) });
-                }
-            }
-        }
         class CodeOfThisProgram final : public AOT::CodeOfProgram {
         public:
             std::optional<About> about(UnlinkedCodeBlock* codeBlock) const final
@@ -6990,21 +6741,8 @@ struct BytecodeLinkEncoder::Impl {
                     functionsNeverReached++;
                     bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
                     if (Options::aotVerbose()) [[unlikely]]
-                        dataLogLn("AOT: left out: `", jobs[index].executableForStatistics ? jobs[index].executableForStatistics->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
+                        dataLogLn("AOT: left out: `", jobs[index].executable ? jobs[index].executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
                     continue;
-                }
-                if (Options::aotReportStats()) [[unlikely]] {
-                    ASCIILiteral origin = "unknown"_s;
-                    if (!(jobs[index].rank & 2))
-                        origin = "module-body"_s;
-                    else {
-                        for (auto& [offset, name] : origins[jobs[index].module]) {
-                            if (offset > jobs[index].key.start)
-                                break;
-                            origin = name;
-                        }
-                    }
-                    AOT::setOriginForStatistics(origin);
                 }
                 AOT::CompiledCode code;
                 if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfCode.get(jobs[index].codeBlock), variableFacts, &codeOfProgram)) {
@@ -7016,31 +6754,8 @@ struct BytecodeLinkEncoder::Impl {
                         AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? textOfModule(jobs[index].module) : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
                     }
                     if (Options::aotLogsFacts()) [[unlikely]] {
-                        auto* executable = jobs[index].executableForStatistics;
+                        auto* executable = jobs[index].executable;
                         dataLogLn("CODESIZE `", executable ? executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, " ", code.bytes.size());
-                    }
-                    if (Options::aotReportStats()) [[unlikely]] {
-                        // TEMPORARY-IMAGE-STATS: whose the code is.
-                        static Lock statisticsLock;
-                        static NeverDestroyed<UncheckedKeyHashMap<String, std::array<uint64_t, 4>>> statistics;
-                        auto* executable = jobs[index].executableForStatistics;
-                        String name = executable ? executable->name().string() : String();
-                        bool isProgram = isModuleOfProgram(jobs[index].module);
-                        ASCIILiteral kind = !isProgram ? "an internal module's"_s : !executable ? "top level of a module"_s : name.startsWith("init_"_s) ? "init_*"_s : name.startsWith("require_"_s) ? "require_*"_s
-                            : executable->isClassConstructorFunction() ? "class constructor"_s : name.isEmpty() ? "anonymous"_s : "named"_s;
-                        Locker locker { statisticsLock };
-                        auto& entry = statistics->add(makeString(kind, code.info.startsCold ? ""_s : " (with a loop or the like)"_s), std::array<uint64_t, 4> { }).iterator->value;
-                        entry[0]++;
-                        entry[1] += code.bytes.size();
-                        entry[2] += jobs[index].codeBlock->instructionsSize();
-                        entry[3] += code.info.numSlots;
-                        static std::once_flag once;
-                        std::call_once(once, [] {
-                            atexit([] {
-                                for (auto& entry : statistics.get())
-                                    dataLogLn("IMAGE: ", entry.key, ": ", entry.value[0], " functions, ", entry.value[1], " bytes of code for ", entry.value[2], " of bytecode, ", entry.value[3], " slots");
-                            });
-                        });
                     }
                     auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                     bool isTopLevel = !(jobs[index].rank & 2);
@@ -7082,21 +6797,6 @@ struct BytecodeLinkEncoder::Impl {
                     return order == std::weak_ordering::less;
                 return a.first->isSymbol() < b.first->isSymbol();
             });
-            if (Options::aotReportStats()) [[unlikely]] {
-                uint64_t covered = 0, at[4] = { };
-                for (size_t i = 0; i < inOrder.size(); ++i) {
-                    covered += inOrder[i].second;
-                    if (i == 99)
-                        at[0] = covered;
-                    if (i == 999)
-                        at[1] = covered;
-                    if (i == 9999)
-                        at[2] = covered;
-                    if (i == 65535)
-                        at[3] = covered;
-                }
-                dataLogLn("AOT: the functions have ", inAll, " identifiers between them, which are ", inOrder.size(), " different ones; the 100 that most have account for ", at[0], ", the 1000 for ", at[1], ", the 10000 for ", at[2], ", the 65536 for ", at[3]);
-            }
             // (From one: they are what properties are looked up by in the dispatch table, where nothing stands for nothing.)
             for (uint32_t number = 0; number < inOrder.size(); ++number)
                 numbersOfIdentifiers.set(inOrder[number].first, number + 1);
@@ -7178,11 +6878,7 @@ struct BytecodeLinkEncoder::Impl {
                             number = rank[number];
                     }
                 }
-                if (Options::aotReportStats()) [[unlikely]]
-                    dataLogLn("AOT: the 4096 constants that most functions have account for ", within);
             }
-            if (Options::aotReportStats()) [[unlikely]]
-                dataLogLn("AOT: ", functions, " functions have ", inAll, " constants between them, which are ", next, " different ones: ", strings.size(), " strings, ", cells, " other cells, ", others.size(), " that are not cells; ", withOwn, " functions have constants that are of a realm, and keep their own");
             AOT::setNumbersOfConstantsOfProgram(&numbersOfConstants);
             builder.setNumberOfConstantsOfProgram(next);
         }
@@ -7269,8 +6965,6 @@ struct BytecodeLinkEncoder::Impl {
                         compiled += builder.addRegExp(vm, pattern, { Yarr::Flags::IgnoreCase });
                     }
                 }
-                if (Options::aotReportStats()) [[unlikely]]
-                    dataLogLn("AOT: ", candidates, " strings look like regular expressions; with and without regard to case, ", compiled, " have code");
             }
         }
         Vector<uint8_t> image = builder.finish();
@@ -7393,14 +7087,6 @@ auto BytecodeLinkEncoder::finish() -> Result
     // span is shorter than that is a miss for every module, as for a payload of one module (GenericCacheEntry::isUpToDate).
     encoder.alignCurrentPageEnd();
     uint32_t payloadSize = safeCast<uint32_t>(encoder.currentOffset());
-    if (getenv("BUN_PAYLOAD_STATS")) { // TEMPORARY-PAYLOAD-STATS
-        size_t accounted = 0;
-        for (unsigned part = 0; part < NumberOfPayloadParts; ++part) {
-            dataLogLn("PAYLOAD: ", namesOfPayloadParts[part], ": ", s_payloadStats[part].load());
-            accounted += s_payloadStats[part].load();
-        }
-        dataLogLn("PAYLOAD: everything else (executables, heads of modules, symbol tables, padding): ", payloadSize - accounted, "; ", payloadSize, " in all, ", s_payloadCodeBlocks.load(), " code blocks");
-    }
     for (auto& module : m_impl->modules)
         *module.entry->payloadSizeSlot() = payloadSize;
 #if ENABLE(FTL_JIT)

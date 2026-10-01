@@ -446,59 +446,6 @@ Vector<uint8_t> ImageBuilder::finish()
         return a.rank < b.rank;
     });
 
-    if (Options::aotReportStats()) [[unlikely]] {
-        // TEMPORARY-FOLDING-STATS: how much of the code is the same as some other function's, but for where it is and what it calls
-        // by way of an address (which has to be the same thing).
-        struct Group {
-            uint64_t count { 0 };
-            uint64_t size { 0 };
-        };
-        UncheckedKeyHashMap<String, Group> groups;
-        uint64_t total = 0;
-        for (auto& function : m_functions) {
-            Vector<uint8_t> bytes = function.code.bytes;
-            auto& info = function.code.info;
-            for (auto& call : info.stubCalls) {
-                uint32_t what = static_cast<uint32_t>(call.stub) << 8 | call.thunk << 16 | call.isTailCall;
-                memcpy(bytes.mutableSpan().data() + call.offset, &what, sizeof(what));
-                if (call.function != StubCall::noFunction) {
-                    const ImageKey& key = info.knownCallees[call.function];
-                    uint32_t words[3] = { key.module, key.start, key.kind };
-                    bytes.append(std::span { reinterpret_cast<const uint8_t*>(words), sizeof(words) });
-                }
-            }
-            total += function.code.bytes.size();
-            SHA1 sha1;
-            sha1.addBytes(bytes.span());
-            SHA1::Digest digest;
-            sha1.computeHash(digest);
-            auto& group = groups.add(String { std::span { reinterpret_cast<const Latin1Character*>(digest.data()), digest.size() } }, Group { }).iterator->value;
-            group.count++;
-            group.size = function.code.bytes.size();
-        }
-        uint64_t duplicates = 0, saved = 0, bySize[6] = { }, savedBySize[6] = { };
-        Vector<Group> largest;
-        for (auto& entry : groups) {
-            auto& group = entry.value;
-            if (group.count < 2)
-                continue;
-            duplicates += group.count - 1;
-            // (Each still needs a header, and a jump.)
-            uint64_t each = group.size > 32 ? group.size - 32 : 0;
-            saved += (group.count - 1) * each;
-            unsigned bucket = group.size <= 128 ? 0 : group.size <= 256 ? 1 : group.size <= 512 ? 2 : group.size <= 1024 ? 3 : group.size <= 4096 ? 4 : 5;
-            bySize[bucket] += group.count - 1;
-            savedBySize[bucket] += (group.count - 1) * each;
-            largest.append(group);
-        }
-        dataLogLn("FOLDING ", m_functions.size(), " functions, ", total, " bytes; ", groups.size(), " distinct; ", duplicates, " are copies, ", saved, " bytes to be had");
-        static constexpr ASCIILiteral names[] = { "<=128"_s, "<=256"_s, "<=512"_s, "<=1024"_s, "<=4096"_s, ">4096"_s };
-        for (unsigned i = 0; i < 6; ++i)
-            dataLogLn("FOLDING   size ", names[i], ": ", bySize[i], " copies, ", savedBySize[i], " bytes");
-        std::ranges::sort(largest, [](auto& a, auto& b) { return a.count * a.size > b.count * b.size; });
-        for (unsigned i = 0; i < std::min<size_t>(largest.size(), 8); ++i)
-            dataLogLn("FOLDING   a group of ", largest[i].count, " of ", largest[i].size, " bytes");
-    }
 
     unsigned capacity = 16;
     while (capacity * 3 < m_functions.size() * 4)
@@ -758,8 +705,6 @@ Vector<uint8_t> ImageBuilder::finish()
     std::ranges::sort(selectorsInOrder, [&](uint32_t a, uint32_t b) {
         return compareSelectors(*selectors[a], *selectors[b]) < 0;
     });
-    if (Options::aotReportStats()) [[unlikely]]
-        dataLogLn("AOT: ", shapes.size() - 1, " shapes with ", numberOfPropertiesOfShapes, " properties, ", selectorsInOrder.size(), " selectors of which ", selectorIsRead.bitCount(), " are read by, ", dispatch.size(), " entries in the dispatch table");
 
     // Which function a call is to: the first that has the key.
     Vector<uint32_t> functionWithKey;
@@ -804,14 +749,12 @@ Vector<uint8_t> ImageBuilder::finish()
             return std::nullopt;
         };
         // Likewise a function that is written as an expression, whoever may get hold of it, if nothing that is left makes it: the closure that was passed to what has become part of the
-        // caller, closure and all. TEMPORARY: BUN_AOT_KEEPS_WHAT_IS_NEVER_MADE=1, for telling whether something is this one's doing.
+        // caller, closure and all.
         BitVector isOnlyMadeWhereItIsWritten(m_functions.size());
-        if (const char* text = getenv("BUN_AOT_KEEPS_WHAT_IS_NEVER_MADE"); !text || strcmp(text, "1")) {
-            for (auto& function : m_functions) {
-                for (auto& key : function.code.info.functionExpressionsWritten) {
-                    if (auto index = indexOf(key))
-                        isOnlyMadeWhereItIsWritten.set(*index);
-                }
+        for (auto& function : m_functions) {
+            for (auto& key : function.code.info.functionExpressionsWritten) {
+                if (auto index = indexOf(key))
+                    isOnlyMadeWhereItIsWritten.set(*index);
             }
         }
         for (size_t index = 0; index < m_functions.size(); ++index) {
@@ -847,7 +790,7 @@ Vector<uint8_t> ImageBuilder::finish()
             code.info.inlineFrames.clear();
             code.info.catchEntrypoints.clear();
         }
-        dataLogLnIf(Options::aotVerbose() || Options::aotReportStats(), "AOT: ", functions, " functions that nothing calls any more had ", bytes, " bytes of code");
+        dataLogLnIf(Options::aotVerbose(), "AOT: ", functions, " functions that nothing calls any more had ", bytes, " bytes of code");
     }
 
     // Where everything goes. The stubs come first, and again whenever the last copy is about to be out of reach.
@@ -890,8 +833,6 @@ Vector<uint8_t> ImageBuilder::finish()
             }
         }
         RELEASE_ASSERT(sizeOfVeneers + stubs.bytes.size() + imageStubsAlignment < roomToSpareInReachOfStubCall);
-        if (Options::aotReportStats()) [[unlikely]]
-            dataLogLn("AOT: at most ", sizeOfVeneers, " bytes of veneers for calls out of reach");
     }
     size_t recordsSize = 0;
     size_t codeSize = 0;
@@ -918,19 +859,13 @@ Vector<uint8_t> ImageBuilder::finish()
     for (auto& [at, stubsForIt] : placement)
         startsOfFunctions.append(safeCast<uint32_t>(at));
     startsOfFunctions.append(std::numeric_limits<uint32_t>::max());
-    if (Options::aotCountsAllocations()) [[unlikely]]
-        dumpKindsOfSites();
     if (Options::aotWritesMap()) [[unlikely]] {
-        // F index, where its code starts, how long that is, and its key. C index, where in its code a stub's return address is, which stub, the place in the bytecode. N index, the place, what was known.
+        // For each function: its index, where its code starts, how long that is, and its key.
         auto out = FilePrintStream::open(Options::aotWritesMap(), "w");
         RELEASE_ASSERT(out);
         for (unsigned index = 0; index < m_functions.size(); ++index) {
             auto& function = m_functions[index];
             out->println("F\t", index, "\t", startsOfFunctions[index], "\t", function.code.bytes.size(), "\t", function.key.module, "\t", function.key.start, "\t", function.key.kind);
-            for (auto& call : function.code.info.stubCalls)
-                out->println("C\t", index, "\t", call.offset + 4, "\t", static_cast<unsigned>(call.stub), "\t", call.callSite);
-            for (auto& [site, note] : function.code.info.notesOfSites)
-                out->println("N\t", index, "\t", site, "\t", note);
         }
     }
     Vector<uint32_t> granulesOfCode;
@@ -1038,14 +973,6 @@ Vector<uint8_t> ImageBuilder::finish()
                 textOfRegExps.append(asBytes(regExp.pattern.span16()));
             }
         }
-        if (Options::aotReportStats()) [[unlikely]] {
-            size_t sizes[2] = { };
-            for (auto& regExp : m_regExps) {
-                for (unsigned i = 0; i < 2; ++i)
-                    sizes[i] += regExp.code[i].bytes.size();
-            }
-            dataLogLn("AOT: ", m_regExps.size(), " regular expressions of ", m_regExpsAsked.size(), " have code: ", sizes[0], " bytes for 8 bit strings, ", sizes[1], " for 16 bit ones, ", sizeOfTables, " of tables in common, ", textOfRegExps.size() + imageRegExps.sizeInBytes(), " to find them by");
-        }
     }
     RELEASE_ASSERT(recordsSize < std::numeric_limits<uint32_t>::max());
 
@@ -1144,14 +1071,9 @@ Vector<uint8_t> ImageBuilder::finish()
                 previous = offset;
             }
         }
-        if (Options::aotReportStats()) [[unlikely]]
-            dataLogLn("AOT: ", numberOfQuotes, " places that an error message may quote: ", quotes.size(), " bytes, and ", textOfQuotes.size(), " of text in ", whereItIs.size(), " pieces");
     }
     // Neither is looked at but to say what an error message says.
-    size_t sizeOfBlockOfEither = 64 * KB;
-    // (For a test whose program is too small to have more than one otherwise.)
-    if (const char* size = getenv("BUN_AOT_SIZE_OF_BLOCKS_OF_QUOTES"))
-        sizeOfBlockOfEither = std::max(64, atoi(size));
+    size_t sizeOfBlockOfEither = std::max(64u, Options::aotSizeOfBlocksOfQuotes());
     uint32_t sizeOfBlockOfTextOfQuotes = 0;
     if (auto packed = packInBlocks(textOfQuotes.span(), sizeOfBlockOfEither)) {
         textOfQuotes = WTF::move(*packed);
@@ -1162,8 +1084,6 @@ Vector<uint8_t> ImageBuilder::finish()
         quotes = WTF::move(*packed);
         sizeOfBlockOfQuotes = sizeOfBlockOfEither;
     }
-    if (Options::aotReportStats()) [[unlikely]]
-        dataLogLn("AOT: packed, they are ", quotes.size(), " bytes and ", textOfQuotes.size());
 
     // Code that goes by the tables of a static heap is no use without one, and that says which function nearly every executable is.
     // So it is for whoever makes it to keep the keys of the rest (StaticHeap::keysOfImage()): the table comes after the image.
@@ -1281,26 +1201,6 @@ Vector<uint8_t> ImageBuilder::finish()
     header.numberOfFunctions = m_functions.size();
     for (unsigned i = 0; i < numberOfStubs; ++i)
         header.stubOffsets[i] = stubs.offsets[i];
-    if (Options::aotReportStats()) [[unlikely]] {
-        // TEMPORARY-IMAGE-STATS
-        size_t heads = 0, calleeSaves = 0, catchEntrypoints = 0, sites = 0, siteConstants = 0, knownCallees = 0, plans = 0, code = 0, sitesWithConstant = 0;
-        for (auto& function : m_functions) {
-            auto& info = function.code.info;
-            heads += sizeof(ImageFunction);
-            catchEntrypoints += info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint);
-            sites += info.sites.size() * sizeof(Site);
-            siteConstants += numbersOfIdentifiers ? 0 : info.sites.size() * sizeof(uint32_t);
-            for (uint32_t constant : info.siteConstants)
-                sitesWithConstant += !!constant;
-            knownCallees += info.knownCallees.size() * sizeof(uint32_t);
-            plans += info.plans.sizeInBytes();
-            code += function.code.bytes.size();
-        }
-        dataLogLn("IMAGE: table of keys ", header.tableCapacity * sizeof(ImageKey), " (", m_functions.size(), " of ", capacity, " used); records ", recordsSize, ": heads ", heads, ", callee saves ", calleeSaves, ", catch entrypoints ", catchEntrypoints,
-            ", sites ", sites, ", site constants ", siteConstants, " (", sitesWithConstant, " are not zero), known callees ", knownCallees, ", plans ", plans);
-        dataLogLn("IMAGE: shapes ", imageShapes.sizeInBytes(),  ", selectors ", imageSelectors.sizeInBytes() + rowOfSelector.sizeInBytes() + selectorsInOrder.sizeInBytes(), ", their text ", textOfSelectors.size(),
-            ", dispatch ", dispatch.sizeInBytes(), ", quotes and construct sites ", quotes.size(), ", text of quotes ", textOfQuotes.size(), "; code ", codeSize, ", of which the functions' own ", code, " and ", stubsAt.size(), " copies of ", stubs.bytes.size(), " bytes of stubs");
-    }
 
     Vector<uint8_t> image;
     image.fill(0, header.size + (keysAreLeftOut ? capacity * sizeof(ImageKey) : 0));
@@ -1810,8 +1710,6 @@ const void* Image::addressOfStub(Stub stub)
     return nullptr;
 }
 
-static std::atomic<uint64_t> s_regExpsFromImage;
-static std::atomic<uint64_t> s_regExpsNotInImage;
 
 auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -> std::optional<CodeForRegExp>
 {
@@ -1830,16 +1728,10 @@ auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -
                 continue;
             StringView said = it->is8Bit ? StringView { std::span { reinterpret_cast<const Latin1Character*>(text + it->text), it->length } } : StringView { std::span { reinterpret_cast<const char16_t*>(text + it->text), it->length } };
             if (said == pattern) {
-                s_regExpsFromImage++;
                 return CodeForRegExp { static_cast<const uint8_t*>(image->m_code) + it->codeFor8Bit, static_cast<const uint8_t*>(image->m_code) + it->codeFor16Bit };
             }
         }
     }
-    s_regExpsNotInImage++;
-    // TEMPORARY: BUN_AOT_LOG_REGEXPS=1 says which. They are left to the interpreter of regular expressions.
-    static const bool logs = !!getenv("BUN_AOT_LOG_REGEXPS");
-    if (logs) [[unlikely]]
-        dataLogLn("AOT: no code in the image for /", pattern, "/ flags ", rawFlags);
     return std::nullopt;
 }
 
@@ -1978,7 +1870,6 @@ unsigned hashOfCode(std::span<const uint8_t> code)
     return hash;
 }
 
-static std::atomic<unsigned> s_installedFromImage;
 
 static String nameForLogging(ScriptExecutable* executable)
 {
@@ -2002,12 +1893,6 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         if (const char* path = Options::aotImagePath()) {
             if (!Image::registerImageFromFile(path))
                 dataLogLn("AOT: ", path, " is not an image for this engine");
-        }
-        if (Options::aotReportStats()) {
-            atexit([] {
-                dataLogLn("AOT: ", s_installedFromImage.load(), " functions ran from an image");
-                dataLogLn("AOT: ", s_regExpsFromImage.load(), " regular expressions got their code from an image, ", s_regExpsNotInImage.load(), " did not");
-            });
         }
     });
     if (!Image::hasAny())
@@ -2069,7 +1954,6 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
 Ref<JITCode> codeFromImage(ImageCode code, UnlinkedCodeBlock* unlinkedCodeBlock)
 {
     auto [image, function] = code;
-    s_installedFromImage++;
     return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, JITCode::wayInto(unlinkedCodeBlock)));
 }
 
@@ -2081,7 +1965,6 @@ bool canDoWithoutUnlinkedCode(JSGlobalObject* globalObject, ImageCode code)
 Ref<JITCode> codeOfFunctionFromImage(ImageCode code, CodeSpecializationKind kind)
 {
     auto [image, function] = code;
-    s_installedFromImage++;
     return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, isCall(kind) ? JITCode::Way::Call : JITCode::Way::Construct));
 }
 

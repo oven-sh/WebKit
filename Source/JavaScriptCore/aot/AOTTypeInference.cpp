@@ -18,36 +18,6 @@
 
 namespace JSC { namespace AOT {
 
-// TEMPORARY statistics.
-static Lock s_passedToLock;
-static UncheckedKeyHashMap<String, unsigned>& passedTo()
-{
-    static NeverDestroyed<UncheckedKeyHashMap<String, unsigned>> map;
-    return map.get();
-}
-
-static void noteWhatAFunctionIsPassedTo(Node* callee, int index, ASCIILiteral more)
-{
-    while (callee->kind == NodeKind::Narrow || callee->isBytecode(op_check_type) || callee->isBytecode(op_check_tdz) || callee->isBytecode(op_type_tag))
-        callee = callee->uses[0].node;
-    String name = callee->isBytecode(op_get_by_id) ? makeString('.', StringView(callee->graph->codeBlock()->identifier(callee->as<OpGetById>().m_property).impl()))
-        : callee->isBytecode(op_get_from_scope) ? makeString("variable "_s, StringView(callee->graph->codeBlock()->identifier(callee->as<OpGetFromScope>().m_var).impl()))
-        : callee->kind == NodeKind::Intrinsic || callee->kind == NodeKind::LinkTimeConstant ? "(one of the engine's own)"_s
-        : callee->kind == NodeKind::Argument ? "(a parameter)"_s : callee->kind == NodeKind::Phi ? "(a phi)"_s : callee->isBytecode(op_call) ? "(what a call gave)"_s : "(something else)"_s;
-    Locker locker { s_passedToLock };
-    passedTo().add(makeString(name, " #"_s, index, ' ', more), 0).iterator->value++;
-}
-
-void dumpWhatFunctionsArePassedTo()
-{
-    Vector<std::pair<unsigned, String>> all;
-    for (auto& entry : passedTo())
-        all.append({ entry.value, entry.key });
-    std::ranges::sort(all, [](auto& a, auto& b) { return a.first > b.first; });
-    for (unsigned i = 0; i < all.size() && i < 90; ++i)
-        dataLogLn("  PASSEDTO ", all[i].first, " ", all[i].second);
-}
-
 namespace {
 
 // Values that ToNumeric turns into a number without running any code and without the chance of a BigInt.
@@ -81,7 +51,7 @@ public:
         }
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
-                if (node->kind != NodeKind::Bytecode || !hasBeenGotTo(node))
+                if (node->kind != NodeKind::Bytecode)
                     continue;
                 switch (node->opcode) {
                 case op_ret:
@@ -109,8 +79,7 @@ public:
                 for (Node* phi : block->phis)
                     noteWhereValuesGoIn(phi);
                 for (Node* node : block->nodes) {
-                    if (hasBeenGotTo(node))
-                        noteWhereValuesGoIn(node);
+                    noteWhereValuesGoIn(node);
                 }
             }
         }
@@ -129,19 +98,6 @@ public:
         }
     }
 
-    // Likewise one thing that the code does: everything that it goes by has been seen to be something. (Not for a phi, which goes by whichever there is.)
-    static bool hasBeenGotTo(const Node* node)
-    {
-        // TEMPORARY: only with BUN_AOT_NOTHING_FOR_NOTHING=1, until what is never got to is compiled as such: it still calls what is then left out as never called.
-        static const bool isOff = !getenv("BUN_AOT_NOTHING_FOR_NOTHING");
-        if (isOff)
-            return true;
-        for (auto& use : node->uses) {
-            if (!use.node->type)
-                return false;
-        }
-        return true;
-    }
     // Whether anything is seen to get to the code, so far. If not it does nothing, so far: it is looked at again if something turns out to.
     bool isReached() const { return !m_graph.facts() || m_graph.facts()->isReached(); }
     Type returnType() const { return m_returnType; }
@@ -205,8 +161,7 @@ private:
             int index = use.reg.offset() - firstArgument;
             if (index >= 1 && static_cast<unsigned>(index) < followed && static_cast<unsigned>(index) < argc)
                 continue;
-            if (expose(use.node->type, !followed ? ProgramFacts::PassedToWhoKnowsWhat : !index ? ProgramFacts::PassedAsThis : ProgramFacts::PassedBeyondParameters) && !followed && Options::aotReportStats()) [[unlikely]]
-                noteWhatAFunctionIsPassedTo(node->use(calleeRegister), index, known ? (isProven ? "known, not closed"_s : "may well be known"_s) : ""_s);
+            expose(use.node->type, !followed ? ProgramFacts::PassedToWhoKnowsWhat : !index ? ProgramFacts::PassedAsThis : ProgramFacts::PassedBeyondParameters);
         }
     }
 
@@ -613,13 +568,11 @@ private:
             return std::nullopt;
         if (calleesConsulted && !calleesConsulted->contains(known))
             calleesConsulted->append(known);
-        return hasBeenGotTo(call) ? known->facts->typesOfThingsReturned[index].load() : TNone;
+        return known->facts->typesOfThingsReturned[index].load();
     }
 
     Type resultOfCall(Node* node)
     {
-        if (!hasBeenGotTo(node))
-            return TNone;
         if (auto result = resultOfCallOfBuiltin(node))
             return *result;
         bool isProven = false;
@@ -698,10 +651,8 @@ private:
             return node->target ? node->uses[0].node->type & node->target->type : node->uses[0].node->type;
         case NodeKind::Proj:
             // (What makes several things is itself none of them.)
-            return hasBeenGotTo(node->uses[0].node) ? computeProj(node) : TNone;
+            return computeProj(node);
         case NodeKind::Bytecode: {
-            if (!hasBeenGotTo(node))
-                return TNone;
             Type type = computeBytecode(node);
             if (node->hasFact(FactField, 2))
                 type &= typeHeldByFact(node->fact >> 24 & 15);

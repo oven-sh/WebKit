@@ -2368,12 +2368,6 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
 
 void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 {
-    // TEMPORARY-SLOT-STATS
-    if (Options::aotReportSlowPaths()) [[unlikely]] {
-        static uint64_t count;
-        if (!(++count % 1000))
-            dataLogLn("MEGA epoch bumped ", count, " times");
-    }
     if (auto* megamorphicCache = this->megamorphicCache())
         megamorphicCache->bumpEpoch();
 }

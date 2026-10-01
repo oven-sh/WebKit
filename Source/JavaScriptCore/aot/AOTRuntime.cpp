@@ -220,21 +220,6 @@ static constexpr auto s_sharedData = [] {
     return words;
 }();
 
-static std::atomic<uint64_t> s_startedCold;
-static std::atomic<uint64_t> s_gotDataLater;
-static void didStartCold()
-{
-    if (!Options::aotReportStats()) [[likely]]
-        return;
-    static std::once_flag once;
-    std::call_once(once, [] {
-        atexit([] {
-            dataLogLn("AOT: ", s_startedCold.load(), " functions started with no Data, of which ", s_gotDataLater.load(), " got one");
-        });
-    });
-    s_startedCold++;
-}
-
 Data* SharedData::get()
 {
     return std::bit_cast<Data*>(s_sharedData.data());
@@ -341,7 +326,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
             instance->linkTimeConstants[which] = JSValue::encode(globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(which)));
             ++count;
         }
-        if (Options::aotVerbose() || Options::aotReportStats()) [[unlikely]]
+        if (Options::aotVerbose()) [[unlikely]]
             dataLogLn("AOT: ", count, " link-time constants made ready in ", (MonotonicTime::now() - before).microseconds(), " us");
     }
     memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
@@ -698,7 +683,6 @@ Data* Instance::ensureData(uint32_t index)
     Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function()), info.function() }, info.kind());
     RELEASE_ASSERT(code->index() == index);
     code->setInstance(*this);
-    s_gotDataLater++;
     data = Data::create(*this, executable, unlinkedCodeBlock, code.get());
     RELEASE_ASSERT(data); // Nothing that it is made of is made now.
     return data;
@@ -864,36 +848,6 @@ UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfThereIsOne() const
     return uncheckedDowncast<FunctionExecutable>(executable())->unlinkedExecutable()->codeBlockIfThereIsOne(info().kind());
 }
 
-// TEMPORARY-FUNCTION-STATS
-static void reportWhoAsks(ASCIILiteral what)
-{
-#if OS(DARWIN)
-    if (!getenv("BUN_AOT_WHO_ASKS"))
-        return;
-    void* stack[14];
-    int depth = backtrace(stack, 14);
-    char** symbols = backtrace_symbols(stack, depth);
-    StringPrintStream out;
-    out.print("WHOASKS ", what);
-    for (int i = 2; i < depth; ++i) {
-        // "3   cli   0x0000000104f2c1a4 symbol + 123"
-        const char* symbol = symbols[i];
-        for (unsigned field = 0; field < 3 && *symbol; ++field) {
-            while (*symbol && *symbol != ' ')
-                ++symbol;
-            while (*symbol == ' ')
-                ++symbol;
-        }
-        const char* end = strchr(symbol, ' ');
-        out.print(" ", String::fromUTF8(std::span { symbol, end ? static_cast<size_t>(end - symbol) : strlen(symbol) }));
-    }
-    free(symbols);
-    dataLogLn(out.toCString());
-#else
-    UNUSED_PARAM(what);
-#endif
-}
-
 // As many zeros as any function has bytes of instructions, in memory that is nobody's until somebody reads it.
 static std::span<const uint8_t> zerosForInstructions(size_t size)
 {
@@ -939,7 +893,6 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
 {
     if (UnlinkedCodeBlock* existing = unlinkedCodeBlockIfThereIsOne())
         return existing;
-    reportWhoAsks("unlinked"_s);
     VM& vm = *instance->vm;
     DeferGCForAWhile deferGC(vm);
     DeferTerminationForAWhile deferTermination(vm);
@@ -954,13 +907,6 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
     data->unlinkedCodeBlock = result;
     if (!data->hasBeenFilledSinceLastCollection)
         data->noteFilled();
-    if (Options::aotReportStats()) [[unlikely]] {
-        // TEMPORARY-FUNCTION-STATS
-        static std::atomic<unsigned> count;
-        unsigned now = ++count;
-        if (!(now & (now - 1)) || !(now % 500))
-            dataLogLn("AOT: the unlinked code of ", now, " functions decoded because somebody asked");
-    }
     return result;
 }
 
@@ -1179,7 +1125,6 @@ CodeBlock* Data::ensureCodeBlock()
     if (codeBlock)
         return codeBlock;
     VM& vm = *instance->vm;
-    reportWhoAsks("codeblock"_s);
     if (!unlinkedCodeBlock)
         function().ensureUnlinkedCodeBlock();
     RELEASE_ASSERT(unlinkedCodeBlock->codeType() == FunctionCode);
@@ -1191,13 +1136,6 @@ CodeBlock* Data::ensureCodeBlock()
     RELEASE_ASSERT(result);
     result->adoptAOTCode(*code, this);
     codeBlock = result;
-    if (Options::aotReportStats()) [[unlikely]] {
-        // TEMPORARY-FUNCTION-STATS
-        static std::atomic<unsigned> count;
-        unsigned now = ++count;
-        if (!(now & (now - 1)) || !(now % 500))
-            dataLogLn("AOT: ", now, " CodeBlocks made because somebody asked");
-    }
     if (!hasBeenFilledSinceLastCollection)
         noteFilled();
     return result;
@@ -1292,7 +1230,6 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
         instance.infos[index].flags |= FunctionInfo::startsCold;
         instance.collections->executablesWithoutData.append(executable);
         instance.setLinkedWithoutData(index);
-        didStartCold();
     } else if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
         return false;
     executable->installAOTCode(vm, kind, WTF::move(code));
@@ -1314,7 +1251,6 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
         if (info.function()->usesStaticImports && !moduleIsLinkedAsCompiled(scope))
             return false;
         instance->setLinkedWithoutData(index);
-        didStartCold();
         return true;
     }
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(kind);
@@ -1409,145 +1345,6 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
         visitor.appendUnbarriered(executable);
 }
 
-// TEMPORARY-SHAPE-COUNTS
-static Vector<std::pair<ASCIILiteral, uint64_t>>& viewsNoted()
-{
-    static NeverDestroyed<Vector<std::pair<ASCIILiteral, uint64_t>>> views;
-    return views;
-}
-void Instance::noteView(ASCIILiteral whatCameOfIt)
-{
-    for (auto& entry : viewsNoted()) {
-        if (entry.first.characters() == whatCameOfIt.characters()) {
-            entry.second++;
-            return;
-        }
-    }
-    viewsNoted().append({ whatCameOfIt, 1 });
-}
-
-// TEMPORARY-SLOT-STATS
-void Instance::dumpSlotStatistics(PrintStream& out)
-{
-    for (auto& entry : viewsNoted())
-        out.println("SHAPECOUNT\t", entry.second, "\tlooked at the long way: ", entry.first);
-    static constexpr unsigned numberOfBuckets = 7;
-    static constexpr unsigned upTo[numberOfBuckets] = { 0, 4, 8, 16, 32, 64, UINT_MAX };
-    uint64_t count[numberOfBuckets] = { }, slotsOf[numberOfBuckets] = { }, filledOf[numberOfBuckets] = { };
-    uint64_t functions = 0, withNothingFilled = 0, slots = 0, filled = 0, withPointer = 0, transitions = 0;
-    uint64_t ownConstants = 0, withOwnConstants = 0, withFunctions = 0, withWatchpoints = 0, withCodeBlock = 0, withUnlinkedCode = 0, startedCold = 0;
-    for (Data* data : collections->all) {
-        functions++;
-        slots += data->numSlots;
-        uint64_t filledHere = 0;
-        for (unsigned i = 0; i < data->numSlots; ++i) {
-            Slot& slot = data->slots[i];
-            auto* words = reinterpret_cast<uint64_t*>(&slot);
-            if (!(words[0] & ~static_cast<uint64_t>(Slot::attemptsMask) << 32) && !words[1])
-                continue;
-            filledHere++;
-            withPointer += slot.hasPointer();
-            transitions += !slot.hasPointer() && words[1];
-        }
-        filled += filledHere;
-        withNothingFilled += !filledHere;
-        unsigned bucket = 0;
-        while (data->numSlots > upTo[bucket])
-            bucket++;
-        count[bucket]++;
-        slotsOf[bucket] += data->numSlots;
-        filledOf[bucket] += filledHere;
-        withOwnConstants += data->ownsConstants;
-        ownConstants += data->ownsConstants ? data->numberOfOwnConstants : 0;
-        withFunctions += !!data->functions;
-        withWatchpoints += !!data->watchpoints;
-        withCodeBlock += !!data->codeBlock;
-        withUnlinkedCode += !!data->unlinkedCodeBlock;
-        startedCold += !!(infos[data->code->index()].flags & FunctionInfo::startsCold);
-    }
-    out.println("DATA functions=", functions, " startedCold=", startedCold, " withNothingFilled=", withNothingFilled, " headerBytes=", functions * sizeof(Data), " (", sizeof(Data), " each) slots=", slots, " slotBytes=", slots * sizeof(Slot), " filled=", filled, " ofWhichWithPointer=", withPointer, " transitions=", transitions);
-    out.println("DATA withOwnConstants=", withOwnConstants, " ownConstantBytes=", ownConstants * sizeof(EncodedJSValue), " withFunctions=", withFunctions, " withWatchpoints=", withWatchpoints, " withCodeBlock=", withCodeBlock, " withUnlinkedCode=", withUnlinkedCode, " aJITCodeIs=", sizeof(JITCode));
-    for (unsigned i = 0; i < numberOfBuckets; ++i)
-        out.println("DATA up to ", upTo[i], " slots: functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
-    {
-        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s, "constructed as a layout"_s, "constructed otherwise"_s, "assertion made"_s, "access served with no assertion"_s, "exit taken"_s, "assertion of what had passed the same before"_s, "taken out of its slot at birth"_s, "exit: the base is no cell"_s, "exit: the base is no plain object"_s, "exit: the base was never given a layout, and has room"_s, "exit: the base was never given a layout, and has no room"_s, "exit: the base was born as something else"_s, "exit: nothing is in the slot"_s, "exit: something else"_s, "made one of a family where it was"_s };
-        static_assert(std::size(names) == NumberOfShapeCounts);
-        for (unsigned i = 0; i < NumberOfShapeCounts; ++i) {
-            if (shapeCounts[i])
-                out.println("SHAPECOUNT\t", shapeCounts[i], "\t", names[i]);
-        }
-        out.println("SHAPECOUNT\t", SlotsOfBornObjects::s_timesAdmitted, "\tstore looked at the long way, and let in");
-        out.println("SHAPECOUNT\t", SlotsOfBornObjects::s_timesRefused, "\tstore looked at the long way, and the property taken out of its slot");
-        for (unsigned i = 0; i < numberOfCountsOfSites; ++i) {
-            if (countsOfSites[i])
-                out.println("SHAPECOUNT\t", countsOfSites[i], "\tsitekind ", i);
-        }
-        for (unsigned i = 0; i < 1024; ++i) {
-            if (readsForReason[i])
-                out.println("SHAPECOUNT\t", readsForReason[i], "\treason ", i);
-        }
-        static constexpr ASCIILiteral paths[] = { "calls"_s, "hit: in the object itself"_s, "hit: out of line or inherited"_s, "hit: a getter"_s, "miss: no cell"_s, "miss: the slot is nobody's"_s, "miss: the slot is empty"_s, "miss: the slot has another structure"_s,
-            "table: in the object itself"_s, "table: out of line"_s, "table: not its own, so undefined"_s, "not settled by the table"_s, "megamorphic cache asked"_s, "the operation is called"_s, "miss: the slot has another structure, and has given up"_s, "table: the structure is of no known shape"_s, "megamorphic cache asked, by the name in the slot"_s, "a slot is given over to the name"_s, "the length of a typed array"_s, ""_s, "KEYED calls"_s, "KEYED an element of an array"_s, "KEYED an element of a typed array"_s, "KEYED a name: megamorphic cache asked"_s, "KEYED the operation is called"_s, "one of several: it is one of them"_s, "goes to find out and remember"_s,
-            "CALL of a function of the program's, in registers"_s, "CALL of a function of the program's that wants a list"_s, "CALL of what call is bound to"_s, "CALL of a native function"_s, "CALL of anything else"_s };
-        static_assert(std::size(paths) == 32);
-        for (unsigned i = 0; i < std::size(paths); ++i) {
-            if (pathsOfStubs[i])
-                out.println("STUBPATH\t", pathsOfStubs[i], "\t", paths[i]);
-        }
-        dumpGettersCalled(out);
-    }
-    // TEMPORARY-RESIDENCY: how much of what is only there once it is touched has been.
-    {
-        auto resident = [&](ASCIILiteral name, const void* start, size_t size) {
-            size_t page = WTF::pageSize();
-            uintptr_t begin = std::bit_cast<uintptr_t>(start) & ~(page - 1);
-            uintptr_t end = roundUpToMultipleOf(page, std::bit_cast<uintptr_t>(start) + size);
-            Vector<char> pages((end - begin) / page);
-            if (mincore(std::bit_cast<void*>(begin), end - begin, pages.mutableSpan().data())) {
-                out.println("RESIDENT\t", name, "\tcannot tell");
-                return;
-            }
-            size_t count = 0;
-            for (char state : pages)
-                count += !!(state & MINCORE_INCORE);
-            out.println("RESIDENT\t", name, "\t", count * page, "\tof\t", end - begin);
-        };
-        size_t environmentsSize = collections->environmentsSize;
-        resident("environments of modules"_s, reinterpret_cast<char*>(this) - environmentsSize, environmentsSize);
-        resident("the Instance itself"_s, this, sizeof(Instance));
-        resident("Instance::states, a word for each function"_s, states, collections->numberOfFunctions * sizeof(uint32_t));
-        resident("the Datas"_s, reinterpret_cast<char*>(this) + (collections->startOfDatas << shiftOfStateWithData), (collections->endOfDatas - collections->startOfDatas) << shiftOfStateWithData);
-        char* bss = std::bit_cast<char*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss));
-        using Region = bmalloc::StaticRegion;
-        resident("Bss: strings, symbols, vtables"_s, bss, Region::offsetOfVMInBss);
-        resident("Bss: the VM"_s, bss + Region::offsetOfVMInBss, Region::offsetOfGlobalObjectInBss - Region::offsetOfVMInBss);
-        resident("Bss: the global object"_s, bss + Region::offsetOfGlobalObjectInBss, Region::offsetOfDecodersInBss - Region::offsetOfGlobalObjectInBss);
-        resident("Bss: decoders of modules"_s, bss + Region::offsetOfDecodersInBss, Region::offsetOfSourceProvidersInBss - Region::offsetOfDecodersInBss);
-        resident("Bss: source providers"_s, bss + Region::offsetOfSourceProvidersInBss, Region::offsetOfTopLevelExecutablesInBss - Region::offsetOfSourceProvidersInBss);
-        resident("Bss: top level executables"_s, bss + Region::offsetOfTopLevelExecutablesInBss, Region::offsetOfBlocksInBss - Region::offsetOfTopLevelExecutablesInBss);
-    }
-    for (unsigned kind = 0; kind < numberOfAllocationKinds; ++kind) {
-        for (unsigned escape = 0; escape < static_cast<unsigned>(Escape::NumberOfThem); ++escape) {
-            uint64_t* counts = &allocationCounts[(kind * 32 + escape) * 2];
-            if (counts[0])
-                out.println("ESCAPE\t", nameOf(static_cast<AllocationKind>(kind)), "\t", counts[0], "\t", counts[1], "\t", nameOf(static_cast<Escape>(escape)));
-        }
-    }
-}
-
-// TEMPORARY-SHAPE-STATS
-static UncheckedKeyHashMap<Structure*, uint8_t>& knownShapes()
-{
-    static NeverDestroyed<UncheckedKeyHashMap<Structure*, uint8_t>> shapes;
-    return shapes;
-}
-void noteKnownShape(Structure* structure, uint8_t kind)
-{
-    if (Options::aotReportSlowPaths()) [[unlikely]]
-        knownShapes().add(structure, kind);
-}
-uint8_t kindOfKnownShape(Structure* structure) { return knownShapes().get(structure); }
-
 Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names)
 {
     if (auto it = collections->knownShapes.find(shape); it != collections->knownShapes.end())
@@ -1574,7 +1371,6 @@ Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStri
     } else if (SlotsOfBornObjects::areStructs())
         result->setBornAs(description.family);
     collections->knownShapes.add(shape, result);
-    noteKnownShape(result, 1);
     return result;
 }
 
@@ -1806,7 +1602,6 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
         object->setStructure(vm, adopted);
         vm.writeBarrier(object);
     }
-    instance.shapeCounts[Adopted]++;
     return true;
 }
 
@@ -1853,7 +1648,6 @@ Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStrin
     if (auto it = collections->shapes.find(key); it != collections->shapes.end())
         return it->value;
     Structure* result = Structure::createWithProperties(*vm, empty, names);
-    noteKnownShape(result, 1);
     collections->shapes.add(WTF::move(key), result); // (The structure keeps the names.)
     return result;
 }

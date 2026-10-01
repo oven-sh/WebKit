@@ -177,7 +177,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     };
     ObjectAllocationProfile profile;
     profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), inlineCapacityInBytecode);
-    if ((count > 1 || !slots.empty()) && !(Options::aotDisableFastPaths() & 4096)) {
+    if (count > 1 || !slots.empty()) {
         // All of it is known, so there is no call for a structure for every property on the way.
         Vector<UniquedStringImpl*, 32> names;
         for (unsigned i = 0; i < count; ++i)
@@ -271,13 +271,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
 
     Structure* last = object->structure();
     if (isLaidOutAsPlanned && !last->isDictionary() && count <= last->inlineCapacity()) {
-        if (uint32_t shape = caller(globalObject, callFrame).siteConstantOf(cache)) {
+        if (uint32_t shape = caller(globalObject, callFrame).siteConstantOf(cache))
             last->setKnownShape(vm, safeCast<uint16_t>(shape));
-            noteKnownShape(last, 2);
-        }
     }
-    // TEMPORARY-SLOT-STATS
-    noteSlowPath("create_this_with_properties"_s, object, nullptr, !constructor ? "not a function"_s : !constructor->canUseAllocationProfiles() ? "no allocation profile"_s : first->hasPolyProto() ? "poly proto"_s : !cacheable ? "a store was not a plain addition in order"_s : last->isDictionary() ? "dictionary"_s : count > last->inlineCapacity() ? "more than fits inline"_s : object->butterfly() ? "has a butterfly"_s : (first->mayBePrototype() || last->mayBePrototype()) ? "may be a prototype"_s : "goes on to try"_s);
     if (!cacheable || last->isDictionary() || count > last->inlineCapacity() || object->butterfly() || first->mayBePrototype() || last->mayBePrototype())
         OPERATION_RETURN(scope, object);
 
@@ -308,11 +304,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
             OPERATION_RETURN(scope, object);
         conditions = conditions.mergedWith(forThis);
     }
-    if (!watchConditions(vm, callerData(globalObject, callFrame), cache, conditions)) {
-        noteSlowPath("create_this_with_properties"_s, object, nullptr, "cannot watch"_s); // TEMPORARY-SLOT-STATS
+    if (!watchConditions(vm, callerData(globalObject, callFrame), cache, conditions))
         OPERATION_RETURN(scope, object);
-    }
-    noteSlowPath("create_this_with_properties"_s, object, nullptr, "filled"_s); // TEMPORARY-SLOT-STATS
     fillConstructionCache(vm, callerData(globalObject, callFrame), cache, constructor, first, last, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(last->inlineCapacity()), AllocatorForMode::EnsureAllocator));
     OPERATION_RETURN(scope, object);
 }
@@ -572,41 +565,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject* glob
 }
 
 // op_new_reg_exp_shared. cache->pointer: the object that does for the site, which the code looks for before it comes here.
-// TEMPORARY-SHAPE-COUNTS: how often something is tested that has passed the same test before. (Roughly: what is at an address may be something new.)
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteAssertion, void, (Instance* instance, EncodedJSValue value, uint32_t layouts))
-{
-    static NeverDestroyed<UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> seen;
-    if (seen->size() > 200000)
-        seen->clear();
-    JSValue decoded = JSValue::decode(value);
-    if (!decoded || !decoded.isCell())
-        return;
-    if (!seen->add((static_cast<uint64_t>(value) << 20) ^ layouts).isNewEntry)
-        instance->shapeCounts[Instance::AssertionRepeated]++;
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteExit, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t layouts, uint32_t slot))
-{
-    JSValue base = JSValue::decode(encodedBase);
-    auto count = [&](Instance::ShapeCount which) { instance->shapeCounts[which]++; };
-    if (!base || !base.isCell())
-        return count(Instance::ExitBaseIsNoCell);
-    if (base.asCell()->type() != FinalObjectType)
-        return count(Instance::ExitBaseIsNoPlainObject);
-    Structure* structure = base.asCell()->structure();
-    uint16_t bornAs = structure->bornAs();
-    if (!bornAs)
-        return count(structure->inlineCapacity() > slot && !structure->outOfLineCapacity() ? Instance::ExitBaseWasNeverBorn : Instance::ExitBaseWasNeverBornAndHasNoRoom);
-    if (bornAs < (layouts >> 16) || bornAs > (layouts & 0xffff))
-        return count(Instance::ExitBaseWasBornOtherwise);
-    if (!asObject(base)->getDirect(slot))
-        return count(Instance::ExitSlotIsEmpty);
-    count(Instance::ExitOther);
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSettleWhatWasBorn, void, (Instance* instance, JSObject* object))
 {
-    instance->shapeCounts[Instance::TakenOutAtBirth] += object->takeOutWhatItsSlotsDoNotHold(*instance->vm);
+    object->takeOutWhatItsSlotsDoNotHold(*instance->vm);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTIteratorMethodOfArray, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* array))
@@ -657,12 +618,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject* gl
     case FunctionKind::AsyncGenerator:
         result = JSAsyncGeneratorFunction::create(vm, globalObject, executable, environment);
         break;
-    }
-    // TEMPORARY: BUN_AOT_COUNTS_CLOSURES.
-    static const bool counts = [] { const char* text = getenv("BUN_AOT_COUNTS_CLOSURES"); return text && !strcmp(text, "1"); }();
-    if (counts) [[unlikely]] {
-        noteClosureMade(executable);
-        OPERATION_RETURN(scope, result);
     }
     // Optimized code may take the only closure of a function for a constant. Once there have been two, nobody has to be told.
     if (executable->singletonHasBeenInvalidated())
@@ -1021,7 +976,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdDirect, EncodedJSValue, (JSGlobalObj
     JSValue result = found ? slot.getValue(globalObject, ident) : jsUndefined();
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    if (!(Options::aotDisableFastPaths() & 1) && !SharedData::contains(cache) && found && base.isCell() && slot.isCacheableValue() && slot.slotBase() == base.asCell()) {
+    if (!SharedData::contains(cache) && found && base.isCell() && slot.isCacheableValue() && slot.slotBase() == base.asCell()) {
         Structure* structure = base.asCell()->structure();
         auto location = locationOfProperty(slot.cachedOffset());
         if (structure->propertyAccessesAreCacheable() && !structure->isDictionary() && !structure->needImpurePropertyWatchpoint() && location) {
@@ -1140,7 +1095,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInById, size_t, (JSGlobalObject* globalObje
     UniquedStringImpl* uid = identifier.impl();
     JSObject* baseObject = asObject(base);
     // (An array has a length, and a function a name, that their Structures say nothing of.)
-    if ((Options::aotDisableFastPaths() & 1024) || parseIndex(*uid) || !vm.megamorphicCache() || uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto)
+    if (parseIndex(*uid) || !vm.megamorphicCache() || uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto)
         OPERATION_RETURN(scope, baseObject->hasProperty(globalObject, identifier));
 
     // What the other tiers do for a site that sees objects of all kinds: the answer is left where generateFrontEndInById() finds it.

@@ -59,14 +59,6 @@ ALWAYS_INLINE void countOperationOnBehalfOf(JSGlobalObject* globalObject, CallFr
 
 // What an operation wants to know about the function that called it, other than what it was passed. All of it is what a
 // function is linked with, none of it is bytecode, metadata or a profile, and this is the only place that says where it is.
-// For finding out what the fast paths miss (Options::aotReportSlowPaths): says every so often what got here most.
-void noteSlowPathSlow(ASCIILiteral operation, JSValue base, UniquedStringImpl* name, ASCIILiteral detail);
-ALWAYS_INLINE void noteSlowPath(ASCIILiteral operation, JSValue base = { }, UniquedStringImpl* name = nullptr, ASCIILiteral detail = ""_s)
-{
-    if (Options::aotReportSlowPaths()) [[unlikely]]
-        noteSlowPathSlow(operation, base, name, detail);
-}
-
 // (Which may be the one that is nobody's: SharedData. That goes for its slots too, and neither is written to.)
 ALWAYS_INLINE Data* callerData(JSGlobalObject* globalObject, CallFrame* callFrame)
 {

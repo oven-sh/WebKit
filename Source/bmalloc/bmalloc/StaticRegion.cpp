@@ -11,7 +11,6 @@
 #include <cstring>
 #include <cstdio>
 #include <utility>
-#include <execinfo.h>
 #include <sys/mman.h>
 
 #if BUSE(MIMALLOC)
@@ -181,58 +180,6 @@ static uint32_t& sizeOfImmutable(const void* pointer)
 
 static size_t unitsFor(size_t size) { return size ? (size + unit - 1) / unit : 1; }
 
-// TEMPORARY-MALLOC-AUDIT. BUN_STATIC_HEAP_MALLOC_AUDIT=1: who asks for how much.
-namespace {
-struct AuditEntry {
-    static constexpr unsigned depth = 7;
-    void* frames[depth];
-    uint64_t count;
-    uint64_t bytes;
-    uint64_t freed;
-};
-constexpr size_t auditCapacity = 1 << 16;
-AuditEntry* s_audit;
-uint64_t s_auditFreedBytes;
-uint64_t s_auditFreedCount;
-struct AuditOwner { const void* pointer; uint32_t entry; };
-}
-
-static AuditEntry* auditEntryForCaller()
-{
-    void* stack[AuditEntry::depth + 3] = { };
-    backtrace(stack, AuditEntry::depth + 3);
-    uint64_t hash = 1469598103934665603ull;
-    for (unsigned i = 0; i < AuditEntry::depth; ++i)
-        hash = (hash ^ reinterpret_cast<uintptr_t>(stack[i + 3])) * 1099511628211ull;
-    for (size_t probe = 0; probe < auditCapacity; ++probe) {
-        auto& entry = s_audit[(hash + probe) & (auditCapacity - 1)];
-        if (!entry.count)
-            memcpy(entry.frames, stack + 3, sizeof(entry.frames));
-        if (!memcmp(entry.frames, stack + 3, sizeof(entry.frames)))
-            return &entry;
-    }
-    return nullptr;
-}
-
-void StaticRegion::dumpMallocAudit()
-{
-    if (!s_audit)
-        return;
-    fprintf(stderr, "MALLOCAUDIT freed, whether or not it was used again: %llu bytes in %llu allocations\n", static_cast<unsigned long long>(s_auditFreedBytes), static_cast<unsigned long long>(s_auditFreedCount));
-    for (unsigned round = 0; round < 60; ++round) {
-        AuditEntry* best = nullptr;
-        for (size_t i = 0; i < auditCapacity; ++i) {
-            if (s_audit[i].count && (!best || s_audit[i].bytes > best->bytes))
-                best = &s_audit[i];
-        }
-        if (!best)
-            break;
-        fprintf(stderr, "MALLOCAUDIT %llu bytes in %llu allocations\n", static_cast<unsigned long long>(best->bytes), static_cast<unsigned long long>(best->count));
-        backtrace_symbols_fd(best->frames, AuditEntry::depth, 2);
-        best->count = 0;
-    }
-}
-
 // What is freed while the region is being built is for the next one who asks for as much: what is not used again is in the file
 // all the same. By how many times 16 bytes it takes up, with what precedes it.
 namespace {
@@ -319,19 +266,6 @@ void StaticRegion::forgetWhatIsFree()
     memset(s_moreFreeListsInUse, 0, sizeof(s_moreFreeListsInUse));
 }
 
-static void noteForAudit(size_t bytes)
-{
-    static const bool audit = !!getenv("BUN_STATIC_HEAP_MALLOC_AUDIT");
-    if (!audit)
-        return;
-    if (!s_audit)
-        s_audit = static_cast<AuditEntry*>(calloc(auditCapacity, sizeof(AuditEntry)));
-    if (auto* entry = auditEntryForCaller()) {
-        entry->count++;
-        entry->bytes += bytes;
-    }
-}
-
 static void* mallocImmutable(size_t size, size_t alignment)
 {
     RELEASE_BASSERT(size <= UINT32_MAX);
@@ -357,7 +291,6 @@ static void* mallocImmutable(size_t size, size_t alignment)
             return block;
         }
     }
-    noteForAudit(units * unit);
     uintptr_t endOfLast = StaticRegion::startOf(StaticRegion::Arena::Malloc) + StaticRegion::used(StaticRegion::Arena::Malloc);
     auto* block = static_cast<char*>(StaticRegion::allocate(StaticRegion::Arena::Malloc, units * unit, alignment));
     pushFreeImmutable(reinterpret_cast<void*>(endOfLast), (reinterpret_cast<uintptr_t>(block) - endOfLast) / unit);
@@ -387,7 +320,6 @@ void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
             return block;
         }
     }
-    noteForAudit((size + sizeOfHeader + 15) & ~static_cast<size_t>(15));
     auto* header = static_cast<char*>(allocate(Arena::MutableMalloc, size + sizeOfHeader, alignment, alignment - sizeOfHeader));
     memcpy(header, &size, sizeof(size));
     return header + sizeOfHeader;
@@ -451,16 +383,12 @@ void StaticRegion::didFreeSlow(void* pointer)
     uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
     if (address - startOf(Arena::Malloc) < used(Arena::Malloc)) {
         size_t units = unitsFor(mallocSize(pointer));
-        s_auditFreedBytes += units * unit;
-        s_auditFreedCount++;
         memset(pointer, 0, units * unit);
         sizeOfImmutable(pointer) = 0;
         pushFreeImmutable(pointer, units);
         return;
     }
     if (address - startOf(Arena::MutableMalloc) < used(Arena::MutableMalloc)) {
-        s_auditFreedBytes += (mallocSize(pointer) + sizeOfHeader + 15) & ~static_cast<size_t>(15);
-        s_auditFreedCount++;
         memset(pointer, 0, mallocSize(pointer));
         if (size_t index = freeListFor(mallocSize(pointer)); index < numberOfFreeLists && !(address & 15))
             pushFree(mutableOnes, index, pointer);

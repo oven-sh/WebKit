@@ -33,7 +33,7 @@ struct ProgramFacts {
     // The function gets somewhere as a value: it is stored, passed, compared, constructed with, asked for a property; or it is called
     // in a way that is not a call of this function and no other. If not, whoever calls it is known, all of them.
     std::atomic<bool> valueIsUsed { false };
-    // For Options::aotReportStats(): the first thing that was seen to make that so. See Graph::noteUsesOfProvenFunctions().
+    // The first thing that was seen to make that so, for the log. See Graph::noteUsesOfProvenFunctions().
     enum WhyValueIsUsed : uint32_t { NotSaid, WhereItIsMade, CalleeButReadIsNotProven, CalleeButCallIsNotProven, Operand };
     std::atomic<uint32_t> whyValueIsUsed { 0 }; // WhyValueIsUsed | what uses it (an opcode, or 1000 + a kind of node) << 8
     std::atomic<uint32_t> directCalls { 0 };
@@ -47,7 +47,7 @@ struct ProgramFacts {
     // set for all of them: one that turns out to be exposed is passed anything, which is as good as saying nothing.)
     mutable std::atomic<bool> isExposed { false };
     uint32_t number { 0 }; // FunctionsOfProgram
-    // For Options::aotReportStats(): the first thing that was seen to make that so.
+    // The first thing that was seen to make that so, for the log.
     enum WhyExposed : uint32_t {
         NotExposed, BundlerSaysItEscapes, IsNotMadeWhereItCanBeSeen, MayGetHoldOfItself, IsNotOfTheProgram, HasNoCodeForACall,
         UsedBy, // | an opcode << 8, or 1000 + a kind of node
@@ -467,7 +467,6 @@ const NumbersOfIdentifiers* numbersOfIdentifiersOfProgram();
 // (a string that says the same, a number) is there once. For each such function, the number of each of its constants, or
 // notAConstantOfProgram for one that is empty.
 static constexpr uint32_t notAConstantOfProgram = std::numeric_limits<uint32_t>::max();
-JS_EXPORT_PRIVATE void dumpWhatFunctionsArePassedTo(); // TEMPORARY statistics
 using NumbersOfConstants = UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<uint32_t>>;
 JS_EXPORT_PRIVATE void setNumbersOfConstantsOfProgram(const NumbersOfConstants*); // Not while anything is being compiled.
 const Vector<uint32_t>* numbersOfConstantsOfProgramFor(UnlinkedCodeBlock*); // Null: the function has its own.

@@ -116,17 +116,6 @@ void Lowering::settleWhatWasBorn(Node* node, LValue object, uint32_t layout, con
 
 bool Lowering::tryLowerAllocation(Node* node)
 {
-    // TEMPORARY-ESCAPE-STATS
-    if (Options::aotCountsAllocations()) [[unlikely]] {
-        if (auto kind = kindOfAllocation(node)) {
-            static_assert(static_cast<unsigned>(Escape::NumberOfThem) <= 32);
-            ptrdiff_t offset = Instance::offsetOfAllocationCounts() + (static_cast<unsigned>(*kind) * 32 + static_cast<unsigned>(node->escape)) * 2 * sizeof(uint64_t);
-            TypedPointer count = m_out.address(m_heaps.root, m_instance, offset);
-            m_out.store64(m_out.add(m_out.load64(count), m_out.constInt64(1)), count);
-            TypedPointer bytes = m_out.address(m_heaps.root, m_instance, offset + sizeof(uint64_t));
-            m_out.store64(m_out.add(m_out.load64(bytes), m_out.constInt64(bytesOfAllocation(node))), bytes);
-        }
-    }
 
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
         m_graph.functionsMade.append(isExpression ? code().codeBlock()->functionExpr(index) : code().codeBlock()->functionDecl(index));
@@ -156,7 +145,6 @@ bool Lowering::tryLowerAllocation(Node* node)
             auto shapeOfThis = m_graph.shapeOfLiteral(node);
             if (uint16_t family = Graph::familyOfNewObject(node); family && (!shapeOfThis || !shapeOfThis->family)) {
                 // It is of a family, and has something that the family has no slot for: it starts with nothing, and is given one thing after another.
-                noteShapeSite(Instance::LiteralWithLayout);
                 LValue object = vmCall(node, pointerType(), Entry::operationAOTNewObjectOfFamily, m_globalObject, m_out.constInt32(family), slotAddress(allocateSlots(2)));
                 auto& instructions = code().codeBlock()->instructions();
                 auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
@@ -173,8 +161,6 @@ bool Lowering::tryLowerAllocation(Node* node)
             Vector<TypeTable::Holds, 8> holdsOfSlots;
             bool holdsAreKnown = false;
             bool hasSlotsOutside = shapeOfThis && shapeOfThis->hasSlotsOutside();
-            noteShapeSite(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
-            countShape(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
             if (auto shape = WTF::move(shapeOfThis)) {
                 // Each where the layout has it.
                 if (!shape->slots.isEmpty()) {
@@ -224,7 +210,6 @@ bool Lowering::tryLowerAllocation(Node* node)
             return true;
         }
         if (uint16_t family = Graph::familyOfNewObject(node)) {
-            noteShapeSite(Instance::LiteralWithLayout);
             setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewObjectOfFamily, m_globalObject, m_out.constInt32(family), slotAddress(allocateSlots(2))));
             return true;
         }
@@ -258,9 +243,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                         if (isAsWritten)
                             shape.number = layout->number;
                     }
-                    noteShapeSite(shape.number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
                 }
-                countShape(shape.number ? Instance::ConstructedWithLayout : Instance::ConstructedWithout);
                 layout = shape.number;
                 if (std::ranges::none_of(shape.names, [](UniquedStringImpl* name) { return name->isSymbol(); }))
                     m_graph.noteShapeOfSite(slot, WTF::move(shape));
@@ -887,7 +870,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
                 { { GPRInfo::argumentGPR3, bytecode.m_ecmaMode.isStrict() } });
             return true;
         }
-        if (mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32) && !(Options::aotDisableFastPaths() & 8) && !isWithout(WithoutPutByValDirect)) {
+        if (mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32)) {
             // An element of an array that keeps its elements as values, its own to write to, where there is room for it already: at the end as a rule, which is how
             // map() and the like fill in what they make.
             slowCase = m_out.newBlock();
@@ -927,7 +910,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
         auto bytecode = node->as<OpInByVal>();
         Node* baseNode = node->use(bytecode.m_base);
         Node* propertyNode = node->use(bytecode.m_property);
-        if (isCompact() || (Options::aotDisableFastPaths() & 8) || !mayBe(baseNode->type, TAnyObject) || !mayBe(propertyNode->type, TNumber))
+        if (isCompact() || !mayBe(baseNode->type, TAnyObject) || !mayBe(propertyNode->type, TNumber))
             return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property)));
 
         // An element that is there, in contiguous or int32 storage. Whether one that is not there is to be had from anywhere else is for the runtime to find out.

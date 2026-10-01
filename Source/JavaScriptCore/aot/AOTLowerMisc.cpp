@@ -345,14 +345,6 @@ void Lowering::findChainsOfComparisons()
         chain.otherwise = next;
         for (unsigned i = 1; i < chain.arms.size(); ++i)
             m_blocksInsideChains.add(chain.arms[i].block);
-        if (Options::aotReportStats()) [[unlikely]] {
-            static std::atomic<uint64_t> chains;
-            static std::atomic<uint64_t> arms;
-            static std::once_flag once;
-            std::call_once(once, [] { atexit([] { dataLogLn("AOT: ", chains.load(), " chains of comparisons, of ", arms.load(), " in all"); }); });
-            chains++;
-            arms += chain.arms.size();
-        }
         m_chainsByFirstBlock.add(head, m_chains.size());
         m_chains.append(WTF::move(chain));
     }
@@ -727,31 +719,19 @@ bool Lowering::tryLowerMisc(Node* node)
         Node* value = node->uses[0].node;
         // (An array: it is taken to be one. Of a family whose slots are verified: it is asked when something is read.)
         if (node->narrowedTo || value->isKnownToBeBornWithin(node->firstLayout, node->lastLayout) || (TypeTable::areStructs() && TypeTable::shared()->isUsable(node->firstLayout) && TypeTable::shared()->isVerified(node->firstLayout))) {
-            noteShapeSite(Instance::ServedWithoutAssertion);
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
             m_sameAs = nullptr;
             return true;
         }
-        noteShapeSite(Instance::AssertionMade);
-        countShape(Instance::AssertionMade);
         LValue jsValue = lowJSValue(value);
         if (!node->isTakenAtItsWord) {
-            isLoweredThisWay(2);
             LValue view = viewFoundFor(value, node->firstLayout);
             m_views.set(node, view ? view : viewAs(node, value, jsValue, node->firstLayout));
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
             m_sameAs = nullptr;
             return true;
-        }
-        {
-            // TEMPORARY: 1 a parameter, 2 what a call gives, 3 a property, 4 a variable, 5 a phi, 6 an element, 7 anything else.
-            Node* origin = value;
-            while (origin->kind == NodeKind::Narrow || origin->isBytecode(op_check_type) || origin->isBytecode(op_check_tdz) || origin->isBytecode(op_type_tag))
-                origin = origin->uses[0].node;
-            isLoweredThisWay(origin->kind == NodeKind::Argument ? 1 : origin->kind == NodeKind::Phi ? 5 : origin->kind != NodeKind::Bytecode ? 7
-                : origin->opcode == op_call || origin->opcode == op_construct || origin->opcode == op_call_varargs ? 2 : origin->opcode == op_get_by_id ? 3 : origin->opcode == op_get_from_scope ? 4 : origin->opcode == op_get_by_val ? 6 : 7);
         }
         assertBornAs(node, value, jsValue, node->firstLayout);
         setJSValue(node, jsValue);
@@ -776,14 +756,6 @@ bool Lowering::tryLowerMisc(Node* node)
         // Only what the value can still be is tested for, the cheapest first. Whatever that does not settle (a callable object
         // that is not a function, say) and every failure is for the runtime, which either comes back or throws.
         LValue jsValue = lowJSValue(value);
-        {
-            // TEMPORARY: 1 a parameter, 2 what a call gives, 3 a property, 4 a variable, 5 a phi, 6 an element, 7 anything else.
-            Node* origin = value;
-            while (origin->kind == NodeKind::Narrow || origin->isBytecode(op_check_type) || origin->isBytecode(op_check_tdz) || origin->isBytecode(op_type_tag))
-                origin = origin->uses[0].node;
-            isLoweredThisWay(origin->kind == NodeKind::Argument ? 1 : origin->kind == NodeKind::Phi ? 5 : origin->kind != NodeKind::Bytecode ? 7
-                : origin->opcode == op_call || origin->opcode == op_construct || origin->opcode == op_call_varargs ? 2 : origin->opcode == op_get_by_id ? 3 : origin->opcode == op_get_from_scope ? 4 : origin->opcode == op_get_by_val ? 6 : 7);
-        }
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         emitTypeTests(value, jsValue, mask, continuation, slowPath);

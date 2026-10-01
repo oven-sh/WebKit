@@ -38,57 +38,6 @@ namespace JSC { namespace AOT {
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
-void noteSlowPathSlow(ASCIILiteral operation, JSValue base, UniquedStringImpl* name, ASCIILiteral detail)
-{
-    static Lock lock;
-    static NeverDestroyed<UncheckedKeyHashMap<String, unsigned>> counts;
-    static unsigned total;
-    Locker locker { lock };
-    StringPrintStream key;
-    key.print(operation);
-    if (base)
-        key.print(" on ", base.isCell() ? base.asCell()->type() : CellType, base.isCell() ? "" : " (not a cell)");
-    if (name)
-        key.print(" .", String(name));
-    key.print(" ", detail);
-    // TEMPORARY-SLOT-STATS: what kind of structure, and who asks.
-    static NeverDestroyed<UncheckedKeyHashMap<String, unsigned>> callers;
-    if (base && base.isCell()) {
-        Structure* structure = base.asCell()->structure();
-        key.print(structure->isUncacheableDictionary() ? " [uncacheable dictionary]" : structure->isDictionary() ? " [dictionary]" : "", structure->propertyAccessesAreCacheable() ? "" : " [not cacheable]", " ", structure->classInfoForCells()->className);
-        VM& vm = base.asCell()->vm();
-        if (FunctionRef function = vm.topCallFrame ? functionThatCalled(vm.topCallFrame) : FunctionRef { }) {
-            if (auto* executable = function.executable()) {
-                StringPrintStream caller;
-                caller.print(operation, " ", detail, " IN ");
-                if (auto* function = dynamicDowncast<FunctionExecutable>(executable))
-                    caller.print(function->ecmaNameWithoutGC());
-                caller.print(" ", executable->sourceURL(), ":", executable->firstLine());
-                callers.get().add(caller.toString(), 0).iterator->value++;
-            }
-        }
-    }
-    counts.get().add(key.toString(), 0).iterator->value++;
-    if (++total % Options::aotReportSlowPaths())
-        return;
-    {
-        Vector<std::pair<String, unsigned>> sorted;
-        for (auto& entry : callers.get())
-            sorted.append({ entry.key, entry.value });
-        std::ranges::sort(sorted, [](auto& a, auto& b) { return a.second > b.second; });
-        dataLogLn("AOT slow path callers, of ", total, ":");
-        for (unsigned i = 0; i < std::min<size_t>(sorted.size(), 60); ++i)
-            dataLogLn("    ", sorted[i].second, " ", sorted[i].first);
-    }
-    Vector<std::pair<String, unsigned>> sorted;
-    for (auto& entry : counts.get())
-        sorted.append({ entry.key, entry.value });
-    std::ranges::sort(sorted, [](auto& a, auto& b) { return a.second > b.second; });
-    dataLogLn("AOT slow paths, of ", total, ":");
-    for (unsigned i = 0; i < std::min<size_t>(sorted.size(), 90); ++i)
-        dataLogLn("    ", sorted[i].second, " ", sorted[i].first);
-}
-
 #define AOT_BINARY_OPERATION(name, function) \
     JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
     { \
@@ -196,49 +145,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCompareStrictEq, size_t, (JSGlobalObject* g
     OPERATION_RETURN(scope, JSValue::strictEqual(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)));
 }
 
-// TEMPORARY-SHAPE-STATS: with the caches off (aotDisableFastPaths=1025) every read comes by here.
-static void noteShapeOfRead(JSValue base, const PropertySlot& slot)
-{
-    ASCIILiteral kind = "SHAPE not a cell"_s;
-    if (base.isCell()) {
-        JSCell* cell = base.asCell();
-        Structure* structure = cell->structure();
-        switch (cell->type()) {
-        case StringType:
-            kind = "SHAPE string"_s;
-            break;
-        case ArrayType:
-        case DerivedArrayType:
-            kind = "SHAPE array"_s;
-            break;
-        case JSFunctionType:
-            kind = "SHAPE function"_s;
-            break;
-        case FinalObjectType: {
-            kind = structure->isDictionary() ? "SHAPE plain object, dictionary"_s : "SHAPE plain object, other"_s;
-            unsigned steps = 0;
-            for (Structure* current = structure; current && steps < 200; current = current->previousID(), ++steps) {
-                if (uint8_t known = kindOfKnownShape(current)) {
-                    if (known == 1)
-                        kind = !steps ? "SHAPE literal"_s : "SHAPE literal, changed since"_s;
-                    else
-                        kind = !steps ? "SHAPE constructed"_s : "SHAPE constructed, changed since"_s;
-                    break;
-                }
-            }
-            break;
-        }
-        default:
-            kind = cell->isObject() ? "SHAPE other object"_s : "SHAPE other cell"_s;
-            break;
-        }
-    }
-    ASCIILiteral result = slot.isUnset() ? "absent"_s
-        : slot.slotBase() == base ? (slot.isCacheableValue() ? "own value"_s : "own, not a plain value"_s)
-        : slot.isCacheableValue() ? "inherited value"_s : slot.isCacheableGetter() ? "inherited getter"_s : "inherited, something else"_s;
-    noteSlowPath(kind, JSValue(), nullptr, result);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint32_t identifierIndex, Slot* cache))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -260,10 +166,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
         noteCustomGetter(globalObject, instance, asObject(base), ident, slot);
     if (slot.isUnset() && structureBefore && structureBefore->knownShape())
         caller(globalObject, callFrame).instance->lookAtObjectPrototype();
-    ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(globalObject, callFrame), base, structureBefore, ident, slot, cache, true);
-    noteSlowPath("get_by_id"_s, base, ident.impl(), whyNotCached.isEmpty() ? "cached"_s : whyNotCached);
-    if (Options::aotReportSlowPaths()) [[unlikely]]
-        noteShapeOfRead(base, slot);
+    cacheGetById(globalObject, callerData(globalObject, callFrame), base, structureBefore, ident, slot, cache, true);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
@@ -286,44 +189,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
         CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(base), ident, value, slot, &oldStructure);
     else
         base.putInline(globalObject, ident, value, slot);
-    if (scope.exception()) [[unlikely]] {
-        // BUN_AOT_LOG_REFUSED=1: which store it was that a struct would not have. (The error says neither, and whoever catches it may say still less.)
-        static const bool logs = !!getenv("BUN_AOT_LOG_REFUSED");
-        if (logs && oldStructure && oldStructure->bornAs()) {
-            dataLog("AOT: REFUSED: .", ident.impl(), isDirect ? " (direct)" : "", " of what was born as ", oldStructure->bornAs(), " is given ");
-            dumpType(WTF::dataFile(), typeOfValue(value));
-            dataLogLn();
-        }
-    }
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (Options::aotReportSlowPaths()) [[unlikely]] { // TEMPORARY-SLOT-STATS
-        bool tookRoom = base.isCell() && oldStructure && base.asCell()->structure()->outOfLineCapacity() != oldStructure->outOfLineCapacity();
-        bool isBorn = oldStructure && oldStructure->bornAs();
-        ASCIILiteral what = "?"_s;
-        switch (slot.type()) {
-        case PutPropertySlot::Uncachable:
-            what = !base.isObject() ? "uncacheable: no object"_s : oldStructure->isDictionary() ? "uncacheable: a dictionary"_s : isBorn ? "uncacheable, of a struct"_s : "uncacheable"_s;
-            break;
-        case PutPropertySlot::ExistingProperty:
-            what = isBorn ? "there already, of a struct but no field"_s : "there already"_s;
-            break;
-        case PutPropertySlot::NewProperty:
-            what = tookRoom ? "new, and took room"_s : isBorn ? "new, of a struct but no field"_s : "new"_s;
-            break;
-        case PutPropertySlot::ExistingFieldOfStruct:
-            what = "a field that is there already"_s;
-            break;
-        case PutPropertySlot::NewFieldOfStruct:
-            what = "a new field"_s;
-            break;
-        default:
-            what = "a setter or the like"_s;
-            break;
-        }
-        noteSlowPath("put_by_id"_s, base, ident.impl(), what);
-        noteSlowPath(isDirect ? "put_by_id (direct), how"_s : "put_by_id, how"_s, JSValue(), nullptr, what);
-        noteSlowPath("put_by_id, the site"_s, JSValue(), nullptr, SharedData::contains(cache) ? "has no slot of its own"_s : "has a slot"_s);
-    }
     // (What makes a property come what may has done what any store would have, if nothing that the object inherits from has a say in the matter.)
     if (!isDirect || (slot.type() == PutPropertySlot::NewProperty && base.isObject() && asObject(base)->canPerformFastPutInline(vm, ident)))
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
@@ -351,7 +217,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* 
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
-    noteSlowPath("get_by_val"_s, base, property.isString() && !asString(property)->isRope() && asString(property)->tryGetValueImpl() && asString(property)->tryGetValueImpl()->isAtom() ? static_cast<UniquedStringImpl*>(const_cast<StringImpl*>(asString(property)->tryGetValueImpl())) : nullptr, property.isInt32() ? "int32"_s : property.isNumber() ? "double"_s : property.isString() ? "string"_s : property.isSymbol() ? "symbol"_s : "other"_s);
 
     if (base.isObject() && property.isString()) [[likely]] {
         // A name nobody has made an atom of is not the name of any ordinary property. One that is gets to be found faster
@@ -432,7 +297,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     Slot unusedSlot { };
-    if ((Options::aotDisableFastPaths() & 32) || SharedData::contains(cache)) [[unlikely]]
+    if (SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
     const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
@@ -503,11 +368,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
     AOT_OPERATION_PROLOGUE(globalObject);
     bool throwIfNotFound = how & Site::throwsIfNotFound;
     Slot unusedSlot { };
-    if ((Options::aotDisableFastPaths() & 32) || SharedData::contains(cache)) [[unlikely]]
+    if (SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
     const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
-    noteSlowPath("get_from_scope"_s, scopeObject, uid);
 
     // For a scope of which the code can only ever see the one at this place: the global object, its lexical environment, the
     // module's environment. What the name resolves to may be a scope of another kind the next time.
@@ -626,7 +490,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     Slot unusedSlot { };
-    if ((Options::aotDisableFastPaths() & 64) || SharedData::contains(cache)) [[unlikely]]
+    if (SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
     const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
@@ -731,11 +595,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTViewAs, EncodedJSValue, (JSGlobalObject* gl
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue value = JSValue::decode(encodedValue);
-    if (value.isObject() && (asObject(value)->structure()->bornAs() == family || Instance::adopt(vm, asObject(value), safeCast<uint16_t>(family)))) {
-        Instance::noteView("made one of the family"_s);
+    if (value.isObject() && (asObject(value)->structure()->bornAs() == family || Instance::adopt(vm, asObject(value), safeCast<uint16_t>(family))))
         OPERATION_RETURN(scope, encodedValue);
-    }
-    Instance::noteView(value.isObject() ? SlotsOfBornObjects::s_whyNotAdopted : value.isUndefinedOrNull() ? "it is undefined or null"_s : "it is no object"_s);
     if (SlotsOfBornObjects::audits() && !value.isUndefinedOrNull()) [[unlikely]]
         SlotsOfBornObjects::audit(value.isObject() ? SlotsOfBornObjects::s_whyNotAdopted : "it is no object"_s, safeCast<uint16_t>(family), value);
     OPERATION_RETURN(scope, static_cast<EncodedJSValue>(std::bit_cast<uintptr_t>(&s_structWithNothingInIt[0])));
@@ -777,23 +638,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
     const SlotsOfBornObjects::Named& field = SlotsOfBornObjects::fieldWithId(slot, static_cast<uint16_t>(which));
     uint16_t family = SlotsOfBornObjects::familyOf(field);
     JSValue base = JSValue::decode(encodedBase);
-    ASCIILiteral why = "it is no object"_s;
     if (base.isObject()) {
         JSObject* object = asObject(base);
         // What code that knows nothing of the types has made is made one of the family, if it can be.
-        if (object->structure()->isNeverAdopted())
-            why = "its like is never adopted"_s;
-        else if (!object->structure()->bornAs())
-            why = Instance::adopt(vm, object, family) ? "made one of the family"_s : SlotsOfBornObjects::s_whyNotAdopted;
-        else
-            why = object->structure()->bornAs() != family ? "it is of another type's family"_s : !object->structure()->fieldInSlot(slot) ? "it has no such property"_s : "the property is somewhere else, or there is no telling"_s;
-        Instance::noteView(why);
-        if (Options::aotReportSlowPaths()) [[unlikely]] { // TEMPORARY
-            UniquedStringImpl* name = StaticHeap::identifiersOfProgram()[field.identifier];
-            unsigned attributes = 0;
-            PropertyOffset offset = object->structure()->get(vm, name, attributes);
-            noteSlowPath(offset == invalidOffset ? "read_field (not its own)"_s : (attributes & PropertyAttribute::Accessor) ? "read_field (a getter)"_s : (attributes & PropertyAttribute::CustomAccessorOrValue) ? "read_field (custom)"_s : attributes ? "read_field (plain but for its attributes)"_s : "read_field (plain)"_s, base, name, why);
-        }
+        if (!object->structure()->isNeverAdopted() && !object->structure()->bornAs())
+            Instance::adopt(vm, object, family);
         Structure* structure = object->structure();
         if (structure->bornAs() == family) {
             uint16_t there = structure->fieldInSlot(slot);
@@ -803,8 +652,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
             } else if (!there && undefinedWillDo)
                 OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         }
-    } else
-        Instance::noteView(base.isUndefinedOrNull() ? "it is undefined or null"_s : "it is no object"_s);
+    }
     UniquedStringImpl* uid = StaticHeap::identifiersOfProgram()[field.identifier];
     JSValue value;
     MegamorphicCache* cache = vm.megamorphicCache();

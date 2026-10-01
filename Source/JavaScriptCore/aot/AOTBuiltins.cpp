@@ -224,17 +224,6 @@ Builtin builtinThatIs(unsigned number)
     const Tables* all = tables();
     if (!all || number >= all->builtins.size())
         return Builtin::None;
-    // TEMPORARY: BUN_AOT_BUILTINS=first-last leaves the rest alone.
-    static const std::pair<unsigned, unsigned> range = [] {
-        const char* text = getenv("BUN_AOT_BUILTINS");
-        unsigned first = 0, last = 255;
-        if (text)
-            sscanf(text, "%u-%u", &first, &last);
-        return std::pair { first, last };
-    }();
-    unsigned which = static_cast<unsigned>(all->builtins[number]);
-    if (which < range.first || which > range.second)
-        return Builtin::None;
     return all->builtins[number];
 }
 

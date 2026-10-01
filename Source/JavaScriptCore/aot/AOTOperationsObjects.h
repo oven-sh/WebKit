@@ -39,7 +39,6 @@ struct Slot;
     v(operationAOTSpread) \
     v(operationAOTNewRegExp) \
     v(operationAOTNewRegExpForReceiver) \
-    v(operationAOTNoteAssertion) \
     v(operationAOTLinkTimeConstant) \
     v(operationAOTIteratorMethodOfArray) \
     v(operationAOTSettleWhatWasBorn) \
@@ -47,7 +46,6 @@ struct Slot;
     v(operationAOTCloneObject) \
     v(operationAOTNoteClass) \
     v(operationAOTMakeAtom) \
-    v(operationAOTNoteExit) \
     v(operationAOTNewFunction) \
     v(operationAOTSetFunctionName) \
     v(operationAOTNewInternalFieldObject) \
@@ -123,10 +121,6 @@ struct Slot;
     v(operationAOTConstructByCalling) \
     v(operationAOTNoteFilled) \
     v(operationAOTHasOwnProperty) \
-    v(operationAOTNoteGetter) \
-    v(operationAOTNoteProbe) \
-    v(operationAOTNoteRead) \
-    v(operationAOTNoteNative) \
     v(operationAOTGiveData) \
     v(operationAOTCallDirectEval) \
 
@@ -171,8 +165,6 @@ JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpecies, JSObject*, (JSGlobalO
 JSC_DECLARE_JIT_OPERATION(operationAOTSpread, JSCell*, (JSGlobalObject*, EncodedJSValue iterable));
 JSCell* spread(JSGlobalObject*, JSValue iterable); // What op_spread makes.
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject*, JSCell* regExp));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteAssertion, void, (Instance*, EncodedJSValue, uint32_t layouts)); // TEMPORARY-SHAPE-COUNTS
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteExit, void, (Instance*, EncodedJSValue base, uint32_t layouts, uint32_t slot)); // TEMPORARY-SHAPE-COUNTS
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSettleWhatWasBorn, void, (Instance*, JSObject*)); // Lowering::settleWhatWasBorn()
 JSC_DECLARE_JIT_OPERATION(operationAOTIteratorMethodOfArray, EncodedJSValue, (JSGlobalObject*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance*, uint32_t which)); // NodeKind::LinkTimeConstant
@@ -267,12 +259,6 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (Ca
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance*, void* addressInFunction));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (JSGlobalObject*, JSObject*, EncodedJSValue));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteGetter, void, (JSCell*)); // TEMPORARY
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteRead, void, (JSCell*, Slot*)); // TEMPORARY
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteProbe, void, (JSCell*, Slot*)); // TEMPORARY
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteNative, void, (JSCell*)); // TEMPORARY
-JS_EXPORT_PRIVATE void dumpGettersCalled(PrintStream&); // TEMPORARY
-void noteClosureMade(FunctionExecutable*); // TEMPORARY
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGiveData, void, (Instance*, uint32_t index));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (JSGlobalObject*, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));
 

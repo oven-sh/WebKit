@@ -1272,8 +1272,6 @@ const uint8_t* SlotsOfBornObjects::s_inlineSlots;
 SlotsOfBornObjects::Adopt SlotsOfBornObjects::s_adopt;
 bool SlotsOfBornObjects::s_audits;
 ASCIILiteral SlotsOfBornObjects::s_whyNotAdopted;
-uint64_t SlotsOfBornObjects::s_timesAdmitted;
-uint64_t SlotsOfBornObjects::s_timesRefused;
 
 void SlotsOfBornObjects::set(std::span<const uint32_t> index, const Held* held)
 {

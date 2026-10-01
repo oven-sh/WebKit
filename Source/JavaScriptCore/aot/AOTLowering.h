@@ -27,8 +27,6 @@ namespace JSC { namespace AOT {
 // AOT IR -> B3. Implemented in AOTLowerCore.cpp (structure, values, calls into C++), AOTLowerArith.cpp, AOTLowerAccess.cpp
 // (properties and scopes), AOTLowerObjects.cpp (allocation, conversions, the rarer kinds of property access),
 // AOTLowerIteration.cpp (for-of and for-in), AOTLowerCalls.cpp and AOTLowerVarargs.cpp (every call that is not a plain one).
-void noteShapeSite(Instance::ShapeCount); // TEMPORARY-SHAPE-COUNTS
-void reportShapeStatistics();
 
 class Lowering : public Emitter {
     WTF_MAKE_NONCOPYABLE(Lowering);
@@ -151,7 +149,6 @@ private:
     LValue numberOfArgumentsPassed(); // Not counting `this`.
     LValue argumentsPassed(); // Where the first is.
     LValue argumentPassedOrUndefined(unsigned index);
-    void countShape(Instance::ShapeCount); // TEMPORARY-SHAPE-COUNTS
     // What the type that the source gives the base of the access says of the property (TypeTable).
     std::optional<TypeTable::Field> fieldAccessedBy(Node*, unsigned identifier);
     // Which layout the cell is of (Structure::knownShape()), and whether that is one of first to last.
@@ -268,29 +265,16 @@ private:
     // Code that is run over and over is worth its size. The rest, which is nearly all of it, is not: it calls a stub for what
     // it would otherwise do itself.
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
-    // TEMPORARY: for saying what the code's bytes went to. What is made for the node from here on is put down to this way of lowering it (1 to 7).
-    unsigned m_tagOfOrigin { 0 };
-    void isLoweredThisWay(unsigned way) { m_out.setOrigin(std::bit_cast<DFG::Node*>(static_cast<uintptr_t>(m_tagOfOrigin | way << 14) << 4)); }
     // Whether some class of the program that extends that one of the language's may have for itself what is read (BUN_AOT_OVERRIDDEN_METHODS).
     static bool mayBeOverridden(ASCIILiteral nameOfClass, Node* read);
-    // TEMPORARY: BUN_AOT_CALLBACKS_SPELLED_OUT=1, as it used to be.
-    static bool callbacksAreCompact() { static const bool result = [] { const char* text = getenv("BUN_AOT_CALLBACKS_SPELLED_OUT"); return !text || strcmp(text, "1"); }(); return result; }
-    // Whether what there is a stub for is done by the stub. It is. What is in a loop, or in a function that calls itself, used to be spelled out where it is, every case of it, on the
-    // grounds that it is run over and over: but that it is in a loop is all that was known, and of a big program that was 12MB of code (a tenth) for nothing that could be measured, in
-    // instructions or in time. Where the types are known there is nothing to spell out: what is done is done on the spot either way.
-    // TEMPORARY: BUN_AOT_SPELLS_OUT_LOOPS=1, as it used to be, until what that is for is gone.
-    static bool spellsOutLoops() { static const bool result = [] { const char* text = getenv("BUN_AOT_SPELLS_OUT_LOOPS"); return text && !strcmp(text, "1"); }(); return result; }
-    // A read of a field whose slot is verified: whether the object's Structure is asked on the spot. (Six instructions and a cold call, against a call.)
-    static unsigned fieldsInPlace() { static const unsigned result = [] { const char* text = getenv("BUN_AOT_FIELDS_IN_PLACE"); return text ? static_cast<unsigned>(atoi(text)) : 0u; }(); return result; } // TEMPORARY. (Not by itself: 1.1MB for the loops of a big program, 6MB for all of it, and no fewer instructions.)
-    bool readsFieldsInPlace() const
+    // Whether an operation that has a stub calls it, instead of having its fast path inline. Inline fast paths are faster where code is hot (25-40% on small kernels) and
+    // bigger everywhere (a tenth of the code of a big program whose time is not spent in loops), and all that is known ahead of time is whether code is in a loop.
+    bool isCompact() const
     {
-        if (m_block->isGeneric || !fieldsInPlace())
-            return false;
-        if (m_block->isInLoop || m_graph.callsItself || fieldsInPlace() >= 3)
+        if (!Options::useAOTInlineFastPathsInLoops() || m_block->isGeneric)
             return true;
-        return fieldsInPlace() >= 2 && m_graph.facts() && m_graph.facts()->isUsedInLoop.load(std::memory_order_relaxed);
+        return (!m_block->isInLoop || m_block->isOnlyInLoopOfBuiltin) && !m_graph.callsItself;
     }
-    bool isCompact() const { return !spellsOutLoops() || ((!m_block->isInLoop || (m_block->isOnlyInLoopOfBuiltin && callbacksAreCompact())) && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
     LValue differenceFromWhatIsWritten(LValue characters, std::span<const Latin1Character> written);
     // The characters of a string, and how many, if they are narrow and are to be had for the looking: it is all in one piece, or is a slice of one that is (which is left a slice).
@@ -479,28 +463,6 @@ LValue Lowering::vmCall(Node* node, LType type, Entry function, Args... args)
 template<typename Slow>
 LValue Lowering::withHelper(Stub stub, const Vector<LValue, 4>& arguments, const Slow& slow)
 {
-    auto without = [&] {
-        switch (stub) {
-        case Stub::HelperNewArray:
-        case Stub::HelperNewArrayOfInt32:
-            return WithoutNewArray;
-        case Stub::HelperNewArrayBuffer:
-            return WithoutNewArrayBuffer;
-        case Stub::HelperNewActivation:
-            return WithoutNewActivation;
-        case Stub::HelperNewArrayWithSpread:
-            return WithoutSpread;
-        case Stub::HelperNewArrayWithSpecies:
-            return WithoutSpecies;
-        case Stub::HelperMakeRope2:
-        case Stub::HelperMakeRope3:
-            return WithoutRopes;
-        default:
-            return static_cast<Without>(0);
-        }
-    };
-    if (isWithout(without())) [[unlikely]]
-        return slow();
     // Code that is not worth its size calls the operation, which has the helper ahead of it (FOR_EACH_AOT_OPERATION_BEHIND_HELPER).
     if (isCompact())
         return slow();

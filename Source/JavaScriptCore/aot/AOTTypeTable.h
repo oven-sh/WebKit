@@ -185,12 +185,6 @@ public:
         auto words = record(type);
         return words.size() == 2 && words[0] == Tags && (words[1] >> 31) ? words[1] >> 10 & 15 : 0;
     }
-    // TEMPORARY-SHAPE-COUNTS: why nothing is made of an access that has this for a type, as a number. Zero: nothing is said.
-    unsigned reasonOf(uint32_t type) const
-    {
-        auto words = record(type);
-        return words.size() == 2 && words[0] == Tags && (words[1] >> 31) ? words[1] & 1023 : 0;
-    }
 
 private:
     enum Kind : uint32_t { Tags = 1, Shape, Array, Union, IsLayout, IsClass };

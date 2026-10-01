@@ -350,8 +350,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
                     codeBlock->installAOTCode(AOT::codeFromImage(code, unlinkedCodeBlock));
                 return codeBlock;
             }
-            if (Options::aotReportStats()) [[unlikely]]
-                dataLogLn("AOT: not in an image: the module ", executable->source().provider()->sourceURL());
         }
 #endif
         // Then it takes the instructions, which are not there to be had.
@@ -418,8 +416,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
             AOT::install(vm, executable, kind, unlinkedCodeBlock, globalObject, AOT::codeFromImage(code, unlinkedCodeBlock));
             return nullptr;
         }
-        if (Options::aotReportStats()) [[unlikely]]
-            dataLogLn("AOT: not in an image: ", executable->ecmaName().string(), " of ", executable->source().provider()->sourceURL(), " at ", executable->source().startOffset(), kind == CodeSpecializationKind::CodeForCall ? "" : " (construct)");
     }
 #endif
     RELEASE_AND_RETURN(throwScope, FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));

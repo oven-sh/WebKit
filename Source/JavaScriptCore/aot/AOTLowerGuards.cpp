@@ -40,9 +40,6 @@ void Lowering::lowerGuard(BasicBlock* block, Node* guard)
     // What the generic copy wants boxed is boxed on the way there.
     m_out.appendTo(m_exit);
     if (guard->guardKind == GuardKind::Field) {
-        countShape(Instance::ExitTaken);
-        if (Options::aotCountsAllocations()) [[unlikely]]
-            plainCall(Void, Entry::operationAOTNoteExit, m_instance, lowJSValue(guard->use(guard->opcode == op_get_by_id ? guard->as<OpGetById>().m_base : guard->as<OpPutById>().m_base)), m_out.constInt32(guard->firstLayout << 16 | guard->lastLayout), m_out.constInt32(guard->slotOfField));
     }
     emitUpsilons(block, block->successors[1]);
     m_out.jump(block->successors[1]->lowered);
@@ -454,10 +451,6 @@ void Lowering::guardField(Node* guard)
         if (!isSubtype(baseNode->type, TCell))
             exitUnless(isCell(base));
         if (!baseNode->isBornWithinIfCell(guard->firstLayout, guard->lastLayout)) {
-            noteShapeSite(Instance::AssertionMade);
-            countShape(Instance::AssertionMade);
-            if (Options::aotCountsAllocations()) [[unlikely]]
-                plainCall(Void, Entry::operationAOTNoteAssertion, m_instance, base, m_out.constInt32(guard->firstLayout << 16 | guard->lastLayout));
             LValue isOneThatHasIt = isOneOf(layoutBornAs(base), guard->firstLayout, guard->lastLayout);
             if (!guard->firstWithout)
                 exitUnless(isOneThatHasIt);
@@ -469,18 +462,11 @@ void Lowering::guardField(Node* guard)
                 m_out.branch(isOneThatHasIt, usually(has), unsure(mayHaveNone));
                 m_out.appendTo(mayHaveNone);
                 exitUnless(isOneOf(layoutOf(base), guard->firstWithout, guard->lastWithout));
-                countShape(Instance::ReadLacks);
                 thereIsNone = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
                 m_out.jump(done);
                 m_out.appendTo(has);
             }
-        } else {
-            noteShapeSite(Instance::ServedWithoutAssertion);
-            countShape(Instance::ServedWithoutAssertion);
         }
-    } else {
-        noteShapeSite(Instance::ServedWithoutAssertion);
-        countShape(Instance::ServedWithoutAssertion);
     }
     // No two names are ever the same place.
     TypedPointer slot = m_out.address(m_heaps.properties[isRead ? guard->as<OpGetById>().m_property : guard->as<OpPutById>().m_property], base, JSObject::offsetOfInlineStorage() + guard->slotOfField * sizeof(EncodedJSValue));
