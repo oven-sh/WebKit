@@ -2969,8 +2969,11 @@ void JSObject::materializeLazyOwnProperties(VM& vm)
     scope.releaseAssertNoExceptionExceptTermination();
 }
 
-// A class that overrides a write hook can change the object before, or without, reaching JSObject's checks. Its objects can have
-// immutable properties only if each of its hooks hands such an object to JSObject's implementation first. These classes do.
+// A class that overrides a write hook can change the object before, or without, reaching JSObject's checks. The classes listed here
+// do not. ErrorInstance, StringObject, RegExpObject and ClonedArguments only materialize lazy properties or refuse on their own
+// account before they call JSObject's implementation (RegExpObject because makePropertiesImmutable() makes lastIndex non-writable).
+// JSArray and JSFunction test hasImmutableProperties() where they write directly. JSGlobalObject's hooks only add its variables,
+// which makePropertiesImmutable() makes read-only.
 static bool canMakePropertiesImmutable(JSObject* object)
 {
     const MethodTable* table = object->methodTable();
@@ -2981,7 +2984,7 @@ static bool canMakePropertiesImmutable(JSObject* object)
     if (usesOnlyJSObjectHooks)
         return true;
     // Not DirectArguments or ScopedArguments: a mapped element is a view of the function's parameter variable, which the function
-    // can still assign. JSGlobalObject's own hooks only add its variables, which makePropertiesImmutable() makes read-only.
+    // can still assign.
     return object->inherits<JSArray>() || object->inherits<JSFunction>() || object->inherits<ErrorInstance>()
         || object->inherits<RegExpObject>() || object->inherits<StringObject>() || object->inherits<ClonedArguments>()
         || object->inherits<JSGlobalObject>();

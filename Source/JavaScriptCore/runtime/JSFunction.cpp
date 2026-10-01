@@ -413,8 +413,6 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
 
 bool JSFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::deleteProperty(cell, globalObject, propertyName, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);

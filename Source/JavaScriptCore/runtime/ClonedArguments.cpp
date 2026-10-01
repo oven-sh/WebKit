@@ -243,8 +243,6 @@ void ClonedArguments::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObjec
 
 bool ClonedArguments::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName ident, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
-        return JSObject::put(cell, globalObject, ident, value, slot);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(cell);
     VM& vm = globalObject->vm();
     
@@ -260,8 +258,6 @@ bool ClonedArguments::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNa
 
 bool ClonedArguments::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName ident, DeletePropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::deleteProperty(cell, globalObject, ident, slot);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(cell);
     VM& vm = globalObject->vm();
     
@@ -274,8 +270,6 @@ bool ClonedArguments::deleteProperty(JSCell* cell, JSGlobalObject* globalObject,
 
 bool ClonedArguments::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName ident, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    if (object->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::defineOwnProperty(object, globalObject, ident, descriptor, shouldThrow);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(object);
     VM& vm = globalObject->vm();
     

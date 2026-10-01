@@ -92,8 +92,6 @@ bool RegExpObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
 
 bool RegExpObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::deleteProperty(cell, globalObject, propertyName, slot);
     VM& vm = globalObject->vm();
     if (propertyName == vm.propertyNames->lastIndex)
         return false;
@@ -109,8 +107,6 @@ void RegExpObject::getOwnSpecialPropertyNames(JSObject*, JSGlobalObject* globalO
 
 bool RegExpObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    if (object->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -159,8 +155,6 @@ JSC_DEFINE_CUSTOM_SETTER(regExpObjectSetLastIndexSloppy, (JSGlobalObject* global
 
 bool RegExpObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
-        return JSObject::put(cell, globalObject, propertyName, value, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     RegExpObject* thisObject = uncheckedDowncast<RegExpObject>(cell);

@@ -561,8 +561,6 @@ void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject*
 
 bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    if (object->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
@@ -573,8 +571,6 @@ bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
 
 bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
-        return JSObject::put(cell, globalObject, propertyName, value, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
@@ -587,8 +583,6 @@ bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
 
 bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::deleteProperty(cell, globalObject, propertyName, slot);
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
     bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);

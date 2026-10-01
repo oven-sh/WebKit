@@ -307,8 +307,6 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSArray* thisObject = uncheckedDowncast<JSArray>(cell);
-    if (thisObject->structure()->hasImmutableProperties() && !isThisValueAltered(slot, thisObject)) [[unlikely]]
-        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
     thisObject->ensureWritable(vm);
 
     if (propertyName == vm.propertyNames->length) {
@@ -337,8 +335,6 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
 
 bool JSArray::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::deleteProperty(cell, globalObject, propertyName, slot);
     VM& vm = globalObject->vm();
     JSArray* thisObject = uncheckedDowncast<JSArray>(cell);
 
