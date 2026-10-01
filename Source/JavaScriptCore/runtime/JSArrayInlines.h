@@ -351,6 +351,12 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
             }
             return;
         }
+        // A non-extensible array cannot gain an element and a read-only length cannot grow, whatever
+        // the vector capacity is.
+        if (!isStructureExtensible() || !isLengthWritable()) {
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+            return;
+        }
         [[fallthrough]];
     }
 

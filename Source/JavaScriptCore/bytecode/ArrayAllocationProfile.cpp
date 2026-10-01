@@ -60,7 +60,15 @@ void ArrayAllocationProfile::updateProfile()
         return;
     if (Options::useArrayAllocationProfiling()) [[likely]] {
         // The basic model here is that we will upgrade ourselves to whatever the CoW version of lastArray is except ArrayStorage since we don't have CoW ArrayStorage.
-        IndexingType indexingType = leastUpperBoundOfIndexingTypes(current.indexingType() & IndexingTypeMask, lastArray->indexingType());
+        // SlowPutArrayStorage is never a shape to allocate: a global having a bad time hands out its
+        // SlowPutArrayStorage structures for every shape anyway, and an array that became
+        // non-extensible (Object.freeze / seal / preventExtensions) took the shape for that reason
+        // alone (JSObject::enterDictionaryIndexingMode). Only the header byte of lastArray is read:
+        // the array may be dead by now.
+        IndexingType lastArrayIndexingType = lastArray->indexingType();
+        if (hasSlowPutArrayStorage(lastArrayIndexingType))
+            lastArrayIndexingType = (lastArrayIndexingType & ~IndexingShapeMask) | ArrayStorageShape;
+        IndexingType indexingType = leastUpperBoundOfIndexingTypes(current.indexingType() & IndexingTypeMask, lastArrayIndexingType);
         if (isCopyOnWrite(current.indexingType())) {
             if (indexingType > ArrayWithContiguous)
                 indexingType = ArrayWithContiguous;
