@@ -2093,7 +2093,6 @@ std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfF
 bool StaticHeap::hasExecutablesOfFunctions(VM&) { return false; }
 AOT::FunctionInfo* StaticHeap::infosOfFunctions(VM&) { return nullptr; }
 const void* StaticHeap::constantsOfProgram(VM&) { return nullptr; }
-std::span<const AOT::ImageKey> StaticHeap::keysOfImage() { return { }; }
 const AOT::ImageFunction* StaticHeap::imageFunctionOfFunction(uint32_t) { return nullptr; }
 const uint32_t* StaticHeap::functionMetadataOffsets(VM&) { return nullptr; }
 Ref<Decoder> StaticHeap::decoderForKeptPayload(VM&, Decoder& placed) { return placed; }
