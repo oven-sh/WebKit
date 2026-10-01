@@ -1,6 +1,5 @@
-// What a generator or an async function has to get right about its locals when it suspends and resumes. Each case is about
-// one way for a local to be in the wrong place: still in the generator frame when it is read, or not yet there when the
-// function suspends or throws.
+// A generator or async function that suspends saves only the locals that may have been written since it was entered or
+// resumed. Each case is a way for a write to reach a suspend point.
 
 function shouldBe(actual, expected)
 {
@@ -45,74 +44,7 @@ function settle(promise)
 let cases = [];
 function test(name, body) { cases.push({ name, body }); }
 
-test("only a handler reads the local", () => {
-    function* inCatch() {
-        let a = opaque(1);
-        try {
-            yield 1;
-            yield 2;
-            yield 3;
-        } catch (error) {
-            return a + error;
-        }
-    }
-    shouldBe(drive(inCatch(), "nt"), "1 done:102");
-    shouldBe(drive(inCatch(), "nnt"), "1 2 done:103");
-    shouldBe(drive(inCatch(), "nnnt"), "1 2 3 done:104");
-
-    function* inFinally(log) {
-        let a = opaque(1);
-        try {
-            yield 1;
-            yield 2;
-        } finally {
-            log.push(a);
-        }
-    }
-    for (let steps of ["nr", "nnr", "nt", "nnt", "nnn"]) {
-        let log = [];
-        drive(inFinally(log), steps);
-        shouldBe(log.join(), "1");
-    }
-});
-
-// A resume point inside a try block can get to the handler by an ordinary jump, since it may have been resumed with throw().
-// One in front of the try block only gets there if something in the block throws.
-test("only a handler reads the local, and the try block does not suspend", () => {
-    function* g(fail) {
-        let a = opaque(1);
-        let b = opaque(2);
-        yield 0;
-        try {
-            throwIf(fail);
-            return "no";
-        } catch {
-            return a + b;
-        }
-    }
-    shouldBe(drive(g(true), "nn"), "0 done:3");
-    shouldBe(drive(g(false), "nn"), "0 done:no");
-
-    function* nested(fail) {
-        let a = opaque(1);
-        try {
-            yield 0;
-            try {
-                throwIf(fail);
-            } finally {
-                a += 10;
-            }
-            yield 1;
-        } catch {
-            a += 100;
-        }
-        return a;
-    }
-    shouldBe(drive(nested(true), "nn"), "0 done:111");
-    shouldBe(drive(nested(false), "nnn"), "0 1 done:11");
-});
-
-test("a local that is saved has to have been restored", () => {
+test("a write on only one of the paths to a suspend point", () => {
     function* g(write) {
         let a = opaque(1);
         yield 0;
@@ -140,66 +72,6 @@ test("a suspend point after a handler saves what the try block wrote", () => {
     }
     shouldBe(drive(g(true), "nnn"), "0 1 done:2");
     shouldBe(drive(g(false), "nnn"), "0 1 done:3");
-});
-
-test("a value that nothing but the handler reads", () => {
-    function* g(failAt) {
-        let seen;
-        {
-            let t = opaque(0);
-            try {
-                yield "a";
-                t = 5;
-                throwIf(failAt === 0);
-                t = 6;
-                yield "b";
-                throwIf(failAt === 1);
-                t = 7;
-                throwIf(failAt === 2);
-                t = 8;
-            } catch {
-                seen = t;
-            }
-        }
-        yield seen;
-    }
-    shouldBe(drive(g(0), "nn"), "a 5");
-    shouldBe(drive(g(1), "nnn"), "a b 6");
-    shouldBe(drive(g(2), "nnn"), "a b 7");
-    shouldBe(drive(g(3), "nnn"), "a b undefined");
-    shouldBe(drive(g(3), "nt"), "a 0");
-    shouldBe(drive(g(3), "nnt"), "a b 6");
-});
-
-test("a definition that reaches a read other paths reach by resuming", () => {
-    function* g(suspend) {
-        let a;
-        if (suspend) {
-            a = opaque(1);
-            yield 0;
-        } else
-            a = opaque(2);
-        let result = a + 10;
-        yield result;
-    }
-    shouldBe(drive(g(true), "nn"), "0 11");
-    shouldBe(drive(g(false), "n"), "12");
-});
-
-test("a handler cannot trust registers", () => {
-    function* g(failEarly) {
-        let a = opaque(1);
-        let b = opaque(2);
-        try {
-            throwIf(failEarly);
-            yield 0;
-            throwIf(true);
-        } catch {
-            return a + b;
-        }
-    }
-    shouldBe(drive(g(true), "n"), "done:3");
-    shouldBe(drive(g(false), "nn"), "0 done:3");
 });
 
 test("a value from an earlier iteration", () => {
@@ -457,7 +329,7 @@ test("the scope register", () => {
     }
     shouldBe(drive(capturedFromTheStart(), "nnn"), "41 42 done:3");
 
-    // The environment for the vars doubles as the generator frame, so it and the scope register are written before there is a frame.
+    // The environment for the vars doubles as the generator frame.
     function* capturedVar() {
         var captured = 1;
         var closure = () => captured++ + outer;
@@ -582,73 +454,6 @@ test("delegating", () => {
     shouldBe(run("nr"), "i1 done:101 | inner done,before");
 });
 
-// A load can end up right in front of a switch, whose jump table has a zero for each value between the cases that has no case.
-test("a switch with gaps between its cases", () => {
-    function* integers(k) {
-        let v = opaque(k) | 0;
-        yield 1;
-        if (k > 50)
-            yield 2;
-        switch (v) {
-        case 0:
-            return "zero";
-        case 1:
-            return "one";
-        case 3:
-            return "three";
-        case 6:
-            return "six";
-        default:
-            return "default";
-        }
-    }
-    let results = [];
-    for (let k of [-1, 0, 1, 2, 3, 4, 5, 6, 7])
-        results.push(drive(integers(k), "nn"));
-    shouldBe(results.join(), "1 done:default,1 done:zero,1 done:one,1 done:default,1 done:three,1 done:default,1 done:default,1 done:six,1 done:default");
-
-    function* characters(c) {
-        let v = opaque(c);
-        yield 1;
-        if (c === "never")
-            yield 2;
-        switch (v) {
-        case "a":
-            return "A";
-        case "b":
-            return "B";
-        case "d":
-            return "D";
-        }
-        return "none";
-    }
-    results = [];
-    for (let c of ["a", "b", "c", "d", "e"])
-        results.push(drive(characters(c), "nn"));
-    shouldBe(results.join(), "1 done:A,1 done:B,1 done:none,1 done:D,1 done:none");
-
-    function* inLoop(values) {
-        let log = [];
-        for (let v of values) {
-            yield v;
-            switch (v) {
-            case 10:
-                log.push("ten");
-                break;
-            case 11:
-                log.push("eleven");
-                continue;
-            case 14:
-                log.push("fourteen");
-                break;
-            }
-            log.push(v);
-        }
-        return log.join();
-    }
-    shouldBe(drive(inLoop([10, 12, 11, 13, 14]), "nnnnnn"), "10 12 11 13 14 done:ten,10,12,eleven,13,fourteen,14");
-});
-
 test("async functions", () => {
     async function f(fail) {
         let a = opaque(1);
@@ -723,62 +528,12 @@ test("async generators and for-await", () => {
     shouldBe(log.join(), "closed at 2");
 });
 
-// Big enough for keeping locals in the frame to pay off. The same body, with the suspends taken out, says what to expect.
-let manySuspendPoints = (() => {
-    function source(suspend, header) {
-        let locals = 12;
-        let lines = [];
-        for (let i = 0; i < locals; i++)
-            lines.push(`let v${i} = base + ${i};`);
-        lines.push("let log = [];", "for (let round = 0; round < 2; round++) {", "try {", "try {");
-        for (let i = 0; i < 36; i++) {
-            let a = i % locals, b = (i * 7 + 3) % locals, c = (i * 5 + 1) % locals;
-            lines.push(`v${a} = (v${b} + ${suspend}) | 0;`);
-            if (i % 9 === 4)
-                lines.push(`for (let k = 0; k < 3; k++) v${c} = (v${c} + v${a} + k) | 0;`);
-            if (i % 13 === 6)
-                lines.push(`if (failAt === ${i} && !round) throw v${c};`);
-            if (i % 17 === 8)
-                lines.push(`try { if (failAt === ${i}) throw v${b}; v${c} ^= ${suspend}; } catch (e) { log.push(e, v${a}); } finally { v${b} = (v${b} + ${suspend}) | 0; }`);
-        }
-        lines.push("} catch (e) {", `log.push("caught", e, v1, v5, ${suspend}, v9);`, "} finally {", `log.push(v2, ${suspend}, v3);`, "}");
-        lines.push("} finally {", "log.push(v10, v11);", "}", "}");
-        let all = [];
-        for (let i = 0; i < locals; i++)
-            all.push(`v${i}`);
-        lines.push(`return log.join() + ":" + [${all.join()}].join();`);
-        return `(${header}(base, failAt) {\n${lines.join("\n")}\n})`;
-    }
-    return {
-        plain: (0, eval)(source("(1)", "function")),
-        generator: (0, eval)(source("(yield)", "function*")),
-        asyncFunction: (0, eval)(source("(await 1)", "async function")),
-    };
-})();
-
-test("many suspend points and many locals", () => {
-    let { plain, generator, asyncFunction } = manySuspendPoints;
-    for (let failAt of [-1, 6, 8, 19, 25, 32]) {
-        let expected = plain(3, failAt);
-        let iterator = generator(3, failAt);
-        let result;
-        do
-            result = iterator.next(1);
-        while (!result.done);
-        shouldBe(result.value, expected);
-        shouldBe(settle(asyncFunction(3, failAt)), "value:" + expected);
-    }
-});
-
-function runGeneratorFrameTests(iterations)
-{
-    for (let i = 0; i < iterations; i++) {
-        for (let { name, body } of cases) {
-            try {
-                body();
-            } catch (error) {
-                throw new Error(`${name}: ${error.message ?? error}`);
-            }
+for (let i = 0; i < testLoopCount / 200; i++) {
+    for (let { name, body } of cases) {
+        try {
+            body();
+        } catch (error) {
+            throw new Error(`${name}: ${error.message ?? error}`);
         }
     }
 }

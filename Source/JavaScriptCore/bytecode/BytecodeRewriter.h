@@ -206,18 +206,9 @@ public:
         return adjustJumpTarget(InsertionPoint(0, Position::Entrypoint), InsertionPoint(absoluteOffset, Position::LabelPoint));
     }
 
-    // Where the instruction itself ends up, which is past what was inserted after its label.
-    int32_t adjustInstructionOffset(JSInstructionStream::Offset absoluteOffset)
-    {
-        return adjustJumpTarget(InsertionPoint(0, Position::Entrypoint), InsertionPoint(absoluteOffset, Position::OriginalBytecodePoint));
-    }
-
     int32_t adjustJumpTarget(JSInstructionStream::Offset originalBytecodeOffset, int32_t originalJumpTarget)
     {
-        // Nothing jumps to itself. This is a hole in a switch's jump table, which has to stay zero to go on meaning the default.
-        if (static_cast<int32_t>(originalBytecodeOffset) == originalJumpTarget)
-            return 0;
-        return adjustJumpTarget(InsertionPoint(originalBytecodeOffset, Position::OriginalBytecodePoint), InsertionPoint(originalJumpTarget, Position::LabelPoint));
+        return adjustJumpTarget(InsertionPoint(originalBytecodeOffset, Position::LabelPoint), InsertionPoint(originalJumpTarget, Position::LabelPoint));
     }
 
     void adjustJumpTargets();
