@@ -50,6 +50,35 @@ void initializeStringIO(JSGlobalObject*, IOModuleState&);
 
 JSValue raiseUnsupportedOperation(JSGlobalObject*, ThrowScope&, const String& message);
 
+// What has been written to a stream and is waiting in it is owed to whatever the stream is over. In CPython it is passed on when the stream is let go of, if not before, which is at once for `open(path, "w").write(text)` and at the
+// end of the program for what is still there. Nothing is let go of here. So a stream that owes something is kept, by the realm, for as long as it does, and one that still does when the program is over is closed then:
+// passOnOwedOutput(). One that owes nothing is kept by nothing but what refers to it.
+//
+// A BufferedWriter, a BufferedRandom and a TextIOWrapper each have one of these, and say whenever they may have come to owe something or to owe nothing.
+class OwedOutput {
+public:
+    // The stream, which this is part of what there is to.
+    void setStream(JSCell* stream) { m_stream = stream; }
+    void note(JSGlobalObject* globalObject, bool owes)
+    {
+        if (owes != (m_place != nowhere)) [[unlikely]]
+            noteSlow(globalObject, owes);
+    }
+
+private:
+    static constexpr unsigned nowhere = std::numeric_limits<unsigned>::max();
+    void noteSlow(JSGlobalObject*, bool owes);
+
+    JSCell* m_stream { nullptr };
+    unsigned m_place { nowhere }; // In IOModuleState::streamsThatOweOutput
+};
+void passOnOwedOutput(JSGlobalObject*);
+// What a stream and what it is over still owe is not going to be passed on.
+void writeOffOwedOutput(JSGlobalObject*, JSValue stream);
+// Whether what is passed on to something comes to nothing once that is closed, so that nothing is owed to it: a BytesIO, which is not to be asked what it has after that, or a stream of ours that is over one. It is of one of those
+// classes and not of one derived from them.
+bool forgetsWhatItIsGiven(JSGlobalObject*, JSValue stream);
+
 // object.name(...)
 JSValue callMethodNamed(JSGlobalObject*, JSValue object, const Identifier& name);
 JSValue callMethodNamed(JSGlobalObject*, JSValue object, const Identifier& name, JSValue);

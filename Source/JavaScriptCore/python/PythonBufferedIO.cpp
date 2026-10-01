@@ -39,7 +39,9 @@ namespace {
 // The first three share nearly everything, and one buffer for reading and for writing, so that the two can be mixed without sending anything on. See the "Implementation notes" of CPython's.
 struct BufferedState final : NativeState {
     PYTHON_NATIVE_STATE(BufferedState);
+    OwedOutput* owedOutput() final { return &owed; }
 
+    OwedOutput owed;
     WriteBarrier<Unknown> raw;
     // The buffer. It is a bytearray, because the raw stream is given a memoryview of some of it to read into or to write from. No program gets hold of it.
     WriteBarrier<JSObject> buffer;
@@ -50,6 +52,7 @@ struct BufferedState final : NativeState {
     bool isFinalizing { false };
     // It is of one of these classes and not of one derived from them, and the raw stream is a FileIO likewise.
     bool hasFastClosedChecks { false };
+    bool isOverWhatForgets { false }; // forgetsWhatItIsGiven(raw)
     // Something is in the middle of being done with it. There is one thread, so if something else is begun it is by what that called.
     bool isBusy { false };
     int64_t absolutePosition { -1 }; // In the raw stream. -1 is that it is not known.
@@ -63,6 +66,7 @@ struct BufferedState final : NativeState {
 
     bool hasValidReadBuffer() const { return isReadable && readEnd != -1; }
     bool hasValidWriteBuffer() const { return isWritable && writeEnd != -1; }
+    bool owesOutput() const { return hasValidWriteBuffer() && writePosition < writeEnd && !isOverWhatForgets; }
     int64_t readAhead() const { return hasValidReadBuffer() ? readEnd - position : 0; }
     int64_t rawOffset() const { return (hasValidReadBuffer() || hasValidWriteBuffer()) && rawPosition >= 0 ? rawPosition - position : 0; }
     void adjustPosition(int64_t newPosition)
@@ -109,7 +113,8 @@ class BusyScope {
     WTF_MAKE_NONCOPYABLE(BusyScope);
 public:
     BusyScope(JSGlobalObject* globalObject, JSValue self, BufferedState& state)
-        : m_state(state)
+        : m_globalObject(globalObject)
+        , m_state(state)
     {
         enter(globalObject, self);
     }
@@ -119,8 +124,10 @@ public:
     explicit operator bool() const { return m_hasEntered; }
     void leave()
     {
-        if (std::exchange(m_hasEntered, false))
-            m_state.isBusy = false;
+        if (!std::exchange(m_hasEntered, false))
+            return;
+        m_state.isBusy = false;
+        m_state.owed.note(m_globalObject, m_state.owesOutput());
     }
     bool enter(JSGlobalObject* globalObject, JSValue self)
     {
@@ -138,6 +145,7 @@ public:
     }
 
 private:
+    JSGlobalObject* m_globalObject;
     BufferedState& m_state;
     bool m_hasEntered { false };
 };
@@ -639,6 +647,15 @@ JSValue readLine(JSGlobalObject* globalObject, JSValue self, BufferedState& stat
 
 } // anonymous namespace
 
+bool forgetsWhatItIsGiven(JSGlobalObject* globalObject, JSValue stream)
+{
+    auto& io = ioState(globalObject);
+    PyType* type = typeOf(globalObject, stream);
+    if (type == io.bytesIO.get())
+        return true;
+    return (type == io.bufferedWriter.get() || type == io.bufferedRandom.get()) && stateOf<BufferedState>(stream).isOverWhatForgets;
+}
+
 // ---- What all three have
 
 PYTHON_NATIVE(bufferedSizeOf)
@@ -1093,9 +1110,11 @@ PYTHON_NATIVE(bufferedInit)
         state.resetWriteBuffer();
         state.position = 0;
     }
+    state.owed.note(globalObject, false);
     auto& io = ioState(globalObject);
     PyType* plain = kind == BufferedKind::Reader ? io.bufferedReader.get() : kind == BufferedKind::Writer ? io.bufferedWriter.get() : io.bufferedRandom.get();
     state.hasFastClosedChecks = typeOf(globalObject, self) == plain && typeOf(globalObject, raw) == io.fileIO.get();
+    state.isOverWhatForgets = typeOf(globalObject, self) == plain && forgetsWhatItIsGiven(globalObject, raw);
     state.isInitialized = true;
     RETURN_NONE();
 }
@@ -1330,7 +1349,11 @@ void initializeBufferedIO(JSGlobalObject* globalObject, IOModuleState& io)
         type->setAllocator(allocator);
         return type;
     };
-    PyType::Allocator allocateBuffered = [] (VM& vm, Structure* structure) -> JSObject* { return PyStateObject::create(vm, structure, makeUnique<BufferedState>()); };
+    PyType::Allocator allocateBuffered = [] (VM& vm, Structure* structure) -> JSObject* {
+        auto* stream = PyStateObject::create(vm, structure, makeUnique<BufferedState>());
+        stream->state<BufferedState>().owed.setStream(stream);
+        return stream;
+    };
 
     struct Class {
         WriteBarrier<PyType>& slot;

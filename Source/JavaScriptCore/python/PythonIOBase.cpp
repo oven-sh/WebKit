@@ -676,6 +676,84 @@ static void initializeBaseClasses(JSGlobalObject* globalObject, IOModuleState& s
     });
 }
 
+void OwedOutput::noteSlow(JSGlobalObject* globalObject, bool owes)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // This is where a stream has got to whether or not what it was doing came off.
+    Exception* raised = scope.exception() ? takeRaisedException(vm) : nullptr;
+    RETURN_IF_EXCEPTION(scope, void());
+    auto& io = ioState(globalObject);
+    if (owes) {
+        if (!io.streamsThatOweOutput)
+            io.streamsThatOweOutput.set(vm, globalObject->pyRealm(), newList(globalObject));
+        JSArray* list = io.streamsThatOweOutput.get();
+        unsigned place = list->length();
+        listAppend(globalObject, list, m_stream);
+        if (!scope.exception())
+            m_place = place;
+    } else {
+        // The last takes its place.
+        JSArray* list = io.streamsThatOweOutput.get();
+        unsigned last = list->length() - 1;
+        if (m_place != last) {
+            JSValue moved = listGet(globalObject, list, last);
+            listSet(globalObject, list, m_place, moved);
+            uncheckedDowncast<PyStateObject>(moved.asCell())->owedOutput()->m_place = m_place;
+        }
+        listRemoveRange(globalObject, list, last, 1);
+        m_place = nowhere;
+    }
+    if (raised && !scope.exception())
+        restoreRaisedException(globalObject, raised);
+}
+
+void writeOffOwedOutput(JSGlobalObject* globalObject, JSValue stream)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    while (stream && stream.isCell() && stream.asCell()->inherits<PyStateObject>()) {
+        OwedOutput* owed = uncheckedDowncast<PyStateObject>(stream.asCell())->owedOutput();
+        if (!owed)
+            return;
+        owed->note(globalObject, false);
+        stream = getAttributeIfPresent(globalObject, stream, Identifier::fromString(vm, "buffer"_s));
+        if (scope.exception()) {
+            scope.clearExceptionExceptTermination();
+            return;
+        }
+    }
+}
+
+void passOnOwedOutput(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& io = ioState(globalObject);
+    // Passing on what one owes can leave another owing it.
+    while (io.streamsThatOweOutput && io.streamsThatOweOutput->length()) {
+        JSArray* list = io.streamsThatOweOutput.get();
+        JSCell* stream = listGet(globalObject, list, list->length() - 1).asCell();
+        // iobase_finalize(), but that close() is not told that nothing had closed it, which is for it to warn of. That would be said of these and of no others.
+        JSValue closed = getAttributeIfPresent(globalObject, stream, Identifier::fromString(vm, "closed"_s));
+        bool isOpen = !scope.exception() && closed && !isTrue(globalObject, closed);
+        if (scope.exception()) {
+            if (!scope.clearExceptionExceptTermination())
+                return;
+            isOpen = false;
+        }
+        if (isOpen) {
+            callMethodNamed(globalObject, stream, Identifier::fromString(vm, "close"_s));
+            if (scope.exception())
+                reportUnraisableShowing(globalObject, "Exception ignored while finalizing file"_s, stream);
+            if (scope.exception())
+                return;
+        }
+        // If it could not be passed on it never will be.
+        uncheckedDowncast<PyStateObject>(stream)->owedOutput()->note(globalObject, false);
+    }
+}
+
 IOModuleState& ioState(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();

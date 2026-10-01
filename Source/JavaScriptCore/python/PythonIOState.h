@@ -30,6 +30,7 @@
 
 namespace JSC {
 
+class JSArray;
 class PyType;
 
 namespace Python {
@@ -43,6 +44,8 @@ struct IOModuleState {
 #define DECLARE(name) WriteBarrier<PyType> name;
     FOR_EACH_PYTHON_IO_TYPE(DECLARE)
 #undef DECLARE
+    // The streams that have been written to and have not passed it all on, in no particular order. See OwedOutput. No program sees it, and there is none until there is such a stream.
+    WriteBarrier<JSArray> streamsThatOweOutput;
 
     template<typename Visitor>
     void visit(Visitor& visitor)
@@ -50,6 +53,7 @@ struct IOModuleState {
 #define VISIT(name) visitor.append(name);
         FOR_EACH_PYTHON_IO_TYPE(VISIT)
 #undef VISIT
+        visitor.append(streamsThatOweOutput);
     }
 };
 

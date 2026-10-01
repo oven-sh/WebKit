@@ -1,0 +1,76 @@
+===== however it is left
+in a global -> 0 b'' b'' {'a': b'text'}
+dropped at once -> 0 b'' b'' {'a': b'text'}
+a local of a function that has returned -> 0 b'' b'' {'a': b'text'}
+in a list -> 0 b'' b'' {'a0': b'text 0', 'a1': b'text 1', 'a2': b'text 2', 'a3': b'text 3', 'a4': b'text 4'}
+in a closure -> 0 b'' b'' {'a': b'one two'}
+in a generator that is not finished -> 0 b'' b'' {'a': b'text'}
+and the collector has been round -> 0 b'' b'' {'a': b'text', 'b': b'more'}
+many -> 0 b'60\n' b'' {'a00': b'', 'a01': b'x', 'a02': b'xx', 'a03': b'xxx', 'a04': b'xxxx', 'a05': b'xxxxx', 'a06': b'xxxxxx', 'a07': b'xxxxxxx', 'a08': b'xxxxxxxx', 'a09': b'xxxxxxxxx', 'a10': b'xxxxxxxxxx', 'a11': b'xxxxxxxxxxx', 'a12': b'xxxxxxxxxxxx', 'a13': b'xxxxxxxxxxxxx', 'a14': b'xxxxxxxxxxxxxx', 'a15': b'xxxxxxxxxxxxxxx', 'a16': b'xxxxxxxxxxxxxxxx', 'a17': b'xxxxxxxxxxxxxxxxx', 'a18': b'xxxxxxxxxxxxxxxxxx', 'a19': b'xxxxxxxxxxxxxxxxxxx', 'a20': b'xxxxxxxxxxxxxxxxxxxx', 'a21': b'xxxxxxxxxxxxxxxxxxxxx', 'a22': b'xxxxxxxxxxxxxxxxxxxxxx', 'a23': b'xxxxxxxxxxxxxxxxxxxxxxx', 'a24': b'xxxxxxxxxxxxxxxxxxxxxxxx', 'a25': b'xxxxxxxxxxxxxxxxxxxxxxxxx', 'a26': b'xxxxxxxxxxxxxxxxxxxxxxxxxx', 'a27': b'xxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a28': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a29': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a30': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a31': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a32': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a33': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a34': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a35': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a36': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a37': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a38': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a39': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a40': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a41': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a42': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a43': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a44': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a45': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a46': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a47': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a48': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a49': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a50': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a51': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a52': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a53': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a54': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a55': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a56': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a57': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a58': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'a59': b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}
+===== whatever kind it is
+binary -> 0 b'' b'' {'a': b'bytes'}
+appending -> 0 b'' b'' {'a': b'one', 'b': b'12'}
+for reading too -> 0 b"b'56'\n" b'' {'a': b'012xy56z89'}
+text for reading too -> 0 b'ab\n' b'' {'a': b'abcdefgh'}
+exclusive -> 0 b'' b'' {'a': b'new'}
+not buffered -> 0 b'' b'' {'a': b'raw'}
+a line at a time -> 0 b'' b'' {'a': b'line\nand part of another'}
+a small buffer -> 0 b'' b'' {'a': b'abcde'}
+a large buffer -> 0 b'' b'' {'a': (100000, 'd5816f35916d1d9482fb0f1ec201101d')}
+more than the buffer holds, and a little -> 0 b'' b'' {'a': (100004, 'de27a91ae4acad48cf46773e97fed552')}
+much text -> 0 b'' b'' {'a': (208890, 'fd9e81b156d2de86516165f7b248e163')}
+UTF-16 -> 0 b'' b'' {'a': b'\xff\xfeh\x00\xe9\x00l\x00l\x00o\x00'}
+UTF-8 with a signature -> 0 b'' b'' {'a': b'\xef\xbb\xbfh\xc3\xa9llo'}
+line endings -> 0 b'' b'' {'a': b'one\r\ntwo\r\n'}
+what cannot be encoded -> 0 b'UnicodeEncodeError\n' b'' {'a': b'ok still'}
+put together by hand -> 0 b'' b'' {'a': b'layers'}
+a BufferedWriter by hand -> 0 b'' b'' {'a': b'two layers'}
+a BufferedRandom by hand -> 0 b'' b'' {'a': b'random'}
+a BufferedRWPair -> 0 b'' b'' {'a': b'', 'b': b'pair'}
+writing through -> 0 b'' b'' {'a': b'through'}
+by a descriptor -> 0 b'' b'' {'a': b'descriptor'}
+that it is not to close -> 0 b'' b'' {'a': b'kept open'}
+derived classes -> 0 b'' b'' {'a': b'derived'}
+whose flush() is its own -> 0 b'flush() ' b'' {'a': b'x'}
+===== whatever wrote it
+print -> 0 b'' b'' {'a': b'printed 1\n'}
+writelines -> 0 b'' b'' {'a': b'one\ntwo\n'}
+json -> 0 b'' b'' {'a': b'{"k": [1, 2, null]}'}
+pickle -> 0 b'' b'' {'a': b'\x80\x02]q\x00(K\x01X\x03\x00\x00\x00twoq\x01e.'}
+csv -> 0 b'' b'' {'a': b'1,a b\r\n2,"c,d"\r\n'}
+pathlib -> 0 b'' b'' {'a': b'path'}
+configparser -> 0 b'' b'' {'a': b'[s]\nk = v\n\n'}
+sys.stdout is a file -> 0 b'' b'' {'a': b'to the file\n'}
+and is put back -> 0 b'to the terminal\n' b'' {'a': b'to the file\n'}
+sys.stderr is a file -> 0 b'' b'' {'a': b'to the file\n'}
+from what is registered with atexit -> 0 b'' b'' {'a': b'before; at exit'}
+a file that is opened there -> 0 b'' b'' {'a': b'opened at exit'}
+===== however the program ends
+sys.exit() -> 3 b'' b'' {'a': b'text'}
+SystemExit with something to say -> 1 b'' b'said\n' {'a': b'text'}
+something is raised -> 1 b'' b'eback (most recent call last):\n  File "<string>", line 1, in <module>\n    f = open(\'a\', \'w\'); f.write(\'text\'); 1 / 0\n                                         ~~^~~\nZeroDivisionError: division by zero\n' {'a': b'text'}
+in a function -> 1 b'' b', line 3, in <module>\n    g()\n    ~^^\n  File "<string>", line 2, in g\n    f = open(\'a\', \'w\'); f.write(\'text\'); 1 / 0\n                                         ~~^~~\nZeroDivisionError: division by zero\n' {'a': b'text'}
+os._exit(), when nothing is seen to -> 4 b'' b'' {'a': b''}
+a signal, likewise -> -9 b'' b'' {'a': b''}
+os.abort(), likewise -> -6 b'' b'' {'a': b''}
+===== what has been seen to already
+closed -> 0 b'' b'' {'a': b'text'}
+with -> 0 b'' b'' {'a': b'text'}
+flushed -> 0 b'text\n' b'' {'a': b'text'}
+flushed, and written to again -> 0 b'' b'' {'a': b'one two'}
+detached -> 0 b'' b'' {'a': b'text bytes'}
+detached twice -> 0 b'' b'' {'a': b'text raw'}
+made over again -> 0 b'' b'' {'a': b'', 'b': b'kept'}
+text made over again -> 0 b'' b'' {'a': b'', 'b': b'kept'}
+truncated -> 0 b'' b'' {'a': b'0123\x00\x00\x00\x00\x00\x00xy'}
+sought -> 0 b'' b'' {'a': b'01xy456789'}
+the descriptor was closed behind its back -> 0 b'' b"Exception ignored while finalizing file <_io.TextIOWrapper name='a' mode='w' encoding='utf-8'>:\nOSError: [Errno 9] Bad file descriptor\n" {'a': b''}
+the raw file was closed -> 0 b'' b'' {'a': b''}
+===== over something of a program's
+it is given it -> 0 b"the end\nwrite(b'owed') " b'' {}
+text -> 0 b"the end\nwrite(b'owed') " b'' {}
+text straight over it -> 0 b"the end\nwrite(b'owed') " b'' {}
+it raises -> 0 b"the end\nwrite(b'owed') " b'Exception ignored while finalizing file <_io.BufferedWriter>:\nTraceback (most recent call last):\n  File "<string>", line 5, in write\nZeroDivisionError: \n' {}
+it takes a little at a time -> 0 b"the end\nwrite(b'012') write(b'345') write(b'678') write(b'9') " b'' {}
+over a BytesIO -> 0 b"b''\nb'x'\n" b'' {}
+done

@@ -1046,6 +1046,13 @@ When a program is over is for the host to say as well, since one that is in two 
 there is still an interpreter to do it in, in the same order: `threading._shutdown()`, what has been registered with `atexit`, and flushing the standard streams. The two that Python started with are flushed as well as the
 two that are there now. In CPython those are flushed when they are let go of, with everything else, and nothing is let go of here: without it `print('x'); sys.stdout = None` prints nothing.
 
+**Then every other stream that has been written to and has not passed it all on is closed**, as `iobase_finalize()` closes it. `open(path, "w").write(text)`, with nothing to close the file, is everywhere in Python, and left the file empty. What
+is waiting in a `BufferedWriter`, a `BufferedRandom` or a `TextIOWrapper` is owed to what it is over, and a stream that owes something is kept by the realm for as long as it does (`OwedOutput`, `IOModuleState::streamsThatOweOutput`):
+whether anything else refers to it makes no difference to whether what was written is to be in the file. It is in the list from when it first has something waiting until that has gone, which is twice for each time that the buffer fills, and
+it knows its place there, so neither takes any looking. Nothing is owed to a `BytesIO`, which forgets what it has when it is closed: 200,000 writers left over those came to 26 GB without that, and come to what they did before.
+It is in the file when the program is over and not, as in CPython, when the last reference goes. What a class written in Python does when it is closed, such as the end of a gzip file, is still not done.
+`command-line/files-that-are-never-closed.py` has 76 ways of leaving one, of which 56 lost what was written.
+
 ### Where the library is written
 
 What CPython writes in C is written here in C++, and what CPython writes in Python is that Python, as it is. A program cannot see into what is written in C: all that there is to match is what it does. What is

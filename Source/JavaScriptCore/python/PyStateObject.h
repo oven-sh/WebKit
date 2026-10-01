@@ -47,6 +47,8 @@ namespace Python {
 //     template<typename Visitor> void CounterState::visit(Visitor& visitor) { visitor.append(callback); }
 //
 // The collector goes through it while the program is running. What it is told of is to be in a WriteBarrier that is always there, and not in anything that grows.
+class OwedOutput;
+
 class NativeState {
     WTF_MAKE_TZONE_ALLOCATED(NativeState);
     WTF_MAKE_NONCOPYABLE(NativeState);
@@ -75,6 +77,9 @@ public:
 
     // What PySequence_GetItem() gives, for a class that has the flag HasSequenceItemOfItsOwn. Empty if it raised.
     virtual JSValue sequenceItem(JSGlobalObject*, int64_t) const { return { }; }
+
+    // For a stream that keeps what is written to it for a while before it passes it on. Null if it is no such thing. See Python::OwedOutput.
+    virtual OwedOutput* owedOutput() { return nullptr; }
 
     // How much memory it keeps that is not the collector's, if that is a good deal: what a library has allocated for it. Nothing is freed until the collector runs, and how soon it runs goes by how much it takes there to
     // be. It is asked when the object is made, and by the collector while the program is running, so it is to be something that can be read at any time.
@@ -127,6 +132,7 @@ public:
     void willExportBytes(JSGlobalObject* globalObject) const { m_state->willExportBytes(globalObject); }
     std::optional<JSValue> showsBytesOf() const { return m_state->showsBytesOf(); }
     JSValue sequenceItem(JSGlobalObject* globalObject, int64_t index) const { return m_state->sequenceItem(globalObject, index); }
+    Python::OwedOutput* owedOutput() const { return m_state->owedOutput(); }
 
 private:
     PyStateObject(VM& vm, Structure* structure, std::unique_ptr<Python::NativeState>&& state)

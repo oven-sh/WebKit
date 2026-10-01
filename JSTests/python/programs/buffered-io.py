@@ -272,7 +272,8 @@ for label, value in (("too many", 100), ("negative", -1), ("a str", "a"), ("huge
     if value == 0:
         continue
     class OddWrite(Raw):
-        def write(self, view): return value
+        # What it returns is what it was made to, whenever it is asked. One that is still owed something is asked again when the program is over, and 0 for ever is never done.
+        def write(self, view, value=value): return value
     t("write that returns " + label, lambda: [(x.write(b"abc"), x.flush()) for x in [BufferedWriter(OddWrite(), 8)]])
     t("at once, " + label, lambda: BufferedWriter(OddWrite(), 2).write(b"abcdef"))
 

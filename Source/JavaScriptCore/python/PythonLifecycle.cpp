@@ -1010,7 +1010,11 @@ bool finalizePython(JSGlobalObject* globalObject)
             reportUnraisable(globalObject, "Exception ignored while flushing sys.stdout"_s);
         else
             scope.clearException();
+        // It has been said, or there is nowhere to say it. By the time CPython lets go of these there is no sys.stderr.
+        writeOffOwedOutput(globalObject, file);
     }
+    // And so is everything else that was never closed.
+    passOnOwedOutput(globalObject);
     return succeeded;
 }
 

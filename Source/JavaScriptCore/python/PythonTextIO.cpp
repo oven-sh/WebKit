@@ -370,7 +370,10 @@ enum class EncodeFunction : uint8_t { None, ASCII, Latin1, UTF8, UTF16BE, UTF16L
 
 struct TextIOState final : NativeState {
     PYTHON_NATIVE_STATE(TextIOState);
+    OwedOutput* owedOutput() final { return &owed; }
 
+    OwedOutput owed;
+    bool isOverWhatForgets { false }; // forgetsWhatItIsGiven(buffer)
     bool isInitialized { false };
     bool isDetached { false };
     int64_t chunkSize { 0 };
@@ -649,6 +652,7 @@ bool writeFlush(JSGlobalObject* globalObject, TextIOState& state)
     if (state.pendingBytes.isEmpty())
         return true;
     ByteVector pending = std::exchange(state.pendingBytes, ByteVector());
+    state.owed.note(globalObject, false);
     JSValue bytes = newBytes(globalObject, pending);
     RETURN_IF_EXCEPTION(scope, false);
     // How much of it has gone, if it fails, there is no knowing.
@@ -985,6 +989,7 @@ PYTHON_NATIVE(textIOInit)
     state.endings = { };
     state.decodedChars = String();
     state.pendingBytes = ByteVector();
+    state.owed.note(globalObject, false);
     state.snapshot.clear();
     state.errors.clear();
     state.raw.clear();
@@ -1010,6 +1015,7 @@ PYTHON_NATIVE(textIOInit)
     state.writesThrough = writesThrough;
     setNewline(state, newline);
     state.buffer.set(vm, self, buffer);
+    state.isOverWhatForgets = typeOf(globalObject, self) == ioState(globalObject).textIOWrapper.get() && forgetsWhatItIsGiven(globalObject, buffer);
     if (!setDecoder(globalObject, self, state, codecInfo, errorsText) || !setEncoder(globalObject, self, state, codecInfo, errorsText))
         return { };
 
@@ -1216,8 +1222,11 @@ PYTHON_NATIVE(textIOWrite)
     state.pendingBytes.append(encoded->span());
     if (state.pendingBytes.hasOverflowed()) {
         state.pendingBytes = ByteVector();
+        state.owed.note(globalObject, false);
         return JSValue::encode(raiseMemoryError(globalObject, scope));
     }
+    state.owed.note(globalObject, !state.pendingBytes.isEmpty() && !state.isOverWhatForgets);
+    RETURN_IF_EXCEPTION(scope, { });
     if (static_cast<int64_t>(state.pendingBytes.size()) >= state.chunkSize || needsFlush || state.writesThrough) {
         if (!writeFlush(globalObject, state))
             return { };
@@ -1745,7 +1754,11 @@ static void initializeTextIOWrapper(JSGlobalObject* globalObject, IOModuleState&
     PyType* type = createBuiltinType(globalObject, "_io.TextIOWrapper"_s, io.textIOBase.get(), PyType::Layout::Native, PyType::IsBaseType);
     io.textIOWrapper.set(vm, globalObject->pyRealm(), type);
     type->setInstanceStructure(vm, PyStateObject::createStructure(vm, globalObject, type));
-    type->setAllocator([] (VM& vm, Structure* structure) -> JSObject* { return PyStateObject::create(vm, structure, makeUnique<TextIOState>()); });
+    type->setAllocator([] (VM& vm, Structure* structure) -> JSObject* {
+        auto* stream = PyStateObject::create(vm, structure, makeUnique<TextIOState>());
+        stream->state<TextIOState>().owed.setStream(stream);
+        return stream;
+    });
     addMethods(globalObject, type, {
         { "__init__"_s, textIOInit, Kind::Wrapper, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, textIORepr },
