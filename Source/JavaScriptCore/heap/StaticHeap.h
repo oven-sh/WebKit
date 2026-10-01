@@ -11,6 +11,7 @@
 #include <span>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
+#include <wtf/PageBlock.h>
 #include <wtf/Vector.h>
 
 namespace WTF {
@@ -160,7 +161,7 @@ public:
 
     // A cell's header identifies its Structure by StructureID, which is an offset into the structure heap. The first VM of a
     // process creates its initial Structures in a fixed order, in a block at this offset.
-    static constexpr uint32_t offsetOfFirstStructureBlock = 16 * 1024;
+    static constexpr uint32_t offsetOfFirstStructureBlock = std::max(16 * KB, CeilingOnPageSize); // MarkedBlock::blockSize
 
     // Per-function data for FunctionExecutables in the short form. Indexed by AOT::CodeHeader::index.
     struct RowOfFunction {

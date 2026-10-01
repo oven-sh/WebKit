@@ -101,6 +101,8 @@ static mi_heap_t* structureHeap { };
 
 #endif
 
+static_assert(StaticHeap::offsetOfFirstStructureBlock == MarkedBlock::blockSize);
+
 class StructureMemoryManager {
 public:
     StructureMemoryManager()
