@@ -268,6 +268,21 @@ JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type,
     return { };
 }
 
+JSValue raiseObject(JSGlobalObject* globalObject, ThrowScope& scope, JSValue exception)
+{
+    if (exception.isObject())
+        setContext(globalObject, asObject(exception));
+    throwException(globalObject, scope, exception);
+    return { };
+}
+
+// _PyErr_NoMemory(), which has one ready and says nothing of what it came of.
+JSValue raiseMemoryError(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    throwException(globalObject, scope, createException(globalObject, globalObject->pyRealm()->type(BuiltinType::MemoryError), JSValue()));
+    return { };
+}
+
 void setContext(JSGlobalObject* globalObject, JSObject* exception)
 {
     VM& vm = globalObject->vm();
@@ -1463,7 +1478,9 @@ bool isCallable(JSGlobalObject* globalObject, JSValue value)
 
 JSObject* createNotCallableError(JSGlobalObject* globalObject, JSValue callable)
 {
-    return createException(globalObject, globalObject->pyRealm()->typeTypeError(), concatenate('\'', typeName(globalObject, callable), "' object is not callable"_s));
+    JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeTypeError(), concatenate('\'', typeName(globalObject, callable), "' object is not callable"_s));
+    setContext(globalObject, exception);
+    return exception;
 }
 
 static JSValue raiseNotCallable(JSGlobalObject* globalObject, ThrowScope& scope, JSValue callable)
@@ -1605,8 +1622,8 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
 
     Vector<String> positionalOnlyGivenByKeyword;
     for (unsigned k = 0; k < keywordCount; ++k) {
-        JSString* keyword = asString(keywordNames->get(k));
-        String keywordString = keyword->value(globalObject);
+        JSValue keyword = keywordNames->get(k);
+        String keywordString = stringIn(keyword)->value(globalObject);
         JSValue value = arguments.at(given + k);
         bool found = false;
         for (unsigned i = info.positionalOnlyCount; i < namedCount; ++i) {
@@ -1785,7 +1802,7 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
         converted.append(arguments.at(i));
     JSObject* options = constructEmptyObject(globalObject);
     for (unsigned i = 0; i < keywordNames->length(); ++i) {
-        auto name = asString(keywordNames->get(i))->toIdentifier(globalObject);
+        auto name = stringIn(keywordNames->get(i))->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         options->putDirect(vm, name, arguments.at(positional + i));
     }
@@ -1956,6 +1973,11 @@ JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from
 }
 
 // ---- The arguments of a function written in C++
+
+JSString* NativeArguments::keywordName(unsigned index) const
+{
+    return stringIn(m_keywordNames->get(index));
+}
 
 JSValue NativeArguments::keyword(JSGlobalObject* globalObject, ASCIILiteral name) const
 {

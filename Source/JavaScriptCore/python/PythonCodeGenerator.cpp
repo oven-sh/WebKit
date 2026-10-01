@@ -3232,6 +3232,9 @@ private:
                 continue;
             if (starIndex >= 0)
                 fail("multiple starred expressions in assignment"_s, node);
+            // As many as CPython's instruction has room to say.
+            else if (i >= (1 << 8) || targets.size() - i - 1 >= static_cast<size_t>(std::numeric_limits<int>::max() >> 8))
+                fail("too many expressions in star-unpacking assignment"_s, node);
             starIndex = i;
         }
         Vector<Reg, 8> values;

@@ -1,0 +1,264 @@
+===== object subclass
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> {}
+delete twice -> (None, None)
+delete, having set something -> False
+where it is defined -> ['Base']
+===== Exception
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> TypeError: cannot delete __dict__
+delete twice -> TypeError: cannot delete __dict__
+delete, having set something -> TypeError: cannot delete __dict__
+where it is defined -> ['BaseException']
+===== ValueError
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> TypeError: cannot delete __dict__
+delete twice -> TypeError: cannot delete __dict__
+delete, having set something -> TypeError: cannot delete __dict__
+where it is defined -> ['BaseException']
+===== E1
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> TypeError: cannot delete __dict__
+delete twice -> TypeError: cannot delete __dict__
+delete, having set something -> TypeError: cannot delete __dict__
+where it is defined -> ['BaseException', 'Base']
+===== E2
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> TypeError: cannot delete __dict__
+delete twice -> TypeError: cannot delete __dict__
+delete, having set something -> TypeError: cannot delete __dict__
+where it is defined -> ['Base', 'BaseException']
+===== E3
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> TypeError: cannot delete __dict__
+delete twice -> TypeError: cannot delete __dict__
+delete, having set something -> TypeError: cannot delete __dict__
+where it is defined -> ['BaseException']
+===== module
+get -> dict
+set -> AttributeError: readonly attribute
+set to a dict subclass -> AttributeError: readonly attribute
+set to a proxy -> AttributeError: readonly attribute
+set to None -> AttributeError: readonly attribute
+set to 5 -> AttributeError: readonly attribute
+delete -> AttributeError: readonly attribute
+delete twice -> AttributeError: readonly attribute
+delete, having set something -> AttributeError: readonly attribute
+where it is defined -> ['module']
+===== M1
+get -> dict
+set -> AttributeError: readonly attribute
+set to a dict subclass -> AttributeError: readonly attribute
+set to a proxy -> AttributeError: readonly attribute
+set to None -> AttributeError: readonly attribute
+set to 5 -> AttributeError: readonly attribute
+delete -> AttributeError: readonly attribute
+delete twice -> AttributeError: readonly attribute
+delete, having set something -> AttributeError: readonly attribute
+where it is defined -> ['module', 'Base']
+===== M2
+get -> dict
+set -> AttributeError: readonly attribute
+set to a dict subclass -> AttributeError: readonly attribute
+set to a proxy -> AttributeError: readonly attribute
+set to None -> AttributeError: readonly attribute
+set to 5 -> AttributeError: readonly attribute
+delete -> AttributeError: readonly attribute
+delete twice -> AttributeError: readonly attribute
+delete, having set something -> AttributeError: readonly attribute
+where it is defined -> ['Base', 'module']
+===== function
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> TypeError: cannot delete __dict__
+delete twice -> TypeError: cannot delete __dict__
+delete, having set something -> TypeError: cannot delete __dict__
+where it is defined -> ['function']
+===== partial
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> TypeError: cannot delete __dict__
+delete twice -> TypeError: cannot delete __dict__
+delete, having set something -> TypeError: cannot delete __dict__
+where it is defined -> ['partial']
+===== P1
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> TypeError: cannot delete __dict__
+delete twice -> TypeError: cannot delete __dict__
+delete, having set something -> TypeError: cannot delete __dict__
+where it is defined -> ['partial']
+===== dict subclass
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> {}
+delete twice -> (None, None)
+delete, having set something -> False
+where it is defined -> ['D1']
+===== StringIO
+get -> dict
+set -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+set to a dict subclass -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+set to a proxy -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+set to None -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+set to 5 -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+delete -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+delete twice -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+delete, having set something -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+where it is defined -> ['_IOBase']
+===== S1
+get -> dict
+set -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+set to a dict subclass -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+set to a proxy -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+set to None -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+set to 5 -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+delete -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+delete twice -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+delete, having set something -> AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+where it is defined -> ['_IOBase']
+===== slots
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> {}
+delete twice -> (None, None)
+delete, having set something -> False
+where it is defined -> ['Slots']
+===== class
+get -> mappingproxy
+set -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+set to a dict subclass -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+set to a proxy -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+set to None -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+set to 5 -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+delete -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+delete twice -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+delete, having set something -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+where it is defined -> ['type']
+===== metaclass instance
+get -> mappingproxy
+set -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+set to a dict subclass -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+set to a proxy -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+set to None -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+set to 5 -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+delete -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+delete twice -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+delete, having set something -> AttributeError: attribute '__dict__' of 'type' objects is not writable
+where it is defined -> ['type']
+===== SimpleNamespace
+get -> dict
+set -> AttributeError: readonly attribute
+set to a dict subclass -> AttributeError: readonly attribute
+set to a proxy -> AttributeError: readonly attribute
+set to None -> AttributeError: readonly attribute
+set to 5 -> AttributeError: readonly attribute
+delete -> AttributeError: readonly attribute
+delete twice -> AttributeError: readonly attribute
+delete, having set something -> AttributeError: readonly attribute
+where it is defined -> ['SimpleNamespace']
+===== deque subclass
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> {}
+delete twice -> (None, None)
+delete, having set something -> False
+where it is defined -> ['Q']
+===== int subclass
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> {}
+delete twice -> (None, None)
+delete, having set something -> False
+where it is defined -> ['I']
+===== method
+get -> AttributeError: 'method-wrapper' object has no attribute '__dict__'
+set -> AttributeError: 'method-wrapper' object has no attribute '__dict__' and no __dict__ for setting new attributes
+set to a dict subclass -> AttributeError: 'method-wrapper' object has no attribute '__dict__' and no __dict__ for setting new attributes
+set to a proxy -> AttributeError: 'method-wrapper' object has no attribute '__dict__' and no __dict__ for setting new attributes
+set to None -> AttributeError: 'method-wrapper' object has no attribute '__dict__' and no __dict__ for setting new attributes
+set to 5 -> AttributeError: 'method-wrapper' object has no attribute '__dict__' and no __dict__ for setting new attributes
+delete -> AttributeError: 'method-wrapper' object has no attribute '__dict__' and no __dict__ for setting new attributes
+delete twice -> AttributeError: 'method-wrapper' object has no attribute '__dict__' and no __dict__ for setting new attributes
+delete, having set something -> AttributeError: 'method-wrapper' object has no attribute 'z' and no __dict__ for setting new attributes
+where it is defined -> []
+===== generator
+get -> AttributeError: 'generator' object has no attribute '__dict__'
+set -> AttributeError: 'generator' object has no attribute '__dict__' and no __dict__ for setting new attributes
+set to a dict subclass -> AttributeError: 'generator' object has no attribute '__dict__' and no __dict__ for setting new attributes
+set to a proxy -> AttributeError: 'generator' object has no attribute '__dict__' and no __dict__ for setting new attributes
+set to None -> AttributeError: 'generator' object has no attribute '__dict__' and no __dict__ for setting new attributes
+set to 5 -> AttributeError: 'generator' object has no attribute '__dict__' and no __dict__ for setting new attributes
+delete -> AttributeError: 'generator' object has no attribute '__dict__' and no __dict__ for setting new attributes
+delete twice -> AttributeError: 'generator' object has no attribute '__dict__' and no __dict__ for setting new attributes
+delete, having set something -> AttributeError: 'generator' object has no attribute 'z' and no __dict__ for setting new attributes
+where it is defined -> []
+===== property subclass
+get -> dict
+set -> 1
+set to a dict subclass -> ('D1', 1)
+set to a proxy -> TypeError: __dict__ must be set to a dictionary, not a 'mappingproxy'
+set to None -> TypeError: __dict__ must be set to a dictionary, not a 'NoneType'
+set to 5 -> TypeError: __dict__ must be set to a dictionary, not a 'int'
+delete -> {}
+delete twice -> (None, None)
+delete, having set something -> False
+where it is defined -> ['P']

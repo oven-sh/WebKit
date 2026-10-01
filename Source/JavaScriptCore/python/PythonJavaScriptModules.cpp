@@ -50,7 +50,7 @@ static JSValue raiseImportError(JSGlobalObject* globalObject, ThrowScope& scope,
     JSValue error = call(globalObject, globalObject->pyRealm()->typeImportError(), jsString(vm, message));
     RETURN_IF_EXCEPTION(scope, { });
     asObject(error)->putDirect(vm, vm.pythonNames().field_path, jsString(vm, key));
-    throwException(globalObject, scope, error);
+    raiseObject(globalObject, scope, error);
     return { };
 }
 

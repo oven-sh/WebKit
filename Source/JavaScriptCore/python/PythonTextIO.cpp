@@ -968,10 +968,8 @@ PYTHON_NATIVE(textIOInit)
         errors = jsNontrivialString(vm, "strict"_s);
     else if (!stringIn(errors))
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("TextIOWrapper() argument 'errors' must be str or None, not "_s, typeName(globalObject, errors))));
-    String errorsText = textOfString(globalObject, errors);
+    String errorsText = textForC(globalObject, stringIn(errors), EndsAtNull::Yes);
     RETURN_IF_EXCEPTION(scope, { });
-    if (errorsText.contains(static_cast<char16_t>(0)))
-        return JSValue::encode(raiseValueError(globalObject, scope, "embedded null character"_s));
     // io_check_errors(): with -X dev it is found out now whether there is such a thing, and not when something first goes wrong.
     if (realm->configuration().isDevelopmentMode && importState(globalObject).hasCodecRegistry && args.at(3) && !isNone(args.at(3))) {
         lookupErrorHandler(globalObject, errorsText);
@@ -1103,9 +1101,9 @@ PYTHON_NATIVE(textIOReconfigure)
             size_t zero = text.find(static_cast<char16_t>(0));
             return zero == notFound ? text : text.left(zero);
         };
-        String encodingText = upToZero(textOfString(globalObject, encoding));
+        String encodingText = upToZero(textForC(globalObject, stringIn(encoding), EndsAtNull::No));
         RETURN_IF_EXCEPTION(scope, { });
-        String errorsText = upToZero(textOfString(globalObject, errors));
+        String errorsText = upToZero(textForC(globalObject, stringIn(errors), EndsAtNull::No));
         RETURN_IF_EXCEPTION(scope, { });
         JSValue codecInfo = lookupTextEncoding(globalObject, encodingText);
         RETURN_IF_EXCEPTION(scope, { });

@@ -630,7 +630,7 @@ PYTHON_NATIVE(builtinBuildClass)
     if (args.keywordCount()) {
         keywords = PyDict::create(globalObject);
         for (unsigned i = 0; i < args.keywordCount(); ++i)
-            keywords->set(globalObject, args.keywordName(i), args.keywordValue(i));
+            keywords->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(buildClass(globalObject, args[0], asString(args[1]), bases, keywords)));
 }

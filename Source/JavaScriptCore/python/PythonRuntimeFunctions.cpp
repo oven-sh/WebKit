@@ -516,11 +516,18 @@ PYTHON_RUNTIME_FUNCTION(callSpread)
     auto* keywords = uncheckedDowncast<PyDict>(argument(2).asCell());
     KeywordNames* names = KeywordNames::create(vm, CopyOnWriteArrayWithContiguous, keywords->size());
     unsigned i = 0;
+    bool areAllStrings = true;
     keywords->forEach(globalObject, [&] (JSValue key, JSValue value) {
+        // _PyStack_UnpackDict()
+        areAllStrings = !!stringIn(key);
+        if (!areAllStrings)
+            return false;
         names->setIndex(vm, i++, key);
         arguments.append(value);
         return true;
     });
+    if (!areAllStrings)
+        return JSValue::encode(raiseTypeError(globalObject, scope, "keywords must be strings"_s));
     RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, names, callFrame->thisValue())));
 }
 
@@ -528,15 +535,14 @@ static bool addKeywordArgument(JSGlobalObject* globalObject, PyDict* keywords, J
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!name.isString()) {
-        raiseTypeError(globalObject, scope, "keywords must be strings"_s);
-        return false;
-    }
+    // DICT_MERGE. Whether they will do for keywords is looked into when all have been gathered.
     bool wasAdded;
     keywords->add(globalObject, name, value, &wasAdded, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (!wasAdded) {
-        raiseTypeError(globalObject, scope, concatenate(describeCallable(globalObject, callable), " got multiple values for keyword argument '"_s, asString(name)->value(globalObject).data, '\''));
+        String shown = str(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, false);
+        raiseTypeError(globalObject, scope, concatenate(describeCallable(globalObject, callable), " got multiple values for keyword argument '"_s, shown, '\''));
         return false;
     }
     return true;

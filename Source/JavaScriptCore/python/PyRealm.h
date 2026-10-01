@@ -307,6 +307,9 @@ public:
     void setFunction(VM& vm, WellKnownFunction function, JSObject* object) { m_functions[static_cast<unsigned>(function)].set(vm, this, object); }
 
     PyTuple* emptyTuple() const { return m_emptyTuple.get(); }
+    // b"", of which there is one. Null until it is first wanted.
+    JSObject* emptyBytes() const { return m_emptyBytes.get(); }
+    void setEmptyBytes(VM& vm, JSObject* bytes) { m_emptyBytes.set(vm, this, bytes); }
     JSObject* notImplemented() const { return m_notImplemented.get(); }
     JSObject* ellipsis() const { return m_ellipsis.get(); }
     JSObject* noDefault() const { return m_noDefault.get(); } // typing.NoDefault
@@ -412,6 +415,7 @@ private:
     WriteBarrier<Structure> m_nativeFunctionStructures[4];
     WriteBarrier<Structure> m_hashStorageStructure;
     WriteBarrier<PyTuple> m_emptyTuple;
+    WriteBarrier<JSObject> m_emptyBytes;
     WriteBarrier<JSObject> m_notImplemented;
     WriteBarrier<JSObject> m_ellipsis;
     WriteBarrier<JSObject> m_noDefault;

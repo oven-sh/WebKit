@@ -1,0 +1,297 @@
+===== f
+int key -> 'TypeError: keywords must be strings'
+str subclass -> '(1, [])'
+str subclass, other -> "(None, [('z', 'S', 1)])"
+StrEnum -> '(1, [])'
+StrEnum, other -> "(None, [('red', 'Color', 1)])"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "(None, [('', 'str', 1)])"
+not an identifier -> "(None, [('a b', 'str', 1)])"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "(None, [('\\ud800', 'str', 1)])"
+===== g
+int key -> 'TypeError: keywords must be strings'
+str subclass -> '(1, None)'
+str subclass, other -> "TypeError: g() got an unexpected keyword argument 'z'"
+StrEnum -> '(1, None)'
+StrEnum, other -> "TypeError: g() got an unexpected keyword argument 'red'"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "TypeError: g() got an unexpected keyword argument ''"
+not an identifier -> "TypeError: g() got an unexpected keyword argument 'a b'"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "TypeError: g() got an unexpected keyword argument '\ud800'"
+===== h
+int key -> 'TypeError: keywords must be strings'
+str subclass -> "{'a': 1}"
+str subclass, other -> "{'z': 1}"
+StrEnum -> "{<Color.A: 'a'>: 1}"
+StrEnum, other -> "{<Color.RED: 'red'>: 1}"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "{'': 1}"
+not an identifier -> "{'a b': 1}"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "{'\\ud800': 1}"
+===== dict
+int key -> 'TypeError: keywords must be strings'
+str subclass -> "{'a': 1}"
+str subclass, other -> "{'z': 1}"
+StrEnum -> "{<Color.A: 'a'>: 1}"
+StrEnum, other -> "{<Color.RED: 'red'>: 1}"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "{'': 1}"
+not an identifier -> "{'a b': 1}"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "{'\\ud800': 1}"
+===== C
+int key -> 'TypeError: keywords must be strings'
+str subclass -> '(1, [])'
+str subclass, other -> "(None, ['z'])"
+StrEnum -> '(1, [])'
+StrEnum, other -> "(None, ['red'])"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "(None, [''])"
+not an identifier -> "(None, ['a b'])"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "(None, ['\\ud800'])"
+===== method
+int key -> 'TypeError: keywords must be strings'
+str subclass -> '(1, [])'
+str subclass, other -> "(None, ['z'])"
+StrEnum -> '(1, [])'
+StrEnum, other -> "(None, ['red'])"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "(None, [''])"
+not an identifier -> "(None, ['a b'])"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "(None, ['\\ud800'])"
+===== instance
+int key -> 'TypeError: keywords must be strings'
+str subclass -> '(1, [])'
+str subclass, other -> "(None, ['z'])"
+StrEnum -> '(1, [])'
+StrEnum, other -> "(None, ['red'])"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "(None, [''])"
+not an identifier -> "(None, ['a b'])"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "(None, ['\\ud800'])"
+===== partial
+int key -> 'TypeError: keywords must be strings'
+str subclass -> '(1, [])'
+str subclass, other -> "(None, [('z', 'S', 1)])"
+StrEnum -> '(1, [])'
+StrEnum, other -> "(None, [('red', 'Color', 1)])"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "(None, [('', 'str', 1)])"
+not an identifier -> "(None, [('a b', 'str', 1)])"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "(None, [('\\ud800', 'str', 1)])"
+===== print
+int key -> 'TypeError: keywords must be strings'
+str subclass -> "TypeError: print() got an unexpected keyword argument 'a'"
+str subclass, other -> "TypeError: print() got an unexpected keyword argument 'z'"
+StrEnum -> "TypeError: print() got an unexpected keyword argument 'a'"
+StrEnum, other -> "TypeError: print() got an unexpected keyword argument 'red'"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "TypeError: print() got an unexpected keyword argument ''"
+not an identifier -> "TypeError: print() got an unexpected keyword argument 'a b'"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "TypeError: print() got an unexpected keyword argument '\ud800'"
+===== int
+int key -> 'TypeError: keywords must be strings'
+str subclass -> "TypeError: int() got an unexpected keyword argument 'a'"
+str subclass, other -> "TypeError: int() got an unexpected keyword argument 'z'"
+StrEnum -> "TypeError: int() got an unexpected keyword argument 'a'"
+StrEnum, other -> "TypeError: int() got an unexpected keyword argument 'red'"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "TypeError: int() got an unexpected keyword argument ''"
+not an identifier -> "TypeError: int() got an unexpected keyword argument 'a b'"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "TypeError: int() got an unexpected keyword argument '\ud800'"
+===== sorted
+int key -> 'TypeError: keywords must be strings'
+str subclass -> 'TypeError: sorted expected 1 argument, got 0'
+str subclass, other -> 'TypeError: sorted expected 1 argument, got 0'
+StrEnum -> 'TypeError: sorted expected 1 argument, got 0'
+StrEnum, other -> 'TypeError: sorted expected 1 argument, got 0'
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> 'TypeError: sorted expected 1 argument, got 0'
+not an identifier -> 'TypeError: sorted expected 1 argument, got 0'
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> 'TypeError: sorted expected 1 argument, got 0'
+===== SimpleNamespace
+int key -> 'TypeError: keywords must be strings'
+str subclass -> 'namespace(a=1)'
+str subclass, other -> 'namespace(z=1)'
+StrEnum -> 'namespace(a=1)'
+StrEnum, other -> 'namespace(red=1)'
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> 'namespace()'
+not an identifier -> 'namespace(a b=1)'
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> 'namespace(\\ud800=1)'
+===== namedtuple
+int key -> 'TypeError: keywords must be strings'
+str subclass -> 'N(a=1)'
+str subclass, other -> "TypeError: N.__new__() got an unexpected keyword argument 'z'"
+StrEnum -> 'N(a=1)'
+StrEnum, other -> "TypeError: N.__new__() got an unexpected keyword argument 'red'"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "TypeError: N.__new__() got an unexpected keyword argument ''"
+not an identifier -> "TypeError: N.__new__() got an unexpected keyword argument 'a b'"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "TypeError: N.__new__() got an unexpected keyword argument '\ud800'"
+===== lambda
+int key -> 'TypeError: keywords must be strings'
+str subclass -> "{'a': 1}"
+str subclass, other -> "{'z': 1}"
+StrEnum -> "{<Color.A: 'a'>: 1}"
+StrEnum, other -> "{<Color.RED: 'red'>: 1}"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "{'': 1}"
+not an identifier -> "{'a b': 1}"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "{'\\ud800': 1}"
+===== type
+int key -> 'TypeError: keywords must be strings'
+str subclass -> 'TypeError: type() takes 1 or 3 arguments'
+str subclass, other -> 'TypeError: type() takes 1 or 3 arguments'
+StrEnum -> 'TypeError: type() takes 1 or 3 arguments'
+StrEnum, other -> 'TypeError: type() takes 1 or 3 arguments'
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> 'TypeError: type() takes 1 or 3 arguments'
+not an identifier -> 'TypeError: type() takes 1 or 3 arguments'
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> 'TypeError: type() takes 1 or 3 arguments'
+===== max
+int key -> 'TypeError: keywords must be strings'
+str subclass -> 'TypeError: max expected at least 1 argument, got 0'
+str subclass, other -> 'TypeError: max expected at least 1 argument, got 0'
+StrEnum -> 'TypeError: max expected at least 1 argument, got 0'
+StrEnum, other -> 'TypeError: max expected at least 1 argument, got 0'
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> 'TypeError: max expected at least 1 argument, got 0'
+not an identifier -> 'TypeError: max expected at least 1 argument, got 0'
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> 'TypeError: max expected at least 1 argument, got 0'
+===== Exception
+int key -> 'TypeError: keywords must be strings'
+str subclass -> 'TypeError: Exception() takes no keyword arguments'
+str subclass, other -> 'TypeError: Exception() takes no keyword arguments'
+StrEnum -> 'TypeError: Exception() takes no keyword arguments'
+StrEnum, other -> 'TypeError: Exception() takes no keyword arguments'
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> 'TypeError: Exception() takes no keyword arguments'
+not an identifier -> 'TypeError: Exception() takes no keyword arguments'
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> 'TypeError: Exception() takes no keyword arguments'
+===== classmethod
+int key -> 'TypeError: keywords must be strings'
+str subclass -> "['a']"
+str subclass, other -> "['z']"
+StrEnum -> "['a']"
+StrEnum, other -> "['red']"
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> "['']"
+not an identifier -> "['a b']"
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> "['\\ud800']"
+===== builtin method
+int key -> 'TypeError: keywords must be strings'
+str subclass -> 'None'
+str subclass, other -> 'None'
+StrEnum -> 'None'
+StrEnum, other -> 'None'
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> 'None'
+not an identifier -> 'None'
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> 'None'
+===== range
+int key -> 'TypeError: keywords must be strings'
+str subclass -> 'TypeError: range() takes no keyword arguments'
+str subclass, other -> 'TypeError: range() takes no keyword arguments'
+StrEnum -> 'TypeError: range() takes no keyword arguments'
+StrEnum, other -> 'TypeError: range() takes no keyword arguments'
+None -> 'TypeError: keywords must be strings'
+tuple -> 'TypeError: keywords must be strings'
+bytes -> 'TypeError: keywords must be strings'
+equal to a name -> 'TypeError: keywords must be strings'
+empty name -> 'TypeError: range() takes no keyword arguments'
+not an identifier -> 'TypeError: range() takes no keyword arguments'
+mixed -> 'TypeError: keywords must be strings'
+surrogate -> 'TypeError: range() takes no keyword arguments'
+===== more than one
+int twice -> "TypeError: __main__.f() got multiple values for keyword argument '1'"
+str twice -> "TypeError: __main__.f() got multiple values for keyword argument 'x'"
+str and its subclass -> "TypeError: __main__.f() got multiple values for keyword argument 'x'"
+written and given -> "TypeError: __main__.f() got multiple values for keyword argument 'x'"
+written and given as a subclass -> "TypeError: __main__.f() got multiple values for keyword argument 'x'"
+written and equal -> "TypeError: __main__.f() got multiple values for keyword argument 'Eq('x')'"
+int and str -> 'TypeError: keywords must be strings'
+position and keyword -> "TypeError: f() got multiple values for argument 'a'"
+position and subclass -> "TypeError: f() got multiple values for argument 'a'"
+dict twice -> "TypeError: dict() got multiple values for keyword argument '1'"
+None twice -> "TypeError: __main__.h() got multiple values for keyword argument 'None'"
+the type of the keys -> ['S', 'Color', 'str']
+the very keys -> [True]
+a mapping that is no dict -> (1, [('q', 'str', 2)])
+a mapping with an int -> 'TypeError: keywords must be strings'
+*args too -> (1, [('q', 'S', 2)])

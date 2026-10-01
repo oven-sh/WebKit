@@ -858,7 +858,7 @@ JSValue importFrom(JSGlobalObject* globalObject, JSValue module, JSValue name)
     asObject(error)->putDirect(vm, names.field_name, moduleName ? moduleName : jsUndefined());
     asObject(error)->putDirect(vm, names.field_path, origin ? origin : jsUndefined());
     asObject(error)->putDirect(vm, names.field_nameFrom, name);
-    throwException(globalObject, scope, error);
+    raiseObject(globalObject, scope, error);
     return { };
 }
 
@@ -1041,7 +1041,7 @@ void raiseFrozenError(JSGlobalObject* globalObject, FrozenStatus status, JSValue
     JSValue error = call(globalObject, globalObject->pyRealm()->typeImportError(), jsString(vm, message));
     RETURN_IF_EXCEPTION(scope, void());
     asObject(error)->putDirect(vm, vm.pythonNames().field_name, name);
-    throwException(globalObject, scope, error);
+    raiseObject(globalObject, scope, error);
 }
 
 // What unmarshal_frozen_code() is, where it is the source that there is.

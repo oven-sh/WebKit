@@ -1,0 +1,525 @@
+===== 'utf-8'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'utf-8'
+reconfigure -> 'utf-8'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'utf-8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'utf-8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'utf-8\'"'
+errors: TextIOWrapper -> 'utf-8'
+errors: reconfigure -> 'utf-8'
+newline -> "ValueError: 'illegal newline value: utf-8'"
+compile -> 'code'
+===== 'UTF_8'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'UTF_8'
+reconfigure -> 'UTF_8'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'UTF_8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'UTF_8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'UTF_8\'"'
+errors: TextIOWrapper -> 'UTF_8'
+errors: reconfigure -> 'UTF_8'
+newline -> "ValueError: 'illegal newline value: UTF_8'"
+compile -> 'code'
+===== 'utf 8'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'utf 8'
+reconfigure -> 'utf 8'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'utf 8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'utf 8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'utf 8\'"'
+errors: TextIOWrapper -> 'utf 8'
+errors: reconfigure -> 'utf 8'
+newline -> "ValueError: 'illegal newline value: utf 8'"
+compile -> 'code'
+===== 'utf-8\udce2\udc80\udc9d'
+lookup -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+decode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+encode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+str() -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+bytes() -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+bytearray() -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+codecs.decode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+codecs.encode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+TextIOWrapper -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+reconfigure -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+open -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+getincrementaldecoder -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+errors: decode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+errors: encode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+errors: decode, none wrong -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+errors: lookup_error -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+errors: TextIOWrapper -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+errors: reconfigure -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+newline -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode characters in position 5-7: surrogates not allowed"'
+compile -> 'SyntaxError: "Non-UTF-8 code starting with \'\\\\xed\' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details (<t>, line 1)"'
+===== '\udcfe'
+lookup -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+decode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+encode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+str() -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+bytes() -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+bytearray() -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+codecs.decode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+codecs.encode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+TextIOWrapper -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+reconfigure -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+open -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+getincrementaldecoder -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+errors: decode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+errors: encode -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+errors: decode, none wrong -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+errors: lookup_error -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+errors: TextIOWrapper -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+errors: reconfigure -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+newline -> 'UnicodeEncodeError: "\'utf-8\' codec can\'t encode character \'\\\\udcfe\' in position 0: surrogates not allowed"'
+compile -> 'SyntaxError: "Non-UTF-8 code starting with \'\\\\xed\' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details (<t>, line 1)"'
+===== 'utf-8\xe9'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'utf-8\xe9'
+reconfigure -> 'utf-8\xe9'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'utf-8\\xe9\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'utf-8\\xe9\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'utf-8\\xe9\'"'
+errors: TextIOWrapper -> 'utf-8\xe9'
+errors: reconfigure -> 'utf-8\xe9'
+newline -> "ValueError: 'illegal newline value: utf-8\\xe9'"
+compile -> 'code'
+===== 'utf-8\u20ac'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'utf-8\u20ac'
+reconfigure -> 'utf-8\u20ac'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'utf-8\\u20ac\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'utf-8\\u20ac\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'utf-8\\u20ac\'"'
+errors: TextIOWrapper -> 'utf-8\u20ac'
+errors: reconfigure -> 'utf-8\u20ac'
+newline -> "ValueError: 'illegal newline value: utf-8\\u20ac'"
+compile -> 'code'
+===== '\xe9'
+lookup -> "LookupError: 'unknown encoding: \\xe9'"
+decode -> "LookupError: 'unknown encoding: \\xe9'"
+encode -> "LookupError: 'unknown encoding: \\xe9'"
+str() -> "LookupError: 'unknown encoding: \\xe9'"
+bytes() -> "LookupError: 'unknown encoding: \\xe9'"
+bytearray() -> "LookupError: 'unknown encoding: \\xe9'"
+codecs.decode -> "LookupError: 'unknown encoding: \\xe9'"
+codecs.encode -> "LookupError: 'unknown encoding: \\xe9'"
+TextIOWrapper -> "LookupError: 'unknown encoding: \\xe9'"
+reconfigure -> "LookupError: 'unknown encoding: \\xe9'"
+open -> "LookupError: 'unknown encoding: \\xe9'"
+getincrementaldecoder -> "LookupError: 'unknown encoding: \\xe9'"
+errors: decode -> 'LookupError: "unknown error handler name \'\\xe9\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'\\xe9\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'\\xe9\'"'
+errors: TextIOWrapper -> '\xe9'
+errors: reconfigure -> '\xe9'
+newline -> "ValueError: 'illegal newline value: \\xe9'"
+compile -> 'code'
+===== ''
+lookup -> "LookupError: 'unknown encoding: '"
+decode -> "LookupError: 'unknown encoding: '"
+encode -> "LookupError: 'unknown encoding: '"
+str() -> "LookupError: 'unknown encoding: '"
+bytes() -> "LookupError: 'unknown encoding: '"
+bytearray() -> "LookupError: 'unknown encoding: '"
+codecs.decode -> "LookupError: 'unknown encoding: '"
+codecs.encode -> "LookupError: 'unknown encoding: '"
+TextIOWrapper -> "LookupError: 'unknown encoding: '"
+reconfigure -> "LookupError: 'unknown encoding: '"
+open -> "LookupError: 'unknown encoding: '"
+getincrementaldecoder -> "LookupError: 'unknown encoding: '"
+errors: decode -> 'LookupError: "unknown error handler name \'\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'\'"'
+errors: TextIOWrapper -> ''
+errors: reconfigure -> ''
+newline -> None
+compile -> 'code'
+===== ' '
+lookup -> "LookupError: 'unknown encoding:  '"
+decode -> "LookupError: 'unknown encoding:  '"
+encode -> "LookupError: 'unknown encoding:  '"
+str() -> "LookupError: 'unknown encoding:  '"
+bytes() -> "LookupError: 'unknown encoding:  '"
+bytearray() -> "LookupError: 'unknown encoding:  '"
+codecs.decode -> "LookupError: 'unknown encoding:  '"
+codecs.encode -> "LookupError: 'unknown encoding:  '"
+TextIOWrapper -> "LookupError: 'unknown encoding:  '"
+reconfigure -> "LookupError: 'unknown encoding:  '"
+open -> "LookupError: 'unknown encoding:  '"
+getincrementaldecoder -> "LookupError: 'unknown encoding:  '"
+errors: decode -> 'LookupError: "unknown error handler name \' \'"'
+errors: encode -> 'LookupError: "unknown error handler name \' \'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \' \'"'
+errors: TextIOWrapper -> ' '
+errors: reconfigure -> ' '
+newline -> "ValueError: 'illegal newline value:  '"
+compile -> 'code'
+===== 'utf-8 '
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'utf-8 '
+reconfigure -> 'utf-8 '
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'utf-8 \'"'
+errors: encode -> 'LookupError: "unknown error handler name \'utf-8 \'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'utf-8 \'"'
+errors: TextIOWrapper -> 'utf-8 '
+errors: reconfigure -> 'utf-8 '
+newline -> "ValueError: 'illegal newline value: utf-8 '"
+compile -> 'code'
+===== ' utf-8'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> ' utf-8'
+reconfigure -> ' utf-8'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \' utf-8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \' utf-8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \' utf-8\'"'
+errors: TextIOWrapper -> ' utf-8'
+errors: reconfigure -> ' utf-8'
+newline -> "ValueError: 'illegal newline value:  utf-8'"
+compile -> 'code'
+===== 'utf--8'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'utf--8'
+reconfigure -> 'utf--8'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'utf--8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'utf--8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'utf--8\'"'
+errors: TextIOWrapper -> 'utf--8'
+errors: reconfigure -> 'utf--8'
+newline -> "ValueError: 'illegal newline value: utf--8'"
+compile -> 'code'
+===== 'utf.8'
+lookup -> "LookupError: 'unknown encoding: utf.8'"
+decode -> "LookupError: 'unknown encoding: utf.8'"
+encode -> "LookupError: 'unknown encoding: utf.8'"
+str() -> "LookupError: 'unknown encoding: utf.8'"
+bytes() -> "LookupError: 'unknown encoding: utf.8'"
+bytearray() -> "LookupError: 'unknown encoding: utf.8'"
+codecs.decode -> "LookupError: 'unknown encoding: utf.8'"
+codecs.encode -> "LookupError: 'unknown encoding: utf.8'"
+TextIOWrapper -> "LookupError: 'unknown encoding: utf.8'"
+reconfigure -> "LookupError: 'unknown encoding: utf.8'"
+open -> "LookupError: 'unknown encoding: utf.8'"
+getincrementaldecoder -> "LookupError: 'unknown encoding: utf.8'"
+errors: decode -> 'LookupError: "unknown error handler name \'utf.8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'utf.8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'utf.8\'"'
+errors: TextIOWrapper -> 'utf.8'
+errors: reconfigure -> 'utf.8'
+newline -> "ValueError: 'illegal newline value: utf.8'"
+compile -> "SyntaxError: 'unknown encoding: utf.8 (<t>, line 0)'"
+===== 'u\x00tf'
+lookup -> "ValueError: 'embedded null character'"
+decode -> "ValueError: 'embedded null character'"
+encode -> "ValueError: 'embedded null character'"
+str() -> "ValueError: 'embedded null character'"
+bytes() -> "ValueError: 'embedded null character'"
+bytearray() -> "ValueError: 'embedded null character'"
+codecs.decode -> "ValueError: 'embedded null character'"
+codecs.encode -> "ValueError: 'embedded null character'"
+TextIOWrapper -> "ValueError: 'embedded null character'"
+reconfigure -> "LookupError: 'unknown encoding: u'"
+open -> "ValueError: 'embedded null character'"
+getincrementaldecoder -> "ValueError: 'embedded null character'"
+errors: decode -> "ValueError: 'embedded null character'"
+errors: encode -> "ValueError: 'embedded null character'"
+errors: decode, none wrong -> "ValueError: 'embedded null character'"
+errors: lookup_error -> "ValueError: 'embedded null character'"
+errors: TextIOWrapper -> "ValueError: 'embedded null character'"
+errors: reconfigure -> 'u\x00tf'
+newline -> "ValueError: 'embedded null character'"
+compile -> "SyntaxError: 'source code string cannot contain null bytes'"
+===== 'utf-8\x00'
+lookup -> "ValueError: 'embedded null character'"
+decode -> "ValueError: 'embedded null character'"
+encode -> "ValueError: 'embedded null character'"
+str() -> "ValueError: 'embedded null character'"
+bytes() -> "ValueError: 'embedded null character'"
+bytearray() -> "ValueError: 'embedded null character'"
+codecs.decode -> "ValueError: 'embedded null character'"
+codecs.encode -> "ValueError: 'embedded null character'"
+TextIOWrapper -> "ValueError: 'embedded null character'"
+reconfigure -> 'utf-8\x00'
+open -> "ValueError: 'embedded null character'"
+getincrementaldecoder -> "ValueError: 'embedded null character'"
+errors: decode -> "ValueError: 'embedded null character'"
+errors: encode -> "ValueError: 'embedded null character'"
+errors: decode, none wrong -> "ValueError: 'embedded null character'"
+errors: lookup_error -> "ValueError: 'embedded null character'"
+errors: TextIOWrapper -> "ValueError: 'embedded null character'"
+errors: reconfigure -> 'utf-8\x00'
+newline -> "ValueError: 'embedded null character'"
+compile -> "SyntaxError: 'source code string cannot contain null bytes'"
+===== 'latin\xb91'
+lookup -> 'iso8859-1'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'latin\xb91'
+reconfigure -> 'latin\xb91'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'latin\\xb91\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'latin\\xb91\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'latin\\xb91\'"'
+errors: TextIOWrapper -> 'latin\xb91'
+errors: reconfigure -> 'latin\xb91'
+newline -> "ValueError: 'illegal newline value: latin\\xb91'"
+compile -> 'code'
+===== 'ascii\uff11'
+lookup -> 'ascii'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'ascii\uff11'
+reconfigure -> 'ascii\uff11'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'ascii\\uff11\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'ascii\\uff11\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'ascii\\uff11\'"'
+errors: TextIOWrapper -> 'ascii\uff11'
+errors: reconfigure -> 'ascii\uff11'
+newline -> "ValueError: 'illegal newline value: ascii\\uff11'"
+compile -> 'SyntaxError: "\'ascii\' codec can\'t decode byte 0xef in position 15: ordinal not in range(128) (<t>, line 0)"'
+===== 'UTF-8\n'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'UTF-8\n'
+reconfigure -> 'UTF-8\n'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'UTF-8\\n\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'UTF-8\\n\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'UTF-8\\n\'"'
+errors: TextIOWrapper -> 'UTF-8\n'
+errors: reconfigure -> 'UTF-8\n'
+newline -> "ValueError: 'illegal newline value: UTF-8\\n'"
+compile -> 'code'
+===== 'utf8'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'utf8'
+reconfigure -> 'utf8'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'utf8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'utf8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'utf8\'"'
+errors: TextIOWrapper -> 'utf8'
+errors: reconfigure -> 'utf8'
+newline -> "ValueError: 'illegal newline value: utf8'"
+compile -> 'code'
+===== 'U8'
+lookup -> 'utf-8'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'U8'
+reconfigure -> 'U8'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'U8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'U8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'U8\'"'
+errors: TextIOWrapper -> 'U8'
+errors: reconfigure -> 'U8'
+newline -> "ValueError: 'illegal newline value: U8'"
+compile -> 'code'
+===== 'l1'
+lookup -> 'iso8859-1'
+decode -> 'abc'
+encode -> b'abc'
+str() -> 'abc'
+bytes() -> b'abc'
+bytearray() -> bytearray(b'abc')
+codecs.decode -> 'abc'
+codecs.encode -> b'abc'
+TextIOWrapper -> 'l1'
+reconfigure -> 'l1'
+open -> None
+getincrementaldecoder -> 'IncrementalDecoder'
+errors: decode -> 'LookupError: "unknown error handler name \'l1\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'l1\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'l1\'"'
+errors: TextIOWrapper -> 'l1'
+errors: reconfigure -> 'l1'
+newline -> "ValueError: 'illegal newline value: l1'"
+compile -> 'code'
+===== '\uff55tf-8'
+lookup -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+decode -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+encode -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+str() -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+bytes() -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+bytearray() -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+codecs.decode -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+codecs.encode -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+TextIOWrapper -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+reconfigure -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+open -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+getincrementaldecoder -> "LookupError: 'unknown encoding: \\uff55tf-8'"
+errors: decode -> 'LookupError: "unknown error handler name \'\\uff55tf-8\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'\\uff55tf-8\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'\\uff55tf-8\'"'
+errors: TextIOWrapper -> '\uff55tf-8'
+errors: reconfigure -> '\uff55tf-8'
+newline -> "ValueError: 'illegal newline value: \\uff55tf-8'"
+compile -> 'code'
+===== 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+lookup -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+decode -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+encode -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+str() -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+bytes() -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+bytearray() -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+codecs.decode -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+codecs.encode -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+TextIOWrapper -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+reconfigure -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+open -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+getincrementaldecoder -> "LookupError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+errors: decode -> 'LookupError: "unknown error handler name \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\'"'
+errors: TextIOWrapper -> 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+errors: reconfigure -> 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+newline -> "ValueError: 'illegal newline value: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+compile -> "SyntaxError: 'unknown encoding: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (<t>, line 0)'"
+===== 'ut\u0131f'
+lookup -> "LookupError: 'unknown encoding: ut\\u0131f'"
+decode -> "LookupError: 'unknown encoding: ut\\u0131f'"
+encode -> "LookupError: 'unknown encoding: ut\\u0131f'"
+str() -> "LookupError: 'unknown encoding: ut\\u0131f'"
+bytes() -> "LookupError: 'unknown encoding: ut\\u0131f'"
+bytearray() -> "LookupError: 'unknown encoding: ut\\u0131f'"
+codecs.decode -> "LookupError: 'unknown encoding: ut\\u0131f'"
+codecs.encode -> "LookupError: 'unknown encoding: ut\\u0131f'"
+TextIOWrapper -> "LookupError: 'unknown encoding: ut\\u0131f'"
+reconfigure -> "LookupError: 'unknown encoding: ut\\u0131f'"
+open -> "LookupError: 'unknown encoding: ut\\u0131f'"
+getincrementaldecoder -> "LookupError: 'unknown encoding: ut\\u0131f'"
+errors: decode -> 'LookupError: "unknown error handler name \'ut\\u0131f\'"'
+errors: encode -> 'LookupError: "unknown error handler name \'ut\\u0131f\'"'
+errors: decode, none wrong -> 'a'
+errors: lookup_error -> 'LookupError: "unknown error handler name \'ut\\u0131f\'"'
+errors: TextIOWrapper -> 'ut\u0131f'
+errors: reconfigure -> 'ut\u0131f'
+newline -> "ValueError: 'illegal newline value: ut\\u0131f'"
+compile -> "SyntaxError: 'unknown encoding: ut (<t>, line 0)'"

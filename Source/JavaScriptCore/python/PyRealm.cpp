@@ -55,6 +55,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(structure);
     visitor.append(thisObject->m_hashStorageStructure);
     visitor.append(thisObject->m_emptyTuple);
+    visitor.append(thisObject->m_emptyBytes);
     visitor.append(thisObject->m_notImplemented);
     thisObject->m_monitoring.visit(visitor);
     thisObject->m_warnings.visit(visitor);

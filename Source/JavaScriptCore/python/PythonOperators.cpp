@@ -1571,17 +1571,26 @@ std::optional<String> toTextArgument(JSGlobalObject* globalObject, JSValue value
         raiseTypeError(globalObject, scope, concatenate(function, "() "_s, argument, " must be str"_s, mayBeNone ? " or None"_s : ""_s, ", not "_s, typeNameOfArgument(globalObject, value)));
         return std::nullopt;
     }
-    String text = string->value(globalObject);
+    String text = textForC(globalObject, string, EndsAtNull::Yes);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (text.contains(static_cast<char16_t>(0))) {
+    return text;
+}
+
+String textForC(JSGlobalObject* globalObject, JSString* string, EndsAtNull endsAtNull)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (endsAtNull == EndsAtNull::Yes && text.contains(static_cast<char16_t>(0))) {
         raiseValueError(globalObject, scope, "embedded null character"_s);
-        return std::nullopt;
+        return { };
     }
     // It is as UTF-8 that C has it, which is not to be had of half a character.
     for (unsigned i = 0; !text.is8Bit() && i < text.length(); ++i) {
         if (U16_IS_SURROGATE(text[i]) && !(U16_IS_LEAD(text[i]) && i + 1 < text.length() && U16_IS_TRAIL(text[i + 1]))) {
             encodeString(globalObject, string, "utf-8"_s, "strict"_s);
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            RETURN_IF_EXCEPTION(scope, { });
         }
         if (U16_IS_LEAD(text[i]))
             ++i;

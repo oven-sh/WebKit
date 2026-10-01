@@ -310,17 +310,14 @@ JSValue keysOfMapping(JSGlobalObject* globalObject, JSValue mapping)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isExactly(globalObject, mapping, globalObject->pyRealm()->typeDict()))
-        RELEASE_AND_RETURN(scope, listFromIterable(globalObject, mapping));
-    JSValue method = getAttribute(globalObject, mapping, Identifier::fromString(vm, "keys"_s));
+    JSValue method = getAttribute(globalObject, mapping, Identifier::fromString(vm, name));
     RETURN_IF_EXCEPTION(scope, { });
     JSValue given = call(globalObject, method);
     RETURN_IF_EXCEPTION(scope, { });
-    // method_output_as_list()
     JSValue iterator = getIterator(globalObject, given);
     if (scope.exception()) [[unlikely]] {
         if (catchException(globalObject, BuiltinType::TypeError))
-            raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, mapping), ".keys() returned a non-iterable (type "_s, typeName(globalObject, given), ')'));
+            raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, mapping), '.', name, "() returned a non-iterable (type "_s, typeName(globalObject, given), ')'));
         return { };
     }
     RELEASE_AND_RETURN(scope, listFromIterable(globalObject, iterator));
@@ -396,7 +393,7 @@ static void updateDict(JSGlobalObject* globalObject, PyDict* dict, const NativeA
         RETURN_IF_EXCEPTION(scope, void());
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        dict->set(globalObject, args.keywordName(i), args.keywordValue(i));
+        dict->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, void());
     }
 }

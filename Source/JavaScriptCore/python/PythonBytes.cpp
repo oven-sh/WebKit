@@ -70,10 +70,17 @@ static JSUint8Array* newView(JSGlobalObject* globalObject, Structure* structure,
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // There is one bytes with nothing in it, as a program can tell.
+    PyRealm* realm = globalObject->pyRealm();
+    bool isEmptyBytes = content.empty() && structure == realm->structureFor(BuiltinType::Bytes);
+    if (isEmptyBytes && realm->emptyBytes())
+        return uncheckedDowncast<JSUint8Array>(realm->emptyBytes());
     JSUint8Array* view = JSUint8Array::createUninitialized(globalObject, structure, content.size());
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!content.empty())
         memcpy(view->typedVector(), content.data(), content.size());
+    if (isEmptyBytes)
+        realm->setEmptyBytes(vm, view);
     return view;
 }
 
@@ -584,7 +591,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
             raiseTypeError(globalObject, scope, concatenate(typeText, "() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, value)));
             return { };
         }
-        return string->value(globalObject);
+        return textForC(globalObject, string, EndsAtNull::Yes);
     };
     String encoding = textOf(encodingValue, "encoding"_s);
     RETURN_IF_EXCEPTION(scope, false);
@@ -998,6 +1005,9 @@ PYTHON_NATIVE(bytesMultiply)
     RETURN_IF_EXCEPTION(scope, { });
     if (result.size() == content.size() && givesItself(globalObject, selfValue))
         return JSValue::encode(selfValue);
+    // bytes_repeat() makes what it returns for itself, and so another each time even if there is nothing in it.
+    if (result.isEmpty() && isBytes(selfValue))
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::createUninitialized(globalObject, realm->structureFor(BuiltinType::Bytes), 0)));
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
@@ -1648,7 +1658,7 @@ static String optionalText(JSGlobalObject* globalObject, ThrowScope& scope, cons
         raiseTypeError(globalObject, scope, concatenate(function, "() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, value)));
         return { };
     }
-    return string->value(globalObject);
+    return textForC(globalObject, string, EndsAtNull::Yes);
 }
 
 // decode(encoding='utf-8', errors='strict')

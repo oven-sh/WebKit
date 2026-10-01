@@ -205,7 +205,7 @@ void raiseBlockingIOError(JSGlobalObject* globalObject, int errorNumber, ASCIILi
     RETURN_IF_EXCEPTION(scope, void());
     JSValue error = call(globalObject, globalObject->pyRealm()->type(BuiltinType::BlockingIOError), jsNumber(errorNumber), jsString(vm, String(message)), intFromInt64(globalObject, written));
     RETURN_IF_EXCEPTION(scope, void());
-    throwException(globalObject, scope, error);
+    raiseObject(globalObject, scope, error);
 }
 
 // _buffered_check_blocking_error(): whether that is what has been raised. It stays raised.

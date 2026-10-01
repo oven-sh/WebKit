@@ -122,6 +122,8 @@ wanted as a number of JavaScript's, as an operand that the code generator gives 
   the call, though nothing was being told when it came to that: what was called may be what asked to be told, and what comes after it on the same line begins no line. `programs/where-a-debugger-stops.py`.
 - **What is told by the unwinder is called with the exception set aside**, as the debugger's hooks are, and from the frame that it is told of. What it raises is what is being thrown from there on.
 - `INSTRUCTION` is told at each of these places. What the engine runs is its own business.
+- **`BRANCH`, which was the two ways as one, has had enough of a place as it has in CPython** (`branch_handler_vectorcall()`): what returns `DISABLE` is told no more of going that way. It is told no more of going the
+  other way either if the way that it disabled is the one that the jump itself tells of, which is right, or left in a `for`. So it hears of a place once or twice, and which depends on which way was gone first.
 - How many times an exception is caught and sent on by what nobody wrote is not what it is in CPython, which wraps every generator in a handler, for one.
 
 What it costs when nothing is being told, for each time round: nothing to 2% for a loop or a branch, 1ns of 10 for a call in Baseline and 2.6ns of 23 in the interpreter, and for a step of a generator nothing
@@ -292,6 +294,12 @@ returns it. `type()` takes it out of the namespace and puts the class in it, bef
 `__set_name__()`, with a `__new__()` that may well call `super().__new__()`. `__build_class__()` looks afterwards whether the class that it got is what is in the cell, since a metaclass may have kept the cell back. `__classdictcell__` is the
 same for `__classdict__`, which is where annotations look for names.
 
+**While `mro()` is first asked, the class has no order** (`PyType::HasNoOrderYet`): `__mro__` is `None`, nothing can be derived from it ("Cannot extend an incomplete type"), and `super()` finds nothing in it. And when
+`__bases__` is set and the `mro()` of some class derived from it raises, what is put back is what this setting changed and nothing that was set meanwhile, as in `type_set_bases()`. `programs/what-mro-can-get-up-to.py`.
+
+**The `__dict__` of an instance is for what is built in to say, if the class is derived from such a thing** (`subtype_setdict()`): `class E(Base, Exception)` finds the `__dict__` of `Base` first, and that of an exception cannot
+be deleted all the same. `programs/setting-and-deleting-the-dict-of-things.py`.
+
 **`super()` with no arguments** is a call of whatever goes by the name of `super` at the time. In CPython it is `super` that finds the class and the first argument, in the frame of what called it. Here the compiler hands them to
 `implicitSuper()`, along with what is being called. If that is not `super` it is called as it was written, with nothing. If it is, this is `super_init_without_args()`, which has something to say about each thing that may be missing.
 `programs/the-cell-of-a-class.py`.
@@ -388,6 +396,9 @@ other's functions with no adapter.
 - Otherwise a function binds what it was given itself, in bytecode: checks the count, fills in defaults, makes the `*args` tuple.
 - A function written in C++ gets keywords as extra arguments, and their names for `this`.
 - Given keywords, a JavaScript function gets them as an object, as its last argument.
+- **A keyword out of `**mapping` may be of a class derived from `str`**, a member of a `StrEnum` for one. It is matched by the string in it (`NativeArguments::keywordName()`), and what keeps it, `**kwargs` or `dict()`, keeps
+  the object (`keywordNameAsGiven()`). Whether the keys are strings is looked into when all the mappings have been put together, so that the same key twice is what is complained of first.
+  `programs/keywords-that-are-not-quite-strings.py`.
 
 **An instance can be called if its class has `__call__()`, whatever kind of cell it is.** To the engine that is `getCallData()`, which is asked only of a cell whose `Structure` says that it has something to say. A class that a
 program derives from `tuple`, `dict`, `int`, an exception or anything else can be given `__call__()` at any time, so the `Structure` of its instances says so: `PyType::createInstanceStructure()`. What is built in never can, so a

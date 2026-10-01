@@ -47,6 +47,12 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    for (auto& base : bases->span()) {
+        if (asType(base.get())->hasFlag(PyType::HasNoOrderYet)) {
+            raiseTypeError(globalObject, scope, concatenate("Cannot extend an incomplete type '"_s, asType(base.get())->nameString(globalObject), '\''));
+            return nullptr;
+        }
+    }
     for (unsigned i = 0; i < bases->length(); ++i) {
         for (unsigned j = i + 1; j < bases->length(); ++j) {
             if (asType(bases->at(i)) == asType(bases->at(j))) {
@@ -241,7 +247,7 @@ void addInstanceDescriptors(JSGlobalObject* globalObject, PyType* type, bool add
     auto& names = vm.pythonNames();
     // add_getset(): what the class was given by the same name is left as it is.
     if (addsDict && !type->getDirect(vm, names.dunder_dict))
-        type->putDirect(vm, names.dunder_dict, PyGetSetDescriptor::create(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDict, false, "dictionary for instance variables"_s));
+        type->putDirect(vm, names.dunder_dict, PyGetSetDescriptor::create(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDictOfSubtype, false, "dictionary for instance variables"_s));
     if (addsWeakReferences && !type->getDirect(vm, names.dunder_weakref))
         type->putDirect(vm, names.dunder_weakref, PyGetSetDescriptor::create(globalObject, type, "__weakref__"_s, getWeakReferences, nullptr, false, "list of weak references to the object"_s));
 }
@@ -496,7 +502,9 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSValue givenNam
         setContentsOfCell(vm, classDictCell, PyDict::backedBy(globalObject, type));
     }
     if (metatype != realm->typeType()) {
+        type->setFlag(PyType::HasNoOrderYet);
         PyTuple* ownOrder = computeOrder(globalObject, type);
+        type->clearFlag(PyType::HasNoOrderYet);
         RETURN_IF_EXCEPTION(scope, { });
         type->setOrder(vm, ownOrder);
     }
@@ -692,6 +700,7 @@ static bool recomputeOrders(JSGlobalObject* globalObject, PyType* type, MarkedAr
     RETURN_IF_EXCEPTION(scope, false);
     changed.append(type);
     changed.append(type->mro());
+    changed.append(order);
     type->setOrder(vm, order);
     for (PyType* subclass : type->subclasses()) {
         bool ok = recomputeOrders(globalObject, subclass, changed);
@@ -758,10 +767,13 @@ void setBases(JSGlobalObject* globalObject, PyType* type, JSValue value)
     recomputeOrders(globalObject, type, changed);
     if (!scope.exception())
         return;
-    // As it was.
-    for (size_t i = changed.size(); i; i -= 2)
-        asType(changed.at(i - 2))->setOrder(vm, asTuple(changed.at(i - 1)));
-    type->setBases(vm, oldBases, oldBase);
+    // As it was, but for what has been changed again since: mro() can run anything, this among it.
+    for (size_t i = changed.size(); i; i -= 3) {
+        if (asType(changed.at(i - 3))->mro() == asTuple(changed.at(i - 1)))
+            asType(changed.at(i - 3))->setOrder(vm, asTuple(changed.at(i - 2)));
+    }
+    if (type->bases() == bases)
+        type->setBases(vm, oldBases, oldBase);
 }
 
 // ---- super

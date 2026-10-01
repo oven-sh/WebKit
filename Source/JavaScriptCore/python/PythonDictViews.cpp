@@ -79,6 +79,9 @@ PYTHON_NATIVE(viewLen)
 PYTHON_NATIVE(viewRepr)
 {
     NATIVE_PROLOGUE();
+    ReprGuard guard(globalObject, args[0].asCell());
+    if (guard.isRecursive())
+        return JSValue::encode(jsNontrivialString(vm, "..."_s));
     JSArray* items = listFromIterable(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     String text = repr(globalObject, items);

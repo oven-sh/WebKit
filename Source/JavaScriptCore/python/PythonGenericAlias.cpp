@@ -432,9 +432,12 @@ PYTHON_NATIVE(genericAliasRepr)
         // Callable[[int, str], bool]
         if (isList(argument) && typeOf(globalObject, argument) == realm->typeList()) {
             out.append('[');
-            for (unsigned j = 0; j < asList(argument)->length(); ++j) {
+            // ga_repr_items_list(): as many as there were to begin with. Showing one can run anything.
+            for (unsigned j = 0, length = asList(argument)->length(); j < length; ++j) {
                 if (j)
                     out.append(", "_s);
+                if (j >= asList(argument)->length())
+                    return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "list index out of range"_s));
                 JSValue item = listGet(globalObject, asList(argument), j);
                 RETURN_IF_EXCEPTION(scope, { });
                 appendTypeRepr(globalObject, out, item);

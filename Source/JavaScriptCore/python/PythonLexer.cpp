@@ -1079,7 +1079,9 @@ private:
         char16_t allCharacters = 0;
         for (char16_t c : buffer)
             allCharacters |= c;
-        add(TokenKind::Name, start).text = makeText(buffer, allCharacters);
+        Token& token = add(TokenKind::Name, start);
+        token.text = makeText(buffer, allCharacters);
+        token.isNameOfConstant = *token.text == "True"_s || *token.text == "False"_s || *token.text == "None"_s;
         return true;
     }
 
@@ -1335,7 +1337,7 @@ private:
     }
 
     // The value of what is between the quotes, or of a piece of it. Null if it has none, and then there is an error.
-    const Identifier* decodeString(unsigned start, unsigned end, bool isRaw, bool isBytes, unsigned line, unsigned column)
+    const Identifier* decodeString(unsigned start, unsigned end, bool isRaw, bool isBytes, unsigned line, unsigned column, bool isBetweenBraces = false)
     {
         auto failHere = [&] (String&& message) -> const Identifier* {
             fail(WTF::move(message), line, column, m_line, columnOf(m_position), SyntaxError::Kind::SyntaxError, SaidBy::Parser);
@@ -1519,9 +1521,9 @@ private:
                 break;
             }
             default:
-                // Not an escape, so both stay.
-                if (!std::exchange(hasWarned, true))
-                        warnAboutEscape(c, currentLine, i - 2);
+                // Not an escape, so both stay. One before a brace has been warned of, when it was found not to make the brace any less of one.
+                if (!std::exchange(hasWarned, true) && !(isBetweenBraces && (c == '{' || c == '}')))
+                    warnAboutEscape(c, currentLine, i - 2);
                 append('\\');
                 append(c);
                 break;
@@ -1626,7 +1628,7 @@ private:
             setStreamedText(start, end);
             return true;
         }
-        const Identifier* value = decodeString(start, end, state.isRaw, false, line, column);
+        const Identifier* value = decodeString(start, end, state.isRaw, false, line, column, true);
         Token& token = add(state.isTemplate ? TokenKind::TStringMiddle : TokenKind::FStringMiddle, start, line, column);
         token.text = value;
         if (!value) {

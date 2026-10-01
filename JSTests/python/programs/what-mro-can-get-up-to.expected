@@ -1,0 +1,28 @@
+it has no order while it is first asked -> ((A, <class 'object'>), (B, A, <class 'object'>))
+    [('A', None, (<class 'object'>,)), ('B', None, (A,))]
+nothing can be derived from it yet -> (A, <class 'object'>)
+    ["Cannot extend an incomplete type 'A'"]
+super() of it -> (A, <class 'object'>)
+    ["'super' object has no attribute 'xxx'", True, True, []]
+its bases are set meanwhile -> ((A, <class 'object'>), (<class 'object'>,))
+    [None]
+what was set meanwhile is not undone -> (((B2,), (C, B2, A, <class 'object'>)), (B2,), (C, B2, A, <class 'object'>), (B1, C, B2, A, <class 'object'>))
+    ['E']
+what fails further down undoes it all -> ((A,), (C, A, <class 'object'>), (D, C, A, <class 'object'>), [C], [])
+    ['E']
+empty -> TypeError: type MRO must not be empty
+    []
+no class -> TypeError: mro() returned a non-class ('int')
+    []
+not iterable -> TypeError: 'int' object is not iterable
+    []
+without itself -> TypeError: super(type, obj): obj (type A) is not an instance or subtype of type (A).
+    []
+unsuitable -> TypeError: mro() returned base with unsuitable layout ('int')
+    []
+a list -> (A, <class 'object'>)
+    []
+twice -> (A, A, <class 'object'>)
+    []
+it takes itself away -> TypeError: super(type, obj): obj (type A) is not an instance or subtype of type (A).
+    []

@@ -316,6 +316,16 @@ private:
             m_error = m_scannerError;
             m_hasScannerError = true;
         }
+        // _PyPegen_new_identifier(), which is the end of it too
+        if (m_tokens[index].isNameOfConstant) [[unlikely]] {
+            if (!m_error) {
+                m_error = { SyntaxError::Kind::ValueError, false, concatenate("identifier field can't represent '"_s, m_tokens[index].text->string(), "' constant"_s), m_tokens[index].line, static_cast<int>(m_tokens[index].column), m_tokens[index].endLine, static_cast<int>(m_tokens[index].endColumn) };
+                m_hasScannerError = true;
+            }
+            m_whatIsNoName = m_tokens[index];
+            m_whatIsNoName.kind = TokenKind::Error;
+            return m_whatIsNoName;
+        }
         return m_tokens[index];
     }
 
@@ -4580,6 +4590,7 @@ private:
     VM& m_vm;
     Arena& m_arena;
     const TokenBuffer& m_tokens;
+    Token m_whatIsNoName; // What the parser is given in place of a token that isNameOfConstant.
     TypedTokens* m_supply { nullptr }; // Where more are to be had, if they are not all there.
     SyntaxError& m_error;
     SyntaxError m_scannerError;

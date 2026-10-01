@@ -90,6 +90,8 @@ public:
         NewIsLookedFor = 1 << 19,
         // It is written in C++, and in CPython has an sq_item as well as an mp_subscript, which do not come to the same. So it can be gone through, and what that gives is not what x[i] gives. See NativeState::sequenceItem().
         HasSequenceItemOfItsOwn = 1 << 20,
+        // It is being made, and the mro() of its metaclass is being asked for its order for the first time. To a program it has none yet.
+        HasNoOrderYet = 1 << 21,
 
         // What follows depends on the attributes of the class and of its bases, which can be set at any time. See hooks().
         HasCustomGetAttribute = 1 << 8, // __getattribute__ is not object's or type's.

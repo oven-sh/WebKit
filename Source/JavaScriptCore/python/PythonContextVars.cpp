@@ -488,7 +488,7 @@ PYTHON_NATIVE(contextGetItem)
         return { };
     if (JSValue value = find(mapOf(args[0]), args[1]))
         return JSValue::encode(value);
-    throwException(globalObject, scope, createException(globalObject, realm->typeKeyError(), args[1]));
+    raiseObject(globalObject, scope, createException(globalObject, realm->typeKeyError(), args[1]));
     return { };
 }
 
@@ -617,6 +617,9 @@ PYTHON_NATIVE(variableNew)
     JSValue name = args[1];
     if (!isInstance(globalObject, name, realm->typeStr()))
         return JSValue::encode(raiseTypeError(globalObject, scope, "context variable name must be a str"_s));
+    // contextvar_generate_hash(), which makes the hash of the variable out of that of its name
+    hash(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::ContextVar, name, defaultValue, jsNumber(static_cast<int32_t>(globalObject->weakRandomInteger()))));
 }
 
@@ -667,7 +670,7 @@ PYTHON_NATIVE(variableGet)
         return JSValue::encode(args[1]);
     if (JSValue value = asNativeObject(args[0])->field(VariableDefault))
         return JSValue::encode(value);
-    throwException(globalObject, scope, createException(globalObject, realm->typeLookupError(), args[0]));
+    raiseObject(globalObject, scope, createException(globalObject, realm->typeLookupError(), args[0]));
     return { };
 }
 

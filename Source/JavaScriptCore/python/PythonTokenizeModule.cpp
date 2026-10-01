@@ -325,7 +325,7 @@ JSValue raiseWithDetails(JSGlobalObject* globalObject, ThrowScope& scope, Builti
 {
     JSValue exception = call(globalObject, globalObject->pyRealm()->type(type)->object(), jsString(globalObject->vm(), message), details);
     RETURN_IF_EXCEPTION(scope, { });
-    throwException(globalObject, scope, exception);
+    raiseObject(globalObject, scope, exception);
     return { };
 }
 
@@ -384,7 +384,7 @@ void raiseForStop(JSGlobalObject* globalObject, TokenStream& stream, const Synta
         RETURN_IF_EXCEPTION(scope, void());
         set("filename"_s, jsNontrivialString(vm, "<string>"_s));
         RETURN_IF_EXCEPTION(scope, void());
-        throwException(globalObject, scope, exception);
+        raiseObject(globalObject, scope, exception);
         return;
     }
     case SyntaxError::Stop::Dedent:

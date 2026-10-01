@@ -954,11 +954,32 @@ static void setInstanceDictOfBuiltin(JSGlobalObject* globalObject, JSValue self,
     RELEASE_AND_RETURN(scope, setInstanceDict(globalObject, self, value));
 }
 
+// subtype_setdict(): what a class of a program's has. If the class is derived besides from something built in that has a __dict__ of its own kind, it is for that to say.
+void setInstanceDictOfSubtype(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // get_builtin_base_with_dict()
+    for (PyType* type = typeOf(globalObject, self); type->base(); type = type->base()) {
+        if (type->hasFlag(PyType::IsHeapType) || !type->hasFlag(PyType::HasInstanceDict))
+            continue;
+        auto* descriptor = dynamicDowncast<PyGetSetDescriptor>(type->lookup(vm, vm.pythonNames().dunder_dict));
+        if (descriptor && descriptor->setter())
+            RELEASE_AND_RETURN(scope, descriptor->setter()(globalObject, self, value));
+        break;
+    }
+    RELEASE_AND_RETURN(scope, setInstanceDict(globalObject, self, value));
+}
+
 void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& names = vm.pythonNames();
+    if (tryModule(globalObject, self)) {
+        raise(globalObject, scope, BuiltinType::AttributeError, "readonly attribute"_s);
+        return;
+    }
     if (value && !isDict(value)) {
         raiseTypeError(globalObject, scope, concatenate("__dict__ must be set to a dictionary, not a '"_s, typeName(globalObject, value), '\''));
         return;
@@ -969,10 +990,6 @@ void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
     }
     if (isClass(self)) {
         raise(globalObject, scope, BuiltinType::AttributeError, "attribute '__dict__' of 'type' objects is not writable"_s);
-        return;
-    }
-    if (tryModule(globalObject, self)) {
-        raise(globalObject, scope, BuiltinType::AttributeError, "readonly attribute"_s);
         return;
     }
     JSValue current = getInstanceDict(globalObject, self);
@@ -1056,7 +1073,7 @@ PYTHON_NATIVE(typeNew)
     if (args.keywordCount()) {
         keywords = PyDict::create(globalObject);
         for (unsigned i = 0; i < args.keywordCount(); ++i)
-            keywords->set(globalObject, args.keywordName(i), args.keywordValue(i));
+            keywords->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(newType(globalObject, metatype, args[1], bases, uncheckedDowncast<PyDict>(args[3].asCell()), keywords)));
 }
@@ -1984,7 +2001,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     });
     addGetSet(globalObject, type, "__bases__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->bases(); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) { setBases(globalObject, asType(self), value); });
     addGetSet(globalObject, type, "__base__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->base() ? JSValue(asType(self)->base()->object()) : jsUndefined(); });
-    addGetSet(globalObject, type, "__mro__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return orderOfResolution(globalObject, asType(self)); });
+    addGetSet(globalObject, type, "__mro__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return asType(self)->hasFlag(PyType::HasNoOrderYet) ? jsUndefined() : orderOfResolution(globalObject, asType(self)); });
     addGetSet(globalObject, type, "__dict__"_s, getTypeDict);
     addGetSet(globalObject, type, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) {
         // Nor for this.

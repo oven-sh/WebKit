@@ -295,7 +295,7 @@ PYTHON_NATIVE(astReplace)
         }
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        payload->set(globalObject, args.keywordName(i), args.keywordValue(i));
+        payload->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
     MarkedArgumentBuffer none;

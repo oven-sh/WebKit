@@ -1,0 +1,137 @@
+== names that come to be True, False and None
+b'Tru\xe1\xb5\x89' eval -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'Tru\xe1\xb5\x89' exec -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'Fal\xc5\xbfe' eval -> ValueError: identifier field can't represent 'False' constant
+  compile -> ValueError: identifier field can't represent 'False' constant
+b'Fal\xc5\xbfe' exec -> ValueError: identifier field can't represent 'False' constant
+  compile -> ValueError: identifier field can't represent 'False' constant
+b'N\xc2\xbane' eval -> ValueError: identifier field can't represent 'None' constant
+  compile -> ValueError: identifier field can't represent 'None' constant
+b'N\xc2\xbane' exec -> ValueError: identifier field can't represent 'None' constant
+  compile -> ValueError: identifier field can't represent 'None' constant
+b'Tru\xe1\xb5\x89 = 1' eval -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'Tru\xe1\xb5\x89 = 1' exec -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'def Tru\xe1\xb5\x89(): pass' eval -> SyntaxError: invalid syntax (<unknown>, line 1)
+  compile -> SyntaxError: invalid syntax (<t>, line 1)
+b'def Tru\xe1\xb5\x89(): pass' exec -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'x.Tru\xe1\xb5\x89' eval -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'x.Tru\xe1\xb5\x89' exec -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'f(Tru\xe1\xb5\x89=1)' eval -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'f(Tru\xe1\xb5\x89=1)' exec -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'import Tru\xe1\xb5\x89' eval -> SyntaxError: invalid syntax (<unknown>, line 1)
+  compile -> SyntaxError: invalid syntax (<t>, line 1)
+b'import Tru\xe1\xb5\x89' exec -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'\xef\xbc\xb4rue' eval -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'\xef\xbc\xb4rue' exec -> ValueError: identifier field can't represent 'True' constant
+  compile -> ValueError: identifier field can't represent 'True' constant
+b'__debug\xef\xbc\xbf_' eval -> Expression(body=Name(id='__debug__', ctx=Load()))
+  compile -> code
+b'__debug\xef\xbc\xbf_' exec -> Module(body=[Expr(value=Name(id='__debug__', ctx=Load()))])
+  compile -> code
+b'\xef\xbd\x98 = 1' eval -> SyntaxError: invalid syntax (<unknown>, line 1)
+  compile -> SyntaxError: invalid syntax (<t>, line 1)
+b'\xef\xbd\x98 = 1' exec -> Module(body=[Assign(targets=[Name(id='x', ctx=Store())], value=Constant(value=1))])
+  compile -> code
+== what is raised while something is being handled has that for its context
+literal_eval ('SyntaxError', 'ZeroDivisionError')
+compile ('SyntaxError', 'ZeroDivisionError')
+eval ('SyntaxError', 'ZeroDivisionError')
+exec ('SyntaxError', 'ZeroDivisionError')
+ast.parse ('SyntaxError', 'ZeroDivisionError')
+indentation ('IndentationError', 'ZeroDivisionError')
+tab ('TabError', 'ZeroDivisionError')
+symtable ('SyntaxError', 'ZeroDivisionError')
+codegen ('SyntaxError', 'ZeroDivisionError')
+tree ('TypeError', 'ZeroDivisionError')
+null ('SyntaxError', 'ZeroDivisionError')
+encoding ('SyntaxError', 'ZeroDivisionError')
+int ('ValueError', 'ZeroDivisionError')
+import ('ModuleNotFoundError', 'ZeroDivisionError')
+key ('KeyError', 'ZeroDivisionError')
+attribute ('AttributeError', 'ZeroDivisionError')
+recursion ('RecursionError', 'ZeroDivisionError')
+not callable ('TypeError', 'ZeroDivisionError')
+ContextVar.get ('LookupError', 'ZeroDivisionError')
+Context[var] ('KeyError', 'ZeroDivisionError')
+unsupported ('UnsupportedOperation', 'ZeroDivisionError')
+from import ('ImportError', 'ZeroDivisionError')
+warning as error ('UserWarning', 'ZeroDivisionError')
+tokenize ('TokenError', 'SyntaxError')
+tokenize 2 ('TokenError', 'SyntaxError')
+frozen ('ImportError', 'ZeroDivisionError')
+unbound ('UnboundLocalError', 'ZeroDivisionError')
+name ('NameError', 'ZeroDivisionError')
+index ('IndexError', 'ZeroDivisionError')
+unpack ('ValueError', 'ZeroDivisionError')
+format ('TypeError', 'ZeroDivisionError')
+overflow ('OverflowError', 'ZeroDivisionError')
+memory ('MemoryError', 'NoneType')
+os ('FileNotFoundError', 'ZeroDivisionError')
+unicode ('UnicodeEncodeError', 'ZeroDivisionError')
+json ('JSONDecodeError', 'ZeroDivisionError')
+struct ('error', 'ZeroDivisionError')
+re ('PatternError', 'ZeroDivisionError')
+generator ('KeyError', 'NoneType')
+close ('ValueError', 'ZeroDivisionError')
+stop ('StopIteration', 'ZeroDivisionError')
+decode ('UnicodeDecodeError', 'ZeroDivisionError')
+assert ('AssertionError', 'ZeroDivisionError')
+== the name of a ContextVar is asked for its hash
+unhashable -> TypeError: unhashable type: 'weird'
+counted -> ('v', 1)
+no str -> TypeError: context variable name must be a str
+hash raises -> ZeroDivisionError: division by zero
+== what has itself in it, shown
+values -> {42: dict_values([...])}
+items -> {42: dict_items([(42, ...)])}
+keys -> {42: dict_keys([42])}
+the view -> dict_values([...])
+the items -> dict_items([(1, ...)])
+proxy -> {1: mappingproxy({...})}
+deque -> deque([[...]])
+defaultdict -> defaultdict(<class 'list'>, {1: defaultdict(<class 'list'>, {...})})
+iterator -> [<list_iterator object
+== an alias whose arguments are a list that is changed while it is shown
+cleared -> IndexError: list index out of range
+added to -> int[[y]]
+cleared, in a tuple -> IndexError: list index out of range
+== how many times a source is warned of
+f'\{{' -> [('SyntaxWarning', '"\\{" is an invalid escape sequence. Such', 1)]
+'\d' -> [('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1)]
+f'\d' -> [('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1)]
+f'\d{1}\d' -> [('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1), ('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1)]
+f'{1:\d}' -> [('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1)]
+b'\d' -> [('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1)]
+'\d' '\d' -> [('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1), ('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1)]
+f'\{{{1}\}}' -> [('SyntaxWarning', '"\\{" is an invalid escape sequence. Such', 1), ('SyntaxWarning', '"\\}" is an invalid escape sequence. Such', 1)]
+1 is 1 -> [('SyntaxWarning', '"is" with \'int\' literal. Did you mean "=', 1)]
+(1)() -> [('SyntaxWarning', "'int' object is not callable; perhaps yo", 1)]
+[1][1,] -> [('SyntaxWarning', 'list indices must be integers or slices,', 1)]
+f'''\{{''' -> [('SyntaxWarning', '"\\{" is an invalid escape sequence. Such', 1)]
+rf'\{{' -> []
+'\777' -> [('SyntaxWarning', '"\\777" is an invalid octal escape sequen', 1)]
+0if 1else 2 -> [('SyntaxWarning', 'invalid decimal literal', 1), ('SyntaxWarning', 'invalid decimal literal', 1)]
+t'\{{' -> [('SyntaxWarning', '"\\{" is an invalid escape sequence. Such', 1)]
+f'{f'\d'}' -> [('SyntaxWarning', '"\\d" is an invalid escape sequence. Such', 1)]
+== bytes that there is only one of
+True True True True True True True True True True True True True True
+None True
+False True
+True True
+Ellipsis True
+b'' True
+() True
+'' True
+0 True
+'a' True

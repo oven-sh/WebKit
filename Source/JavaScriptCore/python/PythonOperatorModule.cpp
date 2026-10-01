@@ -539,7 +539,7 @@ PYTHON_NATIVE(methodCallerNew)
     if (args.keywordCount()) {
         keywords = PyDict::create(globalObject);
         for (unsigned i = 0; i < args.keywordCount(); ++i) {
-            keywords->set(globalObject, args.keywordName(i), args.keywordValue(i));
+            keywords->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
             RETURN_IF_EXCEPTION(scope, { });
         }
     }

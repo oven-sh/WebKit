@@ -113,7 +113,7 @@ PYTHON_NATIVE(atExitRegister)
     if (unsigned count = args.keywordCount()) {
         PyDict* dict = PyDict::create(globalObject);
         for (unsigned i = 0; i < count; ++i) {
-            dict->set(globalObject, args.keywordName(i), args.keywordValue(i));
+            dict->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
             RETURN_IF_EXCEPTION(scope, { });
         }
         keywords = dict;

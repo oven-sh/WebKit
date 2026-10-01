@@ -403,7 +403,7 @@ static bool warnExplicit(JSGlobalObject* globalObject, JSValue category, JSValue
     String action = str(globalObject, filter.action);
     RETURN_IF_EXCEPTION(scope, false);
     if (action == "error"_s) {
-        throwException(globalObject, scope, message);
+        raiseObject(globalObject, scope, message);
         return false;
     }
     if (action == "ignore"_s)

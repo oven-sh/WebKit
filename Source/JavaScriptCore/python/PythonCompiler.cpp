@@ -380,7 +380,7 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     }
     if (error.hasLastStatement && foundIn == FoundIn::Parsing && exception.isObject())
         asObject(exception)->putDirect(vm, vm.pythonNames().field_metadata, PyTuple::create(globalObject, { intFromUInt64(globalObject, error.lastStatementLine), intFromUInt64(globalObject, error.lastStatementColumn), jsString(vm, concatenate(givenSource.provider()->source(), error.sourceIsGivenAnEnd && !givenSource.provider()->source().endsWith('\n') ? "\n"_s : ""_s)) }));
-    throwException(globalObject, scope, exception);
+    raiseObject(globalObject, scope, exception);
     return { };
 }
 
@@ -510,7 +510,7 @@ static void raiseTokenizerError(JSGlobalObject* globalObject, ThrowScope& scope,
     RETURN_IF_EXCEPTION(scope, void());
     setAttribute(globalObject, exception, Identifier::fromString(vm, "filename"_s), jsString(vm, sourceURL));
     RETURN_IF_EXCEPTION(scope, void());
-    throwException(globalObject, scope, exception);
+    raiseObject(globalObject, scope, exception);
 }
 
 SourceCode makeSource(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const SourceOrigin& origin, const String& sourceURL)
@@ -612,7 +612,7 @@ SourceCode makeSource(JSGlobalObject* globalObject, std::span<const uint8_t> byt
         PyTuple* details = PyTuple::create(globalObject, { jsString(vm, sourceURL), jsNumber(0), jsNumber(-1), jsUndefined() });
         JSValue syntaxError = call(globalObject, globalObject->pyRealm()->typeSyntaxError(), jsString(vm, message), details);
         RETURN_IF_EXCEPTION(scope, { });
-        throwException(globalObject, scope, syntaxError);
+        raiseObject(globalObject, scope, syntaxError);
         return { };
     }
     return makeSource(text, origin, sourceURL);

@@ -79,7 +79,7 @@ PyDict* keywordsOf(JSGlobalObject* globalObject, const NativeArguments& args)
         return nullptr;
     PyDict* keywords = PyDict::create(globalObject);
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        keywords->set(globalObject, args.keywordName(i), args.keywordValue(i));
+        keywords->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return keywords;
@@ -246,7 +246,7 @@ PYTHON_NATIVE(partialNew)
         keywords->copyFrom(globalObject, *innerKeywords);
     RETURN_IF_EXCEPTION(scope, { });
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        keywords->set(globalObject, args.keywordName(i), args.keywordValue(i));
+        keywords->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -285,7 +285,7 @@ PYTHON_NATIVE(partialCall)
     keywords->copyFrom(globalObject, *state.keywords.get());
     RETURN_IF_EXCEPTION(scope, { });
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        keywords->set(globalObject, args.keywordName(i), args.keywordValue(i));
+        keywords->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywordDict(globalObject, function, arguments, keywords)));
@@ -616,7 +616,7 @@ JSValue makeKey(JSGlobalObject* globalObject, const NativeArguments& args, bool 
     if (keywordCount) {
         key->initializeAt(vm, at++, functoolsModuleState(globalObject).keywordMark.get());
         for (unsigned i = 0; i < keywordCount; ++i) {
-            key->initializeAt(vm, at++, args.keywordName(i));
+            key->initializeAt(vm, at++, args.keywordNameAsGiven(i));
             key->initializeAt(vm, at++, args.keywordValue(i));
         }
     }

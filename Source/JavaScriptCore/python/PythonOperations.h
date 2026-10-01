@@ -97,6 +97,8 @@ JSC_DECLARE_HOST_FUNCTION(callWhatOnlyPythonCalls);
 JSValue raiseNameError(JSGlobalObject*, ThrowScope&, const String& name);
 // Makes what is being handled now the __context__ of an exception that is about to be raised.
 void setContext(JSGlobalObject*, JSObject* exception);
+// PyErr_SetObject(), of an exception that has just been made: what is being handled is what it came of.
+JSValue raiseObject(JSGlobalObject*, ThrowScope&, JSValue exception);
 String nameOfFunction(JSGlobalObject*, JSFunction*, bool qualified);
 JSObject* createException(JSGlobalObject*, PyType*, JSValue argument);
 // These throw, and return an empty value for the caller to return.
@@ -105,7 +107,7 @@ JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, JSValue argument);
 JSValue raise(JSGlobalObject*, ThrowScope&, PyType*, const String& message); // One of a module's own
 inline JSValue raiseTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::TypeError, message); }
 inline JSValue raiseValueError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::ValueError, message); }
-inline JSValue raiseMemoryError(JSGlobalObject* globalObject, ThrowScope& scope) { return raise(globalObject, scope, BuiltinType::MemoryError, JSValue()); }
+JSValue raiseMemoryError(JSGlobalObject*, ThrowScope&);
 
 // ---- Text that there may be no room for: see PythonText.h
 JSValue strOrMemoryError(JSGlobalObject*, const String&); // A str of the text. Empty if it raised.
@@ -700,6 +702,9 @@ std::optional<int64_t> toOptionalSsize(JSGlobalObject*, JSValue, int64_t default
 // The `str` and `str(accept={str, NoneType})` of Argument Clinic: text with no zero in it. A null String is None, where that will do. Nothing if it raised.
 // `argument` is what to call it: "argument", "argument 1" or "argument 'mode'".
 std::optional<String> toTextArgument(JSGlobalObject*, JSValue, ASCIILiteral function, ASCIILiteral argument, bool mayBeNone = false);
+// What CPython has as a `const char*`: PyUnicode_AsUTF8(), which half of a surrogate pair cannot be put into, and where it is an argument said to be a str, a look for a null in it besides.
+enum class EndsAtNull : bool { No, Yes };
+String textForC(JSGlobalObject*, JSString*, EndsAtNull);
 // _PyEval_SliceIndex(), and _PyEval_SliceIndexNotNone(): where something begins or ends, clamped. Whether it is None is for the caller to have seen to: `mayBeNone` is only for what is said.
 std::optional<int64_t> toSliceIndex(JSGlobalObject*, JSValue, bool mayBeNone);
 // The value of an int, a bool or a float, or of what has __float__ or __index__.
@@ -746,7 +751,9 @@ public:
     }
 
     unsigned keywordCount() const { return m_keywordNames ? m_keywordNames->length() : 0; }
-    JSString* keywordName(unsigned index) const { return asString(m_keywordNames->get(index)); }
+    JSString* keywordName(unsigned index) const;
+    // f(**{name: value}): the name may be of a class derived from str, and what keeps it keeps that.
+    JSValue keywordNameAsGiven(unsigned index) const { return m_keywordNames->get(index); }
     JSValue keywordValue(unsigned index) const { return JSValue::decode(m_values[m_positionalCount + index]); }
     // Empty if it was not given.
     JSValue keyword(JSGlobalObject*, ASCIILiteral name) const;

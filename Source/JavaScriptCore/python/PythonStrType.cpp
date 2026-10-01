@@ -142,6 +142,10 @@ PYTHON_NATIVE(strNew)
         for (JSValue option : { encodingValue, errorsValue }) {
             if (option && !stringIn(option))
                 return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("str() argument '"_s, option == encodingValue ? "encoding"_s : "errors"_s, "' must be str, not "_s, type == realm->typeStr() && !args.keywordCount() ? typeName(globalObject, option) : typeNameOfArgument(globalObject, option))));
+            if (option) {
+                textForC(globalObject, stringIn(option), EndsAtNull::Yes);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
         }
         if (value) {
             if (stringIn(value))

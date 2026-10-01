@@ -308,7 +308,7 @@ PYTHON_NATIVE(namespaceInit)
         RETURN_IF_EXCEPTION(scope, { });
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        dict->set(globalObject, args.keywordName(i), args.keywordValue(i));
+        dict->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
     RETURN_NONE();
@@ -385,7 +385,7 @@ PYTHON_NATIVE(namespaceReplace)
         RETURN_IF_EXCEPTION(scope, { });
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        dict->set(globalObject, args.keywordName(i), args.keywordValue(i));
+        dict->set(globalObject, args.keywordNameAsGiven(i), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(result);

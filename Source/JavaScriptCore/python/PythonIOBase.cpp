@@ -47,7 +47,7 @@ JSValue raiseUnsupportedOperation(JSGlobalObject* globalObject, ThrowScope& scop
 {
     JSObject* exception = createException(globalObject, ioState(globalObject).unsupportedOperation.get(), message);
     RETURN_IF_EXCEPTION(scope, { });
-    throwException(globalObject, scope, exception);
+    raiseObject(globalObject, scope, exception);
     return { };
 }
 
