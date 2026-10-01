@@ -1233,24 +1233,16 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
     }
 }
 
-// BUN_AOT_OVERRIDDEN_METHODS: the path of a file that lists the methods that the program's subclasses of built-in classes override,
-// one per line, for example `Map.set`.
-static const char* pathOfOverriddenMethods()
-{
-    static const char* path = getenv("BUN_AOT_OVERRIDDEN_METHODS");
-    return path;
-}
-
 bool Graph::knowsWhichMethodsAreOverridden()
 {
-    return !!pathOfOverriddenMethods();
+    return !!Options::aotOverriddenMethodsPath();
 }
 
 // (Without the file, assume that it may.)
 bool Graph::methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read)
 {
     static const NeverDestroyed<std::optional<UncheckedKeyHashSet<String>>> all = [] () -> std::optional<UncheckedKeyHashSet<String>> {
-        const char* path = pathOfOverriddenMethods();
+        const char* path = Options::aotOverriddenMethodsPath();
         if (!path)
             return std::nullopt;
         auto contents = FileSystem::readEntireFile(String::fromUTF8(path));

@@ -226,8 +226,10 @@ public:
     // FunctionInfo for each function in the image, by index, as far as it was known at build time. Null if none was.
     static AOT::FunctionInfo* infosOfFunctions(VM&);
     static const void* constantsOfProgram(VM&); // AOT::Instance::constantsOfProgram
+#if ENABLE(AOT)
     // The image's key table, if the image omits it: the keys of functions whose executables are created at run time.
     static std::span<const AOT::ImageKey> keysOfImage();
+#endif
     static const AOT::ImageFunction* imageFunctionOfFunction(uint32_t index);
     // AOT::Instance::functionMetadataOffsets. The offsets in AOT::FunctionMetadata are relative to an arena (inData(), inMalloc()).
     static const uint32_t* functionMetadataOffsets(VM&);
