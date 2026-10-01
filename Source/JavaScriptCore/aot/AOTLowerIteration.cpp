@@ -137,7 +137,8 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     setProj(node, nextRegister, m_out.phi(Int64, nexts));
 }
 
-// result = next.call(iterator); done = result.done; value = done ? (unused) : result.value. Or the fast path.
+// result = next.call(iterator); done = ToBoolean(result.done); value = done ? (unused) : result.value. Or the fast path.
+// (The bytecode only tests `done` for truthiness, so converting it here is not observable.)
 void Lowering::lowerIteratorNext(Node* node)
 {
     auto bytecode = node->as<OpIteratorNext>();
@@ -148,17 +149,62 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue iterable = lowJSValue(node->use(bytecode.m_iterable));
 
     if constexpr (usesStubs) {
-        // Otherwise every loop would contain a copy of the array fast path, and a copy of the generic path as well.
         unsigned slotOfDone = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Done));
         unsigned slotOfValue = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Value));
         RELEASE_ASSERT(slotOfValue == slotOfDone + 1);
+
+        // Only the common case is inline: an element that is present, of an array that op_iterator_open decided to iterate by index.
+        // Everything else, including the end of the array, is in the stub.
+        LBasicBlock byIndex = m_out.newBlock();
+        LBasicBlock indexIsInt32 = m_out.newBlock();
+        LBasicBlock rightShape = m_out.newBlock();
+        LBasicBlock inBounds = m_out.newBlock();
+        LBasicBlock isPresent = m_out.newBlock();
+        LBasicBlock otherwise = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        // op_iterator_open only returns this sentinel for an array, and `iterable` is the register that it read.
+        m_out.branch(m_out.equal(iterator, fixedPointer(Instance::offsetOfSentinelOfArrayIteration())), usually(byIndex), rarely(otherwise));
+
+        m_out.appendTo(byIndex, indexIsInt32);
+        m_out.branch(isInt32(next), usually(indexIsInt32), rarely(otherwise));
+
+        m_out.appendTo(indexIsInt32, rightShape);
+        LValue index = unboxInt32(next);
+        LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(iterable, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
+        m_out.branch(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), usually(rightShape), rarely(otherwise));
+
+        // Compared as unsigned: the index of a finished iteration, -1, is larger than any length. (The length of such storage is far
+        // below 2^31, so the index can be incremented.)
+        m_out.appendTo(rightShape, inBounds);
+        static_assert(MAX_STORAGE_VECTOR_LENGTH < static_cast<unsigned>(std::numeric_limits<int32_t>::max()));
+        LValue butterfly = m_out.loadPtr(iterable, m_heaps.JSObject_butterfly);
+        m_out.branch(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), usually(inBounds), rarely(otherwise));
+
+        m_out.appendTo(inBounds, isPresent);
+        LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
+        m_out.branch(m_out.notZero64(element), usually(isPresent), rarely(otherwise));
+
+        m_out.appendTo(isPresent, otherwise);
+        ValueFromBlock inlineDone = m_out.anchor(m_out.constInt64(JSValue::ValueFalse));
+        ValueFromBlock inlineValue = m_out.anchor(element);
+        ValueFromBlock inlineNext = m_out.anchor(boxInt32(m_out.add(index, m_out.int32One)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(otherwise, continuation);
         PatchpointValue* result = callStub(Stub::IteratorNext, m_proc.addTuple({ Int64, Int64, Int64 }),
             { { next, GPRInfo::argumentGPR0 }, { iterator, GPRInfo::argumentGPR1 }, { iterable, GPRInfo::argumentGPR2 }, { slotAddress(slotOfDone), GPRInfo::argumentGPR3 } },
             { });
         result->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1), ValueRep::reg(GPRInfo::argumentGPR2) };
-        setProj(node, bytecode.m_done, m_out.extract(result, 0));
-        setProj(node, bytecode.m_value, m_out.extract(result, 1));
-        setProj(node, bytecode.m_next, m_out.extract(result, 2));
+        ValueFromBlock stubDone = m_out.anchor(m_out.extract(result, 0));
+        ValueFromBlock stubValue = m_out.anchor(m_out.extract(result, 1));
+        ValueFromBlock stubNext = m_out.anchor(m_out.extract(result, 2));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        setProj(node, bytecode.m_done, m_out.phi(Int64, inlineDone, stubDone));
+        setProj(node, bytecode.m_value, m_out.phi(Int64, inlineValue, stubValue));
+        setProj(node, bytecode.m_next, m_out.phi(Int64, inlineNext, stubNext));
         return;
     }
 
@@ -267,11 +313,11 @@ void Lowering::lowerIteratorNext(Node* node)
         m_out.appendTo(haveDone);
         isDone = m_out.phi(Int32, booleanResult, otherResult);
     }
-    finish(done, m_out.constInt64(JSValue::encode(jsUndefined())), next);
+    finish(m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::encode(jsUndefined())), next);
     m_out.branch(isDone, unsure(continuation), unsure(notDone));
 
     m_out.appendTo(notDone, continuation);
-    finish(done, getByIdCached(node, result, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Value)), next);
+    finish(m_out.constInt64(JSValue::ValueFalse), getByIdCached(node, result, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Value)), next);
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);

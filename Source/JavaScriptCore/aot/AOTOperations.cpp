@@ -655,7 +655,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
             if (there == field.id) {
                 if (JSValue value = object->getDirect(static_cast<PropertyOffset>(slot)))
                     OPERATION_RETURN(scope, JSValue::encode(value));
-            } else if (!there && allowsUndefined)
+            } else if (there != Structure::ambiguousFieldID && allowsUndefined) // (As in the stub: see generateReadSlot().)
                 OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         }
     }

@@ -241,9 +241,13 @@ private:
             ++depth;
         if (depth >= deepest || m_graph.codeBlock() == callee)
             return intrinsicToCheckFor ? declineToInline("it is too deep"_s) : false;
-        for (Graph* graph : m_chain(caller)) {
-            if (graph->codeBlock() == callee)
-                return false;
+        // No recursion. (An array method that is used in its own callback, as in a.some(x => x.b.some(...)), is not recursion: the depth
+        // limit above bounds it.)
+        if (!intrinsicToCheckFor) {
+            for (Graph* graph : m_chain(caller)) {
+                if (graph->codeBlock() == callee)
+                    return false;
+            }
         }
 
         auto inlinee = makeUniqueWithoutFastMallocCheck<Graph>(m_graph.vm(), callee, unknownScopeChain());

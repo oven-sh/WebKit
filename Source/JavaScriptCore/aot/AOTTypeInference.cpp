@@ -697,7 +697,7 @@ private:
         case op_iterator_next: {
             auto bytecode = parent->as<OpIteratorNext>();
             if (node->reg == bytecode.m_done)
-                return TTop; // The `done` property of the iterator result can be any value.
+                return TBoolean; // The `done` property of the iterator result can be any value. It is converted (see lowerIteratorNext()).
             if (node->reg == bytecode.m_next) {
                 // Either the `next` method, unchanged, or the index into an array that is iterated without an iterator.
                 Type next = parent->use(bytecode.m_next)->type;

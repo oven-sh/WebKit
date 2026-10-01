@@ -4846,11 +4846,11 @@ void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(const Scope
     Ref<Label> finallyLabel = newLabel();
     FinallyContext finallyContext(*this, finallyLabel.get());
     pushFinallyControlFlowScope(finallyContext);
-    emitTryWithFinallyThatDoesNotShadowException(finallyContext, emitTry, emitFinally);
+    emitTryWithFinallyThatDoesNotShadowException(finallyContext, emitTry, emitFinally, MayCompleteNormally::Yes);
     popFinallyControlFlowScope();
 }
 
-void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyContext& finallyContext, const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally)
+void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyContext& finallyContext, const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally, MayCompleteNormally mayCompleteNormally)
 {
     Ref<Label> tryStartLabel = newEmittedLabel();
     TryData* tryData = pushTry(tryStartLabel.get(), *finallyContext.finallyLabel(), HandlerType::SynthesizedFinally);
@@ -4871,7 +4871,10 @@ void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyCont
         Ref<Label> tryInFinallyEndLabel = newEmittedLabel();
         popTry(tryInFinallyData, tryInFinallyEndLabel.get());
 
-        emitFinallyCompletion(finallyContext, done.get());
+        // If the try block always ends in a jump, as the body of a loop does, the finally block is only entered by an exception, a
+        // return, or a jump to an outer label. Without an edge from here to the code that follows, what is live after the loop is
+        // not live into the exception handler, so a compiler does not have to keep it in memory during the loop.
+        emitFinallyCompletion(finallyContext, done.get(), mayCompleteNormally);
 
         // Catch block for exceptions that may be thrown while executing the finally block.
         // The only reason we need this catch block is because if the above finally block
@@ -5170,7 +5173,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
                 generator.emitJump(*scope->continueTarget());
             }, [&](BytecodeGenerator& generator) {
                 generator.emitIteratorGenericClose(iterator.get(), node, EmitAwait::Yes);
-            });
+            }, MayCompleteNormally::No);
 
             emitLabel(*scope->continueTarget());
             RELEASE_ASSERT(forLoopNode->isForOfNode());
@@ -5309,7 +5312,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
             generator.emitJump(loopStart.get());
         }, [&](BytecodeGenerator& generator) {
             generator.emitIteratorCloseAfterIteratorOpen(iterator.get(), nextOrIndex.get(), iterable.get(), node);
-        });
+        }, MayCompleteNormally::No);
 
         bool breakLabelIsBound = scope->breakTargetMayBeBound();
         if (breakLabelIsBound)
@@ -5969,10 +5972,11 @@ bool BytecodeGenerator::emitReturnViaFinallyIfNeeded(RegisterID* returnRegister)
     return true; // We'll be jumping to a finally block.
 }
 
-void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& normalCompletionLabel)
+void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& normalCompletionLabel, MayCompleteNormally mayCompleteNormally)
 {
     if (context.numberOfBreaksOrContinues() || context.handlesReturns()) {
-        emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Normal)), normalCompletionLabel);
+        if (mayCompleteNormally == MayCompleteNormally::Yes)
+            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Normal)), normalCompletionLabel);
 
         FinallyContext* outerContext = context.outerContext();
 
@@ -6111,7 +6115,8 @@ void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& no
     // By now, we've rule out all Break / Continue / Return completions above. The only remaining
     // possibilities are Normal or Throw.
 
-    emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Throw)), normalCompletionLabel);
+    if (mayCompleteNormally == MayCompleteNormally::Yes)
+        emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Throw)), normalCompletionLabel);
 
     // We get here because we entered this finally context with Throw completionType (i.e. we have
     // an exception that we need to rethrow), and we didn't encounter a different abrupt completion

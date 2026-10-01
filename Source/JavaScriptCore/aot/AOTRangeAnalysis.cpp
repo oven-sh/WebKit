@@ -32,6 +32,7 @@ public:
 
     void run()
     {
+        m_frameRegisters.fill(FrameRegister { }, m_graph.numRegisters());
         // Ascend from the bottom of the lattice to a fixpoint, widening where a phi keeps growing.
         bool changed = true;
         while (changed) {
@@ -258,6 +259,27 @@ private:
                 return Range::none();
             return Range::of(std::max(range.min, wanted.min), std::min(range.max, wanted.max));
         }
+        // A register that lives in the frame holds what was last stored to it, as for its type (Graph::frameRegisterTypes). Without
+        // this, a counter that is live into an exception handler would come back from the frame as an arbitrary number, and
+        // would be kept as a double in the whole loop.
+        case NodeKind::GetStack:
+            return m_frameRegisters[m_graph.registerIndex(node->reg)].range;
+        case NodeKind::SetStack: {
+            FrameRegister& stored = m_frameRegisters[m_graph.registerIndex(node->reg)];
+            Range result = stored.range.unionWith(node->uses[0].node->range);
+            if (result != stored.range) {
+                // Widened like a phi: a cycle may go through the frame alone.
+                if (result.isKnown() && stored.range.isKnown() && ++stored.updates > 2) {
+                    if (result.max > stored.range.max)
+                        result.max = widenUp(result.max);
+                    if (result.min < stored.range.min)
+                        result.min = widenDown(result.min);
+                }
+                stored.range = result;
+                m_elementsChanged = true;
+            }
+            return stored.range;
+        }
         case NodeKind::Bytecode:
             return computeBytecode(node);
         default:
@@ -465,6 +487,12 @@ private:
     // For each array that the function creates: none if no store to it has been seen, and the whole int32 range if only integers
     // are stored.
     UncheckedKeyHashMap<Node*, Range> m_elements;
+    // Indexed by Graph::registerIndex(): the union of everything stored to each frame register.
+    struct FrameRegister {
+        Range range { Range::none() };
+        unsigned updates { 0 };
+    };
+    Vector<FrameRegister> m_frameRegisters;
     bool m_elementsChanged { false };
     bool m_reentering { false };
 };

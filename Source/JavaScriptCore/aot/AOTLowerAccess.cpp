@@ -409,7 +409,8 @@ void Lowering::lowerGetById(Node* node)
                 recordAvailableField(baseNode, *field, value, Rep::JSValue, value, false);
                 return;
             }
-            if (isCompact()) {
+            // (In a loop the check is inline: it is five instructions, against two for the call of the stub.)
+            if (isCompact() && (!m_block->isInLoop || m_block->isGeneric)) {
                 LValue value = throughStub();
                 setJSValue(node, value);
                 recordAvailableField(baseNode, *field, value, Rep::JSValue, value, false);
@@ -833,7 +834,10 @@ void Lowering::lowerGetByVal(Node* node)
         return;
     }
 
-    if (isCompact() && !allowsEmpty) {
+    // An element read by an integer in a loop is nearly always an element of an array, and the fast path for that is barely larger
+    // than the call of the stub.
+    bool isByIntegerInLoop = propertyNode->isInteger() && m_block->isInLoop && !m_block->isGeneric;
+    if (isCompact() && !allowsEmpty && !isByIntegerInLoop) {
         if (propertyNode->rep() == Rep::Int64)
             setJSValue(node, callBinaryStub(node, Stub::GetByValAtIndex, Int64, base, lowRaw(propertyNode)));
         else

@@ -482,7 +482,7 @@ public:
     // fixed slots.
     //
     // For a Structure with no typed layout, the same table holds property name IDs. See setPropertyNameIDInInlineSlot().
-    static constexpr unsigned numberOfSlotsWithFieldIDs = 8;
+    static constexpr unsigned numberOfSlotsWithFieldIDs = 16;
     static constexpr uint16_t ambiguousFieldID = 0xffff;
     uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
     // For a Structure with no typed layout. `id` comes from VM::aotPropertyNameIDs. Property additions copy the table; every other

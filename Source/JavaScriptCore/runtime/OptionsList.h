@@ -146,7 +146,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpAOTGraph, false, Normal, "Dump the AOT compiler's IR."_s) \
     v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
     v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
-    v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function) to this file, for symbolicating profiles."_s) \
+    v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
     v(Bool, forceAOTVeneers, false, Normal, "For testing. Route every direct call between functions in an image through a veneer, as if the target were out of range."_s) \
     v(Unsigned, numberOfAOTStubCopiesForTesting, 0, Normal, "For testing. If nonzero: lay out an image as if calls reached only far enough for it to need about this many copies of the stubs, instead of 96 MB. Calls between functions that are then out of range go through veneers."_s) \
     v(Unsigned, largestAOTFunctionNumberInTypesForTesting, 0, Normal, "For testing. If nonzero: the largest function number that a type can hold, instead of 262,143. A small program then has functions beyond it."_s) \

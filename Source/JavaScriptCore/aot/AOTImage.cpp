@@ -895,6 +895,23 @@ Vector<uint8_t> ImageBuilder::finish()
             auto& function = m_functions[index];
             out->println("F\t", index, "\t", startsOfFunctions[index], "\t", function.code.bytes.size(), "\t", function.key.module, "\t", function.key.start, "\t", function.key.kind);
         }
+        // For attributing the time spent in a stub to the property that was accessed.
+        // D: the offset of the first inline cache slot in a function's Data, and the size of a slot.
+        // I: the number of an identifier, and its text.
+        // S: the index of a function, the index of one of its slots, and the number of the identifier in the slot's Site. (The Site of
+        // an allocation holds a shape number instead.)
+        if (numbersOfIdentifiers) {
+            out->println("D\t", sizeof(Data), "\t", sizeof(Slot));
+            for (auto& entry : *numbersOfIdentifiers)
+                out->println("I\t", entry.value, "\t", static_cast<const StringImpl*>(entry.key));
+            for (unsigned index = 0; index < m_functions.size(); ++index) {
+                auto& sites = m_functions[index].code.info.sites;
+                for (unsigned slot = 0; slot < sites.size(); ++slot) {
+                    if (uint32_t identifier = sites[slot].identifierAndExtra & ((1u << Site::identifierBits) - 1))
+                        out->println("S\t", index, "\t", slot, "\t", identifier);
+                }
+            }
+        }
     }
     Vector<uint32_t> granulesOfCode;
     {

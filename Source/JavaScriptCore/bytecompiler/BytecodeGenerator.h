@@ -901,8 +901,10 @@ namespace JSC {
         void emitCallDefineProperty(RegisterID* newObj, RegisterID* propertyNameRegister,
             RegisterID* valueRegister, RegisterID* getterRegister, RegisterID* setterRegister, unsigned options, const JSTextPosition&);
 
+        // Whether control can reach the end of a try block, and so enter its finally block with a Normal completion.
+        enum class MayCompleteNormally : bool { No, Yes };
         void emitTryWithFinallyThatDoesNotShadowException(const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally);
-        void emitTryWithFinallyThatDoesNotShadowException(FinallyContext&, const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally);
+        void emitTryWithFinallyThatDoesNotShadowException(FinallyContext&, const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally, MayCompleteNormally);
 
         // Explicit Resource Management: using declarations
         UsingScope& currentUsingScope() { ASSERT(!m_usingScopeStack.isEmpty()); return m_usingScopeStack.last(); }
@@ -1075,7 +1077,7 @@ namespace JSC {
 
         bool emitJumpViaFinallyIfNeeded(int targetLabelScopeDepth, Label& jumpTarget);
         bool emitReturnViaFinallyIfNeeded(RegisterID* returnRegister);
-        void emitFinallyCompletion(FinallyContext&, Label& normalCompletionLabel);
+        void emitFinallyCompletion(FinallyContext&, Label& normalCompletionLabel, MayCompleteNormally = MayCompleteNormally::Yes);
 
     public:
         void pushFinallyControlFlowScope(FinallyContext&);

@@ -229,6 +229,14 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(ReadSlot5) \
     v(ReadSlot6) \
     v(ReadSlot7) \
+    v(ReadSlot8) \
+    v(ReadSlot9) \
+    v(ReadSlot10) \
+    v(ReadSlot11) \
+    v(ReadSlot12) \
+    v(ReadSlot13) \
+    v(ReadSlot14) \
+    v(ReadSlot15) \
     /* The same, but returns undefined for an object that lacks the property. */ \
     v(ReadSlotOrUndefined0) \
     v(ReadSlotOrUndefined1) \
@@ -238,6 +246,14 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(ReadSlotOrUndefined5) \
     v(ReadSlotOrUndefined6) \
     v(ReadSlotOrUndefined7) \
+    v(ReadSlotOrUndefined8) \
+    v(ReadSlotOrUndefined9) \
+    v(ReadSlotOrUndefined10) \
+    v(ReadSlotOrUndefined11) \
+    v(ReadSlotOrUndefined12) \
+    v(ReadSlotOrUndefined13) \
+    v(ReadSlotOrUndefined14) \
+    v(ReadSlotOrUndefined15) \
     /* A0 = base, A1 = value, A2 = site. */ \
     v(PutById) \
     /* A0 = base, A1 = private name or brand, A2 = site. GetPrivateName returns the result in A0. */ \

@@ -17,6 +17,7 @@
 #include "FunctionExecutable.h"
 #include "GetterSetter.h"
 #include "Interpreter.h"
+#include "JSArrayIterator.h"
 #include "JSGlobalObject.h"
 #include "JSMap.h"
 #include "JSSet.h"
@@ -1430,7 +1431,7 @@ static WaysOnOfReadSlot s_waysOnOfReadSlot[2][Structure::numberOfSlotsWithFieldI
 // base: see acceptsOperandInAnyRegister().
 static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool allowsUndefined, GPRReg base = A0)
 {
-    static_assert(Structure::numberOfSlotsWithFieldIDs == 8);
+    static_assert(Structure::numberOfSlotsWithFieldIDs == 16);
     ASSERT(base != A1 && base != T11 && base != T12 && base != T13);
     Jump isNotCell = jit.branchIfNotCell(base);
     jit.load32(Address(base, JSCell::structureIDOffset()), T13);
@@ -1460,9 +1461,11 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool allowsUndefi
     waysOn.isNotThere = jit.label();
     CCallHelpers::JumpList miss;
     if (allowsUndefined) {
-        // None of the layout's fields occupies the slot. If the object's layout is the field's layout, the object has no such
-        // property, and does not inherit one either (see Instance::convertToTypedLayout()).
-        miss.append(jit.branchTest32(CCallHelpers::NonZero, T11));
+        // The slot is empty, or holds another field. Adding a second field that belongs in an occupied slot makes the entry ambiguous
+        // for good (Structure::noteFieldAdded()), so an entry that is not ambiguous names the only such field that the object has
+        // ever had. If the object's layout is the field's layout, the object therefore has no such property, and does not inherit
+        // one either (see Instance::convertToTypedLayout()).
+        miss.append(jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(Structure::ambiguousFieldID)));
         jit.load16(Address(T13, Structure::offsetOfTypedLayoutID()), T11);
         loadInstance(jit, T12);
         jit.loadPtr(Address(T12, Instance::offsetOfRuntimeTable()), T12);
@@ -1499,6 +1502,14 @@ AOT_READ_SLOT(4)
 AOT_READ_SLOT(5)
 AOT_READ_SLOT(6)
 AOT_READ_SLOT(7)
+AOT_READ_SLOT(8)
+AOT_READ_SLOT(9)
+AOT_READ_SLOT(10)
+AOT_READ_SLOT(11)
+AOT_READ_SLOT(12)
+AOT_READ_SLOT(13)
+AOT_READ_SLOT(14)
+AOT_READ_SLOT(15)
 #undef AOT_READ_SLOT
 
 static void generateGetById(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetById); }
@@ -1570,11 +1581,20 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         jit.loadPtr(slotWord(A1, 1), several);
         jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
         static_assert(!OBJECT_OFFSETOF(Slot, structureID));
-        Jump isThatOne[PolymorphicSlots::numberOfSlots];
-        for (unsigned i = 0; i < PolymorphicSlots::numberOfSlots; ++i)
-            isThatOne[i] = jit.branch32(CCallHelpers::Equal, T12, Address(several, PolymorphicSlots::offsetOfSlots() + i * sizeof(Slot)));
+        // The matching entry is selected without branches. A branch per entry would be shared by every polymorphic site of the
+        // program, so it could not be predicted, and a misprediction costs more than the whole scan.
+        jit.move(A1, ownSlotOfSite);
+        jit.addPtr(TrustedImm32(PolymorphicSlots::offsetOfSlots()), several, A1);
+        for (unsigned i = 1; i < PolymorphicSlots::numberOfSlots; ++i) {
+            jit.load32(Address(several, PolymorphicSlots::offsetOfSlots() + i * sizeof(Slot)), T11);
+            jit.addPtr(TrustedImm32(PolymorphicSlots::offsetOfSlots() + i * sizeof(Slot)), several, T9);
+            jit.moveConditionally32(CCallHelpers::Equal, T11, T12, T9, A1, A1);
+        }
+        jit.load64(slotWord(A1, 0), T11);
+        Jump isThatOne = jit.branch32(CCallHelpers::Equal, T11, T12);
 
         // No entry matches.
+        jit.move(ownSlotOfSite, A1);
         missAndUpdateCache.append(jit.branchTest32(CCallHelpers::NonZero, Address(several, PolymorphicSlots::offsetOfTimesLeftToLearnAtOnce())));
         jit.load32(Address(several, PolymorphicSlots::offsetOfMisses()), T12);
         jit.add32(TrustedImm32(1), T12);
@@ -1584,17 +1604,8 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         jit.loadPtr(Address(several, PolymorphicSlots::offsetOfName()), A2);
         getFromMegamorphicCache(jit, A2, missAndUpdateCache);
 
-        // An entry matches. From here on it is treated as the site's slot.
-        CCallHelpers::JumpList haveSlot;
-        for (unsigned i = 0; i < PolymorphicSlots::numberOfSlots; ++i) {
-            isThatOne[i].link(&jit);
-            jit.move(A1, ownSlotOfSite);
-            jit.addPtr(TrustedImm32(PolymorphicSlots::offsetOfSlots() + i * sizeof(Slot)), several, A1);
-            if (i + 1 < PolymorphicSlots::numberOfSlots)
-                haveSlot.append(jit.jump());
-        }
-        haveSlot.link(&jit);
-        jit.load64(slotWord(A1, 0), T11);
+        // An entry matches. From here on it is treated as the site's slot. T11 = its first word.
+        isThatOne.link(&jit);
         Jump isIndirectLocation = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
         jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
         jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
@@ -2981,7 +2992,7 @@ static void generateIteratorNext(CCallHelpers& jit)
     jit.loadPtr(Address(A2, JSObject::butterflyOffset()), T11);
     jit.load32(Address(T11, Butterfly::offsetOfPublicLength()), T12);
     // Unsigned comparison: the index of a finished iteration, -1, exceeds any length.
-    indexSlow.append(jit.branch32(CCallHelpers::AboveOrEqual, A0, T12));
+    Jump isAtTheEnd = jit.branch32(CCallHelpers::AboveOrEqual, A0, T12);
     indexSlow.append(jit.branch32(CCallHelpers::Equal, A0, TrustedImm32(std::numeric_limits<int32_t>::max())));
     jit.zeroExtend32ToWord(A0, T12);
     jit.load64(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), T11);
@@ -2990,6 +3001,13 @@ static void generateIteratorNext(CCallHelpers& jit)
     jit.add32(TrustedImm32(1), T12);
     jit.or64(T9, T12, A2);
     jit.move(TrustedImm32(JSValue::ValueFalse), A0);
+    handled();
+
+    // Every loop over an array ends here, so this is not left to the runtime. See JSArrayIterator::nextValueWithIndexInFrame().
+    isAtTheEnd.link(&jit);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNumber(JSArrayIterator::doneIndex))), A2);
+    jit.move(TrustedImm32(0), A1);
+    jit.move(TrustedImm32(JSValue::ValueTrue), A0);
     handled();
 
     indexSlow.link(&jit);
@@ -3008,7 +3026,6 @@ static void generateIteratorNext(CCallHelpers& jit)
     constexpr int32_t keptNext = 0;
     constexpr int32_t keptSlots = 8;
     constexpr int32_t keptResult = 16;
-    constexpr int32_t keptDone = 24;
     CCallHelpers::JumpList notObject;
     CCallHelpers::JumpList exception;
     jit.emitFunctionPrologue();
@@ -3021,7 +3038,7 @@ static void generateIteratorNext(CCallHelpers& jit)
     jit.store64(A0, Address(sp, keptResult));
     jit.loadPtr(Address(sp, keptSlots), A1);
     getWellKnownInFrameOfStub(jit, WellKnownIdentifier::Done, exception);
-    jit.store64(A0, Address(sp, keptDone));
+    // `done` is only ever tested for truthiness, so it is returned as a boolean. The caller then needs no conversion of its own.
     callStubFromStub(jit, Stub::ToBoolean);
     Jump isDone = jit.branchTest32(CCallHelpers::NonZero, A0);
     jit.load64(Address(sp, keptResult), A0);
@@ -3029,11 +3046,12 @@ static void generateIteratorNext(CCallHelpers& jit)
     jit.addPtr(TrustedImm32(sizeof(Slot)), A1);
     getWellKnownInFrameOfStub(jit, WellKnownIdentifier::Value, exception);
     jit.move(A0, A1);
+    jit.move(TrustedImm32(JSValue::ValueFalse), A0);
     Jump hasValue = jit.jump();
     isDone.link(&jit);
     jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), A1);
+    jit.move(TrustedImm32(JSValue::ValueTrue), A0);
     hasValue.link(&jit);
-    jit.load64(Address(sp, keptDone), A0);
     jit.load64(Address(sp, keptNext), A2);
     jit.emitFunctionEpilogue();
     jit.ret();
@@ -3633,7 +3651,9 @@ static constexpr Stub stubsWithAnyRegisterOperand[] = { Stub::WriteBarrier, Stub
     Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
     Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringEqualTo, Stub::GetLength, Stub::HelperAddField,
     Stub::ReadSlot0, Stub::ReadSlot1, Stub::ReadSlot2, Stub::ReadSlot3, Stub::ReadSlot4, Stub::ReadSlot5, Stub::ReadSlot6, Stub::ReadSlot7,
-    Stub::ReadSlotOrUndefined0, Stub::ReadSlotOrUndefined1, Stub::ReadSlotOrUndefined2, Stub::ReadSlotOrUndefined3, Stub::ReadSlotOrUndefined4, Stub::ReadSlotOrUndefined5, Stub::ReadSlotOrUndefined6, Stub::ReadSlotOrUndefined7 };
+    Stub::ReadSlot8, Stub::ReadSlot9, Stub::ReadSlot10, Stub::ReadSlot11, Stub::ReadSlot12, Stub::ReadSlot13, Stub::ReadSlot14, Stub::ReadSlot15,
+    Stub::ReadSlotOrUndefined0, Stub::ReadSlotOrUndefined1, Stub::ReadSlotOrUndefined2, Stub::ReadSlotOrUndefined3, Stub::ReadSlotOrUndefined4, Stub::ReadSlotOrUndefined5, Stub::ReadSlotOrUndefined6, Stub::ReadSlotOrUndefined7,
+    Stub::ReadSlotOrUndefined8, Stub::ReadSlotOrUndefined9, Stub::ReadSlotOrUndefined10, Stub::ReadSlotOrUndefined11, Stub::ReadSlotOrUndefined12, Stub::ReadSlotOrUndefined13, Stub::ReadSlotOrUndefined14, Stub::ReadSlotOrUndefined15 };
 // So are these operations, which are already entered through a thunk that sets T9.
 struct OperationWithAnyRegisterOperand {
     Stub stub;

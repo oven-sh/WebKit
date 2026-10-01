@@ -190,6 +190,14 @@ namespace AOT {
     v(LayoutIDsOfFieldsInSlot5) \
     v(LayoutIDsOfFieldsInSlot6) \
     v(LayoutIDsOfFieldsInSlot7) \
+    v(LayoutIDsOfFieldsInSlot8) \
+    v(LayoutIDsOfFieldsInSlot9) \
+    v(LayoutIDsOfFieldsInSlot10) \
+    v(LayoutIDsOfFieldsInSlot11) \
+    v(LayoutIDsOfFieldsInSlot12) \
+    v(LayoutIDsOfFieldsInSlot13) \
+    v(LayoutIDsOfFieldsInSlot14) \
+    v(LayoutIDsOfFieldsInSlot15) \
     /* Host functions that compiled code knows when it sees them (CallIntrinsic). */ \
     v(HostMathSqrt) \
     v(HostMathAbs) \
