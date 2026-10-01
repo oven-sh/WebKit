@@ -1243,10 +1243,10 @@ private:
     {
         char32_t ch = consumePossibleSurrogatePair<UnicodeParseContext::PatternCodePoint>();
 
-        if (!ch) {
-            m_errorCode = ErrorCode::InvalidClassSetCharacter;
-            return errorCodePoint;
-        }
+        // U+0000 is an ordinary ClassSetCharacter. Return it before the strchr() checks below,
+        // which would match it against the string terminator.
+        if (!ch)
+            return ch;
 
         if (isASCII(ch)) {
             // Check if the character is part of ClassSetSyntaxCharacter.
