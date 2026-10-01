@@ -115,7 +115,7 @@ sigwait => (set(), None, 12, None, 10, [], [], [10, 12], [])
 signal's own => (set(), {<Signals.SIGUSR1: 10>}, set())
 ---- timers
 setitimer => ((0.0, 0.0), [14], (0.0, 0.0))
-over and over => ((0.0, 0.0), [14, 14, 14], 0.005, (0.0, 0.0))
+over and over => ((0.0, 0.0), [14, 14, 14], 0.005, (0.0, 0.0), [])
 what there was => ((0.0, 0.0), [(True, 50.0)], [(True, 2.25)], None)
 rounded up => ((0.0, 0.0), 1e-06, None, 1.000001)
 of the time that the process uses => ((0.0, 0.0), [26], (0.0, 0.0), [27])

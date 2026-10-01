@@ -143,14 +143,15 @@ def wait_for(count, seconds=5):
     end = time.monotonic() + seconds
     while len(seen) < count and time.monotonic() < end:
         pass
-    return [n for n, *_ in took()]
+    # A timer that goes on may have gone off again since.
+    return [n for n, *_ in took()][:count]
 
 
 _signal.signal(_signal.SIGALRM, handler)
 _signal.signal(_signal.SIGVTALRM, handler)
 _signal.signal(_signal.SIGPROF, handler)
 t("setitimer", lambda: (_signal.setitimer(_signal.ITIMER_REAL, 0.01), wait_for(1), _signal.getitimer(_signal.ITIMER_REAL)))
-t("over and over", lambda: (_signal.setitimer(_signal.ITIMER_REAL, 0.005, 0.005), wait_for(3), [round(v, 3) for v in _signal.setitimer(_signal.ITIMER_REAL, 0)][1], _signal.getitimer(_signal.ITIMER_REAL)))
+t("over and over", lambda: (_signal.setitimer(_signal.ITIMER_REAL, 0.005, 0.005), wait_for(3), [round(v, 3) for v in _signal.setitimer(_signal.ITIMER_REAL, 0)][1], _signal.getitimer(_signal.ITIMER_REAL), took()[:0]))
 t("what there was", lambda: (_signal.setitimer(_signal.ITIMER_REAL, 100, 50), [(99 < a <= 100, b) for a, b in [_signal.setitimer(_signal.ITIMER_REAL, 0)]], [(99 < a <= 100, b) for _ in [_signal.setitimer(_signal.ITIMER_REAL, 100.5, 2.25)] for a, b in [(_signal.getitimer(_signal.ITIMER_REAL)[0] - 0.5, _signal.getitimer(_signal.ITIMER_REAL)[1])]], _signal.setitimer(_signal.ITIMER_REAL, 0) and None))
 t("rounded up", lambda: (_signal.setitimer(_signal.ITIMER_REAL, 100, 1e-9), _signal.setitimer(_signal.ITIMER_REAL, 0)[1], _signal.setitimer(_signal.ITIMER_REAL, 100, 1.0000001) and None, _signal.setitimer(_signal.ITIMER_REAL, 0)[1]))
 t("of the time that the process uses", lambda: (_signal.setitimer(_signal.ITIMER_VIRTUAL, 0.01), wait_for(1), _signal.setitimer(_signal.ITIMER_PROF, 0.01), wait_for(1)))
