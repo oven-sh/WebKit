@@ -93,7 +93,8 @@ JSValue longFromDouble(JSGlobalObject* globalObject, double value)
     return intFromDouble(globalObject, value);
 }
 
-// _PyLong_GCD(), of ints. What it comes to is never less than nothing.
+} // namespace
+
 JSValue greatestCommonDivisor(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -105,6 +106,8 @@ JSValue greatestCommonDivisor(JSGlobalObject* globalObject, JSValue a, JSValue b
     }
     RELEASE_AND_RETURN(scope, absoluteOfInt(globalObject, a));
 }
+
+namespace {
 
 // _PyLong_Frexp(), of an int that is more than nothing: it is x * 2 ** exponent, as nearly as a double can say, with x at least a half and less than one.
 double frexpOfInt(JSGlobalObject* globalObject, JSValue integer, int64_t& exponent)

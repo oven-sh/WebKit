@@ -165,6 +165,10 @@ void deleteAttribute(JSGlobalObject*, JSValue, PropertyName);
 // object.__setattr__, which deletes if the value is empty.
 JSValue genericGetAttribute(JSGlobalObject*, JSValue, PropertyName);
 void genericSetAttribute(JSGlobalObject*, JSValue, PropertyName, JSValue);
+// PyObject_GenericGetAttr() and PyObject_GenericSetAttr(), for a class written in C++ whose __getattribute__() or __setattr__() has something of its own to say first and leaves the rest to these. The first raises if there is none,
+// and is empty then. The second deletes if the value is empty.
+JSValue getAttributeAsObjectDoes(JSGlobalObject*, JSValue self, const Identifier& name);
+void setAttributeAsObjectDoes(JSGlobalObject*, JSValue self, const Identifier& name, JSValue);
 JSValue loadMethod(JSGlobalObject*, JSValue base, PropertyName, JSValue& self);
 // A special method, which is looked for in the type and not in the instance. Empty if the type has none. `self` as for loadMethod.
 JSValue lookupSpecial(JSGlobalObject*, JSValue, PropertyName, JSValue& self);
@@ -376,6 +380,7 @@ JSValue newType(JSGlobalObject*, PyType* metatype, JSValue name, PyTuple* bases,
 void checkNameOfType(JSGlobalObject*, JSValue name);
 // PyErr_NewException("module.name", base, NULL): a class made as a class statement in that module would make it. Null if it raised.
 PyType* newException(JSGlobalObject*, ASCIILiteral module, ASCIILiteral name, PyType* base);
+PyType* newException(JSGlobalObject*, ASCIILiteral module, ASCIILiteral name, std::initializer_list<PyType*> bases);
 // isinstance() and issubclass(), which a class can have its own idea of.
 bool isInstanceOf(JSGlobalObject*, JSValue, JSValue classInfo);
 

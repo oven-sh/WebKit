@@ -2083,6 +2083,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PythonCommonNames.h
     python/PythonCompiler.h
     python/PythonConfiguration.h
+    python/PythonContextVars.h
     python/PythonFileOperations.h
     python/PythonFunctionInfo.h
     python/PythonHashlib.h
@@ -2108,6 +2109,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PythonThreadModule.h
     python/PythonTime.h
     python/PythonToken.h
+    python/PythonUnicodeType.h
     python/PythonWarnings.h
 
     ffi/BunFFI.h

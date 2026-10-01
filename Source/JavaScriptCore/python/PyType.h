@@ -153,6 +153,11 @@ public:
     // than builtins that is `types.GenericAlias`, and its __name__ and its __module__ are the two parts of that.
     String nameString(JSGlobalObject*) const;
     String nameWithoutModule(JSGlobalObject*) const;
+    // What CPython's account of a built-in class is filed under, in PythonSignatures.h. It is its name, or if another class had that name first, as contextvars.Context had it before decimal.Context, its name with where it is from.
+    // Null for a class that is not built in.
+    ASCIILiteral describedAs() const { return m_describedAs; }
+    // For one that is made as a class statement makes one and then given what is written in C++, as ast.AST is
+    void setDescribedAs(ASCIILiteral key) { m_describedAs = key; }
     String moduleOfBuiltin() const; // Null for one of builtins, and for one that is not built in.
     Layout layout() const { return m_layout; }
 
@@ -169,6 +174,12 @@ public:
     using Allocator = JSObject* (*)(VM&, Structure*);
     Allocator allocator() const { return m_allocator; }
     void setAllocator(Allocator allocator) { m_allocator = allocator; }
+
+    // nb_power, for a class that is built in: what pow() comes to, given its three arguments as they were written. Any of them may be the instance, and it may be only the third, which neither __pow__() nor __rpow__() is ever asked
+    // about. It gives NotImplemented for what it can make nothing of, and is empty if it raised. The __pow__() and the __rpow__() of the class are this as well.
+    using PowerFunction = JSValue (*)(JSGlobalObject*, JSValue base, JSValue exponent, JSValue modulus);
+    PowerFunction powerFunction() const { return m_powerFunction; }
+    void setPowerFunction(PowerFunction function) { m_powerFunction = function; }
 
     // tp_vectorcall: what calling the class does, for one that is built in and is called so often that CPython has that done without looking for __new__() and __init__(). A class that is derived from it does not have it.
     // It is given what there is if none of it is by name, and comes back with nothing, and nothing raised, for what it leaves to those two. That is whatever is out of the ordinary, and all that is wrong.
@@ -301,6 +312,7 @@ private:
     WriteBarrier<PyTuple> m_bases;
     WriteBarrier<PyTuple> m_mro;
     ASCIILiteral m_dottedName; // Null unless it is such a one.
+    ASCIILiteral m_describedAs;
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_javaScriptConstructor;
     WriteBarrier<JSObject> m_javaScriptPrototype;
@@ -316,6 +328,7 @@ private:
     int m_weakReferenceOffset { 0 };
     unsigned long m_flagsForPython { 0 };
     Allocator m_allocator { nullptr };
+    PowerFunction m_powerFunction { nullptr };
     Vectorcall m_vectorcall { nullptr };
     bool m_isCPythons { false }; // It is built in, and is a class that CPython has, so that those are what CPython says of it.
     ErrorType m_errorType { ErrorType::Error };

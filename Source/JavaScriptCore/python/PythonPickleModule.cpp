@@ -77,34 +77,6 @@ JSValue getAttributeByPath(JSGlobalObject* globalObject, JSValue object, const M
     return object;
 }
 
-JSValue getAttributeAsObjectDoes(JSGlobalObject* globalObject, JSValue self, const Identifier& name)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue value = genericGetAttribute(globalObject, self, name);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (value)
-        return value;
-    raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, self), "' object has no attribute '"_s, name.string(), '\''));
-    scope.release();
-    setAttributeErrorContext(globalObject, self, name);
-    return { };
-}
-
-void setAttributeAsObjectDoes(JSGlobalObject* globalObject, JSValue self, const Identifier& name, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // What is said of there being nowhere to put it is shorter where it is not object's own __setattr__() that was asked.
-    PyType* type = typeOf(globalObject, self);
-    if (!type->hasFlag(PyType::HasInstanceDict) && !type->lookup(vm, name)) {
-        raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, self), "' object has no attribute '"_s, name.string(), '\''));
-        scope.release();
-        setAttributeErrorContext(globalObject, self, name);
-        return;
-    }
-    RELEASE_AND_RETURN(scope, genericSetAttribute(globalObject, self, name, value));
-}
-
 // _Pickle_InitState()
 static void initializeState(JSGlobalObject* globalObject, PickleModuleState& state)
 {

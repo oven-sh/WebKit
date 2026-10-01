@@ -272,7 +272,8 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     if (PyRealm* realm = globalObject->pyRealm(); function->takesArgumentsOfTheClass() && implicit && (function->owner() == realm->typeSet() || function->owner() == realm->typeFrozenSet()))
         name = (isClass(args[0]) ? asType(args[0]) : typeOf(globalObject, args[0]))->nameWithoutModule(globalObject);
 
-    if (function->kind() == PyNativeFunction::Kind::Wrapper && !function->takesArgumentsOfTheClass()) {
+    // The wrappers of __init__() and __call__() hand on whatever they are given, and it is the slot that takes it apart.
+    if (function->kind() == PyNativeFunction::Kind::Wrapper && !function->takesArgumentsOfTheClass() && !function->takesArgumentsByParseTuple()) {
         if (signature.family() == NativeSignature::Family::Unchecked)
             return true;
         if (keywordCount)
@@ -316,6 +317,9 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
             return !given && !keywordCount ? true : fail(concatenate(name, "() takes no arguments"_s));
         family = NativeSignature::Family::Keywords;
     }
+    // What does not say what it is called, in what it takes its arguments apart by, is "function", or "this function" where something is said to have been done to it. A signature says so by "?" for the name.
+    bool isAnonymous = signature.functionName() == "?"_s;
+    String called = isAnonymous ? String("function"_s) : concatenate(name, "()"_s);
     // vgetargs1() of CPython's Python/getargs.c
     if (function->takesArgumentsByParseTuple() && family != NativeSignature::Family::Keywords) {
         if (keywordCount)
@@ -324,7 +328,7 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
         if (signature.hasVarPositional() || (given >= minimum && given <= maximum))
             return true;
         unsigned bound = given < minimum ? minimum : maximum;
-        return fail(concatenate(name, "() takes "_s, minimum == maximum ? "exactly "_s : given < minimum ? "at least "_s : "at most "_s, bound, " argument"_s, plural(bound), " ("_s, given, " given)"_s));
+        return fail(concatenate(called, " takes "_s, minimum == maximum ? "exactly "_s : given < minimum ? "at least "_s : "at most "_s, bound, " argument"_s, plural(bound), " ("_s, given, " given)"_s));
     }
     switch (family) {
     case NativeSignature::Family::Unchecked:
@@ -351,9 +355,6 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     }
 
     // _PyArg_UnpackKeywords() of CPython's Python/getargs.c
-    // What does not say what it is called, in what it takes its arguments apart by, is "function", or "this function" where something is said to have been done to it. A signature says so by "?" for the name.
-    bool isAnonymous = signature.functionName() == "?"_s;
-    String called = isAnonymous ? String("function"_s) : concatenate(name, "()"_s);
     String subject = isAnonymous ? String("this function"_s) : called;
     auto& names = signature.names();
     unsigned positionalOnly = signature.positionalOnlyCount();

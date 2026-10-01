@@ -56,9 +56,8 @@ void addMethods(JSGlobalObject* globalObject, PyType* type, std::initializer_lis
 
 void addMethodsThatCPythonHas(JSGlobalObject* globalObject, PyType* type, std::initializer_list<MethodDefinition> methods)
 {
-    String typeName = type->nameWithoutModule(globalObject);
     for (auto& method : methods) {
-        if (findAttributeDescription(typeName, method.name))
+        if (findAttributeDescription(type->describedAs(), method.name))
             addMethods(globalObject, type, { method });
     }
 }
@@ -1951,7 +1950,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     addGetSet(globalObject, type, "__text_signature__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
         VM& vm = globalObject->vm();
         if (!asType(self)->hasFlag(PyType::IsHeapType)) {
-            auto* description = findTypeDescription(asType(self)->nameWithoutModule(globalObject));
+            auto* description = findTypeDescription(asType(self)->describedAs());
             return description && !description->signature.isNull() ? JSValue(jsString(vm, String(description->signature))) : jsUndefined();
         }
         // _PyType_GetTextSignatureFromInternalDoc(): a class of a program's says it as those written in C do, at the start of its docstring. "Name(a, b)\n--\n\n"

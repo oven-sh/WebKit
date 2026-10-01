@@ -637,6 +637,12 @@ JSValue contextVariableValue(JSGlobalObject* globalObject, JSObject* variable)
     return asNativeObject(variable)->field(VariableDefault);
 }
 
+void setContextVariableValue(JSGlobalObject* globalObject, JSObject* variable, JSValue value)
+{
+    VariableMap* map = currentMap(globalObject);
+    changeCurrentMap(globalObject, map, mapWith(globalObject, map, variable, value));
+}
+
 PYTHON_NATIVE(variableHash)
 {
     NATIVE_PROLOGUE();

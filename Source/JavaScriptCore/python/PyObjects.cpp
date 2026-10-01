@@ -304,7 +304,7 @@ PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject,
     if (owner && isType(owner)) {
         // It may be that CPython has it in a class that this one is derived from, and has no need of another.
         for (auto& ancestor : asType(owner)->mro()->span()) {
-            description = Python::findAttributeDescription(asType(ancestor.get())->nameWithoutModule(globalObject), name);
+            description = Python::findAttributeDescription(asType(ancestor.get())->describedAs(), name);
             if (description)
                 break;
         }
@@ -319,7 +319,7 @@ PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject,
     } else
         description = Python::findFunctionDescription(emptyString(), name);
     if (arguments == Arguments::AreThoseOfTheClass || arguments == Arguments::AreThoseOfTheClassButNotChecked) {
-        auto* typeDescription = Python::findTypeDescription(asType(owner)->nameWithoutModule(globalObject));
+        auto* typeDescription = Python::findTypeDescription(asType(owner)->describedAs());
         if (signature.isNull() && typeDescription)
             signature = typeDescription->signature;
         // One that does not say is left to see to them itself.
@@ -754,7 +754,7 @@ PyGetSetDescriptor* PyGetSetDescriptor::create(JSGlobalObject* globalObject, PyT
     PyRealm* realm = globalObject->pyRealm();
     // Which of the two it is called is as CPython has it, if it has it.
     // A class that is written in Python may be called what a built-in one is.
-    const Python::BuiltinDescription* description = owner->hasFlag(PyType::IsHeapType) ? nullptr : Python::findAttributeDescription(owner->nameWithoutModule(globalObject), name);
+    const Python::BuiltinDescription* description = owner->hasFlag(PyType::IsHeapType) ? nullptr : Python::findAttributeDescription(owner->describedAs(), name);
     if (description) {
         isMember = description->kind == Python::BuiltinDescription::Kind::MemberDescriptor;
         doc = description->doc;

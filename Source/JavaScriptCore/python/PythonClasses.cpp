@@ -301,13 +301,18 @@ JSValue callWithKeywordDict(JSGlobalObject* globalObject, JSValue callable, Mark
     RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, callable, arguments, names));
 }
 
-PyType* newException(JSGlobalObject* globalObject, ASCIILiteral module, ASCIILiteral name, PyType* base)
+PyType* newException(JSGlobalObject* globalObject, ASCIILiteral module, ASCIILiteral name, PyType* base) { return newException(globalObject, module, name, { base }); }
+
+PyType* newException(JSGlobalObject* globalObject, ASCIILiteral module, ASCIILiteral name, std::initializer_list<PyType*> bases)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyDict* contents = PyDict::create(globalObject);
     contents->setString(globalObject, "__module__"_s, jsNontrivialString(vm, module));
-    JSValue type = newType(globalObject, globalObject->pyRealm()->typeType(), jsNontrivialString(vm, name), PyTuple::create(globalObject, { base }), contents, nullptr);
+    MarkedArgumentBuffer classes;
+    for (PyType* base : bases)
+        classes.append(base);
+    JSValue type = newType(globalObject, globalObject->pyRealm()->typeType(), jsNontrivialString(vm, name), PyTuple::createFromArguments(globalObject, classes), contents, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return asType(type);
 }

@@ -51,9 +51,9 @@ import json
 import sys
 
 # The modules that are written in C++ here, or that a host is to write.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource", "_symtable", "_csv", "_socket", "_asyncio", "fcntl", "termios", "gc", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "_scproxy", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd", "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw", "_suggestions", "_json", "_stat", "_statistics", "_sysconfig", "_types", "_pickle", "_datetime", "_zoneinfo"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource", "_symtable", "_csv", "_socket", "_asyncio", "fcntl", "termios", "gc", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "_scproxy", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd", "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw", "_suggestions", "_json", "_stat", "_statistics", "_sysconfig", "_types", "_pickle", "_datetime", "_zoneinfo", "_decimal"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
-MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools", "_csv", "_socket", "_asyncio", "signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd", "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw", "ssl", "sqlite3", "compression.zstd", "_multibytecodec", "_json", "_pickle", "_datetime", "datetime", "_zoneinfo", "zoneinfo")
+MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools", "_csv", "_socket", "_asyncio", "signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd", "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw", "ssl", "sqlite3", "compression.zstd", "_multibytecodec", "_json", "_pickle", "_datetime", "datetime", "_zoneinfo", "zoneinfo", "_decimal", "decimal")
 
 
 def generator():
@@ -127,9 +127,15 @@ types = {}
 
 def add_type(a_type):
     is_heap_type = a_type.__flags__ & (1 << 9)
-    if a_type.__name__ in types or (is_heap_type and a_type.__module__ not in MODULES_OF_CLASSES and a_type is not _ast.AST):
+    if is_heap_type and a_type.__module__ not in MODULES_OF_CLASSES and a_type is not _ast.AST:
         return
-    types[a_type.__name__] = a_type
+    # Two classes can have the same name, as decimal.Context and contextvars.Context do. The one that is come to second goes by where it is from as well.
+    name = a_type.__name__
+    if name in types and types[name] is not a_type:
+        name = a_type.__module__ + "." + name
+    if name in types:
+        return
+    types[name] = a_type
     for base in a_type.__bases__:
         add_type(base)
 
@@ -163,6 +169,12 @@ add_type(type(__import__("abc").ABC._abc_impl))
 add_type(type(__import__("functools").cmp_to_key(len)))
 add_type(type(__import__("sqlite3").connect(":memory:")("select 1")))
 add_type(type(__import__("_codecs_tw").getcodec("big5")))
+# After contextvars.Context, which had the name first.
+for value in vars(__import__("_decimal")).values():
+    if isinstance(value, type):
+        add_type(value)
+add_type(type(__import__("_decimal").localcontext()))
+add_type(type(__import__("_decimal").getcontext().flags).__mro__[1])
 
 
 class Loop:
@@ -203,6 +215,9 @@ for name, a_type in types.items():
         kind = type(value).__name__
         if kind == "staticmethod":
             value = value.__func__
+            # The __new__() of what namedtuple() made, which a module written in C can call as well as any
+            if type(value).__name__ == "function":
+                continue
         if kind in ("wrapper_descriptor", "method_descriptor", "classmethod_descriptor", "builtin_function_or_method", "staticmethod"):
             entries.append([name + "." + attribute, kind, text(value.__text_signature__), text(value.__doc__)])
         elif kind in ("getset_descriptor", "member_descriptor"):
@@ -221,7 +236,7 @@ for name in MODULES:
         if type(value).__name__ == "builtin_function_or_method":
             entries.append([name + ":" + attribute, "builtin_function_or_method", text(value.__text_signature__), text(value.__doc__)])
         # Something to read, that is not the module's __doc__: _heapq.__about__
-        elif isinstance(value, str) and attribute.startswith("__") and attribute not in ("__name__", "__doc__", "__package__", "__file__"):
+        elif isinstance(value, str) and attribute.startswith("__") and attribute not in ("__name__", "__doc__", "__package__", "__file__", "__libmpdec_version__"):
             entries.append([name + ":" + attribute, "text", None, text(value)])
 
 # The functions that belong to no module.

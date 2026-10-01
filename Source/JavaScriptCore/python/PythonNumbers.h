@@ -65,6 +65,7 @@ std::optional<int> numberCompare(const Number&, const Number&, bool& isUnordered
 JSValue normalizeBigInt(JSValue);
 JSBigInt* toBigInt(JSGlobalObject*, const Number&);
 int64_t bitLengthOfInt(const Number&); // int.bit_length()
+JSValue greatestCommonDivisor(JSGlobalObject*, JSValue, JSValue); // _PyLong_GCD(), of ints. What it comes to is never less than nothing. Empty if it raised.
 // An int, from how large it is written in base 2**64 with the least first, and the other way about. There may be noughts at the top of what is given, and there are none at the top of what is returned, so nought is
 // nothing at all. The first is empty if there is no room for it, and then MemoryError has been raised.
 JSValue intFromDigits(JSGlobalObject*, std::span<const uint64_t>, bool isNegative = false);

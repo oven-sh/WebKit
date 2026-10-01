@@ -1390,6 +1390,17 @@ The six programs `programs/datetime-*.py` are 23,000 lines of what CPython does:
 `fromisoformat()`; what a `tzinfo` can give and what is made of it; classes derived from each; each half hour of the days on which the clocks are changed in ten places, by the clock and by the timestamp; and what each class has in it,
 with what is said when each method is called wrongly.
 
+### What a host's module written in C++ wanted of the engine: `_decimal`
+
+`_decimal` is over libmpdec, which the host has, so it is the host's (in Bun, `src/jsc/bindings/python/PythonDecimal*.cpp`). What it needed here is for any class written in C++:
+
+- **Two classes can have the same name**, as `decimal.Context` and `contextvars.Context` do, and what CPython says of a built-in class was looked up by its name alone. The one that `lib/dump-builtin-descriptions.py` comes to second is filed
+  under where it is from as well, and a class knows what it is filed under: `PyType::describedAs()`. `sqlite3.Warning` had the docstring of `Warning` until then.
+- **`nb_power`**: `pow(2, 3, Decimal(5))` is 3. `ternary_op()` asks the class of each of the three in turn, and the third may be the only one that knows how, which neither `__pow__()` nor `__rpow__()` is ever asked about. So a built-in class
+  can have the slot itself, `PyType::setPowerFunction()`, given the three as they were written. Weak proxies have it too. `programs/pow-of-three-where-only-the-last-knows-how.py`.
+- **The wrapper of `__init__()` hands on keywords** to a slot that takes its own tuple and dict apart (`Arguments::AreCheckedAsByParseTuple`), and such a function that gives `PyArg_ParseTuple()` no name is "function" in what is said.
+- `setContextVariableValue()`, `newException()` with several bases, `greatestCommonDivisor()`, and `getAttributeAsObjectDoes()` and `setAttributeAsObjectDoes()`, which were `_pickle`'s own.
+
 ### `_zoneinfo`
 
 `Modules/_zoneinfo.c`, function for function (`PythonZoneInfoModule.cpp`). What is in a file of the time zone database is read by `zoneinfo._common`, which is written in Python, here as there. What this has is what is made of it, and which

@@ -526,7 +526,18 @@ static JSValue inverseModulo(JSGlobalObject* globalObject, JSValue value, JSValu
 }
 
 // What a class has for pow() with three arguments: nb_power. A class derived from one of the built-in ones has what that has, unless it says something of its own.
-enum class PowerSlot : uint8_t { None, Int, Float, Complex, Methods };
+struct PowerSlot {
+    enum Kind : uint8_t { None, Int, Float, Complex, Methods, Native };
+    PowerSlot(Kind kind, PyType::PowerFunction native = nullptr)
+        : kind(kind)
+        , native(native)
+    {
+    }
+    bool operator==(const PowerSlot&) const = default;
+
+    Kind kind;
+    PyType::PowerFunction native; // Of some other class that is written in C++
+};
 
 static PowerSlot powerSlotOf(JSGlobalObject* globalObject, PyType* type)
 {
@@ -550,6 +561,8 @@ static PowerSlot powerSlotOf(JSGlobalObject* globalObject, PyType* type)
         return PowerSlot::Float;
     if (owner == realm->typeComplex())
         return PowerSlot::Complex;
+    if (auto native = asType(owner)->powerFunction())
+        return { PowerSlot::Native, native };
     return PowerSlot::Methods;
 }
 
@@ -604,9 +617,11 @@ JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSVa
     JSValue notImplemented = globalObject->pyRealm()->notImplemented();
     auto isNumber = [&] (JSValue value) { return classify(value) || isInstance(globalObject, value, globalObject->pyRealm()->typeComplex()); };
     auto apply = [&] (PowerSlot slot) -> JSValue {
-        switch (slot) {
+        switch (slot.kind) {
         case PowerSlot::None:
             break;
+        case PowerSlot::Native:
+            return slot.native(globalObject, base, exponent, modulus);
         case PowerSlot::Int:
             // long_pow()
             if (!classify(base).isInt() || !classify(exponent).isInt() || !classify(modulus).isInt())

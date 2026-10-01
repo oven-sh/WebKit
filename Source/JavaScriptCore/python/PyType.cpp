@@ -106,12 +106,13 @@ PyType* PyType::createBuiltin(VM& vm, JSGlobalObject* globalObject, ASCIILiteral
         type->m_dottedName = name;
         name = ASCIILiteral::fromLiteralUnsafe(name.characters() + dot + 1);
     }
+    type->m_describedAs = !type->m_dottedName.isNull() && Python::findTypeLayout(type->m_dottedName) ? type->m_dottedName : name;
     type->m_originalName.set(vm, type, jsString(vm, String(name)));
     type->m_base.setMayBeNull(vm, type, base);
     type->m_layout = layout;
     type->m_flags = flags;
     // One that is not CPython's is as its base is.
-    if (auto* cpython = Python::findTypeLayout(name)) {
+    if (auto* cpython = Python::findTypeLayout(type->m_describedAs)) {
         type->m_basicSize = cpython->basicSize;
         type->m_itemSize = cpython->itemSize;
         type->m_dictOffset = cpython->dictOffset;

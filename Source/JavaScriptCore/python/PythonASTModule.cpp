@@ -480,6 +480,7 @@ static void initializeASTState(JSGlobalObject* globalObject, ASTState& state)
         state.classes[0].set(vm, realm, type);
         // It is only AST itself that says what module it is in.
         type->setDottedName("ast.AST"_s);
+        type->setDescribedAs("AST"_s);
         using Kind = PyNativeFunction::Kind;
         addGenericGetAttribute(globalObject, type);
         addGenericSetAttribute(globalObject, type);

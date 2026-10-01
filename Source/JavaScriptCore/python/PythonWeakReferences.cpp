@@ -274,6 +274,17 @@ PYTHON_NATIVE(proxyPower)
     RELEASE_AND_RETURN(scope, JSValue::encode(power(globalObject, self, other, modulus)));
 }
 
+// proxy_pow()
+static JSValue proxyPowerSlot(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSValue modulus)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    for (JSValue* value : { &base, &exponent, &modulus }) {
+        *value = unwrap(globalObject, *value);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, power(globalObject, base, exponent, modulus));
+}
+
 enum class Unary : uint8_t { Negative, Positive, Absolute, Invert, Int, Float, Index, Str, Iter, Bytes, Reversed };
 
 PYTHON_NATIVE(proxyUnary)
@@ -519,6 +530,7 @@ void initializeWeakReferenceTypes(JSGlobalObject* globalObject)
             for (auto [name, form] : { std::pair { &names.method(op), Form::Plain }, std::pair { &names.reflectedMethod(op), Form::Reflected }, std::pair { &names.inPlaceMethod(op), Form::InPlace } })
                 proxy->putDirect(vm, *name, PyNativeFunction::create(vm, globalObject, 1, name->string(), proxyBinary, Kind::Method, proxy, pack(op, form)));
         }
+        proxy->setPowerFunction(proxyPowerSlot);
         addMethods(globalObject, proxy, {
             { "__divmod__"_s, proxyDivmod, Kind::Method, pack(0, Form::Plain) },
             { "__rdivmod__"_s, proxyDivmod, Kind::Method, pack(0, Form::Reflected) },

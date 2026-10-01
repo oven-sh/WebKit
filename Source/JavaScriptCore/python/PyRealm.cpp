@@ -212,7 +212,7 @@ static void putDocOfBuiltinType(VM& vm, JSGlobalObject* globalObject, PyType* ty
 {
     if (type->getDirect(vm, vm.pythonNames().dunder_doc))
         return;
-    auto* description = Python::findTypeDescription(type->nameWithoutModule(globalObject));
+    auto* description = Python::findTypeDescription(type->describedAs());
     type->putDirect(vm, vm.pythonNames().dunder_doc, description && !description->doc.isNull() ? JSValue(jsString(vm, String(description->doc))) : jsUndefined());
 }
 

@@ -190,11 +190,6 @@ PickleModuleState& pickleModuleState(JSGlobalObject*);
 void appendDottedPath(JSGlobalObject*, JSValue name, MarkedArgumentBuffer&);
 JSValue getAttributeByPath(JSGlobalObject*, JSValue object, const MarkedArgumentBuffer& names, bool raises);
 
-// PyObject_GenericGetAttr(), for a class that has something of its own to say first. Empty if it raised.
-JSValue getAttributeAsObjectDoes(JSGlobalObject*, JSValue self, const Identifier& name);
-// PyObject_GenericSetAttr(), likewise. An empty value deletes.
-void setAttributeAsObjectDoes(JSGlobalObject*, JSValue self, const Identifier& name, JSValue);
-
 // ---- pickle.PickleBuffer
 
 void initializePickleBufferType(JSGlobalObject*);

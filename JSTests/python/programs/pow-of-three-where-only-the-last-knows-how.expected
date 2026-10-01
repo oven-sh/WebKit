@@ -1,0 +1,452 @@
+pow(2, 3, 5) with proxies 0 -> 3
+pow(2, 3, 5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 5) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 5) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, P) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'int', 'P'"
+pow(2, 3, P) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, P) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, P) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, P) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'int', 'P'"
+pow(2, 3, P) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, P) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, P) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, N) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'int', 'N'"
+pow(2, 3, N) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, N) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, N) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, N) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'int', 'N'"
+pow(2, 3, N) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, N) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, N) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, None) with proxies 0 -> 8
+pow(2, 3, None) with proxies 1 -> 8.0
+pow(2, 3, None) with proxies 2 -> 8.0
+pow(2, 3, None) with proxies 3 -> 8.0
+pow(2, 3, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 1.5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 3, 1.5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, 5) with proxies 0 -> ('rpow', 7, 2, 5)
+pow(2, P, 5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, 5) with proxies 2 -> ('rpow', 7, 2, 5)
+pow(2, P, 5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, 5) with proxies 4 -> ('rpow', 7, 2, <weakproxy at 0x; to 'I' at 0x>)
+pow(2, P, 5) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, 5) with proxies 6 -> ('rpow', 7, 2, 5.0)
+pow(2, P, 5) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, P) with proxies 0 -> ('rpow', 7, 2, <__main__.P object at 0x>)
+pow(2, P, P) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, P) with proxies 2 -> ('rpow', 7, 2, <__main__.P object at 0x>)
+pow(2, P, P) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, P) with proxies 4 -> ('rpow', 7, 2, <weakproxy at 0x; to 'P' at 0x>)
+pow(2, P, P) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, P) with proxies 6 -> ('rpow', 7, 2, <__main__.P object at 0x>)
+pow(2, P, P) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, N) with proxies 0 -> ('rpow', 7, 2, <__main__.N object at 0x>)
+pow(2, P, N) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, N) with proxies 2 -> ('rpow', 7, 2, <__main__.N object at 0x>)
+pow(2, P, N) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, N) with proxies 4 -> ('rpow', 7, 2, <weakproxy at 0x; to 'N' at 0x>)
+pow(2, P, N) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, N) with proxies 6 -> ('rpow', 7, 2, <__main__.N object at 0x>)
+pow(2, P, N) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, None) with proxies 0 -> ('rpow', 7, 2, None)
+pow(2, P, None) with proxies 1 -> ('rpow', 7, 2.0, None)
+pow(2, P, None) with proxies 2 -> ('rpow', 7, 2, None)
+pow(2, P, None) with proxies 3 -> ('rpow', 7, 2.0, None)
+pow(2, P, 1.5) with proxies 0 -> ('rpow', 7, 2, 1.5)
+pow(2, P, 1.5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, P, 1.5) with proxies 2 -> ('rpow', 7, 2, 1.5)
+pow(2, P, 1.5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 5) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'int'"
+pow(2, N, 5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 5) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'int'"
+pow(2, N, 5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 5) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 5) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, P) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'P'"
+pow(2, N, P) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, P) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'P'"
+pow(2, N, P) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, P) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'P'"
+pow(2, N, P) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, P) with proxies 6 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'P'"
+pow(2, N, P) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, N) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'N'"
+pow(2, N, N) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, N) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'N'"
+pow(2, N, N) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, N) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'N'"
+pow(2, N, N) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, N) with proxies 6 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int', 'N', 'N'"
+pow(2, N, N) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, None) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int' and 'N'"
+pow(2, N, None) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'I' and 'N'"
+pow(2, N, None) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'int' and 'N'"
+pow(2, N, None) with proxies 3 -> "TypeError: unsupported operand type(s) for ** or pow(): 'I' and 'N'"
+pow(2, N, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 1.5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, N, 1.5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 1j, 5) with proxies 0 -> 'ValueError: complex modulo'
+pow(2, 1j, 5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 1j, 5) with proxies 4 -> 'ValueError: complex modulo'
+pow(2, 1j, 5) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 1j, P) with proxies 0 -> 'ValueError: complex modulo'
+pow(2, 1j, P) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 1j, P) with proxies 4 -> 'ValueError: complex modulo'
+pow(2, 1j, P) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 1j, N) with proxies 0 -> 'ValueError: complex modulo'
+pow(2, 1j, N) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 1j, N) with proxies 4 -> 'ValueError: complex modulo'
+pow(2, 1j, N) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(2, 1j, None) with proxies 0 -> (0.7692389013639721+0.6389612763136348j)
+pow(2, 1j, None) with proxies 1 -> (0.7692389013639721+0.6389612763136348j)
+pow(2, 1j, 1.5) with proxies 0 -> 'ValueError: complex modulo'
+pow(2, 1j, 1.5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(P, 3, 5) with proxies 0 -> ('pow', 7, 3, 5)
+pow(P, 3, 5) with proxies 1 -> ('pow', 7, 3, 5)
+pow(P, 3, 5) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'I' at 0x>, 5)
+pow(P, 3, 5) with proxies 3 -> ('pow', 7, 3.0, 5)
+pow(P, 3, 5) with proxies 4 -> ('pow', 7, 3, <weakproxy at 0x; to 'I' at 0x>)
+pow(P, 3, 5) with proxies 5 -> ('pow', 7, 3, 5.0)
+pow(P, 3, 5) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'I' at 0x>, <weakproxy at 0x; to 'I' at 0x>)
+pow(P, 3, 5) with proxies 7 -> ('pow', 7, 3.0, 5.0)
+pow(P, 3, P) with proxies 0 -> ('pow', 7, 3, <__main__.P object at 0x>)
+pow(P, 3, P) with proxies 1 -> ('pow', 7, 3, <__main__.P object at 0x>)
+pow(P, 3, P) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'I' at 0x>, <__main__.P object at 0x>)
+pow(P, 3, P) with proxies 3 -> ('pow', 7, 3.0, <__main__.P object at 0x>)
+pow(P, 3, P) with proxies 4 -> ('pow', 7, 3, <weakproxy at 0x; to 'P' at 0x>)
+pow(P, 3, P) with proxies 5 -> ('pow', 7, 3, <__main__.P object at 0x>)
+pow(P, 3, P) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'I' at 0x>, <weakproxy at 0x; to 'P' at 0x>)
+pow(P, 3, P) with proxies 7 -> ('pow', 7, 3.0, <__main__.P object at 0x>)
+pow(P, 3, N) with proxies 0 -> ('pow', 7, 3, <__main__.N object at 0x>)
+pow(P, 3, N) with proxies 1 -> ('pow', 7, 3, <__main__.N object at 0x>)
+pow(P, 3, N) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'I' at 0x>, <__main__.N object at 0x>)
+pow(P, 3, N) with proxies 3 -> ('pow', 7, 3.0, <__main__.N object at 0x>)
+pow(P, 3, N) with proxies 4 -> ('pow', 7, 3, <weakproxy at 0x; to 'N' at 0x>)
+pow(P, 3, N) with proxies 5 -> ('pow', 7, 3, <__main__.N object at 0x>)
+pow(P, 3, N) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'I' at 0x>, <weakproxy at 0x; to 'N' at 0x>)
+pow(P, 3, N) with proxies 7 -> ('pow', 7, 3.0, <__main__.N object at 0x>)
+pow(P, 3, None) with proxies 0 -> ('pow', 7, 3, None)
+pow(P, 3, None) with proxies 1 -> ('pow', 7, 3, None)
+pow(P, 3, None) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'I' at 0x>, None)
+pow(P, 3, None) with proxies 3 -> ('pow', 7, 3.0, None)
+pow(P, 3, 1.5) with proxies 0 -> ('pow', 7, 3, 1.5)
+pow(P, 3, 1.5) with proxies 1 -> ('pow', 7, 3, 1.5)
+pow(P, 3, 1.5) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'I' at 0x>, 1.5)
+pow(P, 3, 1.5) with proxies 3 -> ('pow', 7, 3.0, 1.5)
+pow(P, P, 5) with proxies 0 -> ('pow', 7, <__main__.P object at 0x>, 5)
+pow(P, P, 5) with proxies 1 -> ('pow', 7, <__main__.P object at 0x>, 5)
+pow(P, P, 5) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'P' at 0x>, 5)
+pow(P, P, 5) with proxies 3 -> ('pow', 7, <__main__.P object at 0x>, 5)
+pow(P, P, 5) with proxies 4 -> ('pow', 7, <__main__.P object at 0x>, <weakproxy at 0x; to 'I' at 0x>)
+pow(P, P, 5) with proxies 5 -> ('pow', 7, <__main__.P object at 0x>, 5.0)
+pow(P, P, 5) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'P' at 0x>, <weakproxy at 0x; to 'I' at 0x>)
+pow(P, P, 5) with proxies 7 -> ('pow', 7, <__main__.P object at 0x>, 5.0)
+pow(P, P, P) with proxies 0 -> ('pow', 7, <__main__.P object at 0x>, <__main__.P object at 0x>)
+pow(P, P, P) with proxies 1 -> ('pow', 7, <__main__.P object at 0x>, <__main__.P object at 0x>)
+pow(P, P, P) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'P' at 0x>, <__main__.P object at 0x>)
+pow(P, P, P) with proxies 3 -> ('pow', 7, <__main__.P object at 0x>, <__main__.P object at 0x>)
+pow(P, P, P) with proxies 4 -> ('pow', 7, <__main__.P object at 0x>, <weakproxy at 0x; to 'P' at 0x>)
+pow(P, P, P) with proxies 5 -> ('pow', 7, <__main__.P object at 0x>, <__main__.P object at 0x>)
+pow(P, P, P) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'P' at 0x>, <weakproxy at 0x; to 'P' at 0x>)
+pow(P, P, P) with proxies 7 -> ('pow', 7, <__main__.P object at 0x>, <__main__.P object at 0x>)
+pow(P, P, N) with proxies 0 -> ('pow', 7, <__main__.P object at 0x>, <__main__.N object at 0x>)
+pow(P, P, N) with proxies 1 -> ('pow', 7, <__main__.P object at 0x>, <__main__.N object at 0x>)
+pow(P, P, N) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'P' at 0x>, <__main__.N object at 0x>)
+pow(P, P, N) with proxies 3 -> ('pow', 7, <__main__.P object at 0x>, <__main__.N object at 0x>)
+pow(P, P, N) with proxies 4 -> ('pow', 7, <__main__.P object at 0x>, <weakproxy at 0x; to 'N' at 0x>)
+pow(P, P, N) with proxies 5 -> ('pow', 7, <__main__.P object at 0x>, <__main__.N object at 0x>)
+pow(P, P, N) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'P' at 0x>, <weakproxy at 0x; to 'N' at 0x>)
+pow(P, P, N) with proxies 7 -> ('pow', 7, <__main__.P object at 0x>, <__main__.N object at 0x>)
+pow(P, P, None) with proxies 0 -> ('pow', 7, <__main__.P object at 0x>, None)
+pow(P, P, None) with proxies 1 -> ('pow', 7, <__main__.P object at 0x>, None)
+pow(P, P, None) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'P' at 0x>, None)
+pow(P, P, None) with proxies 3 -> ('pow', 7, <__main__.P object at 0x>, None)
+pow(P, P, 1.5) with proxies 0 -> ('pow', 7, <__main__.P object at 0x>, 1.5)
+pow(P, P, 1.5) with proxies 1 -> ('pow', 7, <__main__.P object at 0x>, 1.5)
+pow(P, P, 1.5) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'P' at 0x>, 1.5)
+pow(P, P, 1.5) with proxies 3 -> ('pow', 7, <__main__.P object at 0x>, 1.5)
+pow(P, N, 5) with proxies 0 -> ('pow', 7, <__main__.N object at 0x>, 5)
+pow(P, N, 5) with proxies 1 -> ('pow', 7, <__main__.N object at 0x>, 5)
+pow(P, N, 5) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'N' at 0x>, 5)
+pow(P, N, 5) with proxies 3 -> ('pow', 7, <__main__.N object at 0x>, 5)
+pow(P, N, 5) with proxies 4 -> ('pow', 7, <__main__.N object at 0x>, <weakproxy at 0x; to 'I' at 0x>)
+pow(P, N, 5) with proxies 5 -> ('pow', 7, <__main__.N object at 0x>, 5.0)
+pow(P, N, 5) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'N' at 0x>, <weakproxy at 0x; to 'I' at 0x>)
+pow(P, N, 5) with proxies 7 -> ('pow', 7, <__main__.N object at 0x>, 5.0)
+pow(P, N, P) with proxies 0 -> ('pow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(P, N, P) with proxies 1 -> ('pow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(P, N, P) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'N' at 0x>, <__main__.P object at 0x>)
+pow(P, N, P) with proxies 3 -> ('pow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(P, N, P) with proxies 4 -> ('pow', 7, <__main__.N object at 0x>, <weakproxy at 0x; to 'P' at 0x>)
+pow(P, N, P) with proxies 5 -> ('pow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(P, N, P) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'N' at 0x>, <weakproxy at 0x; to 'P' at 0x>)
+pow(P, N, P) with proxies 7 -> ('pow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(P, N, N) with proxies 0 -> ('pow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(P, N, N) with proxies 1 -> ('pow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(P, N, N) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'N' at 0x>, <__main__.N object at 0x>)
+pow(P, N, N) with proxies 3 -> ('pow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(P, N, N) with proxies 4 -> ('pow', 7, <__main__.N object at 0x>, <weakproxy at 0x; to 'N' at 0x>)
+pow(P, N, N) with proxies 5 -> ('pow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(P, N, N) with proxies 6 -> ('pow', 7, <weakproxy at 0x; to 'N' at 0x>, <weakproxy at 0x; to 'N' at 0x>)
+pow(P, N, N) with proxies 7 -> ('pow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(P, N, None) with proxies 0 -> ('pow', 7, <__main__.N object at 0x>, None)
+pow(P, N, None) with proxies 1 -> ('pow', 7, <__main__.N object at 0x>, None)
+pow(P, N, None) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'N' at 0x>, None)
+pow(P, N, None) with proxies 3 -> ('pow', 7, <__main__.N object at 0x>, None)
+pow(P, N, 1.5) with proxies 0 -> ('pow', 7, <__main__.N object at 0x>, 1.5)
+pow(P, N, 1.5) with proxies 1 -> ('pow', 7, <__main__.N object at 0x>, 1.5)
+pow(P, N, 1.5) with proxies 2 -> ('pow', 7, <weakproxy at 0x; to 'N' at 0x>, 1.5)
+pow(P, N, 1.5) with proxies 3 -> ('pow', 7, <__main__.N object at 0x>, 1.5)
+pow(P, 1j, 5) with proxies 0 -> ('pow', 7, 1j, 5)
+pow(P, 1j, 5) with proxies 1 -> ('pow', 7, 1j, 5)
+pow(P, 1j, 5) with proxies 4 -> ('pow', 7, 1j, <weakproxy at 0x; to 'I' at 0x>)
+pow(P, 1j, 5) with proxies 5 -> ('pow', 7, 1j, 5.0)
+pow(P, 1j, P) with proxies 0 -> ('pow', 7, 1j, <__main__.P object at 0x>)
+pow(P, 1j, P) with proxies 1 -> ('pow', 7, 1j, <__main__.P object at 0x>)
+pow(P, 1j, P) with proxies 4 -> ('pow', 7, 1j, <weakproxy at 0x; to 'P' at 0x>)
+pow(P, 1j, P) with proxies 5 -> ('pow', 7, 1j, <__main__.P object at 0x>)
+pow(P, 1j, N) with proxies 0 -> ('pow', 7, 1j, <__main__.N object at 0x>)
+pow(P, 1j, N) with proxies 1 -> ('pow', 7, 1j, <__main__.N object at 0x>)
+pow(P, 1j, N) with proxies 4 -> ('pow', 7, 1j, <weakproxy at 0x; to 'N' at 0x>)
+pow(P, 1j, N) with proxies 5 -> ('pow', 7, 1j, <__main__.N object at 0x>)
+pow(P, 1j, None) with proxies 0 -> ('pow', 7, 1j, None)
+pow(P, 1j, None) with proxies 1 -> ('pow', 7, 1j, None)
+pow(P, 1j, 1.5) with proxies 0 -> ('pow', 7, 1j, 1.5)
+pow(P, 1j, 1.5) with proxies 1 -> ('pow', 7, 1j, 1.5)
+pow(N, 3, 5) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'int'"
+pow(N, 3, 5) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'int'"
+pow(N, 3, 5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, 5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, 5) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, 5) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, P) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'P'"
+pow(N, 3, P) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'P'"
+pow(N, 3, P) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, P) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, P) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'P'"
+pow(N, 3, P) with proxies 5 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'P'"
+pow(N, 3, P) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, P) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, N) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'N'"
+pow(N, 3, N) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'N'"
+pow(N, 3, N) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, N) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, N) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'N'"
+pow(N, 3, N) with proxies 5 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'int', 'N'"
+pow(N, 3, N) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, N) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, None) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'int'"
+pow(N, 3, None) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'int'"
+pow(N, 3, None) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'I'"
+pow(N, 3, None) with proxies 3 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'I'"
+pow(N, 3, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, 1.5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 3, 1.5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, P, 5) with proxies 0 -> ('rpow', 7, <__main__.N object at 0x>, 5)
+pow(N, P, 5) with proxies 1 -> ('rpow', 7, <__main__.N object at 0x>, 5)
+pow(N, P, 5) with proxies 2 -> ('rpow', 7, <__main__.N object at 0x>, 5)
+pow(N, P, 5) with proxies 3 -> ('rpow', 7, <__main__.N object at 0x>, 5)
+pow(N, P, 5) with proxies 4 -> ('rpow', 7, <__main__.N object at 0x>, <weakproxy at 0x; to 'I' at 0x>)
+pow(N, P, 5) with proxies 5 -> ('rpow', 7, <__main__.N object at 0x>, 5.0)
+pow(N, P, 5) with proxies 6 -> ('rpow', 7, <__main__.N object at 0x>, 5.0)
+pow(N, P, 5) with proxies 7 -> ('rpow', 7, <__main__.N object at 0x>, 5.0)
+pow(N, P, P) with proxies 0 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(N, P, P) with proxies 1 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(N, P, P) with proxies 2 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(N, P, P) with proxies 3 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(N, P, P) with proxies 4 -> ('rpow', 7, <__main__.N object at 0x>, <weakproxy at 0x; to 'P' at 0x>)
+pow(N, P, P) with proxies 5 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(N, P, P) with proxies 6 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(N, P, P) with proxies 7 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.P object at 0x>)
+pow(N, P, N) with proxies 0 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(N, P, N) with proxies 1 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(N, P, N) with proxies 2 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(N, P, N) with proxies 3 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(N, P, N) with proxies 4 -> ('rpow', 7, <__main__.N object at 0x>, <weakproxy at 0x; to 'N' at 0x>)
+pow(N, P, N) with proxies 5 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(N, P, N) with proxies 6 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(N, P, N) with proxies 7 -> ('rpow', 7, <__main__.N object at 0x>, <__main__.N object at 0x>)
+pow(N, P, None) with proxies 0 -> ('rpow', 7, <__main__.N object at 0x>, None)
+pow(N, P, None) with proxies 1 -> ('rpow', 7, <__main__.N object at 0x>, None)
+pow(N, P, None) with proxies 2 -> ('rpow', 7, <__main__.N object at 0x>, None)
+pow(N, P, None) with proxies 3 -> ('rpow', 7, <__main__.N object at 0x>, None)
+pow(N, P, 1.5) with proxies 0 -> ('rpow', 7, <__main__.N object at 0x>, 1.5)
+pow(N, P, 1.5) with proxies 1 -> ('rpow', 7, <__main__.N object at 0x>, 1.5)
+pow(N, P, 1.5) with proxies 2 -> ('rpow', 7, <__main__.N object at 0x>, 1.5)
+pow(N, P, 1.5) with proxies 3 -> ('rpow', 7, <__main__.N object at 0x>, 1.5)
+pow(N, N, 5) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'int'"
+pow(N, N, 5) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'int'"
+pow(N, N, 5) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'int'"
+pow(N, N, 5) with proxies 3 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'int'"
+pow(N, N, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, N, 5) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, N, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, N, 5) with proxies 7 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, N, P) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'P'"
+pow(N, N, P) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'P'"
+pow(N, N, P) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'P'"
+pow(N, N, P) with proxies 3 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'P'"
+pow(N, N, P) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'P'"
+pow(N, N, P) with proxies 5 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'P'"
+pow(N, N, P) with proxies 6 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'P'"
+pow(N, N, P) with proxies 7 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'P'"
+pow(N, N, N) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'N'"
+pow(N, N, N) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'N'"
+pow(N, N, N) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'N'"
+pow(N, N, N) with proxies 3 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'N'"
+pow(N, N, N) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'N'"
+pow(N, N, N) with proxies 5 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'N'"
+pow(N, N, N) with proxies 6 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'N'"
+pow(N, N, N) with proxies 7 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'N', 'N'"
+pow(N, N, None) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'N'"
+pow(N, N, None) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'N'"
+pow(N, N, None) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'N'"
+pow(N, N, None) with proxies 3 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'N'"
+pow(N, N, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, N, 1.5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, N, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, N, 1.5) with proxies 3 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 1j, 5) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'int'"
+pow(N, 1j, 5) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'int'"
+pow(N, 1j, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 1j, 5) with proxies 5 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 1j, P) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'P'"
+pow(N, 1j, P) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'P'"
+pow(N, 1j, P) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'P'"
+pow(N, 1j, P) with proxies 5 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'P'"
+pow(N, 1j, N) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'N'"
+pow(N, 1j, N) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'N'"
+pow(N, 1j, N) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'N'"
+pow(N, 1j, N) with proxies 5 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N', 'complex', 'N'"
+pow(N, 1j, None) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'complex'"
+pow(N, 1j, None) with proxies 1 -> "TypeError: unsupported operand type(s) for ** or pow(): 'N' and 'complex'"
+pow(N, 1j, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(N, 1j, 1.5) with proxies 1 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, 5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, 5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, P) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, P) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, P) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, P) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, N) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, N) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, N) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, N) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, None) with proxies 0 -> 3.375
+pow(1.5, 3, None) with proxies 2 -> 3.375
+pow(1.5, 3, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 3, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, 5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, 5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, P) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, P) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, P) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, P) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, N) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, N) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, N) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, N) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, None) with proxies 0 -> ('rpow', 7, 1.5, None)
+pow(1.5, P, None) with proxies 2 -> ('rpow', 7, 1.5, None)
+pow(1.5, P, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, P, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, 5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, 5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, P) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, P) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, P) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, P) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, N) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, N) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, N) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, N) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, None) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'float' and 'N'"
+pow(1.5, N, None) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'float' and 'N'"
+pow(1.5, N, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, N, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 1j, 5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 1j, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 1j, P) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 1j, P) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 1j, N) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 1j, N) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(1.5, 1j, None) with proxies 0 -> (0.9189190364394997+0.3944461997143608j)
+pow(1.5, 1j, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, 5) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'int', 'int'"
+pow(x, 3, 5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, P) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'int', 'P'"
+pow(x, 3, P) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, P) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'int', 'P'"
+pow(x, 3, P) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, N) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'int', 'N'"
+pow(x, 3, N) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, N) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'int', 'N'"
+pow(x, 3, N) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, None) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str' and 'int'"
+pow(x, 3, None) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str' and 'I'"
+pow(x, 3, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 3, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, P, 5) with proxies 0 -> ('rpow', 7, 'x', 5)
+pow(x, P, 5) with proxies 2 -> ('rpow', 7, 'x', 5)
+pow(x, P, 5) with proxies 4 -> ('rpow', 7, 'x', <weakproxy at 0x; to 'I' at 0x>)
+pow(x, P, 5) with proxies 6 -> ('rpow', 7, 'x', 5.0)
+pow(x, P, P) with proxies 0 -> ('rpow', 7, 'x', <__main__.P object at 0x>)
+pow(x, P, P) with proxies 2 -> ('rpow', 7, 'x', <__main__.P object at 0x>)
+pow(x, P, P) with proxies 4 -> ('rpow', 7, 'x', <weakproxy at 0x; to 'P' at 0x>)
+pow(x, P, P) with proxies 6 -> ('rpow', 7, 'x', <__main__.P object at 0x>)
+pow(x, P, N) with proxies 0 -> ('rpow', 7, 'x', <__main__.N object at 0x>)
+pow(x, P, N) with proxies 2 -> ('rpow', 7, 'x', <__main__.N object at 0x>)
+pow(x, P, N) with proxies 4 -> ('rpow', 7, 'x', <weakproxy at 0x; to 'N' at 0x>)
+pow(x, P, N) with proxies 6 -> ('rpow', 7, 'x', <__main__.N object at 0x>)
+pow(x, P, None) with proxies 0 -> ('rpow', 7, 'x', None)
+pow(x, P, None) with proxies 2 -> ('rpow', 7, 'x', None)
+pow(x, P, 1.5) with proxies 0 -> ('rpow', 7, 'x', 1.5)
+pow(x, P, 1.5) with proxies 2 -> ('rpow', 7, 'x', 1.5)
+pow(x, N, 5) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'int'"
+pow(x, N, 5) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'int'"
+pow(x, N, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, N, 5) with proxies 6 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, N, P) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'P'"
+pow(x, N, P) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'P'"
+pow(x, N, P) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'P'"
+pow(x, N, P) with proxies 6 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'P'"
+pow(x, N, N) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'N'"
+pow(x, N, N) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'N'"
+pow(x, N, N) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'N'"
+pow(x, N, N) with proxies 6 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'N', 'N'"
+pow(x, N, None) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str' and 'N'"
+pow(x, N, None) with proxies 2 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str' and 'N'"
+pow(x, N, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, N, 1.5) with proxies 2 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 1j, 5) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'complex', 'int'"
+pow(x, 1j, 5) with proxies 4 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+pow(x, 1j, P) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'complex', 'P'"
+pow(x, 1j, P) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'complex', 'P'"
+pow(x, 1j, N) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'complex', 'N'"
+pow(x, 1j, N) with proxies 4 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str', 'complex', 'N'"
+pow(x, 1j, None) with proxies 0 -> "TypeError: unsupported operand type(s) for ** or pow(): 'str' and 'complex'"
+pow(x, 1j, 1.5) with proxies 0 -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+the special methods -> 'TypeError: pow() 3rd argument not allowed unless all arguments are integers'
+of something else -> "TypeError: descriptor '__pow__' requires a 'weakref.ProxyType' object but received a 'int'"
+**= -> [8.0]
+done

@@ -38,6 +38,7 @@ void exitContext(JSGlobalObject*, PyNativeObject*);
 // For what is written in C++ and has a variable of its own.
 JSObject* newContextVariable(JSGlobalObject*, JSString* name);
 JSValue contextVariableValue(JSGlobalObject*, JSObject* variable); // Empty if it has nothing.
+void setContextVariableValue(JSGlobalObject*, JSObject* variable, JSValue); // With no token to put it back by
 
 Structure* createAsyncContextFrameStructure(VM&, JSGlobalObject*);
 
