@@ -28,6 +28,7 @@
 #include "Lexer.h"
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
+#include "SourceCharacters.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"
 #include "YarrSyntaxChecker.h"
@@ -667,7 +668,7 @@ void RegExp::printTraceData()
     formattedRegExp[SameLineFormatedRegExpnWidth] = '\0';
 
     auto patternCStr = pattern().utf8(); // Hold a reference so it doesn't get destroyed.
-    auto patternStr = patternCStr.data();
+    auto patternStr = patternCStr.legacyCStringPointer();
     auto patternLength = pattern().length();
 
     auto appendRawPatternBuffer = [&] (size_t& index) {
@@ -701,7 +702,7 @@ void RegExp::printTraceData()
 
     if (rawPattern.length() + strlen(Yarr::flagsString(flags()).data()) + 2 <= SameLineFormatedRegExpnWidth) {
         String result = makeString('/', rawPattern, '/', Yarr::flagsString(flags()).data());
-        memcpy(formattedRegExp, result.utf8().data(), result.length());
+        memcpy(formattedRegExp, result.utf8().legacyCStringPointer(), result.length());
         formattedRegExp[result.length()] = '\0';
     } else
         SAFE_DATALOGF("/%s/%s\n", rawPattern.utf8(), Yarr::flagsString(flags()).data());
@@ -765,10 +766,10 @@ void RegExp::printTraceData()
     unsigned averageMatchOnlyStringLen = (unsigned)(m_rtMatchOnlyTotalSubjectStringLen / m_rtMatchOnlyCallCount);
     unsigned averageMatchStringLen = (unsigned)(m_rtMatchTotalSubjectStringLen / m_rtMatchCallCount);
 
-    dataLogF("%-*.*s %*.*s %*.*s %10d %10d %10u\n", SameLineFormatedRegExpnWidth, SameLineFormatedRegExpnWidth, formattedRegExp, addrWidth, addrWidth, jit8BitMatchOnlyAddr.utf8().data(), addrWidth, addrWidth, jit16BitMatchOnlyAddr.utf8().data(), m_rtMatchOnlyCallCount, m_rtMatchOnlyFoundCount, averageMatchOnlyStringLen);
+    dataLogF("%-*.*s %*.*s %*.*s %10d %10d %10u\n", SameLineFormatedRegExpnWidth, SameLineFormatedRegExpnWidth, formattedRegExp, addrWidth, addrWidth, jit8BitMatchOnlyAddr.utf8().legacyCStringPointer(), addrWidth, addrWidth, jit16BitMatchOnlyAddr.utf8().legacyCStringPointer(), m_rtMatchOnlyCallCount, m_rtMatchOnlyFoundCount, averageMatchOnlyStringLen);
     for (unsigned i = 0; i < SameLineFormatedRegExpnWidth; ++i)
         dataLog(" ");
-    dataLogF(" %*.*s %*.*s %10d %10d %10u\n", addrWidth, addrWidth, jit8BitMatchAddr.utf8().data(), addrWidth, addrWidth, jit16BitMatchAddr.utf8().data(), m_rtMatchCallCount, m_rtMatchFoundCount, averageMatchStringLen);
+    dataLogF(" %*.*s %*.*s %10d %10d %10u\n", addrWidth, addrWidth, jit8BitMatchAddr.utf8().legacyCStringPointer(), addrWidth, addrWidth, jit16BitMatchAddr.utf8().legacyCStringPointer(), m_rtMatchCallCount, m_rtMatchFoundCount, averageMatchStringLen);
 }
 #endif
 
@@ -776,7 +777,7 @@ void RegExp::dumpToStream(const JSCell* cell, PrintStream& out)
 {
     // This function can be called concurrently. So we must not ref m_pattern.
     auto* regExp = uncheckedDowncast<RegExp>(cell);
-    out.print(toCString("/", regExp->pattern().impl(), "/", Yarr::flagsString(regExp->flags()).data()));
+    out.print(toUTF8CString("/", regExp->pattern().impl(), "/", Yarr::flagsString(regExp->flags()).data()));
 }
 
 template <typename CharacterType>
@@ -835,7 +836,7 @@ static inline String escapePattern(const String& pattern, std::span<const Charac
             }
         }
 
-        if (Lexer<CharacterType>::isLineTerminator(ch)) {
+        if (isLineTerminator<CharacterType>(ch)) {
             shouldEscape = true;
             break;
         }
@@ -866,7 +867,7 @@ static inline String escapePattern(const String& pattern, std::span<const Charac
         }
 
         // escape LineTerminator
-        if (Lexer<CharacterType>::isLineTerminator(ch)) {
+        if (isLineTerminator<CharacterType>(ch)) {
             if (!previousCharacterWasBackslash)
                 result.append('\\');
 

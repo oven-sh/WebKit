@@ -28,6 +28,13 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/Platform.h>
 
+// The signpost macros below convert their arguments with LOG_PRINTF_TYPE(). This header also has to
+// be includable from C, where that C++ helper does not exist; the macros themselves are only ever
+// expanded from C++, so the declaration is all that needs guarding.
+#ifdef __cplusplus
+#include <wtf/StdLibExtras.h>
+#endif
+
 #if USE(APPLE_INTERNAL_SDK)
 #include <sys/kdebug_private.h>
 #define HAVE_KDEBUG_H 1
@@ -45,7 +52,8 @@
 #define WEBKIT_COMPONENT 47
 
 // Trace point codes can be up to 14 bits (0-16383).
-// When adding or changing these codes, update Source/WebKit/Resources/Signposts/SystemTracePoints.plist to match.
+// When adding or changing these codes, update Source/WebKit/Resources/Signposts/SystemTracePoints.plist to match,
+// and SysprofAnnotator::tracePoint(), which pairs the begin and end of each for Sysprof.
 enum TracePointCode {
     WTFRange = 0,
 
@@ -217,8 +225,7 @@ inline void tracePoint(TracePointCode code, uint64_t data1 = 0, uint64_t data2 =
     kdebug_trace(ARIADNEDBG_CODE(WEBKIT_COMPONENT, code), data1, data2, data3, data4);
 #elif USE(SYSPROF_CAPTURE)
     if (auto* annotator = SysprofAnnotator::singletonIfCreated())
-        annotator->tracePoint(code);
-    UNUSED_PARAM(data1);
+        annotator->tracePoint(code, data1);
     UNUSED_PARAM(data2);
     UNUSED_PARAM(data3);
     UNUSED_PARAM(data4);
@@ -237,17 +244,28 @@ public:
 
     TraceScope(TracePointCode entryCode, TracePointCode exitCode, uint64_t data1 = 0, uint64_t data2 = 0, uint64_t data3 = 0, uint64_t data4 = 0)
         : m_exitCode(exitCode)
+#if !HAVE(KDEBUG_H) && USE(SYSPROF_CAPTURE)
+        , m_data1(data1)
+#endif
     {
         tracePoint(entryCode, data1, data2, data3, data4);
     }
 
     ~TraceScope()
     {
+#if !HAVE(KDEBUG_H) && USE(SYSPROF_CAPTURE)
+        // Sysprof pairs some trace points by their data, which the end has to carry as the begin did.
+        tracePoint(m_exitCode, m_data1);
+#else
         tracePoint(m_exitCode);
+#endif
     }
 
 private:
     TracePointCode m_exitCode;
+#if !HAVE(KDEBUG_H) && USE(SYSPROF_CAPTURE)
+    uint64_t m_data1;
+#endif
 };
 
 } // namespace WTF
@@ -409,23 +427,28 @@ enum WTFOSSignpostType {
         const void* wtfPointer = (const void *)(pointer); \
         os_signpost_id_t wtfSignpostID = wtfPointer ? os_signpost_id_make_with_pointer(wtfHandle.get(), wtfPointer) : OS_SIGNPOST_ID_EXCLUSIVE; \
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
-        emitMacro(wtfHandle.get(), wtfSignpostID, #name, format, ##__VA_ARGS__); \
+        emitMacro(wtfHandle.get(), wtfSignpostID, #name, format __VA_OPT__(, LOG_PRINTF_TYPE(__VA_ARGS__))); \
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END \
     } while (0)
 
 #define WTFEmitSignpostIndirectlyWithType(type, pointer, name, specificTime, format, ...) \
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN SUPPRESS_UNCOUNTED_LOCAL os_log(WTFSignpostLogHandle(), "type=%d name=%d p=%" PRIuPTR " ts=%llu " format, type, WTFOSSignpostName ## name, reinterpret_cast<uintptr_t>(pointer), specificTime, ##__VA_ARGS__) WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN SUPPRESS_UNCOUNTED_LOCAL os_log(WTFSignpostLogHandle(), "type=%d name=%d p=%" PRIuPTR " ts=%llu " format, type, WTFOSSignpostName ## name, reinterpret_cast<uintptr_t>(pointer), specificTime __VA_OPT__(, LOG_PRINTF_TYPE(__VA_ARGS__))) WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #define WTFSetCounter(name, value) do { } while (0)
 
 #elif USE(SYSPROF_CAPTURE)
+
+// The sysprof macros take the format string and its arguments as one variadic pack, so the format
+// has to be split back out before LOG_PRINTF_TYPE() is applied to the arguments.
+#define WTFSysprofFormatAndArgs(...) "" __VA_OPT__(WTFSysprofSplitFormatAndArgs(__VA_ARGS__))
+#define WTFSysprofSplitFormatAndArgs(format, ...) format __VA_OPT__(, LOG_PRINTF_TYPE(__VA_ARGS__))
 
 #define WTFEmitSignpost(pointer, name, ...) \
     do { \
         IGNORE_WARNINGS_BEGIN("format-zero-length") \
         IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-format-attr-call") \
         if (auto* annotator = SysprofAnnotator::singletonIfCreated()) \
-            annotator->instantMark(std::span(_STRINGIFY(name)), "" __VA_ARGS__); \
+            annotator->instantMark(std::span(_STRINGIFY(name)), WTFSysprofFormatAndArgs(__VA_ARGS__)); \
         IGNORE_WARNINGS_END \
         IGNORE_WARNINGS_END \
     } while (0)
@@ -435,7 +458,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END \
         IGNORE_WARNINGS_BEGIN("format-zero-length") \
         IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-format-attr-call") \
         if (auto* annotator = SysprofAnnotator::singletonIfCreated()) \
-            annotator->beginMark(reinterpret_cast<const void*>(pointer), std::span(_STRINGIFY(name)), "" __VA_ARGS__); \
+            annotator->beginMark(reinterpret_cast<const void*>(pointer), std::span(_STRINGIFY(name)), WTFSysprofFormatAndArgs(__VA_ARGS__)); \
         IGNORE_WARNINGS_END \
         IGNORE_WARNINGS_END \
     } while (0)
@@ -445,7 +468,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END \
         IGNORE_WARNINGS_BEGIN("format-zero-length") \
         IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-format-attr-call") \
         if (auto* annotator = SysprofAnnotator::singletonIfCreated()) \
-            annotator->endMark(reinterpret_cast<const void*>(pointer), std::span(_STRINGIFY(name)), "" __VA_ARGS__); \
+            annotator->endMark(reinterpret_cast<const void*>(pointer), std::span(_STRINGIFY(name)), WTFSysprofFormatAndArgs(__VA_ARGS__)); \
         IGNORE_WARNINGS_END \
         IGNORE_WARNINGS_END \
     } while (0)
@@ -459,7 +482,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END \
         IGNORE_WARNINGS_BEGIN("format-zero-length") \
         IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-format-attr-call") \
         if (auto* annotator = SysprofAnnotator::singletonIfCreated()) \
-            annotator->mark(SysprofAnnotator::currentContinuousTime(timeDelta), std::span(_STRINGIFY(name)), "" __VA_ARGS__); \
+            annotator->mark(SysprofAnnotator::currentContinuousTime(timeDelta), std::span(_STRINGIFY(name)), WTFSysprofFormatAndArgs(__VA_ARGS__)); \
         IGNORE_WARNINGS_END \
         IGNORE_WARNINGS_END \
     } while (0)
@@ -476,7 +499,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END \
         IGNORE_WARNINGS_BEGIN("format-zero-length") \
         IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-format-attr-call") \
         if (auto* annotator = SysprofAnnotator::singletonIfCreated()) \
-            annotator->mark(specificTime, std::span(_STRINGIFY(name)), "" __VA_ARGS__); \
+            annotator->mark(specificTime, std::span(_STRINGIFY(name)), WTFSysprofFormatAndArgs(__VA_ARGS__)); \
         IGNORE_WARNINGS_END \
         IGNORE_WARNINGS_END \
     } while (0)

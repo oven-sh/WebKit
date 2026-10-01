@@ -379,6 +379,9 @@ template<typename SizeType> LayoutUnit RenderTable::convertStyleLogicalHeightToC
         [&](const typename SizeType::Calc& calc) {
             return checkedThis->computePercentageLogicalHeight(calc).value_or(0_lu);
         },
+        [&](const typename SizeType::CalcSize& calcSize) {
+            return checkedThis->computePercentageLogicalHeight(calcSize).value_or(0_lu);
+        },
         [&](Style::IsIntrinsicOrStretchSizeKeyword auto const&) {
             return checkedThis->computeSizingKeywordLogicalContentHeightUsing(styleLogicalHeight, checkedThis->logicalHeight() - borderAndPadding, borderAndPadding).value_or(0_lu);
         },
@@ -404,31 +407,35 @@ template<typename SizeType> LayoutUnit RenderTable::convertStyleLogicalHeightToC
     );
 }
 
+static LayoutUnit captionLogicalHeight(const RenderTableCaption& caption, WritingMode tableWritingMode)
+{
+    auto captionLogicalHeight = caption.writingMode().isOrthogonal(tableWritingMode) ? caption.logicalWidth() : caption.logicalHeight();
+    return captionLogicalHeight + caption.marginBefore(tableWritingMode) + caption.marginAfter(tableWritingMode);
+}
+
 void RenderTable::layoutCaption(RenderTableCaption& caption)
 {
     LayoutRect captionRect(caption.borderBoxRectInContainer());
 
+    auto setCaptionLocation = [&] {
+        auto logicalLocation = LayoutPoint { caption.marginStart(writingMode()), caption.marginBefore(writingMode()) + logicalHeight() };
+        caption.setLocation(writingMode().isHorizontal() ? logicalLocation : logicalLocation.transposedPoint());
+    };
+
     if (caption.needsLayout()) {
         // The margins may not be available but ensure the caption is at least located beneath any previous sibling caption
         // so that it does not mistakenly think any floats in the previous caption intrude into it.
-        caption.setLogicalLocation(LayoutPoint(caption.marginStart(), caption.marginBefore() + logicalHeight()));
+        setCaptionLocation();
         // If RenderTableCaption ever gets a layout() function, use it here.
         caption.layoutIfNeeded();
     }
     // Apply the margins to the location now that they are definitely available from layout
-    caption.setLogicalLocation(LayoutPoint(caption.marginStart(), caption.marginBefore() + logicalHeight()));
+    setCaptionLocation();
 
     if (!selfNeedsLayout() && caption.checkForRepaintDuringLayout())
         caption.repaintDuringLayoutIfMoved(captionRect);
 
-    // When caption has a different writing mode, we need to use the caption's size in the table's writing mode.
-    LayoutUnit captionLogicalHeightInTableWritingMode;
-    if (caption.writingMode().isOrthogonal(writingMode()))
-        captionLogicalHeightInTableWritingMode = caption.logicalWidth();
-    else
-        captionLogicalHeightInTableWritingMode = caption.logicalHeight();
-
-    setLogicalHeight(logicalHeight() + captionLogicalHeightInTableWritingMode + caption.marginBefore() + caption.marginAfter());
+    setLogicalHeight(logicalHeight() + captionLogicalHeight(caption, writingMode()));
 }
 
 void RenderTable::layoutCaptions(BottomCaptionLayoutPhase bottomCaptionLayoutPhase)
@@ -508,7 +515,7 @@ LayoutUnit RenderTable::sumCaptionsLogicalHeight() const
 {
     LayoutUnit height;
     for (auto& caption : m_captions)
-        height += caption->logicalHeight() + caption->marginBefore() + caption->marginAfter();
+        height += captionLogicalHeight(*caption, writingMode());
     return height;
 }
 
@@ -561,7 +568,7 @@ void RenderTable::layout()
         for (auto& caption : m_captions) {
             if (caption->style().captionSide() == CaptionSide::Bottom)
                 continue;
-            oldTableLogicalTop += caption->logicalHeight() + caption->marginBefore() + caption->marginAfter();
+            oldTableLogicalTop += captionLogicalHeight(*caption, writingMode());
         }
 
         bool collapsing = collapseBorders();
@@ -931,16 +938,16 @@ void RenderTable::paintCollapsedBordersForRow(PaintInfo& paintInfo, RenderTableR
 void RenderTable::adjustBorderBoxRectForPainting(LayoutRect& rect)
 {
     for (auto& caption : m_captions) {
-        LayoutUnit captionLogicalHeight = caption->logicalHeight() + caption->marginBefore() + caption->marginAfter();
+        auto captionLogicalHeightInTableWritingMode = captionLogicalHeight(*caption, writingMode());
         bool captionIsBefore = (caption->style().captionSide() != CaptionSide::Bottom) ^ writingMode().isBlockFlipped();
         if (writingMode().isHorizontal()) {
-            rect.setHeight(rect.height() - captionLogicalHeight);
+            rect.setHeight(rect.height() - captionLogicalHeightInTableWritingMode);
             if (captionIsBefore)
-                rect.move(0_lu, captionLogicalHeight);
+                rect.move(0_lu, captionLogicalHeightInTableWritingMode);
         } else {
-            rect.setWidth(rect.width() - captionLogicalHeight);
+            rect.setWidth(rect.width() - captionLogicalHeightInTableWritingMode);
             if (captionIsBefore)
-                rect.move(captionLogicalHeight, 0_lu);
+                rect.move(captionLogicalHeightInTableWritingMode, 0_lu);
         }
     }
     

@@ -144,7 +144,7 @@ static xmlDocPtr docLoaderFunc(const xmlChar* uri,
             return nullptr;
 
         FrameConsoleClient* console = nullptr;
-        if (RefPtr frame = protect(globalProcessor->xslStylesheet()->ownerDocument())->frame())
+        if (RefPtr frame = protect(protect(globalProcessor->xslStylesheet())->ownerDocument())->frame())
             console = &frame->console();
         XMLDocumentParserScope scope(cachedResourceLoader.get(), XSLTProcessor::genericErrorFunc, XSLTProcessor::parseErrorFunc, console);
 
@@ -218,8 +218,8 @@ static MallocSpan<const char*> xsltParamArrayFromParameterMap(XSLTProcessor::Par
 
     size_t index = 0;
     for (auto& parameter : parameters) {
-        parameterArray[index++] = fastStrDup(parameter.key.utf8().data());
-        parameterArray[index++] = fastStrDup(parameter.value.utf8().data());
+        parameterArray[index++] = fastStrDup(parameter.key.utf8().legacyCStringPointer());
+        parameterArray[index++] = fastStrDup(parameter.value.utf8().legacyCStringPointer());
     }
     parameterArray[index] = nullptr;
 

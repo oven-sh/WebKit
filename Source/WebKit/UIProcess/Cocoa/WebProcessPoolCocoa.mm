@@ -38,6 +38,7 @@
 #import "LockdownModeObserver.h"
 #import "Logging.h"
 #import "MediaCapability.h"
+#import "MemoryFootprintMonitor.h"
 #import "NetworkProcessCreationParameters.h"
 #import "NetworkProcessMessages.h"
 #import "NetworkProcessProxy.h"
@@ -335,7 +336,7 @@ static void logProcessPoolState(const WebProcessPool& pool)
             }
         }
 
-        RELEASE_LOG(Process, "WebProcessProxy %p - %" PUBLIC_LOG_STRING ", domain: %" PRIVATE_LOG_STRING ", pageURLs: %" SENSITIVE_LOG_STRING, process.ptr(), processDescription.release().utf8().data(), domainString.utf8().data(), pageURLs.release().utf8().data());
+        RELEASE_LOG(Process, "WebProcessProxy %p - %" PUBLIC_LOG_STRING ", domain: %" PRIVATE_LOG_STRING ", pageURLs: %" SENSITIVE_LOG_STRING, process.ptr(), processDescription.release().utf8(), domainString.utf8(), pageURLs.release().utf8());
     }
 }
 
@@ -355,8 +356,24 @@ void WebProcessPool::platformInitialize(NeedsGlobalStaticInitialization needsGlo
     // FIXME: This should be able to share code with WebCore's MemoryPressureHandler (and be platform independent).
     // Right now it cannot because WebKit1 and WebKit2 need to be able to coexist in the UI process,
     // and you can only have one WebCore::MemoryPressureHandler.
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitSuppressMemoryPressureHandler"])
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitSuppressMemoryPressureHandler"]) {
         installMemoryPressureHandler();
+
+#if ENABLE(UIPROCESS_PERIODIC_MEMORY_MONITOR)
+        auto monitorConfiguration = MemoryFootprintMonitor::defaultConfiguration();
+        if (auto pollInterval = m_configuration->memoryFootprintPollIntervalForTesting())
+            monitorConfiguration.pollInterval = pollInterval;
+        if (auto memoryLimit = m_configuration->memoryLimitForTesting()) {
+            monitorConfiguration.foregroundPageMemoryLimit = memoryLimit;
+            monitorConfiguration.backgroundPageMemoryLimit = memoryLimit;
+            monitorConfiguration.webProcessMemoryLimit = memoryLimit;
+        }
+
+        auto& memoryMeasurementMonitor = MemoryFootprintMonitor::singleton();
+        memoryMeasurementMonitor.setConfiguration(WTF::move(monitorConfiguration));
+        memoryMeasurementMonitor.start();
+#endif
+    }
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
     dispatch_async(globalDispatchQueueSingleton(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -1726,7 +1743,7 @@ void WebProcessPool::registerAssetFonts(WebProcessProxy& process)
                 protectedThis->m_assetFontURLs = Vector<URL> { };
                 for (auto& fontName : assetFonts) {
                     URL fontURL = fontURLFromName(fontName);
-                    RELEASE_LOG(Process, "Registering font name %s with url %s", fontName.characters(), fontURL.string().utf8().data());
+                    RELEASE_LOG(Process, "Registering font name %s with url %s", fontName.characters(), fontURL.string().utf8());
                     protectedThis->m_assetFontURLs->append(WTF::move(fontURL));
                 }
             }

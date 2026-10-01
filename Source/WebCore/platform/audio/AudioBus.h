@@ -34,6 +34,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
+#include <wtf/text/StringView.h>
 
 namespace WebCore {
 
@@ -146,7 +147,7 @@ public:
     // Makes maximum absolute value == 1.0 (if possible).
     void normalize();
 
-    static RefPtr<AudioBus> loadPlatformResource(const char* name, float sampleRate);
+    static RefPtr<AudioBus> loadPlatformResource(StringView name, float sampleRate);
 
 private:
     AudioBus() { }

@@ -47,7 +47,7 @@ void logRegisterPressure(Code& code)
 
         block->dumpHeader(WTF::dataFile());
 
-        Vector<CString> instDumps;
+        Vector<UTF8CString> instDumps;
         for (unsigned instIndex = block->size(); instIndex--;) {
             Inst& inst = block->at(instIndex);
             Inst* prevInst = block->get(instIndex - 1);
@@ -69,9 +69,9 @@ void logRegisterPressure(Code& code)
             if (set.numberOfSetRegisters()) {
                 set.forEach(
                     [&] (Reg reg) {
-                        CString text = toCString(" ", reg);
+                        auto text = toUTF8CString(" ", reg);
                         if (text.length() + lineOut.length() > totalColumns) {
-                            instOut.print(lineOut.toCString(), "\n");
+                            instOut.print(lineOut.toUTF8CString(), "\n");
                             lineOut.reset();
                             lineOut.print("       ");
                         }
@@ -80,15 +80,15 @@ void logRegisterPressure(Code& code)
                 lineOut.print(":");
             }
             if (lineOut.length() > registerColumns) {
-                instOut.print(lineOut.toCString(), "\n");
+                instOut.print(lineOut.toUTF8CString(), "\n");
                 lineOut.reset();
             }
             while (lineOut.length() < registerColumns)
                 lineOut.print(" ");
             lineOut.print(" ");
             lineOut.print(inst);
-            instOut.print(lineOut.toCString(), "\n");
-            instDumps.append(instOut.toCString());
+            instOut.print(lineOut.toUTF8CString(), "\n");
+            instDumps.append(instOut.toUTF8CString());
         }
 
         for (unsigned i = instDumps.size(); i--;)

@@ -1816,15 +1816,15 @@ ANGLED3D11DeviceType GetDeviceType(ID3D11Device *device)
     // Note that this function returns an ANGLED3D11DeviceType rather than a D3D_DRIVER_TYPE value,
     // since it is difficult to tell Software and Reference devices apart
 
-    IDXGIDevice *dxgiDevice   = nullptr;
-    IDXGIAdapter *dxgiAdapter = nullptr;
+    angle::ComPtr<IDXGIDevice> dxgiDevice;
+    angle::ComPtr<IDXGIAdapter> dxgiAdapter;
 
     ANGLED3D11DeviceType retDeviceType = ANGLE_D3D11_DEVICE_TYPE_UNKNOWN;
 
-    HRESULT hr = device->QueryInterface(__uuidof(IDXGIDevice), (void **)&dxgiDevice);
+    HRESULT hr = device->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
     if (SUCCEEDED(hr))
     {
-        hr = dxgiDevice->GetParent(__uuidof(IDXGIAdapter), (void **)&dxgiAdapter);
+        hr = dxgiDevice->GetParent(IID_PPV_ARGS(&dxgiAdapter));
         if (SUCCEEDED(hr))
         {
             DXGI_ADAPTER_DESC adapterDesc;
@@ -1853,9 +1853,6 @@ ANGLED3D11DeviceType GetDeviceType(ID3D11Device *device)
             }
         }
     }
-
-    SafeRelease(dxgiDevice);
-    SafeRelease(dxgiAdapter);
 
     return retDeviceType;
 }
@@ -2267,22 +2264,22 @@ TextureHelper11::~TextureHelper11() {}
 
 void TextureHelper11::getDesc(D3D11_TEXTURE2D_DESC *desc) const
 {
-    static_cast<ID3D11Texture2D *>(mData->object)->GetDesc(desc);
+    static_cast<ID3D11Texture2D *>(get())->GetDesc(desc);
 }
 
 void TextureHelper11::getDesc(D3D11_TEXTURE3D_DESC *desc) const
 {
-    static_cast<ID3D11Texture3D *>(mData->object)->GetDesc(desc);
+    static_cast<ID3D11Texture3D *>(get())->GetDesc(desc);
 }
 
 void TextureHelper11::getDesc(D3D11_BUFFER_DESC *desc) const
 {
-    static_cast<ID3D11Buffer *>(mData->object)->GetDesc(desc);
+    static_cast<ID3D11Buffer *>(get())->GetDesc(desc);
 }
 
 void TextureHelper11::initDesc(const D3D11_TEXTURE2D_DESC &desc2D)
 {
-    mData->resourceType = ResourceType::Texture2D;
+    data().resourceType = ResourceType::Texture2D;
     mExtents.width      = static_cast<int>(desc2D.Width);
     mExtents.height     = static_cast<int>(desc2D.Height);
     mExtents.depth      = 1;
@@ -2291,7 +2288,7 @@ void TextureHelper11::initDesc(const D3D11_TEXTURE2D_DESC &desc2D)
 
 void TextureHelper11::initDesc(const D3D11_TEXTURE3D_DESC &desc3D)
 {
-    mData->resourceType = ResourceType::Texture3D;
+    data().resourceType = ResourceType::Texture3D;
     mExtents.width      = static_cast<int>(desc3D.Width);
     mExtents.height     = static_cast<int>(desc3D.Height);
     mExtents.depth      = static_cast<int>(desc3D.Depth);
@@ -2300,7 +2297,7 @@ void TextureHelper11::initDesc(const D3D11_TEXTURE3D_DESC &desc3D)
 
 void TextureHelper11::initDesc(const D3D11_BUFFER_DESC &descBuffer)
 {
-    mData->resourceType = ResourceType::Buffer;
+    data().resourceType = ResourceType::Buffer;
     mExtents.width      = static_cast<int>(descBuffer.ByteWidth);
     mExtents.height     = 1;
     mExtents.depth      = 1;
@@ -2309,7 +2306,7 @@ void TextureHelper11::initDesc(const D3D11_BUFFER_DESC &descBuffer)
 
 TextureHelper11 &TextureHelper11::operator=(TextureHelper11 &&other)
 {
-    std::swap(mData, other.mData);
+    swapData(other);
     std::swap(mExtents, other.mExtents);
     std::swap(mFormatSet, other.mFormatSet);
     std::swap(mSampleCount, other.mSampleCount);
@@ -2327,12 +2324,12 @@ TextureHelper11 &TextureHelper11::operator=(const TextureHelper11 &other)
 
 bool TextureHelper11::operator==(const TextureHelper11 &other) const
 {
-    return mData->object == other.mData->object;
+    return get() == other.get();
 }
 
 bool TextureHelper11::operator!=(const TextureHelper11 &other) const
 {
-    return mData->object != other.mData->object;
+    return get() != other.get();
 }
 
 bool UsePresentPathFast(const Renderer11 *renderer,

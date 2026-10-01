@@ -63,11 +63,11 @@ public:
     bool isSampledBefore() const { return prediction() != SpecNone; }
     unsigned totalNumberOfSamples() const { return numberOfSamples() + isSampledBefore(); }
 
-    CString briefDescription() const
+    UTF8CString briefDescription() const
     {
         StringPrintStream out;
         out.print("predicting ", SpeculationDump(computeUpdatedPrediction()));
-        return out.toCString();
+        return out.toUTF8CString();
     }
 
     void dump(PrintStream& out) const

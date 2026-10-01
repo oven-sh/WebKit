@@ -60,13 +60,13 @@ public:
     void handleWasmCallStack(StringView packet);
     void handleWasmLocal(StringView packet);
     void handleWasmGlobal(StringView packet);
+    void handleWasmStackValue(StringView packet);
 
 private:
     DebugServer& m_debugServer;
 
     bool parseLibrariesReadPacket(StringView packet, size_t& offset, size_t& maxSize);
     bool handleChunkedLibrariesResponse(size_t offset, size_t maxSize, String& response);
-    JSWebAssemblyInstance* instanceForModule(uint32_t moduleId);
     JSWebAssemblyInstance* instanceForFrame(uint32_t frameIndex);
 };
 

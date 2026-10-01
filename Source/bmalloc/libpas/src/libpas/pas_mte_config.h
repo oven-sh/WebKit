@@ -67,7 +67,7 @@
 #if defined(PAS_USE_OPENSOURCE_MTE) && PAS_USE_OPENSOURCE_MTE
 #if PAS_ENABLE_MTE
 
-#define PAS_USE_MTE (PAS_RUNTIME_CONFIG_PTR->enabled)
+#define PAS_USE_MTE (PAS_RUNTIME_CONFIG_PTR->mte_state == pas_mte_state_enabled)
 #ifndef PAS_USE_MTE_IN_WEBCONTENT
 #define PAS_USE_MTE_IN_WEBCONTENT 1
 #endif
@@ -198,7 +198,32 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-bool pas_mte_is_mte_enabled(void);
+
+bool pas_mte_is_mte_enabled_slow(void);
+
+#if PAS_ENABLE_MTE
+/* mte_state is safe to read with a relaxed load because in the case that a
+   stale value is observed, it would necessarily be a value of 0 (from the
+   original static initialization) as it will only ever be changed once,
+   inside the first call to pas_mte_is_mte_enabled_slow(); and the result of
+   such a stale read is to fall through to pas_mte_is_mte_enabled_slow(),
+   which ensures single initialization. */
+static inline __attribute__((__always_inline__)) bool pas_mte_is_mte_enabled(void)
+{
+    uint8_t state = PAS_RUNTIME_CONFIG_PTR->mte_state;
+    if (state == pas_mte_state_disabled)
+        return false;
+    if (state == pas_mte_state_enabled)
+        return true;
+    return pas_mte_is_mte_enabled_slow();
+}
+#else /* !PAS_ENABLE_MTE */
+static inline __attribute__((__always_inline__)) bool pas_mte_is_mte_enabled(void)
+{
+    return false;
+}
+#endif /* PAS_ENABLE_MTE */
+
 void pas_mte_ensure_initialized(void);
 void pas_mte_force_nontaggable_user_allocations_into_large_heap(void);
 void pas_bmalloc_force_allocations_into_bitfit_heaps_where_available(void);

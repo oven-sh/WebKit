@@ -66,6 +66,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
+inline std::span<const char8_t> unsafeSpan(const char8_t* string)
+{
+    return byteCast<char8_t>(unsafeSpan(byteCast<char>(string)));
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 inline std::span<const char16_t> unsafeSpan(const char16_t* string)
 {
@@ -1818,6 +1823,18 @@ inline size_t countMatchedCharacters(std::span<const CharacterType> span, Charac
     };
     auto scalarMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
         return input == character;
+    };
+    return SIMD::count(span, vectorMatch, scalarMatch);
+}
+
+template<typename CharacterType, CharacterType... characters>
+inline size_t countMatchedCharacters(std::span<const CharacterType> span)
+{
+    auto vectorMatch = [](auto input) ALWAYS_INLINE_LAMBDA {
+        return SIMD::equal<characters...>(input);
+    };
+    auto scalarMatch = [](auto input) ALWAYS_INLINE_LAMBDA {
+        return compareEach<CharacterType, characters...>(input);
     };
     return SIMD::count(span, vectorMatch, scalarMatch);
 }

@@ -253,30 +253,31 @@ void EditCommandComposition::unapply(AddToUndoStack addToUndoStack)
     // if one is necessary (like for the creation of VisiblePositions).
     m_document->updateLayoutIgnorePendingStylesheets();
     Ref document = m_document.get();
+    Ref editor = document->editor();
 #if PLATFORM(IOS_FAMILY)
     // FIXME: Where should iPhone code deal with the composition?
     // Since editing commands don't save/restore the composition, undoing without fixing
     // up the composition will leave a stale, invalid composition, as in <rdar://problem/6831637>.
     // Desktop handles this in -[WebHTMLView _updateSelectionForInputManager], but the phone
     // goes another route.
-    document->editor().cancelComposition();
+    editor->cancelComposition();
 #endif
 
-    auto prohibitScrollingForScope = document->view() ? document->view()->prohibitScrollingWhenChangingContentSizeForScope() : nullptr;
-    if (addToUndoStack == AddToUndoStack::Yes && !document->editor().willUnapplyEditing(*this))
+    auto prohibitScrollingForScope = document->view() ? protect(document->view())->prohibitScrollingWhenChangingContentSizeForScope() : nullptr;
+    if (addToUndoStack == AddToUndoStack::Yes && !editor->willUnapplyEditing(*this))
         return;
 
     size_t size = m_commands.size();
     for (size_t i = size; i; --i)
-        m_commands[i - 1]->doUnapply();
+        protect(m_commands[i - 1])->doUnapply();
 
     if (addToUndoStack == AddToUndoStack::No)
         return;
 
-    document->editor().unappliedEditing(*this);
+    editor->unappliedEditing(*this);
 
     if (AXObjectCache::accessibilityEnabled())
-        m_replacedText.postTextStateChangeNotificationForUnapply(m_document->existingAXObjectCache());
+        m_replacedText.postTextStateChangeNotificationForUnapply(protect(m_document->existingAXObjectCache()));
 
     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(m_document->selection().isNone() || m_document->selection().isConnectedToDocument());
 }
@@ -303,17 +304,18 @@ void EditCommandComposition::reapply()
     m_document->updateLayoutIgnorePendingStylesheets();
 
     Ref document = m_document.get();
-    auto prohibitScrollingForScope = document->view() ? document->view()->prohibitScrollingWhenChangingContentSizeForScope() : nullptr;
-    if (!document->editor().willReapplyEditing(*this))
+    Ref editor = document->editor();
+    auto prohibitScrollingForScope = document->view() ? protect(document->view())->prohibitScrollingWhenChangingContentSizeForScope() : nullptr;
+    if (!editor->willReapplyEditing(*this))
         return;
 
     for (Ref command : m_commands)
         command->doReapply();
 
-    document->editor().reappliedEditing(*this);
+    editor->reappliedEditing(*this);
 
     if (AXObjectCache::accessibilityEnabled())
-        m_replacedText.postTextStateChangeNotificationForReapply(m_document->existingAXObjectCache());
+        m_replacedText.postTextStateChangeNotificationForReapply(protect(m_document->existingAXObjectCache()));
 
     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(m_document->selection().isNone() || m_document->selection().isConnectedToDocument());
 }
@@ -367,7 +369,7 @@ CompositeEditCommand::~CompositeEditCommand()
 
 bool CompositeEditCommand::willApplyCommand()
 {
-    return protect(document())->editor().willApplyEditing(*this, targetRangesForBindings());
+    return protect(protect(document())->editor())->willApplyEditing(*this, targetRangesForBindings());
 }
 
 void CompositeEditCommand::apply()
@@ -428,7 +430,7 @@ void CompositeEditCommand::apply()
 
 void CompositeEditCommand::didApplyCommand()
 {
-    protect(document())->editor().appliedEditing(*this);
+    protect(protect(document())->editor())->appliedEditing(*this);
 }
 
 Vector<Ref<StaticRange>> CompositeEditCommand::targetRanges() const
@@ -830,7 +832,7 @@ static Vector<RenderedDocumentMarker> copyMarkers(const Vector<WeakPtr<RenderedD
 void CompositeEditCommand::replaceTextInNodePreservingMarkers(Text& node, unsigned offset, unsigned count, const String& replacementText)
 {
     auto range = SimpleRange { { node, offset }, { node, offset + count } };
-    auto markers = copyMarkers(document().markers().markersInRange(range, DocumentMarker::allMarkers()));
+    auto markers = copyMarkers(protect(document().markers())->markersInRange(range, DocumentMarker::allMarkers()));
     replaceTextInNode(node, offset, count, replacementText);
     range.end.offset = range.start.offset + replacementText.length();
     for (auto& marker : markers)
@@ -1258,7 +1260,7 @@ RefPtr<Node> CompositeEditCommand::moveParagraphContentsToNewBlockIfNecessary(co
         if (upstreamStart.deprecatedNode() == editableRootForPosition(upstreamStart)) {
             // If the block is the root editable element and it contains no visible content, create a new
             // block but don't try and move content into it, since there's nothing for moveParagraphs to move.
-            if (!Position::hasRenderedNonAnonymousDescendantsWithHeight(downcast<RenderElement>(*upstreamStart.deprecatedNode()->renderer())))
+            if (!Position::hasRenderedNonAnonymousDescendantsWithHeight(protect(downcast<RenderElement>(*upstreamStart.deprecatedNode()->renderer()))))
                 return insertNewDefaultParagraphElementAt(upstreamStart);
         } else if (upstreamEnd.deprecatedNode() && isBlock(*upstreamEnd.deprecatedNode())) {
             if (!upstreamEnd.deprecatedNode()->isDescendantOf(upstreamStart.deprecatedNode())) {
@@ -1514,6 +1516,7 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
         return;
 
     Ref document = this->document();
+    Ref editor = document->editor();
     // FIXME: Serializing and re-parsing is an inefficient way to preserve style.
     RefPtr<DocumentFragment> fragment;
     if (startOfParagraphToMove != endOfParagraphToMove)
@@ -1537,7 +1540,7 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
     // FIXME (5098931): We should add a new insert action "WebViewInsertActionMoved" and call shouldInsertFragment here.
 
     setEndingSelection(VisibleSelection(start, end));
-    document->editor().clearMisspellingsAndBadGrammar(endingSelection());
+    editor->clearMisspellingsAndBadGrammar(endingSelection());
 
     auto downstreamDestination = destination.deepEquivalent().downstream();
 
@@ -1582,7 +1585,7 @@ void CompositeEditCommand::moveParagraphs(const VisiblePosition& startOfParagrap
         options.add(ReplaceSelectionCommand::MatchStyle);
     applyCommandToComposite(ReplaceSelectionCommand::create(document.copyRef(), WTF::move(fragment), options));
 
-    document->editor().markMisspellingsAndBadGrammar(endingSelection());
+    editor->markMisspellingsAndBadGrammar(endingSelection());
 
     // If the selection is in an empty paragraph, restore styles from the old empty paragraph to the new empty paragraph.
     bool selectionIsEmptyParagraph = endingSelection().isCaret() && isStartOfParagraph(endingSelection().visibleStart()) && isEndOfParagraph(endingSelection().visibleStart());

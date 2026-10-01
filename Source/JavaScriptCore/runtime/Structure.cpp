@@ -1128,6 +1128,11 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     ASSERT(isDictionary());
     ASSERT(object->structure() == this);
 
+    // Must outlive cellLocker. The collection this defers until scope exit would otherwise run
+    // while the cell lock is held, and the collector takes that same cell lock to scan an array
+    // storage butterfly, so it would deadlock against us.
+    DeferGC deferGC(vm);
+
     Locker<JSCellLock> cellLocker(NoLockingNecessary);
 
     PropertyTable* table = nullptr;
@@ -1148,7 +1153,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     if (beforeOutOfLineCapacity != afterOutOfLineCapacity)
         cellLocker = Locker { object->cellLock() };
 
-    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    ConcurrentJSLocker locker(m_lock);
 
     object->setStructureIDDirectly(id().nuke());
     WTF::storeStoreFence();
@@ -1304,7 +1309,7 @@ void TypedLayoutTable::reportViolation(ASCIILiteral what, uint16_t layoutID, JSV
     Locker locker { lock };
     if (seen->add(out.toString(), 0).iterator->value++)
         return;
-    dataLogLn("AUDIT\t", out.toCString());
+    dataLogLn("AUDIT\t", out.toString());
 }
 
 void TypedLayoutTable::setFields(const uint32_t* index, const Field* field, const FieldType* fieldTypes, const uint16_t* fieldLayoutIDs, const uint8_t* inlineSlots, const uint32_t* startOfFields, const uint32_t* fields, const uint16_t* layoutIDsByFieldID, ConvertFunction convertToTypedLayout, bool isAuditing)
@@ -1906,7 +1911,7 @@ void Structure::dumpInContext(PrintStream& out, DumpContext* context) const
         dump(out);
 }
 
-void Structure::dumpBrief(PrintStream& out, const CString& string) const
+void Structure::dumpBrief(PrintStream& out, const ASCIICString& string) const
 {
     out.print("%", string, ":", classInfoForCells()->className);
     if (indexingType() & IndexingShapeMask)

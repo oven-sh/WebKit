@@ -28,8 +28,7 @@
     Exposed=(Window,Worker),
     SecureContext
 ]
-interface GPUInternalError {
+interface GPUInternalError : GPUError {
     constructor(DOMString message);
-    readonly attribute DOMString message;
     readonly attribute DOMString stack;
 };

@@ -43,6 +43,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -63,7 +64,7 @@ void WebBackForwardListProxy::addItem(Ref<HistoryItem>&& item)
     if (!page)
         return;
 
-    LOG(BackForward, "(Back/Forward) WebProcess pid %i setting item %p for id %s with url %s", getCurrentProcessID(), item.ptr(), item->itemID().toString().utf8().data(), item->urlString().utf8().data());
+    LOG_WITH_STREAM(BackForward, stream << "(Back/Forward) WebProcess pid "_s << getCurrentProcessID() << " setting item "_s << item.ptr() << " for id "_s << item->itemID().toString() << " with url "_s << item->urlString());
     m_cachedBackForwardListCounts = std::nullopt;
     page->send(Messages::WebBackForwardList::BackForwardAddItem(toFrameState(item.get())));
 }

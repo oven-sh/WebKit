@@ -44,39 +44,19 @@ RemoteFrameGeometryTransformer::RemoteFrameGeometryTransformer(RemoteFrameGeomet
 
 RemoteFrameGeometryTransformer& RemoteFrameGeometryTransformer::operator=(RemoteFrameGeometryTransformer&&) = default;
 
-// The returned point is in the remote frame's root-view coordinates (i.e. relative to the remote
-// frame's origin, without the remote frame's own scroll offset applied). Consumers deliver it into
-// the remote frame's process as a root-view point, where it is converted to contents coordinates
-// (re-applying the remote frame's scroll) during hit-testing.
-//
-// The mapping applies the CSS transform on the remote frame's owner element -- obtained from the
-// local (parent) frame view, whose owner renderer lives in this process -- so a scaled, rotated, or
-// translated iframe maps its coordinates correctly. A plain translation offset could not represent a
-// scale.
-FloatPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(FloatPoint pointInContents) const
+FloatPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(FloatPoint pointInLocalRootView) const
 {
-    Ref localView = m_localView;
-    Ref remoteFrame = Ref { m_remoteView }->frame();
-    auto local = localView->absoluteToChildFrameOwnerLocalTransform(remoteFrame).projectPoint(pointInContents);
-    FloatPoint contentBoxLocation = localView->childFrameOwnerContentBoxLocation(remoteFrame);
-    local.moveBy(-contentBoxLocation);
-    return local;
+    return Ref { m_remoteView }->convertFromRootView(pointInLocalRootView);
 }
 
-IntPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(IntPoint pointInContents) const
+IntPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(IntPoint pointInLocalRootView) const
 {
-    return roundedIntPoint(transformToRemoteFrameCoordinates(FloatPoint { pointInContents }));
+    return roundedIntPoint(transformToRemoteFrameCoordinates(FloatPoint { pointInLocalRootView }));
 }
 
-DoublePoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(DoublePoint pointInContents) const
+DoublePoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(DoublePoint pointInLocalRootView) const
 {
-    auto transformed = transformToRemoteFrameCoordinates(FloatPoint(pointInContents.x(), pointInContents.y()));
-    return { transformed.x(), transformed.y() };
-}
-
-DoublePoint RemoteFrameGeometryTransformer::transformRootViewPointToRemoteFrameCoordinates(DoublePoint pointInRootView) const
-{
-    return Ref { m_remoteView }->convertFromRootView(pointInRootView);
+    return Ref { m_remoteView }->convertFromRootView(pointInLocalRootView);
 }
 
 } // namespace WebCore

@@ -102,7 +102,7 @@ void SQLiteFileSystem::setCanSuspendLockedFileAttribute(const String& filePath)
     for (auto suffix : databaseFileSuffixes) {
         auto path = makeString(filePath, suffix);
         char excluded = 0xff;
-        auto result = setxattr(FileSystem::fileSystemRepresentation(path).data(), "com.apple.runningboard.can-suspend-locked", &excluded, sizeof(excluded), 0, 0);
+        auto result = setxattr(FileSystem::fileSystemRepresentation(path).legacyCStringPointer(), "com.apple.runningboard.can-suspend-locked", &excluded, sizeof(excluded), 0, 0);
         if (result < 0 && suffix == ""_s)
             RELEASE_LOG_ERROR(SQLDatabase, "SQLiteFileSystem::setCanSuspendLockedFileAttribute: setxattr failed: %" PUBLIC_LOG_STRING, strerror(errno));
     }
@@ -150,7 +150,7 @@ String SQLiteFileSystem::computeHashForFileName(StringView fileName)
 {
     auto cryptoDigest = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
     auto utf8FileName = fileName.utf8();
-    cryptoDigest->addBytes(byteCast<uint8_t>(utf8FileName.span()));
+    cryptoDigest->addBytes(std::as_bytes(utf8FileName.span()));
     return cryptoDigest->toHexString();
 }
 

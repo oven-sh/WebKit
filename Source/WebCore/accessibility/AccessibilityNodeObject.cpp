@@ -414,8 +414,8 @@ Document* AccessibilityNodeObject::document() const
 
 LocalFrameView* AccessibilityNodeObject::documentFrameView() const
 {
-    if (auto* node = this->node())
-        return node->document().view();
+    if (RefPtr node = this->node())
+        return protect(node->document())->view();
     return AccessibilityObject::documentFrameView();
 }
 
@@ -2259,15 +2259,16 @@ bool AccessibilityNodeObject::isDataTable() const
     // When a section of the document is contentEditable, all tables should be
     // treated as data tables, otherwise users may not be able to work with rich
     // text editors that allow creating and editing tables.
-    if (node() && protect(node())->hasEditableStyle())
+    RefPtr node = this->node();
+    if (node && node->hasEditableStyle())
         return true;
 
-    if (RefPtr tableElement = AXTableHelpers::tableElementIncludingAncestors(node(), renderer())) {
+    if (RefPtr tableElement = AXTableHelpers::tableElementIncludingAncestors(node, renderer())) {
         if (AXTableHelpers::tableElementIndicatesAccessibleTable(*tableElement))
             return true;
     }
 
-    RefPtr table = dynamicDowncast<HTMLTableElement>(node());
+    RefPtr table = dynamicDowncast<HTMLTableElement>(node);
     // The following checks should only apply if this is a real <table> element.
     if (!table)
         return false;
@@ -3331,10 +3332,17 @@ String AccessibilityNodeObject::textForLabelElements(Vector<Ref<HTMLElement>>&& 
     // "...if more than one label is associated; concatenate by DOM order, delimited by spaces."
     StringBuilder result;
 
+    RefPtr thisElement = this->element();
+    bool referencedByARIA = thisElement && (thisElement->hasAttributeWithoutSynchronization(aria_labelledbyAttr)
+        || thisElement->hasAttributeWithoutSynchronization(aria_labeledbyAttr));
+
     WeakPtr cache = axObjectCache();
     for (auto& labelElement : labelElements) {
         RefPtr label = cache ? cache->getOrCreate(labelElement.get()) : nullptr;
         if (!label)
+            continue;
+
+        if (!referencedByARIA && label->isARIAHidden())
             continue;
 
         if (label.get() == this) {
@@ -4039,7 +4047,8 @@ String AccessibilityNodeObject::textUnderElement(TextUnderElementMode mode) cons
         // contribute to the owning element's name, not this DOM parent's name.
         // Only skip if the owner is not hidden, as per the ARIA spec, aria-owns must
         // not be resolved when set on an element excluded from the accessibility tree.
-        auto owners = protect(*child)->owners();
+        Ref childObject = *child;
+        auto owners = childObject->owners();
         if (owners.size()) {
             bool isOwnedByOtherObject = false;
             for (const auto& owner : owners) {
@@ -4056,7 +4065,7 @@ String AccessibilityNodeObject::textUnderElement(TextUnderElementMode mode) cons
                 continue;
         }
 
-        processChild(protect(*child));
+        processChild(childObject);
     }
 
     // Include children that this element owns via aria-owns. These are not in
@@ -4362,7 +4371,7 @@ String AccessibilityNodeObject::stringValue() const
                 continue;
 
             if (auto selectedChildren = child->selectedChildren(); selectedChildren.size())
-                return selectedChildren.first()->stringValue();
+                return protect(selectedChildren.first())->stringValue();
             break;
         }
     }
@@ -4407,6 +4416,8 @@ SRGBA<uint8_t> AccessibilityNodeObject::colorValue() const
     return input->valueAsColor().toColorTypeLossy<SRGBA<uint8_t>>();
 }
 
+static constexpr unsigned maxNestedAccessibleNameComputations = 128;
+
 // This function implements the ARIA accessible name as described by the Mozilla
 // ARIA Implementer's Guide.
 static String accessibleNameForNode(Node& node, Node* labelledbyNode, DescendIntoContainers descendIntoContainers)
@@ -4426,6 +4437,19 @@ static String accessibleNameForNode(Node& node, Node* labelledbyNode, DescendInt
         if (String title = svgElement->title(); !title.isEmpty())
             return title;
     }
+
+    // Acc-name computation can recurse. If it does, the node whose traversal is already in
+    // progress contributes the empty string: https://w3c.github.io/accname/#computation-steps
+    // Track and check visited nodes to support this.
+    Ref protectedNode { node };
+    static NeverDestroyed<HashSet<const Node*>> nodesCurrentlyBeingNamed;
+    if (nodesCurrentlyBeingNamed->size() >= maxNestedAccessibleNameComputations)
+        return { };
+    if (!nodesCurrentlyBeingNamed->add(protectedNode.ptr()).isNewEntry)
+        return { };
+    auto removeOnExit = makeScopeExit([&] {
+        nodesCurrentlyBeingNamed->remove(protectedNode.ptr());
+    });
 
     // If the node can be turned into an AX object, we can use standard name computation rules.
     // If however, the node cannot (because there's no renderer e.g.) fallback to using the basic text underneath.
@@ -4710,7 +4734,7 @@ void AccessibilityNodeObject::setFocused(bool on)
     // If we return from setFocusedElement and our element has been removed from a tree, axObjectCache() may be null.
     if (CheckedPtr cache = axObjectCache()) {
         cache->setIsSynchronizingSelection(true);
-        protect(downcast<Element>(*m_node))->focus();
+        protect(downcast<Element>(*m_node))->focus({ .preventInputViewPresentation = true });
         cache->setIsSynchronizingSelection(false);
     }
 }
@@ -4985,7 +5009,7 @@ Vector<Ref<HTMLElement>> labelsForElement(Element* element)
         if (htmlElement->hasAttributeWithoutSynchronization(aria_labelAttr))
             return { };
 
-        if (auto* treeScopeLabels = htmlElement->treeScope().labelElementsForId(idAttribute); treeScopeLabels && !treeScopeLabels->isEmpty()) {
+        if (auto* treeScopeLabels = protect(htmlElement->treeScope())->labelElementsForId(idAttribute); treeScopeLabels && !treeScopeLabels->isEmpty()) {
             result.appendVector(WTF::compactMap(*treeScopeLabels, [] (auto& label) {
                 return RefPtr { dynamicDowncast<HTMLLabelElement>(label.get()) };
             }));

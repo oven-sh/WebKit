@@ -64,6 +64,14 @@ public:
             return sourceOfShortForm();
         return inFull()->m_source;
     }
+    // Must not build the provider's line-start table so it can be called by assertions.
+    bool hasSourceText() const
+    {
+        if (isShortForm()) [[unlikely]]
+            return false;
+        auto& source = inFull()->m_source;
+        return !source.isNull() && source.provider() && !source.provider()->source().isNull();
+    }
     SourceProvider* sourceProvider() const
     {
         if (isShortForm()) [[unlikely]]
@@ -90,14 +98,14 @@ public:
             return whereShortFormStarts().line;
         return inFull()->m_source.firstLine().oneBasedInt();
     }
-    JS_EXPORT_PRIVATE int NODELETE lastLine() const;
+    JS_EXPORT_PRIVATE int lastLine() const;
     unsigned startColumn() const
     {
         if (isShortForm()) [[unlikely]]
             return whereShortFormStarts().column;
         return inFull()->m_source.startColumn().oneBasedInt();
     }
-    JS_EXPORT_PRIVATE unsigned NODELETE endColumn() const;
+    JS_EXPORT_PRIVATE unsigned endColumn() const;
 
     std::optional<int> NODELETE overrideLineNumber(VM&) const;
     unsigned NODELETE typeProfilingStartOffset() const;
@@ -144,7 +152,13 @@ public:
         
     DECLARE_EXPORT_INFO;
 
-    void NODELETE recordParse(CodeFeatures, LexicallyScopedFeatures, bool hasCapturedVariables, int lastLine, unsigned endColumn);
+    void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
+    {
+        m_features = features;
+        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
+        m_hasCapturedVariables = hasCapturedVariables;
+    }
+
     void installCode(CodeBlock*);
     void installCode(VM&, CodeBlock*, CodeType, CodeSpecializationKind, Profiler::JettisonReason);
     // Installs AOT code (aot/) for a function. It runs without a CodeBlock, and the function does not get one.
@@ -193,14 +207,6 @@ private:
 
 protected:
     ScriptExecutable(Structure*, VM&, const SourceCode&, LexicallyScopedFeatures, DerivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType, Intrinsic);
-
-    void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
-    {
-        RELEASE_ASSERT(!isShortForm());
-        m_features = features;
-        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
-        m_hasCapturedVariables = hasCapturedVariables;
-    }
 
     static TemplateObjectMap& ensureTemplateObjectMapImpl(std::unique_ptr<TemplateObjectMap>& dest);
 

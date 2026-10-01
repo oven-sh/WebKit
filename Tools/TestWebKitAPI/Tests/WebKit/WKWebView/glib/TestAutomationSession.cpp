@@ -88,7 +88,7 @@ public:
         if (!parameters.isNull())
             messageBuilder.append(",\"params\":"_s, parameters);
         messageBuilder.append('}');
-        m_connection->sendMessage("SendMessageToBackend", g_variant_new("(tts)", m_connectionID, m_target.id, messageBuilder.toString().utf8().data()));
+        m_connection->sendMessage("SendMessageToBackend", g_variant_new("(tts)", m_connectionID, m_target.id, messageBuilder.toString().utf8().legacyCStringPointer()));
     }
 
     static WebKitWebView* createWebViewCallback(WebKitAutomationSession* session, AutomationTest* test)
@@ -296,14 +296,14 @@ const SocketConnection::MessageHandlers AutomationTest::s_messageHandlers = {
 
 static void testAutomationSessionRequestSession(AutomationTest* test, gconstpointer)
 {
-    CString sessionID = createVersion4UUIDString().utf8();
+    auto sessionID = createVersion4UUIDString().utf8();
     // WebKitAutomationSession::automation-started is never emitted if automation is not enabled.
     g_assert_false(webkit_web_context_is_automation_allowed(test->m_webContext.get()));
 #if ENABLE(2022_GLIB_API)
     // Network session for automation is nullptr if automation is not enabled.
     g_assert_null(webkit_web_context_get_network_session_for_automation(test->m_webContext.get()));
 #endif
-    auto* session = test->requestSession(sessionID.data());
+    auto* session = test->requestSession(sessionID.legacyCStringPointer());
     g_assert_null(session);
 
     webkit_web_context_set_automation_allowed(test->m_webContext.get(), TRUE);
@@ -323,8 +323,8 @@ static void testAutomationSessionRequestSession(AutomationTest* test, gconstpoin
     Test::addLogFatalFlag(G_LOG_LEVEL_WARNING);
     g_assert_false(webkit_web_context_is_automation_allowed(otherContext.get()));
 
-    session = test->requestSession(sessionID.data());
-    g_assert_cmpstr(webkit_automation_session_get_id(session), ==, sessionID.data());
+    session = test->requestSession(sessionID.legacyCStringPointer());
+    g_assert_cmpstr(webkit_automation_session_get_id(session), ==, sessionID.legacyCStringPointer());
     g_assert_cmpuint(test->m_target.id, >, 0);
     ASSERT_CMP_CSTRING(test->m_target.name, ==, sessionID);
     g_assert_false(test->m_target.isPaired);

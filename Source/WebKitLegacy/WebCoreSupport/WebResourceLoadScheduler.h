@@ -62,7 +62,7 @@ public:
     void suspendPendingRequests() final;
     void resumePendingRequests() final;
 
-    void startPingLoad(WebCore::LocalFrame&, WebCore::ResourceRequest&, const WebCore::HTTPHeaderMap&, const WebCore::FetchOptions&, WebCore::ContentSecurityPolicyImposition, PingLoadCompletionHandler&&) final;
+    bool startKeepAliveLoadForWebKitLegacy(WebCore::FrameLoader&, const WebCore::ResourceRequest&, const WebCore::ResourceLoaderOptions&, CompletionHandler<void(const WebCore::ResourceError&, const WebCore::ResourceResponse&)>&&) final;
 
     void preconnectTo(WebCore::FrameLoader&, WebCore::ResourceRequest&&, WebCore::StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&&) final;
 

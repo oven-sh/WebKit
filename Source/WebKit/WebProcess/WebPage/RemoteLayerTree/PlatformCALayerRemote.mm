@@ -38,6 +38,7 @@
 #import <WebCore/EventRegion.h>
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/GraphicsLayerCA.h>
+#import <WebCore/HTMLVideoElement.h>
 #import <WebCore/IOSurface.h>
 #import <WebCore/PlatformCAFilters.h>
 #import <WebCore/PlatformCALayerCocoa.h>
@@ -144,12 +145,20 @@ PlatformCALayerRemote::~PlatformCALayerRemote()
 
 void PlatformCALayerRemote::moveToContext(RemoteLayerTreeContext& context)
 {
-    if (RefPtr oldContext = m_context.get())
+    RefPtr oldContext = m_context.get();
+
+#if HAVE(AVKIT)
+    RefPtr videoElement = oldContext ? oldContext->videoElementForLayer(layerID()) : nullptr;
+    if (videoElement)
+        context.layerDidEnterContext(*this, layerType(), *videoElement);
+    else
+#endif // HAVE(AVKIT)
+        context.layerDidEnterContext(*this, layerType());
+
+    if (oldContext)
         oldContext->layerWillLeaveContext(*this);
 
     m_context = context;
-
-    context.layerDidEnterContext(*this, layerType());
 
     m_properties.notePropertiesChanged(m_properties.everChangedProperties);
 }

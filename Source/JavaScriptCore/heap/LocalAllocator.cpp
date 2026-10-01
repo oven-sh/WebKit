@@ -26,10 +26,12 @@
 #include "config.h"
 #include "LocalAllocator.h"
 
+#include "AlignedMemoryAllocator.h"
 #include "AllocatingScope.h"
 #include "FreeListInlines.h"
 #include "GCDeferralContext.h"
 #include "LocalAllocatorInlines.h"
+#include "MarkedBlockInlines.h"
 #include "Options.h"
 #include "ResourceExhaustion.h"
 #include "SuperSampler.h"
@@ -220,17 +222,23 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
     }
     
     if (Options::stealEmptyBlocksFromOtherAllocators()) {
-        if (MarkedBlock::Handle* block = m_directory->m_subspace->findEmptyBlockToSteal()) {
-            RELEASE_ASSERT(block->alignedMemoryAllocator() == m_directory->m_subspace->alignedMemoryAllocator());
-            
+        AlignedMemoryAllocator* allocator = m_directory->m_subspace->alignedMemoryAllocator();
+        if (MarkedBlock::Handle* block = allocator->findEmptyBlockToSteal()) {
+            RELEASE_ASSERT(block->alignedMemoryAllocator() == allocator);
+
             block->sweep(nullptr);
-            
+            // A block must own no WeakBlock before it changes cell size and owner: a survivor would
+            // go on reading mark bits for cells that no longer exist at those addresses. Sweeping an
+            // empty block leaves it that way, since every handle in it is reaped dead and finalized.
+            RELEASE_ASSERT(!block->weakSet().head());
+            ASSERT(!block->weakSet().isOnList());
+
             block->removeFromDirectory();
             m_directory->addBlock(block);
             return allocateIn(block, cellSize);
         }
     }
-    
+
     return nullptr;
 }
 

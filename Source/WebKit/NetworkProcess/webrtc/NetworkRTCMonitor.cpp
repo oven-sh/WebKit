@@ -99,7 +99,7 @@ HashMap<String, RTCNetwork> NetworkRTCMonitor::gatherNetworkMap()
 
         networkMap.ensure(networkKey, [&] {
             auto interfaceType = NetworkRTCSharedMonitor::singleton().adapterTypeFromInterfaceName(iterator->ifa_name);
-            return RTCNetwork { name, networkKey.utf8().span(), address->second, prefixLength, interfaceType, 0, 0, true, false, scopeID, { } };
+            return RTCNetwork { String::fromLatin1(name), String { networkKey }, address->second, prefixLength, interfaceType, 0, 0, true, false, scopeID, { } };
         }).iterator->value.ips.append(address->first);
     }
 

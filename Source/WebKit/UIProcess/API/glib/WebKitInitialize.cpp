@@ -35,6 +35,7 @@
 #include <skia/core/SkGraphics.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 #if USE(SYSPROF_CAPTURE)
@@ -75,7 +76,7 @@ static void initializeRemoteInspectorServer()
             ipAddress = ipAddress.substring(1, hostLength - 2);
         }
 
-        return adoptGRef(g_inet_socket_address_new_from_string(ipAddress.toString().utf8().data(), *port));
+        return adoptGRef(g_inet_socket_address_new_from_string(ipAddress.utf8().legacyCStringPointer(), *port));
     };
 
     auto inspectorHTTPAddress = parseAddress(httpAddress);
@@ -96,7 +97,7 @@ static void initializeRemoteInspectorServer()
         if (RemoteInspectorHTTPServer::singleton().start(WTF::move(inspectorHTTPAddress), Inspector::RemoteInspectorServer::singleton().port()))
             Inspector::RemoteInspector::setInspectorServerAddress(RemoteInspectorHTTPServer::singleton().inspectorServerAddress().utf8());
     } else
-        Inspector::RemoteInspector::setInspectorServerAddress(address);
+        Inspector::RemoteInspector::setInspectorServerAddress(UTF8CString { byteCast<char8_t>(address) });
 }
 #endif
 

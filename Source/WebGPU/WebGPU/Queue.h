@@ -26,6 +26,7 @@
 #pragma once
 
 #import "Instance.h"
+#import <CoreVideo/CVPixelBuffer.h>
 #import <Metal/Metal.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
@@ -51,6 +52,12 @@ class CommandEncoder;
 class Device;
 class Texture;
 class TextureView;
+
+// A frame carries primaries of its own, which are usually neither of the two color spaces WebGPU
+// names, so both importExternalTexture() and copyExternalImageToTexture() have to convert them.
+// Row-major and applied to linear-light values; std::nullopt when the frame's primaries already are
+// the destination's, which has to stay a no-op rather than a transfer function round trip.
+std::optional<std::array<float, 9>> primariesConversionMatrixForPixelBuffer(CVPixelBufferRef, WGPUColorSpace destination);
 
 // https://gpuweb.github.io/gpuweb/#gpuqueue
 // A device owns its default queue, not the other way around.

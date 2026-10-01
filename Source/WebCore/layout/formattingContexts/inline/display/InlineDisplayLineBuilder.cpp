@@ -28,6 +28,7 @@
 
 #include "InlineDisplayContentBuilder.h"
 #include "LayoutBoxGeometry.h"
+#include "LayoutIntegrationUtils.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TextUtil.h"
 
@@ -498,9 +499,12 @@ std::optional<InlineDisplay::Line::Ellipsis> InlineDisplayLineBuilder::applyElli
     if (truncationPolicy == LineEndingTruncationPolicy::NoTruncation || !displayBoxes.size())
         return { };
 
+    CheckedRef rootBox = displayBoxes[0].layoutBox();
+    CheckedRef styleForTruncation = rootBox->isAnonymous() ? IntegrationUtils::firstNonAnonymousAncestorStyle(rootBox) : rootBox->style();
+
     auto ellipsisText = [&] -> AtomString {
         if (truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInInlineDirection) {
-            return WTF::switchOn(displayBoxes[0].layoutBox().style().textOverflow(),
+            return WTF::switchOn(styleForTruncation->textOverflow(),
                 [&](const CSS::Keyword::Clip&) -> AtomString {
                     return nullAtom();
                 },
@@ -516,7 +520,7 @@ std::optional<InlineDisplay::Line::Ellipsis> InlineDisplayLineBuilder::applyElli
             // Legacy line clamp always uses ...
             return TextUtil::ellipsisTextInInlineDirection(displayLine.isHorizontal());
         }
-        return WTF::switchOn(displayBoxes[0].layoutBox().style().blockEllipsis(),
+        return WTF::switchOn(styleForTruncation->blockEllipsis(),
             [&](const CSS::Keyword::NoEllipsis&) -> AtomString {
                 return nullAtom();
             },

@@ -28,6 +28,7 @@
 
 #include "TestSyncData.h"
 #include <wtf/EnumTraits.h>
+#include <wtf/StdLibExtras.h>
 
 namespace WebCore {
 
@@ -36,26 +37,62 @@ void TestSyncClient::broadcastAudioSessionTypeToOtherProcesses(const WebCore::DO
 {
     broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::AudioSessionType)>, data } });
 }
+
+void TestSyncClient::broadcastAudioSessionTypeToOtherProcesses(WebCore::DOMAudioSessionType&& data)
+{
+    broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::AudioSessionType)>, WTF::move(data) } });
+}
 #endif
+
 void TestSyncClient::broadcastMainFrameURLChangeToOtherProcesses(const URL& data)
 {
     broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::MainFrameURLChange)>, data } });
 }
+
+void TestSyncClient::broadcastMainFrameURLChangeToOtherProcesses(URL&& data)
+{
+    broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::MainFrameURLChange)>, WTF::move(data) } });
+}
+
 void TestSyncClient::broadcastIsAutofocusProcessedToOtherProcesses(const bool& data)
 {
     broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::IsAutofocusProcessed)>, data } });
 }
+
+void TestSyncClient::broadcastIsAutofocusProcessedToOtherProcesses(bool&& data)
+{
+    broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::IsAutofocusProcessed)>, WTF::move(data) } });
+}
+
 void TestSyncClient::broadcastUserDidInteractWithPageToOtherProcesses(const bool& data)
 {
     broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::UserDidInteractWithPage)>, data } });
 }
+
+void TestSyncClient::broadcastUserDidInteractWithPageToOtherProcesses(bool&& data)
+{
+    broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::UserDidInteractWithPage)>, WTF::move(data) } });
+}
+
 void TestSyncClient::broadcastAnotherOneToOtherProcesses(const StringifyThis& data)
 {
     broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::AnotherOne)>, data } });
 }
+
+void TestSyncClient::broadcastAnotherOneToOtherProcesses(StringifyThis&& data)
+{
+    broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::AnotherOne)>, WTF::move(data) } });
+}
+
 void TestSyncClient::broadcastMultipleHeadersToOtherProcesses(const HashSet<URL>& data)
 {
     broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::MultipleHeaders)>, data } });
 }
+
+void TestSyncClient::broadcastMultipleHeadersToOtherProcesses(HashSet<URL>&& data)
+{
+    broadcastTestSyncDataToOtherProcesses({ TestSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(TestSyncDataType::MultipleHeaders)>, WTF::move(data) } });
+}
+
 
 } // namespace WebCore

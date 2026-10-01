@@ -37,7 +37,7 @@ int main(int argc, char** argv)
 {
     g_test_init(&argc, &argv, nullptr);
 
-    g_set_prgname(FileSystem::currentExecutableName().data());
+    g_set_prgname(FileSystem::currentExecutableName().legacyCStringPointer());
     g_setenv("LC_ALL", "C", TRUE);
     g_setenv("GIO_USE_VFS", "local", TRUE);
     g_setenv("GSETTINGS_BACKEND", "memory", TRUE);

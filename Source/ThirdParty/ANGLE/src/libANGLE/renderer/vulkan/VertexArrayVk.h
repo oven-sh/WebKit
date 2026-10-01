@@ -46,6 +46,7 @@ class VertexArrayVk : public VertexArrayImpl
                                        const gl::AttributesMask &dirtyDefaultAttribsMask);
 
     angle::Result updateStreamedAttribs(const gl::Context *context,
+                                        const gl::AttributesMask activeStreamingAttribsMask,
                                         GLint firstVertex,
                                         GLsizei vertexOrIndexCount,
                                         GLuint baseInstance,
@@ -54,7 +55,8 @@ class VertexArrayVk : public VertexArrayImpl
                                         const void *indices,
                                         gl::AttributesMask *strideDirtyAttribMaskOut);
 
-    void resetInactiveStreamedAttribs(const gl::Context *context);
+    void updateCurrentActiveStreamingAttribsMask(const gl::Context *context,
+                                                 vk::BufferHelper &emptyBuffer);
 
     angle::Result handleLineLoop(ContextVk *contextVk,
                                  GLint firstVertex,
@@ -140,6 +142,24 @@ class VertexArrayVk : public VertexArrayImpl
         return mCurrentArrayBuffers;
     }
 
+    void assertEmptyBufferConsistency(const vk::BufferHelper &emptyBuffer) const
+    {
+        for (size_t attribIndex = 0; attribIndex < mCurrentArrayBuffers.size(); ++attribIndex)
+        {
+            ASSERT(mCurrentEmptyBufferMask.test(attribIndex) ==
+                   (mCurrentArrayBuffers[attribIndex] == &emptyBuffer));
+        }
+    }
+
+    angle::Result convertIndexBufferGPU(ContextVk *contextVk,
+                                        BufferVk *bufferVk,
+                                        const void *indices);
+
+    angle::Result convertIndexBufferIndirectGPU(ContextVk *contextVk,
+                                                vk::BufferHelper *srcIndirectBuf,
+                                                VkDeviceSize srcIndirectBufOffset,
+                                                vk::BufferHelper **indirectBufferVkOut);
+
     angle::Result convertIndexBufferCPU(ContextVk *contextVk,
                                         gl::DrawElementsType indexType,
                                         size_t indexCount,
@@ -152,6 +172,8 @@ class VertexArrayVk : public VertexArrayImpl
 
     void syncDirtyDisabledAttribs(ContextVk *contextVk,
                                   const gl::AttributesMask &disabledAttributesMask);
+    void resetInactiveStreamingAttribs(const gl::AttributesMask inactiveAttribMask,
+                                       vk::BufferHelper &emptyBuffer);
 
   private:
 
@@ -205,6 +227,8 @@ class VertexArrayVk : public VertexArrayImpl
     gl::AttribArray<vk::BufferSerial> mCurrentArrayBufferSerial;
     // Tracks the default attribute format ID
     gl::AttribArray<angle::FormatID> mDefaultAttribFormatIDs;
+    // The bit is set when mCurrentArrayBuffers is pointing to empty buffer.
+    gl::AttributesMask mCurrentEmptyBufferMask;
 
     // These struct are defined by VK_EXT_vertex_input_dynamic_state, for convenience, we these to
     // store offset/divisor even when vertexInputDynamicState not supported.
@@ -217,6 +241,8 @@ class VertexArrayVk : public VertexArrayImpl
     vk::BufferHelperQueue mCachedStreamIndexBuffers;
 
     ConversionBuffer mStreamedIndexData;
+    ConversionBuffer mTranslatedByteIndexData;
+    ConversionBuffer mTranslatedByteIndirectData;
 
     LineLoopHelper mLineLoopHelper;
     Optional<GLint> mLineLoopBufferFirstIndex;

@@ -155,6 +155,18 @@ struct PathOrFragmentContains {
     ASCIILiteral substring;
 };
 
+struct LastPathComponentIs {
+    ASCIILiteral component;
+};
+
+struct LastPathComponentStartsWith {
+    ASCIILiteral prefix;
+};
+
+struct LastPathComponentEndsWith {
+    ASCIILiteral suffix;
+};
+
 struct QueryContains {
     ASCIILiteral substring;
 };
@@ -185,6 +197,21 @@ constexpr PathIs pathIs(ASCIILiteral path)
 constexpr PathOrFragmentContains pathOrFragmentContains(ASCIILiteral substring)
 {
     return { substring };
+}
+
+constexpr LastPathComponentIs lastPathComponentIs(ASCIILiteral component)
+{
+    return { component };
+}
+
+constexpr LastPathComponentStartsWith lastPathComponentStartsWith(ASCIILiteral prefix)
+{
+    return { prefix };
+}
+
+constexpr LastPathComponentEndsWith lastPathComponentEndsWith(ASCIILiteral suffix)
+{
+    return { suffix };
 }
 
 constexpr QueryContains queryContains(ASCIILiteral substring)
@@ -276,6 +303,9 @@ private:
         PathStartsWith,
         PathIs,
         PathOrFragmentContains,
+        LastPathComponentIs,
+        LastPathComponentStartsWith,
+        LastPathComponentEndsWith,
     };
 
     struct RefinementSet {
@@ -316,6 +346,21 @@ private:
     static constexpr void applyRefinement(RefinementSet& set, URLRefinement::PathOrFragmentContains refinement)
     {
         setPathPattern(set, PathComparison::PathOrFragmentContains, refinement.substring);
+    }
+
+    static constexpr void applyRefinement(RefinementSet& set, URLRefinement::LastPathComponentIs refinement)
+    {
+        setPathPattern(set, PathComparison::LastPathComponentIs, refinement.component);
+    }
+
+    static constexpr void applyRefinement(RefinementSet& set, URLRefinement::LastPathComponentStartsWith refinement)
+    {
+        setPathPattern(set, PathComparison::LastPathComponentStartsWith, refinement.prefix);
+    }
+
+    static constexpr void applyRefinement(RefinementSet& set, URLRefinement::LastPathComponentEndsWith refinement)
+    {
+        setPathPattern(set, PathComparison::LastPathComponentEndsWith, refinement.suffix);
     }
 
     static constexpr void applyRefinement(RefinementSet& set, URLRefinement::QueryContains refinement)

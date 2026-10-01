@@ -37,6 +37,7 @@
 #import "WKWebViewInternal.h"
 #import "WebExtensionContextProxyMessages.h"
 #import "WebExtensionOffscreenDocumentParameters.h"
+#import "WebExtensionPermission.h"
 #import "WebPageProxy.h"
 
 namespace WebKit {

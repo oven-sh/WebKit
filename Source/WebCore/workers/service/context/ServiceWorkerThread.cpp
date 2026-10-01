@@ -63,6 +63,7 @@
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 
 using namespace PAL;
 
@@ -119,7 +120,8 @@ static WorkerParameters generateWorkerParameters(const ServiceWorkerContextData&
         { },
         advancedPrivacyProtections,
         noiseInjectionHashSalt,
-        makeString(Process::identifier().toUInt64(), "-serviceworker-"_s, contextData.serviceWorkerIdentifier.toUInt64())
+        makeString(Process::identifier().toUInt64(), "-serviceworker-"_s, contextData.serviceWorkerIdentifier.toUInt64()),
+        NetworkLoadPolicy::unrestricted()
     };
 }
 
@@ -202,9 +204,9 @@ static void fireMessageEvent(ServiceWorkerGlobalScope& scope, MessageWithMessage
     scope.updateExtendedEventsSet(messageEvent.event.ptr());
 }
 
-void ServiceWorkerThread::queueTaskToPostMessage(MessageWithMessagePorts&& message, ServiceWorkerOrClientData&& sourceData)
+void ServiceWorkerThread::queueTaskToPostMessage(MessageWithMessagePorts&& message, ServiceWorkerOrClientData&& sourceData, CompletionHandlerCallingScope&& messageDispatched)
 {
-    queueTaskToFireEvent([weakThis = ThreadSafeWeakPtr { *this }, message = WTF::move(message), sourceData = WTF::move(sourceData)](auto& serviceWorkerGlobalScope) mutable {
+    queueTaskToFireEvent([weakThis = ThreadSafeWeakPtr { *this }, message = WTF::move(message), sourceData = WTF::move(sourceData), messageDispatched = WTF::move(messageDispatched)](auto& serviceWorkerGlobalScope) mutable {
         URL sourceURL;
         auto source = WTF::switchOn(WTF::move(sourceData),
             [&](ServiceWorkerClientData&& sourceData) {
@@ -223,7 +225,7 @@ void ServiceWorkerThread::queueTaskToPostMessage(MessageWithMessagePorts&& messa
                         addMismatch("host"_s);
                     if (serviceWorkerGlobalScope.url().port() != sourceClient->url().port())
                         addMismatch("port"_s);
-                    RELEASE_LOG_FAULT(ServiceWorker, "ServiceWorkerThread::queueTaskToPostMessage service worker and client mismatch: %s", mismatchParts.toString().utf8().data());
+                    RELEASE_LOG_FAULT(ServiceWorker, "ServiceWorkerThread::queueTaskToPostMessage service worker and client mismatch: %s", mismatchParts.toString().utf8());
                     ASSERT_NOT_REACHED();
                     return ExtendableMessageEventSource { WTF::move(sourceClient) };
                 }
@@ -241,7 +243,7 @@ void ServiceWorkerThread::queueTaskToPostMessage(MessageWithMessagePorts&& messa
             }
         );
         fireMessageEvent(serviceWorkerGlobalScope, WTF::move(message), WTF::move(source), sourceURL);
-        callOnMainThread([weakThis = WTF::move(weakThis)] {
+        callOnMainThread([weakThis = WTF::move(weakThis), messageDispatched = WTF::move(messageDispatched)] {
             if (RefPtr protectedThis = weakThis.get())
                 protectedThis->finishedFiringMessageEvent();
         });
@@ -449,7 +451,7 @@ void ServiceWorkerThread::queueTaskToFireNotificationEvent(NotificationData&& da
 
 void ServiceWorkerThread::queueTaskToFireBackgroundFetchEvent(BackgroundFetchInformation&& info, Function<void(bool)>&& callback)
 {
-    queueTaskToFireEvent([weakThis = ThreadSafeWeakPtr { *this }, info = crossThreadCopy(WTF::move(info)), callback = WTF::move(callback)](auto& serviceWorkerGlobalScope) mutable {
+    queueTaskToFireEvent([weakThis = ThreadSafeWeakPtr { *this }, info = crossThreadCopy(WTF::move(info)), callback = WTF::move(callback)](ServiceWorkerGlobalScope& serviceWorkerGlobalScope) mutable {
         RELEASE_LOG(ServiceWorker, "ServiceWorkerThread::queueTaskToFireBackgroundFetchEvent firing event for worker %" PRIu64, serviceWorkerGlobalScope.thread()->identifier().toUInt64());
 
         Ref manager = ServiceWorkerRegistrationBackgroundFetchAPI::backgroundFetch(protect(serviceWorkerGlobalScope.registration()));
@@ -487,7 +489,7 @@ void ServiceWorkerThread::queueTaskToFireBackgroundFetchEvent(BackgroundFetchInf
 
 void ServiceWorkerThread::queueTaskToFireBackgroundFetchClickEvent(BackgroundFetchInformation&& info, Function<void(bool)>&& callback)
 {
-    queueTaskToFireEvent([info = crossThreadCopy(WTF::move(info)), callback = WTF::move(callback)](auto& serviceWorkerGlobalScope) mutable {
+    queueTaskToFireEvent([info = crossThreadCopy(WTF::move(info)), callback = WTF::move(callback)](ServiceWorkerGlobalScope& serviceWorkerGlobalScope) mutable {
         RELEASE_LOG(ServiceWorker, "ServiceWorkerThread::queueTaskToFireBackgroundFetchClickEvent firing event for worker %" PRIu64, serviceWorkerGlobalScope.thread()->identifier().toUInt64());
 
         Ref manager = ServiceWorkerRegistrationBackgroundFetchAPI::backgroundFetch(protect(serviceWorkerGlobalScope.registration()));
@@ -534,7 +536,7 @@ void ServiceWorkerThread::start(Function<void(const String&, bool)>&& callback)
     WorkerThread::start([callback = WTF::move(callback), weakThis = ThreadSafeWeakPtr { *this }](auto& errorMessage) mutable {
 #ifndef NDEBUG
         if (!errorMessage.isEmpty())
-            LOG(ServiceWorker, "Service worker thread failed to start: %s", errorMessage.utf8().data());
+            LOG_WITH_STREAM(ServiceWorker, stream << "Service worker thread failed to start: "_s << errorMessage);
 #endif
         bool doesHandleFetch = true;
         if (RefPtr protectedThis = weakThis.get()) {
@@ -640,6 +642,7 @@ void ServiceWorkerThread::willPostTaskToFireActivateEvent()
 void ServiceWorkerThread::finishedFiringActivateEvent()
 {
     m_state = State::Idle;
+    m_hasFinishedFiringActivateEvent = true;
 
     if (RefPtr connection = SWContextManager::singleton().connection())
         connection->didFinishActivation(identifier());

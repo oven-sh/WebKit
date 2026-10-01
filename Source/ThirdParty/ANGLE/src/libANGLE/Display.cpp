@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <iterator>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 #include <EGL/eglext.h>
@@ -44,8 +45,17 @@
 #include "libANGLE/histogram_macros.h"
 #include "libANGLE/renderer/DeviceImpl.h"
 #include "libANGLE/renderer/DisplayImpl.h"
+#include "libANGLE/renderer/EGLReusableSync.h"
 #include "libANGLE/renderer/ImageImpl.h"
 #include "libANGLE/trace.h"
+
+#if defined(ANGLE_USE_PERFETTO)
+#    include <perfetto/tracing/tracing.h>
+#endif
+
+#if defined(ANGLE_USE_X11) || defined(ANGLE_USE_WAYLAND)
+#    include "common/linux/window_system.h"
+#endif
 
 #if defined(ANGLE_PLATFORM_APPLE)
 #    include <dispatch/dispatch.h>
@@ -94,6 +104,44 @@ namespace egl
 
 namespace
 {
+#if defined(ANGLE_USE_PERFETTO)
+#    if defined(ANGLE_PLATFORM_ANDROID) && PERFETTO_BUILDFLAG(PERFETTO_IPC)
+bool isPerfettoTraceEnabledOnAndroid()
+{
+    std::string debugAngleEnablePerfetto;
+    return angle::android::GetSystemProperty("debug.angle.perfetto_trace.enabled",
+                                             &debugAngleEnablePerfetto) &&
+           debugAngleEnablePerfetto == "1";
+}
+#    endif  // defined(ANGLE_PLATFORM_ANDROID) && PERFETTO_BUILDFLAG(PERFETTO_IPC)
+
+void MaybeInitializePerfetto()
+{
+    // TrackEvent::Register() can only be done after Perfetto itself has been
+    // initialized (typically by the embedder).
+    // Android process doesn't initialize Perfetto by default, so we will
+    // initialize it with perfetto::kSystemBackend when:
+    // 1) debug.angle.perfetto_trace.enabled is set to 1.
+    // 2) PERFETTO_IPC is defined.
+    static std::once_flag sInitOnce;
+    std::call_once(sInitOnce, []() {
+#    if defined(ANGLE_PLATFORM_ANDROID) && PERFETTO_BUILDFLAG(PERFETTO_IPC)
+        if (!perfetto::Tracing::IsInitialized() && isPerfettoTraceEnabledOnAndroid())
+        {
+            perfetto::TracingInitArgs args;
+            args.backends = perfetto::kSystemBackend;
+            perfetto::Tracing::Initialize(args);
+        }
+#    endif  // defined(ANGLE_PLATFORM_ANDROID) && PERFETTO_BUILDFLAG(PERFETTO_IPC)
+        // If Perfetto is already initialized, register ANGLE's categories now.
+        if (perfetto::Tracing::IsInitialized())
+        {
+            angle_tracing::TrackEvent::Register();
+        }
+    });
+}
+#endif  // defined(ANGLE_USE_PERFETTO)
+
 struct TLSData
 {
     angle::UnlockedTailCall unlockedTailCall;
@@ -428,27 +476,38 @@ EGLAttrib GetDeviceTypeFromEnvironment()
 
 EGLAttrib GetPlatformTypeFromEnvironment()
 {
-#if defined(ANGLE_USE_OZONE)
-    return 0;
-#elif defined(ANGLE_USE_X11) && defined(ANGLE_USE_WAYLAND)
-    // EGL 1.4 eglGetDisplay() carries no platform attribute, so consult
-    // WAYLAND_DISPLAY to break the tie between the two backends.
-    if (!angle::GetEnvironmentVar("WAYLAND_DISPLAY").empty())
+#if defined(ANGLE_USE_X11) || defined(ANGLE_USE_WAYLAND)
+    // Reached when the caller supplied no native platform type, as EGL 1.4
+    // eglGetDisplay() cannot. Delegate to the shared policy so this implicit
+    // choice agrees with the util window layer (common/linux/window_system.h).
+#    if defined(ANGLE_USE_X11)
+    constexpr bool kX11Compiled = true;
+#    else
+    constexpr bool kX11Compiled = false;
+#    endif
+#    if defined(ANGLE_USE_WAYLAND)
+    constexpr bool kWaylandCompiled = true;
+#    else
+    constexpr bool kWaylandCompiled = false;
+#    endif
+    switch (angle::ChoosePreferredWindowSystem(kX11Compiled, kWaylandCompiled,
+                                               angle::GetWindowSystemFromEnvironment()))
     {
-        return EGL_PLATFORM_WAYLAND_EXT;
+        case angle::WindowSystem::X11:
+            return EGL_PLATFORM_X11_EXT;
+        case angle::WindowSystem::Wayland:
+            return EGL_PLATFORM_WAYLAND_EXT;
+        case angle::WindowSystem::Unspecified:
+            break;
     }
-    return EGL_PLATFORM_X11_EXT;
-#elif defined(ANGLE_USE_X11)
-    return EGL_PLATFORM_X11_EXT;
-#elif defined(ANGLE_USE_WAYLAND)
-    return EGL_PLATFORM_WAYLAND_EXT;
+    return 0;
 #elif defined(ANGLE_USE_VULKAN_DISPLAY) && defined(ANGLE_VULKAN_DISPLAY_MODE_SIMPLE)
     return EGL_PLATFORM_VULKAN_DISPLAY_MODE_SIMPLE_ANGLE;
 #elif defined(ANGLE_USE_VULKAN_DISPLAY) && defined(ANGLE_VULKAN_DISPLAY_MODE_HEADLESS)
     return EGL_PLATFORM_VULKAN_DISPLAY_MODE_HEADLESS_ANGLE;
 #else
     return 0;
-#endif  // defined(ANGLE_USE_OZONE)
+#endif
 }
 
 EGLAttrib GetPlatformTypeFromAttribs(EGLenum platform, const AttributeMap &attribMap)
@@ -795,6 +854,142 @@ static constexpr uint32_t kScratchBufferLifetime = 64u;
 
 }  // anonymous namespace
 
+SyncSet::SyncSet() : mHandleAllocator(gl::IMPLEMENTATION_MAX_OBJECT_HANDLES) {}
+
+SyncSet::~SyncSet()
+{
+    clearPools();
+}
+
+Error SyncSet::createSync(Display *display,
+                          const gl::Context *currentContext,
+                          EGLenum type,
+                          const AttributeMap &attribs,
+                          Sync **outSync)
+{
+    std::lock_guard<angle::SimpleMutex> lock(mMutex);
+    SyncID id;
+    if (!mHandleAllocator.allocate(&id.value))
+    {
+        return Error(EGL_BAD_ALLOC, gl::err::kHandleExhaustion);
+    }
+
+    std::unique_ptr<Sync> sync;
+
+    SyncPool &pool = mSyncPools[type];
+    if (!pool.empty())
+    {
+        sync = std::move(pool.back());
+        pool.pop_back();
+    }
+    else
+    {
+        sync.reset(new Sync(display->getImplementation(), type));
+    }
+
+    Error err = sync->initialize(display, currentContext, id, attribs);
+    if (err.isError())
+    {
+        mHandleAllocator.release(id.value);
+        sync->onDestroy(display);
+        return err;
+    }
+
+    // The sync is now owned by the sync map.
+    sync->addRef();
+    *outSync = sync.release();
+    mSyncMap.insert(std::pair(id.value, *outSync));
+
+    return NoError();
+}
+
+ScopedSyncRef SyncSet::getSync(Display *display, SyncID syncID) const
+{
+    std::lock_guard<angle::SimpleMutex> lock(mMutex);
+    auto iter = mSyncMap.find(syncID.value);
+    if (iter != mSyncMap.end())
+    {
+        return ScopedSyncRef(display, iter->second);
+    }
+    return ScopedSyncRef();
+}
+
+void SyncSet::destroySync(Display *display, SyncID syncID)
+{
+    std::lock_guard<angle::SimpleMutex> lock(mMutex);
+    auto iter = mSyncMap.find(syncID.value);
+    if (iter == mSyncMap.end())
+    {
+        return;
+    }
+
+    mHandleAllocator.release(syncID.value);
+    Sync *sync = iter->second;
+    mSyncMap.erase(iter);
+
+    if (sync->releaseRef())
+    {
+        releaseSyncImpl(display, sync);
+    }
+}
+
+void SyncSet::releaseSync(Display *display, Sync *sync)
+{
+    if (sync == nullptr)
+    {
+        return;
+    }
+    if (sync->releaseRef())
+    {
+        std::lock_guard<angle::SimpleMutex> lock(mMutex);
+        releaseSyncImpl(display, sync);
+    }
+}
+
+void SyncSet::releaseSyncImpl(Display *display, Sync *sync)
+{
+    sync->onDestroy(display);
+    SyncPool &pool = mSyncPools[sync->getType()];
+    if (pool.size() < kMaxSyncPoolSizePerType)
+    {
+        pool.push_back(std::unique_ptr<Sync>(sync));
+    }
+    else
+    {
+        delete sync;
+    }
+}
+
+void SyncSet::invalidateAllSyncs()
+{
+    std::lock_guard<angle::SimpleMutex> lock(mMutex);
+    mInvalidSyncMap.insert(mSyncMap.begin(), mSyncMap.end());
+    mSyncMap.clear();
+}
+
+void SyncSet::destroyAllInvalidSyncs(Display *display)
+{
+    std::lock_guard<angle::SimpleMutex> lock(mMutex);
+    while (!mInvalidSyncMap.empty())
+    {
+        auto iter = mInvalidSyncMap.begin();
+        mHandleAllocator.release(iter->first);
+        Sync *sync = iter->second;
+        mInvalidSyncMap.erase(iter);
+
+        if (sync->releaseRef())
+        {
+            releaseSyncImpl(display, sync);
+        }
+    }
+}
+
+void SyncSet::clearPools()
+{
+    std::lock_guard<angle::SimpleMutex> lock(mMutex);
+    mSyncPools.clear();
+}
+
 // DisplayState
 DisplayState::DisplayState(EGLNativeDisplayType nativeDisplayId)
     : label(nullptr),
@@ -813,13 +1008,9 @@ void DisplayState::notifyDeviceLost() const
         return;
     }
 
-    {
-        std::lock_guard<angle::SimpleMutex> lock(contextMapMutex);
-        for (auto context = contextMap.begin(); context != contextMap.end(); context++)
-        {
-            context->second->markContextLost(gl::GraphicsResetStatus::UnknownContextReset);
-        }
-    }
+    contextMap.forEach([](gl::Context *context) {
+        context->markContextLost(gl::GraphicsResetStatus::UnknownContextReset);
+    });
 
     deviceLost = true;
 }
@@ -901,25 +1092,9 @@ Display *Display::GetDisplayFromNativeDisplay(EGLenum platform,
         return nullptr;
     }
     // Apply new attributes if the display is not initialized yet.
-    if (!display->isInitialized())
+    if (!display->initFromNativeDisplay(updatedAttribMap, nativePlatformType))
     {
-        display->setAttributes(updatedAttribMap);
-
-        EGLAttrib displayType  = display->mAttributeMap.get(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
-        EGLAttrib deviceType   = display->mAttributeMap.get(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE);
-        rx::DisplayImpl *impl  = CreateDisplayFromAttribs(displayType, deviceType,
-                                                          nativePlatformType, display->getState());
-        if (impl == nullptr)
-        {
-            // No valid display implementation for these attributes
-            return nullptr;
-        }
-
-#if defined(ANGLE_USE_ANDROID_TLS_SLOT)
-        angle::gUseAndroidOpenGLTlsSlot = displayType == EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE;
-#endif  // defined(ANGLE_PLATFORM_ANDROID)
-
-        display->setupDisplayPlatform(impl);
+        return nullptr;
     }
 
     return display;
@@ -951,12 +1126,7 @@ Display *Display::GetDisplayFromDevice(Device *device, const AttributeMap &attri
     }
 
     // Apply new attributes if the display is not initialized yet.
-    if (!display->isInitialized())
-    {
-        display->setAttributes(attribMap);
-        rx::DisplayImpl *impl = CreateDisplayFromDevice(device, display->getState());
-        display->setupDisplayPlatform(impl);
-    }
+    display->initFromDevice(device, attribMap);
 
     return display;
 }
@@ -972,7 +1142,6 @@ Display::Display(EGLenum platform, EGLNativeDisplayType displayId, Device *eglDe
       mInvalidImageMap(),
       mInvalidStreamSet(),
       mInvalidSurfaceMap(),
-      mInvalidSyncMap(),
       mInitialized(false),
       mCaps(),
       mDisplayExtensions(),
@@ -992,8 +1161,8 @@ Display::Display(EGLenum platform, EGLNativeDisplayType displayId, Device *eglDe
       mGlobalSemaphoreShareGroupUsers(0),
       mImageHandleAllocator(gl::IMPLEMENTATION_MAX_OBJECT_HANDLES),
       mSurfaceHandleAllocator(gl::IMPLEMENTATION_MAX_OBJECT_HANDLES, 64),
-      mSyncHandleAllocator(gl::IMPLEMENTATION_MAX_OBJECT_HANDLES),
-      mTerminatedByApi(false)
+      mTerminatedByApi(false),
+      mRefCount(0)
 {}
 
 Display::~Display()
@@ -1049,18 +1218,15 @@ void Display::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMess
 {
     ASSERT(index == kGPUSwitchedSubjectIndex);
     ASSERT(message == angle::SubjectMessage::SubjectChanged);
-    std::lock_guard<angle::SimpleMutex> lock(mState.contextMapMutex);
-    for (auto context : mState.contextMap)
-    {
-        context.second->onGPUSwitch();
-    }
+    mState.contextMap.forEach([](gl::Context *context) { context->onGPUSwitch(); });
 }
 
 void Display::setupDisplayPlatform(rx::DisplayImpl *impl)
 {
     ASSERT(!mInitialized);
-
     ASSERT(impl != nullptr);
+    mDisplayMutex.assertLocked();
+
     SafeDelete(mImplementation);
     mImplementation = impl;
 
@@ -1088,9 +1254,55 @@ void Display::setupDisplayPlatform(rx::DisplayImpl *impl)
     mImplementation->addObserver(&mGPUSwitchedBinding);
 }
 
+void Display::initFromDevice(Device *device, const AttributeMap &attribMap)
+{
+    std::lock_guard<angle::SimpleMutex> lock(mDisplayMutex);
+    if (!isInitialized())
+    {
+        setAttributes(attribMap);
+        rx::DisplayImpl *impl = CreateDisplayFromDevice(device, getState());
+        setupDisplayPlatform(impl);
+    }
+}
+
+bool Display::initFromNativeDisplay(const AttributeMap &attribMap,
+                                    const EGLAttrib nativePlatformType)
+{
+    std::lock_guard<angle::SimpleMutex> lock(mDisplayMutex);
+    if (!isInitialized())
+    {
+        setAttributes(attribMap);
+
+        EGLAttrib displayType = mAttributeMap.get(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
+        EGLAttrib deviceType  = mAttributeMap.get(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE);
+        rx::DisplayImpl *impl =
+            CreateDisplayFromAttribs(displayType, deviceType, nativePlatformType, getState());
+        if (impl == nullptr)
+        {
+            // No valid display implementation for these attributes
+            return false;
+        }
+
+#if defined(ANGLE_USE_ANDROID_TLS_SLOT)
+        angle::gUseAndroidOpenGLTlsSlot = displayType == EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE;
+#endif  // defined(ANGLE_PLATFORM_ANDROID)
+
+        setupDisplayPlatform(impl);
+    }
+    return true;
+}
+
 Error Display::initialize()
 {
+    mDisplayMutex.assertLocked();
+    ASSERT(!isTerminating());
+
     mTerminatedByApi = false;
+
+#if defined(ANGLE_USE_PERFETTO)
+    // ANGLE's track event categories must be registered with Perfetto.
+    MaybeInitializePerfetto();
+#endif
 
     ASSERT(mImplementation != nullptr);
     mImplementation->setBlobCache(&mBlobCache);
@@ -1209,15 +1421,15 @@ Error Display::destroyInvalidEglObjects()
     // EGL_Terminate, EGL_ReleaseThread, ThreadCleanupCallBACK.
     // Those functions are protected by egl global lock,
     // so there is no race condition on mInvalidContextMap.
-    while (!mInvalidContextMap.empty())
+    for (gl::Context *context : mInvalidContextMap.extractAll())
     {
-        gl::Context *context = mInvalidContextMap.begin()->second;
+        ASSERT(!context->isReferenced());
         // eglReleaseThread() may call to this method when there are still Contexts, that may
         // potentially acces shared state of the "context".
         // Need AddRefLock because there may be ContextMutex destruction.
         ScopedContextMutexAddRefLock lock(context->getContextMutex());
         context->setIsDestroyed();
-        ANGLE_TRY(releaseContextImpl(eraseContextImpl(context, &mInvalidContextMap)));
+        ANGLE_TRY(releaseContextImpl(std::unique_ptr<gl::Context>(context)));
     }
 
     while (!mInvalidImageMap.empty())
@@ -1230,21 +1442,28 @@ Error Display::destroyInvalidEglObjects()
         destroyStreamImpl(*mInvalidStreamSet.begin(), &mInvalidStreamSet);
     }
 
-    while (!mInvalidSurfaceMap.empty())
+    for (Surface *surface : mInvalidSurfaceMap.extractAll())
     {
-        ANGLE_TRY(destroySurfaceImpl(mInvalidSurfaceMap.begin()->second, &mInvalidSurfaceMap));
+        ANGLE_TRY(destroySurfaceImpl(surface, nullptr));
     }
 
-    while (!mInvalidSyncMap.empty())
-    {
-        destroySyncImpl(mInvalidSyncMap.begin()->second->id(), &mInvalidSyncMap);
-    }
+    mSyncSet.destroyAllInvalidSyncs(this);
 
     return NoError();
 }
 
+void Display::waitUntilUnreferenced(uint32_t expectedCount)
+{
+    mDisplayMutex.assertLocked();
+    while ((mRefCount.load(std::memory_order_acquire) & kRefCountMask) > expectedCount)
+    {
+        std::this_thread::yield();
+    }
+}
+
 Error Display::terminate(Thread *thread, TerminateReason terminateReason)
 {
+    mDisplayMutex.assertLocked();
 
     if (terminateReason == TerminateReason::Api)
     {
@@ -1252,11 +1471,30 @@ Error Display::terminate(Thread *thread, TerminateReason terminateReason)
     }
 
     // All subsequent calls assume the display to be valid and terminated by app.
-    // If it is not terminated or if it isn't even initialized, early return.
+    // If it is not terminated, if it isn't initialized, early return.
     if (!mTerminatedByApi || !mInitialized)
     {
         return NoError();
     }
+
+    ASSERT(!isTerminating());
+    struct [[nodiscard]] ScopedTerminating
+    {
+        ScopedTerminating(Display *display) : mDisplay(display)
+        {
+            // std::memory_order_relaxed might be sufficient, but std::memory_order_release is used
+            // for safety since terminate is not on a performance-critical path.
+            mDisplay->mRefCount.fetch_or(kTerminatingBit, std::memory_order_release);
+        }
+        ~ScopedTerminating()
+        {
+            mDisplay->mRefCount.fetch_and(~kTerminatingBit, std::memory_order_release);
+        }
+        Display *mDisplay;
+    } settingTerminating(this);
+
+    // Wait until all outstanding references from other threads go away before proceeding.
+    waitUntilUnreferenced(1);
 
     // EGL 1.5 Specification
     // 3.2 Initialization
@@ -1275,57 +1513,16 @@ Error Display::terminate(Thread *thread, TerminateReason terminateReason)
     mInvalidStreamSet.insert(mStreamSet.begin(), mStreamSet.end());
     mStreamSet.clear();
 
-    mInvalidSurfaceMap.insert(mState.surfaceMap.begin(), mState.surfaceMap.end());
-    mState.surfaceMap.clear();
+    mState.surfaceMap.moveTo(&mInvalidSurfaceMap);
 
-    mInvalidSyncMap.insert(std::make_move_iterator(mSyncMap.begin()),
-                           std::make_move_iterator(mSyncMap.end()));
-    mSyncMap.clear();
+    mSyncSet.invalidateAllSyncs();
 
+    mState.contextMap.pruneUnreferenced(&mInvalidContextMap);
+
+    if (!mState.contextMap.empty())
     {
-        // Lock mState.contextMapMutex to protect mState.contextMap.
-        // mInvalidContextMap does not need protection. It just happens to fall within this scope.
-        std::lock_guard<angle::SimpleMutex> lock(mState.contextMapMutex);
-        // Cache total number of contexts before invalidation. This is used as a check to verify
-        // that no context is "lost" while being moved between the various sets.
-        size_t contextSetSizeBeforeInvalidation =
-            mState.contextMap.size() + mInvalidContextMap.size();
-
-        // If app called eglTerminate and no active threads remain,
-        // force release any context that is still current.
-        ContextMap contextsStillCurrent = {};
-        for (auto context : mState.contextMap)
-        {
-            if (context.second->isReferenced())
-            {
-                contextsStillCurrent.emplace(context);
-                continue;
-            }
-
-            // Add context that is not current to mInvalidContextSet for cleanup.
-            mInvalidContextMap.emplace(context);
-        }
-
-        // There are many methods that require contexts that are still current to be present in
-        // display's contextSet like during context release or to notify of state changes in a
-        // subject. So as to not interrupt this flow, do not remove contexts that are still
-        // current on some thread from display's contextSet even though eglTerminate marks such
-        // contexts as invalid.
-        //
-        // "mState.contextSet" will now contain only those contexts that are still current on
-        // some thread.
-        mState.contextMap = std::move(contextsStillCurrent);
-
-        // Assert that the total number of contexts is the same before and after context
-        // invalidation.
-        ASSERT(contextSetSizeBeforeInvalidation ==
-               mState.contextMap.size() + mInvalidContextMap.size());
-
-        if (!mState.contextMap.empty())
-        {
-            // There was atleast 1 context that was current on some thread, early return.
-            return NoError();
-        }
+        // There was at least 1 context that was current on some thread, early return.
+        return NoError();
     }
 
     // The global texture and semaphore managers should be deleted with the last context that uses
@@ -1342,7 +1539,7 @@ Error Display::terminate(Thread *thread, TerminateReason terminateReason)
     // Clean up all invalid objects
     ANGLE_TRY(destroyInvalidEglObjects());
 
-    mSyncPools.clear();
+    mSyncSet.clearPools();
 
     mConfigSet.clear();
 
@@ -1378,17 +1575,10 @@ Error Display::terminate(Thread *thread, TerminateReason terminateReason)
     return NoError();
 }
 
-#if ANGLE_USE_DISPLAY_PREPARE_FOR_CALL
-Error Display::prepareForCall()
-{
-    return mImplementation->prepareForCall();
-}
-#endif
-
 Error Display::releaseThread()
 {
     // Need to check if initialized, because makeCurrent() may terminate the Display.
-    if (!mInitialized)
+    if (!isInitialized())
     {
         return NoError();
     }
@@ -1451,7 +1641,7 @@ Error Display::createWindowSurface(const Config *configuration,
 
     ASSERT(outSurface != nullptr);
     *outSurface = surface.release();
-    mState.surfaceMap.insert(std::pair((*outSurface)->id().value, *outSurface));
+    mState.surfaceMap.insert((*outSurface)->id(), *outSurface);
 
     WindowSurfaceMap *windowSurfaces = GetWindowSurfaces();
     ASSERT(windowSurfaces && windowSurfaces->find(window) == windowSurfaces->end());
@@ -1486,7 +1676,7 @@ Error Display::createPbufferSurface(const Config *configuration,
 
     ASSERT(outSurface != nullptr);
     *outSurface = surface.release();
-    mState.surfaceMap.insert(std::pair((*outSurface)->id().value, *outSurface));
+    mState.surfaceMap.insert((*outSurface)->id(), *outSurface);
 
     return NoError();
 }
@@ -1518,7 +1708,7 @@ Error Display::createPbufferFromClientBuffer(const Config *configuration,
 
     ASSERT(outSurface != nullptr);
     *outSurface = surface.release();
-    mState.surfaceMap.insert(std::pair((*outSurface)->id().value, *outSurface));
+    mState.surfaceMap.insert((*outSurface)->id(), *outSurface);
 
     return NoError();
 }
@@ -1549,7 +1739,7 @@ Error Display::createPixmapSurface(const Config *configuration,
 
     ASSERT(outSurface != nullptr);
     *outSurface = surface.release();
-    mState.surfaceMap.insert(std::pair((*outSurface)->id().value, *outSurface));
+    mState.surfaceMap.insert((*outSurface)->id(), *outSurface);
 
     return NoError();
 }
@@ -1732,10 +1922,7 @@ Error Display::createContext(const Config *configuration,
     }
 
     ASSERT(context != nullptr);
-    {
-        std::lock_guard<angle::SimpleMutex> lock(mState.contextMapMutex);
-        mState.contextMap.insert(std::pair(context->id().value, context));
-    }
+    mState.contextMap.insert(context->id(), context);
 
     ASSERT(outContext != nullptr);
     *outContext = context;
@@ -1749,41 +1936,12 @@ Error Display::createSync(const gl::Context *currentContext,
 {
     ASSERT(isInitialized());
 
-    SyncID id;
-    if (!mSyncHandleAllocator.allocate(&id.value))
-    {
-        return Error(EGL_BAD_ALLOC, gl::err::kHandleExhaustion);
-    }
-
     if (mImplementation->testDeviceLost())
     {
         ANGLE_TRY(restoreLostDevice());
     }
 
-    std::unique_ptr<Sync> sync;
-
-    SyncPool &pool = mSyncPools[type];
-    if (!pool.empty())
-    {
-        sync = std::move(pool.back());
-        pool.pop_back();
-    }
-    else
-    {
-        sync.reset(new Sync(mImplementation, type));
-    }
-
-    Error err = sync->initialize(this, currentContext, id, attribs);
-    if (err.isError())
-    {
-        sync->onDestroy(this);
-        return err;
-    }
-
-    *outSync = sync.get();
-    mSyncMap.insert(std::pair(id.value, std::move(sync)));
-
-    return NoError();
+    return mSyncSet.createSync(this, currentContext, type, attribs, outSync);
 }
 
 Error Display::makeCurrent(Thread *thread,
@@ -1819,6 +1977,8 @@ Error Display::makeCurrent(Thread *thread,
     {
         ScopedContextMutexLock lock(context != nullptr ? &context->getContextMutex() : nullptr);
 
+        thread->setCurrent(context);
+
         ANGLE_TRY(mImplementation->makeCurrent(this, drawSurface, readSurface, context));
 
         if (context != nullptr)
@@ -1829,8 +1989,6 @@ Error Display::makeCurrent(Thread *thread,
                 context->addRef();
             }
         }
-
-        thread->setCurrent(context);
     }
 
     // Tick all the scratch buffers to make sure they get cleaned up eventually if they stop being
@@ -1861,20 +2019,13 @@ Error Display::makeCurrent(Thread *thread,
 
 Error Display::restoreLostDevice()
 {
+    // If reset notifications have been requested, application must delete all contexts first
+    const bool noResetNotificationRequested = mState.contextMap.forEach(
+        [](gl::Context *context) { return !context->isResetNotificationEnabled(); });
+    if (!noResetNotificationRequested)
     {
-        std::lock_guard<angle::SimpleMutex> lock(mState.contextMapMutex);
-        for (ContextMap::iterator ctx = mState.contextMap.begin(); ctx != mState.contextMap.end();
-             ctx++)
-        {
-            if (ctx->second->isResetNotificationEnabled())
-            {
-                // If reset notifications have been requested, application must delete all contexts
-                // first
-                return egl::Error(EGL_CONTEXT_LOST);
-            }
-        }
+        return egl::Error(EGL_CONTEXT_LOST);
     }
-
     return mImplementation->restoreLostDevice(this);
 }
 
@@ -1900,10 +2051,12 @@ Error Display::destroySurfaceImpl(Surface *surface, SurfaceMap *surfaces)
         ASSERT(surfaceRemoved);
     }
 
-    auto iter = surfaces->find(surface->id().value);
-    ASSERT(iter != surfaces->end());
+    if (surfaces)
+    {
+        bool surfaceFound = surfaces->erase(surface->id());
+        ASSERT(surfaceFound);
+    }
     mSurfaceHandleAllocator.release(surface->id().value);
-    surfaces->erase(iter);
     ANGLE_TRY(surface->onDestroy(this));
     return NoError();
 }
@@ -1934,24 +2087,16 @@ void Display::destroyStreamImpl(Stream *stream, StreamSet *streams)
 Error Display::releaseContext(gl::Context *context, Thread *thread)
 {
     // Use scoped_ptr to make sure the context is always freed.
-    std::unique_ptr<gl::Context> uniqueContextPtr;
-    {
-        std::lock_guard<angle::SimpleMutex> lock(mState.contextMapMutex);
-        uniqueContextPtr = eraseContextImpl(context, &mState.contextMap);
-    }
+    std::unique_ptr<gl::Context> uniqueContextPtr = eraseContextImpl(context, &mState.contextMap);
     return releaseContextImpl(std::move(uniqueContextPtr));
 }
 
 std::unique_ptr<gl::Context> Display::eraseContextImpl(gl::Context *context, ContextMap *contexts)
 {
     ASSERT(!context->isReferenced());
-
-    // Use scoped_ptr to make sure the context is always freed.
-    std::unique_ptr<gl::Context> unique_context(context);
-    ASSERT(contexts->find(context->id().value) != contexts->end());
-    contexts->erase(context->id().value);
-
-    return unique_context;
+    bool contextFound = contexts->erase(context->id());
+    ASSERT(contextFound);
+    return std::unique_ptr<gl::Context>(context);
 }
 
 Error Display::releaseContextImpl(std::unique_ptr<gl::Context> &&context)
@@ -2035,22 +2180,9 @@ Error Display::destroyContext(Thread *thread, gl::Context *context)
     return NoError();
 }
 
-void Display::destroySyncImpl(SyncID syncId, SyncMap *syncs)
+void Display::releaseSync(Sync *sync)
 {
-    auto iter = syncs->find(syncId.value);
-    ASSERT(iter != syncs->end());
-    mSyncHandleAllocator.release(syncId.value);
-
-    auto &sync = iter->second;
-    sync->onDestroy(this);
-
-    SyncPool &pool = mSyncPools[sync->getType()];
-    if (pool.size() < kMaxSyncPoolSizePerType)
-    {
-        pool.push_back(std::move(sync));
-    }
-
-    syncs->erase(iter);
+    mSyncSet.releaseSync(this, sync);
 }
 
 void Display::destroyImage(Image *image)
@@ -2070,7 +2202,11 @@ Error Display::destroySurface(Surface *surface)
 
 void Display::destroySync(Sync *sync)
 {
-    return destroySyncImpl(sync->id(), &mSyncMap);
+    if (sync == nullptr)
+    {
+        return;
+    }
+    mSyncSet.destroySync(this, sync->id());
 }
 
 bool Display::isDeviceLost() const
@@ -2147,7 +2283,12 @@ const Caps &Display::getCaps() const
 
 bool Display::isInitialized() const
 {
-    return mInitialized;
+    return mInitialized.load(std::memory_order_acquire) && !isTerminating();
+}
+
+bool Display::isTerminating() const
+{
+    return (mRefCount.load(std::memory_order_acquire) & kTerminatingBit) != 0;
 }
 
 bool Display::isValidConfig(const Config *config) const
@@ -2177,7 +2318,7 @@ bool Display::isValidStream(const Stream *stream) const
 
 bool Display::isValidSync(SyncID syncID) const
 {
-    return getSync(syncID) != nullptr;
+    return getSync(syncID).get() != nullptr;
 }
 
 bool Display::hasExistingWindowSurface(EGLNativeWindowType window)
@@ -2258,10 +2399,6 @@ static ClientExtensions GenerateClientExtensions()
 
 #if defined(ANGLE_PLATFORM_LINUX)
     extensions.platformANGLEDeviceTypeEGLANGLE = true;
-#endif
-
-#if defined(ANGLE_ENABLE_CGL)
-    extensions.platformANGLEDeviceContextVolatileCgl = true;
 #endif
 
 #if defined(ANGLE_ENABLE_METAL)
@@ -2429,6 +2566,7 @@ void Display::initializeFrontendFeatures()
 {
     // Enable on all Impls
     ANGLE_FEATURE_CONDITION(&mFrontendFeatures, loseContextOnOutOfMemory, true);
+    ANGLE_FEATURE_CONDITION(&mFrontendFeatures, loseHardenedContextOnBackendError, true);
     ANGLE_FEATURE_CONDITION(&mFrontendFeatures, allowCompressedFormats, true);
 
     // If this feature is enabled, the context can be created with a certain requested version
@@ -2590,11 +2728,7 @@ EGLint Display::programCacheResize(EGLint limit, EGLenum mode)
     switch (mode)
     {
         case EGL_PROGRAM_CACHE_RESIZE_ANGLE:
-        {
-            size_t initialSize = mMemoryProgramCache.size();
-            mMemoryProgramCache.resize(static_cast<size_t>(limit));
-            return static_cast<EGLint>(initialSize);
-        }
+            return static_cast<EGLint>(mMemoryProgramCache.resize(static_cast<size_t>(limit)));
 
         case EGL_PROGRAM_CACHE_TRIM_ANGLE:
             return static_cast<EGLint>(mMemoryProgramCache.trim(static_cast<size_t>(limit)));
@@ -2769,15 +2903,12 @@ angle::ImageLoadContext Display::getImageLoadContext() const
 
 const gl::Context *Display::getContext(gl::ContextID contextID) const
 {
-    std::lock_guard<angle::SimpleMutex> lock(mState.contextMapMutex);
-    auto iter = mState.contextMap.find(contextID.value);
-    return iter != mState.contextMap.end() ? iter->second : nullptr;
+    return mState.contextMap.find(contextID);
 }
 
 const egl::Surface *Display::getSurface(egl::SurfaceID surfaceID) const
 {
-    auto iter = mState.surfaceMap.find(surfaceID.value);
-    return iter != mState.surfaceMap.end() ? iter->second : nullptr;
+    return mState.surfaceMap.find(surfaceID);
 }
 
 const egl::Image *Display::getImage(egl::ImageID imageID) const
@@ -2786,23 +2917,19 @@ const egl::Image *Display::getImage(egl::ImageID imageID) const
     return iter != mImageMap.end() ? iter->second : nullptr;
 }
 
-const egl::Sync *Display::getSync(egl::SyncID syncID) const
+ScopedSyncRef Display::getSync(egl::SyncID syncID) const
 {
-    auto iter = mSyncMap.find(syncID.value);
-    return iter != mSyncMap.end() ? iter->second.get() : nullptr;
+    return mSyncSet.getSync(const_cast<Display *>(this), syncID);
 }
 
 gl::Context *Display::getContext(gl::ContextID contextID)
 {
-    std::lock_guard<angle::SimpleMutex> lock(mState.contextMapMutex);
-    auto iter = mState.contextMap.find(contextID.value);
-    return iter != mState.contextMap.end() ? iter->second : nullptr;
+    return mState.contextMap.find(contextID);
 }
 
 egl::Surface *Display::getSurface(egl::SurfaceID surfaceID)
 {
-    auto iter = mState.surfaceMap.find(surfaceID.value);
-    return iter != mState.surfaceMap.end() ? iter->second : nullptr;
+    return mState.surfaceMap.find(surfaceID);
 }
 
 egl::Image *Display::getImage(egl::ImageID imageID)
@@ -2811,10 +2938,9 @@ egl::Image *Display::getImage(egl::ImageID imageID)
     return iter != mImageMap.end() ? iter->second : nullptr;
 }
 
-egl::Sync *Display::getSync(egl::SyncID syncID)
+ScopedSyncRef Display::getSync(egl::SyncID syncID)
 {
-    auto iter = mSyncMap.find(syncID.value);
-    return iter != mSyncMap.end() ? iter->second.get() : nullptr;
+    return mSyncSet.getSync(this, syncID);
 }
 
 // static

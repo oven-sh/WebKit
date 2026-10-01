@@ -208,6 +208,8 @@ PASS :storage_texture,usage:usage0=16;usage1=2
 PASS :storage_texture,usage:usage0=16;usage1=4
 PASS :storage_texture,usage:usage0=16;usage1=8
 PASS :storage_texture,usage:usage0=16;usage1=16
+PASS :storage_texture,usage:usage0=16;usage1=32
+PASS :storage_texture,usage:usage0=32;usage1=16
 PASS :storage_texture,mip_level_count:baseMipLevel=1;mipLevelCount=1
 PASS :storage_texture,mip_level_count:baseMipLevel=1;mipLevelCount=2
 PASS :storage_texture,mip_level_count:baseMipLevel=2;mipLevelCount=1
@@ -1841,6 +1843,8 @@ PASS :external_texture,texture_view,usage:usage0=16;usage1=2
 PASS :external_texture,texture_view,usage:usage0=16;usage1=4
 PASS :external_texture,texture_view,usage:usage0=16;usage1=8
 PASS :external_texture,texture_view,usage:usage0=16;usage1=16
+PASS :external_texture,texture_view,usage:usage0=16;usage1=32
+PASS :external_texture,texture_view,usage:usage0=32;usage1=16
 PASS :external_texture,texture_view,dimension:dimension="1d"
 PASS :external_texture,texture_view,dimension:dimension="2d"
 PASS :external_texture,texture_view,dimension:dimension="2d-array"

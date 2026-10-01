@@ -29,14 +29,18 @@
 #include "Logging.h"
 #include "SQLValue.h"
 #include "SQLiteFileSystem.h"
+#include "SQLiteStatement.h"
+#include "SQLiteStatementAutoResetScope.h"
 #include "SQLiteTransaction.h"
 #include "SecurityOrigin.h"
 #include <iterator>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/FileSystem.h>
+#include <wtf/HashMap.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/text/MakeString.h>
 
@@ -194,7 +198,7 @@ static std::expected<UniqueRef<SQLiteDatabase>, ShouldDeleteAndRetry> openAndMig
     ASSERT(!RunLoop::isMain());
 
     if (path != ":memory:"_s && !FileSystem::fileExists(path) && !FileSystem::makeAllDirectories(FileSystem::parentPath(path))) {
-        RELEASE_LOG_ERROR(Push, "Couldn't create PushDatabase parent directories for path %s", path.utf8().data());
+        RELEASE_LOG_ERROR(Push, "Couldn't create PushDatabase parent directories for path %s", path.utf8());
         return makeUnexpected(ShouldDeleteAndRetry::No);
     }
 
@@ -202,7 +206,7 @@ static std::expected<UniqueRef<SQLiteDatabase>, ShouldDeleteAndRetry> openAndMig
     db->disableThreadingChecks();
 
     if (!db->open(path)) {
-        RELEASE_LOG_ERROR(Push, "Couldn't open PushDatabase at path %s", path.utf8().data());
+        RELEASE_LOG_ERROR(Push, "Couldn't open PushDatabase at path %s", path.utf8());
         return makeUnexpected(ShouldDeleteAndRetry::Yes);
     }
 
@@ -210,14 +214,14 @@ static std::expected<UniqueRef<SQLiteDatabase>, ShouldDeleteAndRetry> openAndMig
     {
         auto sql = db->prepareStatement("PRAGMA user_version"_s);
         if (!sql || sql->step() != SQLITE_ROW) {
-            RELEASE_LOG_ERROR(Push, "Couldn't get PushDatabase version at path %s", path.utf8().data());
+            RELEASE_LOG_ERROR(Push, "Couldn't get PushDatabase version at path %s", path.utf8());
             return makeUnexpected(ShouldDeleteAndRetry::Yes);
         }
         version = sql->columnInt(0);
     }
 
     if (version < 0 || version > currentPushDatabaseVersion) {
-        RELEASE_LOG_ERROR(Push, "Found unexpected PushDatabase version: %d (expected: %d) at path: %s", version, currentPushDatabaseVersion, path.utf8().data());
+        RELEASE_LOG_ERROR(Push, "Found unexpected PushDatabase version: %d (expected: %d) at path: %s", version, currentPushDatabaseVersion, path.utf8());
         return makeUnexpected(ShouldDeleteAndRetry::Yes);
     }
 
@@ -230,14 +234,14 @@ static std::expected<UniqueRef<SQLiteDatabase>, ShouldDeleteAndRetry> openAndMig
         for (auto i = version; i < currentPushDatabaseVersion; i++) {
             for (auto statement : pushDatabaseSchemaStatements[i]) {
                 if (!db->executeCommand(statement)) {
-                    RELEASE_LOG_ERROR(Push, "Error executing PushDatabase DDL statement %s at path %s: %d", statement.characters(), path.utf8().data(), db->lastError());
+                    RELEASE_LOG_ERROR(Push, "Error executing PushDatabase DDL statement %s at path %s: %d", statement.characters(), path.utf8(), db->lastError());
                     return makeUnexpected(ShouldDeleteAndRetry::Yes);
                 }
             }
         }
 
         if (!db->executeCommandSlow(makeString("PRAGMA user_version = "_s, currentPushDatabaseVersion)))
-            RELEASE_LOG_ERROR(Push, "Error setting user version for PushDatabase at path %s: %d", path.utf8().data(), db->lastError());
+            RELEASE_LOG_ERROR(Push, "Error setting user version for PushDatabase at path %s: %d", path.utf8(), db->lastError());
 
         transaction.commit();
     }
@@ -252,11 +256,11 @@ static std::unique_ptr<SQLiteDatabase> openAndMigrateDatabase(const String& path
     auto result = openAndMigrateDatabaseImpl(path);
     if (!result && result.error() == ShouldDeleteAndRetry::Yes) {
         if (path == SQLiteDatabase::inMemoryPath() || !SQLiteFileSystem::deleteDatabaseFile(path)) {
-            RELEASE_LOG_ERROR(Push, "Failed to delete PushDatabase at path %s; bailing on recreating from scratch", path.utf8().data());
+            RELEASE_LOG_ERROR(Push, "Failed to delete PushDatabase at path %s; bailing on recreating from scratch", path.utf8());
             return nullptr;
         }
 
-        RELEASE_LOG_ERROR(Push, "Deleted PushDatabase at path %s and recreating from scratch", path.utf8().data());
+        RELEASE_LOG_ERROR(Push, "Deleted PushDatabase at path %s and recreating from scratch", path.utf8());
         result = openAndMigrateDatabaseImpl(path);
     }
 
@@ -265,6 +269,66 @@ static std::unique_ptr<SQLiteDatabase> openAndMigrateDatabase(const String& path
 
     auto database = WTF::move(*result);
     return database.moveToUniquePtr();
+}
+
+class PushDatabase::Storage : public ThreadSafeRefCounted<Storage, WTF::DestructionThread::Main> {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(Storage);
+public:
+    static Ref<Storage> create(UniqueRef<SQLiteDatabase>&& database) { return adoptRef(*new Storage(WTF::move(database))); }
+
+    SQLiteDatabase& database() { return m_db; }
+
+    SQLiteStatementAutoResetScope cachedStatement(ASCIILiteral query);
+    template<typename... Args> SQLiteStatementAutoResetScope bindStatement(ASCIILiteral query, Args&&...);
+
+    // Called via dispatchSync from ~PushDatabase, so it is serialized against everything already
+    // dispatched to the queue.
+    void close()
+    {
+        m_statements.clear();
+        m_db->close();
+    }
+
+private:
+    explicit Storage(UniqueRef<SQLiteDatabase>&& database)
+        : m_db(WTF::move(database))
+    {
+    }
+
+    UniqueRef<SQLiteDatabase> m_db;
+    HashMap<ASCIILiteral, UniqueRef<SQLiteStatement>> m_statements;
+};
+
+SQLiteStatementAutoResetScope PushDatabase::Storage::cachedStatement(ASCIILiteral query)
+{
+    ASSERT(!RunLoop::isMain());
+
+    auto it = m_statements.find(query);
+    if (it != m_statements.end())
+        return SQLiteStatementAutoResetScope(it->value.ptr());
+
+    auto statement = m_db->prepareStatement(query);
+    if (!statement) {
+        PUSHDB_RELEASE_LOG_ERROR("Failed with '%" PUBLIC_LOG_STRING "' preparing statement: %" PUBLIC_LOG_STRING, m_db->lastErrorMsg(), query.characters());
+        return SQLiteStatementAutoResetScope(nullptr);
+    }
+
+    auto statementRef = makeUniqueRefFromNonNullUniquePtr(WTF::move(statement));
+    CheckedPtr statementPtr = statementRef.ptr();
+    m_statements.add(query, WTF::move(statementRef));
+    return SQLiteStatementAutoResetScope(WTF::move(statementPtr));
+}
+
+template<typename... Args>
+SQLiteStatementAutoResetScope PushDatabase::Storage::bindStatement(ASCIILiteral query, Args&&... args)
+{
+    auto sql = cachedStatement(query);
+    if (!sql || !sql->bind(std::forward<Args>(args)...)) {
+        PUSHDB_RELEASE_LOG_ERROR("Failed with %d (%" PUBLIC_LOG_STRING ") while binding statement: %" PUBLIC_LOG_STRING, m_db->lastError(), m_db->lastErrorMsg(), query.characters());
+        return SQLiteStatementAutoResetScope(nullptr);
+    }
+
+    return sql;
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PushDatabase);
@@ -289,26 +353,19 @@ void PushDatabase::create(const String& path, CreationHandler&& completionHandle
 
 PushDatabase::PushDatabase(Ref<WorkQueue>&& queue, UniqueRef<SQLiteDatabase>&& db)
     : m_queue(WTF::move(queue))
-    , m_db(WTF::move(db))
+    , m_storage(Storage::create(WTF::move(db)))
 {
 }
 
 PushDatabase::~PushDatabase()
 {
-    // In practice we aren't actually expecting this to run, since a NeverDestroyed<WebPushDaemon> instance
-    // holds on to this object.
-    //
-    // If we intend to delete this object for real, we should probably make this object refcounted and make
-    // the blocks on the queue protect the database object rather than using dispatchSync.
     ASSERT(RunLoop::isMain());
 
-    // Flush any outstanding requests.
-    m_queue->dispatchSync([]() { });
-
-    // Finalize member variables on the queue, since they were are only meant to be used on the queue.
-    m_queue->dispatchSync([db = WTF::move(m_db), statements = WTF::move(m_statements)]() mutable {
-        statements.clear();
-        db->close();
+    // The work queue is serial, so this runs after every outstanding request. Doing it
+    // synchronously means the database file is closed by the time the last reference to this object
+    // is released, which callers rely on before reopening the same path.
+    m_queue->dispatchSync([storage = m_storage] {
+        storage->close();
     });
 }
 
@@ -316,38 +373,6 @@ void PushDatabase::dispatchOnWorkQueue(Function<void()>&& function)
 {
     RELEASE_ASSERT(RunLoop::isMain());
     m_queue->dispatch(WTF::move(function));
-}
-
-SQLiteStatementAutoResetScope PushDatabase::cachedStatementOnQueue(ASCIILiteral query)
-{
-    ASSERT(!RunLoop::isMain());
-
-    auto it = m_statements.find(query);
-    if (it != m_statements.end())
-        return SQLiteStatementAutoResetScope(it->value.ptr());
-
-    auto statement = m_db->prepareStatement(query);
-    if (!statement) {
-        PUSHDB_RELEASE_LOG_ERROR("Failed with '%" PUBLIC_LOG_STRING "' preparing statement: %" PUBLIC_LOG_STRING, m_db->lastErrorMsg(), query.characters());
-        return SQLiteStatementAutoResetScope(nullptr);
-    }
-
-    auto statementRef = makeUniqueRefFromNonNullUniquePtr(WTF::move(statement));
-    CheckedPtr statementPtr = statementRef.ptr();
-    m_statements.add(query, WTF::move(statementRef));
-    return SQLiteStatementAutoResetScope(WTF::move(statementPtr));
-}
-
-template<typename... Args>
-WebCore::SQLiteStatementAutoResetScope PushDatabase::bindStatementOnQueue(ASCIILiteral query, Args&&... args)
-{
-    auto sql = cachedStatementOnQueue(query);
-    if (!sql || !sql->bind(std::forward<Args>(args)...)) {
-        PUSHDB_RELEASE_LOG_ERROR("Failed with %d (%" PUBLIC_LOG_STRING ") while binding statement: %" PUBLIC_LOG_STRING, m_db->lastError(), m_db->lastErrorMsg(), query.characters());
-        return SQLiteStatementAutoResetScope(nullptr);
-    }
-
-    return sql;
 }
 
 static std::span<const uint8_t> NODELETE uuidToSpan(const std::optional<WTF::UUID>& uuid)
@@ -365,14 +390,6 @@ static std::span<const uint8_t> NODELETE uuidToSpan(const std::optional<WTF::UUI
     }
 
     return uuid->span();
-}
-
-static std::optional<WTF::UUID> uuidFromSpan(std::span<const uint8_t> span)
-{
-    if (span.size() != 16)
-        return std::nullopt;
-
-    return WTF::UUID(span.first<16>());
 }
 
 static SQLValue expirationTimeToValue(std::optional<EpochTimeStamp> timestamp)
@@ -402,8 +419,8 @@ static void completeOnMainQueue(CompletionHandler<void(T)>&& completionHandler, 
 
 void PushDatabase::updatePublicToken(std::span<const uint8_t> publicToken, CompletionHandler<void(PublicTokenChanged)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, newPublicToken = Vector<uint8_t> { publicToken }, completionHandler = WTF::move(completionHandler)]() mutable {
-        SQLiteTransaction transaction(m_db);
+    dispatchOnWorkQueue([storage = m_storage, newPublicToken = Vector<uint8_t> { publicToken }, completionHandler = WTF::move(completionHandler)]() mutable {
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         auto result = PublicTokenChanged::No;
@@ -413,7 +430,7 @@ void PushDatabase::updatePublicToken(std::span<const uint8_t> publicToken, Compl
         });
 
         {
-            auto sql = bindStatementOnQueue("SELECT value FROM Metadata WHERE key = ?"_s, publicTokenKey);
+            auto sql = storage->bindStatement("SELECT value FROM Metadata WHERE key = ?"_s, publicTokenKey);
             if (!sql)
                 return;
 
@@ -425,7 +442,7 @@ void PushDatabase::updatePublicToken(std::span<const uint8_t> publicToken, Compl
             return;
 
         {
-            auto sql = bindStatementOnQueue("REPLACE INTO Metadata(key, value) VALUES(?, ?)"_s, publicTokenKey, newPublicToken);
+            auto sql = storage->bindStatement("REPLACE INTO Metadata(key, value) VALUES(?, ?)"_s, publicTokenKey, newPublicToken);
             if (!sql || sql->step() != SQLITE_DONE)
                 return;
         }
@@ -434,8 +451,8 @@ void PushDatabase::updatePublicToken(std::span<const uint8_t> publicToken, Compl
         // save the initial publicToken without deleting all subscriptions and notifying the caller that
         // the token changed.
         if (!currentPublicToken.isEmpty()) {
-            auto deleteSubscriptionSets = cachedStatementOnQueue("DELETE FROM SubscriptionSets"_s);
-            auto deleteSubscriptions = cachedStatementOnQueue("DELETE FROM Subscriptions"_s);
+            auto deleteSubscriptionSets = storage->cachedStatement("DELETE FROM SubscriptionSets"_s);
+            auto deleteSubscriptions = storage->cachedStatement("DELETE FROM Subscriptions"_s);
 
             if (!deleteSubscriptionSets || !deleteSubscriptions || deleteSubscriptionSets->step() != SQLITE_DONE || deleteSubscriptions->step() != SQLITE_DONE)
                 return;
@@ -451,11 +468,11 @@ void PushDatabase::updatePublicToken(std::span<const uint8_t> publicToken, Compl
 
 void PushDatabase::getPublicToken(CompletionHandler<void(Vector<uint8_t>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, completionHandler = WTF::move(completionHandler)]() mutable {
-        SQLiteTransaction transaction(m_db);
+    dispatchOnWorkQueue([storage = m_storage, completionHandler = WTF::move(completionHandler)]() mutable {
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
-        auto sql = bindStatementOnQueue("SELECT value FROM Metadata WHERE key = ?"_s, publicTokenKey);
+        auto sql = storage->bindStatement("SELECT value FROM Metadata WHERE key = ?"_s, publicTokenKey);
         if (!sql)
             return completeOnMainQueue(WTF::move(completionHandler), Vector<uint8_t> { });
 
@@ -470,14 +487,14 @@ void PushDatabase::getPublicToken(CompletionHandler<void(Vector<uint8_t>&&)>&& c
 
 void PushDatabase::insertRecord(const PushRecord& record, CompletionHandler<void(std::optional<PushRecord>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, record = crossThreadCopy(record), completionHandler = WTF::move(completionHandler)]() mutable {
-        SQLiteTransaction transaction(m_db);
+    dispatchOnWorkQueue([storage = m_storage, record = crossThreadCopy(record), completionHandler = WTF::move(completionHandler)]() mutable {
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         int64_t subscriptionSetID = 0;
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "SELECT rowID FROM SubscriptionSets WHERE bundleID = ? AND pushPartition = ? AND dataStoreUUID = ? AND securityOrigin = ?"_s,
                 bindSubscriptionSetParameters(record.subscriptionSetIdentifier),
                 record.securityOrigin);
@@ -489,7 +506,7 @@ void PushDatabase::insertRecord(const PushRecord& record, CompletionHandler<void
         }
 
         if (!subscriptionSetID) {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "INSERT INTO SubscriptionSets VALUES(NULL, ?, ?, ?, ?, ?, 0, 0)"_s,
                 time(nullptr),
                 bindSubscriptionSetParameters(record.subscriptionSetIdentifier),
@@ -497,11 +514,11 @@ void PushDatabase::insertRecord(const PushRecord& record, CompletionHandler<void
             if (!sql || sql->step() != SQLITE_DONE)
                 return completeOnMainQueue(WTF::move(completionHandler), std::optional<PushRecord> { });
 
-            subscriptionSetID = m_db->lastInsertRowID();
+            subscriptionSetID = storage->database().lastInsertRowID();
         }
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "INSERT INTO Subscriptions VALUES(NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"_s,
                 time(nullptr),
                 subscriptionSetID,
@@ -516,7 +533,7 @@ void PushDatabase::insertRecord(const PushRecord& record, CompletionHandler<void
             if (!sql || sql->step() != SQLITE_DONE)
                 return completeOnMainQueue(WTF::move(completionHandler), std::optional<PushRecord> { });
 
-            record.identifier = ObjectIdentifier<PushSubscriptionIdentifierType>(m_db->lastInsertRowID());
+            record.identifier = ObjectIdentifier<PushSubscriptionIdentifierType>(storage->database().lastInsertRowID());
         }
 
         transaction.commit();
@@ -527,8 +544,8 @@ void PushDatabase::insertRecord(const PushRecord& record, CompletionHandler<void
 
 void PushDatabase::removeRecordByIdentifier(PushSubscriptionIdentifier identifier, CompletionHandler<void(bool)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, rowIdentifier = identifier.toUInt64(), completionHandler = WTF::move(completionHandler)]() mutable {
-        SQLiteTransaction transaction(m_db);
+    dispatchOnWorkQueue([storage = m_storage, rowIdentifier = identifier.toUInt64(), completionHandler = WTF::move(completionHandler)]() mutable {
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         bool isLastSubscriptionInSet = false;
@@ -536,7 +553,7 @@ void PushDatabase::removeRecordByIdentifier(PushSubscriptionIdentifier identifie
 
         // FIXME: Remove this and use RETURNING instead once EWS moves to a macOS build that supports it (SQLite >3.35.0).
         {
-            auto sql = bindStatementOnQueue("SELECT subscriptionSetID FROM Subscriptions WHERE rowid = ?"_s, rowIdentifier);
+            auto sql = storage->bindStatement("SELECT subscriptionSetID FROM Subscriptions WHERE rowid = ?"_s, rowIdentifier);
             if (!sql || sql->step() != SQLITE_ROW)
                 return completeOnMainQueue(WTF::move(completionHandler), false);
 
@@ -544,14 +561,14 @@ void PushDatabase::removeRecordByIdentifier(PushSubscriptionIdentifier identifie
         }
 
         {
-            auto sql = bindStatementOnQueue("DELETE FROM Subscriptions WHERE rowid = ?"_s, rowIdentifier);
+            auto sql = storage->bindStatement("DELETE FROM Subscriptions WHERE rowid = ?"_s, rowIdentifier);
             if (!sql || sql->step() != SQLITE_DONE)
                 return completeOnMainQueue(WTF::move(completionHandler), false);
         }
 
         {
             // Check if this was the last subscription in the subscription set.
-            auto sql = bindStatementOnQueue("SELECT rowid FROM Subscriptions WHERE subscriptionSetID = ?"_s, subscriptionSetID);
+            auto sql = storage->bindStatement("SELECT rowid FROM Subscriptions WHERE subscriptionSetID = ?"_s, subscriptionSetID);
             if (!sql)
                 return completeOnMainQueue(WTF::move(completionHandler), false); 
 
@@ -560,7 +577,7 @@ void PushDatabase::removeRecordByIdentifier(PushSubscriptionIdentifier identifie
 
         if (isLastSubscriptionInSet) {
             // Delete the entire subscription set if it is no longer associated with any subscriptions.
-            auto sql = bindStatementOnQueue("DELETE FROM SubscriptionSets WHERE rowid = ?"_s, subscriptionSetID);
+            auto sql = storage->bindStatement("DELETE FROM SubscriptionSets WHERE rowid = ?"_s, subscriptionSetID);
             if (!sql || sql->step() != SQLITE_DONE)
                 return completeOnMainQueue(WTF::move(completionHandler), false);
         }
@@ -578,7 +595,7 @@ static PushRecord makePushRecordFromRow(SQLiteStatementAutoResetScope& sql, int 
         .subscriptionSetIdentifier = {
             .bundleIdentifier = sql->columnText(columnIndex + 1),
             .pushPartition = sql->columnText(columnIndex + 2),
-            .dataStoreIdentifier = uuidFromSpan(sql->columnBlobAsSpan(columnIndex + 3))
+            .dataStoreIdentifier = WTF::UUID::tryCreate(sql->columnBlobAsSpan(columnIndex + 3))
         },
         .securityOrigin = sql->columnText(columnIndex + 4),
         .scope = sql->columnText(columnIndex + 5),
@@ -594,9 +611,9 @@ static PushRecord makePushRecordFromRow(SQLiteStatementAutoResetScope& sql, int 
 
 void PushDatabase::getRecordByTopic(const String& topic, CompletionHandler<void(std::optional<PushRecord>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, topic = crossThreadCopy(topic), completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, topic = crossThreadCopy(topic), completionHandler = WTF::move(completionHandler)]() mutable {
         // Force SQLite to consult the Subscriptions(scope) index first via CROSS JOIN.
-        auto sql = bindStatementOnQueue(
+        auto sql = storage->bindStatement(
             "SELECT " kPushRecordColumns
             "FROM Subscriptions sub "
             "CROSS JOIN SubscriptionSets ss "
@@ -611,9 +628,9 @@ void PushDatabase::getRecordByTopic(const String& topic, CompletionHandler<void(
 
 void PushDatabase::getRecordBySubscriptionSetAndScope(const PushSubscriptionSetIdentifier& subscriptionSetIdentifier, const String& scope, CompletionHandler<void(std::optional<PushRecord>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), scope = crossThreadCopy(scope), completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), scope = crossThreadCopy(scope), completionHandler = WTF::move(completionHandler)]() mutable {
         // Force SQLite to consult the Subscriptions(scope) index first via CROSS JOIN.
-        auto sql = bindStatementOnQueue(
+        auto sql = storage->bindStatement(
             "SELECT " kPushRecordColumns
             "FROM Subscriptions sub "
             "CROSS JOIN SubscriptionSets ss "
@@ -630,9 +647,9 @@ void PushDatabase::getRecordBySubscriptionSetAndScope(const PushSubscriptionSetI
 
 void PushDatabase::getIdentifiers(CompletionHandler<void(HashSet<PushSubscriptionIdentifier>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, completionHandler = WTF::move(completionHandler)]() mutable {
         HashSet<PushSubscriptionIdentifier> result;
-        auto sql = cachedStatementOnQueue("SELECT rowid FROM Subscriptions"_s);
+        auto sql = storage->cachedStatement("SELECT rowid FROM Subscriptions"_s);
         while (sql && sql->step() == SQLITE_ROW)
             result.add(ObjectIdentifier<PushSubscriptionIdentifierType>(sql->columnInt64(0)));
 
@@ -642,10 +659,10 @@ void PushDatabase::getIdentifiers(CompletionHandler<void(HashSet<PushSubscriptio
 
 void PushDatabase::getTopics(CompletionHandler<void(PushTopics&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, completionHandler = WTF::move(completionHandler)]() mutable {
         PushTopics topics;
 
-        auto sql = cachedStatementOnQueue(
+        auto sql = storage->cachedStatement(
             "SELECT sub.topic, ss.state "
             "FROM Subscriptions sub "
             "JOIN SubscriptionSets ss "
@@ -670,10 +687,10 @@ void PushDatabase::getTopics(CompletionHandler<void(PushTopics&&)>&& completionH
 
 void PushDatabase::getPushSubscriptionSetRecords(CompletionHandler<void(Vector<PushSubscriptionSetRecord>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, completionHandler = WTF::move(completionHandler)]() mutable {
         Vector<PushSubscriptionSetRecord> result;
 
-        auto sql = cachedStatementOnQueue("SELECT bundleID, pushPartition, dataStoreUUID, securityOrigin, state FROM SubscriptionSets"_s);
+        auto sql = storage->cachedStatement("SELECT bundleID, pushPartition, dataStoreUUID, securityOrigin, state FROM SubscriptionSets"_s);
         if (!sql)
             return completeOnMainQueue(WTF::move(completionHandler), result);
 
@@ -681,7 +698,7 @@ void PushDatabase::getPushSubscriptionSetRecords(CompletionHandler<void(Vector<P
             PushSubscriptionSetIdentifier identifier {
                 .bundleIdentifier = sql->columnText(0),
                 .pushPartition = sql->columnText(1),
-                .dataStoreIdentifier = uuidFromSpan(sql->columnBlobAsSpan(2))
+                .dataStoreIdentifier = WTF::UUID::tryCreate(sql->columnBlobAsSpan(2))
             };
             String securityOrigin = sql->columnText(3);
             bool enabled = static_cast<SubscriptionSetsStateColumn>(sql->columnInt(4)) == SubscriptionSetsStateColumn::Enabled;
@@ -694,10 +711,10 @@ void PushDatabase::getPushSubscriptionSetRecords(CompletionHandler<void(Vector<P
 
 void PushDatabase::getAllPushSubscriptionOrigins(CompletionHandler<void(Vector<String>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, completionHandler = WTF::move(completionHandler)]() mutable {
         Vector<String> origins;
 
-        auto sql = cachedStatementOnQueue("SELECT DISTINCT securityOrigin FROM SubscriptionSets WHERE state = 0"_s);
+        auto sql = storage->cachedStatement("SELECT DISTINCT securityOrigin FROM SubscriptionSets WHERE state = 0"_s);
         if (!sql)
             return completeOnMainQueue(WTF::move(completionHandler), WTF::move(origins));
 
@@ -710,13 +727,13 @@ void PushDatabase::getAllPushSubscriptionOrigins(CompletionHandler<void(Vector<S
 
 void PushDatabase::incrementSilentPushCount(const PushSubscriptionSetIdentifier& subscriptionSetIdentifier, const String& securityOrigin, CompletionHandler<void(unsigned)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), securityOrigin = crossThreadCopy(securityOrigin), completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), securityOrigin = crossThreadCopy(securityOrigin), completionHandler = WTF::move(completionHandler)]() mutable {
         int silentPushCount = 0;
-        SQLiteTransaction transaction(m_db);
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "UPDATE SubscriptionSets "
                 "SET silentPushCount = silentPushCount + 1 "
                 "WHERE bundleID = ? AND pushPartition = ? AND dataStoreUUID = ? AND securityOrigin = ?"_s,
@@ -728,7 +745,7 @@ void PushDatabase::incrementSilentPushCount(const PushSubscriptionSetIdentifier&
 
         // FIXME: Remove this and use RETURNING instead once EWS moves to a macOS build that supports it (SQLite >3.35.0).
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "SELECT silentPushCount "
                 "FROM SubscriptionSets "
                 "WHERE bundleID = ? AND pushPartition = ? AND dataStoreUUID = ? AND securityOrigin = ?"_s,
@@ -748,17 +765,17 @@ void PushDatabase::incrementSilentPushCount(const PushSubscriptionSetIdentifier&
 
 void PushDatabase::removeRecordsBySubscriptionSet(const PushSubscriptionSetIdentifier& subscriptionSetIdentifier, CompletionHandler<void(Vector<RemovedPushRecord>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), completionHandler = WTF::move(completionHandler)]() mutable {
         auto scope = makeScopeExit([&completionHandler] {
             completeOnMainQueue(WTF::move(completionHandler), Vector<RemovedPushRecord> { });
         });
 
         Vector<RemovedPushRecord> removedPushRecords;
-        SQLiteTransaction transaction(m_db);
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "SELECT sub.subscriptionSetID, sub.rowid, sub.topic, sub.serverVAPIDPublicKey "
                 "FROM SubscriptionSets ss "
                 "JOIN Subscriptions sub "
@@ -777,7 +794,7 @@ void PushDatabase::removeRecordsBySubscriptionSet(const PushSubscriptionSetIdent
         }
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "DELETE FROM Subscriptions "
                 "WHERE subscriptionSetID IN ("
                 "    SELECT rowid FROM SubscriptionSets "
@@ -789,7 +806,7 @@ void PushDatabase::removeRecordsBySubscriptionSet(const PushSubscriptionSetIdent
         }
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "DELETE FROM SubscriptionSets "
                 "WHERE bundleID = ? AND pushPartition = ? AND dataStoreUUID = ?"_s,
                 bindSubscriptionSetParameters(subscriptionSetIdentifier));
@@ -807,19 +824,19 @@ void PushDatabase::removeRecordsBySubscriptionSet(const PushSubscriptionSetIdent
 
 void PushDatabase::removeRecordsBySubscriptionSetAndSecurityOrigin(const PushSubscriptionSetIdentifier& subscriptionSetIdentifier, const String& securityOrigin, CompletionHandler<void(Vector<RemovedPushRecord>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), securityOrigin = crossThreadCopy(securityOrigin), completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), securityOrigin = crossThreadCopy(securityOrigin), completionHandler = WTF::move(completionHandler)]() mutable {
         auto scope = makeScopeExit([&completionHandler] {
             completeOnMainQueue(WTF::move(completionHandler), Vector<RemovedPushRecord> { });
         });
 
         Vector<RemovedPushRecord> removedPushRecords;
-        SQLiteTransaction transaction(m_db);
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         int64_t subscriptionSetID = 0;
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "SELECT sub.subscriptionSetID, sub.rowid, sub.topic, sub.serverVAPIDPublicKey "
                 "FROM SubscriptionSets ss "
                 "JOIN Subscriptions sub "
@@ -840,13 +857,13 @@ void PushDatabase::removeRecordsBySubscriptionSetAndSecurityOrigin(const PushSub
         }
 
         {
-            auto sql = bindStatementOnQueue("DELETE FROM Subscriptions WHERE subscriptionSetID = ?"_s, subscriptionSetID);
+            auto sql = storage->bindStatement("DELETE FROM Subscriptions WHERE subscriptionSetID = ?"_s, subscriptionSetID);
             if (!sql || sql->step() != SQLITE_DONE)
                 return;
         }
 
         {
-            auto sql = bindStatementOnQueue("DELETE FROM SubscriptionSets WHERE rowid = ?"_s, subscriptionSetID);
+            auto sql = storage->bindStatement("DELETE FROM SubscriptionSets WHERE rowid = ?"_s, subscriptionSetID);
             if (!sql || sql->step() != SQLITE_DONE)
                 return;
         }
@@ -860,17 +877,17 @@ void PushDatabase::removeRecordsBySubscriptionSetAndSecurityOrigin(const PushSub
 
 void PushDatabase::removeRecordsByBundleIdentifierAndDataStore(const String& bundleIdentifier, const std::optional<WTF::UUID>& dataStoreIdentifier, CompletionHandler<void(Vector<RemovedPushRecord>&&)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, bundleIdentifier = crossThreadCopy(bundleIdentifier), dataStoreIdentifier, completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, bundleIdentifier = crossThreadCopy(bundleIdentifier), dataStoreIdentifier, completionHandler = WTF::move(completionHandler)]() mutable {
         auto scope = makeScopeExit([&completionHandler] {
             completeOnMainQueue(WTF::move(completionHandler), Vector<RemovedPushRecord> { });
         });
 
         Vector<RemovedPushRecord> removedPushRecords;
-        SQLiteTransaction transaction(m_db);
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "SELECT sub.subscriptionSetID, sub.rowid, sub.topic, sub.serverVAPIDPublicKey "
                 "FROM SubscriptionSets ss "
                 "JOIN Subscriptions sub "
@@ -890,7 +907,7 @@ void PushDatabase::removeRecordsByBundleIdentifierAndDataStore(const String& bun
         }
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "DELETE FROM Subscriptions "
                 "WHERE subscriptionSetID IN ("
                 "    SELECT rowid FROM SubscriptionSets "
@@ -903,7 +920,7 @@ void PushDatabase::removeRecordsByBundleIdentifierAndDataStore(const String& bun
         }
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "DELETE FROM SubscriptionSets "
                 "WHERE bundleID = ? AND dataStoreUUID = ?"_s,
                 !bundleIdentifier.isNull() ? bundleIdentifier : emptyString(),
@@ -921,19 +938,19 @@ void PushDatabase::removeRecordsByBundleIdentifierAndDataStore(const String& bun
 
 void PushDatabase::setPushesEnabled(const PushSubscriptionSetIdentifier& subscriptionSetIdentifier, bool enabled, CompletionHandler<void(bool recordsChanged)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), enabled, completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), enabled, completionHandler = WTF::move(completionHandler)]() mutable {
         auto scope = makeScopeExit([&completionHandler] {
             completeOnMainQueue(WTF::move(completionHandler), false);
         });
 
-        SQLiteTransaction transaction(m_db);
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         Vector<int64_t> subscriptionSetIDs;
         auto newState = enabled ? SubscriptionSetsStateColumn::Enabled : SubscriptionSetsStateColumn::Ignored;
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "SELECT rowid, state "
                 "FROM SubscriptionSets "
                 "WHERE bundleID = ? AND pushPartition = ? AND dataStoreUUID = ?"_s,
@@ -952,7 +969,7 @@ void PushDatabase::setPushesEnabled(const PushSubscriptionSetIdentifier& subscri
             return;
 
         for (auto subscriptionSetID : subscriptionSetIDs) {
-            auto sql = bindStatementOnQueue("UPDATE SubscriptionSets SET state = ? WHERE rowid = ?"_s, static_cast<int>(newState), subscriptionSetID);
+            auto sql = storage->bindStatement("UPDATE SubscriptionSets SET state = ? WHERE rowid = ?"_s, static_cast<int>(newState), subscriptionSetID);
             if (!sql || sql->step() != SQLITE_DONE)
                 return;
         }
@@ -966,19 +983,19 @@ void PushDatabase::setPushesEnabled(const PushSubscriptionSetIdentifier& subscri
 
 void PushDatabase::setPushesEnabledForOrigin(const PushSubscriptionSetIdentifier& subscriptionSetIdentifier, const String& securityOrigin, bool enabled, CompletionHandler<void(bool recordsChanged)>&& completionHandler)
 {
-    dispatchOnWorkQueue([this, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), securityOrigin = crossThreadCopy(securityOrigin), enabled, completionHandler = WTF::move(completionHandler)]() mutable {
+    dispatchOnWorkQueue([storage = m_storage, subscriptionSetIdentifier = crossThreadCopy(subscriptionSetIdentifier), securityOrigin = crossThreadCopy(securityOrigin), enabled, completionHandler = WTF::move(completionHandler)]() mutable {
         auto scope = makeScopeExit([&completionHandler] {
             completeOnMainQueue(WTF::move(completionHandler), false);
         });
 
-        SQLiteTransaction transaction(m_db);
+        SQLiteTransaction transaction(storage->database());
         transaction.begin();
 
         int64_t subscriptionSetID = 0;
         auto newState = enabled ? SubscriptionSetsStateColumn::Enabled : SubscriptionSetsStateColumn::Ignored;
 
         {
-            auto sql = bindStatementOnQueue(
+            auto sql = storage->bindStatement(
                 "SELECT rowid, state "
                 "FROM SubscriptionSets "
                 "WHERE bundleID = ? AND pushPartition = ? AND dataStoreUUID = ? AND securityOrigin = ?"_s,
@@ -991,7 +1008,7 @@ void PushDatabase::setPushesEnabledForOrigin(const PushSubscriptionSetIdentifier
         }
 
         {
-            auto sql = bindStatementOnQueue("UPDATE SubscriptionSets SET state = ? WHERE rowid = ?"_s, static_cast<int>(newState), subscriptionSetID);
+            auto sql = storage->bindStatement("UPDATE SubscriptionSets SET state = ? WHERE rowid = ?"_s, static_cast<int>(newState), subscriptionSetID);
             if (!sql || sql->step() != SQLITE_DONE)
                 return;
         }

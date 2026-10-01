@@ -75,7 +75,7 @@ public:
     bool shouldDeferIntersectionObserversDuringResize() const;
     bool shouldSilenceMediaQueryListChangeEvents() const;
     bool shouldIgnoreInvalidSignal() const;
-    bool needsAnchorToBeMouseFocusable() const;
+    bool needsAnchorToBeMouseFocusable(const Element&) const;
     bool needsFormControlToBeMouseFocusable() const;
     bool needsAutoplayPlayPauseEvents() const;
     bool needsSeekingSupportDisabled() const;
@@ -83,6 +83,9 @@ public:
     bool needsExpediaGroupAnimationQuirk(Element&) const;
     bool shouldAutoplayWebAudioForArbitraryUserGesture() const;
     bool hasBrokenEncryptedMediaAPISupportQuirk() const;
+
+    WEBCORE_EXPORT static bool elementMatchesSelectorCondition(ASCIILiteral selector, const Node*);
+
 #if ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
     bool shouldDispatchSimulatedMouseEvents(const EventTarget*) const;
     bool shouldPreventDispatchOfTouchEvent(const AtomString&, EventTarget*) const;
@@ -261,14 +264,14 @@ public:
     bool NODELETE shouldDisableElementFullscreenQuirk() const;
     bool NODELETE shouldIgnorePlaysInlineRequirementQuirk() const;
 
-    bool shouldAllowPopupFromMicrosoftOfficeToOneDrive() const { return m_quirksData.quirkIsEnabled(QuirkBehaviors::shouldAllowPopupFromMicrosoftOfficeToOneDrive); }
+    bool shouldAllowPopupFromMicrosoftOfficeToOneDrive() const { return m_quirksData.isBehaviorEnabled(QuirkBehaviorID::ShouldAllowPopupFromMicrosoftOfficeToOneDrive); }
     bool needsPopupFromMicrosoftOfficeToOneDrive(const URL& targetURL) const;
 
     WEBCORE_EXPORT bool needsConsistentQueryParameterFilteringQuirk(const URL&) const;
     bool mayBenefitFromFingerprintingProtectionQuirk(const URL&) const;
     static String standardUserAgentWithApplicationNameIncludingCompatOverrides(const String&, const String&, UserAgentType);
 
-    String scriptToEvaluateBeforeRunningScriptFromURL(const URL&);
+    Vector<String, 1> scriptsToEvaluateBeforeRunningScriptFromURL(const URL&);
 
     bool NODELETE shouldHideCoarsePointerCharacteristics() const;
 
@@ -366,14 +369,14 @@ private:
     mutable QuirkBitSet m_probedQuirks;
 
     template<typename Probe>
-    bool quirkIsEnabledAfterProbing(const QuirkBehavior& quirk, NOESCAPE Probe&& probe) const
+    bool isBehaviorEnabledAfterProbing(const QuirkBehavior& quirk, NOESCAPE Probe&& probe) const
     {
         auto index = static_cast<size_t>(quirk.id);
         if (!m_probedQuirks.get(index)) {
             m_probedQuirks.set(index);
-            m_quirksData.setQuirkState(quirk, probe());
+            m_quirksData.setEnabled(quirk, probe());
         }
-        return m_quirksData.quirkIsEnabled(quirk);
+        return m_quirksData.isBehaviorEnabled(quirk.id);
     }
 
     bool m_needsConfigurableIndexedPropertiesQuirk { false };

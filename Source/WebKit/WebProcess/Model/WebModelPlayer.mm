@@ -611,7 +611,7 @@ void WebModelPlayer::scheduleUpdateIfNeeded()
         return;
 
     m_isUpdateScheduled = true;
-    document->eventLoop().queueTask(WebCore::TaskSource::ModelElement, [protectedThis = protect(*this)] {
+    protect(document->eventLoop())->queueTask(WebCore::TaskSource::ModelElement, [protectedThis = protect(*this)] {
         protectedThis->m_isUpdateScheduled = false;
         protectedThis->update();
     });
@@ -734,7 +734,7 @@ void WebModelPlayer::notifyClientDidFinishLoading()
     notifyEntityTransformUpdated();
 
     if (auto environmentMap = m_environmentMap)
-        setEnvironmentMap(WTF::move(*environmentMap));
+        setEnvironmentMap(WTF::move(*environmentMap), URL { });
 }
 
 bool WebModelPlayer::supportsTransform(WebCore::TransformationMatrix transformationMatrix)
@@ -864,7 +864,7 @@ void WebModelPlayer::setEntityTransform(WebCore::NodeIdentifier, WebCore::Transf
         (*m_cachedTransformState)->setEntityTransform(transform);
 }
 
-void WebModelPlayer::setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data)
+void WebModelPlayer::setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data, const URL&)
 {
     RefPtr currentModel = m_currentModel;
     if (!currentModel || !m_didFinishLoading || !m_modelLoader) {

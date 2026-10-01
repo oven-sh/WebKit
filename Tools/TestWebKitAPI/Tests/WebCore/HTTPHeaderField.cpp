@@ -64,6 +64,9 @@ TEST(HTTPHeaderField, Parser)
     static const char nonASCIIQuotedPairInComment[8] = {'a', ':', ' ', '(', '\\', static_cast<char>(0xFF), ')', '\0'};
     static const char nonASCIIQuotedPairInQuote[8] = {'a', ':', ' ', '"', '\\', static_cast<char>(0xFF), '"', '\0'};
     static const char delInQuote[7] = {'a', ':', ' ', '"', static_cast<char>(0x7F), '"', '\0'};
+    static const char obsTextAfterToken[7] = { 'a', ':', ' ', 'b', static_cast<char>(0xFF), 'c', '\0' };
+    static const char controlAfterToken[8] = { 'a', ':', ' ', 'a', 0x01, ' ', 'b', '\0' };
+    static const char delAfterToken[7] = { 'a', ':', ' ', 'b', static_cast<char>(0x7F), 'c', '\0' };
 
     shouldRemainUnchanged({
         "a: b"_s,
@@ -75,9 +78,13 @@ TEST(HTTPHeaderField, Parser)
         "a: \"\""_s,
         "a: \"aA?\t \""_s,
         "a: \"a\" (b) ((c))"_s,
+        "a: text/html"_s,
+        "a: text/html; charset=utf-8"_s,
+        "a: foo,bar"_s,
         String::fromLatin1(nonASCIIComment),
         String::fromLatin1(nonASCIIQuotedPairInComment),
         String::fromLatin1(nonASCIIQuotedPairInQuote),
+        String::fromLatin1(obsTextAfterToken),
     });
     
     shouldBeInvalid({
@@ -97,6 +104,8 @@ TEST(HTTPHeaderField, Parser)
         "a: \"\a\""_s,
         "a: \"a\" (b)}((c))"_s,
         String::fromLatin1(delInQuote),
+        String::fromLatin1(controlAfterToken),
+        String::fromLatin1(delAfterToken),
     });
     
     shouldBecome({

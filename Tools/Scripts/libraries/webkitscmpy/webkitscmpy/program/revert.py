@@ -42,6 +42,8 @@ class Revert(Command):
     help = 'Revert provided list of commits and create a pull-request with this revert commit'
     REVERT_TITLE_TEMPLATE = 'Unreviewed, reverting {}'
     REVERT_TITLE_RE = re.compile(r'^Unreviewed, reverting {}'.format(Commit.IDENTIFIER_RE.pattern))
+    REVERT_BRANCH_PREFIX = 'revert'
+    MAX_REVERTED_IN_BRANCH_NAME = 3
 
     @classmethod
     def parser(cls, parser, loggers=None):
@@ -65,6 +67,18 @@ class Revert(Command):
         )
 
     @classmethod
+    def branch_name_prefix(cls, commit_objects):
+        """Branch name component identifying which commits a revert reverts.
+
+        Without it, two reverts sharing a reason would share a branch, and therefore a pull-request.
+        """
+        reverted = [Branch.to_branch_name(repr(commit)) for commit in commit_objects]
+        if len(reverted) > cls.MAX_REVERTED_IN_BRANCH_NAME:
+            remaining = len(reverted) - cls.MAX_REVERTED_IN_BRANCH_NAME
+            reverted = reverted[:cls.MAX_REVERTED_IN_BRANCH_NAME] + ['and-{}-more'.format(remaining)]
+        return '-'.join([cls.REVERT_BRANCH_PREFIX] + reverted)
+
+    @classmethod
     def get_commit_info(cls, args, repository, **kwargs):
         commit_objects = []
         commit_issues = {}
@@ -73,8 +87,8 @@ class Revert(Command):
             try:
                 commit = repository.find(c, include_log=True)
             except (local.Scm.Exception, ValueError) as exception:
-                sys.stderr.write('Could not find "{}"'.format(c) + '\n')
-                return None, None, None
+                sys.stderr.write('Could not find "{}": {}\n'.format(c, exception))
+                return None, None
 
             commit_objects.append(commit)
             for i in commit.issues:
@@ -299,9 +313,14 @@ class Revert(Command):
         if not commit_identifiers:
             return 1
 
+        # A branch name with no spaces is assumed to be a branch name the user picked, leave it alone
+        name_prefix = None
+        if issue or not args.issue or ' ' in args.issue:
+            name_prefix = cls.branch_name_prefix(commit_objects)
+
         if not args.issue:
             args.issue = revert_reason
-        branch_point = PullRequest.pull_request_branch_point(repository, args, **kwargs)
+        branch_point = PullRequest.pull_request_branch_point(repository, args, name_prefix=name_prefix, **kwargs)
         if not branch_point:
             return 1
 

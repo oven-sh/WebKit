@@ -425,7 +425,7 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
             auto result = StringImpl::createUninitialized(characters.size(), buffer);
             for (size_t i = 0; i < characters.size(); ++i) {
                 char16_t c = characters[i];
-                buffer[i] = Lexer<char16_t>::isWhiteSpace(c) ? static_cast<char16_t>(space) : c;
+                buffer[i] = isWhiteSpace<char16_t>(c) ? static_cast<char16_t>(space) : c;
             }
             updatedString = WTF::move(result);
         }
@@ -479,16 +479,16 @@ String DateCache::timeZoneDisplayName(bool isDST)
 {
     if (m_timeZoneStandardDisplayNameCache.isNull()) {
         auto& timeZoneCache = *this->timeZoneCache();
-        CString language = defaultLanguage().utf8();
+        auto language = defaultLanguage().utf8();
         {
             Vector<char16_t, 32> standardDisplayNameBuffer;
-            auto status = callBufferProducingFunction(ucal_getTimeZoneDisplayName, timeZoneCache.m_calendar.get(), UCAL_STANDARD, language.data(), standardDisplayNameBuffer);
+            auto status = callBufferProducingFunction(ucal_getTimeZoneDisplayName, timeZoneCache.m_calendar.get(), UCAL_STANDARD, language.legacyCStringPointer(), standardDisplayNameBuffer);
             if (U_SUCCESS(status))
                 m_timeZoneStandardDisplayNameCache = String::adopt(WTF::move(standardDisplayNameBuffer));
         }
         {
             Vector<char16_t, 32> dstDisplayNameBuffer;
-            auto status = callBufferProducingFunction(ucal_getTimeZoneDisplayName, timeZoneCache.m_calendar.get(), UCAL_DST, language.data(), dstDisplayNameBuffer);
+            auto status = callBufferProducingFunction(ucal_getTimeZoneDisplayName, timeZoneCache.m_calendar.get(), UCAL_DST, language.legacyCStringPointer(), dstDisplayNameBuffer);
             if (U_SUCCESS(status))
                 m_timeZoneDSTDisplayNameCache = String::adopt(WTF::move(dstDisplayNameBuffer));
         }

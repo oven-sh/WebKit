@@ -61,6 +61,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR "${CMAKE_BINARY_DIR}/WebCore/PrivateHe
 set(WebKitLegacy_FRAMEWORK_HEADERS_DIR "${CMAKE_BINARY_DIR}/WebKitLegacy/Headers")
 set(WebKit_FRAMEWORK_HEADERS_DIR "${CMAKE_BINARY_DIR}/WebKit/Headers")
 set(WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR "${CMAKE_BINARY_DIR}/WebKit/PrivateHeaders")
+set(WebGPU_FRAMEWORK_HEADERS_DIR "${CMAKE_BINARY_DIR}/WebGPU/Headers")
+set(WebGPU_PRIVATE_FRAMEWORK_HEADERS_DIR "${CMAKE_BINARY_DIR}/WebGPU/PrivateHeaders")
 set(WebKitAdditions_FRAMEWORK_HEADERS_DIR "${CMAKE_BINARY_DIR}/WebKitAdditions/Headers")
 
 # HEADER_DIR variables are the directory that a framework's headers are
@@ -76,10 +78,20 @@ set(WebCore_PRIVATE_HEADERS_DIR "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCor
 set(WebKitLeagcy_HEADERS_DIR "${WebKitLegacy_FRAMEWORK_HEADERS_DIR}/WebKitLegacy")
 set(WebKit_HEADERS_DIR "${WebKit_FRAMEWORK_HEADERS_DIR}/WebKit")
 set(WebKit_PRIVATE_HEADERS_DIR "${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebKit")
+set(WebGPU_HEADERS_DIR "${WebGPU_FRAMEWORK_HEADERS_DIR}/WebGPU")
+set(WebGPU_PRIVATE_HEADERS_DIR "${WebGPU_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebGPU")
 set(WebKitAdditions_HEADERS_DIR "${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions")
 
 set(WTF_SCRIPTS_DIR "${CMAKE_BINARY_DIR}/WTF/Scripts")
 set(JavaScriptCore_SCRIPTS_DIR "${CMAKE_BINARY_DIR}/JavaScriptCore/Scripts")
+
+# Anything reading a header out of the WebKitAdditions headers directory has to
+# depend on the target which stages them, and the preferences additions are one
+# of those inputs. Both variables stay unset without the internal SDK.
+if (USE_APPLE_INTERNAL_SDK)
+    set(WEB_PREFERENCES_ADDITIONS "${WebKitAdditions_HEADERS_DIR}/WebPreferencesAdditions.yaml")
+    set(WEBKITADDITIONS_HEADERS_DEPENDENCIES WebKitAdditions_CopyHeaders)
+endif ()
 
 # On Apple platforms, some targets build as framework bundles. Point their
 # HEADERS variables to the inside of the framework bundle.
@@ -101,6 +113,8 @@ if (APPLE AND NOT USE_BUN_JSC_ADDITIONS)
     set(WebKitLegacy_HEADERS_DIR           "${CMAKE_BINARY_DIR}/WebKitLegacy.framework/${WEBKIT_FRAMEWORK_VERSION_PATH}PrivateHeaders")
     set(WebKit_HEADERS_DIR                 "${CMAKE_BINARY_DIR}/WebKit.framework/${WEBKIT_FRAMEWORK_VERSION_PATH}Headers")
     set(WebKit_PRIVATE_HEADERS_DIR         "${CMAKE_BINARY_DIR}/WebKit.framework/${WEBKIT_FRAMEWORK_VERSION_PATH}PrivateHeaders")
+    set(WebGPU_HEADERS_DIR                 "${CMAKE_BINARY_DIR}/WebGPU.framework/${WEBKIT_FRAMEWORK_VERSION_PATH}Headers")
+    set(WebGPU_PRIVATE_HEADERS_DIR         "${CMAKE_BINARY_DIR}/WebGPU.framework/${WEBKIT_FRAMEWORK_VERSION_PATH}PrivateHeaders")
 
     # The code generators sit alongside the private headers, which is where
     # clients above WebKit look for them.

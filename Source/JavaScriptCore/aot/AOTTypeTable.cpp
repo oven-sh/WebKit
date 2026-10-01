@@ -29,7 +29,7 @@ void TypeTable::load(VM& vm)
 {
     if (s_shared || !Options::aotTypeTablePath())
         return;
-    auto contents = FileSystem::readEntireFile(String::fromUTF8(Options::aotTypeTablePath()));
+    auto contents = FileSystem::readEntireFile(String { Options::aotTypeTablePath() });
     RELEASE_ASSERT_WITH_MESSAGE(contents, "The table of types cannot be read");
     auto bytes = contents->span();
     RELEASE_ASSERT(bytes.size() >= 12 && !(bytes.size() % 4) && !memcmp(bytes.data(), "TSTY", 4));

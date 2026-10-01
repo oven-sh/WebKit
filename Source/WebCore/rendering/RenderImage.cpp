@@ -88,7 +88,7 @@
 #include "SpatialImageControls.h"
 #endif
 
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#if ENABLE(SMART_IMAGE_RESIZER)
 #include <WebKitAdditions/RenderImageAdditions.cpp>
 #endif
 
@@ -192,6 +192,9 @@ RenderImage::~RenderImage() = default;
 
 void RenderImage::willBeDestroyed()
 {
+#if ENABLE(SMART_IMAGE_RESIZER)
+    view().unregisterImageForSmartImageResizer(*this);
+#endif
     imageResource().willBeDestroyed();
     RenderReplaced::willBeDestroyed();
 }
@@ -228,11 +231,15 @@ IntSize RenderImage::imageSizeForError(CachedImage* newImage) const
 ImageSizeChangeType RenderImage::setImageSizeForAltText(CachedImage* newImage /* = 0 */)
 {
     IntSize imageSize;
-    if (newImage && newImage->imageForRenderer(this))
-        imageSize = imageSizeForError(newImage);
-    else if (!m_altText.isEmpty() || newImage) {
-        // If we'll be displaying either text or an image, add a little padding.
-        imageSize = IntSize(paddingWidth, paddingHeight);
+    // An img that represents nothing is a replaced element with natural dimensions of 0.
+    // https://html.spec.whatwg.org/multipage/rendering.html#images-3
+    if (!imageRepresentsNothing()) {
+        if (newImage && newImage->imageForRenderer(this))
+            imageSize = imageSizeForError(newImage);
+        else if (!m_altText.isEmpty() || newImage) {
+            // If we'll be displaying either text or an image, add a little padding.
+            imageSize = IntSize(paddingWidth, paddingHeight);
+        }
     }
 
     // we have an alt and the user meant it (its not a text we invented)
@@ -276,36 +283,19 @@ void RenderImage::styleDidChange(Style::Difference diff, const Style::ComputedSt
     }
 }
 
-bool RenderImage::shouldCollapseToEmpty() const
+bool RenderImage::imageRepresentsNothing() const
 {
-    auto imageRepresentsNothing = [&] {
-        if (!protect(element())->hasAttribute(HTMLNames::altAttr))
-            return false;
-        return imageResource().errorOccurred() && m_altText.isEmpty();
-    };
-    if (!element()) {
-        // Images with no associated elements do not fall under the category of unwanted content.
+    // Only an img can represent nothing. The alt attribute carries no meaning on the arbitrary
+    // elements that CSS `content` can replace with an image, and images with no associated
+    // element do not fall under the category of unwanted content.
+    RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element());
+    if (!imageElement)
         return false;
-    }
-    if (!isInline())
+    if (!imageElement->hasAttribute(HTMLNames::altAttr))
         return false;
-    if (!imageRepresentsNothing())
+    if (!imageResource().errorOccurred() || !m_altText.isEmpty())
         return false;
     return document().inNoQuirksMode() || (style().logicalWidth().isAuto() && style().logicalHeight().isAuto());
-}
-
-LayoutUnit RenderImage::computeReplacedLogicalWidth(IsComputingIntrinsicSize isComputingIntrinsicSize) const
-{
-    if (shouldCollapseToEmpty())
-        return { };
-    return RenderReplaced::computeReplacedLogicalWidth(isComputingIntrinsicSize);
-}
-
-LayoutUnit RenderImage::computeReplacedLogicalHeight(std::optional<LayoutUnit> estimatedUsedWidth) const
-{
-    if (shouldCollapseToEmpty())
-        return { };
-    return RenderReplaced::computeReplacedLogicalHeight(estimatedUsedWidth);
 }
 
 void RenderImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
@@ -313,16 +303,10 @@ void RenderImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
     if (renderTreeBeingDestroyed())
         return;
 
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-    m_axCustomColorModeShouldAdjustImage = std::nullopt;
-    m_axCustomColorModeAdjustedBuffer = nullptr;
-    m_axCustomColorModeAdjustedBufferSize = { };
-#endif
-
     if (hasVisibleBoxDecorations() || hasMask() || hasShapeOutside())
         RenderReplaced::imageChanged(newImage, rect);
 
-    if (shouldCollapseToEmpty()) {
+    if (imageRepresentsNothing()) {
         // Image might need resizing when we are at the final state.
         setNeedsLayout();
     }
@@ -828,12 +812,6 @@ ImageDrawResult RenderImage::paintIntoRect(PaintInfo& paintInfo, const FloatRect
     };
 
     auto drawResult = ImageDrawResult::DidNothing;
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-    if (axCustomColorModePaintImage(paintInfo, *img, rect))
-        return ImageDrawResult::DidDraw;
-#endif
-
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
     if (isMultiRepresentationHEIC())
         drawResult = paintInfo.context().drawMultiRepresentationHEIC(*img, style().fontCascade().primaryFont(), rect, options);
@@ -959,6 +937,10 @@ bool RenderImage::canHaveChildren() const
 
 void RenderImage::layout()
 {
+#if ENABLE(SMART_IMAGE_RESIZER)
+    view().setSmartImageResizerNeedsUpdate();
+#endif
+
     // Recomputing overflow is required only when child content is present.
     if (needsSimplifiedNormalFlowLayoutOnly() && !hasShadowContent()) {
         clearNeedsLayout();
@@ -995,7 +977,7 @@ FloatSize RenderImage::preferredAspectRatioAsSize() const
         return RenderReplaced::preferredAspectRatioAsSize();
 
     // Don't compute an intrinsic ratio to preserve historical WebKit behavior if we're painting alt text and/or a broken image.
-    if (shouldDisplayBrokenImageIcon()) {
+    if (shouldDisplayBrokenImageIcon() && !imageRepresentsNothing()) {
         if (style().aspectRatio().isAutoAndRatio() && !isShowingAltText())
             return FloatSize::narrowPrecision(style().aspectRatioLogicalWidth().value, style().aspectRatioLogicalHeight().value);
         return { 1.0, 1.0 };

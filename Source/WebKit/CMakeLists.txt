@@ -623,6 +623,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/Extensions/WebExtensionMenuItem.serialization.in
     Shared/Extensions/WebExtensionMessageSenderParameters.serialization.in
     Shared/Extensions/WebExtensionMessageTargetParameters.serialization.in
+    Shared/Extensions/WebExtensionNotification.serialization.in
     Shared/Extensions/WebExtensionOffscreenDocumentParameters.serialization.in
     Shared/Extensions/WebExtensionSidebarParameters.serialization.in
     Shared/Extensions/WebExtensionStorage.serialization.in
@@ -764,6 +765,13 @@ set(WebCore_SERIALIZATION_IN_FILES
     SharedTimebase.serialization.in
     WebGPU.serialization.in
 )
+
+if (USE_APPLE_INTERNAL_SDK)
+    set(WebKitAdditions_MESSAGES_IN_FILES
+        ${WebKitAdditions_HEADERS_DIR}/WebPageProxyAdditions.messages.in
+    )
+    set(WebKitAdditions_MESSAGES_IN_ARGS --additions-dir ${WebKitAdditions_HEADERS_DIR})
+endif ()
 
 set(WebKit_FRAMEWORKS
     JavaScriptCore
@@ -990,6 +998,12 @@ WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WebKit WebKit
     "${WebKit_SWIFT_INTEROP_MODULE_PATH}"
     "${WebKit_DERIVED_SOURCES_DIR}/WebKit-Swift-Generated.h")
 
+if (SWIFT_REQUIRED)
+    # should match the rest of WebKit and use -Onone, but it negatively impacts build time
+    webkit_target_add_swift_options(WebKit
+        "$<$<AND:$<COMPILE_LANGUAGE:Swift>,$<CONFIG:Debug>>:-O>")
+endif ()
+
 if (WebKit_PUBLIC_FRAMEWORK_HEADERS)
     WEBKIT_COPY_FILES(WebKit_CopyHeaders
         DESTINATION ${WebKit_HEADERS_DIR}
@@ -1076,8 +1090,9 @@ macro(GENERATE_MESSAGE_SOURCES _output_source _inputs)
             ${WEBKIT_DIR}/Scripts/webkit/parser.py
             ${WEBKIT_DIR}/Scripts/webkit/untrusted_origins.py
             ${_input_files}
+            ${WebKitAdditions_MESSAGES_IN_FILES}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${_messages_stage_dir}
-        COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-message-receiver.py --preserve-subdirs ${WEBKIT_DIR} ${_inputs} --output-dir ${_messages_stage_dir}
+        COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-message-receiver.py --preserve-subdirs ${WEBKIT_DIR} ${_inputs} ${WebKitAdditions_MESSAGES_IN_ARGS} --output-dir ${_messages_stage_dir}
         ${_messages_copy_commands}
         WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
         VERBATIM
@@ -1372,13 +1387,14 @@ set(WebKit_WEB_PREFERENCES_TEMPLATES
 
 set(WebKit_WEB_PREFERENCES
     ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml
+    ${WEB_PREFERENCES_ADDITIONS}
 )
 
 set_source_files_properties(${WebKit_WEB_PREFERENCES} PROPERTIES GENERATED TRUE)
 
 add_custom_command(
     OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.h ${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.cpp ${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.serialization.in ${WebKit_DERIVED_SOURCES_DIR}/WebPageUpdatePreferences.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesDefinitions.h ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesFeatures.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesGetterSetters.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesKeys.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesKeys.h ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesStoreDefaultsMap.cpp
-    DEPENDS ${WebKit_WEB_PREFERENCES_TEMPLATES} ${WebKit_WEB_PREFERENCES} WTF_CopyPreferences
+    DEPENDS ${WebKit_WEB_PREFERENCES_TEMPLATES} ${WebKit_WEB_PREFERENCES} WTF_CopyPreferences ${WEBKITADDITIONS_HEADERS_DEPENDENCIES}
     COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend WebKit --outputDir "${WebKit_DERIVED_SOURCES_DIR}" --template "$<JOIN:${WebKit_WEB_PREFERENCES_TEMPLATES},;--template;>" ${WebKit_WEB_PREFERENCES}
     COMMAND_EXPAND_LISTS
     VERBATIM)
@@ -1425,12 +1441,6 @@ list(APPEND WebKit_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.cpp
 )
 
-if (ENABLE_SWIFT_DEMO_URI_SCHEME)
-    list(APPEND WebKit_SOURCES
-        ${WEBKIT_DIR}/UIProcess/SwiftDemoLogo.swift
-    )
-endif ()
-
 if (ENABLE_BACK_FORWARD_LIST_SWIFT)
     set_source_files_properties(
         ${WebKit_DERIVED_SOURCES_DIR}/WebBackForwardListMessageReceiver.swift
@@ -1440,6 +1450,12 @@ if (ENABLE_BACK_FORWARD_LIST_SWIFT)
         ${WEBKIT_DIR}/Shared/API/APIArray.swift
         ${WEBKIT_DIR}/UIProcess/StdlibExtras.swift
         ${WEBKIT_DIR}/UIProcess/WebBackForwardList.swift
+    )
+endif ()
+
+if (ENABLE_BACK_FORWARD_LIST_SWIFT OR ENABLE_IPC_TESTING_SWIFT)
+    list(APPEND WebKit_SOURCES
+        ${WEBKIT_DIR}/Platform/IPC/MessageCheck.swift
     )
 endif ()
 
@@ -1497,6 +1513,12 @@ if (USE_APPLE_INTERNAL_SDK)
     WEBKIT_TARGET_USE_PGO(WebKit PROFILE WebKit)
 endif ()
 WEBKIT_ADD_PREFIX_HEADER(WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
+
+if (APPLE AND USE_LIBWEBRTC)
+    target_link_options(WebKit PRIVATE
+        "LINKER:-weak_library,$<TARGET_FILE:webrtc>")
+    add_dependencies(WebKit webrtc)
+endif ()
 
 if (SWIFT_REQUIRED AND WEBKIT_SDK_IS_MACOS)
     WEBKIT_ADD_SWIFT_PREWARM(WebKit SwiftPrewarmMac.swift)
@@ -1564,6 +1586,7 @@ if (WEBKIT_SDK_IS_MACOS OR WEBKIT_SDK_IS_IOS_FAMILY)
             WebProcess_CodeSign
             WebProcessEnhancedSecurity_CodeSign
             WebProcessCaptivePortal_CodeSign
+            WebProcessDevelopment_CodeSign
             NetworkProcess_CodeSign
             GPUProcess_CodeSign
         )

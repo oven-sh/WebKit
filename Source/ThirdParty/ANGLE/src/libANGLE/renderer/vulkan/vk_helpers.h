@@ -1065,12 +1065,15 @@ class BufferHelper : public ReadWriteResource
     {
         mXFBOrComputeWriteHeuristicBits <<= 1;
 
+        const bool hasVertexInputRead =
+            (mCurrentReadStages & VK_PIPELINE_STAGE_VERTEX_INPUT_BIT) != 0 ||
+            mCurrentReadEvents.getBitMask().test(EventStage::VertexInput);
+
         if (writeStage == PipelineStage::TransformFeedback)
         {
             mXFBOrComputeWriteHeuristicBits |= 1;
         }
-        else if ((writeStage == PipelineStage::ComputeShader) &&
-                 (mCurrentReadStages & VK_PIPELINE_STAGE_VERTEX_INPUT_BIT) != 0 &&
+        else if ((writeStage == PipelineStage::ComputeShader) && hasVertexInputRead &&
                  context->getFeatures().isVertexSyncDeferred.enabled)
         {
             // When a buffer is written in compute after read in vertex stage, using vkEvent
@@ -2446,6 +2449,7 @@ class ImageHelper final : public Resource, public angle::Subject
     using ImageFormats = angle::FixedVector<VkFormat, kImageColorspaceOverrideFormatCount>;
     static const void *DeriveCreateInfoPNext(
         ErrorContext *context,
+        angle::FormatID intendedFormatID,
         angle::FormatID actualFormatID,
         const void *pNext,
         VkImageFormatListCreateInfoKHR *imageFormatListInfoStorage,
@@ -2633,9 +2637,6 @@ class ImageHelper final : public Resource, public angle::Subject
                                               gl::OwnerLevel levelIndexGL,
                                               gl::OwnerLayer layerIndex,
                                               uint32_t layerCount);
-    void removeSingleStagedClearAfterInvalidate(gl::OwnerLevel levelIndexGL,
-                                                gl::OwnerLayer layerIndex,
-                                                uint32_t layerCount);
     void removeStagedUpdates(ErrorContext *context,
                              gl::OwnerLevel levelGLStart,
                              gl::OwnerLevel levelGLEnd);
@@ -3006,13 +3007,10 @@ class ImageHelper final : public Resource, public angle::Subject
     void restoreSubresourceStencilContent(gl::OwnerLevel level,
                                           gl::OwnerLayer layerIndex,
                                           uint32_t layerCount);
-    angle::Result reformatStagedBufferUpdates(ContextVk *contextVk,
-                                              angle::FormatID srcFormatID,
-                                              angle::FormatID dstFormatID,
-                                              gl::TextureType dstTextureType);
-    bool hasStagedImageUpdatesWithMismatchedFormat(gl::OwnerLevel levelStart,
-                                                   gl::OwnerLevel levelEnd,
-                                                   angle::FormatID formatID) const;
+    angle::Result reformatStagedUpdates(ContextVk *contextVk,
+                                        angle::FormatID srcFormatID,
+                                        angle::FormatID dstFormatID,
+                                        gl::TextureType dstTextureType);
 
     void setAcquireNextImageSemaphore(VkSemaphore semaphore)
     {
@@ -3106,7 +3104,7 @@ class ImageHelper final : public Resource, public angle::Subject
     };
     struct ImageUpdate
     {
-        // Note: copyRegion.src/dstSubresource.mipLevel are GL levels (gl::OwnerLevel)
+        // Source mip is vk::LevelIndex; destination mip is gl::OwnerLevel until flush.
         VkImageCopy copyRegion;
         angle::FormatID formatID;
     };
@@ -3147,20 +3145,6 @@ class ImageHelper final : public Resource, public angle::Subject
 
         void release(Renderer *renderer);
 
-        // Returns true if the update's layer range exact matches [layerIndex,
-        // layerIndex+layerCount) range.  To support VK_REMAINING_ARRAY_LAYERS, the number of layers
-        // in the image is also passed in.
-        bool matchesLayerRange(gl::OwnerLayer layerIndex,
-                               uint32_t layerCount,
-                               uint32_t imageLayerCount) const;
-        // Returns true if the update is to any layer within range of [layerIndex,
-        // layerIndex+layerCount)
-        bool intersectsLayerRange(gl::OwnerLayer layerIndex,
-                                  uint32_t layerCount,
-                                  uint32_t imageLayerCount) const;
-        void getDestSubresource(uint32_t imageLayerCount,
-                                gl::OwnerLayer *baseLayerOut,
-                                uint32_t *layerCountOut) const;
         VkImageAspectFlags getDestAspectFlags() const;
 
         UpdateSource updateSource;
@@ -3178,6 +3162,38 @@ class ImageHelper final : public Resource, public angle::Subject
         } refCounted;
     };
     using SubresourceUpdates = std::deque<SubresourceUpdate>;
+
+    struct ImageUpdateReadback : angle::NonCopyable
+    {
+        ImageUpdateReadback(Renderer *rendererIn, SubresourceUpdate *updateIn);
+        ImageUpdateReadback(ImageUpdateReadback &&other) noexcept;
+        ~ImageUpdateReadback();
+
+        Renderer *renderer;
+        std::unique_ptr<RefCounted<BufferHelper>> buffer;
+        SubresourceUpdate *update;
+        uint8_t *srcData;
+    };
+
+    angle::Result createReformattedStagedBufferUpdate(ContextVk *contextVk,
+                                                      const angle::Format &srcFormat,
+                                                      const angle::Format &dstFormat,
+                                                      gl::TextureType dstTextureType,
+                                                      const SubresourceUpdate &sourceUpdate,
+                                                      SubresourceUpdate *reformattedUpdateOut);
+    angle::Result reformatStagedBufferUpdates(ContextVk *contextVk,
+                                              const angle::Format &srcFormat,
+                                              const angle::Format &dstFormat,
+                                              gl::TextureType dstTextureType);
+    angle::Result reformatStagedImageUpdates(ContextVk *contextVk,
+                                             const angle::Format &srcFormat,
+                                             const angle::Format &dstFormat,
+                                             gl::TextureType dstTextureType);
+    angle::Result reformatStagedImageUpdateBatch(ContextVk *contextVk,
+                                                 const angle::Format &srcFormat,
+                                                 const angle::Format &dstFormat,
+                                                 gl::TextureType dstTextureType,
+                                                 std::vector<ImageUpdateReadback> *readbacks);
 
     // Up to 8 layers are tracked per level for whether contents are defined, above which the
     // contents are considered unconditionally defined.  This handles the more likely scenarios of:
@@ -3444,6 +3460,19 @@ class ImageHelper final : public Resource, public angle::Subject
     void adjustLayerRange(const SubresourceUpdates &levelUpdates,
                           gl::OwnerLayer *layerStart,
                           gl::OwnerLayer *layerEnd);
+
+    // Returns true if the update's layer range exactly matches [layerIndex, layerIndex+layerCount).
+    bool matchesLayerRange(const SubresourceUpdate &update,
+                           gl::OwnerLayer layerIndex,
+                           uint32_t layerCount) const;
+    // Returns true if the update is to any layer within range of [layerIndex,
+    // layerIndex+layerCount).
+    bool intersectsLayerRange(const SubresourceUpdate &update,
+                              gl::OwnerLayer layerIndex,
+                              uint32_t layerCount) const;
+    void getDestSubresource(const SubresourceUpdate &update,
+                            gl::OwnerLayer *baseLayerOut,
+                            uint32_t *layerCountOut) const;
 
     // Copy most of state and move VkImage/VkDeviceMemory from other ImageHelper. This should not be
     // used for general usage. It is specifically for stageSelfUpdate and falling back from tile

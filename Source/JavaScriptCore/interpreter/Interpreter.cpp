@@ -258,7 +258,7 @@ unsigned sizeOfVarargs(JSGlobalObject* globalObject, JSValue arguments, uint32_t
         length = uncheckedDowncast<ScopedArguments>(cell)->length(globalObject);
         break;
     case ClonedArgumentsType:
-        length = uncheckedDowncast<ClonedArguments>(cell)->length(globalObject);
+        length = clampToUnsigned(uncheckedDowncast<ClonedArguments>(cell)->length(globalObject));
         break;
     case JSCellButterflyType:
         length = uncheckedDowncast<JSCellButterfly>(cell)->length();

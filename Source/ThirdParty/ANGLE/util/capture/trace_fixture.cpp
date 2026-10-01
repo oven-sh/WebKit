@@ -17,6 +17,8 @@
 
 #include <filesystem>
 #include <string>
+#include "common/system_utils.h"
+#include "scoped_capture_exclude.h"
 
 namespace
 {
@@ -111,16 +113,19 @@ BlockIndexesMap gUniformBlockIndexes;
 
 void UpdateUniformLocation(GLuint program, const char *name, GLint location, GLint count)
 {
+    // Do not capture the glGetUniformLocation below on retrace
+    angle::ScopedCaptureExclude skipRecording;
+
     std::vector<GLint> &programLocations = gInternalUniformLocationsMap[program];
     if (static_cast<GLint>(programLocations.size()) < location + count)
     {
         programLocations.resize(location + count, 0);
     }
     GLuint mappedProgramID = gShaderProgramMap[program];
+    GLint baseUniformLocation = glGetUniformLocation(mappedProgramID, name);
     for (GLint arrayIndex = 0; arrayIndex < count; ++arrayIndex)
     {
-        programLocations[location + arrayIndex] =
-            glGetUniformLocation(mappedProgramID, name) + arrayIndex;
+        programLocations[location + arrayIndex] = baseUniformLocation + arrayIndex;
     }
     gUniformLocations[program] = programLocations.data();
 }
@@ -132,6 +137,9 @@ void DeleteUniformLocations(GLuint program)
 
 void UpdateUniformBlockIndex(GLuint program, const char *name, GLuint index)
 {
+    // Do not capture the glGetUniformBlockIndex below on retrace
+    angle::ScopedCaptureExclude skipRecording;
+
     gUniformBlockIndexes[program][index] = glGetUniformBlockIndex(program, name);
 }
 

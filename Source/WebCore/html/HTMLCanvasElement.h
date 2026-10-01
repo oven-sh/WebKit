@@ -87,9 +87,12 @@ public:
     bool layoutSubtree() const;
 
     void requestPaint();
+    void dispatchPaintEvent();
 
     ExceptionOr<Ref<DOMMatrix>> getElementTransform(const CanvasElementImageSource&, DOMMatrix& drawTransform);
     ExceptionOr<Ref<CanvasElementImage>> captureElementImage(Element&);
+
+    std::optional<CanvasElementSnapshot> drawableElementSnapshot(Element&) const;
 
     CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
     ExceptionOr<std::optional<RenderingContext>> getContext(JSC::JSGlobalObject&, const String& contextId, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);

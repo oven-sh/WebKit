@@ -55,8 +55,6 @@ class Exception;
 class JSGlobalObject;
 class JSPromise;
 class VM;
-template<typename> struct WeakGCSetHash;
-template<typename> struct WeakGCSetHashTraits;
 template<typename, typename, typename> class WeakGCSet;
 enum class MessageLevel : uint8_t;
 enum class MessageSource : uint8_t;
@@ -114,6 +112,7 @@ enum class ScriptTrackingPrivacyCategory : uint8_t;
 enum class StorageBlockingPolicy : uint8_t;
 enum class TaskSource : uint8_t;
 struct CryptoKeyData;
+struct NetworkLoadPolicy;
 struct SettingsValues;
 
 #if ENABLE(NOTIFICATIONS)
@@ -160,6 +159,8 @@ public:
     virtual String userAgent(const URL&) const = 0;
 
     virtual const SettingsValues& settingsValues() const = 0;
+
+    virtual const NetworkLoadPolicy& networkLoadPolicy() const = 0;
 
     virtual NotificationClient* notificationClient() { return nullptr; }
     virtual std::optional<PAL::SessionID> sessionID() const;
@@ -482,7 +483,7 @@ private:
 
     const RefPtr<GuaranteedSerialFunctionDispatcher> m_nativePromiseDispatcher;
     WeakHashSet<NativePromiseRequest> m_nativePromiseRequests;
-    std::unique_ptr<JSC::WeakGCSet<JSC::JSGlobalObject, JSC::WeakGCSetHash<JSC::JSGlobalObject>, JSC::WeakGCSetHashTraits<JSC::JSGlobalObject>>> m_microtaskGlobalObjects;
+    std::unique_ptr<JSC::WeakGCSet<JSC::JSGlobalObject, DefaultHash<JSC::JSGlobalObject*>, HashTraits<JSC::JSGlobalObject*>>> m_microtaskGlobalObjects;
 };
 
 WebCoreOpaqueRoot NODELETE root(ScriptExecutionContext*);

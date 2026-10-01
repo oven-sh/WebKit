@@ -141,6 +141,7 @@ public:
     bool isRayValue() const { return m_classType == ClassType::Ray; }
     bool isScrollValue() const { return m_classType == ClassType::Scroll; }
     bool isStringValue() const { return m_classType == ClassType::String; }
+    bool isSymbolsFunctionValue() const { return m_classType == ClassType::SymbolsFunction; }
     bool isTextShadowPropertyValue() const { return m_classType == ClassType::TextShadowProperty; }
     bool isTransformListValue() const { return m_classType == ClassType::TransformList; }
     bool isURL() const { return m_classType == ClassType::URL; }
@@ -280,6 +281,7 @@ protected:
         ValuePair,
         String,
         Substitution,
+        SymbolsFunction,
         View,
         WebkitBoxReflect,
 
@@ -309,8 +311,8 @@ protected:
     ASCIILiteral separatorCSSText() const { return separatorCSSText(separator()); };
 
 private:
-    template<typename Visitor> constexpr decltype(auto) visitDerived(Visitor&&);
-    template<typename Visitor> constexpr decltype(auto) visitDerived(Visitor&&) const;
+    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE Visitor&&);
+    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE Visitor&&) const;
 
     static inline bool NODELETE customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&);
     bool NODELETE addDerivedHash(Hasher&) const;

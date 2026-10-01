@@ -190,6 +190,7 @@
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 #import <wtf/text/MakeString.h>
+#import <wtf/text/TextStream.h>
 
 #if ENABLE(WEB_AUTHN)
 #import <WebKit/WKDigitalCredentialsPicker.h>
@@ -197,6 +198,10 @@
 
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
 #include "MediaSessionCoordinatorProxyPrivate.h"
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#import <WebKitAdditions/AXCustomColorModePreferencesController.h>
 #endif
 
 #import "AppKitSoftLink.h"
@@ -1361,7 +1366,7 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     auto useRemoteLayerTree = [&]() {
         bool result = false;
 #if ENABLE(REMOTE_LAYER_TREE_ON_MAC_BY_DEFAULT)
-        result = WTF::numberOfPhysicalProcessorCores() >= 4 || m_page->configuration().lockdownModeEnabled();
+        result = true;
 #endif
         if (RetainPtr<id> useRemoteLayerTreeBoolean = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKit2UseRemoteLayerTreeDrawingArea"])
             result = [useRemoteLayerTreeBoolean boolValue];
@@ -2150,7 +2155,7 @@ bool WebViewImpl::canChangeFrameLayout(WebFrameProxy& frame)
 
 RetainPtr<NSPrintOperation> WebViewImpl::printOperationWithPrintInfo(NSPrintInfo *printInfo, WebFrameProxy& frame)
 {
-    LOG(Printing, "Creating an NSPrintOperation for frame '%s'", frame.url().string().utf8().data());
+    LOG_WITH_STREAM(Printing, stream << "Creating an NSPrintOperation for frame '"_s << frame.url().string() << "'"_s);
 
     // FIXME: If the frame cannot be printed (e.g. if it contains an encrypted PDF that disallows
     // printing), this function should return nil.
@@ -2621,6 +2626,12 @@ void WebViewImpl::viewDidMoveToWindow()
 
         accessibilityRegisterUIProcessTokens();
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        // The preference may already be set at launch (before the web process is running, so
+        // preferencesDidChange won't have fired), so evaluate visibility now that we're in a window.
+        updateAXCustomColorModeControlsVisibility();
+#endif
+
         if (m_immediateActionGestureRecognizer && ![retainPtr([m_view.get() gestureRecognizers]) containsObject:m_immediateActionGestureRecognizer.get()] && !m_ignoresNonWheelEvents && m_allowsLinkPreview)
             [m_view.get() addGestureRecognizer:m_immediateActionGestureRecognizer.get()];
     } else {
@@ -2633,6 +2644,8 @@ void WebViewImpl::viewDidMoveToWindow()
 
         dismissContentRelativeChildWindowsWithAnimation(false);
         m_page->closeSharedPreviewPanelIfNecessary();
+
+        updateWindowAndViewFrames();
 
         if (m_immediateActionGestureRecognizer) {
             // Work around <rdar://problem/22646404> by explicitly cancelling the animation.
@@ -3132,7 +3145,7 @@ static String commandNameForSelector(SEL selector)
     auto selectorName = unsafeSpan(sel_getName(selector));
     if (selectorName.size() < 2 || selectorName[selectorName.size() - 1] != ':')
         return String();
-    return String(selectorName.first(selectorName.size() - 1));
+    return String::fromLatin1(selectorName.first(selectorName.size() - 1));
 }
 
 bool WebViewImpl::executeSavedCommandBySelector(SEL selector)
@@ -3963,7 +3976,27 @@ void WebViewImpl::preferencesDidChange()
     if (RetainPtr appKitGestureController = m_appKitGestureController)
         [appKitGestureController preferencesDidChange];
 #endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    updateAXCustomColorModeControlsVisibility();
+#endif
 }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+void WebViewImpl::updateAXCustomColorModeControlsVisibility()
+{
+    if (!m_page->preferences().showAXCustomColorModeControls()) {
+        if (RetainPtr controlsController = m_axCustomColorModeControlsController)
+            [controlsController remove];
+        return;
+    }
+
+    if (!m_axCustomColorModeControlsController)
+        m_axCustomColorModeControlsController = adoptNS([[WKAXCustomColorModePreferencesController alloc] initWithPreferences:m_page->preferences()]);
+
+    [m_axCustomColorModeControlsController attachToView:m_view.getAutoreleased() topInset:obscuredContentInsets().top()];
+}
+#endif
 
 CALayer* WebViewImpl::textIndicatorInstallationLayer()
 {
@@ -5840,7 +5873,7 @@ void WebViewImpl::gestureEventWasNotHandledByWebCore(const NativeWebGestureEvent
         return;
 
     auto eventPhase = WebEventFactory::toNativeEventPhase(event.phase());
-    auto locationInWindow = [m_view.get() convertPoint:event.position() toView:nil];
+    auto locationInWindow = [m_view.get() convertPoint:event.positionInRootView() toView:nil];
 
     [m_view.get() _web_magnificationGestureEventWasNotHandledByWebCoreWithPhase:eventPhase magnification:event.gestureScale() locationInWindow:locationInWindow];
 }

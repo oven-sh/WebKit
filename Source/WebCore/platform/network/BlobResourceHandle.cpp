@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 Google Inc. All rights reserved.
- * Copyright (C) 2014-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -194,7 +194,7 @@ int BlobResourceHandle::readSync(std::span<uint8_t> buffer)
         result = buffer.size() - remaining;
 
     if (result > 0)
-        didReceiveData(buffer);
+        didReceiveData(buffer.first(result));
 
     if (!result)
         didFinish();
@@ -229,9 +229,7 @@ int BlobResourceHandle::readFileSync(const BlobDataItem& item, BlobDataFileRefer
     ASSERT(!async());
 
     if (!isFileOpen()) {
-        auto bytesToRead = lengthOfItemBeingRead() - currentItemReadSize();
-        if (bytesToRead > totalRemainingSize())
-            bytesToRead = totalRemainingSize();
+        auto bytesToRead = clampReadSizeToRemaining(lengthOfItemBeingRead() - currentItemReadSize(), totalRemainingSize());
         bool success = syncStream()->openForRead(file.path(), item.offset() + currentItemReadSize(), bytesToRead);
         setCurrentItemReadSize(0);
         if (!success) {

@@ -222,7 +222,7 @@ void ProcessLauncher::launchProcess()
     auto handler = [](ThreadSafeWeakPtr<ProcessLauncher> weakProcessLauncher, ExtensionProcess&& process, ASCIILiteral name, NSError *error)
     {
         if (error) {
-            RELEASE_LOG_FAULT(Process, "Error launching process, description '%s', reason '%s'", String([error localizedDescription]).utf8().data(), String([error localizedFailureReason]).utf8().data());
+            RELEASE_LOG_FAULT(Process, "Error launching process, description '%s', reason '%s'", UTF8CString { error.localizedDescription }, UTF8CString { error.localizedFailureReason ?: @"" });
 #if PLATFORM(IOS)
             // Fallback to legacy extension identifiers
             // FIXME: this fallback is temporary and should be removed when possible. See rdar://120793705.
@@ -292,7 +292,7 @@ void ProcessLauncher::finishLaunchingProcess(ASCIILiteral name, int retriesRemai
             RefPtr processLauncher = weakThis.get();
             if (!processLauncher)
                 return;
-            LOG_ERROR("Retrying launch of %s (%d retries remaining)", name.characters(), retriesRemaining - 1);
+            LOG_ERROR("Retrying launch of %s (%d retries remaining)", name, retriesRemaining - 1);
             // Each new launch requires a new XPC connection. tryFinishLaunchingProcess destroyed
             // the previous one.
             processLauncher->m_xpcConnection = adoptOSObject(xpc_connection_create(name, nullptr));
@@ -366,7 +366,7 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
         LOG_WITH_STREAM(Language, stream << "Process Launcher is copying OverrideLanguages into initialization message: " << languagesIterator->value);
         OSObjectPtr languages = adoptOSObject(xpc_array_create(nullptr, 0));
         for (auto language : StringView(languagesIterator->value).split(','))
-            xpc_array_set_string(languages.get(), XPC_ARRAY_APPEND, language.utf8().data());
+            xpc_array_set_string(languages.get(), XPC_ARRAY_APPEND, language.utf8().legacyCStringPointer());
         xpc_dictionary_set_value(bootstrapMessage.get(), "OverrideLanguages", languages.get());
     }
 
@@ -404,9 +404,9 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
 
     xpc_dictionary_set_mach_send(bootstrapMessage.get(), "server-port", listeningPort);
 
-    xpc_dictionary_set_string(bootstrapMessage.get(), "client-identifier", !clientIdentifier.isEmpty() ? clientIdentifier.utf8().data() : *_NSGetProgname());
-    xpc_dictionary_set_string(bootstrapMessage.get(), "client-bundle-identifier", applicationBundleIdentifier().utf8().data());
-    xpc_dictionary_set_string(bootstrapMessage.get(), "process-identifier", String::number(m_launchOptions.processIdentifier.toUInt64()).utf8().data());
+    xpc_dictionary_set_string(bootstrapMessage.get(), "client-identifier", !clientIdentifier.isEmpty() ? clientIdentifier.utf8().legacyCStringPointer() : *_NSGetProgname());
+    xpc_dictionary_set_string(bootstrapMessage.get(), "client-bundle-identifier", applicationBundleIdentifier().utf8().legacyCStringPointer());
+    xpc_dictionary_set_string(bootstrapMessage.get(), "process-identifier", String::number(m_launchOptions.processIdentifier.toUInt64()).utf8().legacyCStringPointer());
     RetainPtr processName = [&]() -> RetainPtr<NSString> {
 #if PLATFORM(MAC)
         if (RetainPtr<NSString> name = NSRunningApplication.currentApplication.localizedName; name.get().length)
@@ -449,11 +449,11 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
     OSObjectPtr extraInitializationData = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
 
     for (const auto& keyValuePair : m_launchOptions.extraInitializationData)
-        xpc_dictionary_set_string(extraInitializationData.get(), keyValuePair.key.utf8().data(), keyValuePair.value.utf8().data());
+        xpc_dictionary_set_string(extraInitializationData.get(), keyValuePair.key.utf8().legacyCStringPointer(), keyValuePair.value.utf8().legacyCStringPointer());
 
     xpc_dictionary_set_value(bootstrapMessage.get(), "extra-initialization-data", extraInitializationData.get());
 
-    Function<void(xpc_object_t)> errorHandlerImpl = [weakProcessLauncher = ThreadSafeWeakPtr { *this }, listeningPort, logName = CString(name), onFailure = WTF::move(onFailure)] (xpc_object_t event) mutable {
+    Function<void(xpc_object_t)> errorHandlerImpl = [weakProcessLauncher = ThreadSafeWeakPtr { *this }, listeningPort, name, onFailure = WTF::move(onFailure)] (xpc_object_t event) mutable {
         ASSERT(!event || xpc_get_type(event) == XPC_TYPE_ERROR);
 
         auto processLauncher = weakProcessLauncher.get();
@@ -464,13 +464,13 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
             return;
 
 #if ERROR_DISABLED
-        UNUSED_PARAM(logName);
+        UNUSED_PARAM(name);
 #endif
 
         if (event)
-            LOG_ERROR("Error while launching %s: %s", logName.data(), xpcDictionaryGetString(event, xpcErrorDescriptionKey).utf8().data());
+            LOG_ERROR("Error while launching %s: %s", name, xpcDictionaryGetString(event, xpcErrorDescriptionKey).utf8());
         else
-            LOG_ERROR("Error while launching %s: No xpc_object_t event available.", logName.data());
+            LOG_ERROR("Error while launching %s: No xpc_object_t event available.", name);
 
 #if ASSERT_ENABLED
         mach_port_urefs_t sendRightCount = 0;

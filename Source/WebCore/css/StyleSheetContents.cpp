@@ -21,6 +21,7 @@
 #include "config.h"
 #include "StyleSheetContents.h"
 
+#include "CSSEnvironmentMapRule.h"
 #include "CSSImportRule.h"
 #include "CSSParser.h"
 #include "CSSStyleSheet.h"
@@ -397,11 +398,11 @@ const AtomString& StyleSheetContents::namespaceURIFromPrefix(const AtomString& p
     return it->value;
 }
 
-bool StyleSheetContents::parseAuthorStyleSheet(const CachedCSSStyleSheet* cachedStyleSheet, const SecurityOrigin* securityOrigin)
+bool StyleSheetContents::parseAuthorStyleSheet(const CachedCSSStyleSheet& cachedStyleSheet, const SecurityOrigin* securityOrigin)
 {
-    bool isSameOriginRequest = securityOrigin && securityOrigin->canRequest(baseURL(), OriginAccessPatternsForWebProcess::singleton());
+    bool isSameOriginRequest = securityOrigin && securityOrigin->canRequest(baseURL(), OriginAccessPatternsForWebProcess::singleton()) && !cachedStyleSheet.isCrossOrigin();
     CachedCSSStyleSheet::MIMETypeCheckHint mimeTypeCheckHint = isStrictParserMode(m_parserContext.mode) || !isSameOriginRequest ? CachedCSSStyleSheet::MIMETypeCheckHint::Strict : CachedCSSStyleSheet::MIMETypeCheckHint::Lax;
-    auto sheetTextOrError = cachedStyleSheet->sheetText(mimeTypeCheckHint);
+    auto sheetTextOrError = cachedStyleSheet.sheetText(mimeTypeCheckHint);
 
     if (sheetTextOrError) {
         CSSParser::parseStyleSheet(*sheetTextOrError, parserContext(), *this);
@@ -416,11 +417,11 @@ bool StyleSheetContents::parseAuthorStyleSheet(const CachedCSSStyleSheet* cached
         if (RefPtr document = singleOwnerDocument()) {
             if (RefPtr frame = document->frame()) {
                 if (isStrictParserMode(m_parserContext.mode))
-                    frame->console().addMessage(MessageSource::Security, MessageLevel::Error, makeString("Did not parse stylesheet at '"_s, cachedStyleSheet->url().stringCenterEllipsizedToLength(), "' because non CSS MIME types are not allowed in strict mode."_s));
-                else if (!cachedStyleSheet->mimeTypeAllowedByNosniff())
-                    frame->console().addMessage(MessageSource::Security, MessageLevel::Error, makeString("Did not parse stylesheet at '"_s, cachedStyleSheet->url().stringCenterEllipsizedToLength(), "' because non CSS MIME types are not allowed when 'X-Content-Type-Options: nosniff' is given."_s));
+                    frame->console().addMessage(MessageSource::Security, MessageLevel::Error, makeString("Did not parse stylesheet at '"_s, cachedStyleSheet.url().stringCenterEllipsizedToLength(), "' because non CSS MIME types are not allowed in strict mode."_s));
+                else if (!cachedStyleSheet.mimeTypeAllowedByNosniff())
+                    frame->console().addMessage(MessageSource::Security, MessageLevel::Error, makeString("Did not parse stylesheet at '"_s, cachedStyleSheet.url().stringCenterEllipsizedToLength(), "' because non CSS MIME types are not allowed when 'X-Content-Type-Options: nosniff' is given."_s));
                 else
-                    frame->console().addMessage(MessageSource::Security, MessageLevel::Error, makeString("Did not parse stylesheet at '"_s, cachedStyleSheet->url().stringCenterEllipsizedToLength(), "' because non CSS MIME types are not allowed for cross-origin stylesheets."_s));
+                    frame->console().addMessage(MessageSource::Security, MessageLevel::Error, makeString("Did not parse stylesheet at '"_s, cachedStyleSheet.url().stringCenterEllipsizedToLength(), "' because non CSS MIME types are not allowed for cross-origin stylesheets."_s));
             }
         }
     }
@@ -588,6 +589,7 @@ bool StyleSheetContents::traverseSubresources(NOESCAPE const Function<bool(const
         case StyleRuleType::PositionTry:
         case StyleRuleType::Function:
         case StyleRuleType::FunctionDeclarations:
+        case StyleRuleType::EnvironmentMap:
             return false;
         };
         ASSERT_NOT_REACHED();
@@ -644,6 +646,13 @@ bool StyleSheetContents::mayDependOnBaseURL() const
             return protect(uncheckedDowncast<StyleRule>(rule))->properties().mayDependOnBaseURL();
         case StyleRuleType::FontFace:
             return protect(uncheckedDowncast<StyleRuleFontFace>(rule))->properties().mayDependOnBaseURL();
+#if ENABLE(SPATIAL_PORTAL)
+        case StyleRuleType::EnvironmentMap:
+            return protect(uncheckedDowncast<StyleRuleEnvironmentMap>(rule))->properties().mayDependOnBaseURL();
+#else
+        case StyleRuleType::EnvironmentMap:
+            return false;
+#endif
         case StyleRuleType::Import:
         case StyleRuleType::CounterStyle:
         case StyleRuleType::Media:

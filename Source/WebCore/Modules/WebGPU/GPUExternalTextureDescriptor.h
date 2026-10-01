@@ -73,6 +73,26 @@ struct GPUExternalTextureDescriptor : public GPUObjectDescriptorBase {
 #endif
     }
 
+    // The size the frame is presented at, which textureDimensions() reports and which the pixel buffer
+    // travelling to the GPU process does not carry: a WebCodecs frame's display size is whatever its
+    // constructor was given, independent of its coded size, and a video element's intrinsic size has
+    // already had its pixel aspect ratio applied.
+    static IntSize visibleSizeForSource(const GPUVideoSource& videoSource)
+    {
+#if ENABLE(WEB_CODECS)
+        return WTF::switchOn(videoSource,
+            [&](const Ref<HTMLVideoElement>& videoElement) {
+                return IntSize { static_cast<int>(videoElement->videoWidth()), static_cast<int>(videoElement->videoHeight()) };
+            },
+            [&](const Ref<WebCodecsVideoFrame>& videoFrame) {
+                return IntSize { static_cast<int>(videoFrame->displayWidth()), static_cast<int>(videoFrame->displayHeight()) };
+            }
+        );
+#else
+        return IntSize { static_cast<int>(videoSource->videoWidth()), static_cast<int>(videoSource->videoHeight()) };
+#endif
+    }
+
     std::optional<WebCore::MediaPlayerIdentifier> mediaIdentifier() const
     {
 #if ENABLE(WEB_CODECS)
@@ -103,6 +123,11 @@ struct GPUExternalTextureDescriptor : public GPUObjectDescriptorBase {
             { },
 #endif
             colorSpace,
+#if ENABLE(VIDEO)
+            visibleSizeForSource(source),
+#else
+            { },
+#endif
         };
     }
 

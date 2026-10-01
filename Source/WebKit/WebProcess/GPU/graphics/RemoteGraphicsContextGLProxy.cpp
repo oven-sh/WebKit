@@ -584,12 +584,12 @@ void RemoteGraphicsContextGLProxy::wasLost()
     markContextLost();
 }
 
-void RemoteGraphicsContextGLProxy::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, CString&& message)
+void RemoteGraphicsContextGLProxy::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, std::span<const char8_t> message)
 {
     if (isContextLost())
         return;
     if (m_client)
-        m_client->addDebugMessage(type, id, severity, WTF::move(message));
+        m_client->addDebugMessage(type, id, severity, message);
 }
 
 void RemoteGraphicsContextGLProxy::memoryCostChanged(std::optional<uint64_t> memoryCost)

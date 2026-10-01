@@ -28,6 +28,7 @@
 #if ENABLE(WEBDRIVER_BIDI)
 #include "BidiDigitalCredentialsAgent.h"
 #endif
+#include "Connection.h"
 #include "ContextMenuContextData.h"
 #include "EditorState.h"
 #include "EnhancedSecurityTracking.h"
@@ -67,6 +68,10 @@
 #include "WebPaymentCoordinatorProxy.h"
 #endif
 
+#if __has_include(<WebKitAdditions/WebPageProxyAdditionsIncludes.h>)
+#include <WebKitAdditions/WebPageProxyAdditionsIncludes.h>
+#endif
+
 #if ENABLE(DRAG_SUPPORT)
 #include <WebCore/DragActions.h>
 #endif
@@ -103,6 +108,7 @@
 
 #if PLATFORM(COCOA)
 #include "CocoaWindow.h"
+#include "InteractionInformationRequest.h"
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
@@ -271,6 +277,9 @@ public:
     bool alwaysBounceVertical { true };
     bool alwaysBounceHorizontal { true };
     WebCore::Color sampledPageTopColor;
+#if __has_include(<WebKitAdditions/WebPageProxyInternalsAdditions.h>)
+#include <WebKitAdditions/WebPageProxyInternalsAdditions.h>
+#endif
     WebCore::ScrollPinningBehavior scrollPinningBehavior { WebCore::ScrollPinningBehavior::DoNotPin };
     WebCore::IntSize sizeToContentAutoSizeMaximumSize;
     WebCore::Color themeColor;
@@ -313,6 +322,15 @@ public:
 #if PLATFORM(COCOA)
     WeakObjCPtr<WKWebView> cocoaView;
     std::optional<TransactionID> firstLayerTreeTransactionIdAfterDidCommitLoad;
+
+    struct OutstandingPositionInformationRequest {
+        InteractionInformationRequest request;
+        IPC::AsyncReplyID replyID;
+        Ref<IPC::Connection> connection;
+    };
+    std::optional<OutstandingPositionInformationRequest> outstandingPositionInformationRequest;
+
+    Markable<WebCore::FrameIdentifier> interactionFrameID;
 #endif
 
 #if USE(GLIB)

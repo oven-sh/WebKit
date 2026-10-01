@@ -31,6 +31,7 @@
 #include <span>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringConcatenateNumbers.h>
 #include <wtf/text/StringView.h>
 
 using namespace JSC;
@@ -175,11 +176,11 @@ void testAllMemoryOps()
 
 #undef TEST_MEMORY_STORE_OP
 
-    TEST_ASSERT(loadOpsTested == TOTAL_MEMORY_LOAD_OPS, makeString("Tested all "_s, String::number(TOTAL_MEMORY_LOAD_OPS), " memory load ops"_s).utf8().data());
-    TEST_ASSERT(loadOpsSucceeded == TOTAL_MEMORY_LOAD_OPS, makeString("All "_s, String::number(TOTAL_MEMORY_LOAD_OPS), " memory load ops passed strict validation"_s).utf8().data());
+    TEST_ASSERT(loadOpsTested == TOTAL_MEMORY_LOAD_OPS, makeString("Tested all "_s, TOTAL_MEMORY_LOAD_OPS, " memory load ops"_s));
+    TEST_ASSERT(loadOpsSucceeded == TOTAL_MEMORY_LOAD_OPS, makeString("All "_s, TOTAL_MEMORY_LOAD_OPS, " memory load ops passed strict validation"_s));
 
-    TEST_ASSERT(storeOpsTested == TOTAL_MEMORY_STORE_OPS, makeString("Tested all "_s, String::number(TOTAL_MEMORY_STORE_OPS), " memory store ops"_s).utf8().data());
-    TEST_ASSERT(storeOpsSucceeded == TOTAL_MEMORY_STORE_OPS, makeString("All "_s, String::number(TOTAL_MEMORY_STORE_OPS), " memory store ops passed strict validation"_s).utf8().data());
+    TEST_ASSERT(storeOpsTested == TOTAL_MEMORY_STORE_OPS, makeString("Tested all "_s, TOTAL_MEMORY_STORE_OPS, " memory store ops"_s));
+    TEST_ASSERT(storeOpsSucceeded == TOTAL_MEMORY_STORE_OPS, makeString("All "_s, TOTAL_MEMORY_STORE_OPS, " memory store ops passed strict validation"_s));
 
     dataLogLn("  Successfully tested with strict mapping validation: ", loadOpsSucceeded, " / ", loadOpsTested, " memory load ops");
     dataLogLn("  Successfully tested with strict mapping validation: ", storeOpsSucceeded, " / ", storeOpsTested, " memory store ops");

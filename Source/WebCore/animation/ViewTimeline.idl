@@ -27,7 +27,7 @@
 [
     Exposed=Window
 ] interface ViewTimeline : ScrollTimeline {
-    [CallWith=CurrentDocument] constructor(optional ViewTimelineOptions options = {});
+    [CallWith=CurrentDocument] constructor(ViewTimelineOptions options);
     // FIXME: `subject` should not be nullable.
     readonly attribute Element? subject;
     readonly attribute CSSNumericValue startOffset;

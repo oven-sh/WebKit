@@ -33,6 +33,7 @@
 #include "JSONAtomStringCacheInlines.h"
 #include "Lexer.h"
 #include "ObjectConstructor.h"
+#include "SourceCharacters.h"
 #include <wtf/ASCIICType.h>
 #include <wtf/Range.h>
 #include <wtf/text/FastCharacterComparison.h>
@@ -1070,7 +1071,7 @@ slowPathBegin:
                             return TokError;
                         }
                     }
-                    m_builder.append(JSC::Lexer<CharType>::convertUnicode(m_ptr[1], m_ptr[2], m_ptr[3], m_ptr[4]));
+                    m_builder.append(convertUnicode(m_ptr[1], m_ptr[2], m_ptr[3], m_ptr[4]));
                     m_ptr += 5;
                     break;
 

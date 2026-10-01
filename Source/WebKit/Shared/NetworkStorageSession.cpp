@@ -30,6 +30,7 @@
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/Cookie.h>
 #include <WebCore/CookieJar.h>
+#include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/HTTPCookieAcceptPolicy.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/PublicSuffixStore.h>
@@ -119,12 +120,12 @@ bool NetworkStorageSession::hasHadUserInteractionAsFirstParty(const RegistrableD
     return m_registrableDomainsWithUserInteractionAsFirstParty.contains(registrableDomain);
 }
 
-ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlockingDecisionForRequest(const ResourceRequest& request, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, bool isInitiatedByDedicatedWorker, bool navigationLosesFrameSpecificStorageAccess) const
+ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlockingDecisionForRequest(const ResourceRequest& request, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, bool isInitiatedByDedicatedWorker, bool navigationLosesFrameSpecificStorageAccess) const
 {
-    return thirdPartyCookieBlockingDecisionForRequest(request.firstPartyForCookies(), request.url(), frameID, pageID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker, isInitiatedByDedicatedWorker, navigationLosesFrameSpecificStorageAccess);
+    return thirdPartyCookieBlockingDecisionForRequest(request.firstPartyForCookies(), request.url(), frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker, isInitiatedByDedicatedWorker, navigationLosesFrameSpecificStorageAccess);
 }
 
-ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlockingDecisionForRequest(const URL& firstPartyForCookies, const URL& resource, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, bool isInitiatedByDedicatedWorker, bool navigationLosesFrameSpecificStorageAccess) const
+ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlockingDecisionForRequest(const URL& firstPartyForCookies, const URL& resource, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, bool isInitiatedByDedicatedWorker, bool navigationLosesFrameSpecificStorageAccess) const
 {
     if (shouldRelaxThirdPartyCookieBlocking == ShouldRelaxThirdPartyCookieBlocking::Yes)
         return ThirdPartyCookieBlockingDecision::None;
@@ -152,7 +153,7 @@ ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlocking
     // A navigation that loses its frame-specific storage access grant must not attach first-party
     // cookies to its network request.
     std::optional<FrameIdentifier> grantFrameID = navigationLosesFrameSpecificStorageAccess ? std::nullopt : frameID;
-    if (hasStorageAccess(resourceDomain, firstPartyDomain, grantFrameID, pageID) && !isInitiatedByDedicatedWorker)
+    if (hasStorageAccess(resourceDomain, firstPartyDomain, grantFrameID, webPageProxyID) && !isInitiatedByDedicatedWorker)
         return ThirdPartyCookieBlockingDecision::None;
 
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
@@ -191,14 +192,14 @@ ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlocking
     return ThirdPartyCookieBlockingDecision::None;
 }
 
-bool NetworkStorageSession::shouldBlockCookies(const URL& firstPartyForCookies, const URL& resource, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
+bool NetworkStorageSession::shouldBlockCookies(const URL& firstPartyForCookies, const URL& resource, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
 {
-    return shouldBlockCookies(thirdPartyCookieBlockingDecisionForRequest(firstPartyForCookies, resource, frameID, pageID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker));
+    return shouldBlockCookies(thirdPartyCookieBlockingDecisionForRequest(firstPartyForCookies, resource, frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker));
 }
 
-bool NetworkStorageSession::shouldBlockCookies(const ResourceRequest& request, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
+bool NetworkStorageSession::shouldBlockCookies(const ResourceRequest& request, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
 {
-    return shouldBlockCookies(request.firstPartyForCookies(), request.url(), frameID, pageID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker);
+    return shouldBlockCookies(request.firstPartyForCookies(), request.url(), frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker);
 }
 
 bool NetworkStorageSession::shouldBlockCookies(ThirdPartyCookieBlockingDecision thirdPartyCookieBlockingDecision)
@@ -288,13 +289,13 @@ void NetworkStorageSession::grantCrossPageStorageAccess(const TopFrameDomain& to
     }
 }
 
-bool NetworkStorageSession::hasStorageAccess(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID) const
+bool NetworkStorageSession::hasStorageAccess(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID) const
 {
-    if (!pageID)
+    if (!webPageProxyID)
         return false;
 
     if (frameID) {
-        auto framesGrantedIterator = m_framesGrantedStorageAccess.find(*pageID);
+        auto framesGrantedIterator = m_framesGrantedStorageAccess.find(*webPageProxyID);
         if (framesGrantedIterator != m_framesGrantedStorageAccess.end()) {
             auto it = framesGrantedIterator->value.find(frameID.value());
             if (it != framesGrantedIterator->value.end() && it->value == resourceDomain)
@@ -303,7 +304,7 @@ bool NetworkStorageSession::hasStorageAccess(const RegistrableDomain& resourceDo
     }
 
     if (!firstPartyDomain.isEmpty()) {
-        auto pagesGrantedIterator = m_pagesGrantedStorageAccess.find(*pageID);
+        auto pagesGrantedIterator = m_pagesGrantedStorageAccess.find(*webPageProxyID);
         if (pagesGrantedIterator != m_pagesGrantedStorageAccess.end()) {
             auto it = pagesGrantedIterator->value.find(firstPartyDomain);
             if (it != pagesGrantedIterator->value.end() && it->value == resourceDomain)
@@ -328,7 +329,7 @@ Vector<String> NetworkStorageSession::getAllStorageAccessEntries() const
     return entries;
 }
 
-void NetworkStorageSession::grantStorageAccess(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, std::optional<FrameIdentifier> frameID, PageIdentifier pageID)
+void NetworkStorageSession::grantStorageAccess(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID)
 {
     if (WebCore::loginDomainMatchesRequestingDomain(firstPartyDomain, resourceDomain)) {
         grantCrossPageStorageAccess(firstPartyDomain, resourceDomain);
@@ -338,11 +339,11 @@ void NetworkStorageSession::grantStorageAccess(const RegistrableDomain& resource
     if (!frameID) {
         if (firstPartyDomain.isEmpty())
             return;
-        auto pagesGrantedIterator = m_pagesGrantedStorageAccess.find(pageID);
+        auto pagesGrantedIterator = m_pagesGrantedStorageAccess.find(webPageProxyID);
         if (pagesGrantedIterator == m_pagesGrantedStorageAccess.end()) {
             HashMap<RegistrableDomain, RegistrableDomain> entry;
             entry.add(firstPartyDomain, resourceDomain);
-            m_pagesGrantedStorageAccess.add(pageID, entry);
+            m_pagesGrantedStorageAccess.add(webPageProxyID, entry);
         } else {
             auto firstPartyDomainIterator = pagesGrantedIterator->value.find(firstPartyDomain);
             if (firstPartyDomainIterator == pagesGrantedIterator->value.end())
@@ -353,11 +354,11 @@ void NetworkStorageSession::grantStorageAccess(const RegistrableDomain& resource
         return;
     }
 
-    auto pagesGrantedIterator = m_framesGrantedStorageAccess.find(pageID);
+    auto pagesGrantedIterator = m_framesGrantedStorageAccess.find(webPageProxyID);
     if (pagesGrantedIterator == m_framesGrantedStorageAccess.end()) {
         HashMap<FrameIdentifier, RegistrableDomain> entry;
         entry.add(frameID.value(), resourceDomain);
-        m_framesGrantedStorageAccess.add(pageID, entry);
+        m_framesGrantedStorageAccess.add(webPageProxyID, entry);
     } else {
         auto framesGrantedIterator = pagesGrantedIterator->value.find(frameID.value());
         if (framesGrantedIterator == pagesGrantedIterator->value.end())
@@ -367,21 +368,52 @@ void NetworkStorageSession::grantStorageAccess(const RegistrableDomain& resource
     }
 }
 
-void NetworkStorageSession::removeStorageAccessForFrame(FrameIdentifier frameID, PageIdentifier pageID)
+void NetworkStorageSession::removeStorageAccessForFrame(FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID)
 {
-    auto iteration = m_framesGrantedStorageAccess.find(pageID);
+    auto iteration = m_framesGrantedStorageAccess.find(webPageProxyID);
     if (iteration == m_framesGrantedStorageAccess.end())
         return;
 
     iteration->value.remove(frameID);
 }
 
-void NetworkStorageSession::clearPageSpecificDataForResourceLoadStatistics(PageIdentifier pageID)
+void NetworkStorageSession::didCommitMainFrameNavigation(WebPageProxyIdentifier webPageProxyID, const RegistrableDomain& committedDomain, const RegistrableDomain& previouslyCommittedDomain, RestoredFromBackForwardCache restoredFromBackForwardCache)
 {
-    m_pagesGrantedStorageAccess.remove(pageID);
-    m_framesGrantedStorageAccess.remove(pageID);
+    // A back/forward cache restore brings the previous document and its whole frame tree back to
+    // life, so the state below still belongs to a live page and none of this teardown applies.
+    if (restoredFromBackForwardCache == RestoredFromBackForwardCache::Yes)
+        return;
+
+    m_framesGrantedStorageAccess.remove(webPageProxyID);
+
+    if (committedDomain.isEmpty())
+        return;
+
+    if (committedDomain != previouslyCommittedDomain)
+        removePageLevelStorageAccessForTopFrameDomain(webPageProxyID, committedDomain);
+
+    auto domainIterator = m_navigatedToWithLinkDecorationByPrevalentResource.find(webPageProxyID);
+    if (domainIterator != m_navigatedToWithLinkDecorationByPrevalentResource.end() && domainIterator->value != committedDomain)
+        m_navigatedToWithLinkDecorationByPrevalentResource.remove(domainIterator);
+}
+
+void NetworkStorageSession::removePageLevelStorageAccessForTopFrameDomain(WebPageProxyIdentifier webPageProxyID, const RegistrableDomain& topFrameDomain)
+{
+    auto pagesGrantedIterator = m_pagesGrantedStorageAccess.find(webPageProxyID);
+    if (pagesGrantedIterator == m_pagesGrantedStorageAccess.end())
+        return;
+
+    pagesGrantedIterator->value.remove(topFrameDomain);
+    if (pagesGrantedIterator->value.isEmpty())
+        m_pagesGrantedStorageAccess.remove(pagesGrantedIterator);
+}
+
+void NetworkStorageSession::clearPageSpecificDataForResourceLoadStatistics(WebPageProxyIdentifier webPageProxyID)
+{
+    m_pagesGrantedStorageAccess.remove(webPageProxyID);
+    m_framesGrantedStorageAccess.remove(webPageProxyID);
     if (!m_navigationWithLinkDecorationTestMode)
-        m_navigatedToWithLinkDecorationByPrevalentResource.remove(pageID);
+        m_navigatedToWithLinkDecorationByPrevalentResource.remove(webPageProxyID);
 }
 
 void NetworkStorageSession::removeAllStorageAccess()
@@ -401,9 +433,9 @@ void NetworkStorageSession::resetCacheMaxAgeCapForPrevalentResources()
     m_cacheMaxAgeCapForPrevalentResources = std::nullopt;
 }
 
-void NetworkStorageSession::didCommitCrossSiteLoadWithDataTransferFromPrevalentResource(const RegistrableDomain& toDomain, PageIdentifier pageID)
+void NetworkStorageSession::didCommitCrossSiteLoadWithDataTransferFromPrevalentResource(const RegistrableDomain& toDomain, WebPageProxyIdentifier webPageProxyID)
 {
-    m_navigatedToWithLinkDecorationByPrevalentResource.add(pageID, toDomain);
+    m_navigatedToWithLinkDecorationByPrevalentResource.set(webPageProxyID, toDomain);
 }
 
 void NetworkStorageSession::resetCrossSiteLoadsWithLinkDecorationForTesting()
@@ -455,25 +487,25 @@ void NetworkStorageSession::resetManagedDomains()
 }
 #endif
 
-std::optional<Seconds> NetworkStorageSession::clientSideCookieCap(const RegistrableDomain& firstParty, RequiresScriptTrackingPrivacy requiresScriptTrackingPrivacy, std::optional<PageIdentifier> pageID) const
+std::optional<Seconds> NetworkStorageSession::clientSideCookieCap(const RegistrableDomain& firstParty, RequiresScriptTrackingPrivacy requiresScriptTrackingPrivacy, std::optional<WebPageProxyIdentifier> webPageProxyID) const
 {
     if (requiresScriptTrackingPrivacy == RequiresScriptTrackingPrivacy::Yes)
         return m_ageCapForClientSideCookiesForScriptTrackingPrivacy;
 
 #if ENABLE(JS_COOKIE_CHECKING)
-    if (!pageID)
+    if (!webPageProxyID)
         return std::nullopt;
 
-    auto domainIterator = m_navigatedToWithLinkDecorationByPrevalentResource.find(*pageID);
+    auto domainIterator = m_navigatedToWithLinkDecorationByPrevalentResource.find(*webPageProxyID);
     if (domainIterator != m_navigatedToWithLinkDecorationByPrevalentResource.end() && domainIterator->value == firstParty)
         return m_ageCapForClientSideCookiesForLinkDecorationTargetPage;
 
     return std::nullopt;
 #else
-    if (!m_ageCapForClientSideCookies || !pageID || m_navigatedToWithLinkDecorationByPrevalentResource.isEmpty())
+    if (!m_ageCapForClientSideCookies || !webPageProxyID || m_navigatedToWithLinkDecorationByPrevalentResource.isEmpty())
         return m_ageCapForClientSideCookies;
 
-    auto domainIterator = m_navigatedToWithLinkDecorationByPrevalentResource.find(*pageID);
+    auto domainIterator = m_navigatedToWithLinkDecorationByPrevalentResource.find(*webPageProxyID);
     if (domainIterator == m_navigatedToWithLinkDecorationByPrevalentResource.end())
         return m_ageCapForClientSideCookies;
 
@@ -500,9 +532,9 @@ void NetworkStorageSession::deleteCookies(const ClientOrigin& origin, Completion
 }
 #endif
 
-bool NetworkStorageSession::cookiesEnabled(const URL& firstParty, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
+bool NetworkStorageSession::cookiesEnabled(const URL& firstParty, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
 {
-    return thirdPartyCookieBlockingDecisionForRequest(firstParty, url, frameID, pageID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker) != ThirdPartyCookieBlockingDecision::All;
+    return thirdPartyCookieBlockingDecisionForRequest(firstParty, url, frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker) != ThirdPartyCookieBlockingDecision::All;
 }
 
 void NetworkStorageSession::addCookiesEnabledStateObserver(CookiesEnabledStateObserver& observer)

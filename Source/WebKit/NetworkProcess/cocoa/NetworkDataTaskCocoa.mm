@@ -288,10 +288,8 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
         [mutableRequest _setAllowPrivateAccessTokensForThirdParty:YES];
 
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES) && defined(CFN_COOKIE_ACCEPTS_POLICY_PARTITION) && CFN_COOKIE_ACCEPTS_POLICY_PARTITION
-    if (isOptInCookiePartitioningEnabled() && [mutableRequest respondsToSelector:@selector(_setAllowOnlyPartitionedCookies:)]) {
-        auto shouldAllowOnlyPartitioned = thirdPartyCookieBlockingDecision == WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned ? YES : NO;
-        [mutableRequest _setAllowOnlyPartitionedCookies:shouldAllowOnlyPartitioned];
-    }
+    if (isOptInCookiePartitioningEnabled() && [mutableRequest respondsToSelector:@selector(_setAllowOnlyPartitionedCookies:)])
+        [mutableRequest _setAllowOnlyPartitionedCookies:shouldAllowOnlyPartitionedCookies(request) ? YES : NO];
 #endif
 
 #if ENABLE(APP_PRIVACY_REPORT)
@@ -328,7 +326,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
     updateTaskWithStoragePartitionIdentifier(request);
 #endif
 
-    WTFBeginSignpost(m_task.get(), DataTask, "%" PUBLIC_LOG_STRING " %" PRIVATE_LOG_STRING " pri: %.2f preconnect: %d", request.httpMethod().utf8().data(), url.string().utf8().data(), toNSURLSessionTaskPriority(request.priority()), parameters.shouldPreconnectOnly == PreconnectOnly::Yes);
+    WTFBeginSignpost(m_task.get(), DataTask, "%" PUBLIC_LOG_STRING " %" PRIVATE_LOG_STRING " pri: %.2f preconnect: %d", request.httpMethod().utf8(), url.string().utf8(), toNSURLSessionTaskPriority(request.priority()), parameters.shouldPreconnectOnly == PreconnectOnly::Yes);
 
     switch (parameters.storedCredentialsPolicy) {
     case WebCore::StoredCredentialsPolicy::Use:
@@ -538,8 +536,8 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
     else {
         WebCore::RegistrableDomain firstPartyDomain { request.firstPartyForCookies() };
         if (CheckedPtr storageSession = session->networkStorageSession()) {
-            bool didPreviousRequestHaveStorageAccess = storageSession->hasStorageAccess(WebCore::RegistrableDomain { redirectResponse.url() }, firstPartyDomain, m_frameID, m_pageID);
-            bool doesRequestHaveStorageAccess = storageSession->hasStorageAccess(WebCore::RegistrableDomain { request.url() }, firstPartyDomain, m_frameID, m_pageID);
+            bool didPreviousRequestHaveStorageAccess = storageSession->hasStorageAccess(WebCore::RegistrableDomain { redirectResponse.url() }, firstPartyDomain, m_frameID, m_webPageProxyID);
+            bool doesRequestHaveStorageAccess = storageSession->hasStorageAccess(WebCore::RegistrableDomain { request.url() }, firstPartyDomain, m_frameID, m_webPageProxyID);
             if (didPreviousRequestHaveStorageAccess && doesRequestHaveStorageAccess)
                 request.setFirstPartyForCookies(request.url());
         }
@@ -752,15 +750,6 @@ void NetworkDataTaskCocoa::setPriority(WebCore::ResourceLoadPriority priority)
         return;
     m_task.get().priority = toNSURLSessionTaskPriority(priority);
 }
-
-#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-
-void NetworkDataTaskCocoa::setEmulatedConditions(const std::optional<int64_t>& bytesPerSecondLimit)
-{
-    m_task.get()._bytesPerSecondLimit = bytesPerSecondLimit.value_or(0);
-}
-
-#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
 void NetworkDataTaskCocoa::setTimingAllowFailedFlag()
 {

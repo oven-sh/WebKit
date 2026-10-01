@@ -158,7 +158,7 @@ static bool isDutchIJDigraph(StringView text, unsigned offset)
     return (first == 'i' && second == 'j') || (first == 'I' && second == 'J');
 }
 
-static unsigned firstLetterLength(StringView text, const AtomString& specifiedLocale)
+static unsigned firstLetterLength(StringView text, const AtomString& locale)
 {
     if (text.isEmpty())
         return 0;
@@ -173,7 +173,7 @@ static unsigned firstLetterLength(StringView text, const AtomString& specifiedLo
     length += numCodeUnitsInGraphemeClusters(text.substring(length), 1);
 
     // In Dutch, "ij" is a digraph treated as a single letter for ::first-letter.
-    if (length < text.length() && isDutchLocale(specifiedLocale) && isDutchIJDigraph(text, length - 1))
+    if (length < text.length() && isDutchLocale(locale) && isDutchIJDigraph(text, length - 1))
         length += numCodeUnitsInGraphemeClusters(text.substring(length), 1);
 
     // Keep looking for following punctuation and intervening typographic space,
@@ -251,7 +251,8 @@ void RenderTreeBuilder::FirstLetter::updateAfterDescendants(RenderBlock& block)
             if (is<Text>(textNode->previousSibling()))
                 return true;
             // Length can change due to a locale change.
-            return firstLetterLength(textNode->data(), remainingText->style().fontDescription().specifiedLocale()) != remainingText->start();
+            // FIXME: This should probably be using `fontDescription().usedLocale()`, as that is what is used for shaping.
+            return firstLetterLength(textNode->data(), remainingText->style().fontDescription().computedLocale()) != remainingText->start();
         };
         if (isFirstLetterStale()) {
             ASSERT(remainingText.get());
@@ -362,7 +363,8 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
     ASSERT(!oldText.isNull());
 
     if (!oldText.isEmpty()) {
-        unsigned length = firstLetterLength(oldText, currentTextChild.style().fontDescription().specifiedLocale());
+        // FIXME: This should probably be using `fontDescription().usedLocale()`, as that is what is used for shaping.
+        unsigned length = firstLetterLength(oldText, currentTextChild.style().fontDescription().computedLocale());
 
         RefPtr textNode = currentTextChild.textNode();
         WeakPtr beforeChild = currentTextChild.nextSibling();

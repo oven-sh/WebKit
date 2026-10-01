@@ -406,7 +406,7 @@ static void logSchedulingAttributesFailure(ThreadIdentifier id)
 {
     // A thread that exited before its attributes were applied is expected, not a failure.
     if (errno != ESRCH)
-        RELEASE_LOG_ERROR(Threading, "Failed to apply scheduling attributes to thread %d: %s", id, safeStrerror(errno).data());
+        RELEASE_LOG_ERROR(Threading, "Failed to apply scheduling attributes to thread %d: %s", id, safeStrerror(errno));
     UNUSED_PARAM(id);
 }
 #endif
@@ -434,7 +434,7 @@ bool Thread::establishHandle(NewThreadContext& context, StackAllocationSpecifica
         int result = pthread_attr_setstack(&attr, bounds.data(), bounds.size_bytes());
         if (result) {
             LOG_ERROR("Failed to set custom stack at %p size %zu: %s",
-                bounds.data(), bounds.size_bytes(), safeStrerror(result).data());
+                bounds.data(), bounds.size_bytes(), safeStrerror(result));
             pthread_attr_destroy(&attr);
             return false;
         } } break;
@@ -502,7 +502,7 @@ void Thread::updateSchedulingAttributes(SchedulingState state) const
 
         // Yes, don't try uclamp again.
         if (utilizationClampSupported.exchange(false, std::memory_order_relaxed))
-            RELEASE_LOG_WITH_LEVEL(Threading, WTFLogLevel::Info, "Utilization clamping is unavailable, scheduling every thread without it: %s", safeStrerror(errno).data());
+            RELEASE_LOG_WITH_LEVEL(Threading, WTFLogLevel::Info, "Utilization clamping is unavailable, scheduling every thread without it: %s", safeStrerror(errno));
         return;
     }
 
@@ -622,13 +622,6 @@ Thread& Thread::initializeCurrentTLS()
     WTF::initialize();
 #if PLATFORM(COCOA)
     Ref thread = adoptRef(*new Thread(defaultQOS, SchedulingPolicy::Other, pthread_main_np() ? IsMain::Yes : IsMain::No));
-#elif OS(LINUX) && !USE(BUN_JSC_ADDITIONS)
-    // Bun may call initializeMainThread() from a bundler worker thread (macro
-    // evaluation spins up a JSC VM off the process main thread). Keying the
-    // reserved uid 1 on getpid()==gettid() would leave that "WebKit main" with
-    // uid >= 2 and trip the RELEASE_ASSERT in initializeMainThread(), so fall
-    // through to the first-thread-gets-uid-1 behaviour instead.
-    Ref thread = adoptRef(*new Thread(defaultQOS, SchedulingPolicy::Other, getpid() == static_cast<pid_t>(syscall(SYS_gettid)) ? IsMain::Yes : IsMain::No));
 #else
     Ref thread = adoptRef(*new Thread(defaultQOS, SchedulingPolicy::Other));
 #endif

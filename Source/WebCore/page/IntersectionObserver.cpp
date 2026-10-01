@@ -248,6 +248,17 @@ bool IntersectionObserver::isObserving(const Element& element) const
     return m_observationTargets.contains(element);
 }
 
+void IntersectionObserver::resetPreviousThresholdIndexForTarget(const Element& target)
+{
+    auto* data = target.intersectionObserverDataIfExists();
+    if (!data)
+        return;
+    for (auto& registration : data->registrations) {
+        if (registration.observer.get() == this)
+            registration.previousThresholdIndex = std::nullopt;
+    }
+}
+
 void IntersectionObserver::observe(Element& target)
 {
     if (!trackingDocument() || isObserving(target))
@@ -566,7 +577,7 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
         if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(*targetRenderer))
             return renderBox->borderBoundingBox();
 
-        if (is<RenderInline>(targetRenderer)) {
+        if (targetRenderer->isInlineBox()) {
             Vector<LayoutRect> rects;
             targetRenderer->boundingRects(rects, { });
             return unionRect(rects);
@@ -787,7 +798,7 @@ std::optional<ReducedResolutionSeconds> IntersectionObserver::nowTimestamp() con
 {
     RefPtr<LocalDOMWindow> window;
     {
-        auto* context = m_callback->scriptExecutionContext();
+        RefPtr context = m_callback->scriptExecutionContext();
         if (!context)
             return std::nullopt;
         Ref document = downcast<Document>(*context);
@@ -848,7 +859,8 @@ void IntersectionObserver::notify()
 
 bool IntersectionObserver::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor) const
 {
-    for (auto& target : m_observationTargets) {
+    // Cannot ref on the GC thread.
+    for (SUPPRESS_UNCOUNTED_LOCAL auto& target : m_observationTargets) {
         if (containsWebCoreOpaqueRoot(visitor, target))
             return true;
     }

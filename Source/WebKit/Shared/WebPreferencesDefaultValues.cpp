@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebPreferencesDefaultValues.h"
 
+#include <WebCore/SettingsBase.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
@@ -283,6 +284,16 @@ SUPPRESS_NODELETE bool defaultShouldEnableScreenOrientationAPI()
 #endif
 }
 
+SUPPRESS_NODELETE unsigned defaultMaximumNestedInlineFormattingContextCount()
+{
+#if PLATFORM(IOS)
+    // Mail renders messages from clients that nest markup pathologically, in processes with small stacks.
+    if (WTF::IOSApplication::isMaild() || WTF::IOSApplication::isMobileMail())
+        return 100;
+#endif
+    return WebCore::SettingsBase::defaultMaximumRenderTreeDepth;
+}
+
 #if USE(LIBWEBRTC)
 bool defaultPeerConnectionEnabledAvailable()
 {
@@ -313,12 +324,7 @@ bool defaultPopoverAttributeEnabled()
 bool defaultUseGPUProcessForDOMRenderingEnabled()
 {
 #if ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_DOM_RENDERING_BY_DEFAULT)
-#if PLATFORM(MAC)
-    static bool haveSufficientCores = WTF::numberOfPhysicalProcessorCores() >= 4;
-    return haveSufficientCores;
-#else
     return true;
-#endif
 #endif
 
 #if USE(GRAPHICS_LAYER_WC)

@@ -448,10 +448,10 @@ ImageDrawResult BifurcatedGraphicsContext::drawTiledImage(Image& image, const Fl
 }
 
 #if ENABLE(VIDEO)
-void BifurcatedGraphicsContext::drawVideoFrame(const VideoFrame& videoFrame, const FloatRect& destination, WebCore::ImageOrientation orientation, bool shouldDiscardAlpha)
+void BifurcatedGraphicsContext::drawVideoFrame(const VideoFrame& videoFrame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
 {
-    m_primaryContext.drawVideoFrame(videoFrame, destination, orientation, shouldDiscardAlpha);
-    m_secondaryContext.drawVideoFrame(videoFrame, destination, orientation, shouldDiscardAlpha);
+    m_primaryContext.drawVideoFrame(videoFrame, destination, shouldDiscardAlpha, options);
+    m_secondaryContext.drawVideoFrame(videoFrame, destination, shouldDiscardAlpha, options);
 
     VERIFY_STATE_SYNCHRONIZATION();
 }
@@ -532,6 +532,14 @@ void BifurcatedGraphicsContext::drawGlyphs(const Font& font, std::span<const Gly
 {
     m_primaryContext.drawGlyphs(font, glyphs, advances, point, fontSmoothingMode);
     m_secondaryContext.drawGlyphs(font, glyphs, advances, point, fontSmoothingMode);
+
+    VERIFY_STATE_SYNCHRONIZATION();
+}
+
+void BifurcatedGraphicsContext::drawGlyphsImmediate(const FontBase& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
+{
+    m_primaryContext.drawGlyphsImmediate(font, glyphs, advances, point, fontSmoothingMode);
+    m_secondaryContext.drawGlyphsImmediate(font, glyphs, advances, point, fontSmoothingMode);
 
     VERIFY_STATE_SYNCHRONIZATION();
 }

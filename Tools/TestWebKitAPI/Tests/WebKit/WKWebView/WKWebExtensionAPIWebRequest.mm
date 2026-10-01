@@ -32,9 +32,34 @@
 #import "Helpers/cocoa/WebExtensionUtilities.h"
 #import <WebKit/_WKWebExtensionWebRequestFilter.h>
 
+#if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR) || ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+#import <WebKit/WKPreferencesPrivate.h>
+#import <WebKit/_WKFeature.h>
+#endif
+
+#if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+#import <WebKit/_WKWebExtensionSidebar.h>
+#endif
+
 namespace TestWebKitAPI {
 
 static auto *webRequestManifest = @{ @"manifest_version": @3, @"permissions": @[ @"webRequest" ], @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module" } };
+
+#if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR) || ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+static WKWebExtensionControllerConfiguration *configurationEnablingFeature(NSString *featureKey)
+{
+    auto *configuration = WKWebExtensionControllerConfiguration.nonPersistentConfiguration;
+    if (!configuration.webViewConfiguration)
+        configuration.webViewConfiguration = [[WKWebViewConfiguration alloc] init];
+
+    for (_WKFeature *feature in WKPreferences._features) {
+        if ([feature.key isEqualToString:featureKey])
+            [configuration.webViewConfiguration.preferences _setEnabled:YES forFeature:feature];
+    }
+
+    return configuration;
+}
+#endif
 
 #if PLATFORM(MAC)
 
@@ -170,6 +195,320 @@ TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventForSubresource)
 
     [manager run];
 }
+
+TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventForSubframe)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<iframe src='/subframe.html'></iframe>"_s } },
+        { "/subframe.html"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (!details?.url?.includes('/subframe.html'))",
+        @"    return",
+
+        @"  browser.test.assertEq(typeof details?.requestId, 'string', 'details.requestId should be')",
+        @"  browser.test.assertEq(typeof details?.tabId, 'number', 'details.tabId should be')",
+        @"  browser.test.assertEq(typeof details?.frameId, 'number', 'details.frameId should be')",
+        @"  browser.test.assertTrue(details?.frameId !== 0, 'details.frameId should not be the main frame')",
+        @"  browser.test.assertEq(typeof details?.parentFrameId, 'number', 'details.parentFrameId should be')",
+        @"  browser.test.assertTrue(details?.parentFrameId !== -1, 'details.parentFrameId should not be -1')",
+
+        @"  browser.test.assertEq(typeof details?.documentId, 'string', 'details.documentId should be')",
+        @"  browser.test.assertEq(details?.documentId?.length, 36, 'details.documentId.length should be')",
+
+        @"  browser.test.assertTrue(details?.url?.includes('/subframe.html'), 'details.url should include /subframe.html')",
+        @"  browser.test.assertEq(details?.method, 'GET', 'details.method should be')",
+        @"  browser.test.assertEq(details?.type, 'sub_frame', 'details.type should be')",
+
+        @"  browser.test.notifyPass()",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto manager = Util::loadExtension(webRequestManifest, @{ @"background.js": backgroundScript });
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventSubframeTypeFilter)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<iframe src='/subframe.html'></iframe>"_s } },
+        { "/subframe.html"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (!details?.url?.includes('/subframe.html'))",
+        @"    return",
+        @"  browser.test.notifyPass()",
+        @"}, { urls: [ '<all_urls>' ], types: [ 'sub_frame' ] })",
+
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (!details?.url?.includes('/subframe.html'))",
+        @"    return",
+        @"  browser.test.notifyFail('the main_frame type filter should not match a subframe load')",
+        @"}, { urls: [ '<all_urls>' ], types: [ 'main_frame' ] })",
+
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto manager = Util::loadExtension(webRequestManifest, @{ @"background.js": backgroundScript });
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventSubframeParentFrameIsMainFrame)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<iframe src='/subframe.html'></iframe>"_s } },
+        { "/subframe.html"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (!details?.url?.includes('/subframe.html'))",
+        @"    return",
+        @"  browser.test.assertTrue(details?.frameId !== 0, 'the subframe should have a non-zero frameId')",
+        @"  browser.test.assertEq(details?.parentFrameId, 0, 'the subframe parentFrameId should be the main frame')",
+        @"  browser.test.notifyPass()",
+        @"}, { urls: [ '<all_urls>' ] })",
+
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto manager = Util::loadExtension(webRequestManifest, @{ @"background.js": backgroundScript });
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventNestedSubframeParentFrameId)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<iframe src='/middle.html'></iframe>"_s } },
+        { "/middle.html"_s, { { { "Content-Type"_s, "text/html"_s } }, "<iframe src='/inner.html'></iframe>"_s } },
+        { "/inner.html"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"let middleFrameId",
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (details?.url?.includes('/middle.html')) {",
+        @"    middleFrameId = details.frameId",
+        @"    browser.test.assertTrue(details.frameId !== 0, 'the middle subframe should have a non-zero frameId')",
+        @"    browser.test.assertEq(details.parentFrameId, 0, 'the middle subframe parent should be the main frame')",
+        @"    return",
+        @"  }",
+        @"  if (!details?.url?.includes('/inner.html'))",
+        @"    return",
+        @"  browser.test.assertTrue(details.parentFrameId !== 0, 'the inner subframe parent is not the main frame')",
+        @"  browser.test.assertEq(details.parentFrameId, middleFrameId, 'the inner subframe parent should be the middle subframe')",
+        @"  browser.test.notifyPass()",
+        @"}, { urls: [ '<all_urls>' ] })",
+
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto manager = Util::loadExtension(webRequestManifest, @{ @"background.js": backgroundScript });
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventForActionPopupSubframe)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/subframe.html"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *subframeRequest = server.requestWithLocalhost("/subframe.html"_s);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (!details?.url?.includes('/subframe.html'))",
+        @"    return",
+        @"  browser.test.assertEq(details?.type, 'sub_frame', 'the popup iframe request should be a sub_frame')",
+        @"  browser.test.assertEq(details?.tabId, -1, 'a request from an action popup should not be associated with a tab')",
+        @"  browser.test.assertTrue(details?.frameId !== 0, 'the popup iframe should have a non-zero frameId')",
+        @"  browser.test.notifyPass()",
+        @"}, { urls: [ '<all_urls>' ] })",
+
+        @"browser.test.sendMessage('Ready')"
+    ]);
+
+    auto *popupHTML = [NSString stringWithFormat:@"<body><iframe src='%@'></iframe></body>", subframeRequest.URL.absoluteString];
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+        @"permissions": @[ @"webRequest" ],
+        @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module" },
+        @"action": @{ @"default_popup": @"popup.html" }
+    };
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript, @"popup.html": popupHTML });
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:subframeRequest.URL];
+
+    manager.get().internalDelegate.presentPopupForAction = ^(WKWebExtensionAction *action) {
+        // Do nothing so the popup web view will stay loaded.
+    };
+
+    [manager runUntilTestMessage:@"Ready"];
+
+    [manager.get().context performActionForTab:manager.get().defaultTab];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventForBackgroundPageRequest)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/subresource.txt"_s, { { { "Content-Type"_s, "text/plain"_s } }, "resource"_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *subresourceRequest = server.requestWithLocalhost("/subresource.txt"_s);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (!details?.url?.includes('/subresource.txt'))",
+        @"    return",
+        @"  browser.test.assertEq(details?.type, 'xmlhttprequest', 'the background page fetch should be an xmlhttprequest')",
+        @"  browser.test.assertEq(details?.tabId, -1, 'a request from the background page should not be associated with a tab')",
+        @"  browser.test.notifyPass()",
+        @"}, { urls: [ '<all_urls>' ] })",
+
+        [NSString stringWithFormat:@"fetch('%@')", subresourceRequest.URL.absoluteString],
+    ]);
+
+    auto manager = Util::loadExtension(webRequestManifest, @{ @"background.js": backgroundScript });
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:subresourceRequest.URL];
+
+    [manager run];
+}
+
+#if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventForSidebarSubframe)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/subframe.html"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *subframeRequest = server.requestWithLocalhost("/subframe.html"_s);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (!details?.url?.includes('/subframe.html'))",
+        @"    return",
+        @"  browser.test.assertEq(details?.type, 'sub_frame', 'the sidebar iframe request should be a sub_frame')",
+        @"  browser.test.assertEq(details?.tabId, -1, 'a request from a sidebar should not be associated with a tab')",
+        @"  browser.test.assertTrue(details?.frameId !== 0, 'the sidebar iframe should have a non-zero frameId')",
+        @"  browser.test.notifyPass()",
+        @"}, { urls: [ '<all_urls>' ] })",
+
+        @"browser.test.runWithUserGesture(() => browser.sidebarAction.open())",
+    ]);
+
+    auto *sidebarHTML = [NSString stringWithFormat:@"<body><iframe src='%@'></iframe></body>", subframeRequest.URL.absoluteString];
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+        @"permissions": @[ @"webRequest" ],
+        @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module" },
+        @"sidebar_action": @{ @"default_panel": @"sidebar.html" }
+    };
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript, @"sidebar.html": sidebarHTML }, configurationEnablingFeature(@"WebExtensionSidebarEnabled"));
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:subframeRequest.URL];
+
+    manager.get().internalDelegate.presentSidebar = ^(_WKWebExtensionSidebar *) {
+        // Do nothing so the sidebar web view will stay loaded.
+    };
+
+    [manager run];
+}
+#endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventForOffscreenDocumentSubframe)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/subframe.html"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *subframeRequest = server.requestWithLocalhost("/subframe.html"_s);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webRequest.onBeforeRequest.addListener((details) => {",
+        @"  if (!details?.url?.includes('/subframe.html'))",
+        @"    return",
+        @"  browser.test.assertEq(details?.type, 'sub_frame', 'the offscreen iframe request should be a sub_frame')",
+        @"  browser.test.assertEq(details?.tabId, -1, 'a request from an offscreen document should not be associated with a tab')",
+        @"  browser.test.assertTrue(details?.frameId !== 0, 'the offscreen iframe should have a non-zero frameId')",
+        @"  browser.test.notifyPass()",
+        @"}, { urls: [ '<all_urls>' ] })",
+
+        @"browser.offscreen.createDocument({ url: 'offscreen.html', reasons: [ 'TESTING' ], justification: 'test' })",
+    ]);
+
+    auto *offscreenHTML = [NSString stringWithFormat:@"<body><iframe src='%@'></iframe></body>", subframeRequest.URL.absoluteString];
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+        @"permissions": @[ @"webRequest", @"offscreen" ],
+        @"background": @{ @"service_worker": @"background.js", @"type": @"module" }
+    };
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript, @"offscreen.html": offscreenHTML }, configurationEnablingFeature(@"WebExtensionOffscreenEnabled"));
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:subframeRequest.URL];
+
+    [manager run];
+}
+#endif // ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
 
 TEST(WKWebExtensionAPIWebRequest, BeforeRequestEventWithRequestBodyAndFormData)
 {
@@ -935,6 +1274,47 @@ TEST(WKWebExtensionAPIWebRequest, WebRequestFiresForDeclarativeNetRequestBlocked
     [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionDeclarativeNetRequest];
 
     auto *urlRequest = server.requestWithLocalhost("/blocked"_s);
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIWebRequest, WebRequestParentFrameIdForDeclarativeNetRequestBlockedSubframe)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<iframe src='/blocked'></iframe>"_s } },
+        { "/blocked"_s, { { { "Content-Type"_s, "text/html"_s } }, "<body></body>"_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+        @"permissions": @[ @"webRequest", @"declarativeNetRequest" ],
+        @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module", @"persistent": @NO },
+        @"declarative_net_request": @{
+            @"rule_resources": @[ @{ @"id": @"block", @"enabled": @YES, @"path": @"rules.json" } ]
+        }
+    };
+
+    auto *rules = @"[ { \"id\": 1, \"priority\": 1, \"action\": { \"type\": \"block\" }, \"condition\": { \"urlFilter\": \"blocked\", \"resourceTypes\": [\"sub_frame\"] } } ]";
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webRequest.onErrorOccurred.addListener((details) => {",
+        @"  if (!details.url.includes('/blocked')) return",
+        @"  browser.test.assertTrue(details.frameId !== 0, 'the blocked subframe should have a non-zero frameId')",
+        @"  browser.test.assertEq(details.parentFrameId, 0, 'the blocked subframe parentFrameId should be the main frame')",
+        @"  browser.test.notifyPass()",
+        @"}, { urls: [ '<all_urls>' ] })",
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript, @"rules.json": rules });
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebRequest];
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionDeclarativeNetRequest];
+
+    auto *urlRequest = server.requestWithLocalhost();
     [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
 
     [manager runUntilTestMessage:@"Load Tab"];

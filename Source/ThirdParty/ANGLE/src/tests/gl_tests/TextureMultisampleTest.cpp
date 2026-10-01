@@ -6,6 +6,8 @@
 
 // TextureMultisampleTest: Tests of multisampled texture
 
+#include <array>
+
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
@@ -458,7 +460,7 @@ TEST_P(TextureMultisampleTest, CheckSamplePositions)
         texStorageMultisample(GL_TEXTURE_2D_MULTISAMPLE, sampleCount, GL_RGBA8, 1, 1, GL_TRUE);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE,
                                texture, 0);
-        EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         ASSERT_GL_NO_ERROR();
 
         for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++)
@@ -496,7 +498,7 @@ TEST_P(TextureMultisampleTest, GetMultisamplefvAfterClear)
     texStorageMultisample(GL_TEXTURE_2D_MULTISAMPLE, sampleCount, GL_RGBA8, 1, 1, GL_TRUE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, texture,
                            0);
-    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     ASSERT_GL_NO_ERROR();
 
     // Clear operation will be staged (Vulkan backend).
@@ -573,8 +575,7 @@ TEST_P(TextureMultisampleTest, SimpleTexelFetch)
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE_ANGLE,
                            mTexture, 0);
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, status);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     glClearColor(clearColor.R / 255.0f, clearColor.G / 255.0f, clearColor.B / 255.0f,
                  clearColor.A / 255.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -1170,8 +1171,7 @@ TEST_P(TextureMultisampleArrayTest, FramebufferCompleteness)
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, mTexture, 0, 0);
     ASSERT_GL_NO_ERROR();
 
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, status);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     // Test framebuffer status with both color and depth textures attached.
     GLTexture depthTexture;
@@ -1183,8 +1183,7 @@ TEST_P(TextureMultisampleArrayTest, FramebufferCompleteness)
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthTexture, 0, 0);
     ASSERT_GL_NO_ERROR();
 
-    status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, status);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     // Test with color and depth/stencil textures attached.
     GLTexture depthStencilTexture;
@@ -1197,8 +1196,7 @@ TEST_P(TextureMultisampleArrayTest, FramebufferCompleteness)
                               0);
     ASSERT_GL_NO_ERROR();
 
-    status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, status);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 }
 
 // Attach a layer of TEXTURE_2D_MULTISAMPLE_ARRAY texture to a framebuffer, clear it, and resolve by
@@ -1223,9 +1221,8 @@ TEST_P(TextureMultisampleArrayTest, FramebufferColorClearAndBlit)
     glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, mTexture, 0, 0);
 
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, status);
 
     glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -1316,8 +1313,7 @@ TEST_P(TextureMultisampleArrayTest, SimpleTexelFetch)
     for (GLint i = 0; static_cast<GLsizei>(i) < kLayerCount; ++i)
     {
         glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, mTexture, 0, i);
-        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, status);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         const GLColor &clearColor = clearColors[i];
         glClearColor(clearColor.R / 255.0f, clearColor.G / 255.0f, clearColor.B / 255.0f,
                      clearColor.A / 255.0f);
@@ -1375,8 +1371,7 @@ TEST_P(TextureMultisampleArrayTest, IntegerTexelFetch)
     for (GLint i = 0; static_cast<GLsizei>(i) < kLayerCount; ++i)
     {
         glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, mTexture, 0, i);
-        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, status);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         std::array<GLint, 4> intColor;
         for (size_t j = 0; j < intColor.size(); ++j)
         {
@@ -1495,7 +1490,7 @@ void main()
 
     const uint32_t *ptr = reinterpret_cast<uint32_t *>(
         glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, kBufferSize, GL_MAP_READ_BIT));
-    constexpr GLColor kExpectedColors[4] = {
+    constexpr std::array<GLColor, 4> kExpectedColors = {
         GLColor(96, 32, 0, 255),
         GLColor(223, 96, 0, 255),
         GLColor(32, 159, 0, 255),

@@ -77,14 +77,14 @@ private:
     void dumpHeader(PrintStream&, LinkBuffer&);
     
     struct DumpedOp {
-        DumpedOp(CodeOrigin codeOrigin, CString text)
+        DumpedOp(CodeOrigin codeOrigin, UTF8CString text)
             : codeOrigin(codeOrigin)
             , text(text)
         {
         }
         
         CodeOrigin codeOrigin;
-        CString text;
+        UTF8CString text;
     };
     void append(Vector<DumpedOp>&, StringPrintStream&, CodeOrigin&);
     Vector<DumpedOp> createDumpList(LinkBuffer&);

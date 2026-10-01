@@ -62,10 +62,12 @@ public:
 private:
     void applyInternal(ApplicationResult&, const GraphicsLayerAnimationValue& from, const GraphicsLayerAnimationValue& to, float progress);
     Seconds computeTotalRunningTime(MonotonicTime);
+    const TimingFunction& timingFunctionForKeyframe(const GraphicsLayerAnimationValue& from) const;
 
     String m_name;
     GraphicsLayerKeyframeValueList m_keyframes { AnimatedProperty::Invalid };
     RefPtr<TimingFunction> m_timingFunction;
+    RefPtr<TimingFunction> m_defaultTimingFunctionForKeyframes;
     double m_iterationCount { 0 };
     double m_duration { 0 };
     GraphicsLayerAnimation::Direction m_direction { GraphicsLayerAnimation::Direction::Normal };
@@ -91,8 +93,6 @@ public:
     void remove(const String&);
     void remove(const String&, AnimatedProperty);
     void pause(const String&, Seconds);
-    void suspend(MonotonicTime);
-    void resume();
 
     void apply(TextureMapperAnimation::ApplicationResult&, MonotonicTime, TextureMapperAnimation::KeepInternalState = TextureMapperAnimation::KeepInternalState::No);
 

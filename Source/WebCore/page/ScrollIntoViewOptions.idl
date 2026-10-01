@@ -23,6 +23,5 @@ dictionary ScrollIntoViewOptions : ScrollOptions {
     // from an unspecified one (which defaults to start/nearest and may be adjusted for scroll-snap-align).
     [ImplementedAs=blockPosition] ScrollLogicalPosition block;
     [ImplementedAs=inlinePosition] ScrollLogicalPosition inline;
-    // FIXME: Add support for `container`.
-    // ScrollIntoViewContainer container = "all";
+    ScrollIntoViewContainer container = "all";
 };

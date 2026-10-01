@@ -23,7 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE && !TARGET_OS_TV
 
 #import <UIKit/UIPrintFormatter.h>
 #import <WebKit/WKFoundation.h>

@@ -64,7 +64,7 @@ messages -> WebPageProxy {
     TranslateAccessibilityAnnouncementStrings(Vector<String> strings, String targetLocaleIdentifier) -> (Vector<String> translatedStrings)
 
 #if PLATFORM(COCOA) || PLATFORM(GTK)
-    ShowValidationMessage(WebCore::IntRect anchorRect, String message, std::optional<WebCore::FrameIdentifier> rootFrameID)
+    ShowValidationMessage(WebCore::IntRect anchorRect, String message)
     HideValidationMessage()
 #endif
 
@@ -195,7 +195,6 @@ messages -> WebPageProxy {
     WillSubmitForm(struct WebKit::FrameInfoData frame, struct WebKit::FrameInfoData sourceFrame, Vector<std::pair<String, String>> textFieldValues, WebKit::UserData userData, URL requestURL, String method) -> ()
 
 #if PLATFORM(COCOA)
-    DidReceivePositionInformation(struct WebKit::InteractionInformationAtPosition information) CanDispatchOutOfOrder
     GetAttributedStringsForRemoteFrames(WebCore::FrameIdentifier rootFrameIdentifier, Vector<WebCore::FrameIdentifier> frameIdentifiers) -> (HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> result) Synchronous
 #endif
 
@@ -242,7 +241,7 @@ messages -> WebPageProxy {
     ClearAllEditCommands()
     RegisterInsertionUndoGrouping()
     CanUndoRedo(enum:bool WebKit::UndoOrRedo undoOrRedo) -> (bool result) Synchronous
-    ExecuteUndoRedo(enum:bool WebKit::UndoOrRedo undoOrRedo) -> (uint32_t undoVersion, Vector<std::pair<WebKit::WebUndoStepID, WebKit::UndoOrRedo>> pendingUndoRedo) Synchronous
+    ExecuteUndoRedo(enum:bool WebKit::UndoOrRedo undoOrRedo) -> (uint64_t firstSequence, Vector<std::pair<WebKit::WebUndoStepID, WebKit::UndoOrRedo>> undoRedo) Synchronous
 
     # Diagnostic messages logging
     LogDiagnosticMessageFromWebProcess(String message, String description, enum:bool WebCore::ShouldSample shouldSample)
@@ -689,8 +688,6 @@ messages -> WebPageProxy {
 #if ENABLE(GAMEPAD)
     [EnabledBy=GamepadsEnabled] GamepadsRecentlyAccessed()
 #endif
-
-    HasActiveNowPlayingSessionChanged(bool hasActiveNowPlayingSessionChanged)
 
     SetAllowsLayoutViewportHeightExpansion(bool newValue)
 

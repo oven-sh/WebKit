@@ -61,7 +61,7 @@ LegacyInlineIterator LineBreaker::nextLineBreak(InlineBidiResolver& resolver, Li
 
     while (context.currentObject()) {
         context.initializeForCurrentObject();
-        if (context.currentObject()->isRenderInline()) {
+        if (context.currentObject()->isInlineBox()) {
             context.handleEmptyInline();
         } else if (context.currentObject()->isRenderText()) {
             if (context.handleText()) {

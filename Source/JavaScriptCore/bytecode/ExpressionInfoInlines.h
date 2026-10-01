@@ -56,7 +56,7 @@ void ExpressionInfo::Encoder::rebuild(const MapFunc& mapInstPC)
         RELEASE_ASSERT(instPC >= lastInstPC);
         lastInstPC = instPC;
         auto& entry = entries[i];
-        encode(instPC, entry.divot, entry.startOffset, entry.endOffset, entry.lineColumn);
+        encode(instPC, entry.divot, entry.startOffset, entry.endOffset);
     }
 }
 

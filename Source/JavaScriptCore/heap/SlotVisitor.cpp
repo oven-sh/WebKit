@@ -82,8 +82,8 @@ static void validate(JSCell* cell)
 }
 #endif
 
-SlotVisitor::SlotVisitor(JSC::Heap& heap, CString codeName)
-    : Base(heap, codeName, heap.m_opaqueRoots)
+SlotVisitor::SlotVisitor(JSC::Heap& heap, ASCIICString codeName)
+    : Base(heap, WTF::move(codeName), heap.m_opaqueRoots)
     , m_markingVersion(MarkedSpace::initialVersion)
 #if ASSERT_ENABLED
     , m_isCheckingForDefaultMarkViolation(false)
@@ -804,7 +804,7 @@ void SlotVisitor::donateAndDrain(MonotonicTime timeout)
 
 void SlotVisitor::didRace(const VisitRaceKey& race)
 {
-    dataLogLnIf(Options::verboseVisitRace(), toCString("GC visit race: ", race));
+    dataLogLnIf(Options::verboseVisitRace(), toUTF8CString("GC visit race: ", race));
     
     Locker locker { heap()->m_raceMarkStackLock };
     JSCell* cell = race.cell();

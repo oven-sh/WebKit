@@ -28,6 +28,8 @@
 #include "Logging.h"
 #include "SystemFontDatabaseCoreText.h"
 
+#include <wtf/text/TextStream.h>
+
 namespace WebCore {
 
 static inline Vector<RetainPtr<CTFontDescriptorRef>> systemFontCascadeList(const FontDescription& description, const AtomString& cssFamily, SystemFontKind systemFontKind, AllowUserInstalledFonts allowUserInstalledFonts)
@@ -105,7 +107,7 @@ AtomString FontDescription::platformResolveGenericFamily(UScriptCode script, con
         if (fontName.isEmpty())
             return false;
         if (fontName.startsWith('.')) {
-            LOG(Fonts, "CoreText returned reserved font name '%s'; using settings-based font resolution instead", fontName.utf8().data());
+            LOG_WITH_STREAM(Fonts, stream << "CoreText returned reserved font name '"_s << fontName << "'; using settings-based font resolution instead"_s);
             return false;
         }
         return true;

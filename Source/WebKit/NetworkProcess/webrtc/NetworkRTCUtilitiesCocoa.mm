@@ -55,7 +55,7 @@ void setNWParametersApplicationIdentifiers(nw_parameters_t parameters, const cha
         nw_parameters_set_source_application(parameters, *sourceApplicationAuditToken);
 
     if (!attributedBundleIdentifier.isEmpty() && nw_parameters_set_attributed_bundle_identifierPtr())
-        nw_parameters_set_attributed_bundle_identifierPtr()(parameters, attributedBundleIdentifier.utf8().data());
+        nw_parameters_set_attributed_bundle_identifierPtr()(parameters, attributedBundleIdentifier.utf8().legacyCStringPointer());
 }
 
 void setNWParametersTrackerOptions(nw_parameters_t parameters, bool shouldBypassRelay, bool isFirstParty, bool isKnownTracker)

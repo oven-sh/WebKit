@@ -96,6 +96,10 @@ void BackgroundPainter::paintBackground(const LayoutRect& paintRect, BleedAvoida
     auto compositeOp = document().compositeOperatorForBackgroundColor(backgroundColor, m_renderer);
 
     paintFillLayers(backgroundColor, m_renderer.style().backgroundLayers(), m_renderer.style().usedZoomForLength(), paintRect, bleedAvoidance, compositeOp);
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorModeController::paintSurfaceHairlineIfNecessary(m_paintInfo.context(), document(), m_renderer, paintRect);
+#endif
 }
 
 void BackgroundPainter::paintRootBoxFillLayers() const
@@ -198,7 +202,7 @@ static void applyBoxShadowForBackground(GraphicsContext& context, const Style::C
             },
             shadow.blur.resolveZoom(zoomFactor),
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-            axCustomColorModeShadowColor(colorResolver, style, shadow.color),
+            AXCustomColorModeController::shadowColor(colorResolver, style, shadow),
 #else
             colorResolver.colorResolvingCurrentColorApplyingColorFilter(shadow.color),
 #endif
@@ -552,14 +556,6 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                     return m_renderer.imageOrientation();
             }();
 
-            RefPtr imageToDraw = image;
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-            if constexpr (std::same_as<Layer, Style::BackgroundLayer>) {
-                if (RefPtr adjusted = axCustomColorModeAdjustedBackgroundImage(context, document(), bgImage->cachedImage(), *image, geometry.tileSize, orientation))
-                    imageToDraw = WTF::move(adjusted);
-            }
-#endif
-
             ImagePaintingOptions options = {
                 op == CompositeOperator::SourceOver ? layer.layer.compositeForPainting(layer.isLast) : op,
                 layerBlendMode,
@@ -573,7 +569,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                 style.dynamicRangeLimit().toPlatformDynamicRangeLimit()
             };
 
-            auto drawResult = context.drawTiledImage(*imageToDraw, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options);
+            auto drawResult = context.drawTiledImage(*image, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options);
             if (drawResult == ImageDrawResult::DidRequestDecoding) {
                 ASSERT(bgImage->hasCachedImage());
                 protect(bgImage->cachedImage())->addClientWaitingForAsyncDecoding(protect(m_renderer)->cachedImageClient());
@@ -954,7 +950,7 @@ void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const Style:
 
         Style::ColorResolver colorResolver { style };
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-        auto shadowColor = axCustomColorModeShadowColor(colorResolver, style, shadow.color);
+        auto shadowColor = AXCustomColorModeController::shadowColor(colorResolver, style, shadow);
 #else
         auto shadowColor = colorResolver.colorResolvingCurrentColorApplyingColorFilter(shadow.color);
 #endif

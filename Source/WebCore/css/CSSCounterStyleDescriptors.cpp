@@ -32,6 +32,7 @@
 #include "CSSMarkup.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSStringValue.h"
+#include "CSSValueKeywords.h"
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
 #include "StylePrimitiveNumericTypes+DeprecatedCSSValueConversion.h"
@@ -287,25 +288,54 @@ CSSCounterStyleDescriptors CSSCounterStyleDescriptors::create(AtomString name, c
     return descriptors;
 }
 
-bool CSSCounterStyleDescriptors::areSymbolsValidForSystem(CSSCounterStyleDescriptors::System system, const Vector<CSSCounterStyleDescriptors::Symbol>& symbols, const CSSCounterStyleDescriptors::AdditiveSymbols& additiveSymbols)
+CSSCounterStyleDescriptors CSSCounterStyleDescriptors::createForSymbolsFunction(System system, Vector<Symbol>&& symbols)
+{
+    // https://drafts.csswg.org/css-counter-styles-3/#funcdef-symbols
+    // Defines an anonymous counter style with no name, a prefix of "" (empty string) and suffix of " "
+    // (U+0020 SPACE), a range of auto, a fallback of decimal, a negative of "\2D" ("-" hyphen-minus),
+    // a pad of 0 "", and a speak-as of auto.
+    return {
+        .m_name = { },
+        .m_system = system,
+        .m_negativeSymbols = { },
+        .m_prefix = { },
+        .m_suffix = { false, " "_s },
+        .m_ranges = { },
+        .m_pad = { },
+        .m_fallbackName = "decimal"_s,
+        .m_symbols = WTF::move(symbols),
+        .m_additiveSymbols = { },
+        .m_speakAs = SpeakAs::Auto,
+        .m_extendsName = { },
+        .m_fixedSystemFirstSymbolValue = 1,
+        .m_explicitlySetDescriptors = { },
+    };
+}
+
+bool CSSCounterStyleDescriptors::areSymbolsValidForSystem(CSSCounterStyleDescriptors::System system, size_t symbolsCount, size_t additiveSymbolsCount)
 {
     switch (system) {
     case System::Cyclic:
     case System::Fixed:
     case System::Symbolic:
-        return symbols.size();
+        return symbolsCount;
     case System::Alphabetic:
     case System::Numeric:
-        return symbols.size() >= 2u;
+        return symbolsCount >= 2u;
     case System::Additive:
-        return additiveSymbols.size();
+        return additiveSymbolsCount;
     case System::SimplifiedChineseInformal:
     case System::SimplifiedChineseFormal:
     case System::TraditionalChineseInformal:
     case System::TraditionalChineseFormal:
+    case System::JapaneseInformal:
+    case System::JapaneseFormal:
+    case System::KoreanHangulFormal:
+    case System::KoreanHanjaInformal:
+    case System::KoreanHanjaFormal:
     case System::EthiopicNumeric:
     case System::Extends:
-        return !symbols.size() && !additiveSymbols.size();
+        return !symbolsCount && !additiveSymbolsCount;
     case System::DisclosureClosed:
     case System::DisclosureOpen:
         return true;
@@ -317,7 +347,7 @@ bool CSSCounterStyleDescriptors::areSymbolsValidForSystem(CSSCounterStyleDescrip
 
 bool CSSCounterStyleDescriptors::isValid() const
 {
-    return areSymbolsValidForSystem(m_system, m_symbols, m_additiveSymbols);
+    return areSymbolsValidForSystem(m_system, m_symbols.size(), m_additiveSymbols.size());
 }
 
 void CSSCounterStyleDescriptors::setName(CSSCounterStyleDescriptors::Name name)
@@ -385,7 +415,7 @@ void CSSCounterStyleDescriptors::setFallbackName(CSSCounterStyleDescriptors::Nam
 
 void CSSCounterStyleDescriptors::setSymbols(Vector<CSSCounterStyleDescriptors::Symbol> symbols)
 {
-    if (m_symbols == symbols || !areSymbolsValidForSystem(m_system, symbols, m_additiveSymbols))
+    if (m_symbols == symbols || !areSymbolsValidForSystem(m_system, symbols.size(), m_additiveSymbols.size()))
         return;
     m_symbols = WTF::move(symbols);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::Symbols, true);
@@ -393,7 +423,7 @@ void CSSCounterStyleDescriptors::setSymbols(Vector<CSSCounterStyleDescriptors::S
 
 void CSSCounterStyleDescriptors::setAdditiveSymbols(CSSCounterStyleDescriptors::AdditiveSymbols additiveSymbols)
 {
-    if (m_additiveSymbols == additiveSymbols || !areSymbolsValidForSystem(m_system, m_symbols, additiveSymbols))
+    if (m_additiveSymbols == additiveSymbols || !areSymbolsValidForSystem(m_system, m_symbols.size(), additiveSymbols.size()))
         return;
     m_additiveSymbols = WTF::move(additiveSymbols);
     m_explicitlySetDescriptors.set(ExplicitlySetDescriptors::AdditiveSymbols, true);
@@ -449,6 +479,11 @@ String CSSCounterStyleDescriptors::systemCSSText() const
     case System::SimplifiedChineseFormal:
     case System::TraditionalChineseInformal:
     case System::TraditionalChineseFormal:
+    case System::JapaneseInformal:
+    case System::JapaneseFormal:
+    case System::KoreanHangulFormal:
+    case System::KoreanHanjaInformal:
+    case System::KoreanHanjaFormal:
     case System::EthiopicNumeric:
     case System::DisclosureClosed:
     case System::DisclosureOpen:
@@ -550,4 +585,5 @@ String CSSCounterStyleDescriptors::additiveSymbolsCSSText() const
     }
     return builder.toString();
 }
+
 } // namespace WebCore

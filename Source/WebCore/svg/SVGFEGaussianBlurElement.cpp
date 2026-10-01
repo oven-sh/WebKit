@@ -140,6 +140,9 @@ bool SVGFEGaussianBlurElement::isIdentity() const
 
 IntOutsets SVGFEGaussianBlurElement::outsets(const FloatRect& targetBoundingBox, SVGUnitTypes::SVGUnitType primitiveUnits) const
 {
+    if (stdDeviationX() < 0 || stdDeviationY() < 0)
+        return { };
+
     auto stdDeviation = SVGFilterRenderer::calculateResolvedSize({ stdDeviationX(), stdDeviationY() }, targetBoundingBox, primitiveUnits);
     return FEGaussianBlur::calculateOutsets(stdDeviation);
 }

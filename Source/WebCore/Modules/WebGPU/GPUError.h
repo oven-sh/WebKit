@@ -25,13 +25,30 @@
 
 #pragma once
 
-#include "GPUInternalError.h"
-#include "GPUOutOfMemoryError.h"
-#include "GPUValidationError.h"
-#include <wtf/RefPtr.h>
+#include <wtf/RefCounted.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
-using GPUError = Variant<Ref<GPUOutOfMemoryError>, Ref<GPUValidationError>, Ref<GPUInternalError>>;
+// https://gpuweb.github.io/gpuweb/#gpuerror
+// The base class the three concrete error types inherit from, so that a page which patches
+// GPUError.prototype affects all of them.
+class GPUError : public RefCounted<GPUError> {
+public:
+    // Lets the bindings pick the concrete wrapper for an error only known as a GPUError.
+    enum class Type : uint8_t {
+        OutOfMemory,
+        Validation,
+        Internal,
+    };
+
+    virtual ~GPUError() = default;
+
+    virtual Type type() const = 0;
+    virtual const String& message() const LIFETIME_BOUND = 0;
+
+protected:
+    GPUError() = default;
+};
 
 }

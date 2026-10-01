@@ -337,8 +337,8 @@ bool GStreamerInternalVideoEncoder::encode(VideoEncoder::RawFrame&& rawFrame, bo
     auto orientation = makeString(gstVideoFrame.isMirrored() ? "flip-"_s : ""_s, "rotate-"_s, gstVideoFrame.rotation());
     if (orientation != m_orientation) {
         auto orientationCString = orientation.utf8();
-        GST_DEBUG_OBJECT(m_harness->element(), "New orientation: %s", orientationCString.data());
-        GRefPtr tags = adoptGRef(gst_tag_list_new(GST_TAG_IMAGE_ORIENTATION, orientationCString.data(), nullptr));
+        GST_DEBUG_OBJECT(m_harness->element(), "New orientation: %s", orientationCString.legacyCStringPointer());
+        GRefPtr tags = adoptGRef(gst_tag_list_new(GST_TAG_IMAGE_ORIENTATION, orientationCString.legacyCStringPointer(), nullptr));
         GRefPtr event = adoptGRef(gst_event_new_tag(tags.leakRef()));
         m_harness->storeStickyEvent(event);
         m_orientation = WTF::move(orientation);

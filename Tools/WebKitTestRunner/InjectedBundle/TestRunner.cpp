@@ -34,6 +34,7 @@
 #include "PlatformWebView.h"
 #include "TestController.h"
 #include <JavaScriptCore/JSCTestRunnerUtils.h>
+#include <JavaScriptCore/JSStringRefCPP.h>
 #include <WebCore/ResourceLoadObserver.h>
 #include <WebKit/WKBase.h>
 #include <WebKit/WKBundle.h>
@@ -219,7 +220,7 @@ void TestRunner::waitUntilDone()
         [[maybe_unused]] WTF::String testURL = "(unknown test)"_s;
         if (WKURLRef url = m_testURL.get())
             testURL = toWTFString(adoptWK(WKURLCopyString(url)));
-        LOG_ERROR("(%s) testRunner.waitUntilDone() called after test has terminated. Possibly an async handler was not awaited.", testURL.utf8().data());
+        LOG_ERROR("(%s) testRunner.waitUntilDone() called after test has terminated. Possibly an async handler was not awaited.", testURL.utf8());
         return;
     }
 
@@ -481,6 +482,12 @@ void TestRunner::closeWebInspector()
     WKBundlePageCloseInspectorForTest(page());
 }
 
+void TestRunner::disconnectFrameInspectorTarget(JSContextRef context)
+{
+    // Synchronous so that the disconnect lands before this returns, while breakpoint evaluation is still running.
+    postSynchronousPageMessage("DisconnectFrameInspectorTarget", adoptWK(WKBundleFrameCreateFrameHandle(WKBundleFrameForJavaScriptContext(context))));
+}
+
 void TestRunner::evaluateInWebInspector(JSStringRef script)
 {
     WKBundlePageEvaluateScriptInInspectorForTest(page(), toWK(script).get());
@@ -526,9 +533,7 @@ void TestRunner::evaluateScriptInIsolatedWorld(JSContextRef context, unsigned wo
 
 void TestRunner::setPOSIXLocale(JSStringRef locale)
 {
-    char localeBuf[32];
-    JSStringGetUTF8CString(locale, localeBuf, sizeof(localeBuf));
-    setlocale(LC_ALL, localeBuf);
+    setlocale(LC_ALL, utf8CString(locale).legacyCStringPointer());
 }
 
 void TestRunner::setTextDirection(JSContextRef context, JSStringRef direction)
@@ -1521,13 +1526,13 @@ void TestRunner::simulatePrivateClickMeasurementSessionRestart()
 void TestRunner::setPrivateClickMeasurementTokenPublicKeyURLForTesting(JSStringRef urlString)
 {
     postSynchronousPageMessage("SetPrivateClickMeasurementTokenPublicKeyURLForTesting",
-        adoptWK(WKURLCreateWithUTF8CString(toWTFString(urlString).utf8().data())));
+        adoptWK(WKURLCreateWithUTF8CString(toWTFString(urlString).utf8().legacyCStringPointer())));
 }
 
 void TestRunner::setPrivateClickMeasurementTokenSignatureURLForTesting(JSStringRef urlString)
 {
     postSynchronousPageMessage("SetPrivateClickMeasurementTokenSignatureURLForTesting",
-        adoptWK(WKURLCreateWithUTF8CString(toWTFString(urlString).utf8().data())));
+        adoptWK(WKURLCreateWithUTF8CString(toWTFString(urlString).utf8().legacyCStringPointer())));
 }
 
 void TestRunner::setPrivateClickMeasurementAttributionReportURLsForTesting(JSStringRef sourceURLString, JSStringRef destinationURLString)

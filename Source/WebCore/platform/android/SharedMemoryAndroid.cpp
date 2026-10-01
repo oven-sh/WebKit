@@ -76,7 +76,7 @@ static inline int accessModeMMap(SharedMemory::Protection protection)
 static UnixFileDescriptor createSharedMemory(size_t size)
 {
     const auto name = makeString("/WK2SharedMemory."_s, cryptographicallyRandomNumber<unsigned>());
-    int fileDescriptor = ASharedMemory_create(name.utf8().data(), size);
+    int fileDescriptor = ASharedMemory_create(name.utf8().legacyCStringPointer(), size);
     return UnixFileDescriptor { fileDescriptor, UnixFileDescriptor::Adopt };
 }
 
@@ -84,12 +84,12 @@ RefPtr<SharedMemory> SharedMemory::allocate(size_t size)
 {
     auto fileDescriptor = createSharedMemory(size);
     if (!fileDescriptor) {
-        WTFLogAlways("Failed to create shared memory: %s", safeStrerror(errno).data());
+        SAFE_WTFLOGALWAYS("Failed to create shared memory: %s", safeStrerror(errno));
         return nullptr;
     }
 
     if (ASharedMemory_setProt(fileDescriptor.value(), PROT_READ | PROT_WRITE) == -1) {
-        WTFLogAlways("Failed to set ASharedMemory protection: %s", safeStrerror(errno).data());
+        SAFE_WTFLOGALWAYS("Failed to set ASharedMemory protection: %s", safeStrerror(errno));
         return nullptr;
     }
 

@@ -152,7 +152,7 @@ bool SourceBufferPrivateGStreamer::canSwitchToType(const ContentType& type)
 
     if (isContentTypeSupported(type)) {
         if (player)
-            GST_INFO_OBJECT(player->pipeline(), "type change %s -> %s", m_type.raw().utf8().data(), type.raw().utf8().data());
+            GST_INFO_OBJECT(player->pipeline(), "type change %s -> %s", m_type.raw().utf8().legacyCStringPointer(), type.raw().utf8().legacyCStringPointer());
         m_type = type;
 
         return true;
@@ -230,7 +230,7 @@ void SourceBufferPrivateGStreamer::enqueueSample(Ref<MediaSample>&& sample, Trac
 
         if (mappedBuffer) [[likely]] {
             auto message = makeString("Text sample (trackId="_s, trackId, ')');
-            GST_MEMDUMP_OBJECT(player->pipeline(), message.utf8().data(), mappedBuffer.data(), mappedBuffer.size());
+            GST_MEMDUMP_OBJECT(player->pipeline(), message.utf8().legacyCStringPointer(), mappedBuffer.data(), mappedBuffer.size());
         }
     }
 #endif

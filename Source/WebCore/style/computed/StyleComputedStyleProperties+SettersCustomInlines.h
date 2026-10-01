@@ -302,7 +302,7 @@ inline void ComputedStyleProperties::setFontVariantPosition(FontVariantPosition 
 inline void ComputedStyleProperties::setLocale(WebkitLocale value)
 {
     auto description = fontDescription();
-    description.setSpecifiedLocale(value.takePlatform());
+    description.setComputedLocale(value.takePlatform());
     setFontDescription(WTF::move(description));
 }
 

@@ -443,6 +443,7 @@ TEST(WKWebViewEditActions, CopyMenuItemDisabledInCopyDisallowedPDF)
 {
     validateCopyMenuItem(configurationForWebViewTestingUnifiedPDF(), ^(TestWKWebView *webView) {
         RetainPtr request = [NSURLRequest requestWithURL:[NSBundle.test_resourcesBundle URLForResource:@"copying-disabled" withExtension:@"pdf"]];
+        [webView synchronouslyLoadRequest:request];
         [webView waitForNextPresentationUpdate];
         [[webView window] makeFirstResponder:webView];
         [[webView window] makeKeyAndOrderFront:nil];

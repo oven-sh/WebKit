@@ -227,7 +227,7 @@ public:
     void setFontDescriptionFontSynthesisWeight(FontSynthesisLonghandValue);
     void setFontDescriptionKerning(Kerning);
     void setFontDescriptionOpticalSizing(FontOpticalSizing);
-    void setFontDescriptionSpecifiedLocale(WebkitLocale&&);
+    void setFontDescriptionLocale(WebkitLocale&&);
     void setFontDescriptionTextAutospace(TextAutospace);
     void setFontDescriptionTextRenderingMode(TextRenderingMode);
     void setFontDescriptionTextSpacingTrim(TextSpacingTrim);

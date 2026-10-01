@@ -36,6 +36,7 @@
 #include <WebCore/GlobalFrameIdentifier.h>
 #include <WebCore/LayoutPoint.h>
 #include <WebCore/NavigationRequester.h>
+#include <WebCore/PendingNavigateEventIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOrigin.h>
@@ -125,8 +126,32 @@ public:
     std::optional<NavigationNavigationType> navigationAPIType() const { return m_navigationAPIType; }
     void setNavigationAPIType(NavigationNavigationType navigationAPIType) { m_navigationAPIType = navigationAPIType; }
 
-    void setPendingDispatchNavigateEvent(std::function<bool()>&& function) { m_pendingDispatchNavigateEvent = WTF::move(function); }
-    std::function<bool()> takePendingDispatchNavigateEvent() { return std::exchange(m_pendingDispatchNavigateEvent, nullptr); }
+    // The NavigationHistoryBehavior which m_navigationAPIType was resolved from, so that a process taking
+    // over this navigation can resolve the navigation API type the same way.
+    WEBCORE_EXPORT NavigationHistoryBehavior navigationHistoryBehavior() const;
+
+    void setPendingDispatchNavigateEvent(std::function<bool()>&& function)
+    {
+        m_pendingDispatchNavigateEvent = PendingNavigateEvent { PendingNavigateEventIdentifier::generate(), WTF::move(function) };
+    }
+
+    Markable<PendingNavigateEventIdentifier> pendingDispatchNavigateEventIdentifier() const
+    {
+        return m_pendingDispatchNavigateEvent ? Markable { m_pendingDispatchNavigateEvent->identifier } : std::nullopt;
+    }
+
+    std::function<bool()> takePendingDispatchNavigateEvent(PendingNavigateEventIdentifier identifier)
+    {
+        if (!m_pendingDispatchNavigateEvent || m_pendingDispatchNavigateEvent->identifier != identifier)
+            return nullptr;
+        return takePendingDispatchNavigateEvent();
+    }
+
+    std::function<bool()> takePendingDispatchNavigateEvent()
+    {
+        auto pendingDispatchNavigateEvent = std::exchange(m_pendingDispatchNavigateEvent, std::nullopt);
+        return pendingDispatchNavigateEvent ? WTF::move(pendingDispatchNavigateEvent->dispatch) : nullptr;
+    }
 
     // Whether UIProcess has already made the policy decision for this navigation.
     PolicyAlreadyDecided policyAlreadyDecided() const { return m_policyAlreadyDecided; }
@@ -142,7 +167,12 @@ private:
     RefPtr<UserGestureToken> m_userGestureToken { UserGestureIndicator::currentUserGesture() };
     std::optional<BackForwardItemIdentifier> m_sourceBackForwardItemIdentifier;
     std::optional<PrivateClickMeasurement> m_privateClickMeasurement;
-    std::function<bool()> m_pendingDispatchNavigateEvent;
+
+    struct PendingNavigateEvent {
+        PendingNavigateEventIdentifier identifier;
+        std::function<bool()> dispatch;
+    };
+    std::optional<PendingNavigateEvent> m_pendingDispatchNavigateEvent;
 
     NavigationType m_type { NavigationType::Other };
     std::optional<NavigationNavigationType> m_navigationAPIType;

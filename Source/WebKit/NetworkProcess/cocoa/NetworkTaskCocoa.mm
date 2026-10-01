@@ -39,6 +39,7 @@
 #import <wtf/ProcessPrivilege.h>
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/text/MakeString.h>
+#import <wtf/text/TextStream.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -84,8 +85,6 @@ NSHTTPCookieStorage *NetworkTaskCocoa::statelessCookieStorage()
 
 NSString *NetworkTaskCocoa::lastRemoteIPAddress(NSURLSessionTask *task)
 {
-    // FIXME (246428): In a future patch, this should adopt CFNetwork API that retrieves the original
-    // IP address of the proxied response, rather than the proxy itself.
     return task._incompleteTaskMetrics.transactionMetrics.lastObject.remoteAddress;
 }
 
@@ -320,7 +319,7 @@ WebCore::ThirdPartyCookieBlockingDecision NetworkTaskCocoa::requestThirdPartyCoo
     auto thirdPartyCookieBlockingDecision = storedCredentialsPolicy() == WebCore::StoredCredentialsPolicy::EphemeralStateless ? WebCore::ThirdPartyCookieBlockingDecision::All : WebCore::ThirdPartyCookieBlockingDecision::None;
     if (CheckedPtr networkStorageSession = protect(m_networkSession)->networkStorageSession()) {
         if (!NetworkStorageSession::shouldBlockCookies(thirdPartyCookieBlockingDecision))
-            thirdPartyCookieBlockingDecision = networkStorageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID(), pageID(), shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request), isInitiatedByDedicatedWorker(), navigationLosesFrameSpecificStorageAccess());
+            thirdPartyCookieBlockingDecision = networkStorageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID(), webPageProxyID(), shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request), isInitiatedByDedicatedWorker(), navigationLosesFrameSpecificStorageAccess());
     }
 
     return thirdPartyCookieBlockingDecision;
@@ -374,22 +373,16 @@ void NetworkTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&& re
         if (NetworkStorageSession::shouldBlockCookies(thirdPartyCookieBlockingDecision))
             blockCookies();
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES) && defined(CFN_COOKIE_ACCEPTS_POLICY_PARTITION) && CFN_COOKIE_ACCEPTS_POLICY_PARTITION
-        else {
-            RetainPtr<NSMutableURLRequest> mutableRequest = adoptNS([request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody) mutableCopy]);
-            if (isOptInCookiePartitioningEnabled() && [mutableRequest respondsToSelector:@selector(_setAllowOnlyPartitionedCookies:)]) {
-                auto shouldAllowOnlyPartitioned = thirdPartyCookieBlockingDecision == WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned ? YES : NO;
-                [mutableRequest _setAllowOnlyPartitionedCookies:shouldAllowOnlyPartitioned];
-                request = mutableRequest.get();
-            }
-        }
+        else if (isOptInCookiePartitioningEnabled())
+            shouldAllowOnlyPartitionedCookies(request);
 #endif
     } else if (storedCredentialsPolicy() != WebCore::StoredCredentialsPolicy::EphemeralStateless && needsFirstPartyCookieBlockingLatchModeQuirk(request.firstPartyForCookies(), request.url(), redirectResponse.url()))
         unblockCookies();
 #if !RELEASE_LOG_DISABLED
     if (protect(m_networkSession)->shouldLogCookieInformation())
-        RELEASE_LOG_IF(isAlwaysOnLoggingAllowed(), Network, "%p - NetworkTaskCocoa::willPerformHTTPRedirection::logCookieInformation: pageID=%" PRIu64 ", frameID=%" PRIu64 ", taskID=%lu: %s cookies for redirect URL %s", this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8().data());
+        RELEASE_LOG_IF(isAlwaysOnLoggingAllowed(), Network, "%p - NetworkTaskCocoa::willPerformHTTPRedirection::logCookieInformation: pageID=%" PRIu64 ", frameID=%" PRIu64 ", taskID=%lu: %s cookies for redirect URL %s", this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8());
 #else
-    LOG(NetworkSession, "%lu %s cookies for redirect URL %s", (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8().data());
+    LOG_WITH_STREAM(NetworkSession, stream << (unsigned long)[task() taskIdentifier] << " "_s << (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking") << " cookies for redirect URL "_s << request.url().string());
 #endif
 
     updateTaskWithFirstPartyForSameSiteCookies(protect(task()).get(), request);
@@ -398,6 +391,15 @@ void NetworkTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&& re
 #endif
     completionHandler(WTF::move(request));
 }
+
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+bool NetworkTaskCocoa::shouldAllowOnlyPartitionedCookies(const WebCore::ResourceRequest& request)
+{
+    if (requestThirdPartyCookieBlockingDecision(request) == WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned)
+        m_hasBeenSetToAllowOnlyPartitionedCookies = true;
+    return m_hasBeenSetToAllowOnlyPartitionedCookies;
+}
+#endif
 
 ShouldRelaxThirdPartyCookieBlocking NetworkTaskCocoa::shouldRelaxThirdPartyCookieBlocking() const
 {

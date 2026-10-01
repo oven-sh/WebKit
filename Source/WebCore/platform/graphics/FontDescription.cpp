@@ -103,12 +103,12 @@ static const AtomString& specializedChineseLocale()
     return locale;
 }
 
-void FontDescription::setSpecifiedLocale(const AtomString& locale)
+void FontDescription::setComputedLocale(const AtomString& computedLocale)
 {
     ASSERT(isMainThread());
-    m_specifiedLocale = locale;
-    m_script = localeToScriptCode(m_specifiedLocale);
-    m_usedLocale = m_script == USCRIPT_HAN ? specializedChineseLocale() : m_specifiedLocale;
+    m_computedLocale = computedLocale;
+    m_script = localeToScriptCode(m_computedLocale);
+    m_usedLocale = m_script == USCRIPT_HAN ? specializedChineseLocale() : m_computedLocale;
 }
 
 #if !PLATFORM(COCOA)

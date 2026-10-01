@@ -988,7 +988,7 @@ static BOOL _PDFSelectionsAreEqual(PDFSelection *selectionA, PDFSelection *selec
     }
 
     // Call to the frame loader because this is where our security checks are made.
-    auto* frame = core([dataSource webFrame]);
+    RefPtr frame = core([dataSource webFrame]);
     WebCore::FrameLoadRequest frameLoadRequest { *frame->document(), frame->document()->securityOrigin(), { URL }, { }, WebCore::InitiatedByMainFrame::Unknown };
     frameLoadRequest.setReferrerPolicy(WebCore::ReferrerPolicy::NoReferrer);
     frame->loader().loadFrameRequest(WTF::move(frameLoadRequest), event.get(), nullptr);
@@ -1291,14 +1291,14 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     
     path = [temporaryPDFDirectoryPath stringByAppendingPathComponent:filename];
     if ([manager fileExistsAtPath:path]) {
-        auto [fileHandle, pathTemplateRepresentation] = FileSystem::createTemporaryFileInDirectory(temporaryPDFDirectoryPath, makeString('-', filename));
+        auto [fileHandle, temporaryFilePath] = FileSystem::createTemporaryFileInDirectory(temporaryPDFDirectoryPath, makeString('-', filename));
         if (!fileHandle) {
             // Couldn't create a temporary file! Should never happen; if it does we'll fail silently on non-debug builds.
             ASSERT_NOT_REACHED();
             path = nil;
         } else {
             fileHandle = { };
-            path = [manager stringWithFileSystemRepresentation:pathTemplateRepresentation.data() length:pathTemplateRepresentation.length()];
+            path = temporaryFilePath.createNSString().autorelease();
         }
     }
     

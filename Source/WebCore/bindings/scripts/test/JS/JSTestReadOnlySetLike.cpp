@@ -348,7 +348,7 @@ static inline void verifyVTable(TestReadOnlySetLike* ptr)
         // TestReadOnlySetLike has subclasses. If TestReadOnlySetLike has subclasses that get passed
         // to toJS() we currently require TestReadOnlySetLike you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif

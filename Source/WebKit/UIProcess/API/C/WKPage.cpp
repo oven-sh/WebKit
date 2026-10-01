@@ -91,6 +91,7 @@
 #include "WebOpenPanelResultListenerProxy.h"
 #include "WebPageDiagnosticLoggingClient.h"
 #include "WebPageGroup.h"
+#include "WebPageInspectorController.h"
 #include "WebPageMessages.h"
 #include "WebPageProxy.h"
 #include "WebPageProxyTesting.h"
@@ -1979,10 +1980,10 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
             m_client.setWindowFrame(toAPI(&page), toAPI(frame), m_client.base.clientInfo);
         }
 
-        void windowFrame(WebPageProxy& page, Function<void(WebCore::FloatRect)>&& completionHandler) final
+        void windowFrame(WebPageProxy& page, Function<void(std::optional<WebCore::FloatRect>)>&& completionHandler) final
         {
             if (!m_client.getWindowFrame)
-                return completionHandler({ });
+                return completionHandler(std::nullopt);
 
             completionHandler(toFloatRect(m_client.getWindowFrame(toAPI(&page), m_client.base.clientInfo)));
         }
@@ -3022,6 +3023,18 @@ void WKPageShowWebInspectorForTesting(WKPageRef pageRef)
     RefPtr<WebInspectorUIProxy> inspector = toImpl(pageRef)->inspector();
     inspector->markAsUnderTest();
     inspector->show();
+}
+
+void WKPageDisconnectInspectorFrameTargetForTesting(WKPageRef pageRef, WKFrameHandleRef frameHandleRef)
+{
+    if (!frameHandleRef)
+        return;
+
+    auto frameID = toImpl(frameHandleRef)->frameID();
+    if (!frameID)
+        return;
+
+    protect(toImpl(pageRef))->inspectorController().disconnectFrameTargetForTesting(*frameID);
 }
 
 void WKPageSetMediaVolume(WKPageRef pageRef, float volume)

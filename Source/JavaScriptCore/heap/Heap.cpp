@@ -126,6 +126,7 @@
 #include <wtf/SetForScope.h>
 #include <wtf/SimpleStats.h>
 #include <wtf/SpinBackoff.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
@@ -345,7 +346,7 @@ private:
     , name ISO_SUBSPACE_INIT(*this, heapCellType, type)
 
 #define INIT_SERVER_STRUCTURE_ISO_SUBSPACE(name, heapCellType, type) \
-    , name(#name, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, makeUnique<StructureAlignedMemoryAllocator>())
+    , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
 
 Heap::Heap(VM& vm, HeapType heapType)
     : m_heapType(heapType)
@@ -437,6 +438,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     // AlignedMemoryAllocators
     , fastMallocAllocator(makeUnique<FastMallocAlignedMemoryAllocator>())
     , primitiveGigacageAllocator(makeUnique<GigacageAlignedMemoryAllocator>(Gigacage::Primitive))
+    , structureAllocator(makeUnique<StructureAlignedMemoryAllocator>())
 
     // Subspaces
     , primitiveGigacageAuxiliarySpace("Primitive Gigacage Auxiliary"_s, *this, auxiliaryHeapCellType, primitiveGigacageAllocator.get()) // Hash:0x3e7cd762
@@ -460,7 +462,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     m_worldState.store(0);
 
     for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
-        std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toCString("P", i + 1));
+        std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
         if (Options::optimizeParallelSlotVisitorsForStoppedMutator())
             visitor->optimizeForStoppedMutator();
         m_availableParallelSlotVisitors.append(visitor.get());
@@ -506,8 +508,10 @@ Heap::~Heap()
     m_mutatorMarkStack->clear();
     m_raceMarkStack->clear();
     
-    for (WeakBlock* block : m_logicallyEmptyWeakBlocks)
+    while (WeakBlock* block = m_detachedWeakBlocks.removeHead())
         WeakBlock::destroy(*this, block);
+    destroyAllPooledWeakBlocks();
+    ASSERT(!m_weakBlockCount);
 }
 
 void Heap::dumpHeapStatisticsAtVMDestruction()
@@ -617,10 +621,8 @@ void Heap::lastChanceToFinalize()
     Wasm::TypeInformation::cleanupIfRequested();
 #endif
 
-    sweepAllLogicallyEmptyWeakBlocks();
-    
     m_objectSpace.freeMemory();
-    
+
     dataLogIf(Options::logGC(), (MonotonicTime::now() - before).milliseconds(), "ms]\n");
 }
 
@@ -1440,6 +1442,7 @@ void Heap::sweepSynchronously()
     }
     m_objectSpace.sweepBlocks();
     m_objectSpace.shrink();
+    destroyAllPooledWeakBlocks();
 #if ENABLE(WEBASSEMBLY)
     Wasm::TypeInformation::cleanupIfRequested();
 #endif
@@ -1918,8 +1921,6 @@ void Heap::collectNow(Synchronousness synchronousness, GCRequest request)
             dataLogIf(Options::logGC(), "]\n");
         }
         m_objectSpace.assertNoUnswept();
-        
-        sweepAllLogicallyEmptyWeakBlocks();
         return;
     } }
     RELEASE_ASSERT_NOT_REACHED();
@@ -2120,8 +2121,8 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
     if (Options::useGCSignpost()) [[unlikely]] {
         StringPrintStream stream;
         stream.print("GC:(", RawPointer(this), "),mode:(", (isFullGC ? "Full" : "Eden"), "),version:(", m_gcVersion, "),conn:(", gcConductorShortName(conn), "),capacity(", capacity() / 1024, "kb)");
-        m_signpostMessage = stream.toCString();
-        WTFBeginSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.data() ? m_signpostMessage.data() : "(nullptr)");
+        m_signpostMessage = stream.toUTF8CString();
+        WTFBeginSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.isNull() ? "(nullptr)"_s : m_signpostMessage);
     }
 
     prepareForMarking();
@@ -2204,21 +2205,14 @@ NEVER_INLINE bool Heap::runFixpointPhase(GCConductor conn)
     SlotVisitor& visitor = *m_collectorSlotVisitor;
     
     if (Options::logGC()) [[unlikely]] {
-        UncheckedKeyHashMap<const char*, size_t> visitMap;
+        UncheckedKeyHashMap<ASCIICString, size_t> visitMap;
         forEachSlotVisitor(
             [&] (SlotVisitor& visitor) {
                 visitMap.add(visitor.codeName(), visitor.bytesVisited() / 1024);
             });
-        
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        auto perVisitorDump = sortedMapDump(
-            visitMap,
-            [] (const char* a, const char* b) -> bool {
-                return strcmp(a, b) < 0;
-            },
-            ":"_s, " "_s);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-        
+
+        auto perVisitorDump = sortedMapDump(visitMap, std::less<>(), ":"_s, " "_s);
+
         dataLog("v=", bytesVisited() / 1024, "kb (", perVisitorDump, ") o=", m_opaqueRoots.size(), " b=", m_barriersExecuted, " ");
     }
         
@@ -2375,7 +2369,7 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
 
         cancelDeferredWorkIfNeeded();
         reapWeakHandles();
-        pruneStaleEntriesFromWeakGCHashTables();
+        reconcileWeakGCHashTables();
         sweepArrayBuffers();
         snapshotUnswept();
         reconcileWeakReferencesAtGCEnd(); // Must precede clearCurrentlyExecuting: CodeBlock::reconcileWeakReferencesAtGCEnd queries which CodeBlocks are currently executing.
@@ -2385,8 +2379,8 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
             releaseUnusedSharedBaselineCode();
     }
 
-    notifyIncrementalSweeper();
-    
+    m_sweeper->startSweeping(*this);
+
     m_codeBlocks->iterateCurrentlyExecuting(
         [&] (CodeBlock* codeBlock) {
             writeBarrier(codeBlock);
@@ -2428,7 +2422,7 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
 
     dataLogLnIf(Options::logGC(), "GC END!");
     if (Options::useGCSignpost()) [[unlikely]] {
-        WTFEndSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.data() ? m_signpostMessage.data() : "(nullptr)");
+        WTFEndSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.isNull() ? "(nullptr)"_s : m_signpostMessage);
         m_signpostMessage = { };
     }
 
@@ -3084,12 +3078,24 @@ void Heap::reapWeakHandles()
     m_objectSpace.reapWeakSets();
 }
 
-void Heap::pruneStaleEntriesFromWeakGCHashTables()
+void Heap::reconcileWeakGCHashTables()
 {
-    if (!m_collectionScope || m_collectionScope.value() != CollectionScope::Full)
+    CollectionScope collectionScope = m_collectionScope.value_or(CollectionScope::Full);
+    if (collectionScope == CollectionScope::Full) {
+        for (auto* weakGCHashTable : m_weakGCHashTables)
+            weakGCHashTable->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
+        m_dirtyWeakGCHashTables.forEach([](WeakGCHashTable* weakGCHashTable) {
+            weakGCHashTable->remove();
+        });
         return;
-    for (auto* weakGCHashTable : m_weakGCHashTables)
-        weakGCHashTable->pruneStaleEntries();
+    }
+
+    // Only a table that gained an entry since the last collection can hold an entry that dies here:
+    // everything that survived that collection is old, and an eden collection cannot free it.
+    m_dirtyWeakGCHashTables.forEach([&](WeakGCHashTable* weakGCHashTable) {
+        weakGCHashTable->remove();
+        weakGCHashTable->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
+    });
 }
 
 void Heap::sweepArrayBuffers()
@@ -3107,16 +3113,6 @@ void Heap::deleteSourceProviderCaches()
 {
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full)
         vm().clearSourceProviderCaches();
-}
-
-void Heap::notifyIncrementalSweeper()
-{
-    if (m_collectionScope && m_collectionScope.value() == CollectionScope::Full) {
-        if (!m_logicallyEmptyWeakBlocks.isEmpty())
-            m_indexOfNextLogicallyEmptyWeakBlockToSweep = 0;
-    }
-
-    m_sweeper->startSweeping(*this);
 }
 
 void Heap::updateAllocationLimits()
@@ -3402,43 +3398,65 @@ bool Heap::shouldDoFullCollection()
     return *m_currentRequest.scope == CollectionScope::Full;
 }
 
-void Heap::addLogicallyEmptyWeakBlock(WeakBlock* block)
+void Heap::addDetachedWeakBlock(WeakBlock* block)
 {
     RELEASE_ASSERT(!block->next() && !block->prev());
-    m_logicallyEmptyWeakBlocks.append(block);
+    ASSERT(&block->heap() == this);
+    block->setDetached();
+    m_detachedWeakBlocks.append(block);
 }
 
-void Heap::sweepAllLogicallyEmptyWeakBlocks()
+void Heap::releaseDetachedWeakBlock(WeakBlock* block)
 {
-    if (m_logicallyEmptyWeakBlocks.isEmpty())
-        return;
-
-    m_indexOfNextLogicallyEmptyWeakBlockToSweep = 0;
-    while (sweepNextLogicallyEmptyWeakBlock()) { }
+    ASSERT(&block->heap() == this);
+    m_detachedWeakBlocks.remove(block);
+    returnWeakBlockToPool(block);
 }
 
-bool Heap::sweepNextLogicallyEmptyWeakBlock()
+void Heap::returnWeakBlockToPool(WeakBlock* block)
 {
-    if (m_indexOfNextLogicallyEmptyWeakBlockToSweep == WTF::notFound)
-        return false;
-
-    WeakBlock* block = m_logicallyEmptyWeakBlocks[m_indexOfNextLogicallyEmptyWeakBlockToSweep];
     RELEASE_ASSERT(!block->next() && !block->prev());
+    ASSERT(&block->heap() == this);
+    ASSERT(block->isEmpty());
 
-    block->sweep();
-    if (block->isEmpty()) {
-        std::swap(m_logicallyEmptyWeakBlocks[m_indexOfNextLogicallyEmptyWeakBlockToSweep], m_logicallyEmptyWeakBlocks.last());
-        m_logicallyEmptyWeakBlocks.removeLast();
+    if (m_pooledWeakBlockCount >= maxPooledWeakBlocks()) {
         WeakBlock::destroy(*this, block);
-    } else
-        m_indexOfNextLogicallyEmptyWeakBlockToSweep++;
-
-    if (m_indexOfNextLogicallyEmptyWeakBlockToSweep >= m_logicallyEmptyWeakBlocks.size()) {
-        m_indexOfNextLogicallyEmptyWeakBlockToSweep = WTF::notFound;
-        return false;
+        return;
     }
 
-    return true;
+    block->setPooled();
+    m_pooledWeakBlocks.push(block);
+    ++m_pooledWeakBlockCount;
+}
+
+unsigned Heap::maxPooledWeakBlocks()
+{
+    unsigned divisor = Options::weakBlockPoolDivisor();
+    if (!divisor)
+        return 0;
+
+    // One spare per divisor MarkedBlocks, so a bigger heap keeps a proportionally bigger cache.
+    // The floor covers a heap too small for the ratio to name anything; the ceiling keeps the
+    // cache from becoming a memory sink in its own right.
+    constexpr unsigned minPooledWeakBlocks = 8;
+    constexpr unsigned maxPooledWeakBlocksEver = 1024;
+    size_t pooled = m_objectSpace.capacity() / (MarkedBlock::blockSize * static_cast<size_t>(divisor));
+    return clampTo<unsigned>(pooled, minPooledWeakBlocks, maxPooledWeakBlocksEver);
+}
+
+WeakBlock* Heap::takeWeakBlockFromPool()
+{
+    WeakBlock* block = m_pooledWeakBlocks.removeHead();
+    if (block)
+        --m_pooledWeakBlockCount;
+    return block;
+}
+
+void Heap::destroyAllPooledWeakBlocks()
+{
+    while (WeakBlock* block = m_pooledWeakBlocks.removeHead())
+        WeakBlock::destroy(*this, block);
+    m_pooledWeakBlockCount = 0;
 }
 
 size_t Heap::visitCount()
@@ -3634,7 +3652,20 @@ void Heap::registerWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
 
 void Heap::unregisterWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
 {
+    if (weakGCHashTable->isOnList())
+        weakGCHashTable->remove();
     m_weakGCHashTables.remove(weakGCHashTable);
+}
+
+void Heap::addDirtyWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
+{
+    ASSERT(!weakGCHashTable->isOnList());
+    m_dirtyWeakGCHashTables.append(weakGCHashTable);
+}
+
+void WeakGCHashTable::addToDirtyList(VM& vm)
+{
+    vm.heap.addDirtyWeakGCHashTable(this);
 }
 
 void Heap::didAllocateBlock(size_t capacity)
@@ -3677,7 +3708,7 @@ static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) { }
 void Heap::addCoreConstraints()
 {
     m_constraintSet->add(
-        "Cs", "Conservative Scan",
+        "Cs"_s, "Conservative Scan"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this, lastVersion = static_cast<uint64_t>(0)] (auto& visitor) mutable {
             bool shouldNotProduceWork = lastVersion == m_phaseVersion;
             SuperSamplerScope superSamplerScope(false);
@@ -3727,7 +3758,7 @@ void Heap::addCoreConstraints()
         ConstraintVolatility::GreyedByExecution);
     
     m_constraintSet->add(
-        "Msr", "Misc Small Roots",
+        "Msr"_s, "Misc Small Roots"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             VM& vm = this->vm();
 #if JSC_OBJC_API_ENABLED
@@ -3775,7 +3806,7 @@ void Heap::addCoreConstraints()
         ConstraintVolatility::GreyedByExecution);
     
     m_constraintSet->add(
-        "Sh", "Strong Handles",
+        "Sh"_s, "Strong Handles"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongHandles);
             m_strongSet.visitAggregate(visitor);
@@ -3784,7 +3815,7 @@ void Heap::addCoreConstraints()
         ConstraintVolatility::GreyedByExecution);
     
     m_constraintSet->add(
-        "St", "Static Heap",
+        "St"_s, "Static Heap"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             // (An eden collection has the ones stored to since the last collection in the remembered set.)
             if (m_collectionScope && m_collectionScope.value() == CollectionScope::Eden)
@@ -3798,7 +3829,7 @@ void Heap::addCoreConstraints()
 
 #if ENABLE(FTL_JIT)
     m_constraintSet->add(
-        "Ao", "Instances of Statically Compiled Code",
+        "Ao"_s, "Instances of Statically Compiled Code"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
             bool onlyNew = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
@@ -3809,7 +3840,7 @@ void Heap::addCoreConstraints()
 #endif
 
     m_constraintSet->add(
-        "D", "Debugger",
+        "D"_s, "Debugger"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::Debugger);
 
@@ -3826,7 +3857,7 @@ void Heap::addCoreConstraints()
         ConstraintVolatility::GreyedByExecution);
     
     m_constraintSet->add(
-        "Ws", "Weak Sets",
+        "Ws"_s, "Weak Sets"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::WeakSets);
             RefPtr<SharedTask<void(decltype(visitor)&)>> task = m_objectSpace.forEachWeakInParallel<decltype(visitor)>(visitor);
@@ -3836,7 +3867,7 @@ void Heap::addCoreConstraints()
         ConstraintParallelism::Parallel);
     
     m_constraintSet->add(
-        "O", "Output",
+        "O"_s, "Output"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([] (auto& visitor) {
             JSC::Heap* heap = visitor.heap();
 
@@ -3870,7 +3901,7 @@ void Heap::addCoreConstraints()
 
 #if ENABLE(WEBASSEMBLY)
     m_constraintSet->add(
-        "Pbc", "Pinball Completions",
+        "Pbc"_s, "Pinball Completions"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             // FIXME: Unlike the "Cs" constraint which is skipped during verification
             // because conservative roots are not stable, this skip is only here because
@@ -3902,7 +3933,7 @@ void Heap::addCoreConstraints()
 #if ENABLE(JIT)
     if (Options::useJIT()) {
         m_constraintSet->add(
-            "Jw", "JIT Worklist",
+            "Jw"_s, "JIT Worklist"_s,
             MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::JITWorkList);
 
@@ -3924,7 +3955,7 @@ void Heap::addCoreConstraints()
 #endif
     
     m_constraintSet->add(
-        "Cb", "CodeBlocks",
+        "Cb"_s, "CodeBlocks"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
             iterateExecutingAndCompilingCodeBlocksWithoutHoldingLocks(visitor,
@@ -4273,6 +4304,14 @@ void Heap::finalizeWasmCalleeCleanup()
                 && !m_wasmCalleesDiscoveredDuringGC.contains(callee.ptr());
         });
     }
+
+    // We need to ensure our thread sees all the new callsites otherwise we could be discarding a BBQCallee
+    // for foo but a different Callee could still have a stale direct call to foo's BBQ code on this core.
+    // Realistically, this is probably not needed, since we're essentially guarenteed to make a syscall
+    // that will syncronize the instruction cache during GC. That said, this happens so infrequently it's
+    // better to just have the code be clear.
+    if (!wasmCalleesToRelease.isEmpty())
+        WTF::crossModifyingCodeFence();
 
     m_wasmCalleesPendingDestructionSnapshot.clear();
     m_wasmCalleesDiscoveredDuringGC.clear();

@@ -145,7 +145,7 @@ static bool NODELETE cannotConstrainInlineItem(const InlineItem& inlineItem)
     // A block level box takes a line of its own, so it bounds the text we constrain rather than being part of it.
     if (inlineItem.isBlock())
         return false;
-    if (!inlineItem.isText() && !inlineItem.isSoftLineBreak() && !inlineItem.layoutBox().isInlineLevelBox())
+    if (!inlineItem.isText() && !inlineItem.isSoftLineBreak() && !inlineItem.layoutBox().isInlineLevelBox() && !inlineItem.layoutBox().isLineBreakBox())
         return true;
     if (containsTrailingSoftHyphen(inlineItem))
         return true;

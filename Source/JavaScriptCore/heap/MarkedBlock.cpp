@@ -74,8 +74,8 @@ MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAlloca
 MarkedBlock::Handle::Handle(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, void* blockSpace)
     : m_markingVersionAtLastSweep(heap.objectSpace().markingVersion())
     , m_alignedMemoryAllocator(alignedMemoryAllocator)
-    , m_weakSet(heap.vm())
     , m_block(new (NotNull, blockSpace) MarkedBlock(heap.vm(), *this))
+    , m_weakSet(heap.vm())
 {
     heap.didAllocateBlock(blockSize);
 }
@@ -632,12 +632,16 @@ void MarkedBlock::Handle::recommitPages()
 
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
-    SweepingScope sweepingScope(*heap());
     m_directory->assertIsMutatorOrMutatorIsStopped();
     ASSERT(m_directory->isInUse(this));
 
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
     bool needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+    // Nothing has been allocated into a block that is still swept, so no weak handle into it can have
+    // been created and died since; re-sweeping its weak set would find nothing.
+    if (sweepMode == SweepOnly && !needsDestruction && !m_directory->isUnswept(this))
+        return;
+
     // A sweep while a full collection is marking cannot go by that collection's marks yet (the version has moved on, the
     // marks have not caught up): it is not that collection's first sweep and must not count as it. An eden collection's
     // marking leaves the version and the old blocks' marks alone, so a sweep during it counts like any other.
@@ -645,6 +649,8 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     bool isFirstSweepSinceFullCollection = !marksArePending && m_markingVersionAtLastSweep != space()->markingVersion();
     if (!marksArePending)
         m_markingVersionAtLastSweep = space()->markingVersion();
+
+    SweepingScope sweepingScope(*heap());
 
     m_weakSet.sweep();
 
@@ -750,9 +756,9 @@ NO_RETURN_DUE_TO_CRASH NEVER_INLINE static void crashDueToGarbageCollectorClient
         "WebKit developers: check for missing write barriers, incomplete visitChildren implementations, "
         "or unrooted GC objects.",
         heapCell);
-    auto message = out.toCString();
-    WTF::setCrashLogMessage(message.data());
-    dataLogLn(message.data());
+    auto message = out.toUTF8CString();
+    dataLogLn(message);
+    WTF::setCrashLogMessage(WTF::move(message));
 #endif
     CRASH_WITH_INFO(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
 }
@@ -786,9 +792,9 @@ NO_RETURN_DUE_TO_CRASH NEVER_INLINE void MarkedBlock::analyzeInvalidHandleAndCra
         StringPrintStream out;
         out.printf("Suspected memory corruption: invalid handle [line=%d]: markedBlock=%p; heapCell=%p; cellFirst8Bytes=%#llx; subspaceHash=%#x; contiguousZeros=%lu; totalZeros=%lu; blockVM=%p; actualVM=%p; isBlockVMValid=%d; isBlockInSet=%d; isBlockInDir=%d; foundInBlockVM=%d;",
             line, this, heapCell, cellFirst8Bytes, subspaceHash, contiguousZeroBytesHeadOfBlock, totalZeroBytesInBlock, blockVM, actualVM, isBlockVMValid, isBlockInSet, isBlockInDirectory, foundInBlockVM);
-        auto message = out.toCString();
-        WTF::setCrashLogMessage(message.data());
-        dataLogLn(message.data());
+        auto message = out.toUTF8CString();
+        dataLogLn(message);
+        WTF::setCrashLogMessage(WTF::move(message));
 #else
         UNUSED_PARAM(line);
 #endif

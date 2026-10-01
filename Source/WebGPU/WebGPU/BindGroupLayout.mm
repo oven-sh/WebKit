@@ -55,6 +55,12 @@ static MTLArgumentDescriptor *createArgumentDescriptor(const WGPUBufferBindingLa
     } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_Float4x3)) {
         descriptor.dataType = MTLDataTypeFloat4x3;
         bufferType = WGPUBufferBindingType_Uniform;
+    } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_Float3x3)) {
+        descriptor.dataType = MTLDataTypeFloat3x3;
+        bufferType = WGPUBufferBindingType_Uniform;
+    } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_UInt2)) {
+        descriptor.dataType = MTLDataTypeUInt2;
+        bufferType = WGPUBufferBindingType_Uniform;
     } else
         descriptor.dataType = MTLDataTypePointer;
 
@@ -143,7 +149,7 @@ static void addDescriptor(NSMutableArray<MTLArgumentDescriptor *> *arguments, MT
     [arguments addObject:stageDescriptor];
 }
 
-static bool NODELETE containsStage(WGPUShaderStageFlags stageBitfield, auto stage)
+static bool NODELETE containsStage(WGPUShaderStage stageBitfield, auto stage)
 {
     static_assert(1 == WGPUShaderStage_Vertex && 2 == WGPUShaderStage_Fragment && 4 == WGPUShaderStage_Compute, "Expect WGPUShaderStage to be a bitfield");
     return stageBitfield & (1 << static_cast<uint32_t>(stage));
@@ -195,7 +201,7 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDesc
     std::array<size_t, stageCount> sizeOfDynamicOffsets { };
     std::array<uint32_t, stageCount> bindingOffset { };
     std::array<uint32_t, stageCount> bufferCounts { };
-    std::array<HashMap<uint32_t, std::pair<std::array<uint32_t, stageCount>, WGPUShaderStageFlags>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>, stageCount> slotForEntry;
+    std::array<HashMap<uint32_t, std::pair<std::array<uint32_t, stageCount>, WGPUShaderStage>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>, stageCount> slotForEntry;
     const auto maxBindingIndex = limits().maxBindingsPerBindGroup;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usedBindingSlots;
     uint32_t dynamicUniformBuffers = 0;
@@ -223,7 +229,7 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDesc
         }
 
         bool isExternalTexture = false;
-        constexpr int maxGeneratedDescriptors = 4;
+        constexpr int maxGeneratedDescriptors = 6;
         std::array<RetainPtr<MTLArgumentDescriptor>, maxGeneratedDescriptors> descriptors { };
         BindGroupLayout::Entry::BindingLayout bindingLayout;
         Ref protectedThis = *this;
@@ -252,6 +258,10 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDesc
             descriptors[2] = createArgumentDescriptor(bufferLayout, *this, entry);
             bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_Float4x3);
             descriptors[3] = createArgumentDescriptor(bufferLayout, *this, entry);
+            bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_Float3x3);
+            descriptors[4] = createArgumentDescriptor(bufferLayout, *this, entry);
+            bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_UInt2);
+            descriptors[5] = createArgumentDescriptor(bufferLayout, *this, entry);
             bindingLayout = WGPUExternalTextureBindingLayout();
         } else if (isArrayLength(entry)) {
             for (uint32_t stage = 0; stage < stageCount; ++stage) {
@@ -767,7 +777,7 @@ const BindGroupLayout::ArgumentIndices& BindGroupLayout::argumentIndices(ShaderS
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuBindGroupLayoutReference(WGPUBindGroupLayout bindGroupLayout)
+void NODELETE wgpuBindGroupLayoutAddRef(WGPUBindGroupLayout bindGroupLayout)
 {
     WebGPU::fromAPI(bindGroupLayout).ref();
 }
@@ -777,7 +787,7 @@ void wgpuBindGroupLayoutRelease(WGPUBindGroupLayout bindGroupLayout)
     WebGPU::fromAPI(bindGroupLayout).deref();
 }
 
-void wgpuBindGroupLayoutSetLabel(WGPUBindGroupLayout bindGroupLayout, const char* label)
+void wgpuBindGroupLayoutSetLabel(WGPUBindGroupLayout bindGroupLayout, WGPUStringView label)
 {
     protect(WebGPU::fromAPI(bindGroupLayout))->setLabel(WebGPU::fromAPI(label));
 }

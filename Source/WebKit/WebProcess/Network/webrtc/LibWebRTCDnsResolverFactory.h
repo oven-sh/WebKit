@@ -30,6 +30,7 @@
 #include <wtf/Compiler.h>
 
 #include <WebCore/LibWebRTCMacros.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/api/async_dns_resolver.h>
@@ -43,6 +44,11 @@ namespace WebKit {
 class LibWebRTCDnsResolverFactory final : public webrtc::AsyncDnsResolverFactoryInterface {
     WTF_MAKE_TZONE_ALLOCATED(LibWebRTCDnsResolverFactory);
 public:
+    explicit LibWebRTCDnsResolverFactory(WebCore::ScriptExecutionContextIdentifier contextIdentifier)
+        : m_contextIdentifier(contextIdentifier)
+    {
+    }
+
     class Resolver : public webrtc::AsyncDnsResolverInterface {
     public:
         virtual void start(const webrtc::SocketAddress&, Function<void()>&&) = 0;
@@ -57,6 +63,8 @@ private:
     std::unique_ptr<webrtc::AsyncDnsResolverInterface> CreateAndResolve(const webrtc::SocketAddress&, absl::AnyInvocable<void()>) final;
     std::unique_ptr<webrtc::AsyncDnsResolverInterface> CreateAndResolve(const webrtc::SocketAddress&, int family, absl::AnyInvocable<void()>) final;
     std::unique_ptr<webrtc::AsyncDnsResolverInterface> Create() final;
+
+    const WebCore::ScriptExecutionContextIdentifier m_contextIdentifier;
 };
 
 } // namespace WebKit

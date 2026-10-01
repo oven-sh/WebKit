@@ -35,6 +35,13 @@
 #include <unistd.h>
 #endif
 
+#if OS(LINUX)
+#include <sys/syscall.h>
+#ifndef GRND_NONBLOCK
+#define GRND_NONBLOCK 0x0001
+#endif
+#endif
+
 #if OS(WINDOWS)
 #include <windows.h>
 #endif
@@ -86,9 +93,16 @@ NEVER_INLINE NO_RETURN_DUE_TO_CRASH static void crashUnableToReadFromURandom()
 #if !OS(DARWIN) && !OS(FUCHSIA) && !OS(WINDOWS)
 RandomDevice::RandomDevice()
 {
+#if !OS(LINUX)
+    openURandom();
+#endif
+}
+
+void RandomDevice::openURandom()
+{
     int ret = 0;
     do {
-        ret = open("/dev/urandom", O_RDONLY, 0);
+        ret = open("/dev/urandom", O_RDONLY | O_CLOEXEC, 0);
     } while (ret == -1 && errno == EINTR);
     m_fd = ret;
     if (m_fd < 0)
@@ -99,7 +113,8 @@ RandomDevice::RandomDevice()
 #if !OS(DARWIN) && !OS(FUCHSIA) && !OS(WINDOWS)
 RandomDevice::~RandomDevice()
 {
-    close(m_fd);
+    if (m_fd >= 0)
+        close(m_fd);
 }
 #endif
 
@@ -113,6 +128,26 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
     zx_cprng_draw(buffer.data(), buffer.size());
 #elif OS(UNIX)
     ssize_t amountRead = 0;
+#if OS(LINUX)
+#if defined(SYS_getrandom)
+    // getrandom(2) reads the pool /dev/urandom reads, but needs neither the path nor a free descriptor.
+    // Any failure reads the rest from /dev/urandom: EAGAIN (pool not initialized, where /dev/urandom
+    // does not block), ENOSYS, EPERM (a seccomp filter, which can be installed at any time).
+    while (static_cast<size_t>(amountRead) < buffer.size()) {
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        ssize_t currentRead = syscall(SYS_getrandom, buffer.data() + amountRead, buffer.size() - amountRead, GRND_NONBLOCK);
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        if (currentRead > 0)
+            amountRead += currentRead;
+        else if (currentRead != -1 || errno != EINTR)
+            break;
+    }
+    if (static_cast<size_t>(amountRead) == buffer.size())
+        return;
+#endif
+    if (m_fd < 0)
+        openURandom();
+#endif
     while (static_cast<size_t>(amountRead) < buffer.size()) {
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         ssize_t currentRead = read(m_fd, buffer.data() + amountRead, buffer.size() - amountRead);

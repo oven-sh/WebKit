@@ -164,7 +164,7 @@ void ResourceHandle::clearClient()
 void ResourceHandle::didReceiveResponse(ResourceResponse&& response, CompletionHandler<void()>&& completionHandler)
 {
     if (response.isHTTP09()) {
-        auto url = response.url();
+        auto& url = response.url();
         std::optional<uint16_t> port = url.port();
         if (port && !WTF::isDefaultPortForProtocol(port.value(), url.protocol())) {
             cancel();

@@ -162,6 +162,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
+#define TYPE InterpolateSize
+#define FOR_EACH(CASE) CASE(NumericOnly) CASE(AllowKeywords)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
 #define TYPE BlockStepAlign
 #define FOR_EACH(CASE) CASE(Auto) CASE(Center) CASE(Start) CASE(End)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
@@ -983,6 +989,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 
 #define TYPE PortalActionType
 #define FOR_EACH(CASE) CASE(None) CASE(Orbit)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE PositionContextType
+#define FOR_EACH(CASE) CASE(Container) CASE(Anchor)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
@@ -2292,6 +2304,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 
 #define TYPE QuoteType
 #define FOR_EACH(CASE) CASE(OpenQuote) CASE(CloseQuote) CASE(NoOpenQuote) CASE(NoCloseQuote)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE SynthesizedGlyph
+#define FOR_EACH(CASE) CASE(PickerUp) CASE(PickerDown)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH

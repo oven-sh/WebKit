@@ -126,6 +126,7 @@
 #include <wtf/WallTime.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(SERVICE_CONTROLS)
 #include "ServicesController.h"
@@ -793,6 +794,8 @@ void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(Remo
         completionHandler(remoteProcessIdentifier);
     });
     protect(websiteDataStore->networkProcess())->addAllowedFirstPartyForCookies(*remoteWorkerProcessProxy, site.domain(), LoadedWebArchive::No, [aggregator] { });
+    if (auto workerPageProxyID = remoteWorkerProcessProxy->remoteWorkerPageProxyID(workerType))
+        protect(websiteDataStore->networkProcess())->addAllowedWebPageProxyIdentifier(*remoteWorkerProcessProxy, *workerPageProxyID);
     remoteWorkerProcessProxy->establishRemoteWorkerContext(workerType, preferencesStore.store, site, serviceWorkerPageIdentifier, workerCrossOriginEmbedderPolicy, [aggregator] { });
 
     if (!processPool->m_remoteWorkerUserAgent.isNull())
@@ -1218,7 +1221,7 @@ void WebProcessPool::processDidFinishLaunching(WebProcessProxy& process)
 #if ENABLE(EXTENSION_CAPABILITIES)
     for (auto& page : process.pages()) {
         if (RefPtr mediaCapability = page->mediaCapability()) {
-            WEBPROCESSPOOL_RELEASE_LOG(ProcessCapabilities, "processDidFinishLaunching[envID=%" PUBLIC_LOG_STRING "]: updating media capability", mediaCapability->environmentIdentifier().utf8().data());
+            WEBPROCESSPOOL_RELEASE_LOG(ProcessCapabilities, "processDidFinishLaunching[envID=%" PUBLIC_LOG_STRING "]: updating media capability", mediaCapability->environmentIdentifier().utf8());
             page->updateMediaCapability();
         }
     }
@@ -1370,6 +1373,24 @@ Ref<WebUserContentControllerProxy> WebProcessPool::userContentControllerForRemot
     return *m_userContentControllerForRemoteWorkers;
 }
 
+static bool canShareProcessWithOpener(WebProcessProxy& openerProcess, const API::PageConfiguration& pageConfiguration, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
+{
+    // A FrameProcess created for a shared process in a group that does not have one would dedicate
+    // that process to a single site.
+    if (openerProcess.isSharedProcess())
+        return false;
+
+    // We do not support several WebsiteDataStores sharing a single process.
+    if (openerProcess.websiteDataStore() != &pageConfiguration.websiteDataStore())
+        return false;
+
+    if (openerProcess.lockdownMode() != lockdownMode || !enhancedSecurityStatesAreConsistent(openerProcess.enhancedSecurity(), enhancedSecurity))
+        return false;
+
+    auto sharedPreferences = openerProcess.sharedPreferencesForWebProcessValue();
+    return !updateSharedPreferencesForWebProcess(sharedPreferences, pageConfiguration.preferences().store(), lockdownMode == WebProcessProxy::LockdownMode::Enabled);
+}
+
 Ref<WebPageProxy> WebProcessPool::createWebPage(PageClient& pageClient, Ref<API::PageConfiguration>&& pageConfiguration)
 {
     if (!pageConfiguration->pageGroup())
@@ -1398,6 +1419,8 @@ Ref<WebPageProxy> WebProcessPool::createWebPage(PageClient& pageClient, Ref<API:
         pageConfiguration->setProcessInheritedFromOpener(true);
     } else if (preferredFrameProcess)
         process = preferredFrameProcess->process();
+    else if (RefPtr openerProcess = pageConfiguration->preferredProcessFromOpener(); openerProcess && canShareProcessWithOpener(*openerProcess, pageConfiguration, lockdownMode, enhancedSecurity))
+        process = openerProcess;
     else if (relatedPage && !relatedPage->isClosed() && relatedPage->hasSameGPUAndNetworkProcessPreferencesAs(pageConfiguration) && !siteIsolationEnabled) {
         // Sharing processes, e.g. when creating the page via window.open().
         process = relatedPage->ensureRunningProcess();
@@ -2169,7 +2192,7 @@ void WebProcessPool::addProcessToOriginCacheSet(WebProcessProxy& process, const 
     if (!result.isNewEntry)
         result.iterator->value = process;
 
-    LOG(ProcessSwapping, "(ProcessSwapping) Registrable domain %s just saved a cached process with pid %i", registrableDomain.string().utf8().data(), process.processID());
+    LOG_WITH_STREAM(ProcessSwapping, stream << "(ProcessSwapping) Registrable domain "_s << registrableDomain.string() << " just saved a cached process with pid "_s << process.processID());
     if (!result.isNewEntry)
         LOG(ProcessSwapping, "(ProcessSwapping) Note: It already had one saved");
 }
@@ -2257,7 +2280,7 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
         if (RefPtr frameProcess = browsingContextGroup.processForSite(site))
             process = &frameProcess->process();
         if (process && process->websiteDataStore() == dataStore.ptr() && process->websiteDataStore() == &page.websiteDataStore() && !process->isInProcessCache() && process->lockdownMode() == lockdownMode && enhancedSecurityStatesAreConsistent(process->enhancedSecurity(), enhancedSecurity)) {
-            protect(dataStore->networkProcess())->addAllowedFirstPartyForCookies(*process, mainFrameSite.domain(), LoadedWebArchive::No, [completionHandler = WTF::move(completionHandler), process, preventProcessShutdownScope = process->shutdownPreventingScope()] () mutable {
+            page.addAllowedFirstPartyForCookies(*process, mainFrameSite.domain(), LoadedWebArchive::No, [completionHandler = WTF::move(completionHandler), process, preventProcessShutdownScope = process->shutdownPreventingScope()] () mutable {
                 completionHandler(process.releaseNonNull(), nullptr, "Found process for the same site"_s);
             });
             return;
@@ -2265,7 +2288,7 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
     }
 
     ASSERT(isolatedProcessType != WebProcessProxy::IsolatedProcessType::Shared);
-    auto [process, suspendedPage, reason] = processForNavigationInternal(page, frame, navigation, sourceURL, isolatedProcessType, mainFrameSite, processSwapRequestedByClient, lockdownMode, enhancedSecurity, frameInfo, dataStore.copyRef());
+    auto [process, suspendedPage, reason] = processForNavigationInternal(page, frame, navigation, sourceURL, browsingContextGroup, isolatedProcessType, mainFrameSite, processSwapRequestedByClient, lockdownMode, enhancedSecurity, frameInfo, dataStore.copyRef());
 
     // We are process-swapping so automatic process prewarming would be beneficial if the client has not explicitly enabled / disabled it.
     bool doingAnAutomaticProcessSwap = processSwapRequestedByClient == ProcessSwapRequestedByClient::No && process.ptr() != sourceProcess.ptr();
@@ -2283,7 +2306,7 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
 
         addProcessToOriginCacheSet(sourceProcess, sourceURL);
 
-        LOG(ProcessSwapping, "(ProcessSwapping) Navigating from %s to %s, keeping around old process. Now holding on to old processes for %u origins.", sourceURL.string().utf8().data(), navigation.currentRequest().url().string().utf8().data(), m_swappedProcessesPerRegistrableDomain.size());
+        LOG_WITH_STREAM(ProcessSwapping, stream << "(ProcessSwapping) Navigating from "_s << sourceURL.string() << " to "_s << navigation.currentRequest().url().string() << ", keeping around old process. Now holding on to old processes for "_s << m_swappedProcessesPerRegistrableDomain.size() << " origins."_s);
     }
 
     if (!isMainFrameNavigation && siteIsolationEnabled)
@@ -2324,7 +2347,7 @@ void WebProcessPool::prepareProcessForNavigation(Ref<WebProcessProxy>&& process,
         completionHandler(WTF::move(process), suspendedPage, reason);
     };
 
-    protect(dataStore->networkProcess())->addAllowedFirstPartyForCookies(process, site.domain(), loadedWebArchive, [callCompletionHandler = WTF::move(callCompletionHandler), weakSuspendedPage = WeakPtr { suspendedPage }]() mutable {
+    page.addAllowedFirstPartyForCookies(process, site.domain(), loadedWebArchive, [callCompletionHandler = WTF::move(callCompletionHandler), weakSuspendedPage = WeakPtr { suspendedPage }]() mutable {
         if (RefPtr suspendedPage = weakSuspendedPage.get())
             suspendedPage->waitUntilReadyToUnsuspend(WTF::move(callCompletionHandler));
         else
@@ -2332,7 +2355,7 @@ void WebProcessPool::prepareProcessForNavigation(Ref<WebProcessProxy>&& process,
     });
 }
 
-std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebProcessPool::processForNavigationInternal(WebPageProxy& page, WebFrameProxy& frame, const API::Navigation& navigation, const URL& pageSourceURL, WebProcessProxy::IsolatedProcessType isolatedProcessType, const Site& mainFrameSite, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore)
+std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebProcessPool::processForNavigationInternal(WebPageProxy& page, WebFrameProxy& frame, const API::Navigation& navigation, const URL& pageSourceURL, BrowsingContextGroup& browsingContextGroup, WebProcessProxy::IsolatedProcessType isolatedProcessType, const Site& mainFrameSite, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore)
 {
     auto& targetURL = navigation.currentRequest().url();
     auto targetSite = Site { targetURL };
@@ -2372,16 +2395,25 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
         return { createNewProcess(), nullptr, "Redirect to a different scheme for which the app registered a custom handler"_s };
 
     bool siteIsolationEnabled = protect(page.preferences())->siteIsolationEnabled();
+
+    if (siteIsolationEnabled && &browsingContextGroup != &page.browsingContextGroup()) {
+        // Only main frame navigation can swap browsing context group.
+        ASSERT(frame.isMainFrame());
+        RefPtr siteProcess = protect(page.browsingContextGroup())->processForSite(targetSite);
+        if (siteProcess && siteProcess->isSharedProcess())
+            return { createNewProcess(), nullptr, "Process swap because the main frame site is in the shared process"_s };
+    }
+
     bool isProcessInUseBySingleFrame = !siteIsolationEnabled || (sourceProcess->frameProcessCount() == 1 && frame.frameProcess().frameCount() <= 1);
     if (!sourceProcess->hasCommittedAnyProvisionalLoads() && isProcessInUseBySingleFrame) {
         tryPrewarmWithDomainInformation(sourceProcess, targetSite.domain());
         return { WTF::move(sourceProcess), nullptr, "Process has not yet committed any provisional loads"_s };
     }
 
-    if (siteIsolationEnabled && targetURL.isAboutBlank()) {
+    if (siteIsolationEnabled && (targetURL.isAboutBlank() || targetURL.isAboutSrcDoc())) {
         RefPtr navigationOriginatorFrame = navigation.originatingFrameInfo() ? WebFrameProxy::webFrame(navigation.originatingFrameInfo()->frameID) : nullptr;
         if (navigationOriginatorFrame)
-            return { navigationOriginatorFrame->process(), nullptr, "Frame is navigating to about:blank from a cross site origin. Switching to process that originated navigation."_s };
+            return { navigationOriginatorFrame->process(), nullptr, "Frame is navigating to about:blank or about:srcdoc from a cross site origin. Switching to process that originated navigation."_s };
     }
 
     // FIXME: We should support process swap when a window has been opened via window.open() without 'noopener'.
@@ -2425,19 +2457,16 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
 
     // If it is the first navigation in a DOM popup and there is no opener, then force a process swap no matter what since
     // popup windows are originally created in their opener's process.
-    // However, if the navigation is same-site with the related page (the opener), keep them in the same process,
-    // IFF the page was initially opened with noopener. If openerFrameIdentifier is set,
+    // However, if the navigation is same-site with the site the window was opened at, keep it in
+    // the opener's process. If openerFrameIdentifier is set,
     // the page was originally opened with an opener but COOP severed it, so we should still swap processes.
     // Note that we currently do not process swap if the window popup has a name. In theory, we should be able to swap in this case too
     // but we would need to transfer over the name to the new process. At this point, it is not clear it is worth the extra complexity.
     if (page.openedByDOM() && !navigation.openedByDOMWithOpener() && !page.hasCommittedAnyProvisionalLoads() && frameInfo.frameName.isEmpty() && !targetURL.protocolIsBlob()) {
-        bool isSameSiteWithRelatedPage = false;
-        if (!page.openerFrameIdentifier() && pageConfiguration->relatedPage()) {
-            RefPtr relatedPage = pageConfiguration->relatedPage();
-            auto& relatedPageURL = relatedPage->pageLoadState().url();
-            isSameSiteWithRelatedPage = relatedPageURL.isValid() && targetSite.matches(relatedPageURL);
-        }
-        if (!isSameSiteWithRelatedPage)
+        bool isSameSiteWithOpener = false;
+        if (!page.openerFrameIdentifier() && pageConfiguration->preferredProcessFromOpener())
+            isSameSiteWithOpener = targetSite == pageConfiguration->openedSite();
+        if (!isSameSiteWithOpener)
             return { createNewProcess(), nullptr, "Process swap because this is a first navigation in a DOM popup without opener"_s };
     }
 
@@ -2508,11 +2537,11 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
     auto reason = "Navigation is cross-site"_s;
     
     if (m_configuration->alwaysKeepAndReuseSwappedProcesses()) {
-        LOG(ProcessSwapping, "(ProcessSwapping) Considering re-use of a previously cached process for domain %s", targetSite.domain().string().utf8().data());
+        LOG_WITH_STREAM(ProcessSwapping, stream << "(ProcessSwapping) Considering re-use of a previously cached process for domain "_s << targetSite.domain().string());
 
         if (RefPtr process = m_swappedProcessesPerRegistrableDomain.get(targetSite.domain())) {
             if (process->websiteDataStore() == dataStore.ptr() && process->state() != AuxiliaryProcessProxy::State::Terminated) {
-                LOG(ProcessSwapping, "(ProcessSwapping) Reusing a previously cached process with pid %i to continue navigation to URL %s", process->processID(), targetURL.string().utf8().data());
+                LOG_WITH_STREAM(ProcessSwapping, stream << "(ProcessSwapping) Reusing a previously cached process with pid "_s << process->processID() << " to continue navigation to URL "_s << targetURL.string());
 
                 return { process.releaseNonNull(), nullptr, reason };
             }

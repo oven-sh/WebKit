@@ -83,6 +83,7 @@
 #include <wtf/JSONValues.h>
 #include <wtf/Scope.h>
 #include <wtf/UUID.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -422,7 +423,7 @@ String MediaControlsHost::externalDeviceDisplayName() const
     }
 
     String name = player->wirelessPlaybackTargetName();
-    LOG(Media, "MediaControlsHost::externalDeviceDisplayName - returning \"%s\"", name.utf8().data());
+    LOG_WITH_STREAM(Media, stream << "MediaControlsHost::externalDeviceDisplayName - returning \""_s << name << "\""_s);
     return name;
 #else
     return emptyString();
@@ -434,7 +435,7 @@ String MediaControlsHost::externalDeviceRouteName() const
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     if (RefPtr player = m_mediaElement->player()) {
         String name = player->wirelessPlaybackRouteName();
-        LOG(Media, "MediaControlsHost::externalDeviceRouteName - returning \"%s\"", name.utf8().data());
+        LOG_WITH_STREAM(Media, stream << "MediaControlsHost::externalDeviceRouteName - returning \""_s << name << "\""_s);
         return name;
     }
 

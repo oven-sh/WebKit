@@ -399,6 +399,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 void ImageDecoderAVFObjC::readSamples()
 {
+    assertIsOwnerThread();
     if (!m_sampleData.empty())
         return;
 
@@ -409,12 +410,23 @@ void ImageDecoderAVFObjC::readSamples()
     [assetReader addOutput:referenceOutput.get()];
     [assetReader startReading];
 
+    Vector<Ref<ImageDecoderAVFObjCSample>> samples;
     while (auto sampleBuffer = adoptCF([referenceOutput copyNextSampleBuffer])) {
         // NOTE: Some samples emitted by the AVAssetReader simply denote the boundary of edits
         // and do not carry media data.
         if (!(PAL::CMSampleBufferGetNumSamples(sampleBuffer.get())))
             continue;
-        m_sampleData.addSample(ImageDecoderAVFObjCSample::create(WTF::move(sampleBuffer)).get());
+        samples.append(ImageDecoderAVFObjCSample::create(WTF::move(sampleBuffer)));
+    }
+
+    releaseOwnerThreadAssertion();
+    {
+        // m_sampleData is read on the image decoding work queue by createFrameImageAtIndex(), so
+        // populating it must not race with it. The samples are read above without the lock so that
+        // reading from the asset does not block the work queue.
+        Locker locker { m_sampleGeneratorLock };
+        for (auto& sample : samples)
+            m_sampleData.addSample(sample.get());
     }
 
     if (m_encodedDataStatusChangedCallback)
@@ -423,8 +435,8 @@ void ImageDecoderAVFObjC::readSamples()
 
 void ImageDecoderAVFObjC::readTrackMetadata()
 {
-    // m_imageRotationSession and m_size are read on the image decoding work queue by
-    // createFrameImageAtIndex(), so replacing them here must not race with it.
+    // m_imageRotationSession is read on the image decoding work queue by storeSampleBuffer(), so
+    // replacing it here must not race with it. m_size is only ever read on the main thread.
     Locker locker { m_sampleGeneratorLock };
 
     AffineTransform finalTransform = CGAffineTransformConcat(m_asset.get().preferredTransform, m_track.get().preferredTransform);
@@ -518,6 +530,7 @@ void ImageDecoderAVFObjC::setEncodedDataStatusChangeCallback(WTF::Function<void(
 
 EncodedDataStatus ImageDecoderAVFObjC::encodedDataStatus() const
 {
+    assertIsOwnerThread();
     if (!m_sampleData.empty())
         return EncodedDataStatus::Complete;
     if (m_size)
@@ -536,6 +549,7 @@ IntSize ImageDecoderAVFObjC::size() const
 
 size_t ImageDecoderAVFObjC::frameCount() const
 {
+    assertIsOwnerThread();
     return m_sampleData.size();
 }
 
@@ -564,12 +578,14 @@ IntSize ImageDecoderAVFObjC::frameSizeAtIndex(size_t, SubsamplingLevel) const
 
 bool ImageDecoderAVFObjC::frameIsCompleteAtIndex(size_t index) const
 {
+    assertIsOwnerThread();
     RefPtr sampleData = sampleAtIndex(index);
     return sampleData && sampleIsComplete(*sampleData);
 }
 
 Seconds ImageDecoderAVFObjC::frameDurationAtIndex(size_t index) const
 {
+    assertIsOwnerThread();
     RefPtr sampleData = sampleAtIndex(index);
     if (!sampleData)
         return { };
@@ -579,12 +595,14 @@ Seconds ImageDecoderAVFObjC::frameDurationAtIndex(size_t index) const
 
 bool ImageDecoderAVFObjC::frameHasAlphaAtIndex(size_t index) const
 {
+    assertIsOwnerThread();
     RefPtr sampleData = sampleAtIndex(index);
     return sampleData && sampleData->hasAlpha();
 }
 
 Vector<ImageDecoder::FrameInfo> ImageDecoderAVFObjC::frameInfos() const
 {
+    assertIsOwnerThread();
     if (m_sampleData.empty())
         return { };
 
@@ -696,6 +714,10 @@ void ImageDecoderAVFObjC::setData(const FragmentedSharedBuffer& data, bool allDa
 
 void ImageDecoderAVFObjC::clearFrameBufferCache(size_t index)
 {
+    // The sample images are read on the image decoding work queue by createFrameImageAtIndex(),
+    // which retains them; releasing them here must not race with that.
+    Locker locker { m_sampleGeneratorLock };
+
     size_t i = 0;
     for (auto& samplePair : m_sampleData.presentationOrder()) {
         protect(toSample(samplePair))->setImage(nullptr);

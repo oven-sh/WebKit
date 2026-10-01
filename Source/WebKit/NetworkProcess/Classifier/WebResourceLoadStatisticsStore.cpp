@@ -357,12 +357,12 @@ void WebResourceLoadStatisticsStore::resourceLoadStatisticsUpdated(Vector<Resour
     });
 }
 
-void WebResourceLoadStatisticsStore::hasStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, std::optional<FrameIdentifier> frameID, PageIdentifier pageID, CompletionHandler<void(bool)>&& completionHandler)
+void WebResourceLoadStatisticsStore::hasStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID, CompletionHandler<void(bool)>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
 
     if (isEphemeral())
-        return hasStorageAccessEphemeral(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, pageID, WTF::move(completionHandler));
+        return hasStorageAccessEphemeral(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageProxyID, WTF::move(completionHandler));
 
     CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction { CanRequestStorageAccessWithoutUserInteraction::No };
     if (CheckedPtr networkSession = m_networkSession.get()) {
@@ -370,7 +370,7 @@ void WebResourceLoadStatisticsStore::hasStorageAccess(RegistrableDomain&& subFra
             canRequestStorageAccessWithoutUserInteraction = WebCore::canRequestStorageAccessForLoginOrCompatibilityPurposesWithoutPriorUserInteraction(subFrameDomain, topFrameDomain) ? CanRequestStorageAccessWithoutUserInteraction::Yes : CanRequestStorageAccessWithoutUserInteraction::No;
     }
 
-    postTask([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, pageID, canRequestStorageAccessWithoutUserInteraction, completionHandler = WTF::move(completionHandler)](auto& store) mutable {
+    postTask([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, webPageProxyID, canRequestStorageAccessWithoutUserInteraction, completionHandler = WTF::move(completionHandler)](auto& store) mutable {
         RefPtr statisticsStore = store.m_statisticsStore;
         if (!statisticsStore) {
             postTaskReply([completionHandler = WTF::move(completionHandler)]() mutable {
@@ -379,7 +379,7 @@ void WebResourceLoadStatisticsStore::hasStorageAccess(RegistrableDomain&& subFra
             return;
         }
 
-        statisticsStore->hasStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, pageID, canRequestStorageAccessWithoutUserInteraction, [completionHandler = WTF::move(completionHandler)](bool hasStorageAccess) mutable {
+        statisticsStore->hasStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageProxyID, canRequestStorageAccessWithoutUserInteraction, [completionHandler = WTF::move(completionHandler)](bool hasStorageAccess) mutable {
             postTaskReply([completionHandler = WTF::move(completionHandler), hasStorageAccess]() mutable {
                 completionHandler(hasStorageAccess);
             });
@@ -387,38 +387,38 @@ void WebResourceLoadStatisticsStore::hasStorageAccess(RegistrableDomain&& subFra
     });
 }
 
-void WebResourceLoadStatisticsStore::hasStorageAccessEphemeral(const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, std::optional<FrameIdentifier> frameID, PageIdentifier pageID, CompletionHandler<void(bool)>&& completionHandler)
+void WebResourceLoadStatisticsStore::hasStorageAccessEphemeral(const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID, CompletionHandler<void(bool)>&& completionHandler)
 {
     ASSERT(isEphemeral());
 
     if (CheckedPtr networkSession = m_networkSession.get()) {
         if (CheckedPtr storageSession = networkSession->networkStorageSession()) {
-            completionHandler(storageSession->hasStorageAccess(subFrameDomain, topFrameDomain, frameID, pageID));
+            completionHandler(storageSession->hasStorageAccess(subFrameDomain, topFrameDomain, frameID, webPageProxyID));
             return;
         }
     }
     completionHandler(false);
 }
 
-bool WebResourceLoadStatisticsStore::hasStorageAccessForFrame(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, FrameIdentifier frameID, PageIdentifier pageID)
+bool WebResourceLoadStatisticsStore::hasStorageAccessForFrame(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID)
 {
     ASSERT(RunLoop::isMain());
 
     if (CheckedPtr networkSession = m_networkSession.get()) {
         if (CheckedPtr storageSession = networkSession->networkStorageSession())
-            return storageSession->hasStorageAccess(resourceDomain, firstPartyDomain, frameID, pageID);
+            return storageSession->hasStorageAccess(resourceDomain, firstPartyDomain, frameID, webPageProxyID);
     }
 
     return false;
 }
 
-void WebResourceLoadStatisticsStore::callHasStorageAccessForFrameHandler(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, FrameIdentifier frameID, PageIdentifier pageID, CompletionHandler<void(bool hasAccess)>&& callback)
+void WebResourceLoadStatisticsStore::callHasStorageAccessForFrameHandler(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, CompletionHandler<void(bool hasAccess)>&& callback)
 {
     ASSERT(RunLoop::isMain());
 
     if (CheckedPtr networkSession = m_networkSession.get()) {
         if (CheckedPtr storageSession = networkSession->networkStorageSession()) {
-            callback(storageSession->hasStorageAccess(resourceDomain, firstPartyDomain, frameID, pageID));
+            callback(storageSession->hasStorageAccess(resourceDomain, firstPartyDomain, frameID, webPageProxyID));
             return;
         }
     }
@@ -426,7 +426,7 @@ void WebResourceLoadStatisticsStore::callHasStorageAccessForFrameHandler(const R
     callback(false);
 }
 
-void WebResourceLoadStatisticsStore::requestStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, FrameIdentifier frameID, PageIdentifier webPageID, WebPageProxyIdentifier webPageProxyID, StorageAccessScope scope, HasUserGestureOrNoUserGestureRequired hasUserGestureOrNoUserGestureRequired, CompletionHandler<void(RequestStorageAccessResult)>&& completionHandler)
+void WebResourceLoadStatisticsStore::requestStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessScope scope, HasUserGestureOrNoUserGestureRequired hasUserGestureOrNoUserGestureRequired, CompletionHandler<void(RequestStorageAccessResult)>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
 
@@ -451,9 +451,9 @@ void WebResourceLoadStatisticsStore::requestStorageAccess(RegistrableDomain&& su
     }
     
     if (isEphemeral())
-        return requestStorageAccessEphemeral(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageID, webPageProxyID, scope, canRequestStorageAccessWithoutUserInteraction, WTF::move(storageAccessQuirk), WTF::move(completionHandler));
+        return requestStorageAccessEphemeral(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageProxyID, scope, canRequestStorageAccessWithoutUserInteraction, WTF::move(storageAccessQuirk), WTF::move(completionHandler));
 
-    auto statusHandler = [this, protectedThis = Ref { *this }, subFrameDomain = subFrameDomain.isolatedCopy(), topFrameDomain = topFrameDomain.isolatedCopy(), frameID, webPageID, webPageProxyID, scope, storageAccessQuirk = WTF::move(storageAccessQuirk), completionHandler = WTF::move(completionHandler)](StorageAccessStatus status) mutable {
+    auto statusHandler = [this, protectedThis = Ref { *this }, subFrameDomain = subFrameDomain.isolatedCopy(), topFrameDomain = topFrameDomain.isolatedCopy(), frameID, webPageProxyID, scope, storageAccessQuirk = WTF::move(storageAccessQuirk), completionHandler = WTF::move(completionHandler)](StorageAccessStatus status) mutable {
         switch (status) {
         case StorageAccessStatus::CannotRequestAccess:
             completionHandler({ StorageAccessWasGranted::No, StorageAccessPromptWasShown::No, scope, topFrameDomain, subFrameDomain });
@@ -463,9 +463,9 @@ void WebResourceLoadStatisticsStore::requestStorageAccess(RegistrableDomain&& su
             if (!networkSession)
                 return completionHandler({ StorageAccessWasGranted::No, StorageAccessPromptWasShown::No, scope, topFrameDomain, subFrameDomain });
 
-            CompletionHandler<void(bool)> requestConfirmationCompletionHandler = [this, protectedThis, subFrameDomain, topFrameDomain, frameID, webPageID, webPageProxyID, scope, completionHandler = WTF::move(completionHandler)] (bool userDidGrantAccess) mutable {
+            CompletionHandler<void(bool)> requestConfirmationCompletionHandler = [this, protectedThis, subFrameDomain, topFrameDomain, frameID, webPageProxyID, scope, completionHandler = WTF::move(completionHandler)] (bool userDidGrantAccess) mutable {
                 if (userDidGrantAccess)
-                    grantStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageID, webPageProxyID, StorageAccessPromptWasShown::Yes, scope, WTF::move(completionHandler));
+                    grantStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageProxyID, StorageAccessPromptWasShown::Yes, scope, WTF::move(completionHandler));
                 else
                     completionHandler({ StorageAccessWasGranted::No, StorageAccessPromptWasShown::Yes, scope, topFrameDomain, subFrameDomain });
             };
@@ -479,7 +479,7 @@ void WebResourceLoadStatisticsStore::requestStorageAccess(RegistrableDomain&& su
         }
     };
 
-    postTask([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, webPageID, scope, canRequestStorageAccessWithoutUserInteraction, statusHandler = WTF::move(statusHandler)](auto& store) mutable {
+    postTask([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, webPageProxyID, scope, canRequestStorageAccessWithoutUserInteraction, statusHandler = WTF::move(statusHandler)](auto& store) mutable {
         RefPtr statisticsStore = store.m_statisticsStore;
         if (!statisticsStore) {
             postTaskReply([statusHandler = WTF::move(statusHandler)]() mutable {
@@ -488,7 +488,7 @@ void WebResourceLoadStatisticsStore::requestStorageAccess(RegistrableDomain&& su
             return;
         }
 
-        statisticsStore->requestStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageID, scope, canRequestStorageAccessWithoutUserInteraction, [statusHandler = WTF::move(statusHandler)](StorageAccessStatus status) mutable {
+        statisticsStore->requestStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageProxyID, scope, canRequestStorageAccessWithoutUserInteraction, [statusHandler = WTF::move(statusHandler)](StorageAccessStatus status) mutable {
             postTaskReply([statusHandler = WTF::move(statusHandler), status]() mutable {
                 statusHandler(status);
             });
@@ -568,7 +568,7 @@ void WebResourceLoadStatisticsStore::isLoggedIn(RegistrableDomain&& domain, Comp
     completionHandler(it != m_loginStatus.end() && it->value.first == IsLoggedIn::LoggedIn);
 }
 
-void WebResourceLoadStatisticsStore::requestStorageAccessEphemeral(const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, FrameIdentifier frameID, PageIdentifier webPageID, WebPageProxyIdentifier webPageProxyID, StorageAccessScope scope, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, std::optional<OrganizationStorageAccessPromptQuirk>&& storageAccessPromptQuirk, CompletionHandler<void(RequestStorageAccessResult)>&& completionHandler)
+void WebResourceLoadStatisticsStore::requestStorageAccessEphemeral(const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessScope scope, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, std::optional<OrganizationStorageAccessPromptQuirk>&& storageAccessPromptQuirk, CompletionHandler<void(RequestStorageAccessResult)>&& completionHandler)
 {
     ASSERT(isEphemeral());
 
@@ -576,9 +576,9 @@ void WebResourceLoadStatisticsStore::requestStorageAccessEphemeral(const Registr
     if (!networkSession || (!m_domainsWithEphemeralUserInteraction.contains(subFrameDomain) && canRequestStorageAccessWithoutUserInteraction == CanRequestStorageAccessWithoutUserInteraction::No))
         return completionHandler({ StorageAccessWasGranted::No, StorageAccessPromptWasShown::No, scope, topFrameDomain, subFrameDomain });
 
-    CompletionHandler<void(bool)> requestConfirmationCompletionHandler = [this, protectedThis = Ref { *this }, subFrameDomain, topFrameDomain, frameID, webPageID, scope, completionHandler = WTF::move(completionHandler)] (bool userDidGrantAccess) mutable {
+    CompletionHandler<void(bool)> requestConfirmationCompletionHandler = [this, protectedThis = Ref { *this }, subFrameDomain, topFrameDomain, frameID, webPageProxyID, scope, completionHandler = WTF::move(completionHandler)] (bool userDidGrantAccess) mutable {
         if (userDidGrantAccess)
-            grantStorageAccessEphemeral(subFrameDomain, topFrameDomain, frameID, webPageID, StorageAccessPromptWasShown::Yes, scope, WTF::move(completionHandler));
+            grantStorageAccessEphemeral(subFrameDomain, topFrameDomain, frameID, webPageProxyID, StorageAccessPromptWasShown::Yes, scope, WTF::move(completionHandler));
         else
             completionHandler({ StorageAccessWasGranted::No, StorageAccessPromptWasShown::Yes, scope, topFrameDomain, subFrameDomain });
     };
@@ -586,12 +586,12 @@ void WebResourceLoadStatisticsStore::requestStorageAccessEphemeral(const Registr
     protect(networkSession->networkProcess().parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::RequestStorageAccessConfirm(webPageProxyID, frameID, subFrameDomain, topFrameDomain, WTF::move(storageAccessPromptQuirk)), WTF::move(requestConfirmationCompletionHandler));
 }
 
-void WebResourceLoadStatisticsStore::requestStorageAccessUnderOpener(RegistrableDomain&& domainInNeedOfStorageAccess, PageIdentifier openerPageID, RegistrableDomain&& openerDomain)
+void WebResourceLoadStatisticsStore::requestStorageAccessUnderOpener(RegistrableDomain&& domainInNeedOfStorageAccess, WebPageProxyIdentifier openerWebPageProxyID, RegistrableDomain&& openerDomain)
 {
     ASSERT(RunLoop::isMain());
 
     if (isEphemeral())
-        return requestStorageAccessUnderOpenerEphemeral(WTF::move(domainInNeedOfStorageAccess), openerPageID, WTF::move(openerDomain));
+        return requestStorageAccessUnderOpenerEphemeral(WTF::move(domainInNeedOfStorageAccess), openerWebPageProxyID, WTF::move(openerDomain));
 
     CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction { CanRequestStorageAccessWithoutUserInteraction::No };
     if (CheckedPtr networkSession = m_networkSession.get()) {
@@ -602,30 +602,30 @@ void WebResourceLoadStatisticsStore::requestStorageAccessUnderOpener(Registrable
     // It is safe to move the strings to the background queue without isolated copy here because they are r-value references
     // coming from IPC. Strings which are safe to move to other threads as long as nobody on this thread holds a reference
     // to those strings.
-    postTask([domainInNeedOfStorageAccess = WTF::move(domainInNeedOfStorageAccess), openerPageID, openerDomain = WTF::move(openerDomain), canRequestStorageAccessWithoutUserInteraction](auto& store) mutable {
+    postTask([domainInNeedOfStorageAccess = WTF::move(domainInNeedOfStorageAccess), openerWebPageProxyID, openerDomain = WTF::move(openerDomain), canRequestStorageAccessWithoutUserInteraction](auto& store) mutable {
         if (RefPtr statisticsStore = store.m_statisticsStore)
-            statisticsStore->requestStorageAccessUnderOpener(WTF::move(domainInNeedOfStorageAccess), openerPageID, WTF::move(openerDomain), canRequestStorageAccessWithoutUserInteraction);
+            statisticsStore->requestStorageAccessUnderOpener(WTF::move(domainInNeedOfStorageAccess), openerWebPageProxyID, WTF::move(openerDomain), canRequestStorageAccessWithoutUserInteraction);
     });
 }
 
-void WebResourceLoadStatisticsStore::requestStorageAccessUnderOpenerEphemeral(RegistrableDomain&& domainInNeedOfStorageAccess, PageIdentifier openerPageID, RegistrableDomain&& openerDomain)
+void WebResourceLoadStatisticsStore::requestStorageAccessUnderOpenerEphemeral(RegistrableDomain&& domainInNeedOfStorageAccess, WebPageProxyIdentifier openerWebPageProxyID, RegistrableDomain&& openerDomain)
 {
     ASSERT(isEphemeral());
 
     if (CheckedPtr networkSession = m_networkSession.get()) {
         if (CheckedPtr storageSession = networkSession->networkStorageSession())
-            storageSession->grantStorageAccess(WTF::move(domainInNeedOfStorageAccess), WTF::move(openerDomain), std::nullopt, openerPageID);
+            storageSession->grantStorageAccess(WTF::move(domainInNeedOfStorageAccess), WTF::move(openerDomain), std::nullopt, openerWebPageProxyID);
     }
 }
 
-void WebResourceLoadStatisticsStore::grantStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, FrameIdentifier frameID, PageIdentifier pageID, WebPageProxyIdentifier webPageProxyID, StorageAccessPromptWasShown promptWasShown, StorageAccessScope scope, CompletionHandler<void(RequestStorageAccessResult)>&& completionHandler)
+void WebResourceLoadStatisticsStore::grantStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessPromptWasShown promptWasShown, StorageAccessScope scope, CompletionHandler<void(RequestStorageAccessResult)>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
 
     if (promptWasShown == StorageAccessPromptWasShown::Yes)
         wasGrantedStorageAccessPermissionInPage(webPageProxyID, topFrameDomain, subFrameDomain);
 
-    postTask([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, pageID, promptWasShown, scope, completionHandler = WTF::move(completionHandler)](auto& store) mutable {
+    postTask([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, webPageProxyID, promptWasShown, scope, completionHandler = WTF::move(completionHandler)](auto& store) mutable {
         RefPtr statisticsStore = store.m_statisticsStore;
         if (!statisticsStore) {
             postTaskReply([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), promptWasShown, scope, completionHandler = WTF::move(completionHandler)]() mutable {
@@ -634,7 +634,7 @@ void WebResourceLoadStatisticsStore::grantStorageAccess(RegistrableDomain&& subF
             return;
         }
 
-        statisticsStore->grantStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, pageID, promptWasShown, scope, [weakStore = ThreadSafeWeakPtr { store }, frameID, subFrameDomain = subFrameDomain.isolatedCopy(), topFrameDomain = topFrameDomain.isolatedCopy(), promptWasShown, scope, completionHandler = WTF::move(completionHandler)](StorageAccessWasGranted wasGrantedAccess) mutable {
+        statisticsStore->grantStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageProxyID, promptWasShown, scope, [weakStore = ThreadSafeWeakPtr { store }, frameID, subFrameDomain = subFrameDomain.isolatedCopy(), topFrameDomain = topFrameDomain.isolatedCopy(), promptWasShown, scope, completionHandler = WTF::move(completionHandler)](StorageAccessWasGranted wasGrantedAccess) mutable {
             postTaskReply([weakStore = WTF::move(weakStore), frameID, subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), wasGrantedAccess, promptWasShown, scope, completionHandler = WTF::move(completionHandler)]() mutable {
                 RefPtr store { weakStore.get() };
                 if (store && wasGrantedAccess == StorageAccessWasGranted::Yes) {
@@ -647,13 +647,13 @@ void WebResourceLoadStatisticsStore::grantStorageAccess(RegistrableDomain&& subF
     });
 }
 
-void WebResourceLoadStatisticsStore::grantStorageAccessEphemeral(const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, FrameIdentifier frameID, PageIdentifier pageID, StorageAccessPromptWasShown promptWasShown, StorageAccessScope scope, CompletionHandler<void(RequestStorageAccessResult)>&& completionHandler)
+void WebResourceLoadStatisticsStore::grantStorageAccessEphemeral(const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessPromptWasShown promptWasShown, StorageAccessScope scope, CompletionHandler<void(RequestStorageAccessResult)>&& completionHandler)
 {
     ASSERT(isEphemeral());
 
     if (CheckedPtr networkSession = m_networkSession.get()) {
         if (CheckedPtr storageSession = networkSession->networkStorageSession()) {
-            storageSession->grantStorageAccess(subFrameDomain, topFrameDomain, frameID, pageID);
+            storageSession->grantStorageAccess(subFrameDomain, topFrameDomain, frameID, webPageProxyID);
             completionHandler({ storageAccessWasGrantedValueForFrame(frameID, subFrameDomain), promptWasShown, scope, topFrameDomain, subFrameDomain });
             return;
         }
@@ -661,7 +661,7 @@ void WebResourceLoadStatisticsStore::grantStorageAccessEphemeral(const Registrab
     completionHandler({ StorageAccessWasGranted::No, promptWasShown, scope, topFrameDomain, subFrameDomain });
 }
 
-StorageAccessWasGranted WebResourceLoadStatisticsStore::grantStorageAccessInStorageSession(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, std::optional<FrameIdentifier> frameID, PageIdentifier pageID, StorageAccessScope scope)
+StorageAccessWasGranted WebResourceLoadStatisticsStore::grantStorageAccessInStorageSession(const RegistrableDomain& resourceDomain, const RegistrableDomain& firstPartyDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessScope scope)
 {
     ASSERT(RunLoop::isMain());
 
@@ -669,8 +669,8 @@ StorageAccessWasGranted WebResourceLoadStatisticsStore::grantStorageAccessInStor
 
     if (CheckedPtr networkSession = m_networkSession.get()) {
         if (CheckedPtr storageSession = networkSession->networkStorageSession()) {
-            storageSession->grantStorageAccess(resourceDomain, firstPartyDomain, (scope == StorageAccessScope::PerFrame ? frameID : std::nullopt), pageID);
-            ASSERT(storageSession->hasStorageAccess(resourceDomain, firstPartyDomain, frameID, pageID));
+            storageSession->grantStorageAccess(resourceDomain, firstPartyDomain, (scope == StorageAccessScope::PerFrame ? frameID : std::nullopt), webPageProxyID);
+            ASSERT(storageSession->hasStorageAccess(resourceDomain, firstPartyDomain, frameID, webPageProxyID));
             isStorageGranted = true;
         }
     }
@@ -684,11 +684,11 @@ StorageAccessWasGranted WebResourceLoadStatisticsStore::grantStorageAccessInStor
     return storageAccessWasGrantedValueForFrame(*frameID, resourceDomain);
 }
 
-void WebResourceLoadStatisticsStore::callGrantStorageAccessHandler(const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, std::optional<FrameIdentifier> frameID, PageIdentifier pageID, StorageAccessScope scope, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
+void WebResourceLoadStatisticsStore::callGrantStorageAccessHandler(const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessScope scope, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
 
-    completionHandler(grantStorageAccessInStorageSession(subFrameDomain, topFrameDomain, frameID, pageID, scope));
+    completionHandler(grantStorageAccessInStorageSession(subFrameDomain, topFrameDomain, frameID, webPageProxyID, scope));
 }
 
 void WebResourceLoadStatisticsStore::hasCookies(const RegistrableDomain& domain, CompletionHandler<void(bool)>&& completionHandler)

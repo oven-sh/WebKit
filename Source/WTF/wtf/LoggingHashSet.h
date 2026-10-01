@@ -117,7 +117,7 @@ public:
         else
             string.print("    RELEASE_ASSERT(iter != ", m_id, "->end());\n");
         string.print("}\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return result;
     }
     
@@ -134,7 +134,7 @@ public:
         string.print(m_id, "->add(");
         LoggingTraits::print(string, value);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return m_set.add(value);
     }
 
@@ -144,7 +144,7 @@ public:
         string.print(m_id, "->add(");
         LoggingTraits::print(string, value);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return m_set.add(WTF::move(value));
     }
     
@@ -154,7 +154,7 @@ public:
         string.print(m_id, "->addVoid(");
         LoggingTraits::print(string, value);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         m_set.addVoid(value);
     }
 
@@ -164,7 +164,7 @@ public:
         string.print(m_id, "->addVoid(");
         LoggingTraits::print(string, value);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         m_set.addVoid(WTF::move(value));
     }
     
@@ -191,7 +191,7 @@ public:
         string.print(m_id, "->remove(");
         LoggingTraits::print(string, value);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return m_set.remove(value);
     }
     
@@ -209,7 +209,7 @@ public:
         string.print(m_id, "->remove(");
         LoggingTraits::print(string, value);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return m_set.take(value);
     }
     

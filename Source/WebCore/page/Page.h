@@ -34,6 +34,7 @@
 #include <WebCore/IntRectHash.h>
 #include <WebCore/LoadSchedulingMode.h>
 #include <WebCore/MediaSessionGroupIdentifier.h>
+#include <WebCore/NetworkLoadPolicy.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
 #include <WebCore/PlaybackTargetClientContextIdentifier.h>
@@ -71,6 +72,13 @@
 
 #if ENABLE(THREADED_ANIMATIONS)
 #include <WebCore/AcceleratedTimelinesUpdater.h>
+#endif
+
+#if __has_include(<WebKitAdditions/PageAdditionsIncludes.h>)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnon-modular-include-in-module"
+#include <WebKitAdditions/PageAdditionsIncludes.h>
+#pragma clang diagnostic pop
 #endif
 
 namespace JSC {
@@ -179,6 +187,7 @@ class ScrollLatchingController;
 class ScrollingCoordinator;
 class ServicesOverlayController;
 class ServiceWorkerGlobalScope;
+class ServiceWorkerThread;
 class Settings;
 class SocketProvider;
 class SpeechRecognitionProvider;
@@ -277,7 +286,6 @@ using MediaProducerMediaStateFlags = OptionSet<MediaProducerMediaState>;
 using MediaProducerMutedStateFlags = OptionSet<MediaProducerMutedState>;
 
 enum class EventThrottlingBehavior : bool { Responsive, Unresponsive };
-enum class MainFrameMainResource : bool { No, Yes };
 
 enum class PageIsEditable : bool { No, Yes };
 
@@ -317,6 +325,7 @@ enum class RenderingUpdateStep : uint32_t {
     PrepareCanvasesForDisplayOrFlush    = 1 << 21,
     CaretAnimation                      = 1 << 22,
     FocusFixup                          = 1 << 23,
+    SyncLocalFrameInfoToRemote          = 1 << 24,
     UpdateValidationMessagePositions    = 1 << 25,
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     AccessibilityRegionUpdate           = 1 << 26,
@@ -327,6 +336,7 @@ enum class RenderingUpdateStep : uint32_t {
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     Immersive                           = 1 << 30,
 #endif
+    CanvasPaintEvent                    = 1u << 31,
 
 };
 
@@ -365,6 +375,8 @@ constexpr OptionSet<RenderingUpdateStep> updateRenderingSteps = {
     RenderingUpdateStep::UpdateContentRelevancy,
     RenderingUpdateStep::PerformPendingViewTransitions,
     RenderingUpdateStep::AdjustVisibility,
+    RenderingUpdateStep::SyncLocalFrameInfoToRemote,
+    RenderingUpdateStep::CanvasPaintEvent,
 };
 
 constexpr auto perRootFrameRenderingUpdateSteps = OptionSet<RenderingUpdateStep> {
@@ -437,10 +449,6 @@ public:
     Frame& mainFrame() const { return m_mainFrame.get(); }
     WEBCORE_EXPORT void setMainFrame(Ref<Frame>&&);
     WEBCORE_EXPORT const URL& NODELETE mainFrameURL() const LIFETIME_BOUND;
-
-    bool hasRemoteFrames() const;
-    void didAttachRemoteFrame() { ++m_remoteFrameCount; }
-    void didDetachRemoteFrame() { ASSERT(m_remoteFrameCount); --m_remoteFrameCount; }
 
     WEBCORE_EXPORT void didObserveFirstPartyUserGesture();
     SecurityOrigin& mainFrameOrigin() const;
@@ -822,6 +830,7 @@ public:
     // Service worker pages have an associated ServiceWorkerGlobalScope on the main thread.
     void setServiceWorkerGlobalScope(ServiceWorkerGlobalScope&);
     WEBCORE_EXPORT JSC::JSGlobalObject* serviceWorkerGlobalObject(DOMWrapperWorld&);
+    WEBCORE_EXPORT RefPtr<ServiceWorkerThread> serviceWorkerThread() const;
 
     // Notifications when the Page starts and stops being presented via a native window.
     WEBCORE_EXPORT void setActivityState(OptionSet<ActivityState>);
@@ -1141,6 +1150,7 @@ public:
     bool isUtilityPage() const { return m_isUtilityPage; }
 
     WEBCORE_EXPORT bool allowsLoadFromURL(const URL&, MainFrameMainResource) const;
+    const NetworkLoadPolicy& networkLoadPolicy() const { return m_networkLoadPolicy; }
     WEBCORE_EXPORT bool hasLocalDataForURL(const URL&);
 
     ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking() const { return m_shouldRelaxThirdPartyCookieBlocking; }
@@ -1346,10 +1356,6 @@ public:
     TextEffectController& textEffectController() { return m_textEffectController.get(); }
 #endif
 
-    bool hasActiveNowPlayingSession() const { return m_hasActiveNowPlayingSession; }
-    void hasActiveNowPlayingSessionChanged();
-    void updateActiveNowPlayingSessionNow();
-
 #if PLATFORM(IOS_FAMILY)
     bool canShowWhileLocked() const { return m_canShowWhileLocked; }
 #endif
@@ -1544,8 +1550,6 @@ private:
     HashSet<WeakRef<LocalFrame>> m_rootFrames;
     const UniqueRef<EditorClient> m_editorClient;
 
-    // Declared before m_mainFrame so a remote main frame can count itself as m_mainFrame is built.
-    unsigned m_remoteFrameCount { 0 };
     Ref<Frame> m_mainFrame;
     String m_mainFrameURLFragment;
 
@@ -1797,9 +1801,8 @@ private:
     Vector<UserContentURLPattern> m_corsDisablingPatterns;
     const HashSet<String> m_maskedURLSchemes;
     Vector<UserStyleSheet> m_userStyleSheetsPendingInjection;
-    const std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<String>> m_allowedNetworkHosts;
+    const NetworkLoadPolicy m_networkLoadPolicy;
     bool m_isTakingSnapshotsForApplicationSuspension { false };
-    bool m_loadsSubresources { true };
     bool m_canUseCredentialStorage { true };
     ShouldRelaxThirdPartyCookieBlocking m_shouldRelaxThirdPartyCookieBlocking;
     LoadSchedulingMode m_loadSchedulingMode { LoadSchedulingMode::Direct };
@@ -1813,6 +1816,14 @@ private:
 
     Color m_underPageBackgroundColorOverride;
     std::optional<Color> m_sampledPageTopColor;
+
+#if __has_include(<WebKitAdditions/PageAdditions.h>)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnon-modular-include-in-module"
+#include <WebKitAdditions/PageAdditions.h>
+#pragma clang diagnostic pop
+#endif
+
     std::pair<UniqueRef<FixedContainerEdges>, WeakElementEdges> m_fixedContainerEdgesAndElements;
     bool m_userHasInteractedSinceLastPageLoad { false };
     bool m_userHasInteractedSinceLastPageLoadExcludingForcedUserGestures { false };
@@ -1888,9 +1899,6 @@ private:
 #endif
 
     HashSet<std::pair<URL, ScriptTrackingPrivacyCategory>> m_scriptTrackingPrivacyReports;
-
-    bool m_hasActiveNowPlayingSession { false };
-    Timer m_activeNowPlayingSessionUpdateTimer;
 
     std::unique_ptr<LoginStatus> m_lastAuthentication;
 

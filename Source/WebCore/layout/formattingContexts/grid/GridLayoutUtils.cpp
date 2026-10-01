@@ -57,6 +57,9 @@ UsedMargins usedMarginsForAxis(const PlacedGridItem& gridItem, const ComputedSiz
         if (auto fixedMarginStart = axisSizes.marginStart.tryFixed())
             return LayoutUnit { fixedMarginStart->resolveZoom(gridItem.usedZoom()) };
 
+        if (axisSizes.marginStart.isKnownZero())
+            return { };
+
         ASSERT_NOT_IMPLEMENTED_YET();
         return { };
     };
@@ -64,6 +67,9 @@ UsedMargins usedMarginsForAxis(const PlacedGridItem& gridItem, const ComputedSiz
     auto marginEnd = [&] -> LayoutUnit {
         if (auto fixedMarginEnd = axisSizes.marginEnd.tryFixed())
             return LayoutUnit { fixedMarginEnd->resolveZoom(gridItem.usedZoom()) };
+
+        if (axisSizes.marginEnd.isKnownZero())
+            return { };
 
         ASSERT_NOT_IMPLEMENTED_YET();
         return { };
@@ -320,7 +326,9 @@ static bool NODELETE hasScrollableBlockComputedOverflowValue(const PlacedGridIte
 // the available space (the grid area size) less the box's margins, border, and padding.
 static BorderBoxSize stretchFitSize(LayoutUnit borderAndPadding, LayoutUnit availableSize, const UsedMargins& usedMargins)
 {
-    return BorderBoxSize { ContentBoxSize { availableSize - usedMargins.marginStart - usedMargins.marginEnd - borderAndPadding }, borderAndPadding };
+    // A content box cannot be negative, so an item whose margins, border, and padding already fill
+    // the available space stretches to a zero content box and overflows its grid area.
+    return BorderBoxSize { ContentBoxSize { std::max(0_lu, availableSize - usedMargins.marginStart - usedMargins.marginEnd - borderAndPadding) }, borderAndPadding };
 }
 
 // https://www.w3.org/TR/css-sizing-3/#fit-content-size
@@ -642,10 +650,10 @@ LayoutUnit blockMaximumSize(const PlacedGridItem& gridItem, LayoutUnit borderAnd
 // https://drafts.csswg.org/css-grid-1/#grid-item-sizing
 // https://drafts.csswg.org/css-grid-1/#layout-algorithm
 // Lay out the grid items into their respective containing blocks. Each grid area's width and height are considered definite for this purpose.
-LayoutUnit inlineUsedSize(const PlacedGridItem& gridItem, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit borderAndPadding, LayoutUnit columnsSize, const IntegrationUtils& integrationUtils, const UsedMargins& usedMargins)
+LayoutUnit inlineUsedSize(const PlacedGridItem& gridItem, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit borderAndPadding, LayoutUnit gridAreaInlineSize, const IntegrationUtils& integrationUtils, const UsedMargins& usedMargins)
 {
-    auto preferredSize = inlinePreferredSize(gridItem, borderAndPadding, columnsSize, integrationUtils, usedMargins);
-    auto minimumSize = inlineMinimumSize(gridItem, trackSizingFunctions, borderAndPadding, columnsSize, integrationUtils);
+    auto preferredSize = inlinePreferredSize(gridItem, borderAndPadding, gridAreaInlineSize, integrationUtils, usedMargins);
+    auto minimumSize = inlineMinimumSize(gridItem, trackSizingFunctions, borderAndPadding, gridAreaInlineSize, integrationUtils);
     auto maximumSize = inlineMaximumSize(gridItem, borderAndPadding);
     return std::max(minimumSize, std::min(maximumSize, preferredSize));
 }
@@ -653,10 +661,10 @@ LayoutUnit inlineUsedSize(const PlacedGridItem& gridItem, const TrackSizingFunct
 // https://drafts.csswg.org/css-grid-1/#grid-item-sizing
 // https://drafts.csswg.org/css-grid-1/#layout-algorithm
 // Lay out the grid items into their respective containing blocks. Each grid area's width and height are considered definite for this purpose.
-LayoutUnit blockUsedSize(const PlacedGridItem& gridItem, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit borderAndPadding, LayoutUnit rowsSize, const GridFormattingContext& formattingContext, LayoutUnit inlineAxisConstraint, const UsedMargins& usedMargins)
+LayoutUnit blockUsedSize(const PlacedGridItem& gridItem, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit borderAndPadding, LayoutUnit gridAreaBlockSize, const GridFormattingContext& formattingContext, LayoutUnit gridAreaInlineSize, const UsedMargins& usedMargins)
 {
-    auto preferredSize = blockPreferredSize(gridItem, borderAndPadding, rowsSize, formattingContext, inlineAxisConstraint, usedMargins);
-    auto minimumSize = blockMinimumSize(gridItem, trackSizingFunctions, borderAndPadding, rowsSize, formattingContext, inlineAxisConstraint);
+    auto preferredSize = blockPreferredSize(gridItem, borderAndPadding, gridAreaBlockSize, formattingContext, gridAreaInlineSize, usedMargins);
+    auto minimumSize = blockMinimumSize(gridItem, trackSizingFunctions, borderAndPadding, gridAreaBlockSize, formattingContext, gridAreaInlineSize);
     auto maximumSize = blockMaximumSize(gridItem, borderAndPadding);
     return std::max(minimumSize, std::min(maximumSize, preferredSize));
 }
@@ -690,32 +698,32 @@ LayoutUnit gridAreaDimensionSize(size_t startLine, size_t endLine, const TrackSi
     return sumOfTrackSizes + (numberOfInteriorGaps * gap);
 }
 
-LayoutUnit inlineAxisMinContentContribution(const PlacedGridItem& gridItem, const IntegrationUtils& integrationUtils)
+MarginBoxSize inlineAxisMinContentContribution(const PlacedGridItem& gridItem, const IntegrationUtils& integrationUtils)
 {
     auto borderBoxSize = BorderBoxSize::fromIntegrationFunction(integrationUtils.minContentLogicalWidthContribution(gridItem.layoutBox()));
     auto usedMargins = usedMarginsForAxis(gridItem, gridItem.inlineAxisSizes());
-    return MarginBoxSize { borderBoxSize, usedMargins.marginStart + usedMargins.marginEnd }.value;
+    return MarginBoxSize { borderBoxSize, usedMargins.marginStart + usedMargins.marginEnd };
 }
 
-LayoutUnit inlineAxisMaxContentContribution(const PlacedGridItem& gridItem, const IntegrationUtils& integrationUtils)
+MarginBoxSize inlineAxisMaxContentContribution(const PlacedGridItem& gridItem, const IntegrationUtils& integrationUtils)
 {
     auto borderBoxSize = BorderBoxSize::fromIntegrationFunction(integrationUtils.maxContentLogicalWidthContribution(gridItem.layoutBox()));
     auto usedMargins = usedMarginsForAxis(gridItem, gridItem.inlineAxisSizes());
-    return MarginBoxSize { borderBoxSize, usedMargins.marginStart + usedMargins.marginEnd }.value;
+    return MarginBoxSize { borderBoxSize, usedMargins.marginStart + usedMargins.marginEnd };
 }
 
-LayoutUnit blockAxisMinContentContribution(const PlacedGridItem& gridItem, LayoutUnit inlineAxisConstraint, const GridFormattingContext& formattingContext)
+MarginBoxSize blockAxisMinContentContribution(const PlacedGridItem& gridItem, LayoutUnit inlineAxisConstraint, const GridFormattingContext& formattingContext)
 {
     auto borderBoxSize = BorderBoxSize::fromIntegrationFunction(formattingContext.integrationUtils().minContentContributionHeightForGridItem(gridItem.layoutBox(), inlineAxisConstraint));
     auto usedMargins = usedMarginsForAxis(gridItem, gridItem.blockAxisSizes());
-    return MarginBoxSize { borderBoxSize, usedMargins.marginStart + usedMargins.marginEnd }.value;
+    return MarginBoxSize { borderBoxSize, usedMargins.marginStart + usedMargins.marginEnd };
 }
 
-LayoutUnit blockAxisMaxContentContribution(const PlacedGridItem& gridItem, LayoutUnit inlineAxisConstraint, const GridFormattingContext& formattingContext)
+MarginBoxSize blockAxisMaxContentContribution(const PlacedGridItem& gridItem, LayoutUnit inlineAxisConstraint, const GridFormattingContext& formattingContext)
 {
     auto borderBoxSize = BorderBoxSize::fromIntegrationFunction(formattingContext.integrationUtils().maxContentContributionHeightForGridItem(gridItem.layoutBox(), inlineAxisConstraint));
     auto usedMargins = usedMarginsForAxis(gridItem, gridItem.blockAxisSizes());
-    return MarginBoxSize { borderBoxSize, usedMargins.marginStart + usedMargins.marginEnd }.value;
+    return MarginBoxSize { borderBoxSize, usedMargins.marginStart + usedMargins.marginEnd };
 }
 
 // https://www.w3.org/TR/css-sizing-3/#behave-as-auto

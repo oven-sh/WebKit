@@ -62,6 +62,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/PageBlock.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(CONTENT_EXTENSIONS)
 #include <WebCore/ResourceMonitor.h>
@@ -183,7 +184,7 @@ void WebResourceLoader::willSendRequest(ResourceRequest&& proposedRequest, IPC::
     // Make the request whole again as we do not normally encode the request's body when sending it over IPC, for performance reasons.
     proposedRequest.setHTTPBody(proposedRequestBody.takeData());
 
-    LOG(Network, "(WebProcess) WebResourceLoader::willSendRequest to '%s'", proposedRequest.url().string().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "(WebProcess) WebResourceLoader::willSendRequest to '"_s << proposedRequest.url().string() << "'"_s);
     WEBRESOURCELOADER_RELEASE_LOG(WebResourceLoaderWillSendRequest);
     
     if (RefPtr frame = coreLoader->frame()) {
@@ -251,7 +252,7 @@ void WebResourceLoader::updateNetworkLoadMetrics(NetworkLoadMetrics& metrics)
 void WebResourceLoader::didReceiveResponse(ResourceResponse&& response, PrivateRelayed privateRelayed, bool needsContinueDidReceiveResponseMessage, std::optional<NetworkLoadMetrics>&& metrics)
 {
     RefPtr coreLoader = m_coreLoader;
-    LOG(Network, "(WebProcess) WebResourceLoader::didReceiveResponse for '%s'. Status %d.", coreLoader->url().string().utf8().data(), response.httpStatusCode());
+    LOG_WITH_STREAM(Network, stream << "(WebProcess) WebResourceLoader::didReceiveResponse for '"_s << coreLoader->url().string() << "'. Status "_s << response.httpStatusCode() << "."_s);
     WEBRESOURCELOADER_RELEASE_LOG(WebResourceLoaderDidReceiveResponse, response.httpStatusCode());
 
     Ref<WebResourceLoader> protectedThis(*this);
@@ -324,7 +325,7 @@ void WebResourceLoader::didReceiveResponse(ResourceResponse&& response, PrivateR
 void WebResourceLoader::didReceiveData(IPC::SharedBufferReference&& data, uint64_t bytesTransferredOverNetwork)
 {
     RefPtr coreLoader = m_coreLoader;
-    LOG(Network, "(WebProcess) WebResourceLoader::didReceiveData of size %zu for '%s'", data.size(), coreLoader->url().string().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "(WebProcess) WebResourceLoader::didReceiveData of size "_s << data.size() << " for '"_s << coreLoader->url().string() << "'"_s);
     ASSERT_WITH_MESSAGE(!m_isProcessingNetworkResponse, "Network process should not send data until we've validated the response");
 
     if (m_interceptController.isIntercepting(*coreLoader->identifier())) [[unlikely]] {
@@ -369,7 +370,7 @@ void WebResourceLoader::didReceiveData(IPC::SharedBufferReference&& data, uint64
 void WebResourceLoader::didFinishResourceLoad(NetworkLoadMetrics&& networkLoadMetrics)
 {
     RefPtr coreLoader = m_coreLoader;
-    LOG(Network, "(WebProcess) WebResourceLoader::didFinishResourceLoad for '%s'", coreLoader->url().string().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "(WebProcess) WebResourceLoader::didFinishResourceLoad for '"_s << coreLoader->url().string() << "'"_s);
     WEBRESOURCELOADER_RELEASE_LOG(WebResourceLoaderDidFinishResourceLoad, static_cast<uint64_t>(m_numBytesReceived));
 
     if (m_interceptController.isIntercepting(*coreLoader->identifier())) [[unlikely]] {
@@ -436,7 +437,7 @@ void WebResourceLoader::cancelPendingStreamUpload()
 void WebResourceLoader::didFailResourceLoad(const ResourceError& error)
 {
     RefPtr coreLoader = m_coreLoader;
-    LOG(Network, "(WebProcess) WebResourceLoader::didFailResourceLoad for '%s'", coreLoader->url().string().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "(WebProcess) WebResourceLoader::didFailResourceLoad for '"_s << coreLoader->url().string() << "'"_s);
     WEBRESOURCELOADER_RELEASE_LOG(WebResourceLoaderDidFailResourceLoad);
 
     if (m_interceptController.isIntercepting(*coreLoader->identifier())) [[unlikely]] {
@@ -455,7 +456,7 @@ void WebResourceLoader::didFailResourceLoad(const ResourceError& error)
 void WebResourceLoader::didBlockAuthenticationChallenge()
 {
     RefPtr coreLoader = m_coreLoader;
-    LOG(Network, "(WebProcess) WebResourceLoader::didBlockAuthenticationChallenge for '%s'", coreLoader->url().string().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "(WebProcess) WebResourceLoader::didBlockAuthenticationChallenge for '"_s << coreLoader->url().string() << "'"_s);
     WEBRESOURCELOADER_RELEASE_LOG(WebResourceLoaderDidBlockAuthenticationChallenge);
 
     coreLoader->didBlockAuthenticationChallenge();
@@ -464,7 +465,7 @@ void WebResourceLoader::didBlockAuthenticationChallenge()
 void WebResourceLoader::stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied(const ResourceResponse& response)
 {
     RefPtr coreLoader = m_coreLoader;
-    LOG(Network, "(WebProcess) WebResourceLoader::stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied for '%s'", coreLoader->url().string().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "(WebProcess) WebResourceLoader::stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied for '"_s << coreLoader->url().string() << "'"_s);
     WEBRESOURCELOADER_RELEASE_LOG(WebResourceLoaderStopLoadingAfterSecurityPolicyDenied);
 
     protect(coreLoader->documentLoader())->stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied(*coreLoader->identifier(), response);
@@ -474,7 +475,7 @@ void WebResourceLoader::stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDeni
 void WebResourceLoader::didReceiveResource(ShareableResource::Handle&& handle)
 {
     RefPtr coreLoader = m_coreLoader;
-    LOG(Network, "(WebProcess) WebResourceLoader::didReceiveResource for '%s'", coreLoader->url().string().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "(WebProcess) WebResourceLoader::didReceiveResource for '"_s << coreLoader->url().string() << "'"_s);
     WEBRESOURCELOADER_RELEASE_LOG(WebResourceLoaderDidReceiveResource);
 
     RefPtr<SharedBuffer> buffer = WTF::move(handle).tryWrapInSharedBuffer();

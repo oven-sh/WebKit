@@ -46,7 +46,7 @@ void activateFonts()
     if (appFontSet && numFonts && appFontSet->nfont == numFonts)
         return;
 
-    GUniquePtr<gchar> absoluteFontsDir(g_build_filename(FileSystem::webkitTopLevelDirectory().data(), "Tools", "WebKitTestRunner", "glib", "fonts", nullptr));
+    GUniquePtr<gchar> absoluteFontsDir(g_build_filename(FileSystem::webkitTopLevelDirectory().legacyCStringPointer(), "Tools", "WebKitTestRunner", "glib", "fonts", nullptr));
 
     // Load our configuration file, which sets up proper aliases for family
     // names like sans, serif and monospace.

@@ -29,6 +29,7 @@
 #include "Document.h"
 #include "EventTargetInterfaces.h"
 #include "FetchRequestCredentials.h"
+#include "NetworkLoadPolicy.h"
 #include "ScriptExecutionContext.h"
 #include "ScriptSourceCode.h"
 #include "Settings.h"
@@ -114,6 +115,7 @@ private:
     URL parseURL(const String&) const final;
     String userAgent(const URL&) const final;
     const SettingsValues& settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
+    const NetworkLoadPolicy& networkLoadPolicy() const LIFETIME_BOUND final { return m_networkLoadPolicy; }
 
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
 
@@ -127,6 +129,7 @@ private:
 
     SettingsValues m_settingsValues;
     String m_agentClusterID;
+    const NetworkLoadPolicy m_networkLoadPolicy;
 };
 
 } // namespace WebCore

@@ -171,7 +171,7 @@ TEST(MouseEventTests, ProcessSwapWithDeferredMouseMoveEventCompletion)
                 "        location.href = 'pson://www.apple.com/index.html';"_s,
                 "    });"_s,
                 "</script>"_s,
-                "</body>"_s).utf8().data());
+                "</body>"_s).utf8().legacyCStringPointer());
         }
     }];
     [configuration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];

@@ -32,14 +32,40 @@
 namespace WebCore {
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(FrameGeometrySyncData);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(FrameViewportInfo);
+
+bool operator==(const FrameGeometrySyncData& a, const FrameGeometrySyncData& b)
+{
+    if (a.contentsSize != b.contentsSize)
+        return false;
+
+    if (a.childrenFrameLayoutInfo.size() != b.childrenFrameLayoutInfo.size())
+        return false;
+
+    for (auto& [frameID, layoutInfo] : a.childrenFrameLayoutInfo) {
+        RefPtr otherLayoutInfo = b.childrenFrameLayoutInfo.get(frameID);
+        if (!otherLayoutInfo || *otherLayoutInfo != layoutInfo.get())
+            return false;
+    }
+
+    return true;
+}
 
 WTF::TextStream& operator<<(WTF::TextStream& ts, const FrameGeometrySyncData& data)
 {
     WTF::TextStream::GroupScope scope(ts);
     ts << "FrameGeometrySyncData"_s;
-    ts.dumpProperty("layoutViewportRect"_s, data.layoutViewportRect);
     ts.dumpProperty("contentsSize"_s, data.contentsSize);
     ts.dumpProperty("childrenFrameLayoutInfo"_s, data.childrenFrameLayoutInfo);
+    return ts;
+}
+
+WTF::TextStream& operator<<(WTF::TextStream& ts, const FrameViewportInfo& data)
+{
+    WTF::TextStream::GroupScope scope(ts);
+    ts << "FrameViewportInfo"_s;
+    ts.dumpProperty("layoutViewportRect"_s, data.layoutViewportRect);
+    ts.dumpProperty("scrollPosition"_s, data.scrollPosition);
     return ts;
 }
 

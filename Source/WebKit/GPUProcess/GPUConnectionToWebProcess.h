@@ -173,6 +173,7 @@ public:
         std::optional<WebCore::NowPlayingInfo> info;
     };
     const HashMap<WebCore::PageIdentifier, UniqueRef<NowPlayingCandidate>>& nowPlayingCandidates() const LIFETIME_BOUND { return m_nowPlayingCandidates; }
+    void clearNowPlayingInfoForPage(std::optional<WebCore::PageIdentifier>);
     void becomeNowPlayingOwner(WebCore::PageIdentifier);
     void becomeRemoteCommandFallbackTarget();
     void resignNowPlayingManagerClient();
@@ -318,7 +319,6 @@ private:
     void createGPU(WebGPUIdentifier, RemoteRenderingBackendIdentifier, IPC::StreamServerConnection::Handle&&);
     void releaseGPU(WebGPUIdentifier);
 
-    void clearNowPlayingInfoForPage(std::optional<WebCore::PageIdentifier>);
     void setNowPlayingInfoForPage(WebCore::NowPlayingInfo&&, std::optional<WebCore::PageIdentifier>);
     void setNowPlayingCandidateState(WebCore::NowPlayingCandidateState&&);
     void nowPlayingClientDidClose();
@@ -451,7 +451,7 @@ private:
     HashMap<std::pair<WebPageProxyIdentifier, WebCore::PageIdentifier>, std::unique_ptr<LayerHostingContext>> m_visibilityPropagationContexts;
 #endif
 
-    using RemoteAudioHardwareListenerMap = HashMap<RemoteAudioHardwareListenerIdentifier, std::unique_ptr<RemoteAudioHardwareListenerProxy>>;
+    using RemoteAudioHardwareListenerMap = HashMap<RemoteAudioHardwareListenerIdentifier, Ref<RemoteAudioHardwareListenerProxy>>;
     RemoteAudioHardwareListenerMap m_remoteAudioHardwareListenerMap;
 
 #if USE(GRAPHICS_LAYER_WC)

@@ -54,7 +54,7 @@
 #include "StreamConnectionWorkQueue.h"
 #include "StreamMessageReceiver.h"
 #include "StreamServerConnection.h"
-#include <WebCore/Font.h>
+#include <WebCore/FontBase.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/PixelFormat.h>
 #include <WebCore/ProcessIdentity.h>
@@ -157,6 +157,8 @@ private:
     void releaseImageBuffer(WebCore::RenderingResourceIdentifier);
     void moveToSerializedBuffer(WebCore::RenderingResourceIdentifier, RemoteSerializedImageBufferIdentifier);
     void moveToImageBuffer(RemoteSerializedImageBufferIdentifier, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier);
+    void moveSerializedBufferToTransferHeap(RemoteSerializedImageBufferIdentifier, WebCore::ImageBufferTransferIdentifier);
+    void takeTransferredBuffer(WebCore::ImageBufferTransferIdentifier, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier);
     void createDisplayListRecorder(RemoteDisplayListRecorderIdentifier);
     void sinkDisplayListRecorderIntoDisplayList(RemoteDisplayListRecorderIdentifier, RemoteDisplayListIdentifier);
     void releaseDisplayList(RemoteDisplayListIdentifier);
@@ -171,7 +173,7 @@ private:
     void releaseGradient(RemoteGradientIdentifier);
     void cacheFilter(Ref<WebCore::Filter>&&);
     void releaseFilter(WebCore::RenderingResourceIdentifier);
-    void cacheFont(const WebCore::Font::Attributes&, WebCore::FontPlatformDataAttributes, std::optional<WebCore::RenderingResourceIdentifier>);
+    void cacheFont(const WebCore::FontInternalAttributes&, WebCore::FontPlatformDataAttributes, std::optional<WebCore::RenderingResourceIdentifier>);
     void releaseFont(WebCore::RenderingResourceIdentifier);
     void cacheFontCustomPlatformData(WebCore::FontCustomPlatformSerializedData&&);
     void releaseFontCustomPlatformData(WebCore::RenderingResourceIdentifier);

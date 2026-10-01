@@ -579,6 +579,7 @@ end
 function :extractBits, {
     must_use: true,
     const: true,
+    validate: true,
 
     # signed
     [].(i32, u32, u32) => i32,
@@ -673,6 +674,7 @@ function :frexp, {
 function :insertBits, {
     must_use: true,
     const: true,
+    validate: true,
 
     [T < ConcreteInteger].(T, T, u32, u32) => T,
     [T < ConcreteInteger, N].(vec[N][T], vec[N][T], u32, u32) => vec[N][T],
@@ -1604,6 +1606,7 @@ function :workgroupBarrier, {
 function :workgroupUniformLoad, {
     must_use: true,
     stage: :compute,
+    validate: true,
 
     # @must_use fn workgroupUniformLoad(p : ptr<workgroup, atomic<T>, read_write>) -> T
     [T].(ptr[workgroup, atomic[T]]) => T,

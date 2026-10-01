@@ -303,7 +303,7 @@ void Connection::readyReadHandler()
             }
 
             if (m_isConnected) {
-                WTFLogAlways("Error receiving IPC message on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(errno).data());
+                SAFE_WTFLOGALWAYS("Error receiving IPC message on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(errno));
                 connectionDidClose();
             }
             return;
@@ -475,7 +475,7 @@ bool Connection::sendOutputMessage(UnixMessage&& outputMessage)
         }
 
         if (m_isConnected)
-            WTFLogAlways("Error sending IPC message: %s", safeStrerror(errno).data());
+            SAFE_WTFLOGALWAYS("Error sending IPC message: %s", safeStrerror(errno));
         return false;
     }
 
@@ -526,7 +526,7 @@ bool Connection::sendOutgoingHardwareBuffers()
         }
 
         if (m_isConnected) {
-            LOG_ERROR("Error sending AHardwareBuffer on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(-result).data());
+            LOG_ERROR("Error sending AHardwareBuffer on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(-result));
             connectionDidClose();
         }
         return false;
@@ -555,7 +555,7 @@ bool Connection::receiveIncomingHardwareBuffers()
             connectionDidClose();
 
         if (m_isConnected) {
-            LOG_ERROR("Error receiving AHardwareBuffer on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(-result).data());
+            LOG_ERROR("Error receiving AHardwareBuffer on socket %d in process %d: %s", socketDescriptor(), getpid(), safeStrerror(-result));
             connectionDidClose();
         }
         return false;

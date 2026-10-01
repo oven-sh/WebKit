@@ -80,10 +80,6 @@
 #include "WebAnimationUtilities.h"
 #include <ranges>
 
-#if PLATFORM(COCOA)
-#include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
-#endif
-
 namespace WebCore {
 
 namespace Style {
@@ -92,6 +88,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(TreeResolverScope);
 
 TreeResolver::TreeResolver(Document& document, std::unique_ptr<Update> update)
     : m_document(document)
+    , m_maximumNestedInlineFormattingContextCount(document.settings().maximumNestedInlineFormattingContextCount())
     , m_update(WTF::move(update))
 {
 }
@@ -376,6 +373,10 @@ auto TreeResolver::resolveElement(Element& element, const Style::ComputedStyle* 
         }
     }
 
+    SetForScope hostElementStyleScope(
+        scope().selectorMatchingState.containerQueryEvaluationState.hostElementStyle,
+        HostElementStyle { element, *update.style });
+
     auto resolveAndAddPseudoElementStyle = [&](const PseudoElementIdentifier& pseudoElementIdentifier) {
         const Style::ComputedStyle* existingPseudoStyle = existingStyle ? existingStyle->pseudoElementStyle(pseudoElementIdentifier) : nullptr;
         auto pseudoElementUpdate = resolvePseudoElement(element, pseudoElementIdentifier, update, parent().isInDisplayNoneTree, existingPseudoStyle);
@@ -469,29 +470,33 @@ std::optional<ElementUpdate> TreeResolver::resolvePseudoElement(Element& element
         return { };
 
     if (pseudoElementIdentifier.type == PseudoElementType::Checkmark) {
-        if (auto* option = dynamicDowncast<HTMLOptionElement>(element)) {
-            // Option elements need to check against the picker for their appearance value.
+        auto hasCheckmark = [&] {
+            auto* option = dynamicDowncast<HTMLOptionElement>(element);
+            if (!option) {
+                if (elementUpdate.style->usedAppearance() != StyleAppearance::Base)
+                    return false;
+                auto* input = dynamicDowncast<HTMLInputElement>(element);
+                return input && input->isCheckable();
+            }
             auto* select = option->ownerSelectElement();
             if (!select)
-                return { };
-            auto* pickerElement = select->pickerPopoverElement();
-            if (!pickerElement)
-                return { };
-            auto* pickerStyle = m_update->elementStyle(*pickerElement);
-            if (!pickerStyle || pickerStyle->usedAppearance() != StyleAppearance::Base)
-                return { };
-        } else {
-            if (elementUpdate.style->usedAppearance() != StyleAppearance::Base)
-                return { };
-            if (auto* input = dynamicDowncast<HTMLInputElement>(element); !input || !input->isCheckable())
-                return { };
-        }
+                return false;
+            if (select->isBaseListBox(m_update->elementStyle(*select)))
+                return true;
+            auto* picker = select->pickerPopoverElement();
+            if (!picker)
+                return false;
+            auto* pickerStyle = m_update->elementStyle(*picker);
+            return pickerStyle && pickerStyle->usedAppearance() == StyleAppearance::Base;
+        };
+        if (!hasCheckmark())
+            return { };
     }
 
     if (pseudoElementIdentifier.type == PseudoElementType::PickerIcon) {
         if (elementUpdate.style->usedAppearance() != StyleAppearance::Base)
             return { };
-        if (auto* select = dynamicDowncast<HTMLSelectElement>(element); !select || !select->usesMenuList())
+        if (auto* select = dynamicDowncast<HTMLSelectElement>(element); !select || !select->isDropdownBox(elementUpdate.style.get()))
             return { };
     }
 
@@ -1108,6 +1113,37 @@ HashSet<AnimatableCSSProperty> TreeResolver::applyCascadeAfterAnimation(Style::C
     return styleBuilder.overriddenAnimatedProperties();
 }
 
+static bool isInlineBox(Style::Display display)
+{
+    return display == DisplayType::InlineFlow || display.isRubyContainerOrInternalRubyBox();
+}
+
+void TreeResolver::incrementNestedInlineFormattingContextCountIfNeeded(Parent& newParent)
+{
+    newParent.nestedInlineFormattingContextCount = parent().nestedInlineFormattingContextCount;
+
+    auto& style = newParent.style;
+    auto display = style.display();
+    if (!display.doesGenerateBox() || style.hasOutOfFlowPosition())
+        return;
+
+    auto isLaidOutByInlineFormattingContext = [&] {
+        // A float is inline content unless the container also has in-flow block-level children,
+        // which style alone doesn't tell us.
+        if (style.floating() != Float::None)
+            return true;
+
+        if (display.isInlineType())
+            return !isInlineBox(display);
+
+        auto* parentBoxStyle = this->parentBoxStyle();
+        return parentBoxStyle && isInlineBox(parentBoxStyle->display());
+    };
+
+    if (isLaidOutByInlineFormattingContext())
+        ++newParent.nestedInlineFormattingContextCount;
+}
+
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 void TreeResolver::pushParent(Element& element, const Style::ComputedStyle& style, OptionSet<Change> changes, DescendantsToResolve descendantsToResolve, IsInDisplayNoneTree isInDisplayNoneTree, bool didAXUpdateFontSubtree, bool didAXUpdateTextColorSubtree)
 #else
@@ -1119,6 +1155,7 @@ void TreeResolver::pushParent(Element& element, const Style::ComputedStyle& styl
         scope().selectorMatchingState.containerQueryEvaluationState.sizeQueryContainers.append(element);
 
     Parent parent(element, style, changes, descendantsToResolve, isInDisplayNoneTree);
+    incrementNestedInlineFormattingContextCountIfNeeded(parent);
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     parent.didAXUpdateFontSubtree = didAXUpdateFontSubtree;
     parent.didAXUpdateTextColorSubtree = didAXUpdateTextColorSubtree;
@@ -1340,12 +1377,22 @@ void TreeResolver::resolveComposedTree()
 
         Ref element { downcast<Element>(node.get()) };
 
-        // At the maximum render tree depth, only the first child per parent gets a renderer.
-        // The HTML parser caps DOM depth by attaching overflow elements as siblings at this
-        // boundary (see HTMLConstructionSite::attachLater); skipping later siblings here keeps
-        // those overflow elements from being styled and laid out.
-        if (auto depth = it.depth(); depth > maximumRenderTreeDepth()
-            || (depth == maximumRenderTreeDepth() && element->previousElementSibling())) {
+        auto isTooDeepToRender = [&] {
+            // At the maximum render tree depth, only the first child per parent gets a renderer.
+            // The HTML parser caps DOM depth by attaching overflow elements as siblings at this
+            // boundary (see HTMLConstructionSite::attachLater); skipping later siblings here keeps
+            // those overflow elements from being styled and laid out.
+            auto depth = it.depth();
+            if (depth > Settings::defaultMaximumRenderTreeDepth)
+                return true;
+            if (depth == Settings::defaultMaximumRenderTreeDepth && element->previousElementSibling())
+                return true;
+
+            // Nested inline formatting contexts are limited separately as each costs far more stack.
+            return parent.nestedInlineFormattingContextCount >= m_maximumNestedInlineFormattingContextCount;
+        };
+
+        if (isTooDeepToRender()) {
             resetStyleForNonRenderedDescendants(element.get());
             it.traverseNextSkippingChildren();
             continue;
@@ -2019,20 +2066,6 @@ void TreeResolver::collectChangedAnchorNames(const Style::ComputedStyle& newStyl
         addChanged(*currentStyle);
         addChanged(newStyle);
     }
-}
-
-unsigned TreeResolver::maximumRenderTreeDepth()
-{
-    static unsigned maximum = [] {
-#if PLATFORM(IOS)
-        if (WTF::IOSApplication::isMaild() || WTF::IOSApplication::isMobileMail()) {
-            static const unsigned maximumMailRenderTreeDepth = 100;
-            return maximumMailRenderTreeDepth;
-        }
-#endif
-        return Settings::defaultMaximumRenderTreeDepth;
-    }();
-    return maximum;
 }
 
 static Vector<Function<void ()>>& NODELETE postResolutionCallbackQueue()

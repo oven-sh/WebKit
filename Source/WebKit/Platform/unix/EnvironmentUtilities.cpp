@@ -66,7 +66,7 @@ void removeValuesEndingWith(const char* environmentVariable, const char* searchV
         return;
     }
 
-    setenv(environmentVariable, after.utf8().data(), 1);
+    setenv(environmentVariable, after.utf8().legacyCStringPointer(), 1);
 }
 
 } // namespace EnvironmentUtilities

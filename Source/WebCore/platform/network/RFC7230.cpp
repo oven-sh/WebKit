@@ -103,6 +103,7 @@ bool isValidName(StringView name)
     return true;
 }
 
+// See RFC 7230, Section 3.2 and Section 3.2.6.
 bool isValidValue(StringView value)
 {
     enum class State {
@@ -141,6 +142,8 @@ bool isValidValue(StringView value)
         case State::Token:
             if (isTokenCharacter(c))
                 continue;
+            if (!isTabOrSpace(c) && !isVisibleCharacter(c) && !isOBSText(c))
+                return false;
             state = State::OptionalWhitespace;
             continue;
         case State::QuotedString:

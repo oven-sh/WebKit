@@ -30,6 +30,7 @@
 
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringConcatenateNumbers.h>
 
 using namespace JSC;
 using namespace JSC::Wasm;
@@ -141,9 +142,9 @@ void testAllUnaryOps()
 #undef TEST_UNARY_OP
 
     TEST_ASSERT(opsTested == TOTAL_UNARY_OPS,
-        makeString("Tested all "_s, String::number(TOTAL_UNARY_OPS), " unary ops"_s).utf8().data());
+        makeString("Tested all "_s, TOTAL_UNARY_OPS, " unary ops"_s));
     TEST_ASSERT(opsSucceeded == TOTAL_UNARY_OPS,
-        makeString("All "_s, String::number(TOTAL_UNARY_OPS), " unary ops passed strict validation"_s).utf8().data());
+        makeString("All "_s, TOTAL_UNARY_OPS, " unary ops passed strict validation"_s));
 
     dataLogLn("  Successfully tested with strict mapping validation: ", opsSucceeded, " / ", opsTested, " unary ops");
     dataLogLn("All unary ops coverage testing completed");

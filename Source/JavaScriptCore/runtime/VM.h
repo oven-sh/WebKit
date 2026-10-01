@@ -528,6 +528,9 @@ public:
         bool resolveAllScopeSlotsStatically { Options::resolveAllScopeSlotsStatically() };
         bool evaluateObjectLiteralValuesFirst { Options::evaluateObjectLiteralValuesFirst() };
         bool definePlainInstanceFieldsInConstructor { Options::definePlainInstanceFieldsInConstructor() };
+        // However short the source is (SourceProvider::minimumLengthToHaveLineStartsWithTheCode). What is built from the code
+        // may have no text to scan.
+        bool keepLineStartsOfEverySource { false };
     };
     BytecodeGenerationOptions bytecodeGenerationOptions;
 
@@ -983,6 +986,7 @@ public:
 
     unsigned varargsLength;
     uint32_t osrExitIndex;
+    void* osrExitReturnPC;
     void* osrExitJumpDestination;
     RegExp* m_executingRegExp { nullptr };
 

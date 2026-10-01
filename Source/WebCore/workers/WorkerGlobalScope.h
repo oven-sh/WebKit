@@ -30,6 +30,7 @@
 #include <WebCore/CacheStorageConnection.h>
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/ImageBitmap.h>
+#include <WebCore/NetworkLoadPolicy.h>
 #include <WebCore/ReportingClient.h>
 #include <WebCore/ScriptExecutionContext.h>
 #include <WebCore/Settings.h>
@@ -161,6 +162,8 @@ public:
 
     const SettingsValues& settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
 
+    const NetworkLoadPolicy& networkLoadPolicy() const LIFETIME_BOUND final { return m_networkLoadPolicy; }
+
     FetchOptions::Credentials credentials() const { return m_credentials; }
 
     void releaseMemory(Synchronous);
@@ -250,6 +253,7 @@ private:
     WorkerType m_workerType;
     FetchOptions::Credentials m_credentials;
     String m_agentClusterID;
+    const NetworkLoadPolicy m_networkLoadPolicy;
     const RefPtr<WorkerStorageConnection> m_storageConnection;
     RefPtr<WorkerFileSystemStorageConnection> m_fileSystemStorageConnection;
 };

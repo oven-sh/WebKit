@@ -167,7 +167,7 @@ public:
         void decommitUnusedPages(bool isFirstSweepSinceFullCollection);
         void recommitPages();
         unsigned numberOfDecommittedPages() const { return std::popcount(m_decommittedPages); }
-            
+
         // While allocating from a free list, MarkedBlock temporarily has bogus
         // cell liveness data. To restore accurate cell liveness data, call one
         // of these functions:
@@ -259,9 +259,10 @@ public:
 
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
         BlockDirectory* m_directory { nullptr };
-        WeakSet m_weakSet;
-        
         MarkedBlock* const m_block { nullptr };
+
+        // WeakSet is rarely accessed so keep it after the other members.
+        WeakSet m_weakSet;
     };
 
 private:    

@@ -627,8 +627,8 @@ void JIT::privateCompileSlowCases()
         if (JITInternal::verbose)
             dataLog("At ", firstTo, " slow: ", iter - m_slowCases.begin(), "\n");
 
-        RELEASE_ASSERT_WITH_MESSAGE(iter == m_slowCases.end() || firstTo.offset() != iter->to.offset(), "Not enough jumps linked in slow case codegen while handling %s.", toCString(currentInstruction->opcodeID()).data());
-        RELEASE_ASSERT_WITH_MESSAGE(firstTo.offset() == (iter - 1)->to.offset(), "Too many jumps linked in slow case codegen while handling %s.", toCString(currentInstruction->opcodeID()).data());
+        RELEASE_ASSERT_WITH_MESSAGE(iter == m_slowCases.end() || firstTo.offset() != iter->to.offset(), "Not enough jumps linked in slow case codegen while handling %s.", toUTF8CString(currentInstruction->opcodeID()));
+        RELEASE_ASSERT_WITH_MESSAGE(firstTo.offset() == (iter - 1)->to.offset(), "Too many jumps linked in slow case codegen while handling %s.", toUTF8CString(currentInstruction->opcodeID()));
 
         jump().linkTo(fastPathResumePoint(), this);
         ++bytecodeCountHavingSlowCase;
@@ -937,7 +937,7 @@ RefPtr<BaselineJITCode> JIT::link(LinkBuffer& patchBuffer)
 
     auto finalizeICs = [&] (auto& generators) {
         for (auto& gen : generators)
-            gen.m_unlinkedPropertyCache->doneLocation = patchBuffer.locationOf<JSInternalPtrTag>(gen.m_done);
+            gen.m_baselineUnlinkedPropertyCache->doneLocation = patchBuffer.locationOf<JSInternalPtrTag>(gen.m_done);
     };
 
     finalizeICs(m_getByIds);
@@ -990,7 +990,7 @@ RefPtr<BaselineJITCode> JIT::link(LinkBuffer& patchBuffer)
                 BytecodeIndex bytecodeIndex(bytecodeOffset);
                 if (bytecodeIndex.offset() >= m_profiledCodeBlock->instructionsSize())
                     continue;
-                LineColumn lineColumn = m_profiledCodeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+                LineColumn lineColumn = m_profiledCodeBlock->lineColumnForBytecodeIndexConcurrently(bytecodeIndex);
                 auto location = patchBuffer.locationOf<DisassemblyPtrTag>(m_labels[bytecodeOffset]);
                 uint32_t codeOffset = static_cast<uint32_t>(location.dataLocation<uintptr_t>() - reinterpret_cast<uintptr_t>(codeStart));
                 debugInfo->codeEntries.append({ codeOffset, lineColumn, Ref { *provider } });
@@ -1002,7 +1002,7 @@ RefPtr<BaselineJITCode> JIT::link(LinkBuffer& patchBuffer)
     // FIXME: Make a version of CodeBlockWithJITType that knows about UnlinkedCodeBlock.
     CodeRef<JSEntryPtrTag> result = FINALIZE_BASELINE_CODE(
         patchBuffer, JSEntryPtrTag,
-        "Baseline JIT code for %s", toCString(CodeBlockWithJITType(m_profiledCodeBlock, JITType::BaselineJIT)).data());
+        "Baseline JIT code for %s", toUTF8CString(CodeBlockWithJITType(m_profiledCodeBlock, JITType::BaselineJIT)));
     
     CodePtr<JSEntryPtrTag> withArityCheck = patchBuffer.locationOf<JSEntryPtrTag>(m_arityCheck);
     auto jitCode = adoptRef(*new BaselineJITCode(result, withArityCheck));
@@ -1090,9 +1090,9 @@ int JIT::stackPointerOffsetFor(CodeBlock* codeBlock)
     return stackPointerOffsetFor(codeBlock->unlinkedCodeBlock());
 }
 
-UncheckedKeyHashMap<CString, Seconds> JIT::compileTimeStats()
+UncheckedKeyHashMap<ASCIICString, Seconds> JIT::compileTimeStats()
 {
-    UncheckedKeyHashMap<CString, Seconds> result;
+    UncheckedKeyHashMap<ASCIICString, Seconds> result;
     if (Options::reportTotalCompileTimes()) {
         result.add("Total Compile Time"_s, totalCompileTime());
         result.add("Baseline Compile Time"_s, totalBaselineCompileTime);

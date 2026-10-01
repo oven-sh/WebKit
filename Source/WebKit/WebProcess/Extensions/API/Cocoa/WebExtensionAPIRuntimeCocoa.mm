@@ -49,10 +49,13 @@
 #import "WebPage.h"
 #import "WebProcess.h"
 #import <WebCore/LocalFrameInlines.h>
+#import <WebCore/Page.h>
 #import <WebCore/SecurityOrigin.h>
+#import <WebCore/ServiceWorkerThread.h>
 #import <WebCore/UserGestureIndicator.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/CallbackAggregator.h>
+#import <wtf/RunLoop.h>
 #import <wtf/text/MakeString.h>
 
 
@@ -99,31 +102,64 @@ JSValueRef toWebAPI(JSContextRef context, const WebExtensionMessageSenderParamet
     JSObjectRef result = JSObjectMake(context, 0, 0);
 
     if (parameters.extensionUniqueIdentifier)
-        JSObjectSetProperty(context, result, toJSString(idKey).get(), toJSValueRef(context, parameters.extensionUniqueIdentifier.value()), 0, nullptr);
+        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(idKey).get(), toJSValueRef(context, parameters.extensionUniqueIdentifier.value()), 0, nullptr);
 
     if (parameters.tabParameters)
-        JSObjectSetProperty(context, result, toJSString(tabKey).get(), toJSValueRef(context, toWebAPI(parameters.tabParameters.value())), 0, nullptr);
+        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(tabKey).get(), toJSValueRef(context, toWebAPI(parameters.tabParameters.value())), 0, nullptr);
 
     // The frame identifier is only included when tab is included.
     if (parameters.frameIdentifier && parameters.tabParameters)
-        JSObjectSetProperty(context, result, toJSString(frameIdKey).get(), JSValueMakeNumber(context, toWebAPI(parameters.frameIdentifier.value())), 0, nullptr);
+        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(frameIdKey).get(), JSValueMakeNumber(context, toWebAPI(parameters.frameIdentifier.value())), 0, nullptr);
 
     if (parameters.url.isValid()) {
-        JSObjectSetProperty(context, result, toJSString(urlKey).get(), toJSValueRef(context, parameters.url.string()), 0, nullptr);
-        JSObjectSetProperty(context, result, toJSString(originKey).get(), toJSValueRef(context, WebCore::SecurityOrigin::create(parameters.url)->toString()), 0, nullptr);
+        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(urlKey).get(), toJSValueRef(context, parameters.url.string()), 0, nullptr);
+        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(originKey).get(), toJSValueRef(context, WebCore::SecurityOrigin::create(parameters.url)->toString()), 0, nullptr);
     }
 
-    if (parameters.documentIdentifier.isValid())
-        JSObjectSetProperty(context, result, toJSString(documentIdKey).get(), toJSValueRef(context, parameters.documentIdentifier.toString()), 0, nullptr);
+    if (parameters.documentIdentifier)
+        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(documentIdKey).get(), toJSValueRef(context, parameters.documentIdentifier->toString()), 0, nullptr);
 
     return result;
 }
 
+bool WebExtensionContextProxy::isBackgroundServiceWorkerStillActivating()
+{
+    bool isStillActivating = false;
+    m_extensionContentFrames.forEach([&](auto& frame) {
+        if (isStillActivating)
+            return;
+
+        RefPtr page = frame.page() ? frame.page()->corePage() : nullptr;
+        if (!page || !page->isServiceWorkerPage())
+            return;
+
+        RefPtr serviceWorkerThread = page->serviceWorkerThread();
+        if (serviceWorkerThread && !serviceWorkerThread->hasFinishedFiringActivateEvent())
+            isStillActivating = true;
+    });
+
+    return isStillActivating;
+}
+
 void WebExtensionContextProxy::internalDispatchRuntimeMessageEvent(WebExtensionContentWorldType contentWorldType, const String& messageJSON, const std::optional<WebExtensionMessageTargetParameters>& targetParameters, const WebExtensionMessageSenderParameters& senderParameters, bool userGesture, CompletionHandler<void(String&& replyJSON)>&& completionHandler)
+{
+    static constexpr unsigned backgroundServiceWorkerActivationMaxPollAttempts = 400;
+    dispatchRuntimeMessageEventOnceBackgroundServiceWorkerIsActive(contentWorldType, messageJSON, targetParameters, senderParameters, userGesture, WTF::move(completionHandler), backgroundServiceWorkerActivationMaxPollAttempts);
+}
+
+void WebExtensionContextProxy::dispatchRuntimeMessageEventOnceBackgroundServiceWorkerIsActive(WebExtensionContentWorldType contentWorldType, String messageJSON, std::optional<WebExtensionMessageTargetParameters> targetParameters, WebExtensionMessageSenderParameters senderParameters, bool userGesture, CompletionHandler<void(String&& replyJSON)>&& completionHandler, unsigned remainingActivationPollAttempts)
 {
     if (!hasDOMWrapperWorld(contentWorldType)) {
         // A null reply to the completionHandler means no listeners replied.
         completionHandler({ });
+        return;
+    }
+
+    if (remainingActivationPollAttempts && isBackgroundServiceWorkerStillActivating()) {
+        static constexpr auto backgroundServiceWorkerActivationPollInterval = 5_ms;
+        RunLoop::mainSingleton().dispatchAfter(backgroundServiceWorkerActivationPollInterval, [this, protectedThis = Ref { *this }, contentWorldType, messageJSON, targetParameters, senderParameters, userGesture, completionHandler = WTF::move(completionHandler), remainingActivationPollAttempts]() mutable {
+            dispatchRuntimeMessageEventOnceBackgroundServiceWorkerIsActive(contentWorldType, WTF::move(messageJSON), WTF::move(targetParameters), WTF::move(senderParameters), userGesture, WTF::move(completionHandler), remainingActivationPollAttempts - 1);
+        });
         return;
     }
 

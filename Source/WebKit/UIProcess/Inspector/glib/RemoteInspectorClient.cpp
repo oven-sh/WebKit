@@ -154,7 +154,7 @@ const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers(
             gboolean hasLocalDebugger;
             while (g_variant_iter_loop(iter.get(), "(t&s&s&sb)", &targetID, &type, &name, &url, &hasLocalDebugger)) {
                 if (!g_strcmp0(type, "JavaScript") || !g_strcmp0(type, "ServiceWorker") || !g_strcmp0(type, "WebPage"))
-                    targetList.append({ targetID, type, name, url });
+                    targetList.append({ targetID, UTF8CString { byteCast<char8_t>(type) }, UTF8CString { byteCast<char8_t>(name) }, UTF8CString { byteCast<char8_t>(url) } });
             }
             client.setTargetList(connectionID, WTF::move(targetList));
         }}
@@ -178,7 +178,7 @@ RemoteInspectorClient::RemoteInspectorClient(String&& hostAndPort, RemoteInspect
     , m_cancellable(adoptGRef(g_cancellable_new()))
 {
     GRefPtr<GSocketClient> socketClient = adoptGRef(g_socket_client_new());
-    g_socket_client_connect_to_host_async(socketClient.get(), m_hostAndPort.utf8().data(), 0, m_cancellable.get(),
+    g_socket_client_connect_to_host_async(socketClient.get(), m_hostAndPort.utf8().legacyCStringPointer(), 0, m_cancellable.get(),
         [](GObject* object, GAsyncResult* result, gpointer userData) {
             GUniqueOutPtr<GError> error;
             GRefPtr<GSocketConnection> connection = adoptGRef(g_socket_client_connect_to_host_finish(G_SOCKET_CLIENT(object), result, &error.outPtr()));
@@ -253,7 +253,7 @@ void RemoteInspectorClient::inspect(uint64_t connectionID, uint64_t targetID, co
 
 void RemoteInspectorClient::sendMessageToBackend(uint64_t connectionID, uint64_t targetID, const String& message)
 {
-    m_socketConnection->sendMessage("SendMessageToBackend", g_variant_new("(tts)", connectionID, targetID, message.utf8().data()));
+    m_socketConnection->sendMessage("SendMessageToBackend", g_variant_new("(tts)", connectionID, targetID, message.utf8().legacyCStringPointer()));
 }
 
 void RemoteInspectorClient::closeFromFrontend(uint64_t connectionID, uint64_t targetID)
@@ -306,7 +306,7 @@ void RemoteInspectorClient::appendTargetList(StringBuilder& html, InspectorType 
         for (auto connectionID : m_targets.keys()) {
             for (auto& target : m_targets.get(connectionID)) {
                 html.append("<tbody><tr>"_s,
-                    "<td class=\"data\"><div class=\"targetname\">"_s, String::fromUTF8(target.name.span()), "</div><div class=\"targeturl\">"_s,
+                    "<td class=\"data\"><div class=\"targetname\">"_s, target.name, "</div><div class=\"targeturl\">"_s,
                     target.url, "</div></td>"_s,
                     "<td class=\"input\"><input type=\"button\" value=\"Inspect\" onclick="_s);
 

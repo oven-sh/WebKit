@@ -54,7 +54,7 @@ protected:
     void addSequenceProperties(Dumper&, JSON::Object&) const;
     
 private:
-    Vector<CString> m_header;
+    Vector<UTF8CString> m_header;
     Vector<Bytecode> m_sequence;
 };
 

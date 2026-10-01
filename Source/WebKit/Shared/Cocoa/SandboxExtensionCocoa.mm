@@ -36,7 +36,7 @@
 
 namespace WebKit {
 
-std::unique_ptr<SandboxExtensionImpl> SandboxExtensionImpl::create(const char* path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
+std::unique_ptr<SandboxExtensionImpl> SandboxExtensionImpl::create(const UTF8CString& path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
 {
     std::unique_ptr<SandboxExtensionImpl> impl { new SandboxExtensionImpl(path, type, auditToken, flags) };
     if (!impl->m_token.length())
@@ -44,10 +44,10 @@ std::unique_ptr<SandboxExtensionImpl> SandboxExtensionImpl::create(const char* p
     return impl;
 }
 
-SandboxExtensionImpl::SandboxExtensionImpl(std::span<const uint8_t> serializedFormat)
-    : m_token { byteCast<Latin1Character>(serializedFormat) }
+SandboxExtensionImpl::SandboxExtensionImpl(UTF8CString&& serializedFormat)
+    : m_token { WTF::move(serializedFormat) }
 {
-    ASSERT(!serializedFormat.empty());
+    ASSERT(!m_token.isEmpty());
 }
 
 SandboxExtensionImpl::~SandboxExtensionImpl()
@@ -58,12 +58,12 @@ SandboxExtensionImpl::~SandboxExtensionImpl()
 
 [[nodiscard]] bool SandboxExtensionImpl::consume()
 {
-    m_handle = sandbox_extension_consume(m_token.data());
+    m_handle = sandbox_extension_consume(m_token.legacyCStringPointer());
 #if PLATFORM(IOS_FAMILY_SIMULATOR)
     return !sandbox_check(getpid(), 0, SANDBOX_FILTER_NONE);
 #else
     if (m_handle == -1) {
-        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%s', errno = %d", m_token.data(), errno);
+        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%s', errno = %d", m_token.legacyCStringPointer(), errno);
         return false;
     }
     return true;
@@ -75,14 +75,15 @@ bool SandboxExtensionImpl::invalidate()
     return !sandbox_extension_release(std::exchange(m_handle, 0));
 }
 
-std::span<const uint8_t> SandboxExtensionImpl::getSerializedFormat()
+const UTF8CString& SandboxExtensionImpl::getSerializedFormat() LIFETIME_BOUND
 {
     ASSERT(m_token.length());
-    return byteCast<uint8_t>(m_token.span());
+    return m_token;
 }
 
-CString SandboxExtensionImpl::sandboxExtensionForType(const char* path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
+UTF8CString SandboxExtensionImpl::sandboxExtensionForType(const UTF8CString& path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
 {
+    auto* pathPointer = path.legacyCStringPointer();
     auto sandboxExtension = [&] {
         uint32_t extensionFlags = 0;
         if (flags & SandboxExtension::Flags::NoReport)
@@ -92,33 +93,33 @@ CString SandboxExtensionImpl::sandboxExtensionForType(const char* path, SandboxE
 
         switch (type) {
         case SandboxExtension::Type::ReadOnly:
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file(APP_SANDBOX_READ, path, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file(APP_SANDBOX_READ, pathPointer, extensionFlags), free);
         case SandboxExtension::Type::ReadWrite:
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file(APP_SANDBOX_READ_WRITE, path, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file(APP_SANDBOX_READ_WRITE, pathPointer, extensionFlags), free);
         case SandboxExtension::Type::Mach:
             if (!auditToken)
-                return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_mach("com.apple.webkit.extension.mach", path, extensionFlags), free);
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_mach_to_process("com.apple.webkit.extension.mach", path, extensionFlags, *auditToken), free);
+                return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_mach("com.apple.webkit.extension.mach", pathPointer, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_mach_to_process("com.apple.webkit.extension.mach", pathPointer, extensionFlags, *auditToken), free);
         case SandboxExtension::Type::IOKit:
             if (!auditToken)
-                return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_iokit_registry_entry_class("com.apple.webkit.extension.iokit", path, extensionFlags), free);
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_iokit_registry_entry_class_to_process("com.apple.webkit.extension.iokit", path, extensionFlags, *auditToken), free);
+                return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_iokit_registry_entry_class("com.apple.webkit.extension.iokit", pathPointer, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_iokit_registry_entry_class_to_process("com.apple.webkit.extension.iokit", pathPointer, extensionFlags, *auditToken), free);
         case SandboxExtension::Type::Generic:
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_generic(path, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_generic(pathPointer, extensionFlags), free);
         case SandboxExtension::Type::ReadByProcess:
             if (!auditToken)
                 return std::unique_ptr<char, decltype(free)*>(nullptr, free);
 #if PLATFORM(MAC)
             extensionFlags |= SANDBOX_EXTENSION_USER_INTENT;
 #endif
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file_to_process(APP_SANDBOX_READ, path, extensionFlags, *auditToken), free);
+            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file_to_process(APP_SANDBOX_READ, pathPointer, extensionFlags, *auditToken), free);
         }
     }();
 
-    return CString(sandboxExtension.get());
+    return UTF8CString { byteCast<char8_t>(sandboxExtension.get()) };
 }
 
-SandboxExtensionImpl::SandboxExtensionImpl(const char* path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
+SandboxExtensionImpl::SandboxExtensionImpl(const UTF8CString& path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
     : m_token { sandboxExtensionForType(path, type, auditToken, flags) }
 {
 }
@@ -129,7 +130,7 @@ SandboxExtensionHandle::SandboxExtensionHandle()
 
 SandboxExtensionHandle::SandboxExtensionHandle(const SandboxExtensionHandle& handle)
 {
-    m_sandboxExtension = WTF::makeUnique<SandboxExtensionImpl>(handle.m_sandboxExtension->getSerializedFormat());
+    m_sandboxExtension = WTF::makeUnique<SandboxExtensionImpl>(UTF8CString { handle.m_sandboxExtension->getSerializedFormat() });
 }
 
 SandboxExtensionHandle::SandboxExtensionHandle(SandboxExtensionHandle&&) = default;
@@ -152,7 +153,7 @@ RefPtr<SandboxExtension> SandboxExtension::create(Handle&& handle)
 String stringByResolvingSymlinksInPath(StringView path)
 {
     char resolvedPath[PATH_MAX] = { 0 };
-    realpath(path.utf8().data(), resolvedPath);
+    realpath(path.utf8().legacyCStringPointer(), resolvedPath);
     return String::fromUTF8(resolvedPath);
 }
 
@@ -173,7 +174,7 @@ String resolvePathForSandboxExtension(StringView path)
 {
     String resolvedPath = stringByResolvingSymlinksInPath(path);
     if (resolvedPath.isNull()) {
-        RELEASE_LOG_ERROR(Sandbox, "Could not create a valid file system representation for the string '%s' of length %u", resolvedPath.utf8().data(), resolvedPath.length());
+        RELEASE_LOG_ERROR(Sandbox, "Could not create a valid file system representation for the string '%s' of length %u", resolvedPath.utf8(), resolvedPath.length());
         return { };
     }
 
@@ -185,13 +186,13 @@ auto SandboxExtension::createHandleWithoutResolvingPath(StringView path, Type ty
     Handle handle;
     ASSERT(!handle.m_sandboxExtension);
 
-    handle.m_sandboxExtension = SandboxExtensionImpl::create(path.utf8().data(), type, std::nullopt, Flags::DoNotCanonicalize);
+    handle.m_sandboxExtension = SandboxExtensionImpl::create(path.utf8(), type, std::nullopt, Flags::DoNotCanonicalize);
     if (!handle.m_sandboxExtension) {
-        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%{private}s'", path.utf8().data());
+        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%{private}s'", path.utf8());
         return std::nullopt;
     }
 
-    RELEASE_LOG(Sandbox, "Successfully created a sandbox extension for '%{private}s'", path.utf8().data());
+    RELEASE_LOG(Sandbox, "Successfully created a sandbox extension for '%{private}s'", path.utf8());
     return WTF::move(handle);
 }
 
@@ -216,7 +217,7 @@ auto SandboxExtension::createReadOnlyHandlesForFiles(ASCIILiteral logLabel, cons
         if (!handle) {
             // This can legitimately fail if a directory containing the file is deleted after the file was chosen.
             // We also have reports of cases where this likely fails for some unknown reason, <rdar://problem/10156710>.
-            WTFLogAlways("%s: could not create a sandbox extension for '%s'\n", logLabel.characters(), path.utf8().data());
+            SAFE_WTFLOGALWAYS("%s: could not create a sandbox extension for '%s'\n", logLabel, path.utf8());
             ASSERT_NOT_REACHED();
         }
         return handle;
@@ -252,10 +253,10 @@ auto SandboxExtension::createHandleForTemporaryFile(StringView prefix, Type type
     if (pathString.isNull())
         return std::nullopt;
     
-    handle.m_sandboxExtension = SandboxExtensionImpl::create(FileSystem::fileSystemRepresentation(pathString).data(), type);
+    handle.m_sandboxExtension = SandboxExtensionImpl::create(FileSystem::fileSystemRepresentation(pathString), type);
 
     if (!handle.m_sandboxExtension) {
-        WTFLogAlways("Could not create a sandbox extension for temporary file '%s'", pathString.utf8().data());
+        SAFE_WTFLOGALWAYS("Could not create a sandbox extension for temporary file '%s'", pathString.utf8());
         return std::nullopt;
     }
     return { { WTF::move(handle), WTF::move(pathString) } };
@@ -266,9 +267,9 @@ auto SandboxExtension::createHandleForGenericExtension(ASCIILiteral extensionCla
     Handle handle;
     ASSERT(!handle.m_sandboxExtension);
 
-    handle.m_sandboxExtension = SandboxExtensionImpl::create(extensionClass.characters(), Type::Generic);
+    handle.m_sandboxExtension = SandboxExtensionImpl::create(extensionClass, Type::Generic);
     if (!handle.m_sandboxExtension) {
-        WTFLogAlways("Could not create a '%s' sandbox extension", extensionClass.characters());
+        SAFE_WTFLOGALWAYS("Could not create a '%s' sandbox extension", extensionClass);
         return std::nullopt;
     }
     
@@ -288,9 +289,9 @@ auto SandboxExtension::createHandleForMachLookup(ASCIILiteral service, std::opti
     Handle handle;
     ASSERT(!handle.m_sandboxExtension);
     
-    handle.m_sandboxExtension = SandboxExtensionImpl::create(service.characters(), Type::Mach, auditToken, flags);
+    handle.m_sandboxExtension = SandboxExtensionImpl::create(service, Type::Mach, auditToken, flags);
     if (!handle.m_sandboxExtension) {
-        WTFLogAlways("Could not create a '%s' sandbox extension", service.characters());
+        SAFE_WTFLOGALWAYS("Could not create a '%s' sandbox extension", service);
         return std::nullopt;
     }
     
@@ -322,13 +323,13 @@ auto SandboxExtension::createHandleForReadByAuditToken(StringView path, audit_to
     Handle handle;
     ASSERT(!handle.m_sandboxExtension);
 
-    handle.m_sandboxExtension = SandboxExtensionImpl::create(path.utf8().data(), Type::ReadByProcess, auditToken);
+    handle.m_sandboxExtension = SandboxExtensionImpl::create(path.utf8(), Type::ReadByProcess, auditToken);
     if (!handle.m_sandboxExtension) {
-        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%{private}s'", path.utf8().data());
+        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%{private}s'", path.utf8());
         return std::nullopt;
     }
     
-    RELEASE_LOG(Sandbox, "Successfully created sandbox extension for '%{private}s'", path.utf8().data());
+    RELEASE_LOG(Sandbox, "Successfully created sandbox extension for '%{private}s'", path.utf8());
     return WTF::move(handle);
 }
 
@@ -337,7 +338,7 @@ auto SandboxExtension::createHandleForIOKitClassExtension(ASCIILiteral ioKitClas
     Handle handle;
     ASSERT(!handle.m_sandboxExtension);
 
-    handle.m_sandboxExtension = SandboxExtensionImpl::create(ioKitClass.characters(), Type::IOKit, auditToken);
+    handle.m_sandboxExtension = SandboxExtensionImpl::create(ioKitClass, Type::IOKit, auditToken);
     if (!handle.m_sandboxExtension) {
         RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%s'", ioKitClass.characters());
         return std::nullopt;

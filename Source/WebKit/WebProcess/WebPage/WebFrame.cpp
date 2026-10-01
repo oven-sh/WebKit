@@ -154,12 +154,6 @@
 namespace WebKit {
 using namespace WebCore;
 
-static uint64_t NODELETE generateListenerID()
-{
-    static uint64_t uniqueListenerID = 1;
-    return uniqueListenerID++;
-}
-
 void WebFrame::initWithCoreMainFrame(WebPage& page, Frame& coreFrame)
 {
     m_coreFrame = coreFrame;
@@ -299,10 +293,10 @@ WebCore::Frame* WebFrame::coreFrame() const
 
 Awaitable<std::optional<FrameInfoData>> WebFrame::getFrameInfo()
 {
-    co_return info(WithCertificateInfo::Yes);
+    co_return info();
 }
 
-FrameInfoData WebFrame::info(WithCertificateInfo withCertificateInfo) const
+FrameInfoData WebFrame::info() const
 {
     RefPtr parent = parentFrame();
     RefPtr coreFrame = this->coreFrame();
@@ -337,7 +331,6 @@ FrameInfoData WebFrame::info(WithCertificateInfo withCertificateInfo) const
         page ? std::optional { page->webPageProxyIdentifier() } : std::nullopt,
         parent ? std::optional { parent->frameID() } : std::nullopt,
         document ? std::optional { document->identifier() } : std::nullopt,
-        withCertificateInfo == WithCertificateInfo::Yes ? certificateInfo() : CertificateInfo(),
         getCurrentProcessID(),
         isFocused(),
         loadingFrame && loadingFrame->loader().errorOccurredInLoading(),
@@ -393,9 +386,9 @@ ScopeExit<Function<void()>> WebFrame::makeInvalidator()
     });
 }
 
-uint64_t WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunction, ForNavigationAction forNavigationAction, PolicyCheckKind kind, Markable<WebCore::ScriptExecutionContextIdentifier> initiatingDocument, SingleThreadWeakPtr<WebCore::DocumentLoader>&& downloadAttributePolicyDocumentLoader)
+PolicyListenerIdentifier WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunction, ForNavigationAction forNavigationAction, PolicyCheckKind kind, Markable<WebCore::ScriptExecutionContextIdentifier> initiatingDocument, SingleThreadWeakPtr<WebCore::DocumentLoader>&& downloadAttributePolicyDocumentLoader)
 {
-    auto policyListenerID = generateListenerID();
+    auto policyListenerID = PolicyListenerIdentifier::generate();
     m_pendingPolicyChecks.add(policyListenerID, PolicyCheck {
         forNavigationAction,
         kind,
@@ -664,7 +657,7 @@ void WebFrame::invalidatePolicyListeners()
     // download: https://html.spec.whatwg.org/multipage/links.html#downloading-hyperlinks
     m_policyDownloadID = { };
 
-    HashMap<uint64_t, PolicyCheck> policyChecksToCancel;
+    HashMap<PolicyListenerIdentifier, PolicyCheck> policyChecksToCancel;
     for (auto& [listenerID, policyCheck] : std::exchange(m_pendingPolicyChecks, { })) {
         if (policyCheck.kind != PolicyCheckKind::Navigation && initiatingDocumentIsStillCurrent(policyCheck))
             m_pendingPolicyChecks.add(listenerID, WTF::move(policyCheck));
@@ -677,7 +670,16 @@ void WebFrame::invalidatePolicyListeners()
         policyCheck.policyFunction(PolicyAction::Ignore);
 }
 
-void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& policyDecision)
+bool WebFrame::dispatchPendingNavigateEventAfterNavigationPolicy(WebCore::PendingNavigateEventIdentifier identifier)
+{
+    RefPtr coreFrame = coreLocalFrame();
+    if (!coreFrame)
+        return true;
+
+    return coreFrame->loader().dispatchPendingNavigateEventAfterNavigationPolicy(identifier);
+}
+
+void WebFrame::didReceivePolicyDecision(PolicyListenerIdentifier listenerID, PolicyDecision&& policyDecision)
 {
     if (RefPtr page = m_page.get()) {
 #if ENABLE(APP_BOUND_DOMAINS)
@@ -738,7 +740,7 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
     }
 
     if (policyDecision.backForwardFrameState) {
-        RELEASE_LOG(Loading, "didReceivePolicyDecision: Received FrameState for child frame, URL=%" SENSITIVE_LOG_STRING, policyDecision.backForwardFrameState->urlString.utf8().data());
+        RELEASE_LOG(Loading, "didReceivePolicyDecision: Received FrameState for child frame, URL=%" SENSITIVE_LOG_STRING, policyDecision.backForwardFrameState->urlString.utf8());
         setHistoryItemForBackForwardNavigation(protect(*policyDecision.backForwardFrameState));
     }
 

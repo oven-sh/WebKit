@@ -30,6 +30,7 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/JSCConfig.h>
+#include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/VMManager.h>
 #include <string>
@@ -782,7 +783,7 @@ static void waitForVMDestruction() WTF_REQUIRES_LOCK(lock)
     vmDestructionConditionVariable.wait(lock);
     WTF::compilerFence();
     mainIsWaitingForVMDestruction = false;
-    WTF::loadLoadFence();
+    WTF::storeLoadFence();
 }
 
 static int test()
@@ -929,9 +930,7 @@ static int test()
             if (exception) {
                 APIString string(context, exception);
                 if (string) {
-                    SUPPRESS_UNCOUNTED_ARG Vector<char> buffer(JSStringGetMaximumUTF8CStringSize(string));
-                    SUPPRESS_UNCOUNTED_ARG JSStringGetUTF8CString(string, buffer.mutableSpan().data(), buffer.size());
-                    dataLogLn("FAIL: thread<", TID, "> ", __FILE__, ":", __LINE__, ": ", buffer.span().data());
+                    SUPPRESS_UNCOUNTED_ARG dataLogLn("FAIL: thread<", TID, "> ", __FILE__, ":", __LINE__, ": ", utf8CString(string));
                 } else
                     dataLogLn("FAIL: thread<", TID, "> ", __FILE__, ":", __LINE__, ": stringifying exception failed");
             }

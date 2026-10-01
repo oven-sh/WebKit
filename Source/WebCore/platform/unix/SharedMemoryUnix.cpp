@@ -123,7 +123,7 @@ RefPtr<SharedMemory> SharedMemory::allocate(size_t size)
 {
     auto fileDescriptor = createSharedMemory();
     if (!fileDescriptor) {
-        WTFLogAlways("Failed to create shared memory: %s", safeStrerror(errno).data());
+        SAFE_WTFLOGALWAYS("Failed to create shared memory: %s", safeStrerror(errno));
         return nullptr;
     }
 

@@ -52,8 +52,8 @@ static void parseUserData(API::Object* userData, String& webProcessExtensionsDir
 {
     ASSERT(userData->type() == API::Object::Type::String);
 
-    CString userDataString = downcast<API::String>(userData)->string().utf8();
-    const auto userDataSpan = userDataString.spanIncludingNullTerminator();
+    auto userDataString = downcast<API::String>(userData)->string().utf8();
+    const auto userDataSpan = byteCast<char>(userDataString.spanIncludingNullTerminator());
     GRefPtr<GVariant> variant = adoptGRef(g_variant_parse(nullptr, userDataSpan.data(), userDataSpan.last(1).data(), nullptr, nullptr));
 
     ASSERT(variant);

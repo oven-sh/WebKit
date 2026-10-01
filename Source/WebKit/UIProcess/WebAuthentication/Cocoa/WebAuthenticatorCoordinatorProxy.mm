@@ -363,7 +363,7 @@ RetainPtr<NSArray> WebAuthenticatorCoordinatorProxy::requestsForRegistration(con
             request = [provider createCredentialRegistrationRequestWithChallenge:toNSData(options.challenge).get() displayName:options.user.displayName.createNSString().get() name:options.user.name.createNSString().get() userID:toNSData(options.user.id).get()];
         }
 #if HAVE(WEB_AUTHN_PRF_API)
-        if (options.extensions && options.extensions->prf) {
+        if (options.extensions && options.extensions->prf && [request respondsToSelector:@selector(setPrf:)]) {
             auto prf = options.extensions->prf;
             if (prf->eval)
                 request.get().prf = adoptNS([allocASAuthorizationPublicKeyCredentialPRFRegistrationInputInstance() initWithInputValues:toASAssertionPRFInputValue(prf->eval).get()]).get();
@@ -465,7 +465,7 @@ RetainPtr<NSArray> WebAuthenticatorCoordinatorProxy::requestsForAssertion(const 
             if (prf->evalByCredential) {
                 perCredentialInputValues = adoptNS([[NSMutableDictionary alloc] init]);
                 for (auto& credentialIDAndInputValues : *prf->evalByCredential) {
-                    auto key = base64URLDecode(credentialIDAndInputValues.key.utf8().span());
+                    auto key = base64URLDecode(credentialIDAndInputValues.key);
                     if (!key)
                         continue;
                     [perCredentialInputValues setObject:toASAssertionPRFInputValue(credentialIDAndInputValues.value).get() forKey: toNSData(*key).get()];
@@ -501,7 +501,7 @@ RetainPtr<NSArray> WebAuthenticatorCoordinatorProxy::requestsForAssertion(const 
             if (prf->evalByCredential) {
                 perCredentialInputValues = adoptNS([[NSMutableDictionary alloc] init]);
                 for (auto& credentialIDAndInputValues : *prf->evalByCredential) {
-                    auto key = base64URLDecode(credentialIDAndInputValues.key.utf8().span());
+                    auto key = base64URLDecode(credentialIDAndInputValues.key);
                     if (!key)
                         continue;
                     [perCredentialInputValues setObject:toASAssertionPRFInputValue(credentialIDAndInputValues.value).get() forKey: toNSData(*key).get()];

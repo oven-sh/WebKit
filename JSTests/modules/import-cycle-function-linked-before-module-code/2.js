@@ -1,8 +1,7 @@
-import { addLexical, addHoisted } from "./1.js"
 import { shouldBe, shouldThrow } from "../resources/assert.js";
+import { addLexical, addHoisted } from "./1.js";
 
-// Module "1" is not evaluated yet. A call still links the function, which is all this needs:
-// "lexical" is in its TDZ, and "hoisted" is already undefined.
+// 1.js has not been evaluated yet, but calling its functions links their CodeBlocks.
 shouldThrow(() => {
     addLexical(0);
 }, `ReferenceError: Cannot access 'lexical' before initialization.`);

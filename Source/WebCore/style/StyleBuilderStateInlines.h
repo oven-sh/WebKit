@@ -42,15 +42,40 @@ inline bool BuilderState::isBuildingHighlightStyle() const
     return pseudoElementType && isHighlightPseudoElement(*pseudoElementType);
 }
 
-inline void BuilderState::setTextOrientation(TextOrientation orientation) { m_fontDirty |= m_style.setTextOrientation(orientation); }
-inline void BuilderState::setWritingMode(StyleWritingMode mode) { m_fontDirty |= m_style.setWritingMode(mode); }
+inline void BuilderState::setTextOrientation(TextOrientation orientation)
+{
+    m_fontDirty |= m_style.setTextOrientation(orientation);
+}
 
-inline void BuilderState::setZoom(Zoom zoom) { m_fontDirty |= m_style.setZoom(zoom); }
-inline void BuilderState::setUsedZoom(float zoom) { m_fontDirty |= m_style.setUsedZoom(zoom); }
+inline void BuilderState::setWritingMode(StyleWritingMode mode)
+{
+    m_fontDirty |= m_style.setWritingMode(mode);
+}
 
-inline const FontCascadeDescription& BuilderState::parentFontDescription() { return parentStyle().fontDescription(); }
-inline const FontCascadeDescription& BuilderState::fontDescription() { return m_style.fontDescription(); }
-inline void BuilderState::setFontDescription(FontCascadeDescription&& description) { m_fontDirty |= m_style.setFontDescriptionWithoutUpdate(WTF::move(description)); }
+inline void BuilderState::setZoom(Zoom zoom)
+{
+    m_fontDirty |= m_style.setZoom(zoom);
+}
+
+inline void BuilderState::setUsedZoom(float zoom)
+{
+    m_fontDirty |= m_style.setUsedZoom(zoom);
+}
+
+inline const FontCascadeDescription& BuilderState::parentFontDescription()
+{
+    return parentStyle().fontDescription();
+}
+
+inline const FontCascadeDescription& BuilderState::fontDescription()
+{
+    return m_style.fontDescription();
+}
+
+inline void BuilderState::setFontDescription(FontCascadeDescription&& description)
+{
+    m_fontDirty |= m_style.setFontDescriptionWithoutUpdate(WTF::move(description));
+}
 
 inline void BuilderState::setFontDescriptionKeywordSizeFromIdentifier(CSSValueID identifier)
 {
@@ -195,13 +220,13 @@ inline void BuilderState::setFontDescriptionOpticalSizing(FontOpticalSizing opti
     m_style.mutableFontDescriptionWithoutUpdate().setOpticalSizing(opticalSizing);
 }
 
-inline void BuilderState::setFontDescriptionSpecifiedLocale(WebkitLocale&& specifiedLocale)
+inline void BuilderState::setFontDescriptionLocale(WebkitLocale&& locale)
 {
-    if (m_style.fontDescription().specifiedLocale() == specifiedLocale.platform())
+    if (m_style.fontDescription().computedLocale() == locale.platform())
         return;
 
     m_fontDirty = true;
-    m_style.mutableFontDescriptionWithoutUpdate().setSpecifiedLocale(specifiedLocale.takePlatform());
+    m_style.mutableFontDescriptionWithoutUpdate().setComputedLocale(locale.takePlatform());
 }
 
 inline void BuilderState::setFontDescriptionTextAutospace(TextAutospace textAutospace)

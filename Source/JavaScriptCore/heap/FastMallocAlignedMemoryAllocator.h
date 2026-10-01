@@ -55,12 +55,8 @@ private:
 
 // The supply of pre-warmed MarkedBlocks is a process-wide singleton with no other observer, so $vm
 // reaches its state through these rather than through any VM.
-enum class WarmUpMarkedBlockPhase : uint8_t { Stopped, Armed, StandingDown };
-struct WarmUpMarkedBlockState {
-    size_t blockCount { 0 };
-    WarmUpMarkedBlockPhase phase { WarmUpMarkedBlockPhase::Stopped };
-};
-WarmUpMarkedBlockState warmUpMarkedBlockStateForTesting();
+bool warmUpMarkedBlocksAreEnabledForTesting();
+unsigned warmUpMarkedBlockCountForTesting();
 void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool);
 
 } // namespace JSC

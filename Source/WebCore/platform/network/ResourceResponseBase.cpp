@@ -418,7 +418,7 @@ void ResourceResponseBase::setHTTPVersion(String&& versionText)
 {
     lazyInit(AllFields);
     
-    m_httpVersion = versionText;
+    m_httpVersion = WTF::move(versionText);
     
     // FIXME: Should invalidate or update platform response if present.
 }
@@ -436,7 +436,6 @@ static bool NODELETE isSafeRedirectionResponseHeader(HTTPHeaderName name)
         || name == HTTPHeaderName::LastModified
         || name == HTTPHeaderName::Age
         || name == HTTPHeaderName::Pragma
-        || name == HTTPHeaderName::ReferrerPolicy
         || name == HTTPHeaderName::Refresh
         || name == HTTPHeaderName::Vary
         || name == HTTPHeaderName::CrossOriginOpenerPolicy
@@ -668,6 +667,13 @@ void ResourceResponseBase::addUncommonHTTPHeaderField(const String& name, const 
 {
     lazyInit(AllFields);
     m_httpHeaderFields.addUncommonHeader(name, value);
+}
+
+void ResourceResponseBase::removeHTTPHeaderField(HTTPHeaderName name)
+{
+    lazyInit(AllFields);
+    updateHeaderParsedState(name);
+    m_httpHeaderFields.remove(name);
 }
 
 const HTTPHeaderMap& ResourceResponseBase::httpHeaderFields() const
@@ -922,7 +928,7 @@ std::optional<ResourceResponseData> ResourceResponseBase::getResponseData() cons
         m_wasPrivateRelayed,
         String { m_proxyName },
         m_isRangeRequested,
-        m_certificateInfo,
+        std::optional<CertificateInfo> { m_certificateInfo },
         m_ipAddressSpace
     } };
 }

@@ -641,7 +641,9 @@ struct LiveResizeSnapshotState {
 
 - (void)_proofreadingSessionUpdateState:(WebCore::WritingTools::TextSuggestionState)state forSuggestionWithUUID:(NSUUID *)replacementUUID;
 
+#if !__has_feature(modules)
 - (CocoaWritingToolsResultOptions)allowedWritingToolsResultOptions;
+#endif
 
 - (void)_didEndPartialIntelligenceTextAnimation;
 - (BOOL)_writingToolsTextReplacementsFinished;
@@ -831,7 +833,7 @@ RetainPtr<NSError> nsErrorFromExceptionDetails(const std::optional<WebCore::Exce
 @end
 #endif
 
-#if PLATFORM(IOS_FAMILY)
+#if HAVE(UIKIT_PRINTING)
 @interface WKWebView (_WKWebViewPrintFormatter)
 @property (nonatomic, readonly) id <_WKWebViewPrintProvider> _printProvider;
 @end

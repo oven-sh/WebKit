@@ -97,6 +97,7 @@ private:
     void didDestroyBuffer(uint64_t id);
     void frame(uint64_t id, Rects&&, WTF::UnixFileDescriptor&&);
     void frameDone();
+    void queuePendingDamageDraw();
 
     void ensureGLContext();
     bool swapBuffersIfNeeded();
@@ -267,6 +268,7 @@ private:
     RefPtr<Buffer> m_committedBuffer;
     Rects m_pendingDamageRects;
     HashMap<uint64_t, RefPtr<Buffer>> m_buffers;
+    bool m_needsFrame { false };
 };
 
 } // namespace WebKit

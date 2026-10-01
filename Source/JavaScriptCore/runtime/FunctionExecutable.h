@@ -184,7 +184,7 @@ public:
     String nameWithoutGC() { return isShortForm() ? (unlinkedExecutable()->hasName() ? ecmaNameWithoutGC() : String()) : inFull()->m_unlinkedExecutable->nameWithoutGC(); }
     String ecmaNameWithoutGC() { return isShortForm() ? ecmaName().string() : inFull()->m_unlinkedExecutable->ecmaNameWithoutGC(); }
     const Identifier* tryGetEcmaNameConcurrently() { return isShortForm() ? &ecmaName() : inFull()->m_unlinkedExecutable->tryGetEcmaNameConcurrently(); } // null while the name is still only in the bytecode cache; otherwise &ecmaName() (which may itself be a null Identifier)
-    CString inferredNameForTools(); // dumps and debug info; callable from compiler / GC threads, where a name still in the bytecode cache prints as a placeholder
+    UTF8CString inferredNameForTools(); // dumps and debug info; callable from compiler / GC threads, where a name still in the bytecode cache prints as a placeholder
     unsigned parameterCount() const { return isShortForm() ? StaticHeap::rowOf(indexOfShortForm()).parameterCount : inFull()->m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!
     SourceParseMode parseMode() const { return unlinkedExecutable()->parseMode(); }
     JSParserScriptMode scriptMode() const { return unlinkedExecutable()->scriptMode(); }
@@ -219,27 +219,43 @@ public:
         return std::nullopt;
     }
 
+    LineStartTable::PositionInfo sourceStartInfo() const
+    {
+        auto& source = inFull()->m_source; // (Not for the short form.)
+        SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
+        return source.provider()->positionInfoForOffset(source.startOffset());
+    }
+
+    // endOffset() is one past the closing brace, but a reported end column names the brace itself.
+    LineStartTable::PositionInfo sourceEndInfo() const
+    {
+        auto& source = inFull()->m_source; // (Not for the short form.)
+        SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
+        return source.provider()->positionInfoForOffset(source.endOffset() - 1);
+    }
+
+    // Deliberately not cached in RareData: the only callers are the debugger and a debug assertion,
+    // whereas deriving whenever rare data appears would build the line-start table on the
+    // web-reachable Function.prototype.toString path.
     int lineCount() const
     {
-        if (auto* rareData = this->rareData()) [[unlikely]]
-            return rareData->m_lineCount;
         if (isShortForm()) [[unlikely]]
             return 0; // (Without source text, the end position is meaningless.)
-        return inFull()->m_unlinkedExecutable->lineCount();
+        return static_cast<int>(sourceEndInfo().line0Based) - static_cast<int>(sourceStartInfo().line0Based);
     }
 
     int endColumn() const
     {
-        if (auto* rareData = this->rareData()) [[unlikely]]
-            return rareData->m_endColumn;
         if (isShortForm()) [[unlikely]]
             return startColumn();
-        return inFull()->m_unlinkedExecutable->linkedEndColumn(inFull()->m_source.startColumn().oneBasedInt());
+        auto& source = inFull()->m_source;
+        SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
+        return source.provider()->documentLineColumnForOffset(source.endOffset() - 1).column;
     }
 
     int firstLine() const
     {
-        return source().firstLine().oneBasedInt();
+        return ScriptExecutable::firstLine();
     }
 
     int lastLine() const
@@ -367,8 +383,6 @@ public:
         static constexpr ptrdiff_t offsetOfAsString() { return OBJECT_OFFSETOF(RareData, m_asString); }
 
         RefPtr<TypeSet> m_returnStatementTypeSet;
-        unsigned m_lineCount;
-        unsigned m_endColumn;
         Markable<int> m_overrideLineNumber;
         unsigned m_parametersStartOffset { 0 };
         WriteBarrierStructureID m_cachedPolyProtoStructureID;

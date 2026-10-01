@@ -166,11 +166,16 @@ public:
     void setPaused(WebCore::NodeIdentifier, bool, CompletionHandler<void(bool succeeded)>&&) final;
     Seconds currentTime(WebCore::NodeIdentifier) const final;
     void setCurrentTime(WebCore::NodeIdentifier, Seconds, CompletionHandler<void()>&&) final;
-    void setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data) final;
+    void setEnvironmentMapData(Ref<WebCore::SharedBuffer>&&);
+#if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP) && ENABLE(SPATIAL_PORTAL)
+    void disableEnvironmentMap() final;
+    void enableSystemEnvironmentMap() final;
+#endif
     void setHasPortal(bool) final;
 #if ENABLE(SPATIAL_PORTAL)
-    void setPortalTransform(WebCore::PortalTransformKind) final;
+    void setPortalTransform(const WebCore::UsedPortalTransform&) final;
     void setPortalAction(WebCore::PortalActionKind) final;
+    void setAnchor(WebCore::NodeIdentifier, std::optional<WebCore::NodeIdentifier> anchorNode, const String& placement) final;
 #endif
     void setStageMode(WebCore::StageModeOperation) final;
     void beginStageModeTransform(const WebCore::TransformationMatrix&) final;
@@ -210,13 +215,23 @@ private:
         // Set from CSS or the entityTransform attribute. Stored rather than applied directly because it can arrive
         // before the entity exists, and has to be recomposed whenever the container's scale changes.
         simd_float4x4 childTransform { matrix_identity_float4x4 };
+
+        std::optional<WebCore::NodeIdentifier> anchorNode;
+        String anchorPlacement;
+        RetainPtr<WKRKEntity> anchorPlacementEntity;
+        simd_quatf anchorCorrection = simd_quaternion(0.0f, simd_make_float3(1, 0, 0));
 #endif
     };
     using TrackedModelMap = HashMap<WebCore::NodeIdentifier, UniqueRef<TrackedModel>>;
 
-    RESRT modelStandardizedTransformSRT(RESRT originalSRT);
-    RESRT modelLocalizedTransformSRT(RESRT originalSRT);
+    RESRT modelStandardizedTransformSRT(RESRT originalSRT) const;
+    RESRT modelLocalizedTransformSRT(RESRT originalSRT) const;
     void computeTransform(bool);
+#if ENABLE(SPATIAL_PORTAL)
+    simd_float4x4 contentTransformMatrix() const;
+#endif
+    using EnvironmentMapKind = WebCore::EnvironmentMapKind;
+
     void updateTransform();
     void applyEnvironmentMapDataAndRelease(CompletionHandler<void()>&&);
     void applyStageModeOperationToDriver();
@@ -226,8 +241,12 @@ private:
     void notifyModelPlayerOfTransformChange();
 #if ENABLE(SPATIAL_PORTAL)
     RESRT childEntityTransformSRT(const TrackedModel&) const;
+    float anchorPlacementScale(const TrackedModel&) const;
+    void updateAnchorParenting();
 #endif
     void applyDefaultIBL();
+    void removeIBL();
+    RetainPtr<WKRKEntity> environmentMapTargetEntity() const;
     void updateForCurrentStageMode();
     void setUpLoadedEntity(WebCore::NodeIdentifier, WKRKEntity *);
     simd_float3 reportingModelScale() const;
@@ -274,9 +293,10 @@ private:
     bool m_entityTransformSetByScript { false };
 
     RefPtr<WebCore::SharedBuffer> m_transientEnvironmentMapData;
+    EnvironmentMapKind m_environmentMapKind { EnvironmentMapKind::Default };
     bool m_hasPortal { true };
 #if ENABLE(SPATIAL_PORTAL)
-    WebCore::PortalTransformKind m_portalTransform { WebCore::PortalTransformKind::Auto };
+    WebCore::UsedPortalTransform m_portalTransform;
     WebCore::PortalActionKind m_portalAction { WebCore::PortalActionKind::None };
     bool m_isSpatialPortal { false };
 #endif

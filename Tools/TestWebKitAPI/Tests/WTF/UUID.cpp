@@ -114,3 +114,54 @@ TEST(WTF, TestUUIDVersion4MakeString)
 
     EXPECT_EQ(WTF::StringTypeAdapter<WTF::UUID>(uuid.value()).length(), 36U);
 }
+
+// tryCreate() is the only way to build a UUID out of raw bytes, so it has to reject
+// everything the reserved empty and deleted values would otherwise let through.
+TEST(WTF, UUIDTryCreateFromSpan)
+{
+    constexpr auto valid = WTF::toArray<uint8_t>({ 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0x4d, 0xe0, 0x89, 0xab, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab });
+    constexpr auto empty = WTF::toArray<uint8_t>({ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 });
+    constexpr auto seventeenBytes = WTF::toArray<uint8_t>({ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 });
+
+    EXPECT_FALSE(!!WTF::UUID::tryCreate({ }));
+    EXPECT_FALSE(!!WTF::UUID::tryCreate(std::span { valid }.first(15)));
+    EXPECT_FALSE(!!WTF::UUID::tryCreate(seventeenBytes));
+    EXPECT_FALSE(!!WTF::UUID::tryCreate(empty));
+
+    // The deleted value is 1 as a UInt128, whose byte pattern depends on endianness.
+    UInt128 deletedValue = 1;
+    EXPECT_FALSE(!!WTF::UUID::tryCreate(asByteSpan(deletedValue)));
+
+    auto uuid = WTF::UUID::tryCreate(valid);
+    EXPECT_TRUE(!!uuid);
+    EXPECT_TRUE(equalSpans(uuid->span(), std::span { valid }));
+}
+
+// The generated IPC decoder builds a UUID out of the two halves it decoded, so that overload
+// has to reject the reserved values just like the span one does.
+TEST(WTF, UUIDTryCreateFromHighAndLow)
+{
+    EXPECT_FALSE(!!WTF::UUID::tryCreate(0, 0));
+    EXPECT_FALSE(!!WTF::UUID::tryCreate(0, 1));
+
+    EXPECT_TRUE(!!WTF::UUID::tryCreate(0, 2));
+    EXPECT_TRUE(!!WTF::UUID::tryCreate(1, 0));
+    EXPECT_TRUE(!!WTF::UUID::tryCreate(1, 1));
+
+    auto uuid = WTF::UUID::tryCreate(0x123456789abc4de0ULL, 0x89ab0123456789abULL);
+    EXPECT_TRUE(!!uuid);
+    EXPECT_EQ(uuid->high(), 0x123456789abc4de0ULL);
+    EXPECT_EQ(uuid->low(), 0x89ab0123456789abULL);
+    EXPECT_EQ(makeString(*uuid), "12345678-9abc-4de0-89ab-0123456789ab"_s);
+}
+
+// UUIDCanonicalForm renders bits a UUID cannot hold, and has to agree with a UUID on bits it can.
+TEST(WTF, UUIDCanonicalForm)
+{
+    EXPECT_EQ(makeString(WTF::UUIDCanonicalForm { }), "00000000-0000-0000-0000-000000000000"_s);
+    EXPECT_EQ(makeString(WTF::UUIDCanonicalForm { 0, 1 }), "00000000-0000-0000-0000-000000000001"_s);
+
+    auto uuid = WTF::UUID::tryCreate(0x123456789abc4de0ULL, 0x89ab0123456789abULL);
+    EXPECT_TRUE(!!uuid);
+    EXPECT_EQ(makeString(WTF::UUIDCanonicalForm { uuid->high(), uuid->low() }), makeString(*uuid));
+}

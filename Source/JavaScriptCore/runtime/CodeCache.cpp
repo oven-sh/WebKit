@@ -143,13 +143,8 @@ UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& s
     if (!rootNode)
         return nullptr;
 
-    unsigned lineCount = rootNode->lastLine() - rootNode->firstLine();
-    unsigned startColumn = rootNode->startColumn() + 1;
-    bool endColumnIsOnStartLine = !lineCount;
-    unsigned unlinkedEndColumn = rootNode->endColumn();
-    unsigned endColumn = unlinkedEndColumn + (endColumnIsOnStartLine ? startColumn : 1);
     if (executable)
-        executable->recordParse(rootNode->features(), rootNode->lexicallyScopedFeatures(), rootNode->hasCapturedVariables(), rootNode->lastLine(), endColumn);
+        executable->recordParse(rootNode->features(), rootNode->lexicallyScopedFeatures(), rootNode->hasCapturedVariables());
 
     NeedsClassFieldInitializer needsClassFieldInitializer = NeedsClassFieldInitializer::No;
     PrivateBrandRequirement privateBrandRequirement = PrivateBrandRequirement::None;
@@ -160,11 +155,12 @@ UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& s
     ExecutableInfo executableInfo(false, privateBrandRequirement, false, ConstructorKind::None, scriptMode, SuperBinding::NotNeeded, CacheTypes<UnlinkedCodeBlockType>::parseMode, derivedContextType, needsClassFieldInitializer, isArrowFunctionContext, false, evalContextType);
 
     UnlinkedCodeBlockType* unlinkedCodeBlock = UnlinkedCodeBlockType::create(vm, executableInfo, codeGenerationMode);
-    unlinkedCodeBlock->recordParse(rootNode->features(), rootNode->lexicallyScopedFeatures(), rootNode->hasCapturedVariables(), lineCount, unlinkedEndColumn);
+    unlinkedCodeBlock->recordParse(rootNode->features(), rootNode->lexicallyScopedFeatures(), rootNode->hasCapturedVariables());
     if (!source.provider()->sourceURLDirective().isNull())
         unlinkedCodeBlock->setSourceURLDirective(source.provider()->sourceURLDirective());
     if (!source.provider()->sourceMappingURLDirective().isNull())
         unlinkedCodeBlock->setSourceMappingURLDirective(source.provider()->sourceMappingURLDirective());
+    unlinkedCodeBlock->setLineStarts(vm.bytecodeGenerationOptions.keepLineStartsOfEverySource ? source.provider()->lineStarts() : source.provider()->lineStartsIfBuilt());
 
     RefPtr<TDZEnvironmentLink> parentVariablesUnderTDZ;
     if (variablesUnderTDZ)
@@ -219,15 +215,13 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
 
 void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const SourceCode& source, UnlinkedGlobalCodeBlock* unlinkedCodeBlock)
 {
-    unsigned lineCount = unlinkedCodeBlock->lineCount();
-    unsigned startColumn = unlinkedCodeBlock->startColumn() + source.startColumn().oneBasedInt();
-    bool endColumnIsOnStartLine = !lineCount;
-    unsigned endColumn = unlinkedCodeBlock->endColumn() + (endColumnIsOnStartLine ? startColumn : 1);
-    executable->recordParse(unlinkedCodeBlock->codeFeatures(), unlinkedCodeBlock->lexicallyScopedFeatures(), unlinkedCodeBlock->hasCapturedVariables(), source.firstLine().oneBasedInt() + lineCount, endColumn);
+    executable->recordParse(unlinkedCodeBlock->codeFeatures(), unlinkedCodeBlock->lexicallyScopedFeatures(), unlinkedCodeBlock->hasCapturedVariables());
     if (unlinkedCodeBlock->sourceURLDirective())
         source.provider()->setSourceURLDirective(unlinkedCodeBlock->sourceURLDirective());
     if (unlinkedCodeBlock->sourceMappingURLDirective())
         source.provider()->setSourceMappingURLDirective(unlinkedCodeBlock->sourceMappingURLDirective());
+    if (unlinkedCodeBlock->lineStarts())
+        source.provider()->setLineStarts(LineStarts { unlinkedCodeBlock->lineStarts() });
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType>
@@ -316,8 +310,7 @@ UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& v
         return executable;
     }
 
-    JSTextPosition positionBeforeLastNewline;
-    std::unique_ptr<ProgramNode> program = parseFunctionForFunctionConstructor(vm, source, lexicallyScopedFeatures, error, &positionBeforeLastNewline, functionConstructorParametersEndPosition);
+    std::unique_ptr<ProgramNode> program = parseFunctionForFunctionConstructor(vm, source, lexicallyScopedFeatures, error, functionConstructorParametersEndPosition);
     if (!program) {
         RELEASE_ASSERT(error.isValid());
         return nullptr;
@@ -338,7 +331,6 @@ UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& v
         return nullptr;
 
     metadata->overrideName(name);
-    metadata->setEndPosition(positionBeforeLastNewline);
     // The Function constructor only has access to global variables, so no variables will be under TDZ unless they're
     // in the global lexical environment, which we always TDZ check accesses from.
     ConstructAbility constructAbility = constructAbilityForParseMode(metadata->parseMode());

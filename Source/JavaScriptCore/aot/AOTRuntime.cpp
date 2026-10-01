@@ -1190,15 +1190,15 @@ LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
         return position->lineColumn;
     ScriptExecutable* executable = this->executable();
     RELEASE_ASSERT(bytecodeIndex.offset() < instructionsSize());
-    LineColumn lineColumn;
+    SourceProvider& provider = *executable->sourceProvider();
+    unsigned sourceOffset = executable->source().startOffset();
+    LineColumn inText = provider.lineColumnInTextForOffset(sourceOffset);
     if (auto* metadata = this->metadata()) {
         if (const uint32_t* word = metadata->find(FunctionMetadata::ExpressionInfo))
-            lineColumn = decodeBorrowedExpressionInfo(StaticHeap::inData<uint8_t>(*word))->lineColumnForInstPC(bytecodeIndex.offset());
+            inText = decodeBorrowedExpressionInfo(StaticHeap::inData<uint8_t>(*word))->lineColumnInTextForInstPC(bytecodeIndex.offset(), provider, sourceOffset);
     } else
-        lineColumn = unlinkedCodeBlockIfExists()->lineColumnForBytecodeIndex(bytecodeIndex);
-    lineColumn.column += lineColumn.line ? 1 : executable->startColumn();
-    lineColumn.line += executable->firstLine();
-    return lineColumn;
+        inText = unlinkedCodeBlockIfExists()->lineColumnInTextForBytecodeIndex(bytecodeIndex, provider, sourceOffset);
+    return provider.documentLineColumn(inText);
 }
 
 static FunctionExecutable* functionOf(Data& data, unsigned index, const WriteBarrier<UnlinkedFunctionExecutable>& entry)

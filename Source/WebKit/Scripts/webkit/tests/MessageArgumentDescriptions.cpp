@@ -341,6 +341,12 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithSwift_TestAsyncMessage>(globalObject, decoder);
     case MessageName::TestWithSwift_TestSyncMessage:
         return jsValueForDecodedMessage<MessageName::TestWithSwift_TestSyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestMessageWithAliasedParameter:
+        return jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithAliasedParameter>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestThrowingMessageWithReply:
+        return jsValueForDecodedMessage<MessageName::TestWithSwift_TestThrowingMessageWithReply>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestThrowingMessageWithoutReply:
+        return jsValueForDecodedMessage<MessageName::TestWithSwift_TestThrowingMessageWithoutReply>(globalObject, decoder);
     case MessageName::TestWithSwift_TestAsyncMessageReply:
         return jsValueForDecodedMessage<MessageName::TestWithSwift_TestAsyncMessageReply>(globalObject, decoder);
     case MessageName::TestWithSwiftConditionally_TestAsyncMessage:
@@ -474,6 +480,8 @@ std::optional<JSC::JSValue> jsValueForReplyArguments(JSC::JSGlobalObject* global
         return jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestAsyncMessage>(globalObject, decoder);
     case MessageName::TestWithSwift_TestSyncMessage:
         return jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestSyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestThrowingMessageWithReply:
+        return jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestThrowingMessageWithReply>(globalObject, decoder);
     case MessageName::TestWithSwiftConditionally_TestAsyncMessage:
         return jsValueForDecodedMessageReply<MessageName::TestWithSwiftConditionally_TestAsyncMessage>(globalObject, decoder);
     case MessageName::TestWithSwiftConditionally_TestSyncMessage:
@@ -528,7 +536,9 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::MediaUniqueIdentifier"_s,
         "WebCore::NavigationIdentifier"_s,
         "WebCore::OpaqueOriginIdentifier"_s,
+        "WebCore::PendingNavigateEventIdentifier"_s,
         "WebCore::PageIdentifier"_s,
+        "WebCore::ImageBufferTransferIdentifierID"_s,
         "WebCore::PlatformLayerIdentifierID"_s,
         "WebCore::PlaybackTargetClientContextID"_s,
         "WebCore::NonSerializedDataIdentifier"_s,
@@ -589,6 +599,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebKit::NonProcessQualifiedContentWorldIdentifier"_s,
         "WebKit::PDFPluginIdentifier"_s,
         "WebKit::PageGroupIdentifier"_s,
+        "WebKit::PolicyListenerIdentifier"_s,
         "WebKit::QuotaIncreaseRequestIdentifier"_s,
         "WebKit::RealmIdentifier"_s,
         "WebKit::RemoteAudioDestinationIdentifier"_s,
@@ -1188,6 +1199,19 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         return Vector<ArgumentDescription> {
             { "param"_s, "uint32_t"_s },
         };
+    case MessageName::TestWithSwift_TestMessageWithAliasedParameter:
+        return Vector<ArgumentDescription> {
+            { "frameState"_s, "Ref<WebKit::FrameState>"_s },
+        };
+    case MessageName::TestWithSwift_TestThrowingMessageWithReply:
+        return Vector<ArgumentDescription> {
+            { "param"_s, "uint32_t"_s },
+        };
+    case MessageName::TestWithSwift_TestThrowingMessageWithoutReply:
+        return Vector<ArgumentDescription> {
+            { "frameState"_s, "Ref<WebKit::FrameState>"_s },
+            { "frameID"_s, "WebCore::FrameIdentifier"_s },
+        };
     case MessageName::TestWithSwift_TestAsyncMessageReply:
         return Vector<ArgumentDescription> {
             { "reply"_s, "uint8_t"_s },
@@ -1414,6 +1438,10 @@ std::optional<Vector<ArgumentDescription>> messageReplyArgumentDescriptions(Mess
             { "reply"_s, "uint8_t"_s },
         };
     case MessageName::TestWithSwift_TestSyncMessage:
+        return Vector<ArgumentDescription> {
+            { "reply"_s, "uint8_t"_s },
+        };
+    case MessageName::TestWithSwift_TestThrowingMessageWithReply:
         return Vector<ArgumentDescription> {
             { "reply"_s, "uint8_t"_s },
         };

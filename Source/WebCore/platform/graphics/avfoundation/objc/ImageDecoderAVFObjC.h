@@ -32,6 +32,7 @@
 #include <WebCore/SampleMap.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadAssertions.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -99,11 +100,11 @@ private:
     AVAssetTrack *firstEnabledTrack();
     void readSamples();
     void readTrackMetadata();
-    bool storeSampleBuffer(CMSampleBufferRef);
-    void NODELETE advanceCursor();
+    bool storeSampleBuffer(CMSampleBufferRef) WTF_REQUIRES_LOCK(m_sampleGeneratorLock);
+    void NODELETE advanceCursor() WTF_REQUIRES_LOCK(m_sampleGeneratorLock);
     void setTrack(AVAssetTrack *);
 
-    const ImageDecoderAVFObjCSample* NODELETE sampleAtIndex(size_t) const;
+    const ImageDecoderAVFObjCSample* NODELETE sampleAtIndex(size_t) const WTF_REQUIRES_SHARED_LOCK(m_sampleGeneratorLock);
     bool sampleIsComplete(const ImageDecoderAVFObjCSample&) const;
 
     String m_mimeType;
@@ -111,16 +112,21 @@ private:
     RetainPtr<AVURLAsset> m_asset;
     RetainPtr<AVAssetTrack> m_track;
     RetainPtr<WebCoreSharedBufferResourceLoaderDelegate> m_loader;
-    std::unique_ptr<ImageRotationSessionVT> m_imageRotationSession;
+    std::unique_ptr<ImageRotationSessionVT> m_imageRotationSession WTF_GUARDED_BY_LOCK(m_sampleGeneratorLock);
     const Ref<WebCoreDecompressionSession> m_decompressionSession;
     Function<void(EncodedDataStatus)> m_encodedDataStatusChangedCallback;
 
-    SampleMap m_sampleData;
-    DecodeOrderSampleMap::iterator m_cursor;
+    // Mutated on the main thread while holding m_sampleGeneratorLock and read on the image
+    // decoding work queue by createFrameImageAtIndex(), which locks; the main thread's own reads
+    // use assertIsOwnerThread() instead of locking.
+    SampleMap m_sampleData WTF_GUARDED_BY_LOCK(m_sampleGeneratorLock);
+    DecodeOrderSampleMap::iterator m_cursor WTF_GUARDED_BY_LOCK(m_sampleGeneratorLock);
     Lock m_sampleGeneratorLock;
     bool m_isAllDataReceived { false };
     std::optional<IntSize> m_size;
     ProcessIdentity m_resourceOwner;
+
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_sampleGeneratorLock, mainThreadLike);
 };
 
 }

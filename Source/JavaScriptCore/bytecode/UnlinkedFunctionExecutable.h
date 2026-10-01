@@ -128,7 +128,7 @@ public:
             return SourceCode();
         const SourceCode& source = m_members.live().rareData->m_classSource;
         if (StaticHeap::contains(this) && m_isClass) [[unlikely]]
-            return SourceCode(provider, source.startOffset(), source.endOffset(), source.firstLine().oneBasedInt(), source.startColumn().oneBasedInt());
+            return SourceCode(RefPtr<SourceProvider> { &provider }, source.startOffset(), source.endOffset());
         return source;
     }
     void setClassSource(const SourceCode& source)
@@ -160,14 +160,8 @@ public:
     ConstructorKind constructorKind() const { return static_cast<ConstructorKind>(m_constructorKind); }
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
 
-    unsigned lineCount() const { materializeDeferredScalarsIfNeeded(); return m_lineCount; }
-    unsigned linkedStartColumn(unsigned parentStartColumn) const { return m_unlinkedBodyStartColumn + (!m_firstLineOffset ? parentStartColumn : 1); }
-    unsigned linkedEndColumn(unsigned startColumn) const { materializeDeferredScalarsIfNeeded(); return m_unlinkedBodyEndColumn + (!m_lineCount ? startColumn : 1); }
-
     unsigned unlinkedFunctionStart() const { return m_unlinkedFunctionStart; }
     unsigned unlinkedFunctionEnd() const { materializeDeferredScalarsIfNeeded(); return m_unlinkedFunctionEnd; }
-    unsigned unlinkedBodyStartColumn() const { return m_unlinkedBodyStartColumn; }
-    unsigned unlinkedBodyEndColumn() const { materializeDeferredScalarsIfNeeded(); return m_unlinkedBodyEndColumn; }
     unsigned startOffset() const { return m_startOffset; }
     unsigned sourceLength() { return m_sourceLength; }
     unsigned parametersStartOffset() const { materializeDeferredScalarsIfNeeded(); return m_parametersStartOffset; }
@@ -422,20 +416,15 @@ public:
         return !m_nameIsDeferred && !m_membersAreDeferred && !m_scalarsAreDeferred && !m_members.live().rareData && !m_members.live().parentScopeTDZVariables
             && !m_isBuiltinFunction && !m_isBuiltinDefaultClassConstructor;
     }
-    std::array<uint8_t, 104> whatIsSharedByStaticExecutables() const
+    auto whatIsSharedByStaticExecutables() const
     {
-        static_assert(sizeof(UnlinkedFunctionExecutable) == 104);
         RELEASE_ASSERT(canBeSharedByStaticExecutables());
-        std::array<uint8_t, 104> bytes;
+        std::array<uint8_t, sizeof(UnlinkedFunctionExecutable)> bytes;
         memcpy(bytes.data(), static_cast<const void*>(this), sizeof(UnlinkedFunctionExecutable));
         auto* copy = reinterpret_cast<UnlinkedFunctionExecutable*>(bytes.data());
         copy->m_parameterCount = 0;
         memset(static_cast<void*>(&copy->m_ecmaName), 0, sizeof(m_ecmaName));
-        copy->m_firstLineOffset = 0;
-        copy->m_lineCount = 0;
         copy->m_unlinkedFunctionStart = 0;
-        copy->m_unlinkedBodyStartColumn = 0;
-        copy->m_unlinkedBodyEndColumn = 0;
         copy->m_startOffset = 0;
         copy->m_sourceLength = 0;
         copy->m_parametersStartOffset = 0;
@@ -465,28 +454,24 @@ private:
         return VM::useUnlinkedCodeBlockJettisoning() && !m_isGeneratedFromCache;
     }
 
-    unsigned m_firstLineOffset : 31;
-    unsigned m_isGeneratedFromCache : 1;
-    unsigned m_lineCount : 31;
     unsigned m_hasCapturedVariables : 1;
     unsigned m_unlinkedFunctionStart: 31;
-    unsigned m_isBuiltinFunction : 1;
-    unsigned m_unlinkedBodyStartColumn : 31;
-    unsigned m_isBuiltinDefaultClassConstructor : 1;
-    // m_lineCount, m_unlinkedBodyEndColumn, m_parametersStartOffset and m_unlinkedFunctionEnd may be written late
-    // (m_scalarsAreDeferred); the bit each shares its word with is one only the mutator reads.
-    unsigned m_unlinkedBodyEndColumn : 31;
-    unsigned m_superBinding : 1;
     unsigned m_startOffset : 31;
     unsigned m_isCached : 1;
     unsigned m_sourceLength : 31;
     unsigned m_constructAbility: 1;
+    // m_parametersStartOffset and m_unlinkedFunctionEnd may be written late (m_scalarsAreDeferred); the bit each
+    // shares its word with is one only the mutator reads.
     unsigned m_parametersStartOffset : 31;
     unsigned m_scriptMode: 1; // JSParserScriptMode
     unsigned m_unlinkedFunctionEnd : 31;
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_parameterCount : 30;
     unsigned m_singletonHasBeenInvalidated : 1;
+    unsigned m_isGeneratedFromCache : 1;
+    unsigned m_isBuiltinFunction : 1;
+    unsigned m_isBuiltinDefaultClassConstructor : 1;
+    unsigned m_superBinding : 1;
     unsigned m_privateBrandRequirement : 1;
     CodeFeatures m_features : bitWidthOfCodeFeatures;
     uint16_t m_constructorKind : 2;
@@ -502,7 +487,7 @@ private:
     // Own bytes, not bits of the group above: the mutator clears these late, while compiler threads read that group.
     bool m_nameIsDeferred { false }; // m_ecmaName is still in the cache record; implies m_membersAreDeferred
     bool m_membersAreDeferred { false }; // TDZ variables + rare data are still in the cache record; the m_deferredMembers* union members are live
-    bool m_scalarsAreDeferred { false }; // the record's cold tail was not read yet (those four members are 0); implies m_membersAreDeferred (that state holds the record)
+    bool m_scalarsAreDeferred { false }; // the record's cold tail was not read yet (those two members are 0); implies m_membersAreDeferred (that state holds the record)
 
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;

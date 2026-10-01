@@ -445,7 +445,8 @@ static void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
 // A position on the same line of the same source as the previous one is zigzag(column delta) << 1 | 1. Any other position is
 // zigzag(line delta) << 2 | sourceChanged << 1, then the number of the source if it changed (zero: no source, the position is in
 // the module's text), then the column.
-static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock, unsigned firstLine, unsigned startColumn, uint32_t entryOffsetOfModule)
+// (While a heap is being built its sources have no SourceProvider to ask. `lineStarts` came with the code of the module.)
+static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock, unsigned sourceOffset, LineStartTable& lineStarts, uint32_t entryOffsetOfModule)
 {
     Vector<uint8_t> stream;
     {
@@ -463,8 +464,13 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
         }
         if (!codeBlock->hasExpressionInfo())
             offsets.clear();
-        appendVarint(stream, firstLine);
-        appendVarint(stream, startColumn);
+        auto positionOf = [&](unsigned offset) {
+            LineColumn inText = lineStarts.lineColumnForOffset(StringView(), offset);
+            return LineColumn { inText.line + 1, inText.column + 1 };
+        };
+        LineColumn start = positionOf(sourceOffset);
+        appendVarint(stream, start.line);
+        appendVarint(stream, start.column);
         appendVarint(stream, offsets.size());
         uint32_t previousOffset = 0;
         int64_t previousLine = 0;
@@ -504,9 +510,7 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
             while (nextConstruction < sites.constructions.size() && sites.constructions[nextConstruction].offset < offset)
                 ++nextConstruction;
             const auto* construction = nextConstruction < sites.constructions.size() && sites.constructions[nextConstruction].offset == offset ? &sites.constructions[nextConstruction] : nullptr;
-            LineColumn position = codeBlock->lineColumnForBytecodeIndex(BytecodeIndex(offset));
-            position.column += position.line ? 1 : startColumn;
-            position.line += firstLine;
+            LineColumn position = positionOf(sourceOffset + codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(offset)).divot);
             appendVarint(stream, static_cast<uint64_t>(offset - previousOffset) << 1 | !!construction);
             previousOffset = offset;
             appendPosition(position);
@@ -532,14 +536,14 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
 
 static const uint8_t* deduplicatedCopy(std::span<const uint8_t>, size_t alignment); // Shares one copy between equal arrays, while there is an ArrayDeduplicator.
 
-static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t entryOffsetOfModule)
+static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, LineStartTable& lineStarts, uint32_t entryOffsetOfModule)
 {
     if (s_functionMetadataOffsetsBeingBuilt.empty() || s_functionMetadataOffsetsBeingBuilt[index])
         return;
     if (codeBlock->codeType() != FunctionCode) {
         // The code of a module. Its UnlinkedCodeBlock is kept, so only the positions are needed.
         if (s_positionsToKeep)
-            s_functionMetadataOffsetsBeingBuilt[index] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(makePositions(index, codeBlock, 1, 1, entryOffsetOfModule)) - Region::startOf(Region::Arena::Data)) | 1;
+            s_functionMetadataOffsetsBeingBuilt[index] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(makePositions(index, codeBlock, 0, lineStarts, entryOffsetOfModule)) - Region::startOf(Region::Arena::Data)) | 1;
         return;
     }
     using Metadata = AOT::FunctionMetadata;
@@ -554,7 +558,7 @@ static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExe
         // (A default class constructor gets its own executable in every realm, and has no position in any source.)
         if (executable) {
             words[0] |= Metadata::ExpressionInfo;
-            words.append(in(Region::Arena::Data, makePositions(index, codeBlock, executable->firstLine(), executable->startColumn(), entryOffsetOfModule)));
+            words.append(in(Region::Arena::Data, makePositions(index, codeBlock, executable->source().startOffset(), lineStarts, entryOffsetOfModule)));
         }
     } else if (const void* record = codeBlock->cachedExpressionInfo()) {
         words[0] |= Metadata::ExpressionInfo;
@@ -673,7 +677,7 @@ std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdent
 std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
 }
 
-static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, CodeSpecializationKind kind)
+static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, CodeSpecializationKind kind, LineStartTable& lineStarts)
 {
     // (Its SymbolTables are being created in the static heap right now, so they are shared.)
     bool constantsAreRealmIndependent = AOT::hasOnlyRealmIndependentConstants(codeBlock, AOT::SymbolTablesAreShared::Yes);
@@ -730,11 +734,11 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     info.setExecutable(executable, kind, constantsAreRealmIndependent);
     info.flags = (function.hasSiteConstants ? AOT::FunctionInfo::hasSiteConstants : AOT::FunctionInfo::sitesHaveTheirConstants) | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0) | AOT::FunctionInfo::slotsAmongFlags(function.numSlots);
     RELEASE_ASSERT(info.function() == function.function);
-    fillMetadata(function.index, codeBlock, executable, s_entryOffsetOfModuleBeingBuilt);
+    fillMetadata(function.index, codeBlock, executable, lineStarts, s_entryOffsetOfModuleBeingBuilt);
 }
 
 // Creates the executables of the functions nested in `codeBlock`, whose source is `source`, recursively.
-static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<AOT::FunctionInfo> byIndex, UnlinkedFunctionExecutable* only = nullptr)
+static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<AOT::FunctionInfo> byIndex, LineStartTable& lineStarts, UnlinkedFunctionExecutable* only = nullptr)
 {
     auto make = [&](UnlinkedFunctionExecutable* unlinked) {
         if (unlinked->staticExecutable())
@@ -759,7 +763,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         if (isDefaultConstructor) {
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto& function = code[static_cast<unsigned>(kind)]; function && !byIndex[function->index].sites)
-                    fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfExists(kind), nullptr, kind);
+                    fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfExists(kind), nullptr, kind, lineStarts);
             }
             return;
         }
@@ -781,7 +785,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
             unlinked->setStaticExecutable(executable);
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto* nested = unlinked->codeBlockIfExists(kind))
-                    makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex);
+                    makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, lineStarts);
             }
             return;
         }
@@ -795,7 +799,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto& function = code[static_cast<unsigned>(kind)]) {
                     executable->setAOTCode(kind, image.addressOfStub(isCall(kind) ? AOT::Stub::EnterStaticFunctionForCall : AOT::Stub::EnterStaticFunctionForConstruct), function->entry, function->index);
-                fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfExists(kind), executable, kind);
+                fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfExists(kind), executable, kind, lineStarts);
             }
         }
         // (Any other function either has code for construct or cannot be constructed.)
@@ -806,7 +810,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         unlinked->setStaticExecutable(executable);
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto* nested = unlinked->codeBlockIfExists(kind))
-                makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex);
+                makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, lineStarts);
         }
     };
     if (only) {
@@ -1405,14 +1409,22 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         UnlinkedFunctionExecutable* builtinFunction = nullptr;
                         unsigned lengthOfBuiltin = 0;
                         unsigned stampOfBuiltin = 0;
+                        LineStartTable lineStarts;
+                        auto setLineStarts = [&](const LineStarts& ofCode) {
+                            Region::AllocationScope notInRegion(false);
+                            // (A short builtin comes without. Its positions are all on its first line.)
+                            lineStarts.setLineStarts(ofCode ? LineStarts { ofCode } : LineStartTable::encode(Vector<unsigned> { 0 }));
+                        };
                         if (isBuiltinFunction) {
                             // Without compiled code for the builtin, there is no benefit to having it in the static heap.
+                            LineStarts lineStartsOfBuiltin;
                             if (imageView)
-                                builtinFunction = decodeBuiltinForStaticHeap(decoder, lengthOfBuiltin, stampOfBuiltin, functions);
+                                builtinFunction = decodeBuiltinForStaticHeap(decoder, lengthOfBuiltin, stampOfBuiltin, lineStartsOfBuiltin, functions);
                             if (builtinFunction) {
+                                setLineStarts(lineStartsOfBuiltin);
                                 static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
-                                SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(lengthOfBuiltin), 1, 1 };
-                                makeExecutables(vm, nullptr, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, builtinFunction);
+                                SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(lengthOfBuiltin) };
+                                makeExecutables(vm, nullptr, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, lineStarts, builtinFunction);
                             }
                         }
                         UnlinkedCodeBlock* codeBlock = isBuiltinFunction ? nullptr : decodeAllForStaticHeap(decoder, key, functions);
@@ -1427,11 +1439,22 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             // changes, in memory that is not kept. The extra ref() keeps the count from reaching zero, which would
                             // destroy it, if the module has no functions.
                             static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
-                            SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(key.length()), 1, 1 };
-                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions);
+                            SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(key.length()) };
+                            setLineStarts(uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->lineStarts());
+                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, lineStarts);
                             // The top-level code of the module. Its executable is created at run time.
                             if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
-                                fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall);
+                                fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall, lineStarts);
+                        }
+                        if (codeBlock) {
+                            // The code block stays, and gives its line starts to the module's provider at run time. They are borrowed
+                            // from the payload, so it gets a copy. Without bytecode, every position comes from makePositions().
+                            auto* global = uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock);
+                            auto bytes = global->lineStarts().bytes;
+                            if (bytes.empty() || Options::omitBytecodeFromStaticHeap())
+                                global->setLineStarts({ });
+                            else
+                                global->setLineStarts({ std::span { deduplicatedCopy(bytes, 1), bytes.size() }, nullptr });
                         }
                         if (decoder.leavesFunctionCodeInPayload()) {
                             DynamicallyResolvedNames lookedUp;

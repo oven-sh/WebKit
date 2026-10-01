@@ -30,6 +30,7 @@
 #include "CSSValueKeywords.h"
 #include "HTMLOptionElement.h"
 #include "HTMLSelectElement.h"
+#include "LocalizedStrings.h"
 #include "PlatformRenderTheme.h"
 #include "RenderTheme.h"
 #include "ResolvedStyle.h"
@@ -40,17 +41,13 @@
 #include "StyleResolver.h"
 #include "StyleTextAlign.h"
 #include "Text.h"
+#include "UserAgentParts.h"
 #include <wtf/TZoneMallocInlines.h>
-
-#if PLATFORM(IOS_FAMILY)
-#include "LocalizedStrings.h"
-#endif
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SelectFallbackButtonElement);
 
-#if PLATFORM(IOS_FAMILY)
 static size_t selectedOptionCount(const HTMLSelectElement& selectElement)
 {
     size_t count = 0;
@@ -60,12 +57,12 @@ static size_t selectedOptionCount(const HTMLSelectElement& selectElement)
     }
     return count;
 }
-#endif
 
 Ref<SelectFallbackButtonElement> SelectFallbackButtonElement::create(Document& document)
 {
     Ref element = adoptRef(*new SelectFallbackButtonElement(document));
     ScriptDisallowedScope::EventAllowedScope scope { element };
+    element->setUserAgentPart(UserAgentParts::fieldContent());
     element->appendChild(Text::create(document, "\n"_s));
     return element;
 }
@@ -93,7 +90,6 @@ void SelectFallbackButtonElement::updateText(HTMLOptionElement* selectedOption, 
         selectElement->didUpdateActiveOption(optionIndex);
     };
 
-#if PLATFORM(IOS_FAMILY)
     if (selectElement->multiple()) {
         size_t count = selectedOptionCount(selectElement);
         if (count != 1) {
@@ -101,7 +97,6 @@ void SelectFallbackButtonElement::updateText(HTMLOptionElement* selectedOption, 
             return;
         }
     }
-#endif
 
     RefPtr option = selectedOption;
     if (!option) {

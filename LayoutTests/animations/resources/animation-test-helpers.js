@@ -421,7 +421,9 @@ function getPropertyValue(property, elementId, iframeId)
         elementDocument = document.getElementById(iframeId).contentDocument;
     const element = elementDocument.getElementById(elementId);
     const propertyPrefix = property.split(".")[0];
-    const value = getComputedStyle(element)[propertyPrefix];
+    const value = propertyPrefix == "-apple-color-filter"
+        ? internals.computedAppleColorFilter(element)
+        : getComputedStyle(element)[propertyPrefix];
     if (value == "auto")
         return "auto";
     if (property == "font-stretch")

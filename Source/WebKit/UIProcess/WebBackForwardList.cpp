@@ -46,6 +46,7 @@
 #include <wtf/HexNumber.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextStream.h>
 
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
@@ -228,7 +229,7 @@ void WebBackForwardList::goToItem(WebBackForwardListItem& item)
 
     // If the target item wasn't even in the list, there's nothing else to do.
     if (targetIndex == notFound) {
-        LOG(BackForward, "(Back/Forward) WebBackForwardList %p could not go to item %s (%s) because it was not found", this, item.identifier().toString().utf8().data(), item.url().utf8().data());
+        LOG_WITH_STREAM(BackForward, stream << "(Back/Forward) WebBackForwardList "_s << this << " could not go to item "_s << item.identifier().toString() << " ("_s << item.url() << ") because it was not found"_s);
         return;
     }
 
@@ -264,7 +265,7 @@ void WebBackForwardList::goToItem(WebBackForwardListItem& item)
 
     m_currentIndex = targetIndex;
 
-    LOG(BackForward, "(Back/Forward) WebBackForwardList %p going to item %s, is now at index %zu", this, item.identifier().toString().utf8().data(), targetIndex);
+    LOG_WITH_STREAM(BackForward, stream << "(Back/Forward) WebBackForwardList "_s << this << " going to item "_s << item.identifier().toString() << ", is now at index "_s << targetIndex);
     page->didChangeBackForwardList(nullptr, WTF::move(removedItems));
 }
 
@@ -887,7 +888,7 @@ void WebBackForwardList::replaceFrameStateForChild(WebBackForwardListItem& item,
     targetFrameItem->updateFrameStatePayload(WTF::move(newFrameState));
 }
 
-void WebBackForwardList::backForwardGoToItem(BackForwardItemIdentifier itemID)
+void WebBackForwardList::backForwardGoToItem(IPC::Connection& connection, BackForwardItemIdentifier itemID)
 {
     // On process swap, we tell the previous process to ignore the load, which causes it to restore its current back forward item to its previous
     // value. Since the load is really going on in a new provisional process, we want to ignore such requests from the committed process.
@@ -897,7 +898,7 @@ void WebBackForwardList::backForwardGoToItem(BackForwardItemIdentifier itemID)
             return;
     }
 
-    backForwardGoToItemShared(itemID);
+    backForwardGoToItemShared(connection, itemID);
 }
 
 void WebBackForwardList::backForwardListContainsItem(WebCore::BackForwardItemIdentifier itemID, CompletionHandler<void(bool)>&& completionHandler)
@@ -905,10 +906,10 @@ void WebBackForwardList::backForwardListContainsItem(WebCore::BackForwardItemIde
     completionHandler(itemForID(itemID));
 }
 
-void WebBackForwardList::backForwardGoToItemShared(BackForwardItemIdentifier itemID)
+void WebBackForwardList::backForwardGoToItemShared(IPC::Connection& connection, BackForwardItemIdentifier itemID)
 {
     if (RefPtr webPageProxy = m_page.get())
-        MESSAGE_CHECK(Ref { webPageProxy->legacyMainFrameProcess() }, !WebKit::isInspectorPage(*webPageProxy));
+        MESSAGE_CHECK_BASE(!WebKit::isInspectorPage(*webPageProxy), connection);
 
     RefPtr item = itemForID(itemID);
     if (!item)
@@ -1113,17 +1114,12 @@ WebCore::BackForwardFrameItemIdentifier generateBackForwardFrameItemIdentifier()
 // rdar://168139823 is the task of doing a productionized version of WebKit Swift logging
 void doLog(const WTF::String& msg)
 {
-    LOG(BackForward, "%s", msg.utf8().data());
+    LOG_WITH_STREAM(BackForward, stream << msg);
 }
 
 void doLoadingReleaseLog(const WTF::String& msg)
 {
-    RELEASE_LOG(Loading, "%s", msg.utf8().data());
-}
-// rdar://168139740 is the task of doing a productionized Swift MESSAGE_CHECK
-void messageCheckFailed(Ref<WebKit::WebProcessProxy> process)
-{
-    MESSAGE_CHECK_BASE(false, process->connection());
+    RELEASE_LOG(Loading, "%s", msg.utf8());
 }
 
 // Workarounds for rdar://171011011

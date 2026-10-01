@@ -71,6 +71,13 @@ constexpr bool kEnableVulkanAPIDumpLayer = true;
 #else
 constexpr bool kEnableVulkanAPIDumpLayer = false;
 #endif
+
+#if defined(ANGLE_OPENCL_COMPUTE_ONLY_PIPE)
+constexpr bool kUseComputeOnlyQueue = true;
+#else
+constexpr bool kUseComputeOnlyQueue = false;
+#endif
+
 }  // anonymous namespace
 
 namespace rx
@@ -2361,13 +2368,17 @@ angle::Result Renderer::enableInstanceExtensions(vk::ErrorContext *context,
                                            instanceExtensionNames) &&
                                 useVulkanSwapchain == UseVulkanSwapchain::Yes);
 
+    const bool isSamsungDeviceWithSurfacelessQueryBug = IsXclipse() && GetAndroidSDKVersion() < 36;
+
     // TODO: Validation layer has a bug when vkGetPhysicalDeviceSurfaceFormats2KHR is called
     // on Mock ICD with surface handle set as VK_NULL_HANDLE. http://anglebug.com/42266098
-    // b/267953710: VK_GOOGLE_surfaceless_query isn't working on some Samsung Xclipse builds
+    // b/267953710: VK_GOOGLE_surfaceless_query isn't working on some Samsung Xclipse builds with
+    // Android API level below 36.
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsSurfacelessQueryExtension,
         ExtensionFound(VK_GOOGLE_SURFACELESS_QUERY_EXTENSION_NAME, instanceExtensionNames) &&
-            useVulkanSwapchain == UseVulkanSwapchain::Yes && !isMockICDEnabled() && !IsXclipse());
+            useVulkanSwapchain == UseVulkanSwapchain::Yes && !isMockICDEnabled() &&
+            !isSamsungDeviceWithSurfacelessQueryBug);
 
     // VK_KHR_external_fence_capabilities and VK_KHR_extenral_semaphore_capabilities are promoted to
     // core in Vulkan 1.1
@@ -2758,12 +2769,21 @@ angle::Result Renderer::initialize(vk::ErrorContext *context,
 
     VkQueueFlags queueFamilyBits = VK_QUEUE_FLAG_BITS_MAX_ENUM;
     uint32_t firstQueueFamily    = QueueFamily::kInvalidIndex;
-    if (nativeWindowSystem == angle::NativeWindowSystem::NullCompute)
+
+    // If this is compute client, give preference to compute only queue (if not available fall back
+    // to default queue)
+    if (nativeWindowSystem == angle::NativeWindowSystem::NullCompute && kUseComputeOnlyQueue)
     {
         queueFamilyBits = VK_QUEUE_COMPUTE_BIT;
         firstQueueFamily =
             QueueFamily::FindIndex(mQueueFamilyProperties2, queueFamilyBits, VK_QUEUE_PROTECTED_BIT,
                                    VK_QUEUE_GRAPHICS_BIT, &queueFamilyMatchCount);
+
+        if (queueFamilyMatchCount == 0)
+        {
+            INFO() << "Compute Only queue is not supported by the device, falling back to default "
+                      "Graphics|Compute queue";
+        }
     }
     if (queueFamilyMatchCount == 0)
     {
@@ -3673,7 +3693,7 @@ void Renderer::queryDeviceExtensionFeatures(const vk::ExtensionNameList &deviceE
     mHostImageCopyFeatures       = {};
     mHostImageCopyFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES;
 
-    mHostImageCopyProperties = {};
+    mHostImageCopyProperties       = {};
     mHostImageCopyProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_PROPERTIES;
 
     m8BitStorageFeatures       = {};
@@ -5319,12 +5339,12 @@ gl::Version Renderer::getMaxSupportedESVersion() const
 
     // Verify minimum requirements of ANGLE:
     //
-    // - VK_KHR_index_type_uint8 or VK_EXT_index_type_uint8
+    // - VK_KHR_image_format_list
     //
-    if (!mFeatures.supportsIndexTypeUint8.enabled)
+    if (!mFeatures.supportsImageFormatList.enabled)
     {
         WARN() << "Vulkan device does not meet ANGLE's minimum requirements";
-        WARN() << "  Missing VK_EXT_index_type_uint8 or VK_KHR_index_type_uint8";
+        WARN() << "  Missing VK_KHR_image_format_list";
         maxVersion = LimitVersionTo(maxVersion, {0, 0});
     }
 
@@ -6205,9 +6225,12 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
 
     // ANI crashes on NVIDIA/Wayland on a swapchain with deferred memory allocation.
     // http://anglebug.com/499347835
+    // Keyed on the window system this display resolved to, so it covers the
+    // Wayland WSI exactly and leaves XWayland's xcb swapchains alone.
     ANGLE_FEATURE_CONDITION(
         &mFeatures, swapchainDeferredMemoryAllocation,
-        mFeatures.supportsSwapchainMaintenance1.enabled && !(IsWayland() && isNvidia));
+        mFeatures.supportsSwapchainMaintenance1.enabled &&
+            !(nativeWindowSystem == angle::NativeWindowSystem::Wayland && isNvidia));
 
     // The VK_EXT_legacy_dithering extension enables dithering support without emulation
     // Disable the usage of VK_EXT_legacy_dithering on ARM until the driver bug
@@ -7027,6 +7050,10 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
     // Enable this feature to avoid image allocation overhead when repeatedly uploading the same
     // texture that has already been uploaded, outside a render pass.
     ANGLE_FEATURE_CONDITION(&mFeatures, avoidImageGhostOutsideRenderPass, !isARM);
+
+    // Precompute the vertex pre-rotation swap + flip into a driver uniform to reduce additional
+    // instructions executed per vertex
+    ANGLE_FEATURE_CONDITION(&mFeatures, preferPrecomputedVertexTransform, isQualcommProprietary);
 }
 
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -7160,6 +7187,19 @@ void Renderer::initOpenCLFeatures(const vk::ExtensionNameList &deviceExtensionNa
     // serves as a allowlist around this support/feature http://anglebug.com/540157153
     const bool vendorsSupportingAlphaChannel = isSamsung;
     ANGLE_FEATURE_CONDITION(&mFeatures, enableAlphaChannelImages, vendorsSupportingAlphaChannel);
+
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, supportsClFp16,
+        mFeatures.supportsShaderFloat16.enabled && (mFeatures.supportsRoundingModeRteFp16.enabled ||
+                                                    mFeatures.supportsRoundingModeRtzFp16.enabled));
+
+    ANGLE_FEATURE_CONDITION(&mFeatures, debugSupportsClFp64, false);
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsClFp64,
+                            mFeatures.debugSupportsClFp64.enabled &&
+                                mFeatures.supportsShaderFloat64.enabled &&
+                                mFeatures.supportsRoundingModeRteFp64.enabled &&
+                                mFeatures.supportsRoundingModeRtzFp64.enabled &&
+                                mFeatures.supportsDenormFtzFp64.enabled);
 }
 
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

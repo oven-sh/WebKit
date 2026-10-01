@@ -710,7 +710,6 @@ public:
     RuntimeFlags m_runtimeFlags;
     Vector<EncodedJSValue> m_immutableIntrinsics;
     WeakPtr<ConsoleClient> m_consoleClient;
-    std::optional<unsigned> m_stackTraceLimit;
     Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
     
     // Added for "bun test". NaN (the default) means no override is active.
@@ -735,8 +734,8 @@ public:
 
     template<typename T>
     struct WeakCustomGetterOrSetterHash {
-        static unsigned hash(const Weak<T>&);
-        static bool equal(const Weak<T>&, const Weak<T>&);
+        static unsigned hash(T*);
+        static bool equal(T*, T*);
         // Templated on U=T so T::CustomFunctionPointer is a dependent name and lookup is
         // deferred to call time; otherwise instantiating this struct (as a HashSet trait)
         // requires JSCustomGetterFunction/JSCustomSetterFunction to be complete in every
@@ -744,6 +743,8 @@ public:
         template<typename U = T>
         static unsigned hash(const PropertyName&, typename U::CustomFunctionPointer, const ClassInfo*);
 
+        // HashTable gates WeakCustomGetterOrSetterHashTranslator::equal() on this flag too, and that
+        // one dereferences the bucket it is handed.
         static constexpr bool safeToCompareToEmptyOrDeleted = false;
     };
 
@@ -805,8 +806,7 @@ public:
     WatchpointSet& ensureReferencedPropertyWatchpointSet(UniquedStringImpl*);
 #endif
 
-    std::optional<unsigned> stackTraceLimit() const { return m_stackTraceLimit; }
-    void setStackTraceLimit(std::optional<unsigned> value) { m_stackTraceLimit = value; }
+    std::optional<unsigned> stackTraceLimit() const;
 
     JS_EXPORT_PRIVATE void startSignpost(String&&);
     JS_EXPORT_PRIVATE void stopSignpost(String&&);

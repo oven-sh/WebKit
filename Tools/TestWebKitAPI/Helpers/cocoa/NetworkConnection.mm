@@ -164,7 +164,7 @@ void Connection::sendHTTPMessagingResponse(const HTTPResponse& response, Complet
     RetainPtr httpResponse = adoptNS(nw_http_response_create(response.statusCode, nullptr));
     RetainPtr fields = adoptNS(nw_http_fields_create());
     for (auto& pair : response.headerFields)
-        nw_http_fields_append(fields.get(), pair.key.utf8().data(), pair.value.utf8().data());
+        nw_http_fields_append(fields.get(), pair.key.utf8().legacyCStringPointer(), pair.value.utf8().legacyCStringPointer());
     nw_http_response_set_header_fields(httpResponse.get(), fields.get());
 
     RetainPtr metadata = adoptNS(nw_http_create_metadata_for_response(httpResponse.get()));
@@ -258,8 +258,8 @@ void Connection::webSocketHandshake(CompletionHandler<void()>&& connectionHandle
 
             constexpr auto webSocketKeyGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"_s;
             SHA1 sha1;
-            sha1.addBytes(byteCast<uint8_t>(keySpan.first(keyEnd)));
-            sha1.addBytes(webSocketKeyGUID.span());
+            sha1.addBytes(std::as_bytes(keySpan.first(keyEnd)));
+            sha1.addBytes(std::as_bytes(webSocketKeyGUID.span()));
             SHA1::Digest hash;
             sha1.computeHash(hash);
             return base64EncodeToString(hash);

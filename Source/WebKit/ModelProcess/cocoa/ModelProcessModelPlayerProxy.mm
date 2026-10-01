@@ -590,7 +590,7 @@ static CGFloat effectivePointsPerMeter(CALayer *caLayer)
     return defaultPointsPerMeter;
 }
 
-RESRT ModelProcessModelPlayerProxy::modelStandardizedTransformSRT(RESRT originalSRT)
+RESRT ModelProcessModelPlayerProxy::modelStandardizedTransformSRT(RESRT originalSRT) const
 {
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     if (m_immersivePresentation)
@@ -603,7 +603,7 @@ RESRT ModelProcessModelPlayerProxy::modelStandardizedTransformSRT(RESRT original
     return originalSRT;
 }
 
-RESRT ModelProcessModelPlayerProxy::modelLocalizedTransformSRT(RESRT originalSRT)
+RESRT ModelProcessModelPlayerProxy::modelLocalizedTransformSRT(RESRT originalSRT) const
 {
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     if (m_immersivePresentation)
@@ -616,10 +616,68 @@ RESRT ModelProcessModelPlayerProxy::modelLocalizedTransformSRT(RESRT originalSRT
     return originalSRT;
 }
 
+#if ENABLE(SPATIAL_PORTAL)
+static void transformBoundingBox(simd_float3 extents, simd_float3 center, const simd_float4x4& matrix, simd_float3& minimum, simd_float3& maximum)
+{
+    simd_float3 halfExtents = extents / 2;
+
+    for (int corner = 0; corner < 8; ++corner) {
+        simd_float3 offset = simd_make_float3(
+            (corner & 1) ? halfExtents.x : -halfExtents.x,
+            (corner & 2) ? halfExtents.y : -halfExtents.y,
+            (corner & 4) ? halfExtents.z : -halfExtents.z
+        );
+        simd_float3 point = simd_make_float3(simd_mul(matrix, simd_make_float4(center + offset, 1.0f)));
+
+        minimum = corner ? simd_min(minimum, point) : point;
+        maximum = corner ? simd_max(maximum, point) : point;
+    }
+}
+
+static float maximumScale(const simd_float4x4& matrix)
+{
+    return std::max({
+        simd_length(simd_make_float3(matrix.columns[0])),
+        simd_length(simd_make_float3(matrix.columns[1])),
+        simd_length(simd_make_float3(matrix.columns[2]))
+    });
+}
+
+static RESRT contentTransformedEntitySRT(const simd_float4x4& contentTransform, simd_float3 entityScale)
+{
+    RESRT entityScaleSRT = REMakeSRT(entityScale, simd_quaternion(0, simd_make_float3(1, 0, 0)), simd_make_float3(0, 0, 0));
+    return REMakeSRTFromMatrix(simd_mul(contentTransform, RESRTMatrix(entityScaleSRT)));
+}
+#endif // ENABLE(SPATIAL_PORTAL)
+
+#if ENABLE(SPATIAL_PORTAL)
+// Converts the trailing list's lengths from CSS pixels into the scaled (auto fit) coordinate system.
+simd_float4x4 ModelProcessModelPlayerProxy::contentTransformMatrix() const
+{
+    auto beforeAuto = static_cast<simd_float4x4>(m_portalTransform.transformBeforeAuto);
+    auto afterAuto = static_cast<simd_float4x4>(m_portalTransform.transformAfterAuto);
+
+    simd_float4x4 enclosing = simd_mul(RESRTMatrix(modelStandardizedTransformSRT(m_transformSRT)), beforeAuto);
+    simd_float3x3 enclosingLinear = simd_matrix(simd_make_float3(enclosing.columns[0]), simd_make_float3(enclosing.columns[1]), simd_make_float3(enclosing.columns[2]));
+
+    simd_float3 translation = simd_mul(simd_inverse(enclosingLinear), simd_make_float3(afterAuto.columns[3]));
+
+    if (std::isfinite(translation.x) && std::isfinite(translation.y) && std::isfinite(translation.z))
+        afterAuto.columns[3] = simd_make_float4(translation, afterAuto.columns[3].w);
+
+    return simd_mul(beforeAuto, afterAuto);
+}
+#endif
+
 void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
 {
     if (m_trackedModels.isEmpty() || !m_layer)
         return;
+
+#if ENABLE(SPATIAL_PORTAL)
+    auto beforeAutoMatrix = static_cast<simd_float4x4>(m_portalTransform.transformBeforeAuto);
+    float beforeAutoScale = maximumScale(beforeAutoMatrix);
+#endif
 
     // TODO: Once we have spatial positioninig the union won't be centered on the origin anymore.
     simd_float3 minBound = simd_make_float3(0, 0, 0);
@@ -630,9 +688,15 @@ void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
         if (!tracked->entity)
             continue;
 
+#if ENABLE(SPATIAL_PORTAL)
+        simd_float3 entityMin;
+        simd_float3 entityMax;
+        transformBoundingBox(tracked->originalBoundingBoxExtents, tracked->originalBoundingBoxCenter, beforeAutoMatrix, entityMin, entityMax);
+#else
         simd_float3 halfExtents = tracked->originalBoundingBoxExtents / 2;
         simd_float3 entityMin = tracked->originalBoundingBoxCenter - halfExtents;
         simd_float3 entityMax = tracked->originalBoundingBoxCenter + halfExtents;
+#endif
 
         minBound = hasBounds ? simd_min(minBound, entityMin) : entityMin;
         maxBound = hasBounds ? simd_max(maxBound, entityMax) : entityMax;
@@ -648,8 +712,7 @@ void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
     simd_quatf currentModelRotation = setDefaultRotation ? simd_quaternion(0, simd_make_float3(1, 0, 0)) : m_transformSRT.rotation;
 
 #if ENABLE(SPATIAL_PORTAL)
-    bool skipAutoFit = m_portalTransform == WebCore::PortalTransformKind::None;
-    if (skipAutoFit) {
+    if (!m_portalTransform.fitsContent) {
         m_transformSRT = computeUnfittedSRT(boundingBoxExtents, boundingBoxCenter, currentModelRotation);
         notifyModelPlayerOfTransformChange();
         return;
@@ -664,7 +727,13 @@ void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
             continue;
 
         float entityRadius = [tracked->entity boundingRadius] * tracked->originalEntityScale.x;
-        boundingRadius = std::max(boundingRadius, simd_length(tracked->originalBoundingBoxCenter - boundingBoxCenter) + entityRadius);
+#if ENABLE(SPATIAL_PORTAL)
+        entityRadius *= beforeAutoScale;
+        simd_float3 entityCenter = simd_make_float3(simd_mul(beforeAutoMatrix, simd_make_float4(tracked->originalBoundingBoxCenter, 1.0f)));
+#else
+        simd_float3 entityCenter = tracked->originalBoundingBoxCenter;
+#endif
+        boundingRadius = std::max(boundingRadius, simd_length(entityCenter - boundingBoxCenter) + entityRadius);
     }
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
@@ -681,6 +750,12 @@ void ModelProcessModelPlayerProxy::notifyModelPlayerOfTransformChange()
 {
     RESRT newSRT = modelStandardizedTransformSRT(m_transformSRT);
     simd_float4x4 matrix = RESRTMatrix(newSRT);
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (m_portalTransform.hasContentTransform())
+        matrix = simd_mul(matrix, contentTransformMatrix());
+#endif
+
     WebCore::TransformationMatrix transform = WebCore::TransformationMatrix(matrix);
 
 #if ENABLE(SPATIAL_PORTAL)
@@ -695,21 +770,126 @@ void ModelProcessModelPlayerProxy::notifyModelPlayerOfTransformChange()
 
 #if ENABLE(SPATIAL_PORTAL)
 
+float ModelProcessModelPlayerProxy::anchorPlacementScale(const TrackedModel& tracked) const
+{
+    if (!tracked.anchorPlacementEntity)
+        return 1;
+
+    float scale = simd_reduce_max(simd_abs([tracked.anchorPlacementEntity transform].scale));
+    return scale > std::numeric_limits<float>::epsilon() ? scale : 1;
+}
+
 RESRT ModelProcessModelPlayerProxy::childEntityTransformSRT(const TrackedModel& tracked) const
 {
-    RESRT srt {
-        .scale = tracked.originalEntityScale,
-        .rotation = simd_quaternion(0, simd_make_float3(1, 0, 0)),
-        .translation = simd_make_float3(0, 0, 0),
-    };
+    bool hasChildTransform = !simd_equal(tracked.childTransform, matrix_identity_float4x4);
+    bool hasContentTransform = !tracked.anchorPlacementEntity && m_portalTransform.hasContentTransform();
 
-    if (simd_equal(tracked.childTransform, matrix_identity_float4x4))
-        return srt;
+    if (!hasChildTransform && !hasContentTransform) {
+        return RESRT {
+            .scale = tracked.originalEntityScale,
+            .rotation = tracked.anchorCorrection,
+            .translation = simd_make_float3(0, 0, 0),
+        };
+    }
 
-    RESRT childSRT = REMakeSRTFromMatrix(tracked.childTransform);
-    childSRT.translation /= effectivePointsPerMeter(m_layer.get());
+    // The author's `portal-transform` list applies to the whole portal content, so it sits outside of a child's own transform.
+    simd_float4x4 matrix = hasContentTransform ? contentTransformMatrix() : matrix_identity_float4x4;
 
-    return REMakeSRTFromMatrix(simd_mul(RESRTMatrix(childSRT), RESRTMatrix(srt)));
+    if (hasChildTransform) {
+        RESRT childSRT = REMakeSRTFromMatrix(tracked.childTransform);
+        childSRT.translation /= effectivePointsPerMeter(m_layer.get()) * anchorPlacementScale(tracked);
+        matrix = simd_mul(matrix, RESRTMatrix(childSRT));
+    }
+
+    matrix = simd_mul(RESRTMatrix(REMakeSRT(simd_make_float3(1, 1, 1), tracked.anchorCorrection, simd_make_float3(0, 0, 0))), matrix);
+
+    return contentTransformedEntitySRT(matrix, tracked.originalEntityScale);
+}
+
+void ModelProcessModelPlayerProxy::updateAnchorParenting()
+{
+#if HAVE(CORE_RE)
+    if (!m_containerEntity)
+        return;
+
+    for (auto& [nodeID, tracked] : m_trackedModels) {
+        RetainPtr trackedEntity = tracked->entity;
+        if (!trackedEntity)
+            continue;
+
+        // A child sits on the container until an anchor moves it off, so an unresolved anchor is the same as none.
+        auto* anchor = tracked->anchorNode ? trackedModel(*tracked->anchorNode) : nullptr;
+        bool isAnchored = anchor && anchor->entity;
+
+        REEntityRef desiredParent = m_containerEntity.get();
+        if (isAnchored) {
+            desiredParent = [anchor->entity coreEntity];
+
+            if (!tracked->anchorPlacement.isEmpty()) {
+                auto placementName = tracked->anchorPlacement.utf8();
+                if (REEntityRef placement = REEntityFindInHierarchyByName(desiredParent, placementName.legacyCStringPointer()))
+                    desiredParent = placement;
+                else
+                    RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy::updateAnchorParenting: the anchor's asset has no entity named '%s', anchoring to its root instead. nodeID=%" PRIu64, this, placementName.legacyCStringPointer(), nodeID.toUInt64());
+            }
+        }
+
+        if (REEntityGetParent([trackedEntity coreEntity]) == desiredParent)
+            continue;
+
+        // WebCore rejects element cycles, but anchors arrive one per message, so the chain can briefly loop back to this child.
+        bool wouldCreateCycle = false;
+        auto ancestorNode = tracked->anchorNode;
+        for (size_t step = 0; ancestorNode && step <= m_trackedModels.size(); ++step) {
+            if (*ancestorNode == nodeID) {
+                wouldCreateCycle = true;
+                break;
+            }
+            auto* ancestorModel = trackedModel(*ancestorNode);
+            ancestorNode = ancestorModel ? ancestorModel->anchorNode : std::nullopt;
+        }
+
+        if (wouldCreateCycle) {
+            RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy::updateAnchorParenting: refusing to anchor nodeID=%" PRIu64 " because its anchor chain leads back to it", this, nodeID.toUInt64());
+            continue;
+        }
+
+        // Un-anchoring, which also covers a host that unloaded. Both derived values go with the parent change.
+        if (!isAnchored) {
+            tracked->anchorPlacementEntity = nullptr;
+            tracked->anchorCorrection = simd_quaternion(0.0f, simd_make_float3(1, 0, 0));
+            parentToContainer(trackedEntity.get());
+            continue;
+        }
+
+        // Referenced to the container, so the scale read from it is in the same space as the CSS translation it divides.
+        RetainPtr placementEntity = adoptNS([allocWKRKEntityInstance() initWithCoreEntity:desiredParent]);
+        [placementEntity setReferenceEntity:m_containerEntityWrapper.get()];
+        tracked->anchorPlacementEntity = placementEntity;
+
+        // Captured once rather than recomputed, so an animated joint above the placement still carries the child.
+        RetainPtr placementInHostFrame = adoptNS([allocWKRKEntityInstance() initWithCoreEntity:desiredParent]);
+        [placementInHostFrame setReferenceEntity:anchor->entity.get()];
+        tracked->anchorCorrection = simd_inverse([placementInHostFrame transform].rotation);
+
+        [trackedEntity setParentCoreEntity:desiredParent preservingWorldTransform:NO];
+        [trackedEntity setReferenceEntity:placementEntity.get()];
+    }
+#endif // HAVE(CORE_RE)
+}
+
+void ModelProcessModelPlayerProxy::setAnchor(WebCore::NodeIdentifier nodeID, std::optional<WebCore::NodeIdentifier> anchorNode, const String& placement)
+{
+    auto& tracked = ensureTrackedModel(nodeID);
+
+    if (tracked.anchorNode == anchorNode && tracked.anchorPlacement == placement)
+        return;
+
+    tracked.anchorNode = anchorNode;
+    tracked.anchorPlacement = placement;
+
+    updateAnchorParenting();
+    updateTransform();
 }
 
 #endif // ENABLE(SPATIAL_PORTAL)
@@ -723,7 +903,7 @@ void ModelProcessModelPlayerProxy::updateTransform()
     if (!m_containerEntityWrapper)
         return;
 
-    // The container owns the global transforms (stagemode, portal-transform) and each model sits beneath with only its own scale and transform applied.
+    // The container owns the auto-fit and stage mode, and each model sits beneath it with its own scale and transform, and the author's `portal-transform` list applied.
     [m_containerEntityWrapper setTransform:WKEntityTransform({ m_transformSRT.scale, m_transformSRT.rotation, m_transformSRT.translation })];
     for (UniqueRef<TrackedModel>& tracked : m_trackedModels.values()) {
         if (!tracked->entity)
@@ -740,7 +920,12 @@ void ModelProcessModelPlayerProxy::updateTransform()
     if (!reportingEntity)
         return;
 
-    [reportingEntity setTransform:WKEntityTransform({ m_transformSRT.scale * reportingModelScale(), m_transformSRT.rotation, m_transformSRT.translation })];
+    RESRT entitySRT = REMakeSRT(m_transformSRT.scale * reportingModelScale(), m_transformSRT.rotation, m_transformSRT.translation);
+#if ENABLE(SPATIAL_PORTAL)
+    if (m_portalTransform.hasContentTransform())
+        entitySRT = REMakeSRTFromMatrix(simd_mul(RESRTMatrix(m_transformSRT), RESRTMatrix(contentTransformedEntitySRT(contentTransformMatrix(), reportingModelScale()))));
+#endif
+    [reportingEntity setTransform:WKEntityTransform({ entitySRT.scale, entitySRT.rotation, entitySRT.translation })];
 #endif
 }
 
@@ -861,6 +1046,8 @@ void ModelProcessModelPlayerProxy::didFinishLoading(WebCore::REModelLoader& load
     // attribute does not, and is lost across a suspend/resume. Fixed by keying that cache per node.
     if (m_isSpatialPortal)
         entityTransformToRestore = std::nullopt;
+
+    updateAnchorParenting();
 #endif
 
     if (entityTransformToRestore) {
@@ -885,8 +1072,14 @@ void ModelProcessModelPlayerProxy::didFinishLoading(WebCore::REModelLoader& load
             protectedThis->triggerModelLoadedCallbacks(true);
 #endif
         });
-    } else
+    } else {
+#if ENABLE(SPATIAL_PORTAL)
+        if (!m_isSpatialPortal)
+            [loadedEntity applyDefaultIBL];
+#else
         [loadedEntity applyDefaultIBL];
+#endif
+    }
 
     send(Messages::ModelProcessModelPlayer::DidFinishLoading(nodeID, WebCore::FloatPoint3D(boundingBoxCenter.x, boundingBoxCenter.y, boundingBoxCenter.z), WebCore::FloatPoint3D(boundingBoxExtents.x, boundingBoxExtents.y, boundingBoxExtents.z)));
 }
@@ -1047,6 +1240,10 @@ void ModelProcessModelPlayerProxy::unloadModel(WebCore::NodeIdentifier nodeID)
     }
 
     clearReportingModelIfNeeded(nodeID);
+
+#if ENABLE(SPATIAL_PORTAL)
+    updateAnchorParenting();
+#endif
 
     // The portal-wide fit covered the removed model, so it has to be recomputed without it.
     computeTransform(true);
@@ -1342,14 +1539,53 @@ void ModelProcessModelPlayerProxy::setCurrentTime(WebCore::NodeIdentifier nodeID
     completionHandler();
 }
 
-void ModelProcessModelPlayerProxy::setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data)
+void ModelProcessModelPlayerProxy::setEnvironmentMapData(Ref<WebCore::SharedBuffer>&& data)
 {
+    ASSERT(data->size());
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     m_persistedEnvironmentMapData = data.copyRef();
 #endif
+    m_environmentMapKind = EnvironmentMapKind::Custom;
     m_transientEnvironmentMapData = WTF::move(data);
-    if (m_modelRKEntity)
+
+    if (environmentMapTargetEntity())
         applyEnvironmentMapDataAndRelease([] { });
+}
+
+#if ENABLE(SPATIAL_PORTAL)
+
+void ModelProcessModelPlayerProxy::disableEnvironmentMap()
+{
+    if (m_environmentMapKind == EnvironmentMapKind::None)
+        return;
+
+    m_environmentMapKind = EnvironmentMapKind::None;
+
+    if (environmentMapTargetEntity())
+        applyEnvironmentMapDataAndRelease([] { });
+}
+
+void ModelProcessModelPlayerProxy::enableSystemEnvironmentMap()
+{
+    if (m_environmentMapKind == EnvironmentMapKind::Default)
+        return;
+
+    m_environmentMapKind = EnvironmentMapKind::Default;
+    m_transientEnvironmentMapData = nullptr;
+
+    if (environmentMapTargetEntity())
+        applyEnvironmentMapDataAndRelease([] { });
+}
+
+#endif // ENABLE(SPATIAL_PORTAL)
+
+RetainPtr<WKRKEntity> ModelProcessModelPlayerProxy::environmentMapTargetEntity() const
+{
+#if ENABLE(SPATIAL_PORTAL)
+    if (m_isSpatialPortal && m_containerEntityWrapper)
+        return m_containerEntityWrapper;
+#endif
+    return m_modelRKEntity;
 }
 
 void ModelProcessModelPlayerProxy::beginStageModeTransform(const WebCore::TransformationMatrix& transform)
@@ -1409,25 +1645,52 @@ static void setIBLAssetOwnership(const String& attributionTaskID, REAssetRef ibl
     auto attributionIDString = attributionTaskID.utf8();
 
     if (REPtr<REAssetRef> skyboxTexture = REIBLAssetGetSkyboxTexture(iblAsset)) {
-        RELEASE_LOG_DEBUG(ModelElement, "Attributing skyboxTexture to task ID: %s", attributionIDString.data());
-        REAssetSetMemoryAttributionTarget(skyboxTexture.get(), attributionIDString.data());
+        RELEASE_LOG_DEBUG(ModelElement, "Attributing skyboxTexture to task ID: %s", attributionIDString);
+        REAssetSetMemoryAttributionTarget(skyboxTexture.get(), attributionIDString.legacyCStringPointer());
     }
     if (REPtr<REAssetRef> diffuseTexture = REIBLAssetGetDiffuseTexture(iblAsset)) {
-        RELEASE_LOG_DEBUG(ModelElement, "Attributing diffuseTexture to task ID: %s", attributionIDString.data());
-        REAssetSetMemoryAttributionTarget(diffuseTexture.get(), attributionIDString.data());
+        RELEASE_LOG_DEBUG(ModelElement, "Attributing diffuseTexture to task ID: %s", attributionIDString);
+        REAssetSetMemoryAttributionTarget(diffuseTexture.get(), attributionIDString.legacyCStringPointer());
     }
     if (REPtr<REAssetRef> specularTexture = REIBLAssetGetSpecularTexture(iblAsset)) {
-        RELEASE_LOG_DEBUG(ModelElement, "Attributing specularTexture to task ID: %s", attributionIDString.data());
-        REAssetSetMemoryAttributionTarget(specularTexture.get(), attributionIDString.data());
+        RELEASE_LOG_DEBUG(ModelElement, "Attributing specularTexture to task ID: %s", attributionIDString);
+        REAssetSetMemoryAttributionTarget(specularTexture.get(), attributionIDString.legacyCStringPointer());
     }
 }
 #endif
 
 void ModelProcessModelPlayerProxy::applyEnvironmentMapDataAndRelease(CompletionHandler<void()>&& completion)
 {
-    if (m_transientEnvironmentMapData) {
-        if (m_transientEnvironmentMapData->size() > 0) {
-            [m_modelRKEntity applyIBLData:m_transientEnvironmentMapData->createNSData().get() attributionHandler:makeBlockPtr([weakThis = WeakPtr { *this }] (REAssetRef coreEnvironmentResourceAsset) {
+    RefPtr data = std::exchange(m_transientEnvironmentMapData, nullptr);
+
+    switch (m_environmentMapKind) {
+    case EnvironmentMapKind::None:
+        removeIBL();
+        completion();
+        return;
+
+    case EnvironmentMapKind::Default:
+        applyDefaultIBL();
+        completion();
+        return;
+
+    case EnvironmentMapKind::Custom:
+        if (!data) {
+#if ENABLE(SPATIAL_PORTAL)
+            if (m_isSpatialPortal) {
+                completion();
+                return;
+            }
+#endif
+            applyDefaultIBL();
+            completion();
+            return;
+        }
+
+        {
+            RetainPtr entity = environmentMapTargetEntity();
+            RetainPtr nsData = data->createNSData();
+            [entity applyIBLData:nsData.get() attributionHandler:makeBlockPtr([weakThis = WeakPtr { *this }] (REAssetRef coreEnvironmentResourceAsset) {
                 RefPtr protectedThis = weakThis.get();
                 if (!protectedThis || !protectedThis->m_attributionTaskID || !coreEnvironmentResourceAsset)
                     return;
@@ -1446,15 +1709,8 @@ void ModelProcessModelPlayerProxy::applyEnvironmentMapDataAndRelease(CompletionH
 
                 protectedThis->send(Messages::ModelProcessModelPlayer::DidFinishEnvironmentMapLoading(succeeded));
             }).get()];
-        } else {
-            applyDefaultIBL();
-            completion();
-            send(Messages::ModelProcessModelPlayer::DidFinishEnvironmentMapLoading(true));
         }
-        m_transientEnvironmentMapData = nullptr;
-    } else {
-        applyDefaultIBL();
-        completion();
+        return;
     }
 }
 
@@ -1471,14 +1727,14 @@ void ModelProcessModelPlayerProxy::setHasPortal(bool hasPortal)
 
 #if ENABLE(SPATIAL_PORTAL)
 
-void ModelProcessModelPlayerProxy::setPortalTransform(WebCore::PortalTransformKind kind)
+void ModelProcessModelPlayerProxy::setPortalTransform(const WebCore::UsedPortalTransform& portalTransform)
 {
     m_isSpatialPortal = true;
 
-    if (m_portalTransform == kind)
+    if (m_portalTransform == portalTransform)
         return;
 
-    m_portalTransform = kind;
+    m_portalTransform = portalTransform;
 
     computeTransform(effectiveStageModeOperation() == WebCore::StageModeOperation::None);
     updateTransform();
@@ -1643,7 +1899,14 @@ void ModelProcessModelPlayerProxy::parentToContainer(WKRKEntity *childEntity)
 
 void ModelProcessModelPlayerProxy::applyDefaultIBL()
 {
-    [m_modelRKEntity applyDefaultIBL];
+    RetainPtr entity = environmentMapTargetEntity();
+    [entity applyDefaultIBL];
+}
+
+void ModelProcessModelPlayerProxy::removeIBL()
+{
+    RetainPtr entity = environmentMapTargetEntity();
+    [entity removeIBL];
 }
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
@@ -1658,6 +1921,10 @@ void ModelProcessModelPlayerProxy::teardownEntity()
         tracked->loader = nullptr;
         [tracked->entity setDelegate:nil];
         tracked->entity = nullptr;
+#if ENABLE(SPATIAL_PORTAL)
+        tracked->anchorPlacementEntity = nullptr;
+        tracked->anchorCorrection = simd_quaternion(0.0f, simd_make_float3(1, 0, 0));
+#endif
     }
 #if HAVE(CORE_RE)
     if (m_containerEntity.get())
@@ -1690,7 +1957,7 @@ void ModelProcessModelPlayerProxy::captureStateForReload()
     // the immersive/non-immersive coordinate spaces differ (see modelStandardizedTransformSRT), so a
     // captured matrix would be in the wrong space after the boundary. didFinishLoading recomputes
     // transform via computeTransform(true) for the new presentation mode.
-    if (m_persistedEnvironmentMapData)
+    if (m_environmentMapKind == EnvironmentMapKind::Custom)
         m_transientEnvironmentMapData = m_persistedEnvironmentMapData;
 }
 

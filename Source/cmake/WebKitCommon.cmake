@@ -155,11 +155,23 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     # -----------------------------------------------------------------------------
     # Use MSVC_CXX_ARCHITECTURE_ID instead of CMAKE_SYSTEM_PROCESSOR when defined,
     # since the later one just resolves to the host processor on Windows.
+    #
+    # Likewise, on Apple platforms CMAKE_SYSTEM_PROCESSOR resolves to the host,
+    # while CMAKE_OSX_ARCHITECTURES selects the target -- these differ when
+    # building x86_64 under Rosetta on an Apple Silicon host. Prefer
+    # CMAKE_OSX_ARCHITECTURES when it names a single architecture so that the
+    # CPU detection below (and everything keyed off WTF_CPU_*, e.g. the
+    # offlineasm backend) matches the code the compiler actually emits. Universal
+    # builds (multiple architectures) fall back to CMAKE_SYSTEM_PROCESSOR.
+    list(LENGTH CMAKE_OSX_ARCHITECTURES _osx_architectures_count)
     if (MSVC_CXX_ARCHITECTURE_ID)
         string(TOLOWER ${MSVC_CXX_ARCHITECTURE_ID} LOWERCASE_CMAKE_SYSTEM_PROCESSOR)
+    elseif (APPLE AND _osx_architectures_count EQUAL 1)
+        string(TOLOWER "${CMAKE_OSX_ARCHITECTURES}" LOWERCASE_CMAKE_SYSTEM_PROCESSOR)
     else ()
         string(TOLOWER ${CMAKE_SYSTEM_PROCESSOR} LOWERCASE_CMAKE_SYSTEM_PROCESSOR)
     endif ()
+    unset(_osx_architectures_count)
     if (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch32|cortex-(a(5|7|8|9|1[2-7]|32)|m[0-9]|r[0-9]([^0-9]|$)))"
             AND NOT LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)")
         set(WTF_CPU_ARM 1)
@@ -235,7 +247,10 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     set(WebKit_LIBRARY_TYPE SHARED)
     set(WebCoreTestSupport_LIBRARY_TYPE STATIC)
 
-    if (NOT USE_BUN_JSC_ADDITIONS)
+    if (NOT APPLE AND NOT USE_BUN_JSC_ADDITIONS)
+        # ld on Apple platforms creates position-independent code by default
+        # where it's needed (e.g. main executables), and rejects the linker
+        # flag on other operations such as merging object files.
         set(CMAKE_POSITION_INDEPENDENT_CODE True)
     endif ()
 
@@ -344,6 +359,8 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     if (ENABLE_THREAD_SAFETY_WARNING)
         WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wthread-safety)
     endif ()
+
+    include(WebKitSwiftFlags)
 
     # Check gperf after including OptionsXXX.cmake since gperf is required only when ENABLE_WEBCORE is true,
     # and ENABLE_WEBCORE is configured in OptionsXXX.cmake.
@@ -523,6 +540,101 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
             ALL
             DEPENDS ${CMAKE_SOURCE_DIR}/.clangd
         )
+    endif ()
+
+    # -----------------------------------------------------------------------------
+    # Record the build settings for later commands
+    # -----------------------------------------------------------------------------
+    # run-safari, run-webkit-tests and the apps built above WebKit resolve a build
+    # through the settings in the base product directory, which only build-webkit
+    # and set-webkit-configuration write. A tree configured or built straight from
+    # a preset records them too, so that the build made last is the one those
+    # commands resolve. set-webkit-configuration stays the only writer of the files.
+    execute_process(
+        COMMAND ${PERL_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/Scripts/webkit-build-directory --top-level
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE _base_product_dir
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _base_product_dir_result
+    )
+    if (_base_product_dir_result EQUAL 0)
+        get_filename_component(_base_product_dir "${_base_product_dir}" REALPATH)
+    else ()
+        set(_base_product_dir "")
+    endif ()
+
+    cmake_path(GET CMAKE_BINARY_DIR FILENAME _configuration_directory)
+    cmake_path(GET CMAKE_BINARY_DIR PARENT_PATH _tree_directory)
+    cmake_path(GET _tree_directory PARENT_PATH _tree_base_dir)
+    get_filename_component(_tree_base_dir "${_tree_base_dir}" REALPATH)
+
+    # A sanitizer or a forced optimization level builds into a directory of its
+    # own, whichever configuration it was built in, so there the configuration is
+    # the build type and everywhere else it is the directory, which is what has
+    # to be resolved. A preset describes its build completely, so the settings it
+    # does not use are cleared rather than left at whatever was recorded before.
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(_build_type_configuration --debug)
+    else ()
+        set(_build_type_configuration --release)
+    endif ()
+
+    set(_recorded_settings "")
+    if (_configuration_directory STREQUAL "Release")
+        set(_recorded_settings --release --no-asan --no-tsan --force-opt=none)
+    elseif (_configuration_directory STREQUAL "Debug")
+        set(_recorded_settings --debug --no-asan --no-tsan --force-opt=none)
+    elseif (_configuration_directory STREQUAL "DebugO3")
+        set(_recorded_settings --debug --no-asan --no-tsan --force-opt=O3)
+    elseif (_configuration_directory STREQUAL "ASan")
+        set(_recorded_settings ${_build_type_configuration} --asan --no-tsan --force-opt=none)
+    elseif (_configuration_directory STREQUAL "TSan")
+        set(_recorded_settings ${_build_type_configuration} --tsan --no-asan --force-opt=none)
+    endif ()
+
+    if (NOT _base_product_dir)
+        message(STATUS "Not recording the build settings: the base product directory could not be resolved")
+    elseif (NOT _tree_base_dir STREQUAL _base_product_dir)
+        message(STATUS "Not recording the build settings: ${CMAKE_BINARY_DIR} is not in ${_base_product_dir}")
+    elseif (NOT _recorded_settings)
+        message(STATUS "Not recording the build settings: set-webkit-configuration has no setting for the ${_configuration_directory} configuration")
+    else ()
+        # Write the settings when this tree is configured and when it is built, so
+        # that later commands find the tree built last.
+        #
+        # Best-effort: set-webkit-configuration dies in some legitimate
+        # environments (an OpenSource-only checkout using an internal SDK).
+        # Do not fail the configure, and only add the target when recording
+        # worked, so that the same failure does not just move to the first
+        # build.
+        set(_record_settings_command
+            ${PERL_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/Scripts/set-webkit-configuration
+            --cmake ${_recorded_settings}
+        )
+        execute_process(
+            COMMAND ${_record_settings_command}
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            RESULT_VARIABLE _record_settings_result
+            ERROR_VARIABLE _record_settings_error
+        )
+        if (NOT _record_settings_result EQUAL 0)
+            message(STATUS "Not recording the build settings: set-webkit-configuration failed: ${_record_settings_error}")
+        else ()
+            # Recording a setting, in any tree, makes the directory newer than this stamp.
+            set(_record_settings_stamp ${CMAKE_BINARY_DIR}/CMakeFiles/RecordBuildSettings.stamp)
+            add_custom_command(
+                OUTPUT ${_record_settings_stamp}
+                DEPENDS ${_base_product_dir}
+                COMMAND ${_record_settings_command}
+                COMMAND ${CMAKE_COMMAND} -E touch ${_record_settings_stamp}
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                COMMENT "Recording the build settings for later commands"
+                VERBATIM
+            )
+            add_custom_target(RecordBuildSettings ALL
+                DEPENDS ${_record_settings_stamp}
+            )
+        endif ()
     endif ()
 
     # -----------------------------------------------------------------------------

@@ -51,6 +51,7 @@
 #include <JavaScriptCore/StrongInlines.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -298,7 +299,7 @@ void IDBRequest::enqueueEvent(Ref<Event>&& event)
 
 void IDBRequest::dispatchEvent(Event& event)
 {
-    LOG(IndexedDB, "IDBRequest::dispatchEvent - %s (%p)", event.type().string().utf8().data(), this);
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBRequest::dispatchEvent - "_s << event.type().string() << " ("_s << this << ")"_s);
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(!isContextStopped());

@@ -26,6 +26,8 @@
 #include "config.h"
 #include "APIContentRuleListStore.h"
 
+#include <wtf/text/TextStream.h>
+
 #if ENABLE(CONTENT_EXTENSIONS)
 
 #include "APIContentRuleList.h"
@@ -273,7 +275,7 @@ static bool validateContentRuleListActionsMatchingEverything(const WTF::String& 
     auto universalActions = copyToVector(interpreter.actionsMatchingEverything());
     for (uint64_t universalActionLocation : universalActions) {
         if (universalActionLocation >= metaData.actionsSize) {
-            LOG(ContentRuleLists, "Universal action has location outside range of serialized actions. The compiled extension may be corrupted: %s", path.utf8().data());
+            LOG_WITH_STREAM(ContentRuleLists, stream << "Universal action has location outside range of serialized actions. The compiled extension may be corrupted: "_s << path);
             return false;
         }
     }

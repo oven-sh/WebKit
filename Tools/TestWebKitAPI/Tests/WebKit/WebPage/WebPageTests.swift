@@ -69,7 +69,6 @@ private class TestNavigationDecider: WebPage.NavigationDeciding {
     }
 }
 
-#if ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
 @MainActor
 private struct TrustingNavigationDecider: WebPage.NavigationDeciding {
     mutating func decideAuthenticationChallengeDisposition(
@@ -89,7 +88,6 @@ extension WebPage.Configuration {
         self.websiteDataStore = WKWebsiteDataStore._store(with: storeConfiguration)
     }
 }
-#endif // ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
 
 // MARK: Tests
 
@@ -113,10 +111,9 @@ struct WebPageTests {
         // FIXME: (283456) Make this test more comprehensive once Observation supports observing a stream of changes to properties.
     }
 
-    #if ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
     @Test
     func qualifiedServerTrust() async throws {
-        var server = HTTPServer(protocol: .httpsProxy) {
+        var server = try HTTPServer(protocol: .httpsProxy) {
             Route("/binding-link", headerFields: ["Link": "<https://webkit.org/2qwac>; rel=\"tls-certificate-binding\""]) {
                 "hi"
             }
@@ -143,7 +140,9 @@ struct WebPageTests {
 
             // The 2-QWAC is fetched after the navigation commits, so waiting for the navigation to finish
             // is not enough; this waits for the property to be observed changing.
-            _ = try await #require(changes.first { @Sendable in $0 })
+            for try await change in changes where change {
+                break
+            }
 
             let qualifiedServerTrust = try #require(page.qualifiedServerTrust)
             let serverTrust = try #require(page.serverTrust)
@@ -163,7 +162,6 @@ struct WebPageTests {
             #expect(page.qualifiedServerTrust == nil)
         }
     }
-    #endif // ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
 
     @Test
     func decidePolicyForNavigationActionFragment() async throws {

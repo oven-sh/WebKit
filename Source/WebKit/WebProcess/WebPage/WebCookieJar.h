@@ -63,7 +63,7 @@ public:
     void setCookieAsync(WebCore::Document&, const URL&, const WebCore::Cookie&, CompletionHandler<void(bool)>&&) const final;
 
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
-    void addChangeListenerWithAccess(const URL&, const URL& firstParty, WebCore::FrameIdentifier, WebCore::PageIdentifier, WebPageProxyIdentifier, const WebCore::CookieChangeListener&);
+    void addChangeListenerWithAccess(const URL&, const URL& firstParty, WebCore::FrameIdentifier, WebPageProxyIdentifier, const WebCore::CookieChangeListener&);
     void addChangeListener(const WebCore::Document&, const WebCore::CookieChangeListener&) final;
     void removeChangeListener(const String& host, const WebCore::CookieChangeListener&) final;
 #endif

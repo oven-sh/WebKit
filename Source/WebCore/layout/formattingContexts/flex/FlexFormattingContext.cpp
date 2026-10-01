@@ -168,7 +168,7 @@ FlexFormattingContext::FlexLines FlexFormattingContext::computeFlexLines(const F
         if (!m_constraints.isMultiline)
             return { flexItems.size() };
         if (m_constraints.isBalance)
-            return balancedLineBreaks(itemMainAxisSizes.span(), mainAxisAvailableSpace, gapBetweenItems);
+            return balancedLineBreaks(itemMainAxisSizes.span(), mainAxisAvailableSpace, gapBetweenItems, m_constraints.minimumLineCount);
         return greedyLineBreaks(itemMainAxisSizes.span(), mainAxisAvailableSpace, gapBetweenItems);
     }();
 
@@ -966,6 +966,11 @@ LayoutUnit FlexFormattingContext::computeMainSizeFromAspectRatioUsing(const Flex
             return flexLayoutItem.mainAxisIsInlineAxis
                 ? integrationUtils().computePercentageLogicalHeightForFlexItem(flexLayoutItem, calcCrossSizeLength)
                 : integrationUtils().adjustBorderBoxLogicalWidthForBoxSizing(Style::evaluate<LayoutUnit>(calcCrossSizeLength, m_constraints.crossAxisSizeForLengthResolution, style->usedZoomForLength()));
+        },
+        [&](const typename SizeType::CalcSize& calcSizeCrossSizeLength) -> std::optional<LayoutUnit> {
+            return flexLayoutItem.mainAxisIsInlineAxis
+                ? integrationUtils().computePercentageLogicalHeightForFlexItem(flexLayoutItem, SizeType { calcSizeCrossSizeLength })
+                : integrationUtils().adjustBorderBoxLogicalWidthForBoxSizing(Style::evaluate<LayoutUnit>(calcSizeCrossSizeLength, m_constraints.crossAxisSizeForLengthResolution, style->usedZoomForLength()));
         },
         [&](const CSS::Keyword::Auto&) -> std::optional<LayoutUnit> {
             ASSERT(flexFormattingUtils().hasDefiniteCrossSizeForFlexItem(flexLayoutItem));

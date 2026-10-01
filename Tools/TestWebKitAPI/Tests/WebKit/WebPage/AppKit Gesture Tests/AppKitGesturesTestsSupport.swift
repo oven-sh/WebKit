@@ -33,6 +33,7 @@ import Testing
 import TestWebKitAPILibrary
 import Recap
 private import AppKit_Private.NSMenu_Private
+private import IOKit.hid
 
 actor Recap {
     static let shared = Recap()
@@ -47,6 +48,71 @@ actor Recap {
         }
 
         await RCPInlinePlayer.play(eventStream, options: .init())
+    }
+}
+
+extension Recap {
+    struct KeyboardModifiers: OptionSet, Sendable {
+        let rawValue: UInt8
+
+        static let shift = KeyboardModifiers(rawValue: 1 << 0)
+        static let option = KeyboardModifiers(rawValue: 1 << 1)
+        static let command = KeyboardModifiers(rawValue: 1 << 2)
+
+        static let all: KeyboardModifiers = [.shift, .option, .command]
+
+        fileprivate var hidUsages: [UInt] {
+            var usages: [UInt] = []
+            if contains(.shift) { usages.append(UInt(kHIDUsage_KeyboardLeftShift)) }
+            if contains(.option) { usages.append(UInt(kHIDUsage_KeyboardLeftAlt)) }
+            if contains(.command) { usages.append(UInt(kHIDUsage_KeyboardLeftGUI)) }
+            return usages
+        }
+
+        var domNames: [String] {
+            var names: [String] = []
+            if contains(.shift) { names.append("shift") }
+            if contains(.option) { names.append("alt") }
+            if contains(.command) { names.append("meta") }
+            return names
+        }
+    }
+}
+
+extension RCPEventStreamComposer {
+    private static var keyboardOrKeypadUsagePage: UInt { UInt(kHIDPage_KeyboardOrKeypad) }
+
+    private static var modifierDelay: TimeInterval { 0.05 }
+
+    /// Composes `body` with `modifiers` physically held down, so that the inner events carry those modifiers.
+    func holdingModifiers(_ modifiers: Recap.KeyboardModifiers, _ body: () -> Void) {
+        let usages = modifiers.hidUsages
+
+        guard !usages.isEmpty else {
+            body()
+            return
+        }
+
+        let pointerSender = senderProperties
+
+        senderProperties = .keyboardSender()
+        for usage in usages {
+            beginButtonPress(withPage: Self.keyboardOrKeypadUsagePage, usage: usage)
+        }
+
+        advanceTime(Self.modifierDelay)
+
+        senderProperties = pointerSender
+        body()
+
+        advanceTime(Self.modifierDelay)
+
+        senderProperties = .keyboardSender()
+        for usage in usages.reversed() {
+            endButtonPress(withPage: Self.keyboardOrKeypadUsagePage, usage: usage)
+        }
+
+        senderProperties = pointerSender
     }
 }
 

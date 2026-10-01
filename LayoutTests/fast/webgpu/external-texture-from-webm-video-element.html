@@ -51,13 +51,17 @@ struct VertexOut {
 }
 `;
 
-// Classify a pixel into a color name using generous thresholds, so that the exact YUV to RGB
-// conversion does not matter. The buggy (placeholder texture) path is black everywhere.
+// Classify a pixel by the corner of the RGB cube it is nearest to, taking for each channel
+// whichever of 0 and 255 is closer, so that neither the YUV to RGB conversion nor the conversion
+// from the video's BT.601 primaries to sRGB has to be exact. That primary conversion is why a
+// channel which is zero in the source is not zero here: BT.601 green arrives as (64, 252, 0), and
+// BT.601 blue as (26, 35, 255). A pixel too far from every corner is reported rather than snapped
+// to one. The buggy (placeholder texture) path is black everywhere.
 function classify(r, g, b) {
-    const hi = 200, lo = 60;
-    const bit = v => v >= hi ? 1 : (v <= lo ? 0 : -1);
-    const bits = [bit(r), bit(g), bit(b)];
-    if (bits.includes(-1))
+    const channels = [r, g, b];
+    const bits = channels.map(v => v >= 128 ? 1 : 0);
+    const error = channels.reduce((total, v, i) => total + Math.abs(v - 255 * bits[i]), 0);
+    if (error > 255) // A third of full scale per channel; the conversion above is off by 67 at worst.
         return `unclassified(${r},${g},${b})`;
     return ["black", "blue", "green", "cyan", "red", "magenta", "yellow", "white"][bits[0] * 4 + bits[1] * 2 + bits[2]];
 }

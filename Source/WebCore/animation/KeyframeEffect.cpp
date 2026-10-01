@@ -1001,7 +1001,7 @@ auto KeyframeEffect::getKeyframes() -> Vector<ComputedKeyframe>
 
     auto styleProperties = MutableStyleProperties::create();
     if (m_animationType == WebAnimationType::CSSAnimation && m_target->isConnected()) {
-        auto matchingRules = protect(m_target->styleResolver())->pseudoStyleRulesForElement(target.get(), m_pseudoElementIdentifier, Style::Resolver::AllCSSRules);
+        auto matchingRules = protect(target->styleResolver())->pseudoStyleRulesForElement(target.get(), m_pseudoElementIdentifier, Style::Resolver::AllCSSRules);
         for (auto& matchedRule : matchingRules)
             styleProperties->mergeAndOverrideOnConflict(protect(matchedRule->properties()));
         if (RefPtr target = dynamicDowncast<StyledElement>(*m_target); target && !m_pseudoElementIdentifier) {
@@ -1355,6 +1355,7 @@ void KeyframeEffect::setBlendingKeyframes(BlendingKeyframes&& blendingKeyframes)
 
     checkForMatchingTransformFunctionLists();
 
+    updateComputedKeyframeOffsetsIfNeeded();
     updateAcceleratedAnimationIfNecessary();
 }
 
@@ -1966,7 +1967,8 @@ bool KeyframeEffect::canBeAccelerated() const
 
 bool KeyframeEffect::canBeAccelerated(AccountForTimelineAccelerationAbility accountForTimelineAccelerationAbility) const
 {
-    if (!animation() || !animation()->timeline() || animation()->isSkippedContentAnimation())
+    RefPtr animation = this->animation();
+    if (!animation || !animation->timeline() || animation->isSkippedContentAnimation())
         return false;
 
     if (m_acceleratedPropertiesState == AcceleratedProperties::None)
@@ -1997,7 +1999,7 @@ bool KeyframeEffect::canBeAccelerated(AccountForTimelineAccelerationAbility acco
 
 #if ENABLE(THREADED_ANIMATIONS)
     if (canHaveAcceleratedRepresentation())
-        return !animation()->pending() && (accountForTimelineAccelerationAbility == AccountForTimelineAccelerationAbility::No || animation()->timeline()->canBeAccelerated());
+        return !animation->pending() && (accountForTimelineAccelerationAbility == AccountForTimelineAccelerationAbility::No || protect(animation->timeline())->canBeAccelerated());
 #else
     UNUSED_PARAM(accountForTimelineAccelerationAbility);
 #endif
@@ -2005,11 +2007,13 @@ bool KeyframeEffect::canBeAccelerated(AccountForTimelineAccelerationAbility acco
     if (m_isAssociatedWithProgressBasedTimeline)
         return false;
 
+#if USE(CA)
     if (m_someKeyframesUseStepsTimingFunction || is<StepsTimingFunction>(timingFunction()))
         return false;
 
     if (m_someKeyframesUseLinearTimingFunctionWithPoints || isLinearTimingFunctionWithPoints(timingFunction()))
         return false;
+#endif
 
     if (m_compositeOperation != CompositeOperation::Replace)
         return false;
@@ -2125,21 +2129,7 @@ void KeyframeEffect::addPendingAcceleratedAction(AcceleratedAction action)
 
 void KeyframeEffect::animationDidTick()
 {
-    auto canSkipInvalidation = [this]() {
-        if (!isCompletelyAccelerated() || !isRunningAccelerated())
-            return false;
-        if (getBasicTiming().phase != m_phaseAtLastApplication)
-            return false;
-#if ENABLE(THREADED_ANIMATIONS)
-        if (canHaveAcceleratedRepresentation() && m_isAssociatedWithProgressBasedTimeline)
-            return false;
-#endif
-        return true;
-    };
-
-    if (!canSkipInvalidation())
-        invalidate();
-
+    invalidate();
     updateAcceleratedActions();
 
 #if ENABLE(THREADED_ANIMATIONS)
@@ -3320,7 +3310,7 @@ void KeyframeEffect::timelineAccelerationAbilityDidChange()
 
 Ref<AcceleratedEffect> KeyframeEffect::acceleratedRepresentation(const IntRect& borderBoxRect, const AcceleratedEffectValues& baseValues, OptionSet<AcceleratedEffectProperty>& disallowedProperties)
 {
-    updateComputedKeyframeOffsetsIfNeeded();
+    ASSERT(canBeAccelerated());
     Ref acceleratedEffect = AcceleratedEffect::create(*this, borderBoxRect, baseValues, disallowedProperties);
     m_acceleratedRepresentation = acceleratedEffect.ptr();
     return acceleratedEffect;

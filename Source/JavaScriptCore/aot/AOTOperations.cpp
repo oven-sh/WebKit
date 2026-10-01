@@ -558,7 +558,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
     unsigned tag = soundTypeTag(JSValue::decode(encodedValue));
     if (soundTypeMaskAccepts(mask, JSValue::decode(encodedValue)))
         OPERATION_RETURN(scope);
-    throwTypeError(globalObject, scope, makeString("Type check failed: expected "_s, toCString(SoundTypeMaskDump(mask)).span(), ", got "_s, toCString(SoundTypeMaskDump(tag)).span()));
+    throwTypeError(globalObject, scope, makeString("Type check failed: expected "_s, toString(SoundTypeMaskDump(mask)), ", got "_s, toString(SoundTypeMaskDump(tag))));
     OPERATION_RETURN(scope);
 }
 

@@ -75,9 +75,14 @@ class CommitContext(object):
         repository_id = columns.Text(partition_key=True, required=True)
         branch = columns.Text(primary_key=True, required=True)
 
+    class RecentBranches(Model):
+        __table_name__ = 'commit_recent_branches'
+        repository_id = columns.Text(partition_key=True, required=True)
+        branch = columns.Text(primary_key=True, required=True)
+
     DEFAULT_BRANCH_KEY = 'default'
 
-    def __init__(self, redis, cassandra, cache_timeout=60 * 60 * 24 * 2):
+    def __init__(self, redis, cassandra, cache_timeout=60 * 60 * 24 * 2, branch_ttl=60 * 60 * 24 * 14):
         assert redis
         assert cassandra
 
@@ -85,10 +90,11 @@ class CommitContext(object):
         self.cassandra = cassandra
         self.repositories = {}
         self.cache_timeout = cache_timeout
+        self.branch_ttl = branch_ttl
         self.name = 'commit-identifiers'
 
         with self:
-            for table in [self.CommitByRef, self.CommitByUuidAscending, self.CommitByUuidDescending, self.Branches]:
+            for table in [self.CommitByRef, self.CommitByUuidAscending, self.CommitByUuidDescending, self.Branches, self.RecentBranches]:
                 self.cassandra.create_table(table)
 
     def __enter__(self):
@@ -299,9 +305,9 @@ class CommitContext(object):
                     repository_id=repository_id, branch__gte=branch, branch__lte=(branch + '~'),
                 )]
 
-            return [model.branch for model in self.cassandra.select_from_table(
-                self.Branches.__table_name__, limit=limit, repository_id=repository_id,
-            )]
+            return [self.repositories[repository_id].default_branch] + [model.branch for model in self.cassandra.select_from_table(
+                self.RecentBranches.__table_name__, limit=limit, repository_id=repository_id,
+            ) if model.branch != self.repositories[repository_id].default_branch]
 
     def register(self, configuration, commits, suite, test_results, timestamp=None):
         try:
@@ -332,6 +338,26 @@ class CommitContext(object):
             if commit.branch in ScmBase.DEFAULT_BRANCHES:
                 commit.branch = self.repositories[commit.repository_id].default_branch
 
+            refs = [ref_gen(commit) for key, ref_gen in (
+                ('revision', lambda commit: 'r{}'.format(commit.revision)),
+                ('hash', lambda commit: commit.hash),
+                ('identifier', str),
+            ) if getattr(commit, key)]
+
+            # Never overwrite an existing commit with an empty commit/author
+            if not all((commit.branch, commit.author, commit.message)):
+                for ref in refs:
+                    for row in self.cassandra.select_from_table(
+                        self.CommitByRef.__table_name__, limit=1,
+                        repository_id=commit.repository_id, ref=ref,
+                    ):
+                        existing = row.to_commit()
+                        commit.branch = commit.branch or existing.branch
+                        commit.author = commit.author or existing.author
+                        commit.message = commit.message or existing.message
+                    if commit.author and commit.message:
+                        break
+
             for table in [self.CommitByUuidAscending, self.CommitByUuidDescending]:
                 self.cassandra.insert_row(
                     table.__table_name__,
@@ -345,17 +371,10 @@ class CommitContext(object):
                     message=commit.message,
                 )
 
-            for key, ref_gen in (
-                ('revision', lambda commit: 'r{}'.format(commit.revision)),
-                ('hash', lambda commit: commit.hash),
-                ('identifier', str),
-            ):
-                if not getattr(commit, key):
-                    continue
-
+            for ref in refs:
                 self.cassandra.insert_row(
                     self.CommitByRef.__table_name__,
-                    ref=ref_gen(commit),
+                    ref=ref,
                     repository_id=commit.repository_id,
                     branch=commit.branch,
                     revision=commit.revision,
@@ -369,6 +388,11 @@ class CommitContext(object):
             self.cassandra.insert_row(
                 self.Branches.__table_name__,
                 repository_id=commit.repository_id, branch=commit.branch,
+            )
+            self.cassandra.insert_row(
+                self.RecentBranches.__table_name__,
+                repository_id=commit.repository_id, branch=commit.branch,
+                ttl=self.branch_ttl,
             )
             return commit
 

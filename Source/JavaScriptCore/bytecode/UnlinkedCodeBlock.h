@@ -183,7 +183,7 @@ public:
     bool hasExpressionInfo() { return !expressionInfo().isEmpty(); }
     // Null while the expression info is still in the cache payload. For a caller that cannot take m_lock or allocate
     // (a sampling hook inside malloc): unlike expressionInfo() it never decodes. On the result use entryForInstPC(),
-    // which does neither; lineColumnForInstPC() fills a cache.
+    // which does neither; lineColumnInTextForInstPC() fills a cache.
     ExpressionInfo* expressionInfoIfDecoded() const { return m_expressionInfo.get(); }
     // StaticHeap keeps some of what a function's code has, and not the code: the record that the expression info is decoded from,
     // and what this then no longer has (the identifiers, the constants, the functions and, if asked, the rare data).
@@ -306,7 +306,7 @@ public:
     bool hasRareData() const { return m_rareData.get(); }
 
     ExpressionInfo::Entry expressionInfoForBytecodeIndex(BytecodeIndex);
-    LineColumn lineColumnForBytecodeIndex(BytecodeIndex);
+    LineColumn lineColumnInTextForBytecodeIndex(BytecodeIndex, SourceProvider&, unsigned sourceOffset);
 
     bool typeProfilerExpressionInfoForBytecodeOffset(unsigned bytecodeOffset, unsigned& startDivot, unsigned& endDivot);
 

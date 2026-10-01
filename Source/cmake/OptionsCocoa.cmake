@@ -110,8 +110,8 @@ WEBKIT_OPTION_OWNED_BY_PLATFORM_H(
     ENABLE_MEDIA_SOURCE_IN_WORKERS
     ENABLE_PDF_HUD
     ENABLE_PDF_PLUGIN
-    ENABLE_PERIODIC_MEMORY_MONITOR
     ENABLE_PREDEFINED_COLOR_SPACE_DISPLAY_P3
+    ENABLE_UIPROCESS_PERIODIC_MEMORY_MONITOR
     ENABLE_UNIFIED_PDF
 )
 
@@ -123,6 +123,9 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MINIBROWSER PUBLIC ON)
 
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS PRIVATE ON)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS PRIVATE ON)
+# Matches PlatformEnableCocoa.h. Declaring it here as well is what gets it into
+# FEATURE_DEFINES, which is how the IDL preprocessor learns about it.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MAC_GESTURE_EVENTS PRIVATE ${USE_APPLE_INTERNAL_SDK})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MODEL_ELEMENT PRIVATE ON)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WRITING_TOOLS PRIVATE ON)
 
@@ -145,7 +148,7 @@ if (WEBKIT_SDK_IS_IOS_FAMILY)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_BACK_FORWARD_LIST_SWIFT PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MINIBROWSER PUBLIC OFF)
     # Mac-only features absent on the iOS family.
-    WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_AV1 PRIVATE OFF)
+    WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MAC_GESTURE_EVENTS PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SESSION_COORDINATOR PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SESSION_PLAYLIST PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MOUSE_CURSOR_SCALE PRIVATE OFF)
@@ -169,23 +172,6 @@ WEBKIT_OPTION_END()
 # ---------------------------------------------------------------------------
 set(SWIFT_REQUIRED ON)
 
-# Configure module building
-add_compile_options(
-    "$<$<COMPILE_LANGUAGE:Swift>:-explicit-module-build>"
-    # Needed for compatibility with modules in the (internal) SDK:
-    # https://bugs.webkit.org/show_bug.cgi?id=312083
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fexperimental-bounds-safety-attributes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fexperimental-late-parse-attributes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-module-cache-path ${CMAKE_BINARY_DIR}/SwiftModuleCache>"
-)
-set_property(DIRECTORY "${CMAKE_BINARY_DIR}" APPEND PROPERTY
-    ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/SwiftModuleCache")
-
-# FIXME: Consider building with -wmo in release / performance builds.
-add_compile_options(
-    "$<$<COMPILE_LANGUAGE:Swift>:-enable-batch-mode>"
-)
-
 if (WEBKIT_SDK_IS_MACOS AND USE_APPLE_INTERNAL_SDK)
     set(WEBKIT_CODE_SIGN_IDENTITY "Safari Engineering")
     WEBKITADDITIONS_FIND_KEYCHAIN()
@@ -208,21 +194,6 @@ set(WebKitTestRunner_DERIVED_SOURCES_DIR "${CMAKE_BINARY_DIR}/DerivedSources/Web
 set(TestRunnerShared_DERIVED_SOURCES_DIR "${CMAKE_BINARY_DIR}/DerivedSources/TestRunnerShared")
 
 SET_AND_EXPOSE_TO_BUILD(USE_LIBWEBRTC TRUE)
-
-if (NOT ENABLE_WEBGPU)
-    set(_webgpu_fwd "${CMAKE_BINARY_DIR}/WebGPU-stub/WebGPU")
-    file(MAKE_DIRECTORY "${_webgpu_fwd}")
-    foreach (_h WebGPU.h WebGPUExt.h)
-        if (NOT EXISTS "${_webgpu_fwd}/${_h}")
-            file(CREATE_LINK "${CMAKE_SOURCE_DIR}/Source/WebGPU/WebGPU/${_h}" "${_webgpu_fwd}/${_h}" SYMBOLIC)
-        endif ()
-    endforeach ()
-    include_directories(SYSTEM "${CMAKE_BINARY_DIR}/WebGPU-stub")
-    unset(_webgpu_fwd)
-    unset(_h)
-else ()
-    include_directories(SYSTEM "${CMAKE_BINARY_DIR}/WebGPU/Headers")
-endif ()
 
 set(ENABLE_WEBKIT_LEGACY ON)
 set(ENABLE_WEBKIT ON)
@@ -310,6 +281,13 @@ add_compile_options(
     "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Wno-objc-signed-char-bool-implicit-float-conversion>"
     "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Wno-unused-parameter>"
 )
+# BOOL is `signed char` on x86_64 and raises additional warnings.
+if (WTF_CPU_X86_64)
+    add_compile_options(
+        "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Wno-objc-signed-char-bool-implicit-int-conversion>"
+    )
+endif ()
+
 add_compile_options("$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-Wno-cast-align>")
 add_compile_options("$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-Wno-undefined-inline>")
 add_compile_options("$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-Wno-nonportable-include-path>")
@@ -439,6 +417,11 @@ if (CMAKE_OSX_DEPLOYMENT_TARGET)
     unset(_arch_count)
 endif ()
 
+# Building x86_64 on an Apple Silicon host means the result only ever runs under Rosetta.
+if (CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" AND WTF_HOST_SYSTEM_MACHINE STREQUAL "arm64")
+    add_compile_definitions(HAVE_CPU_TRANSLATION_CAPABILITY=0)
+endif ()
+
 # Fail loudly if an ASan build dir lost its CMakeCache.txt and reconfigured
 # without ENABLE_SANITIZERS — otherwise the tree silently rebuilds uninstrumented.
 get_filename_component(_bindir_name "${CMAKE_BINARY_DIR}" NAME)
@@ -459,6 +442,7 @@ set(WTF_LIBRARY_TYPE OBJECT)
 set(JavaScriptCore_LIBRARY_TYPE SHARED)
 set(WebCore_LIBRARY_TYPE SHARED)
 set(WebKit_LIBRARY_TYPE SHARED)
+set(WebGPU_LIBRARY_TYPE SHARED)
 
 # Large unified-source bundles speed up the macOS build. The iOS family keeps
 # the script default (8) so @no-unify-when(bundle<=8) sources (e.g. those that

@@ -82,18 +82,18 @@ struct GlyphOverflow;
 using CanvasImageSource = Variant<
       Ref<HTMLImageElement>
     , Ref<SVGImageElement>
-    , Ref<HTMLCanvasElement>
-    , Ref<ImageBitmap>
-    , Ref<CSSStyleImageValue>
-#if ENABLE(OFFSCREEN_CANVAS)
-    , Ref<OffscreenCanvas>
-#endif
 #if ENABLE(VIDEO)
     , Ref<HTMLVideoElement>
+#endif
+    , Ref<HTMLCanvasElement>
+    , Ref<ImageBitmap>
+#if ENABLE(OFFSCREEN_CANVAS)
+    , Ref<OffscreenCanvas>
 #endif
 #if ENABLE(WEB_CODECS)
     , Ref<WebCodecsVideoFrame>
 #endif
+    , Ref<CSSStyleImageValue>
 >;
 
 class CanvasRenderingContext2DBase : public CanvasRenderingContext, public CanvasPath {
@@ -477,6 +477,9 @@ private:
     ExceptionOr<void> drawImage(WebCodecsVideoFrame&, const FloatRect& srcRect, const FloatRect& dstRect);
 #endif
 
+    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, const FloatRect& srcRect, const FloatRect& dstRect);
+    ExceptionOr<Ref<DOMMatrix>> drawSnapshot(const CanvasElementSnapshot&, const FloatRect& srcRect, const FloatRect& dstRect);
+
     void beginCompositeLayer();
     void endCompositeLayer();
 
@@ -496,7 +499,7 @@ private:
 
     FloatRect inflatedStrokeRect(const FloatRect&) const;
 
-    template<class T> void fullCanvasCompositedDrawImage(T&, const FloatRect&, const FloatRect&, CompositeOperator);
+    template<class T> void fullCanvasCompositedDrawImage(T&, const FloatRect&, const FloatRect&, CompositeOperator, ImagePaintingOptions = { });
 
     RefPtr<ImageBuffer> surfaceBufferToImageBuffer(SurfaceBuffer) final;
     RefPtr<NativeImage> surfaceBufferToNativeImage(SurfaceBuffer) final;

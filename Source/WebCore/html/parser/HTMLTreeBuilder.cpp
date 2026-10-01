@@ -293,6 +293,10 @@ HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser& parser, DocumentFragment& f
     auto* formElement = dynamicDowncast<HTMLFormElement>(contextElement);
     m_tree.setForm(protect(formElement ? formElement : HTMLFormElement::findClosestFormAncestor(contextElement)));
 
+    // Characters are tokenized before any token reaches the tree builder, so the tokenizer flags
+    // implied by the context element have to be set up front rather than after the first token.
+    updateTokenizerForAdjustedCurrentNode();
+
 #if ASSERT_ENABLED
     m_destructionProhibited = false;
 #endif
@@ -351,6 +355,18 @@ void HTMLTreeBuilder::constructTree(AtomHTMLToken&& token)
     else
         processToken(WTF::move(token));
 
+    updateTokenizerForAdjustedCurrentNode();
+
+#if ASSERT_ENABLED
+    m_destructionProhibited = false;
+#endif
+
+    m_tree.executeQueuedTasks();
+    // The tree builder might have been destroyed as an indirect result of executing the queued tasks.
+}
+
+void HTMLTreeBuilder::updateTokenizerForAdjustedCurrentNode()
+{
     // Both flags are computed from the adjusted current node, matching the tree construction
     // dispatcher. When fragment-parsing with only one element on the stack, the adjusted current
     // node is the context element, not the DocumentFragment.
@@ -370,15 +386,8 @@ void HTMLTreeBuilder::constructTree(AtomHTMLToken&& token)
         && !HTMLElementStack::isHTMLIntegrationPoint(adjustedCurrentStackItem())
         && !HTMLElementStack::isMathMLTextIntegrationPoint(adjustedCurrentStackItem());
 
-    m_parser->tokenizer().setForceNullCharacterReplacement(m_insertionMode == InsertionMode::Text || inForeignContent);
+    m_parser->tokenizer().setForceNullCharacterReplacement(inForeignContent);
     m_parser->tokenizer().setShouldAllowCDATA(adjustedCurrentNodeIsForeign);
-
-#if ASSERT_ENABLED
-    m_destructionProhibited = false;
-#endif
-
-    m_tree.executeQueuedTasks();
-    // The tree builder might have been destroyed as an indirect result of executing the queued tasks.
 }
 
 void HTMLTreeBuilder::processToken(AtomHTMLToken&& token)

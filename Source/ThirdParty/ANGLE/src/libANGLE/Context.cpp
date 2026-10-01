@@ -424,14 +424,16 @@ void GetObjectLabelBase(const std::string &objectLabel,
     }
 }
 
-GLsizei GetMarkerLength(GLsizei length, const char *marker)
+GLsizei GetMarkerLength(GLsizei length, const char *marker, GLsizei maxLength)
 {
     if (length == 0)
     {
-        return static_cast<GLsizei>(
+        length = static_cast<GLsizei>(
             std::min<size_t>(strlen(marker), std::numeric_limits<GLsizei>::max()));
     }
-    return length;
+    // https://crbug.com/524435922: Cap debug marker length to prevent driver or validation layer
+    // issues with large labels.
+    return std::min(length, maxLength);
 }
 
 enum SubjectIndexes : angle::SubjectIndex
@@ -724,7 +726,7 @@ Context::Context(egl::Display *display,
       mCurrentReadSurface(static_cast<egl::Surface *>(EGL_NO_SURFACE)),
       mDisplay(display),
       mWebGLContext(GetWebGLContext(attribs)),
-      mHardenedContext(GetHardenedContext(attribs)),
+      mHardenedContext(mWebGLContext || GetHardenedContext(attribs)),
       mBufferAccessValidationEnabled(false),
       mRequiresRobustBehavior(false),
       mExtensionsEnabled(GetExtensionsEnabled(attribs, mWebGLContext)),
@@ -2029,7 +2031,7 @@ Compiler *Context::getCompiler() const
 {
     if (mCompiler.get() == nullptr)
     {
-        mCompiler.set(this, new Compiler(mImplementation.get(), mState, mDisplay));
+        mCompiler.set(this, new Compiler(mImplementation.get(), mState));
     }
     return mCompiler.get();
 }
@@ -3222,7 +3224,9 @@ void Context::insertEventMarker(GLsizei length, const char *marker)
     }
 
     // If <length> is 0 then <marker> is assumed to be null-terminated.
-    ANGLE_CONTEXT_TRY(mImplementation->insertEventMarker(GetMarkerLength(length, marker), marker));
+    ANGLE_CONTEXT_TRY(mImplementation->insertEventMarker(
+        GetMarkerLength(length, marker, static_cast<GLsizei>(getCaps().maxDebugMessageLength)),
+        marker));
 }
 
 void Context::pushGroupMarker(GLsizei length, const char *marker)
@@ -3241,8 +3245,9 @@ void Context::pushGroupMarker(GLsizei length, const char *marker)
     else
     {
         // If <length> is 0 then <marker> is assumed to be null-terminated.
-        ANGLE_CONTEXT_TRY(
-            mImplementation->pushGroupMarker(GetMarkerLength(length, marker), marker));
+        ANGLE_CONTEXT_TRY(mImplementation->pushGroupMarker(
+            GetMarkerLength(length, marker, static_cast<GLsizei>(getCaps().maxDebugMessageLength)),
+            marker));
     }
     mState.incrementGroupMarkers();
 }
@@ -4121,6 +4126,29 @@ Extensions Context::generateSupportedExtensions() const
         // non-conformant in ES 3.0 and superseded by EXT_color_buffer_float.
         supportedExtensions.colorBufferFloatRgbCHROMIUM  = false;
         supportedExtensions.colorBufferFloatRgbaCHROMIUM = false;
+
+        // In WebGL2, WebGL1 extensions whose functionality is present in core are not exposed.
+        // This information can be found by comparing
+        // WebGLRenderingContext::RegisterContextExtensions() and
+        // WebGL2RenderingContext::RegisterContextExtensions() in Blink code.
+        if (mWebGLContext)
+        {
+            supportedExtensions.instancedArraysANGLE         = false;
+            supportedExtensions.blendMinmaxEXT               = false;
+            supportedExtensions.fragDepthEXT                 = false;
+            supportedExtensions.shaderTextureLodEXT          = false;
+            supportedExtensions.sRGBEXT                      = false;
+            supportedExtensions.elementIndexUintOES          = false;
+            supportedExtensions.fboRenderMipmapOES           = false;
+            supportedExtensions.standardDerivativesOES       = false;
+            supportedExtensions.textureFloatOES              = false;
+            supportedExtensions.textureHalfFloatLinearOES    = false;
+            supportedExtensions.vertexArrayObjectOES         = false;
+            supportedExtensions.colorBufferFloatRgbCHROMIUM  = false;
+            supportedExtensions.colorBufferFloatRgbaCHROMIUM = false;
+            supportedExtensions.depthTextureANGLE            = false;
+            supportedExtensions.drawBuffersEXT               = false;
+        }
     }
 
     if (getClientVersion() >= ES_3_0)
@@ -4750,13 +4778,6 @@ void Context::updateCaps()
     caps->compressedTextureFormats.clear();
     textureCaps->clear();
 
-    // Workaround for dEQP bug
-    // https://gitlab.khronos.org/Tracker/vk-gl-cts/-/issues/6138
-    // . Put paletted formats at the end of the compressed texture
-    // format list. If these tests are fixed, remove this vector and
-    // simplify the code below.
-    std::vector<GLenum> palettedFormats;
-
     for (GLenum sizedInternalFormat : GetAllSizedInternalFormats())
     {
         TextureCaps formatCaps = mImplementation->getNativeTextureCaps().get(sizedInternalFormat);
@@ -4837,23 +4858,13 @@ void Context::updateCaps()
             }
         }
 
-        if (formatCaps.texturable)
+        if (formatCaps.texturable && (formatInfo.compressed || formatInfo.paletted))
         {
-            if (formatInfo.compressed)
-            {
-                caps->compressedTextureFormats.push_back(sizedInternalFormat);
-            }
-            else if (formatInfo.paletted)
-            {
-                palettedFormats.push_back(sizedInternalFormat);
-            }
+            caps->compressedTextureFormats.push_back(sizedInternalFormat);
         }
 
         textureCaps->insert(sizedInternalFormat, formatCaps);
     }
-
-    caps->compressedTextureFormats.insert(caps->compressedTextureFormats.end(),
-                                          palettedFormats.begin(), palettedFormats.end());
 
     // If program binary is disabled, blank out the memory cache pointer.
     if (!mSupportedExtensions.getProgramBinaryOES)
@@ -9759,6 +9770,13 @@ egl::Error Context::unsetDefaultFramebuffer()
 
 void Context::onPreSwap()
 {
+    // Ignore non-window (side-context / aux-pbuffer) swaps for frame boundaries
+    const egl::Surface *drawSurface = getCurrentDrawSurface();
+    if (drawSurface && drawSurface->getType() != EGL_WINDOW_BIT)
+    {
+        return;
+    }
+
     // Dump frame capture if enabled.
     getShareGroup()->getFrameCaptureShared()->onEndFrame(this);
 }
@@ -9832,11 +9850,6 @@ egl::Error Context::releaseExternalContext()
 {
     mImplementation->releaseExternalContext(this);
     return egl::NoError();
-}
-
-angle::SimpleMutex &Context::getProgramCacheMutex() const
-{
-    return mDisplay->getProgramCacheMutex();
 }
 
 bool Context::supportsGeometryOrTesselation() const
@@ -10392,6 +10405,8 @@ ErrorSet::ErrorSet(Debug *debug,
     : mDebug(debug),
       mResetStrategy(GetResetStrategy(attribs)),
       mLoseContextOnOutOfMemory(frontendFeatures.loseContextOnOutOfMemory.enabled),
+      mLoseContextOnInternalError(frontendFeatures.loseHardenedContextOnBackendError.enabled &&
+                                  (GetWebGLContext(attribs) || GetHardenedContext(attribs))),
       mContextLostForced(false),
       mResetStatus(GraphicsResetStatus::NoError),
       mErrorMessageCount(0),
@@ -10419,8 +10434,9 @@ void ErrorSet::handleError(GLenum errorCode,
                            const char *function,
                            unsigned int line)
 {
-    if (errorCode == GL_OUT_OF_MEMORY && mResetStrategy == GL_LOSE_CONTEXT_ON_RESET_EXT &&
-        mLoseContextOnOutOfMemory)
+    if (mLoseContextOnInternalError ||
+        (errorCode == GL_OUT_OF_MEMORY && mResetStrategy == GL_LOSE_CONTEXT_ON_RESET_EXT &&
+         mLoseContextOnOutOfMemory))
     {
         markContextLost(GraphicsResetStatus::UnknownContextReset);
     }

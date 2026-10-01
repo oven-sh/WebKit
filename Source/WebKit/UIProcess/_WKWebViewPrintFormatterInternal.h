@@ -25,7 +25,7 @@
 
 #import "_WKWebViewPrintFormatter.h"
 
-#if PLATFORM(IOS_FAMILY)
+#if HAVE(UIKIT_PRINTING)
 
 @interface UIPrintFormatter ()
 - (CGRect)_pageContentRect:(BOOL)firstPage;
@@ -53,4 +53,4 @@
 - (void)_wk_requestImageForPrintFormatter:(_WKWebViewPrintFormatter *)printFormatter;
 @end
 
-#endif // PLATFORM(IOS_FAMILY)
+#endif // HAVE(UIKIT_PRINTING)

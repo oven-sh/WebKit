@@ -272,7 +272,7 @@ ALWAYS_INLINE void gcSafeZeroMemory(T* dst, size_t bytes)
         "movi v0.16b, #0\t\n"
 
 #if !OS(WINDOWS)
-        // On Windows ARM64, LLVM has a bug (llvm/llvm-project#47432) that causes a
+        // On Windows ARM64, LLVM has a bug (https://github.com/llvm/llvm-project/issues/47432) that causes a
         // fatal error "Failed to evaluate function length in SEH unwind info" when
         // inline assembly contains alignment directives like .p2align.
         ".p2align 4\t\n"
@@ -303,6 +303,87 @@ ALWAYS_INLINE void gcSafeZeroMemory(T* dst, size_t bytes)
     size_t count = bytes / 8;
     for (size_t i = 0; i < count; ++i)
         std::bit_cast<volatile uint64_t*>(dst)[i] = 0;
+#endif
+}
+
+template<typename T>
+ALWAYS_INLINE void gcSafeMemfill(T* dst, T value, size_t bytes)
+{
+    static_assert(sizeof(T) == sizeof(JSValue));
+    RELEASE_ASSERT(!(bytes % sizeof(JSValue)));
+    uint64_t word = std::bit_cast<uint64_t>(value);
+#if CPU(X86_64)
+    size_t alignedBytes = (bytes / 64) * 64;
+    size_t offset = 0;
+    __asm__ volatile(
+        "movq %q[word], %%xmm0\t\n"
+        "movlhps %%xmm0, %%xmm0\t\n"
+
+        ".balign 32\t\n"
+        "1:\t\n"
+        "cmpq %q[offset], %q[alignedBytes]\t\n"
+        "je 2f\t\n"
+        "movups %%xmm0, (%q[dst], %q[offset], 1)\t\n"
+        "movups %%xmm0, 16(%q[dst], %q[offset], 1)\t\n"
+        "movups %%xmm0, 32(%q[dst], %q[offset], 1)\t\n"
+        "movups %%xmm0, 48(%q[dst], %q[offset], 1)\t\n"
+        "addq $64, %q[offset]\t\n"
+        "jmp 1b\t\n"
+
+        "2:\t\n"
+        "cmpq %q[offset], %q[bytes]\t\n"
+        "je 3f\t\n"
+        "movq %%xmm0, (%q[dst], %q[offset], 1)\t\n"
+        "addq $8, %q[offset]\t\n"
+        "jmp 2b\t\n"
+
+        "3:\t\n"
+
+        : [offset] "+r" (offset)
+        : [alignedBytes] "r" (alignedBytes), [bytes] "r" (bytes), [dst] "r" (dst), [word] "r" (word)
+        : "xmm0", "memory", "cc"
+    );
+#elif CPU(ARM64)
+            uint64_t alignedBytes = (static_cast<uint64_t>(bytes) / 64) * 64;
+            uint64_t dstPtr = static_cast<uint64_t>(std::bit_cast<uintptr_t>(dst));
+            uint64_t end = dstPtr + bytes;
+            uint64_t alignedEnd = dstPtr + alignedBytes;
+
+            __asm__ volatile(
+        "dup v0.2d, %x[word]\t\n"
+
+#if !OS(WINDOWS)
+        // On Windows ARM64, LLVM has a bug (https://github.com/llvm/llvm-project/issues/47432) that causes a
+        // fatal error "Failed to evaluate function length in SEH unwind info" when
+        // inline assembly contains alignment directives like .p2align.
+        ".p2align 4\t\n"
+#endif
+        "1:\t\n"
+        "cmp %x[dstPtr], %x[alignedEnd]\t\n"
+        "b.eq 2f\t\n"
+
+        "stnp q0, q0, [%x[dstPtr]]\t\n"
+        "stnp q0, q0, [%x[dstPtr], #0x20]\t\n"
+        "add %x[dstPtr], %x[dstPtr], #0x40\t\n"
+        "b 1b\t\n"
+
+        "2:\t\n"
+        "cmp %x[dstPtr], %x[end]\t\n"
+        "b.eq 3f\t\n"
+
+        "str d0, [%x[dstPtr]], #0x8\t\n"
+        "b 2b\t\n"
+
+        "3:\t\n"
+
+        : [dstPtr] "+r" (dstPtr)
+        : [end] "r" (end), [alignedEnd] "r" (alignedEnd), [word] "r" (word)
+        : "v0", "memory", "cc"
+            );
+#else
+            size_t count = bytes / 8;
+            for (size_t i = 0; i < count; ++i)
+                std::bit_cast<volatile uint64_t*>(dst)[i] = word;
 #endif
 }
 

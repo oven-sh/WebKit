@@ -47,16 +47,16 @@ class MarkingConstraint {
     WTF_MAKE_TZONE_ALLOCATED(MarkingConstraint);
 public:
     JS_EXPORT_PRIVATE MarkingConstraint(
-        CString abbreviatedName, CString name, ConstraintVolatility,
+        ASCIICString abbreviatedName, ASCIICString name, ConstraintVolatility,
         ConstraintConcurrency = ConstraintConcurrency::Concurrent,
         ConstraintParallelism = ConstraintParallelism::Sequential);
-    
+
     JS_EXPORT_PRIVATE virtual ~MarkingConstraint();
-    
+
     JS_EXPORT_PRIVATE unsigned index() const { return m_index; }
-    
-    JS_EXPORT_PRIVATE const char* abbreviatedName() const LIFETIME_BOUND { return m_abbreviatedName.data(); }
-    JS_EXPORT_PRIVATE const char* name() const LIFETIME_BOUND { return m_name.data(); }
+
+    JS_EXPORT_PRIVATE const ASCIICString& abbreviatedName() const LIFETIME_BOUND { return m_abbreviatedName; }
+    JS_EXPORT_PRIVATE const ASCIICString& name() const LIFETIME_BOUND { return m_name; }
     
     JS_EXPORT_PRIVATE void NODELETE resetStats();
     
@@ -91,8 +91,8 @@ protected:
 private:
     friend class MarkingConstraintSet; // So it can set m_index.
     
-    CString m_abbreviatedName;
-    CString m_name;
+    ASCIICString m_abbreviatedName;
+    ASCIICString m_name;
     size_t m_lastVisitCount { 0 };
     unsigned m_index { UINT_MAX };
     ConstraintVolatility m_volatility;

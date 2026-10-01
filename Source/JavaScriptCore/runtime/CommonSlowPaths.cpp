@@ -104,17 +104,19 @@ namespace JSC {
 
 #define END_IMPL() RETURN_TWO(pc, callFrame)
 
+#define THROW_IMPL() RETURN_TWO(pc, LLInt::exceptionSignal())
+
 #define THROW(exceptionToThrow) do {                        \
         throwException(globalObject, throwScope, exceptionToThrow); \
         RETURN_TO_THROW(pc);                          \
-        END_IMPL();                                         \
+        THROW_IMPL();                                       \
     } while (false)
 
 #define CHECK_EXCEPTION() do {                    \
         doExceptionFuzzingIfEnabled(globalObject, throwScope, "CommonSlowPaths", pc);   \
         if (throwScope.exception()) [[unlikely]] {   \
             RETURN_TO_THROW(pc);                     \
-            END_IMPL();                              \
+            THROW_IMPL();                            \
         }                                            \
     } while (false)
 
@@ -347,7 +349,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_type)
         }
         END();
     }
-    THROW(createTypeError(globalObject, makeString("Type check failed: expected "_s, toCString(SoundTypeMaskDump(bytecode.m_mask)).span(), ", got "_s, toCString(SoundTypeMaskDump(tag)).span())));
+    THROW(createTypeError(globalObject, makeString("Type check failed: expected "_s, toString(SoundTypeMaskDump(bytecode.m_mask)), ", got "_s, toString(SoundTypeMaskDump(tag)))));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_throw_strict_mode_readonly_property_write_error)

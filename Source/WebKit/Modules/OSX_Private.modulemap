@@ -434,11 +434,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKCrashReporter {
-    header "WKCrashReporter.h"
-    export *
-  }
-
   explicit module WKCredential {
     header "WKCredential.h"
     export *
@@ -2251,6 +2246,11 @@ framework module WebKit_Private [system] {
 
   explicit module _WKWebExtensionMessagePortPrivate {
     header "_WKWebExtensionMessagePortPrivate.h"
+    export *
+  }
+
+  explicit module _WKWebExtensionNotification {
+    header "_WKWebExtensionNotification.h"
     export *
   }
 

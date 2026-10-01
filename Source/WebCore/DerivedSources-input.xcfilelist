@@ -5,6 +5,7 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/platform-enabled-swift-args.arm64e.
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/platform-enabled-swift-args.armv7k.resp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/platform-enabled-swift-args.x86_64.resp
 $(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/AdditionalFeatureDefines.h
+$(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/WebPreferencesAdditions.yaml
 $(BUILT_PRODUCTS_DIR)/usr/local/include/bmalloc/BCompiler.h
 $(BUILT_PRODUCTS_DIR)/usr/local/include/bmalloc/BPlatform.h
 $(BUILT_PRODUCTS_DIR)/usr/local/include/wtf/Compiler.h
@@ -1295,6 +1296,7 @@ $(PROJECT_DIR)/crypto/parameters/X25519Params.idl
 $(PROJECT_DIR)/css/CSSConditionRule.idl
 $(PROJECT_DIR)/css/CSSContainerRule.idl
 $(PROJECT_DIR)/css/CSSCounterStyleRule.idl
+$(PROJECT_DIR)/css/CSSEnvironmentMapRule.idl
 $(PROJECT_DIR)/css/CSSFontFaceDescriptors.idl
 $(PROJECT_DIR)/css/CSSFontFaceRule.idl
 $(PROJECT_DIR)/css/CSSFontFeatureValuesRule.idl
@@ -1376,6 +1378,7 @@ $(PROJECT_DIR)/css/mathmlFontSizeMath.css
 $(PROJECT_DIR)/css/mathmlLegacyFontSizeMath.css
 $(PROJECT_DIR)/css/popover.css
 $(PROJECT_DIR)/css/quirks.css
+$(PROJECT_DIR)/css/selectMultipleAndListBox.css
 $(PROJECT_DIR)/css/scripts/process-css-properties.py
 $(PROJECT_DIR)/css/scripts/process-css-pseudo-selectors.py
 $(PROJECT_DIR)/css/scripts/process-css-values.py
@@ -1560,6 +1563,8 @@ $(PROJECT_DIR)/dom/PredicateCallback.idl
 $(PROJECT_DIR)/dom/ProcessingInstruction.idl
 $(PROJECT_DIR)/dom/ProgressEvent.idl
 $(PROJECT_DIR)/dom/PromiseRejectionEvent.idl
+$(PROJECT_DIR)/dom/QuotaExceededError.idl
+$(PROJECT_DIR)/dom/QuotaExceededErrorOptions.idl
 $(PROJECT_DIR)/dom/Range+CSSOMView.idl
 $(PROJECT_DIR)/dom/Range+DOMParsing.idl
 $(PROJECT_DIR)/dom/Range.idl
@@ -1975,6 +1980,7 @@ $(PROJECT_DIR)/page/ResizeObserverSize.idl
 $(PROJECT_DIR)/page/Screen.idl
 $(PROJECT_DIR)/page/ScreenOrientation.idl
 $(PROJECT_DIR)/page/ScrollBehavior.idl
+$(PROJECT_DIR)/page/ScrollIntoViewContainer.idl
 $(PROJECT_DIR)/page/ScrollIntoViewOptions.idl
 $(PROJECT_DIR)/page/ScrollLogicalPosition.idl
 $(PROJECT_DIR)/page/ScrollOptions.idl
@@ -2130,7 +2136,6 @@ $(PROJECT_DIR)/testing/FakeXRJointStateInit.idl
 $(PROJECT_DIR)/testing/FakeXRRigidTransformInit.idl
 $(PROJECT_DIR)/testing/FakeXRViewInit.idl
 $(PROJECT_DIR)/testing/FakeXRWorldInit.idl
-$(PROJECT_DIR)/testing/GCObservation.idl
 $(PROJECT_DIR)/testing/InternalSettings.idl
 $(PROJECT_DIR)/testing/Internals.idl
 $(PROJECT_DIR)/testing/InternalsMapLike.idl

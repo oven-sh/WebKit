@@ -1060,7 +1060,17 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. If result is a normal completion, then
+#if USE(BUN_JSC_ADDITIONS)
+    // hostLoadImportedModule() relies on the realm's [[LoadedModules]] holding only what the registry holds. removeEntry()
+    // and clearAll() take a module out of both, and a load of it that was in flight then must not put it back into one.
+    auto isRegistered = [&](AbstractModuleRecord* record) {
+        ModuleRegistryEntry* entry = getRegisteredMayBeNull(record->moduleKey(), moduleRequest.type());
+        return entry && entry->record() == record;
+    };
+    if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result); resultRecord && (!referrer.isRealm() || isRegistered(*resultRecord))) {
+#else
     if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result)) {
+#endif
         JSCell* owner = nullptr;
 
         auto& loadedModules = [&] -> ModuleMap<AbstractModuleRecord::LoadedModuleRequest> & {

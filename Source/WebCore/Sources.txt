@@ -186,6 +186,7 @@ Modules/fetch/FetchRequest.cpp @cost:3
 Modules/fetch/FetchResponse.cpp @cost:4
 Modules/fetch/FormDataConsumer.cpp
 Modules/fetch/IPAddressSpace.cpp
+Modules/fetch/LocalNetworkAccess.cpp
 Modules/fetch/WindowOrWorkerGlobalScopeFetch.cpp @cost:3
 Modules/filesystem/FileSystemDirectoryHandle.cpp
 Modules/filesystem/FileSystemFileHandle.cpp
@@ -350,8 +351,8 @@ Modules/mediastream/STUNMessageParsing.cpp
 Modules/mediastream/UserMediaController.cpp
 Modules/mediastream/UserMediaRequest.cpp
 Modules/mediastream/VideoTrackGenerator.cpp
+Modules/model-element/EnvironmentMapLoader.cpp
 Modules/model-element/HTMLModelElement.cpp @header:RenderStyleGetters @cost:10
-Modules/model-element/LazyLoadModelObserver.cpp
 Modules/model-element/ModelPlayer.cpp
 Modules/model-element/ModelPlayerAnimationState.cpp
 Modules/model-element/ModelPlayerClient.cpp
@@ -541,6 +542,7 @@ Modules/webcodecs/WebCodecsAudioDataAlgorithms.cpp
 Modules/webcodecs/WebCodecsAudioDecoder.cpp
 Modules/webcodecs/WebCodecsAudioEncoder.cpp
 Modules/webcodecs/WebCodecsBase.cpp
+Modules/webcodecs/WebCodecsBufferTransfer.cpp
 Modules/webcodecs/WebCodecsControlMessageQueue.cpp
 Modules/webcodecs/WebCodecsEncodedAudioChunk.cpp
 Modules/webcodecs/WebCodecsEncodedVideoChunk.cpp
@@ -795,6 +797,7 @@ bindings/js/JSEventTargetCustom.cpp
 bindings/js/JSExecState.cpp
 bindings/js/JSExtendableMessageEventCustom.cpp
 bindings/js/JSFetchEventCustom.cpp
+bindings/js/JSGPUErrorCustom.cpp
 bindings/js/JSHTMLAllCollectionCustom.cpp
 bindings/js/JSHTMLCanvasElementCustom.cpp
 bindings/js/JSHTMLElementCustom.cpp @cost:3
@@ -971,6 +974,7 @@ css/CSSContentValue.cpp
 css/CSSCounterStyleDescriptors.cpp
 css/CSSCounterStyleRegistry.cpp
 css/CSSCounterStyleRule.cpp
+css/CSSEnvironmentMapRule.cpp
 css/CSSCrossfadeValue.cpp
 css/CSSCursorImageValue.cpp
 css/CSSCustomIdentValue.cpp
@@ -1064,6 +1068,7 @@ css/CSSStyleRule.cpp
 css/CSSStyleSheet.cpp @cost:3
 css/CSSStyleSheetObservableArray.cpp @cost:4
 css/CSSSupportsRule.cpp
+css/CSSSymbolsFunctionValue.cpp
 css/CSSTextShadowPropertyValue.cpp
 css/CSSToLengthConversionData.cpp @header:RenderStyleGetters
 css/CSSTransformListValue.cpp
@@ -1306,6 +1311,7 @@ css/values/primitives/CSSPrimitiveNumericUnits.cpp
 css/values/primitives/CSSRatio.cpp
 css/values/primitives/CSSString.cpp
 css/values/primitives/CSSSymbol.cpp
+css/values/primitives/CSSTypeSpecifier.cpp
 css/values/primitives/CSSURL.cpp
 css/values/primitives/CSSURLModifiers.cpp
 css/values/primitives/CSSUnevaluatedCalc.cpp
@@ -1354,6 +1360,7 @@ dom/CustomElementRegistry.cpp
 dom/CustomEvent.cpp
 dom/CustomStateSet.cpp
 dom/DOMException.cpp
+dom/QuotaExceededError.cpp
 dom/DOMImplementation.cpp
 dom/DOMPointInit.cpp
 dom/DOMPointReadOnly.cpp
@@ -1640,6 +1647,7 @@ history/BackForwardController.cpp
 history/CachedFrame.cpp @header:RenderStyleGetters
 history/CachedPage.cpp
 history/HistoryItem.cpp
+html/AnchorElementFunctions.cpp
 html/AttachmentAssociatedElement.cpp
 html/Autocapitalize.cpp
 html/Autofill.cpp
@@ -1774,9 +1782,7 @@ html/InputMode.cpp
 html/InputType.cpp @header:RenderStyleGetters @cost:7
 html/InputTypeNames.cpp
 html/LabelsNodeList.cpp
-html/LazyLoadFrameObserver.cpp
-html/LazyLoadImageObserver.cpp
-html/LazyLoadVideoObserver.cpp
+html/LazyLoadElementObserver.cpp
 html/LinkIconCollector.cpp
 html/LinkRelAttribute.cpp
 html/MediaController.cpp
@@ -2336,6 +2342,7 @@ page/NavigatorBase.cpp
 page/NavigatorGlobalPrivacyControl.cpp
 page/NavigatorLoginStatus.cpp
 page/NavigatorUAData.cpp
+page/NetworkLoadPolicy.cpp
 page/OpportunisticTaskScheduler.cpp
 page/OriginAccessEntry.cpp
 page/OriginAccessPatterns.cpp
@@ -2400,6 +2407,7 @@ page/UserContentURLPattern.cpp
 page/UserAgentStringParser.cpp
 page/UserScript.cpp
 page/UserStyleSheet.cpp
+page/ViewportProximityInfo.cpp
 page/VisitedLinkStore.cpp
 page/VisualViewport.cpp
 page/WebKitJSHandle.cpp
@@ -2649,8 +2657,8 @@ platform/gamepad/GamepadProvider.cpp
 platform/graphics/AV1Utilities.cpp
 platform/graphics/AlphaPremultiplication.cpp
 platform/graphics/AnimationFrameRate.cpp
+platform/graphics/AnnexBUtilities.cpp
 platform/graphics/ArrayPixelBuffer.cpp
-platform/graphics/AsyncImageDecoder.cpp
 platform/graphics/BezierUtilities.cpp
 platform/graphics/BifurcatedGraphicsContext.cpp
 platform/graphics/BitmapImage.cpp
@@ -2682,16 +2690,19 @@ platform/graphics/DoublePoint.cpp
 platform/graphics/DoubleRect.cpp
 platform/graphics/DoubleSize.cpp
 platform/graphics/FloatLine.cpp
+platform/graphics/FloatPlane3D.cpp
 platform/graphics/FloatPoint.cpp
 platform/graphics/FloatPoint3D.cpp
 platform/graphics/FloatPointGraph.cpp
 platform/graphics/FloatPolygon.cpp
+platform/graphics/FloatPolygon3D.cpp
 platform/graphics/FloatQuad.cpp
 platform/graphics/FloatRect.cpp
 platform/graphics/FloatRoundedRect.cpp
 platform/graphics/FloatSegment.cpp
 platform/graphics/FloatSize.cpp
 platform/graphics/Font.cpp
+platform/graphics/FontBase.cpp
 platform/graphics/FontCache.cpp
 platform/graphics/FontCascade.cpp
 platform/graphics/FontCascadeCache.cpp
@@ -2729,6 +2740,7 @@ platform/graphics/GraphicsLayerTransform.cpp
 platform/graphics/GraphicsStyle.cpp
 platform/graphics/GraphicsTZoneImpls.cpp
 platform/graphics/GraphicsTypes.cpp
+platform/graphics/H264Utilities.cpp
 platform/graphics/HEVCUtilities.cpp
 platform/graphics/Icon.cpp
 platform/graphics/Image.cpp
@@ -2741,6 +2753,7 @@ platform/graphics/ImageBufferDisplayListBackend.cpp
 platform/graphics/ImageDecoder.cpp
 platform/graphics/ImageFrame.cpp
 platform/graphics/ImageFrameAnimator.cpp
+platform/graphics/ImageFrameWorkQueue.cpp
 platform/graphics/ImagePaintingOptions.cpp
 platform/graphics/ImageResolution.cpp
 platform/graphics/ImageSource.cpp
@@ -3179,6 +3192,7 @@ rendering/mathml/RenderMathMLUnderOver.cpp @header:RenderStyleGetters
 rendering/mathml/MathVariant.cpp
 rendering/shapes/BoxLayoutShape.cpp @header:RenderStyleGetters
 rendering/shapes/LayoutShape.cpp
+rendering/shapes/PathLayoutShape.cpp
 rendering/shapes/PolygonLayoutShape.cpp
 rendering/shapes/RasterLayoutShape.cpp
 rendering/shapes/RectangleLayoutShape.cpp
@@ -3273,6 +3287,7 @@ rendering/svg/legacy/SVGResourcesCycleSolver.cpp
 rendering/updating/RenderTreeBuilder.cpp @header:RenderStyleGetters
 rendering/updating/RenderTreeBuilderBlock.cpp @header:RenderStyleGetters
 rendering/updating/RenderTreeBuilderBlockFlow.cpp
+rendering/updating/RenderTreeBuilderCanvas.cpp
 rendering/updating/RenderTreeBuilderFirstLetter.cpp @header:RenderStyleGetters
 rendering/updating/RenderTreeBuilderFormControls.cpp @header:RenderStyleGetters
 rendering/updating/RenderTreeBuilderInline.cpp @header:RenderStyleGetters
@@ -3351,9 +3366,9 @@ style/UserAgentStyle.cpp @header:RenderStyleGetters @cost:6
 style/calc/StyleCalculationTree+Conversion.cpp @header:RenderStyleGetters @cost:7
 style/calc/StyleCalculationTree+Copy.cpp
 style/calc/StyleCalculationTree+Evaluation.cpp
+style/calc/StyleCalculationTree+Substitution.cpp
 style/calc/StyleCalculationTree.cpp
 style/calc/StyleCalculationValue.cpp
-style/calc/StyleCalculationValueMap.cpp
 style/computed/data/StyleAppleColorFilterData.cpp @cost:5
 style/computed/data/StyleBackdropFilterData.cpp @cost:5
 style/computed/data/StyleBackgroundData.cpp @cost:5
@@ -3432,6 +3447,7 @@ style/values/color/StyleColorLayers.cpp
 style/values/color/StyleColorMix.cpp
 style/values/color/StyleColorOptions.cpp
 style/values/color/StyleContrastColor.cpp
+style/values/color/StyleCurrentAccentColor.cpp
 style/values/color/StyleCurrentColor.cpp
 style/values/color/StyleDynamicRangeLimit.cpp
 style/values/color/StyleDynamicRangeLimitMix.cpp
@@ -3441,6 +3457,7 @@ style/values/color/StyleLightDarkColor.cpp
 style/values/color/StyleOpacity.cpp
 style/values/color/StyleRelativeAlphaColor.cpp
 style/values/color/StyleResolvedColor.cpp
+style/values/color/StyleResolvedColors.cpp
 style/values/contain/StyleContain.cpp
 style/values/contain/StyleContainerType.cpp
 style/values/content/StyleContent.cpp @header:RenderStyleGetters @cost:6
@@ -3550,6 +3567,8 @@ style/values/overflow/StyleTextOverflow.cpp
 style/values/overflow/StyleOverflowClipMargin.cpp
 style/values/page/StylePageSize.cpp
 style/values/pointerevents/StyleTouchAction.cpp
+style/values/primitives/StyleCalcSizeValue+Interpolation.cpp
+style/values/primitives/StyleCalcSizeValue.cpp
 style/values/primitives/StyleCustomIdent.cpp
 style/values/primitives/StyleDeclarationValue.cpp
 style/values/primitives/StyleLengthResolution.cpp @header:RenderStyleGetters @cost:6
@@ -3559,6 +3578,7 @@ style/values/primitives/StyleRatio.cpp
 style/values/primitives/StyleSnapLengthAsBorderWidth.cpp
 style/values/primitives/StyleString.cpp
 style/values/primitives/StyleURL.cpp
+style/values/primitives/StyleUnevaluatedCalcSize.cpp
 style/values/primitives/StyleUnevaluatedCalculation.cpp
 style/values/rhythm/StyleBlockStepSize.cpp
 style/values/scroll-animations/StyleScrollFunction.cpp
@@ -3587,6 +3607,7 @@ style/values/size-adjust/StyleTextSizeAdjust.cpp
 style/values/sizing/StyleAspectRatio.cpp @header:RenderStyleGetters @cost:5
 style/values/sizing/StyleContainIntrinsicSize.cpp
 style/values/sizing/StylePreferredSize.cpp
+style/values/spatial/StyleEnvironmentMap.cpp
 style/values/speech/StyleSpeakAs.cpp
 style/values/svg/StyleSVGBaselineShift.cpp
 style/values/svg/StyleSVGGlyphOrientationVertical.cpp
@@ -4026,6 +4047,7 @@ JSCSSAnimationEvent.cpp
 JSCSSConditionRule.cpp
 JSCSSContainerRule.cpp
 JSCSSCounterStyleRule.cpp
+JSCSSEnvironmentMapRule.cpp
 JSCSSFontFaceDescriptors.cpp
 JSCSSFontFaceRule.cpp
 JSCSSFontFeatureValuesRule.cpp
@@ -4419,6 +4441,7 @@ JSGPUDeviceLost.cpp
 JSGPUDeviceLostInfo.cpp
 JSGPUDeviceLostReason.cpp
 JSGPUDeviceUncapturedError.cpp
+JSGPUError.cpp
 JSGPUErrorFilter.cpp
 JSGPUExtent3DDict.cpp
 JSGPUExternalTexture.cpp
@@ -4925,6 +4948,8 @@ JSPushSubscriptionOptions.cpp
 JSPushSubscriptionOptionsInit.cpp
 JSQueuingStrategy.cpp
 JSQueuingStrategySize.cpp
+JSQuotaExceededError.cpp
+JSQuotaExceededErrorOptions.cpp
 JSRTCAnswerOptions.cpp
 JSRTCCertificate.cpp
 JSRTCConfiguration.cpp
@@ -5146,6 +5171,7 @@ JSScreenOrientation.cpp
 JSScriptProcessorNode.cpp
 JSScrollAxis.cpp
 JSScrollBehavior.cpp
+JSScrollIntoViewContainer.cpp
 JSScrollIntoViewOptions.cpp
 JSScrollLogicalPosition.cpp
 JSScrollOptions.cpp

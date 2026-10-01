@@ -209,6 +209,8 @@ def types_that_must_be_moved():
         'HashMap<WebKit::ImageBufferSetIdentifier, std::unique_ptr<WebKit::BufferSetBackendHandle>>',
         'WebCore::DMABufBufferAttributes',
         'std::optional<WebCore::DMABufBufferAttributes>',
+        'WebCore::DocumentSyncSerializationData',
+        'WebCore::FrameTreeSyncSerializationData',
     ]
 
 
@@ -466,7 +468,9 @@ def serialized_identifiers():
         'WebCore::MediaUniqueIdentifier',
         'WebCore::NavigationIdentifier',
         'WebCore::OpaqueOriginIdentifier',
+        'WebCore::PendingNavigateEventIdentifier',
         'WebCore::PageIdentifier',
+        'WebCore::ImageBufferTransferIdentifierID',
         'WebCore::PlatformLayerIdentifierID',
         'WebCore::PlaybackTargetClientContextID',
         'WebCore::NonSerializedDataIdentifier',
@@ -527,6 +531,7 @@ def serialized_identifiers():
         'WebKit::NonProcessQualifiedContentWorldIdentifier',
         'WebKit::PDFPluginIdentifier',
         'WebKit::PageGroupIdentifier',
+        'WebKit::PolicyListenerIdentifier',
         'WebKit::QuotaIncreaseRequestIdentifier',
         'WebKit::RealmIdentifier',
         'WebKit::RemoteAudioDestinationIdentifier',
@@ -595,6 +600,7 @@ def types_that_cannot_be_forward_declared():
         'Inspector::ExtensionTabID',
         'Inspector::FrameResource',
         'Inspector::FrameResourceData',
+        'Inspector::InitiatorData',
         'Inspector::ResourceType',
         'Inspector::SearchMatch',
         'Inspector::SearchResult',
@@ -653,11 +659,13 @@ def types_that_cannot_be_forward_declared():
         'WebCore::PathDataLineColorThickness',
         'WebCore::PathDataQuadCurve',
         'WebCore::PatternParameters',
+        'WebCore::ImageBufferTransferIdentifier',
         'WebCore::PlatformLayerIdentifier',
         'WebCore::PlatformMediaError',
         'WebCore::PlaybackTargetClientContextIdentifier',
         'WebCore::PointerID',
         'WebCore::QualifiedMediaSessionIdentifier',
+        'WebCore::QualifiedPageIdentifier',
         'WebCore::RTCDataChannelIdentifier',
         'WebCore::ReferrerPolicy',
         'WebCore::RenderingMode',
@@ -745,6 +753,7 @@ def conditions_for_header(header):
         '"RemoteLegacyCDMIdentifier.h"': ["ENABLE(GPU_PROCESS) && ENABLE(LEGACY_ENCRYPTED_MEDIA)"],
         '"RemoteLegacyCDMSessionIdentifier.h"': ["ENABLE(GPU_PROCESS) && ENABLE(LEGACY_ENCRYPTED_MEDIA)"],
         '"RemoteMediaResourceLoaderIdentifier.h"': ["ENABLE(GPU_PROCESS) && ENABLE(VIDEO)"],
+        '"RevealItem.h"': ["ENABLE(REVEAL)"],
         '"SoupCookiePersistentStorageType.h"': ["USE(SOUP)"],
         '"SharedCARingBuffer.h"': ["PLATFORM(COCOA)"],
         '"UserMessage.h"': ["USE(GLIB)"],
@@ -865,6 +874,33 @@ def message_to_completion_handler_using_declaration(receiver, message):
     return 'using %s = WTF::RefCountable<Messages::%s::%s::Reply>;' % (completion_handler_name, receiver.name, message.name)
 
 
+def messages_with_distinct_reply_types(receiver):
+    seen = set()
+    result = []
+    for message in receiver.messages:
+        if message.reply_parameters is None:
+            continue
+        key = tuple(parameter.type for parameter in message.reply_parameters)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(message)
+    return result
+
+
+def message_to_complete_with_default_reply_declaration(receiver, message):
+    return 'void completeWithDefaultReply(%sCompletionHandler&);' % message.name
+
+
+def message_to_complete_with_default_reply_definition(receiver, message):
+    return '\n'.join([
+        'void completeWithDefaultReply(%sCompletionHandler& completionHandler)' % message.name,
+        '{',
+        '    IPC::Connection::cancelReply<Messages::%s::%s>(*completionHandler);' % (receiver.name, message.name),
+        '}',
+    ])
+
+
 def generate_messages_header(receiver):
     result = []
 
@@ -926,6 +962,17 @@ def generate_messages_header(receiver):
         result.append('\n')
     if_swift_enabled(receiver, result, append_message_forwarder_class_for_swift, None)
 
+    def append_swift_type_aliases(result):
+        aliases = swift_type_aliases(receiver)
+        for namespace in sorted(aliases):
+            result.append('namespace %s {\n' % namespace)
+            for alias in sorted(aliases[namespace]):
+                result.append('using %s = %s;\n' % (alias, aliases[namespace][alias]))
+            result.append('}\n')
+            result.append('\n')
+    if swift_type_aliases(receiver):
+        if_swift_enabled(receiver, result, append_swift_type_aliases, None)
+
     result.append('namespace Messages {\nnamespace %s {\n' % receiver.name)
     result.append('\n')
     result.append('static inline IPC::ReceiverName messageReceiverName()\n')
@@ -948,10 +995,15 @@ def generate_messages_header(receiver):
     result.append('} // namespace %s\n} // namespace Messages\n' % receiver.name)
 
     def append_completion_handler_types_for_swift(result):
+        reply_messages = [x for x in receiver.messages if x.reply_parameters is not None]
         result.append('\n')
         result.append('namespace CompletionHandlers {\nnamespace %s {\n' % receiver.name)
-        result.append('\n'.join([message_to_completion_handler_using_declaration(receiver, x) for x in receiver.messages if x.reply_parameters is not None]))
+        result.append('\n'.join([message_to_completion_handler_using_declaration(receiver, x) for x in reply_messages]))
         result.append('\n')
+        if reply_messages:
+            result.append('\n')
+            result.append('\n\n'.join([message_to_complete_with_default_reply_declaration(receiver, x) for x in messages_with_distinct_reply_types(receiver)]))
+            result.append('\n')
         result.append('} // namespace %s\n} // namespace CompletionHandlers\n' % receiver.name)
         result.append('\n')
     if_swift_enabled(receiver, result, append_completion_handler_types_for_swift, None)
@@ -962,12 +1014,123 @@ def generate_messages_header(receiver):
     return ''.join(result)
 
 
-def handler_function(receiver, message):
+_SWIFT_WRAPPER_TEMPLATES = ('Ref', 'RefPtr', 'Vector')
+
+
+class UnmappableSwiftType(Exception):
+    pass
+
+
+# The Swift spelling of a builtin_types entry, derived rather than tabulated. Entries that are not
+# primitives at all (WebCore::TrackID) fall through to the namespaced rule.
+def _swift_primitive_type_name(cpp_type):
+    if cpp_type not in builtin_types:
+        return None
+    if cpp_type == 'size_t':
+        return 'Int'
+    if cpp_type in ('bool', 'float', 'double'):
+        return cpp_type.capitalize()
+    match = re.match(r'^(u?)int(\d+)_t$', cpp_type)
+    return '%sInt%s' % ('U' if match.group(1) else '', match.group(2)) if match else None
+
+
+def _strip_cpp_type_decorations(cpp_type):
+    return re.sub(r'^(?:const\s+|struct\s+|class\s+|enum\s+)+', '', cpp_type.strip()).rstrip('&').strip()
+
+
+def swift_type_name(cpp_type):
+    cpp_type = _strip_cpp_type_decorations(cpp_type)
+
+    primitive = _swift_primitive_type_name(cpp_type)
+    if primitive:
+        return primitive
+
+    match = re.match(r'^(%s)<(.+)>$' % '|'.join(_SWIFT_WRAPPER_TEMPLATES), cpp_type)
+    if match:
+        # Ref<WebKit::FrameState> -> WebKit.RefFrameState, matching the alias declared for Swift.
+        inner_name = swift_type_name(match.group(2))
+        if '.' not in inner_name:
+            raise UnmappableSwiftType("Cannot derive the Swift name of '%s': '%s' has no namespace to "
+                                      "hang the alias off." % (cpp_type, match.group(2)))
+        namespace, inner = inner_name.rsplit('.', 1)
+        return '%s.%s%s' % (namespace, match.group(1), inner)
+
+    match = re.match(r'^([A-Za-z_][A-Za-z_0-9]*)::([A-Za-z_][A-Za-z_0-9]*)$', cpp_type)
+    if match:
+        return '%s.%s' % (match.group(1), match.group(2))
+
+    # .messages.in namespaces everything except WTF, which it writes unqualified: String, URL,
+    # Seconds and so on. A non-WTF unqualified typedef would produce a Swift compile error naming
+    # the type, rather than anything silent.
+    if re.match(r'^[A-Za-z_][A-Za-z_0-9]*$', cpp_type):
+        return 'WTF.%s' % cpp_type
+
+    raise UnmappableSwiftType(
+        "Cannot derive the Swift name of '%s'. Either give it an alias following the existing "
+        "convention (Ref<NS::T> as NS::RefT) or teach swift_type_name() about it." % cpp_type)
+
+
+def _cpp_type_with_qualified_templates(cpp_type):
+    cpp_type = _strip_cpp_type_decorations(cpp_type)
+    match = re.match(r'^(%s)<(.+)>$' % '|'.join(_SWIFT_WRAPPER_TEMPLATES), cpp_type)
+    if match:
+        return 'WTF::%s<%s>' % (match.group(1), _cpp_type_with_qualified_templates(match.group(2)))
+    return cpp_type
+
+
+# Swift cannot spell Ref<WebKit::FrameState>, so it names an alias instead. Emit the aliases the
+# generated Swift needs rather than expecting them to be declared - and kept in step - by hand.
+def swift_type_alias(cpp_type):
+    cpp_type = _strip_cpp_type_decorations(cpp_type)
+    if not re.match(r'^(%s)<' % '|'.join(_SWIFT_WRAPPER_TEMPLATES), cpp_type):
+        return None
+    try:
+        namespace, alias = swift_type_name(cpp_type).split('.', 1)
+    except UnmappableSwiftType:
+        return None
+    return (namespace, alias, _cpp_type_with_qualified_templates(cpp_type))
+
+
+def swift_type_aliases(receiver):
+    aliases = {}
+    for message in receiver.messages:
+        for parameter in list(message.parameters) + list(message.reply_parameters or []):
+            alias = swift_type_alias(parameter.type)
+            if alias:
+                aliases.setdefault(alias[0], {})[alias[1]] = alias[2]
+    return aliases
+
+
+# The generated trampoline that catches a failed message check on behalf of a throwing Swift handler.
+# It lives on <Receiver>WeakRef because Swift does not export extension members to C++ and a
+# generator cannot add members to the hand-written receiver class.
+def swift_trampoline_function(receiver, message):
+    return '%sWeakRef::dispatch%s' % (receiver.name, message.name)
+
+
+# The object the generated C++ dispatches through, and the function it calls on it.
+def swift_dispatch_target_and_function(receiver, message):
+    if generates_swift_trampoline(receiver, message):
+        return ('m_handler.get()', swift_trampoline_function(receiver, message))
+    return ('target.get()', handler_function(receiver, message))
+
+
+def generates_swift_trampoline(receiver, message):
+    return bool(receiver.swift_receiver or receiver.swift_receiver_build_enabled_by) and not message.is_async_reply
+
+
+def handler_function_name(message):
     if message.name.startswith('URL'):
-        return '%s::%s' % (receiver.name, 'url' + message.name[3:])
+        return 'url' + message.name[3:]
     if message.name.startswith('GPU'):
-        return '%s::%s' % (receiver.name, 'gpu' + message.name[3:])
-    return '%s::%s' % (receiver.receiver_name if receiver.receiver_name else receiver.name, message.name[0].lower() + message.name[1:])
+        return 'gpu' + message.name[3:]
+    return message.name[0].lower() + message.name[1:]
+
+
+def handler_function(receiver, message):
+    if message.name.startswith('URL') or message.name.startswith('GPU'):
+        return '%s::%s' % (receiver.name, handler_function_name(message))
+    return '%s::%s' % (receiver.receiver_name if receiver.receiver_name else receiver.name, handler_function_name(message))
 
 def generate_enabled_by(receiver, enabled_by, enabled_by_conjunction):
     conjunction = ' %s ' % (enabled_by_conjunction or '&&')
@@ -983,15 +1146,16 @@ def generate_runtime_enablement(receiver, message):
 
 
 def async_message_statement(receiver, message):
-    def append_with_dispatch_function_args_and_particular_target_name(receiver, result, pattern, target_name):
+    def append_with_dispatch_function_args_and_particular_target_name(receiver, result, pattern, target_name, dispatched_function):
         if receiver.has_attribute(NOT_USING_IPC_CONNECTION_ATTRIBUTE) and message.reply_parameters is not None and not message.has_attribute(SYNCHRONOUS_ATTRIBUTE):
-            dispatch_function_args = ['decoder', 'WTF::move(replyHandler)', target_name, '&%s' % handler_function(receiver, message)]
+            dispatch_function_args = ['decoder', 'WTF::move(replyHandler)', target_name, '&%s' % dispatched_function]
         else:
-            dispatch_function_args = ['decoder', target_name, '&%s' % handler_function(receiver, message)]
+            dispatch_function_args = ['decoder', target_name, '&%s' % dispatched_function]
         result.append(pattern % (', '.join(dispatch_function_args)))
 
     def append_with_dispatch_function_args(receiver, result, pattern):
-        if_swift_enabled(receiver, result, lambda x: append_with_dispatch_function_args_and_particular_target_name(receiver, x, pattern, 'target.get()'), lambda x: append_with_dispatch_function_args_and_particular_target_name(receiver, x, pattern, 'this'))
+        swift_target, swift_function = swift_dispatch_target_and_function(receiver, message)
+        if_swift_enabled(receiver, result, lambda x: append_with_dispatch_function_args_and_particular_target_name(receiver, x, pattern, swift_target, swift_function), lambda x: append_with_dispatch_function_args_and_particular_target_name(receiver, x, pattern, 'this', handler_function(receiver, message)))
 
     dispatch_function = 'handleMessage'
     if message.reply_parameters is not None and not message.has_attribute(SYNCHRONOUS_ATTRIBUTE):
@@ -1064,10 +1228,11 @@ def sync_message_statement(receiver, message):
     else:
         result.append('    if (decoder.messageName() == Messages::%s::%s::name()) {\n' % (receiver.name, message.name))
 
-    def append_call_with_target_name(result, target_name):
-        result.append('        IPC::%s<Messages::%s::%s>(connection, decoder%s, %s, &%s);\n' % (dispatch_function, receiver.name, message.name, maybe_reply_encoder, target_name, handler_function(receiver, message)))
+    def append_call_with_target_name(result, target_name, dispatched_function):
+        result.append('        IPC::%s<Messages::%s::%s>(connection, decoder%s, %s, &%s);\n' % (dispatch_function, receiver.name, message.name, maybe_reply_encoder, target_name, dispatched_function))
 
-    if_swift_enabled(receiver, result, lambda x: append_call_with_target_name(x, 'target.get()'), lambda x: append_call_with_target_name(x, 'this'), )
+    swift_target, swift_function = swift_dispatch_target_and_function(receiver, message)
+    if_swift_enabled(receiver, result, lambda x: append_call_with_target_name(x, swift_target, swift_function), lambda x: append_call_with_target_name(x, 'this', handler_function(receiver, message)), )
     result.append('        return;\n')
     result.append('    }\n')
     return result
@@ -1158,6 +1323,7 @@ def headers_for_type(type, for_implementation_file=False):
         'Inspector::FrameResource': ['<WebCore/InspectorResourceUtilities.h>'],
         'Inspector::FrameResourceData': ['<WebCore/InspectorResourceUtilities.h>'],
         'Inspector::FrontendChannel::ConnectionType': ['<JavaScriptCore/InspectorFrontendChannel.h>'],
+        'Inspector::InitiatorData': ['<WebCore/InspectorResourceUtilities.h>'],
         'Inspector::InspectorTargetType': ['<JavaScriptCore/InspectorTarget.h>'],
         'Inspector::ResourceType': ['<WebCore/InspectorResourceType.h>'],
         'Inspector::SearchMatch': ['<WebCore/InspectorResourceUtilities.h>'],
@@ -1327,6 +1493,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::HighlightVisibility': ['<WebCore/HighlightVisibility.h>'],
         'WebCore::IFrameUnloadReason': ['<WebCore/LocalFrameLoaderClient.h>'],
         'WebCore::InterpolationQuality': ['<WebCore/GraphicsTypes.h>'],
+        'WebCore::ImageBufferTransferHandle': ['<WebCore/ImageBuffer.h>'],
         'WebCore::ImageBufferParameters': ['<WebCore/ImageBuffer.h>'],
         'WebCore::ImageDecoderFrameInfo': ['<WebCore/ImageDecoder.h>'],
         'WebCore::ImageDecodingError': ['<WebCore/ImageUtilities.h>'],
@@ -1351,12 +1518,14 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::LineJoin': ['<WebCore/GraphicsTypes.h>'],
         'WebCore::PackedColor::RGBA': ['<WebCore/ColorTypes.h>'],
         'WebCore::PaginationMode': ['<WebCore/Pagination.h>'],
+        'WebCore::ImageBufferTransferIdentifierID': ['"GeneratedSerializers.h"'],
         'WebCore::PlatformLayerIdentifierID': ['"GeneratedSerializers.h"'],
         'WebCore::PlatformMediaSessionRemoteControlCommandType': ['<WebCore/PlatformMediaSession.h>'],
         'WebCore::PlatformMediaSessionRemoteCommandArgument': ['<WebCore/PlatformMediaSession.h>'],
         'WebCore::PlayingToAutomotiveHeadUnit': ['<WebCore/MediaSessionHelperIOS.h>'],
         'WebCore::PlaybackSessionModelExternalPlaybackTargetType': ['<WebCore/PlaybackSessionModel.h>'],
         'WebCore::QualifiedMediaSessionIdentifier': ['<WebCore/ProcessQualified.h>', '<WebCore/MediaSessionIdentifier.h>', '<wtf/ObjectIdentifier.h>'],
+        'WebCore::QualifiedPageIdentifier': ['<WebCore/ProcessQualified.h>', '<WebCore/PageIdentifier.h>', '<wtf/ObjectIdentifier.h>'],
         'WebCore::LockBackForwardList': ['<WebCore/FrameLoaderTypes.h>'],
         'WebCore::MediaPlaybackTargetMockState': ['<WebCore/MediaPlaybackTargetMock.h>'],
         'WebCore::MediaPlayerBufferingPolicy': ['<WebCore/MediaPlayerEnums.h>'],
@@ -1414,7 +1583,6 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::PluginInfo': ['<WebCore/PluginData.h>'],
         'WebCore::PolicyAction': ['<WebCore/FrameLoaderTypes.h>'],
         'WebCore::PortalActionKind': ['<WebCore/PortalAction.h>'],
-        'WebCore::PortalTransformKind': ['<WebCore/PortalTransform.h>'],
         'WebCore::NonSerializedDataIdentifier': ['<WebCore/NonSerializedDataIdentifier.h>'],
         'WebCore::PreserveResolution': ['<WebCore/ImageBufferBackend.h>'],
         'WebCore::ProcessIdentifier': ['<WebCore/ProcessIdentifier.h>'],
@@ -1470,6 +1638,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::SharedWorkerObjectIdentifierID': ['"GeneratedSerializers.h"'],
         'WebCore::ShareDataWithParsedURL': ['<WebCore/ShareData.h>'],
         'WebCore::ShouldContinuePolicyCheck': ['<WebCore/FrameLoaderTypes.h>'],
+        'WebCore::ShouldDiscardAlpha': ['<WebCore/GraphicsContext.h>'],
         'WebCore::ShouldFocusElement': ['<WebCore/FocusControllerTypes.h>'],
         'WebCore::ShouldGoToHistoryItem': ['<WebCore/LocalFrameLoaderClient.h>'],
         'WebCore::ShouldNotifyWhenResolved': ['<WebCore/ServiceWorkerTypes.h>'],
@@ -1525,7 +1694,9 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::WritingTools::TextSuggestion::ID': ['<WebCore/WritingToolsTypes.h>'],
         'WebCore::WritingTools::TextSuggestionState': ['<WebCore/WritingToolsTypes.h>'],
         'WebCore::UsedLegacyTLS': ['<WebCore/ResourceResponseBase.h>'],
+        'WebCore::UsedPortalTransform': ['<WebCore/PortalTransform.h>'],
         'WebCore::VideoFrameRotation': ['<WebCore/VideoFrame.h>'],
+        'WebCore::GPUVideoEncoderFrameInfo': ['<WebCore/GPUVideoEncoder.h>'],
         'WebCore::VideoPlaybackQualityMetrics': ['<WebCore/VideoPlaybackQualityMetrics.h>'],
         'WebCore::VideoPresetData': ['<WebCore/VideoPreset.h>'],
         'WebCore::JSHandleIdentifier': ['<WebCore/WebKitJSHandle.h>'],
@@ -1615,9 +1786,11 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::PageGroupIdentifier': ['"IdentifierTypes.h"'],
         'WebKit::PDFAccessibilityDisplayModeState': ['"PDFAccessibilityDisplayModeState.h"'],
         'WebKit::PDFPluginDisplayMode': ['"PDFDisplayMode.h"'],
+        'WebKit::PolicyListenerIdentifier': ['"PolicyListenerIdentifier.h"'],
         'WebKit::RealmIdentifier': ['"IdentifierTypes.h"'],
         'WebKit::PaymentSetupConfiguration': ['"PaymentSetupConfigurationWebKit.h"'],
         'WebKit::PaymentSetupFeatures': ['"ApplePayPaymentSetupFeaturesWebKit.h"'],
+        'WebKit::PrepareSelectionForContextMenuResult': ['"RevealItem.h"'],
         'WebKit::ImageBufferSetPrepareBufferForDisplayInputData': ['"PrepareBackingStoreBuffersData.h"'],
         'WebKit::ImageBufferSetPrepareBufferForDisplayOutputData': ['"PrepareBackingStoreBuffersData.h"'],
         'WebKit::WebRTCNetwork::EcnMarking': ['"RTCNetwork.h"'],
@@ -1634,6 +1807,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::SandboxExtensionHandle': ['"SandboxExtension.h"'],
         'WebKit::ScriptTrackingPrivacyHost': ['"ScriptTrackingPrivacyFilter.h"'],
         'WebKit::ScriptTrackingPrivacyRules': ['"ScriptTrackingPrivacyFilter.h"'],
+        'WebKit::SelectionExtentAnchor': ['"GestureTypes.h"'],
         'WebKit::SelectionFlags': ['"GestureTypes.h"'],
         'WebKit::SelectionTouch': ['"GestureTypes.h"'],
         'WebKit::SelectWithGestureResult': ['"GestureTypes.h"'],
@@ -1732,7 +1906,6 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::WebUserStyleSheetData': ['"WebUserContentControllerDataTypes.h"'],
         'WTF::UnixFileDescriptor': ['<wtf/unix/UnixFileDescriptor.h>'],
         'WTF::SystemMemoryPressureStatus': ['<wtf/MemoryPressureHandler.h>'],
-        'webrtc::WebKitEncodedFrameInfo': ['"RTCWebKitEncodedFrameInfo.h"'],
     }
 
     headers = []
@@ -1962,8 +2135,8 @@ def generate_message_handler(receiver):
     if receiver.has_attribute(STREAM_ATTRIBUTE):
         append_with_potentially_swiftified_classname(receiver, result, 'void %s::didReceiveStreamMessage(IPC::StreamServerConnection& connection, IPC::Decoder& decoder)\n')
         result.append('{\n')
-        assert(not receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE))
-        assert(not receiver.has_attribute(WANTS_ASYNC_DISPATCH_MESSAGE_ATTRIBUTE))
+        assert not receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE)
+        assert not receiver.has_attribute(WANTS_ASYNC_DISPATCH_MESSAGE_ATTRIBUTE)
         result += generate_target_and_enabled_by_statements(receiver, receiver.messages)
         result += async_message_statements
         result += sync_message_statements
@@ -2082,6 +2255,17 @@ def generate_message_handler(receiver):
     result.append('\n')
     result.append('} // namespace WebKit\n')
 
+    def append_complete_with_default_reply_definitions(result):
+        reply_messages = [x for x in receiver.messages if x.reply_parameters is not None]
+        if not reply_messages:
+            return
+        result.append('\n')
+        result.append('namespace CompletionHandlers {\nnamespace %s {\n\n' % receiver.name)
+        result.append('\n\n'.join([message_to_complete_with_default_reply_definition(receiver, x) for x in messages_with_distinct_reply_types(receiver)]))
+        result.append('\n\n')
+        result.append('} // namespace %s\n} // namespace CompletionHandlers\n' % receiver.name)
+    if_swift_enabled(receiver, result, append_complete_with_default_reply_definitions, None)
+
     result.append('\n')
     result.append('#if ENABLE(IPC_TESTING_API)\n')
     result.append('\n')
@@ -2177,6 +2361,50 @@ def generate_swift_message_handler(receiver):
     result.append('    func getMessageTarget() -> %s? {\n' % (class_name))
     result.append('        target\n')
     result.append('    }\n')
+
+    # A Swift handler cannot throw across the C++ boundary - swiftc will not represent a throwing
+    # function in C++ at all - so IPC dispatch is pointed at one of these instead. Each catches a
+    # failed message check on the handler's behalf, and supplies the reply if the message has one.
+    for message in receiver.messages:
+        if not generates_swift_trampoline(receiver, message):
+            continue
+
+        parameters = ['connection: IPC.Connection']
+        arguments = ['connection: connection']
+        for parameter in message.parameters:
+            parameters.append('%s: %s' % (parameter.name, swift_type_name(parameter.type)))
+            arguments.append('%s: %s' % (parameter.name, parameter.name))
+        completion_handler = None
+        if message.reply_parameters is not None:
+            completion_handler = 'CompletionHandlers.%s.%sCompletionHandler' % (receiver.name, message.name)
+            parameters.append('completionHandler: %s' % completion_handler)
+            arguments.append('completionHandler: completionHandler')
+
+        result.append('\n')
+        result.append('    @used\n')
+        result.append('    func dispatch%s(\n' % message.name)
+        result.append(',\n'.join(['        %s' % parameter for parameter in parameters]))
+        result.append('\n    ) {\n')
+        result.append('        guard let target else {\n')
+        result.append('            return\n')
+        result.append('        }\n')
+        call = ['try mayThrowInvalidMessage(']
+        call.append('    target.%s(' % handler_function_name(message))
+        call.append(',\n'.join(['        %s' % argument for argument in arguments]))
+        call.append('    )')
+        call.append(')')
+        result.append('        do {\n')
+        indent = '            '
+        for line in call:
+            result.append('\n'.join(['%s%s' % (indent, part) for part in line.split('\n')]))
+            result.append('\n')
+        result.append('        } catch {\n')
+        result.append('            markMessageInvalid(error, on: connection)\n')
+        if completion_handler:
+            result.append('            CompletionHandlers.%s.completeWithDefaultReply(completionHandler)\n' % receiver.name)
+        result.append('        }\n')
+        result.append('    }\n')
+
     result.append('}\n')
     result.append('\n')
     result.append('extension WebKit.%s {\n' % (message_forwarder_class))

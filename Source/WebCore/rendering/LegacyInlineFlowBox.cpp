@@ -35,6 +35,7 @@
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
+#include "RenderSVGInline.h"
 #include "RenderTableCell.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
@@ -182,7 +183,7 @@ void LegacyInlineFlowBox::deleteLine()
 
 void LegacyInlineFlowBox::removeLineBoxFromRenderObject()
 {
-    downcast<RenderInline>(renderer()).legacyLineBoxes().removeLineBox(this);
+    downcast<RenderSVGInline>(renderer()).legacyLineBoxes().removeLineBox(this);
 }
 
 void LegacyInlineFlowBox::adjustPosition(float dx, float dy)
@@ -260,7 +261,7 @@ void LegacyInlineFlowBox::computeOverflow(LayoutUnit lineTop, LayoutUnit lineBot
             LayoutRect textBoxOverflow(enclosingLayoutRect(textBox.logicalFrameRect()));
             addTextBoxVisualOverflow(textBox, textBoxDataMap, textBoxOverflow);
             logicalVisualOverflow.unite(textBoxOverflow);
-        } else if (is<RenderInline>(child->renderer())) {
+        } else if (child->renderer().isInlineBox()) {
             auto& flow = downcast<LegacyInlineFlowBox>(*child);
             flow.computeOverflow(lineTop, lineBottom, textBoxDataMap);
             if (!flow.renderer().hasSelfPaintingLayer())

@@ -55,13 +55,13 @@ struct _WebKitWebExtensionPrivate {
 #if ENABLE(WK_WEB_EXTENSIONS)
     GRefPtr<GFile> path;
     RefPtr<WebExtension> extension;
-    CString defaultLocale;
-    CString displayName;
-    CString displayShortName;
-    CString displayVersion;
-    CString displayDescription;
-    CString displayActionLabel;
-    CString version;
+    UTF8CString defaultLocale;
+    UTF8CString displayName;
+    UTF8CString displayShortName;
+    UTF8CString displayVersion;
+    UTF8CString displayDescription;
+    UTF8CString displayActionLabel;
+    UTF8CString version;
     GRefPtr<GPtrArray> requestedPermissions;
     GRefPtr<GPtrArray> optionalPermissions;
 #endif
@@ -440,7 +440,7 @@ static void webkit_web_extension_class_init(WebKitWebExtensionClass* klass)
      * WebKitWebExtension:has-content-modification-rules:
      * 
      * Whether the #WebKitWebExtension includes rules used for content modification or blocking.
-     * See webkit_web_extension_get_content_modification_rules() for more details.
+     * See webkit_web_extension_get_has_content_modification_rules() for more details.
      * 
      * Since: 2.52
      */
@@ -467,7 +467,7 @@ static gboolean webkitWebExtensionInitableInit(GInitable* initable, GCancellable
     Ref extension = WebKit::WebExtension::create(extensionPath.get(), internalError);
     if (internalError) {
         g_set_error(error, webkit_web_extension_error_quark(),
-            toWebKitWebExtensionError(internalError->errorCode()), internalError->localizedDescription().utf8().data(), nullptr);
+            toWebKitWebExtensionError(internalError->errorCode()), internalError->localizedDescription().utf8().legacyCStringPointer(), nullptr);
         return FALSE;
     }
 
@@ -497,7 +497,7 @@ WebKitWebExtension* webkitWebExtensionCreate(HashMap<String, GRefPtr<GBytes>>&& 
     if (!extension->errors().isEmpty()) {
         Ref internalError = extension->errors().last();
         g_set_error(error, webkit_web_extension_error_quark(),
-            toWebKitWebExtensionError(internalError->errorCode()), internalError->localizedDescription().utf8().data(), nullptr);
+            toWebKitWebExtensionError(internalError->errorCode()), internalError->localizedDescription().utf8().legacyCStringPointer(), nullptr);
     }
 
     WebKitWebExtension* object = WEBKIT_WEB_EXTENSION(g_object_new(WEBKIT_TYPE_WEB_EXTENSION, nullptr));
@@ -559,7 +559,7 @@ const char* webkit_web_extension_get_path(WebKitWebExtension* extension)
  * Get the parsed manifest version, or `0` if there is no
  * version specified in the manifest.
  *
- * A [error@WebExtensionError.UNSUPPORTED_MANIFEST_VERSION] error will be
+ * A %WEBKIT_WEB_EXTENSION_ERROR_UNSUPPORTED_MANIFEST_VERSION error will be
  * reported if the manifest version isn't specified.
  * 
  * Returns: the parsed manifest version.
@@ -609,14 +609,14 @@ const gchar* webkit_web_extension_get_default_locale(WebKitWebExtension* extensi
 
     WebKitWebExtensionPrivate* priv = extension->priv;
     if (!priv->defaultLocale.isNull())
-        return priv->defaultLocale.data();
+        return priv->defaultLocale.legacyCStringPointer();
 
     auto defaultLocale = priv->extension->defaultLocale();
     if (defaultLocale.isEmpty())
         return nullptr;
 
     priv->defaultLocale = defaultLocale.utf8();
-    return priv->defaultLocale.data();
+    return priv->defaultLocale.legacyCStringPointer();
 }
 
 /**
@@ -636,14 +636,14 @@ const gchar* webkit_web_extension_get_display_name(WebKitWebExtension* extension
 
     WebKitWebExtensionPrivate* priv = extension->priv;
     if (!priv->displayName.isNull())
-        return priv->displayName.data();
+        return priv->displayName.legacyCStringPointer();
 
     auto displayName = priv->extension->displayName();
     if (displayName.isEmpty())
         return nullptr;
 
     priv->displayName = displayName.utf8();
-    return priv->displayName.data();
+    return priv->displayName.legacyCStringPointer();
 }
 
 /**
@@ -663,14 +663,14 @@ const gchar* webkit_web_extension_get_display_short_name(WebKitWebExtension* ext
 
     WebKitWebExtensionPrivate* priv = extension->priv;
     if (!priv->displayShortName.isNull())
-        return priv->displayShortName.data();
+        return priv->displayShortName.legacyCStringPointer();
 
     auto displayShortName = priv->extension->displayShortName();
     if (displayShortName.isEmpty())
         return nullptr;
 
     priv->displayShortName = displayShortName.utf8();
-    return priv->displayShortName.data();
+    return priv->displayShortName.legacyCStringPointer();
 }
 
 /**
@@ -690,14 +690,14 @@ const gchar* webkit_web_extension_get_display_version(WebKitWebExtension* extens
 
     WebKitWebExtensionPrivate* priv = extension->priv;
     if (!priv->displayVersion.isNull())
-        return priv->displayVersion.data();
+        return priv->displayVersion.legacyCStringPointer();
 
     auto displayVersion = priv->extension->displayVersion();
     if (displayVersion.isEmpty())
         return nullptr;
 
     priv->displayVersion = displayVersion.utf8();
-    return priv->displayVersion.data();
+    return priv->displayVersion.legacyCStringPointer();
 }
 
 /**
@@ -717,14 +717,14 @@ const gchar* webkit_web_extension_get_display_description(WebKitWebExtension* ex
 
     WebKitWebExtensionPrivate* priv = extension->priv;
     if (!priv->displayDescription.isNull())
-        return priv->displayDescription.data();
+        return priv->displayDescription.legacyCStringPointer();
 
     auto displayDescription = priv->extension->displayDescription();
     if (displayDescription.isEmpty())
         return nullptr;
 
     priv->displayDescription = displayDescription.utf8();
-    return priv->displayDescription.data();
+    return priv->displayDescription.legacyCStringPointer();
 }
 
 /**
@@ -735,7 +735,7 @@ const gchar* webkit_web_extension_get_display_description(WebKitWebExtension* ex
  * 
  * This label serves as a default and should be used to represent the extension in contexts like action sheets or toolbars prior to 
  * the extension being loaded into an extension context.
- * Once the extension is loaded, use the ``actionForTab:`` API to get the tab-specific label.
+ * Once the extension is loaded, a tab-specific label may be used instead.
  * 
  * Returns: (nullable): the localized display action label, or %NULL if there
  * was no display action label specified.
@@ -748,14 +748,14 @@ const gchar* webkit_web_extension_get_display_action_label(WebKitWebExtension* e
 
     WebKitWebExtensionPrivate* priv = extension->priv;
     if (!priv->displayActionLabel.isNull())
-        return priv->displayActionLabel.data();
+        return priv->displayActionLabel.legacyCStringPointer();
 
     auto displayActionLabel = priv->extension->displayActionLabel();
     if (displayActionLabel.isEmpty())
         return nullptr;
 
     priv->displayActionLabel = displayActionLabel.utf8();
-    return priv->displayActionLabel.data();
+    return priv->displayActionLabel.legacyCStringPointer();
 }
 
 /**
@@ -792,8 +792,8 @@ GIcon* webkit_web_extension_get_icon(WebKitWebExtension* extension, gdouble widt
  *
  * Returns the extension's default action icon image for the specified size.
  * This icon serves as a default and should be used to represent the extension in contexts like action sheets or toolbars prior to 
- * the extension being loaded into an extension context. Once the extension is loaded, use the
- * ``actionForTab:`` API to get the tab-specific icon.
+ * the extension being loaded into an extension context. Once the extension is loaded, a tab-specific
+ * icon may be used instead.
  * The returned image will be the best match for the specified size that is available in the extension's action icon set. If no matching icon is available,
  * the method will fall back to the extension's icon.
  * 
@@ -829,14 +829,14 @@ const gchar* webkit_web_extension_get_version(WebKitWebExtension* extension)
 
     WebKitWebExtensionPrivate* priv = extension->priv;
     if (!priv->version.isNull())
-        return priv->version.data();
+        return priv->version.legacyCStringPointer();
 
     auto version = priv->extension->version();
     if (version.isEmpty())
         return nullptr;
 
     priv->version = version.utf8();
-    return priv->version.data();
+    return priv->version.legacyCStringPointer();
 }
 
 /**
@@ -867,7 +867,7 @@ const gchar* const * webkit_web_extension_get_requested_permissions(WebKitWebExt
 
     priv->requestedPermissions = adoptGRef(g_ptr_array_new_with_free_func(g_free));
     for (auto permission : requestedPermissions)
-        g_ptr_array_add(priv->requestedPermissions.get(), g_strdup(permission.utf8().data()));
+        g_ptr_array_add(priv->requestedPermissions.get(), g_strdup(permission.utf8().legacyCStringPointer()));
     g_ptr_array_add(priv->requestedPermissions.get(), nullptr);
 
     return reinterpret_cast<gchar**>(priv->requestedPermissions->pdata);
@@ -902,7 +902,7 @@ const gchar* const * webkit_web_extension_get_optional_permissions(WebKitWebExte
 
     priv->optionalPermissions = adoptGRef(g_ptr_array_new_with_free_func(g_free));
     for (auto permission : optionalPermissions)
-        g_ptr_array_add(priv->optionalPermissions.get(), g_strdup(permission.utf8().data()));
+        g_ptr_array_add(priv->optionalPermissions.get(), g_strdup(permission.utf8().legacyCStringPointer()));
     g_ptr_array_add(priv->optionalPermissions.get(), nullptr);
 
     return reinterpret_cast<gchar**>(priv->optionalPermissions->pdata);
@@ -1048,8 +1048,8 @@ gboolean webkit_web_extension_get_has_persistent_background_content(WebKitWebExt
  * Get whether the extension has script or stylesheet content
  * that can be injected into webpages.
  * 
- * Once the extension is loaded, use the ``hasInjectedContent``
- * property on an extension context, as the injectable content
+ * Once the extension is loaded, use
+ * webkit_web_extension_context_get_has_injected_content(), as the injectable content
  * can change after the extension is loaded.
  * 
  * Returns: `TRUE` if the extension has content that can be
@@ -1073,7 +1073,7 @@ gboolean webkit_web_extension_get_has_injected_content(WebKitWebExtension* exten
  * 
  * The app should provide access to this page through a
  * user interface element, which can be accessed via
- * ``optionsPageURL`` on an extension context.
+ * webkit_web_extension_context_get_options_page_uri().
  * 
  * Returns: `TRUE` if the extension includes a dedicated options
  * page where users can customize settings.
@@ -1096,8 +1096,8 @@ gboolean webkit_web_extension_get_has_options_page(WebKitWebExtension* extension
  * 
  * The app should prompt the user for permission to use
  * the extension's new tab page as the default, which can
- * be accessed via ``overrideNewTabPageURL``
- * on an extension context.
+ * be accessed via
+ * webkit_web_extension_context_get_override_new_tab_page_uri().
  * 
  * Returns: `TRUE` if the extension can specify a custom page
  * that can be displayed when a new tab is opened in the app,
@@ -1120,9 +1120,7 @@ gboolean webkit_web_extension_get_has_override_new_tab_page(WebKitWebExtension* 
  * 
  * These commands should be accessible via keyboard shortcuts,
  * menu items, or other user interface elements provided
- * by the app. The list of commands can be accessed
- * via ``commands`` on an extension context, and
- * invoked via ``performCommand:``.
+ * by the app.
  * 
  * Returns: `TRUE` if the extension contains one or more commands
  * that can be performed by the user.

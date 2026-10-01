@@ -127,7 +127,11 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    void fireOutputDeviceChanged() { m_client.audioOutputDeviceChanged(); }
+    void fireOutputDeviceChanged()
+    {
+        if (RefPtr client = this->client())
+            client->audioOutputDeviceChanged();
+    }
 
 private:
     explicit TestFiringAudioHardwareListener(Client& client)

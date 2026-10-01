@@ -71,7 +71,7 @@ struct _WebKitAutomationSessionPrivate {
     RefPtr<WebAutomationSession> session;
     WebKitApplicationInfo* applicationInfo;
     WebKitWebContext* webContext;
-    CString id;
+    UTF8CString id;
 };
 
 static std::array<unsigned, LAST_SIGNAL> signals;
@@ -89,7 +89,7 @@ public:
 private:
     String sessionIdentifier() const override
     {
-        return String::fromUTF8(m_session->priv->id.data());
+        return String { m_session->priv->id };
     }
 
     void didDisconnectFromRemote(WebAutomationSession&) override
@@ -222,7 +222,7 @@ static void webkitAutomationSessionGetProperty(GObject* object, guint propID, GV
 
     switch (propID) {
     case PROP_ID:
-        g_value_set_string(value, session->priv->id.data());
+        g_value_set_string(value, session->priv->id.legacyCStringPointer());
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propID, paramSpec);
@@ -235,7 +235,7 @@ static void webkitAutomationSessionSetProperty(GObject* object, guint propID, co
 
     switch (propID) {
     case PROP_ID:
-        session->priv->id = g_value_get_string(value);
+        session->priv->id = UTF8CString { byteCast<char8_t>(g_value_get_string(value)) };
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propID, paramSpec);
@@ -249,7 +249,7 @@ static void webkitAutomationSessionConstructed(GObject* object)
     G_OBJECT_CLASS(webkit_automation_session_parent_class)->constructed(object);
 
     session->priv->session = adoptRef(new WebAutomationSession());
-    session->priv->session->setSessionIdentifier(String::fromUTF8(session->priv->id.data()));
+    session->priv->session->setSessionIdentifier(String { session->priv->id });
     session->priv->session->setClient(makeUnique<AutomationSessionClient>(session));
 }
 
@@ -356,19 +356,19 @@ static WebKitNetworkProxyMode parseProxyCapabilities(const Inspector::RemoteInsp
         Vector<const char*> ignoreAddressList;
         ignoreAddressList.reserveInitialCapacity(proxy.ignoreAddressList.size() + 1);
         for (const auto& ignoreAddress : proxy.ignoreAddressList)
-            ignoreAddressList.append(ignoreAddress.utf8().data());
+            ignoreAddressList.append(ignoreAddress.utf8().legacyCStringPointer());
         *settings = webkit_network_proxy_settings_new(nullptr, ignoreAddressList.span().data());
     } else
         *settings = webkit_network_proxy_settings_new(nullptr, nullptr);
 
     if (proxy.ftpURL)
-        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "ftp", proxy.ftpURL->utf8().data());
+        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "ftp", proxy.ftpURL->utf8().legacyCStringPointer());
     if (proxy.httpURL)
-        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "http", proxy.httpURL->utf8().data());
+        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "http", proxy.httpURL->utf8().legacyCStringPointer());
     if (proxy.httpsURL)
-        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "https", proxy.httpsURL->utf8().data());
+        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "https", proxy.httpsURL->utf8().legacyCStringPointer());
     if (proxy.socksURL)
-        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "socks", proxy.socksURL->utf8().data());
+        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "socks", proxy.socksURL->utf8().legacyCStringPointer());
 
     return WEBKIT_NETWORK_PROXY_MODE_CUSTOM;
 }
@@ -390,12 +390,12 @@ WebKitAutomationSession* webkitAutomationSessionCreate(WebKitWebContext* webCont
     }
 
     for (auto& certificate : capabilities.certificates) {
-        GRefPtr<GTlsCertificate> tlsCertificate = adoptGRef(g_tls_certificate_new_from_file(certificate.second.utf8().data(), nullptr));
+        GRefPtr<GTlsCertificate> tlsCertificate = adoptGRef(g_tls_certificate_new_from_file(certificate.second.utf8().legacyCStringPointer(), nullptr));
         if (tlsCertificate) {
 #if ENABLE(2022_GLIB_API)
-            webkit_network_session_allow_tls_certificate_for_host(networkSession, tlsCertificate.get(), certificate.first.utf8().data());
+            webkit_network_session_allow_tls_certificate_for_host(networkSession, tlsCertificate.get(), certificate.first.utf8().legacyCStringPointer());
 #else
-            webkit_web_context_allow_tls_certificate_for_host(webContext, tlsCertificate.get(), certificate.first.utf8().data());
+            webkit_web_context_allow_tls_certificate_for_host(webContext, tlsCertificate.get(), certificate.first.utf8().legacyCStringPointer());
 #endif
         }
     }
@@ -472,7 +472,7 @@ String webkitAutomationSessionGetBrowserVersion(WebKitAutomationSession* session
 const char* webkit_automation_session_get_id(WebKitAutomationSession* session)
 {
     g_return_val_if_fail(WEBKIT_IS_AUTOMATION_SESSION(session), nullptr);
-    return session->priv->id.data();
+    return session->priv->id.legacyCStringPointer();
 }
 
 /**
@@ -508,11 +508,11 @@ void webkit_automation_session_set_application_info(WebKitAutomationSession* ses
  * webkit_automation_session_get_application_info:
  * @session: a #WebKitAutomationSession
  *
- * Get the the previously set #WebKitAutomationSession.
+ * Get the previously set #WebKitApplicationInfo.
  *
- * Get the #WebKitAutomationSession previously set with webkit_automation_session_set_application_info().
+ * Get the #WebKitApplicationInfo previously set with webkit_automation_session_set_application_info().
  *
- * Returns: (transfer none): the #WebKitAutomationSession of @session, or %NULL if no one has been set.
+ * Returns: (transfer none): the #WebKitApplicationInfo of @session, or %NULL if no one has been set.
  *
  * Since: 2.18
  */

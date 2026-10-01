@@ -110,6 +110,15 @@ bool SMILTimeContainer::isPaused() const
     return !!m_pauseTime;
 }
 
+bool SMILTimeContainer::hasAnimations() const
+{
+    for (auto& animations : m_scheduledAnimations.values()) {
+        if (!animations.isEmpty())
+            return true;
+    }
+    return false;
+}
+
 bool SMILTimeContainer::isStarted() const
 {
     return !!m_beginTime;

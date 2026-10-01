@@ -52,6 +52,7 @@
 #include "WebExtensionMenuItem.h"
 #include "WebExtensionMessagePort.h"
 #include "WebExtensionMessageSenderParameters.h"
+#include "WebExtensionNotificationParameters.h"
 #include "WebExtensionPortChannelIdentifier.h"
 #include "WebExtensionRegisteredScriptsSQLiteStore.h"
 #include "WebExtensionStorageAccessLevel.h"
@@ -630,6 +631,7 @@ public:
     void sendTestStarted(id argument);
     void sendTestFinished(id argument);
     void reloadBackgroundContentForTesting();
+    void unloadBackgroundContentForTesting();
 #endif
 
     URL backgroundContentURL();
@@ -775,6 +777,7 @@ private:
 
     bool isBackgroundPage(WebCore::FrameIdentifier) const;
     bool isBackgroundPage(WebPageProxyIdentifier) const;
+    bool isExtensionPage(WebPageProxyIdentifier) const;
     bool NODELETE backgroundContentIsLoaded() const;
 
     bool isNotRunningInTestRunner();
@@ -977,6 +980,13 @@ private:
     void menusRemoveAll(CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void fireMenusClickedEventIfNeeded(const WebExtensionMenuItem&, bool wasChecked, const WebExtensionMenuItemContextParameters&);
 
+#if ENABLE(WK_WEB_EXTENSIONS_NOTIFICATIONS)
+    // Notifications APIs
+    bool isNotificationsMessageAllowed(IPC::Decoder&);
+
+    void notificationsCreate(const WebExtensionNotificationParameters&, CompletionHandler<void()>&&);
+#endif
+
 #if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
     // Offscreen APIs
     bool isOffscreenMessageAllowed(IPC::Decoder&);
@@ -1112,7 +1122,8 @@ private:
     void fireWindowsEventIfNeeded(WebExtensionEventListenerType, std::optional<WebExtensionWindowParameters>);
 
     // webRequest support.
-    bool hasPermissionToSendWebRequestEvent(WebExtensionTab*, const URL& resourceURL, const ResourceLoadInfo&);
+    bool hasPermissionToSendWebRequestEvent(WebExtensionTab*, const URL& resourceURL, const ResourceLoadInfo&, bool isRequestFromExtensionPage);
+    std::optional<std::pair<WebExtensionTabIdentifier, WebExtensionWindowIdentifier>> webRequestEventTabAndWindowIdentifiers(WebPageProxyIdentifier, const URL& resourceURL, const ResourceLoadInfo&);
 
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -1263,6 +1274,10 @@ private:
 
     MenuItemMap m_menuItems;
     MenuItemVector m_mainMenuItems;
+
+#if ENABLE(WK_WEB_EXTENSIONS_NOTIFICATIONS)
+    HashMap<String, WebExtensionNotificationParameters> m_notifications;
+#endif
 
     WebExtensionStorageAccessLevelMap m_storageAccessLevels;
 

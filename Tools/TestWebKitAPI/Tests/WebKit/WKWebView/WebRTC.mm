@@ -29,8 +29,13 @@
 
 #import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/PlatformUtilities.h"
+#import "Helpers/Test.h"
+#import "Helpers/cocoa/MiniTURNServer.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
+#import <WebKit/WKPreferencesPrivate.h>
+#import <WebKit/_WKFeature.h>
+#import <wtf/Function.h>
 
 @interface WebRTCMessageHandler : NSObject <WKScriptMessageHandler>
 - (void)setMessageHandler:(Function<void(WKScriptMessage*)>&&)messageHandler;
@@ -200,6 +205,93 @@ TEST(WebKit2, RTCDataChannelPostMessage)
     isReady = false;
     [webView2 stringByEvaluatingJavaScript:@"closePC1()"];
     TestWebKitAPI::Util::run(&isReady);
+}
+
+TEST(WebKit2, WebRTCTurnAllocationWithDirectDNSDisabled)
+{
+    MiniTURNServer turnServer;
+
+    static constexpr auto pageTemplate =
+    "<html><body><script>"
+    "function runTest(port, transportType) {"
+    "    gatherRelayCandidate(port, transportType);"
+    "}"
+    "async function gatherRelayCandidate(port, transportType) {"
+    "    try {"
+    "        const pc = new RTCPeerConnection({"
+    "            iceServers: [{"
+    "                urls: ["
+    "                    `turn:localhost:${port}?transport=${transportType}`"
+    "                ],"
+    "                username: 'testUser',"
+    "                credential: 'testPass'"
+    "            }],"
+    "            iceTransportPolicy: 'relay'"
+    "        });"
+    "        pc.onicecandidate = (event) => {"
+    "            if (!event.candidate)"
+    "                return;"
+    "            const c = event.candidate.candidate;"
+    "            if (!c.includes(' typ relay '))"
+    "                return;"
+    "            pc.close();"
+    "            window.webkit.messageHandlers.webrtc.postMessage('GOT_RELAY');"
+    "        };"
+    "        pc.createDataChannel('probe');"
+    "        const offer = await pc.createOffer();"
+    "        await pc.setLocalDescription(offer);"
+    "    } catch (e) {"
+    "        window.webkit.messageHandlers.webrtc.postMessage('GOT_ERROR: ' + e.message);"
+    "        pc.close();"
+    "    }"
+    "}"
+    "</script></body></html>"_s;
+
+    HTTPServer server({ { "/"_s, { pageTemplate } } }, HTTPServer::Protocol::Http);
+
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    for (_WKFeature *feature in [WKPreferences _features]) {
+        if ([feature.key isEqualToString:@"WebRTCDNSResolutionBySocketEnabled"])
+            [[configuration preferences] _setEnabled:YES forFeature:feature];
+    }
+
+    RetainPtr messageHandler = adoptNS([[WebRTCMessageHandler alloc] init]);
+    [[configuration userContentController] addScriptMessageHandler:messageHandler.get() name:@"webrtc"];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500) configuration:configuration.get()]);
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    bool gotRelayCandidate = false;
+    RetainPtr<NSString> errorMessage;
+    [messageHandler setMessageHandler:[&gotRelayCandidate, &errorMessage](WKScriptMessage *message) {
+        NSString *body = [message body];
+        if ([body isEqualToString:@"GOT_RELAY"])
+            gotRelayCandidate = true;
+        else
+            errorMessage = body;
+    }];
+
+    [webView loadRequest:server.request()];
+    [webView _test_waitForDidFinishNavigation];
+
+    [webView stringByEvaluatingJavaScript:
+        [NSString stringWithFormat:@"runTest(%u, 'tcp')", turnServer.tcpPort()]];
+    TestWebKitAPI::Util::run(&gotRelayCandidate);
+    EXPECT_NULL(errorMessage.get());
+    EXPECT_TRUE(turnServer.takeRequests().containsIf([](auto& request) {
+        return MiniTURNServer::isStunMethodAllocate(request.method) && request.transport == MiniTURNServer::Transport::Tcp;
+    }));
+
+    errorMessage = { };
+    gotRelayCandidate = false;
+    [webView stringByEvaluatingJavaScript:
+        [NSString stringWithFormat:@"runTest(%u, 'udp')", turnServer.udpPort()]];
+    TestWebKitAPI::Util::run(&gotRelayCandidate);
+    EXPECT_NULL(errorMessage.get());
+    EXPECT_TRUE(turnServer.takeRequests().containsIf([](auto& request) {
+        return MiniTURNServer::isStunMethodAllocate(request.method) && request.transport == MiniTURNServer::Transport::Udp;
+    }));
 }
 
 } // namespace TestWebKitAPI

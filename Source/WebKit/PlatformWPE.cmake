@@ -218,6 +218,7 @@ set(WPE_API_HEADER_TEMPLATES
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURISchemeRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURISchemeResponse.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURIUtilities.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserAgent.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContent.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContentFilterStore.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContentManager.h.in
@@ -240,6 +241,9 @@ if (ENABLE_2022_GLIB_API)
     list(APPEND WPE_API_HEADER_TEMPLATES
         ${WEBKIT_DIR}/UIProcess/API/glib/WebKitNetworkSession.h.in
     )
+    list(APPEND WebKit_SOURCES
+        ${WEBKIT_DIR}/UIProcess/API/glib/WebKitIconLoadingClient.cpp
+    )
 endif ()
 
 if (ENABLE_2022_GLIB_API)
@@ -251,6 +255,7 @@ if (ENABLE_2022_GLIB_API)
     list(APPEND WebKit_SOURCES
         ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtension.cpp
         ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtensionContext.cpp
+        ${WEBKIT_DIR}/UIProcess/API/glib/WebKitWebExtensionMatchPattern.cpp
     )
 endif ()
 

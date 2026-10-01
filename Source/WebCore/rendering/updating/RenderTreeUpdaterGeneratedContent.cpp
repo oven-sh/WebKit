@@ -37,6 +37,7 @@
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
+#include "RenderGlyph.h"
 #include "RenderImage.h"
 #include "RenderQuote.h"
 #include "RenderTextFragment.h"
@@ -117,6 +118,14 @@ void RenderTreeUpdater::GeneratedContent::updateQuotesUpTo(RenderQuote* lastQuot
 
 void RenderTreeUpdater::GeneratedContent::updateCounters()
 {
+    if (m_updater.renderView().hasCounterTreeNeedingUpdate()) {
+        for (auto& renderer : descendantsOfType<RenderElement>(m_updater.renderView())) {
+            if (renderer.hasCounterNodeMap())
+                RenderCounter::destroyCounterNodes(renderer);
+        }
+        m_updater.renderView().setHasCounterTreeNeedingUpdate(false);
+    }
+
     auto update = [&] {
         auto counters = m_updater.renderView().takeCountersNeedingUpdate();
         for (auto& counter : counters)
@@ -178,6 +187,13 @@ static RenderPtr<RenderObject> createContentRenderer(const Style::Content::Quote
 {
     auto contentRenderer = createRenderer<RenderQuote>(document, Style::ComputedStyle::createStyleInheritingFromPseudoStyle(pseudoStyle), value.quote);
     contentRenderer->initializeStyle();
+    return contentRenderer;
+}
+
+static RenderPtr<RenderObject> createContentRenderer(const Style::Content::Glyph& value, const String& altText, Document& document, const Style::ComputedStyle&)
+{
+    auto contentRenderer = createRenderer<RenderGlyph>(document, value.glyph);
+    contentRenderer->setAltText(altText);
     return contentRenderer;
 }
 

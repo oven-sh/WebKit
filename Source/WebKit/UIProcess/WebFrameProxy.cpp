@@ -123,8 +123,6 @@ using namespace WebCore;
 
 class WebPageProxy;
 
-static constexpr Seconds unloadEventsExpirationDelay { 1_s };
-
 class FrameProcessRefWithExpiration : public RefCountedAndCanMakeWeakPtr<FrameProcessRefWithExpiration> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(FrameProcessRefWithExpiration);
 public:
@@ -668,7 +666,7 @@ void WebFrameProxy::prepareForProvisionalLoadInProcess(WebProcessProxy& process,
 
     page->inspectorController().didCreateProvisionalFrame(provisionalFrame);
 
-    auto continuation = [networkProcess = Ref { protect(page->websiteDataStore())->networkProcess() }, process = Ref { process }, mainFrameDomain, weakProvisionalFrame = WeakPtr { m_provisionalFrame }, pageID = page->webPageIDInProcess(process), completionHandler = WTF::move(completionHandler)] () mutable {
+    auto continuation = [page = Ref { *page }, process = Ref { process }, mainFrameDomain, weakProvisionalFrame = WeakPtr { m_provisionalFrame }, pageID = page->webPageIDInProcess(process), completionHandler = WTF::move(completionHandler)] () mutable {
         RefPtr provisionalFrame = weakProvisionalFrame.get();
         bool cancelled = !provisionalFrame || !protect(provisionalFrame->frame())->isConnected();
         if (cancelled) {
@@ -676,7 +674,7 @@ void WebFrameProxy::prepareForProvisionalLoadInProcess(WebProcessProxy& process,
             return;
         }
 
-        networkProcess->addAllowedFirstPartyForCookies(process, mainFrameDomain, LoadedWebArchive::No, [weakProvisionalFrame = WTF::move(weakProvisionalFrame), pageID, completionHandler = WTF::move(completionHandler)] mutable {
+        page->addAllowedFirstPartyForCookies(process, mainFrameDomain, LoadedWebArchive::No, [weakProvisionalFrame = WTF::move(weakProvisionalFrame), pageID, completionHandler = WTF::move(completionHandler)] mutable {
             RefPtr provisionalFrame = weakProvisionalFrame.get();
             bool cancelled = !provisionalFrame || !protect(provisionalFrame->frame())->isConnected();
             if (cancelled) {
@@ -749,10 +747,6 @@ void WebFrameProxy::getFrameInfo(CompletionHandler<void(std::optional<FrameInfoD
         if (!topOrigin.isOpaque() && frameInfo->topOrigin != topOrigin) {
             RELEASE_LOG_ERROR(IPC, "WebFrameProxy::getFrameInfo: topOrigin mismatch");
             frameInfo->topOrigin = WTF::move(topOrigin);
-        }
-        if (frameInfo->certificateInfo != certificateInfo()) {
-            RELEASE_LOG_ERROR(IPC, "WebFrameProxy::getFrameInfo: certificateInfo mismatch");
-            frameInfo->certificateInfo = certificateInfo();
         }
         if (frameInfo->processID != process().processID()) {
             RELEASE_LOG_ERROR(IPC, "WebFrameProxy::getFrameInfo: process ID mismatch");
@@ -915,7 +909,7 @@ Ref<FrameTreeSyncData> WebFrameProxy::calculateFrameTreeSyncData() const
     bool isSecureForPaymentSession = false;
 #endif
 
-    return FrameTreeSyncData::create(isSecureForPaymentSession, securityOrigin(), m_documentSecurityPolicy, m_effectiveSandboxFlags.contains(WebCore::SandboxFlag::Origin), url().protocol().toString(), IntRect { }, ScrollPosition { }, FrameGeometrySyncData { });
+    return FrameTreeSyncData::create(isSecureForPaymentSession, securityOrigin(), m_documentSecurityPolicy, m_effectiveSandboxFlags.contains(WebCore::SandboxFlag::Origin), url().protocol().toString(), IntRect { }, FrameGeometrySyncData { }, FrameViewportInfo { });
 }
 
 Ref<SecurityOrigin> WebFrameProxy::securityOrigin() const

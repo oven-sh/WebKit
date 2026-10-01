@@ -51,7 +51,7 @@ ExceptionScope::~ExceptionScope()
     m_vm.m_topExceptionScope = m_previousScope;
 }
 
-CString ExceptionScope::unexpectedExceptionMessage()
+UTF8CString ExceptionScope::unexpectedExceptionMessage()
 {
     StringPrintStream out;
 
@@ -60,7 +60,7 @@ CString ExceptionScope::unexpectedExceptionMessage()
     out.print(StackTracePrinter { *currentStack, "    " });
 
     if (!m_vm.nativeStackTraceOfLastThrow())
-        return CString();
+        return { };
     
     out.println("The exception was thrown from thread ", *m_vm.throwingThread(), " at:");
     out.print(StackTracePrinter { *m_vm.nativeStackTraceOfLastThrow(), "    " });
@@ -70,7 +70,7 @@ CString ExceptionScope::unexpectedExceptionMessage()
     else
         out.println("non-Error Exception: ", exception()->value());
 
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 #endif // ENABLE(EXCEPTION_SCOPE_VERIFICATION)

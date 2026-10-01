@@ -164,9 +164,9 @@ static ASCIILiteral NODELETE extensionName(GCGLExtension extension)
     return name.literal;
 }
 
-static std::optional<GCGLExtension> extensionEnum(const CString& extension)
+static std::optional<GCGLExtension> extensionEnum(const UTF8CString& extension)
 {
-    if (auto* result = extensionsMapping.tryGet(extension.span()))
+    if (auto* result = extensionsMapping.tryGet(byteCast<char>(extension.span())))
         return *result;
     return std::nullopt;
 }
@@ -197,12 +197,12 @@ bool GraphicsContextGLANGLE::initialize()
     {
         StringView extensionsString { unsafeSpan(byteCast<char>(GL_GetString(GL_EXTENSIONS))) };
         for (auto extension : extensionsString.split(' '))
-            m_extensions.add(extension.span8());
+            m_extensions.add(extension.utf8());
     }
     {
         StringView extensionsString { unsafeSpan(byteCast<char>(GL_GetString(GL_REQUESTABLE_EXTENSIONS_ANGLE))) };
         for (auto extension : extensionsString.split(' '))
-            m_allRequestableExtensions.add(extension.span8());
+            m_allRequestableExtensions.add(extension.utf8());
     }
 
     validateAttributes();
@@ -291,7 +291,7 @@ bool GraphicsContextGLANGLE::initialize()
     auto debugMessageCallback = [](GCGLenum, GCGLenum type, GCGLenum id, GCGLenum severity, GCGLsizei length, const GCGLchar* message, const void* context) {
         auto* gl = reinterpret_cast<const GraphicsContextGLANGLE*>(context);
         if (gl->m_client)
-            gl->m_client->addDebugMessage(type, id, severity, CString { unsafeMakeSpan(message, length) });
+            gl->m_client->addDebugMessage(type, id, severity, byteCast<char8_t>(unsafeMakeSpan(message, length)));
     };
     GL_DebugMessageCallbackKHR(debugMessageCallback, this);
 
@@ -988,13 +988,13 @@ void GraphicsContextGLANGLE::attachShader(PlatformGLObject program, PlatformGLOb
     GL_AttachShader(program, shader);
 }
 
-void GraphicsContextGLANGLE::bindAttribLocation(PlatformGLObject program, GCGLuint index, const CString& name)
+void GraphicsContextGLANGLE::bindAttribLocation(PlatformGLObject program, GCGLuint index, const UTF8CString& name)
 {
     ASSERT(program);
     if (!makeContextCurrent())
         return;
 
-    GL_BindAttribLocation(program, index, name.data());
+    GL_BindAttribLocation(program, index, name.legacyCStringPointer());
 }
 
 void GraphicsContextGLANGLE::bindBuffer(GCGLenum target, PlatformGLObject buffer)
@@ -1535,7 +1535,7 @@ Vector<GCGLAttribActiveInfo> GraphicsContextGLANGLE::activeAttribs(PlatformGLObj
             return { };
         }
         name.resize(length);
-        result.append(GCGLAttribActiveInfo { name.data(), type, GL_GetAttribLocation(program, name.data()) });
+        result.append(GCGLAttribActiveInfo { UTF8CString { name }, type, GL_GetAttribLocation(program, name.data()) });
     }
     return result;
 }
@@ -1564,7 +1564,7 @@ Vector<GCGLUniformActiveInfo> GraphicsContextGLANGLE::activeUniforms(PlatformGLO
             return { };
         }
         name.resize(length);
-        info.name = name;
+        info.name = UTF8CString { name };
         if (m_isForWebGL2) {
             GL_GetActiveUniformsiv(program, 1, &index, GL_UNIFORM_BLOCK_INDEX, &info.blockIndex);
             GL_GetActiveUniformsiv(program, 1, &index, GL_UNIFORM_OFFSET, &info.offset);
@@ -1621,11 +1621,11 @@ GCGLErrorCodeSet GraphicsContextGLANGLE::getErrors()
     return std::exchange(m_errors, { });
 }
 
-CString GraphicsContextGLANGLE::getString(GCGLenum name)
+UTF8CString GraphicsContextGLANGLE::getString(GCGLenum name)
 {
     if (!makeContextCurrent())
         return { };
-    return CString { byteCast<char>(GL_GetString(name)) };
+    return UTF8CString { byteCast<char8_t>(GL_GetString(name)) };
 }
 
 void GraphicsContextGLANGLE::hint(GCGLenum target, GCGLenum mode)
@@ -1771,14 +1771,14 @@ void GraphicsContextGLANGLE::scissor(GCGLint x, GCGLint y, GCGLsizei width, GCGL
     GL_Scissor(x, y, width, height);
 }
 
-void GraphicsContextGLANGLE::shaderSource(PlatformGLObject shader, const CString& source)
+void GraphicsContextGLANGLE::shaderSource(PlatformGLObject shader, const UTF8CString& source)
 {
     ASSERT(shader);
 
     if (!makeContextCurrent())
         return;
 
-    const char* sources = source.data();
+    const char* sources = source.legacyCStringPointer();
     int lengths = source.length();
     GL_ShaderSource(shader, 1, &sources, &lengths);
 }
@@ -2223,19 +2223,19 @@ GCGLint GraphicsContextGLANGLE::getProgrami(PlatformGLObject program, GCGLenum p
     return value;
 }
 
-CString GraphicsContextGLANGLE::getProgramInfoLog(PlatformGLObject program)
+UTF8CString GraphicsContextGLANGLE::getProgramInfoLog(PlatformGLObject program)
 {
     if (!makeContextCurrent())
         return { };
     GLint maxLength = 0;
     GL_GetProgramiv(program, GL_INFO_LOG_LENGTH, &maxLength);
     if (!maxLength)
-        return "";
-    Vector<char, 64> buffer(maxLength); // GL_INFO_LOG_LENGTH includes nul termination.
+        return ""_s;
+    Vector<char8_t, 64> buffer(maxLength); // GL_INFO_LOG_LENGTH includes nul termination.
     GLsizei length = 0;
-    GL_GetProgramInfoLog(program, maxLength, &length, buffer.mutableSpan().data());
+    GL_GetProgramInfoLog(program, maxLength, &length, byteCast<char>(buffer.mutableSpan()).data());
     ASSERT(length == maxLength - 1);
-    return buffer.subspan(0, length);
+    return UTF8CString { buffer.subspan(0, length) };
 }
 
 GCGLint GraphicsContextGLANGLE::getRenderbufferParameteri(GCGLenum target, GCGLenum pname)
@@ -2257,19 +2257,19 @@ GCGLint GraphicsContextGLANGLE::getShaderi(PlatformGLObject shader, GCGLenum pna
     return value;
 }
 
-CString GraphicsContextGLANGLE::getShaderInfoLog(PlatformGLObject shader)
+UTF8CString GraphicsContextGLANGLE::getShaderInfoLog(PlatformGLObject shader)
 {
     if (!makeContextCurrent())
         return { };
     GLint maxLength = 0;
     GL_GetShaderiv(shader, GL_INFO_LOG_LENGTH, &maxLength);
     if (!maxLength)
-        return "";
-    Vector<char, 64> buffer(maxLength); // GL_INFO_LOG_LENGTH includes nul termination.
+        return ""_s;
+    Vector<char8_t, 64> buffer(maxLength); // GL_INFO_LOG_LENGTH includes nul termination.
     GLsizei length = 0;
-    GL_GetShaderInfoLog(shader, maxLength, &length, buffer.mutableSpan().data());
+    GL_GetShaderInfoLog(shader, maxLength, &length, byteCast<char>(buffer.mutableSpan()).data());
     ASSERT(length == maxLength - 1);
-    return buffer.subspan(0, length);
+    return UTF8CString { buffer.subspan(0, length) };
 }
 
 GCGLfloat GraphicsContextGLANGLE::getTexParameterf(GCGLenum target, GCGLenum pname)
@@ -2481,16 +2481,16 @@ void GraphicsContextGLANGLE::vertexAttribDivisor(GCGLuint index, GCGLuint diviso
         GL_VertexAttribDivisorANGLE(index, divisor);
 }
 
-GCGLuint GraphicsContextGLANGLE::getUniformBlockIndex(PlatformGLObject program, const CString& uniformBlockName)
+GCGLuint GraphicsContextGLANGLE::getUniformBlockIndex(PlatformGLObject program, const UTF8CString& uniformBlockName)
 {
     ASSERT(program);
     if (!makeContextCurrent())
         return GL_INVALID_INDEX;
 
-    return GL_GetUniformBlockIndex(program, uniformBlockName.data());
+    return GL_GetUniformBlockIndex(program, uniformBlockName.legacyCStringPointer());
 }
 
-CString GraphicsContextGLANGLE::getActiveUniformBlockName(PlatformGLObject program, GCGLuint uniformBlockIndex)
+UTF8CString GraphicsContextGLANGLE::getActiveUniformBlockName(PlatformGLObject program, GCGLuint uniformBlockIndex)
 {
     ASSERT(program);
     if (!makeContextCurrent())
@@ -2498,12 +2498,12 @@ CString GraphicsContextGLANGLE::getActiveUniformBlockName(PlatformGLObject progr
     GLint maxLength = 0;
     GL_GetProgramiv(program, GL_ACTIVE_UNIFORM_BLOCK_MAX_NAME_LENGTH, &maxLength);
     // maxLength == 0 is ok, trying to access uniformBlockIndex in below call sets the consistent error.
-    Vector<char, 64> buffer(maxLength); // GL_ACTIVE_UNIFORM_BLOCK_MAX_NAME_LENGTH includes nul termination.
+    Vector<char8_t, 64> buffer(maxLength); // GL_ACTIVE_UNIFORM_BLOCK_MAX_NAME_LENGTH includes nul termination.
     GLsizei length = 0;
-    GL_GetActiveUniformBlockName(program, uniformBlockIndex, maxLength, &length, buffer.mutableSpan().data());
+    GL_GetActiveUniformBlockName(program, uniformBlockIndex, maxLength, &length, byteCast<char>(buffer.mutableSpan()).data());
     if (!length)
         return { };
-    return buffer.subspan(0, length);
+    return UTF8CString { buffer.subspan(0, length) };
 }
 
 void GraphicsContextGLANGLE::uniformBlockBinding(PlatformGLObject program, GCGLuint uniformBlockIndex, GCGLuint uniformBlockBinding)
@@ -2604,12 +2604,12 @@ void GraphicsContextGLANGLE::endTransformFeedback()
     GL_EndTransformFeedback();
 }
 
-void GraphicsContextGLANGLE::transformFeedbackVaryings(PlatformGLObject program, const Vector<CString>& varyings, GCGLenum bufferMode)
+void GraphicsContextGLANGLE::transformFeedbackVaryings(PlatformGLObject program, const Vector<UTF8CString>& varyings, GCGLenum bufferMode)
 {
     if (!makeContextCurrent())
         return;
-    Vector<const char*> pointersToVaryings = varyings.map([](const CString& varying) {
-        return varying.data();
+    Vector<const char*> pointersToVaryings = varyings.map([](const UTF8CString& varying) {
+        return varying.legacyCStringPointer();
     });
     GL_TransformFeedbackVaryings(program, pointersToVaryings.size(), pointersToVaryings.span().data(), bufferMode);
 }
@@ -2621,14 +2621,14 @@ std::optional<GCGLTransformFeedbackActiveInfo> GraphicsContextGLANGLE::getTransf
     GLsizei maxLength = 0;
     GL_GetProgramiv(program, GL_TRANSFORM_FEEDBACK_VARYING_MAX_LENGTH, &maxLength);
     // maxLength == 0 is ok, trying to access index in below call sets the consistent error.
-    Vector<char, 64> buffer(maxLength); // GL_TRANSFORM_FEEDBACK_VARYING_MAX_LENGTH includes nul termination.
+    Vector<char8_t, 64> buffer(maxLength); // GL_TRANSFORM_FEEDBACK_VARYING_MAX_LENGTH includes nul termination.
     GLsizei length = 0;
     GLsizei size = 0;
     GLenum type = 0;
-    GL_GetTransformFeedbackVarying(program, index, maxLength, &length, &size, &type, buffer.mutableSpan().data());
+    GL_GetTransformFeedbackVarying(program, index, maxLength, &length, &size, &type, byteCast<char>(buffer.mutableSpan()).data());
     if (!length)
         return std::nullopt;
-    return GCGLTransformFeedbackActiveInfo { buffer.subspan(0, length), type, size };
+    return GCGLTransformFeedbackActiveInfo { UTF8CString { buffer.subspan(0, length) }, type, size };
 }
 
 void GraphicsContextGLANGLE::bindBufferBase(GCGLenum target, GCGLuint index, PlatformGLObject buffer)
@@ -2699,12 +2699,12 @@ void GraphicsContextGLANGLE::copyTexSubImage3D(GCGLenum target, GCGLint level, G
         GL_BindFramebuffer(framebufferTarget, m_multisampleFBO);
 }
 
-GCGLint GraphicsContextGLANGLE::getFragDataLocation(PlatformGLObject program, const CString& name)
+GCGLint GraphicsContextGLANGLE::getFragDataLocation(PlatformGLObject program, const UTF8CString& name)
 {
     if (!makeContextCurrent())
         return -1;
 
-    return GL_GetFragDataLocation(program, name.data());
+    return GL_GetFragDataLocation(program, name.legacyCStringPointer());
 }
 
 void GraphicsContextGLANGLE::uniform1ui(GCGLint location, GCGLuint v0)
@@ -3222,19 +3222,19 @@ bool GraphicsContextGLANGLE::isExtensionEnabledImpl(ASCIILiteral name) const
     return m_extensions.contains(name) || m_allEnabledRequestableExtensions.contains(name);
 }
 
-CString GraphicsContextGLANGLE::getTranslatedShaderSourceANGLE(PlatformGLObject shader)
+UTF8CString GraphicsContextGLANGLE::getTranslatedShaderSourceANGLE(PlatformGLObject shader)
 {
     if (!makeContextCurrent())
         return { };
     GLint maxLength = 0;
     GL_GetShaderivRobustANGLE(shader, GL_TRANSLATED_SHADER_SOURCE_LENGTH_ANGLE, 1, nullptr, &maxLength);
     if (!maxLength)
-        return "";
-    Vector<char, 64> buffer(maxLength); // GL_TRANSLATED_SHADER_SOURCE_LENGTH_ANGLE includes nul termination.
+        return ""_s;
+    Vector<char8_t, 64> buffer(maxLength); // GL_TRANSLATED_SHADER_SOURCE_LENGTH_ANGLE includes nul termination.
     GLsizei length = 0;
-    GL_GetTranslatedShaderSourceANGLE(shader, maxLength, &length, buffer.mutableSpan().data());
+    GL_GetTranslatedShaderSourceANGLE(shader, maxLength, &length, byteCast<char>(buffer.mutableSpan()).data());
     ASSERT(length == maxLength - 1);
-    return buffer.subspan(0, length);
+    return UTF8CString { buffer.subspan(0, length) };
 }
 
 void GraphicsContextGLANGLE::drawBuffersEXT(std::span<const GCGLenum> bufs)

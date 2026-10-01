@@ -37,6 +37,7 @@
 #import <wtf/FileSystem.h>
 #import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
+#import <wtf/text/CString.h>
 
 #define DOWNLOAD_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, "[downloadID=%" PRIu64 "] Download::" fmt, m_downloadID.toUInt64(), ##__VA_ARGS__)
 #define DOWNLOAD_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(Network, "[downloadID=%" PRIu64 "] Download::" fmt, m_downloadID.toUInt64(), ##__VA_ARGS__)
@@ -82,7 +83,7 @@ void Download::resume(std::span<const uint8_t> resumeData, const String& path, S
 #if HAVE(MODERN_DOWNLOADPROGRESS)
     if (RetainPtr<NSData> placeholderURLBookmark = [dictionary objectForKey:@"ResumePlaceholderURLBookmarkData"]) {
         RetainPtr nsActivityAccessToken = toNSData(activityAccessToken);
-        RetainPtr pathString  = adoptNS([[NSString alloc] initWithUTF8String:WTF::FileSystemImpl::fileSystemRepresentation(path).data()]);
+        RetainPtr pathString = WTF::FileSystemImpl::fileSystemRepresentation(path).createNSString();
         RetainPtr destinationURL = adoptNS([[NSURL alloc] initFileURLWithPath:pathString.get() isDirectory:NO]);
 
         BOOL bookmarkDataIsStale = NO;

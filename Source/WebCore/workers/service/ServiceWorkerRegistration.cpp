@@ -53,6 +53,7 @@
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
+#include <wtf/text/TextStream.h>
 
 #define REGISTRATION_RELEASE_LOG(fmt, ...) RELEASE_LOG(ServiceWorker, "%p - ServiceWorkerRegistration::" fmt, this, ##__VA_ARGS__)
 #define REGISTRATION_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(ServiceWorker, "%p - ServiceWorkerRegistration::" fmt, this, ##__VA_ARGS__)
@@ -78,7 +79,7 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(ScriptExecutionContext& con
     , m_registrationData(WTF::move(registrationData))
     , m_container(WTF::move(container))
 {
-    LOG(ServiceWorker, "Creating registration %p for registration key %s", this, m_registrationData.key.loggingString().utf8().data());
+    LOG_WITH_STREAM(ServiceWorker, stream << "Creating registration "_s << this << " for registration key "_s << m_registrationData.key.loggingString());
 
     if (m_registrationData.installingWorker)
         m_installingWorker = ServiceWorker::getOrCreate(context, WTF::move(*m_registrationData.installingWorker));
@@ -94,7 +95,7 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(ScriptExecutionContext& con
 
 ServiceWorkerRegistration::~ServiceWorkerRegistration()
 {
-    LOG(ServiceWorker, "Deleting registration %p for registration key %s", this, m_registrationData.key.loggingString().utf8().data());
+    LOG_WITH_STREAM(ServiceWorker, stream << "Deleting registration "_s << this << " for registration key "_s << m_registrationData.key.loggingString());
 
     m_container->removeRegistration(*this);
 }

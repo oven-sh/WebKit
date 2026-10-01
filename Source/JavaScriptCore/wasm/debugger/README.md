@@ -77,7 +77,7 @@ The implementation follows the **GDB Remote Serial Protocol** standard with [was
 
 #### 3. **Helper Classes** - Supporting Components
 
-- **ModuleManager**: Virtual address space management and module tracking
+- **ModuleManager**: Virtual address space management, module and instance tracking
 - **BreakpointManager**: Breakpoint storage and management
 - **VirtualAddress**: 64-bit virtual address encoding for LLDB compatibility
 
@@ -88,12 +88,12 @@ The debugger uses a sophisticated virtual address encoding system to present Web
 ```txt
 Address Format (64-bit):
 - Bits 63-62: Address Type (2 bits)
-- Bits 61-32: ID (30 bits) - ModuleID for code, InstanceID for memory
+- Bits 61-32: InstanceId (30 bits)
 - Bits 31-0:  Offset (32 bits)
 
 Address Types:
-- 0x00 (Memory): Instance linear memory
-- 0x01 (Module): Module code/bytecode
+- 0x00 (Memory): The instance's linear memory
+- 0x01 (Module): The instance's view of its module image (bytecode)
 - 0x02 (Invalid): Invalid/unmapped regions
 - 0x03 (Invalid2): Invalid/unmapped regions
 
@@ -102,6 +102,30 @@ Virtual Memory Layout:
 - 0x4000000000000000 - 0x7FFFFFFFFFFFFFFF: Module regions
 - 0x8000000000000000 - 0xFFFFFFFFFFFFFFFF: Invalid regions
 ```
+
+Wasm scopes linear memory, globals, tables, and data segments to an instance rather than a
+module, so both halves of the address space are keyed by instance ID. Every live instance receives
+its own library entry, module image, and linear memory region. That ID also identifies the
+instance in `qWasmGlobal`. The protocol only requires IDs to be unique among live instances, but
+they are allocated monotonically and never reused to prevent aliasing stale addresses in LLDB.
+Modules carry no debugger-assigned identity.
+
+LLDB merges libraries that share a name, so libraries are named `<declared-name>@<instance-id>`.
+Because instance IDs are globally unique, library names remain distinct even when modules share a
+declared name. Modules declaring neither a name section nor a source URL fall back to
+`0x<image-base>.wasm`.
+
+Instances of a module share one bytecode buffer, so a breakpoint patches that buffer once for all
+of them. A site, though, belongs to the instance its address names: LLDB gives every instance its
+own library and installs one site in each, and only that instance stops there. A sibling reaching
+the same patched byte resumes through it — dispatching the opcode the patch displaced — without
+reporting a stop. Setting a breakpoint by symbol name still covers every instance, because the
+symbol resolves once per library. The patch is lifted only once the last site referring to it and
+any step in flight are both gone.
+
+The patch byte is `0x00`, which is `unreachable`. Where the bytecode really is an `unreachable`
+the patch displaces nothing, so that byte reports the breakpoint and then the trap it hides;
+returning it as a resume opcode would throw a trap LLDB was never told about.
 
 ## Testing
 
@@ -176,14 +200,6 @@ See [RWI_ARCHITECTURE.md](./RWI_ARCHITECTURE.md) for complete setup instructions
 - **Why aggregation is acceptable for now**: A single WebContent process runs a single `WasmDebugServer` that owns all Wasm execution for every page it hosts. Splitting that into per-page debuggables would create multiple LLDB sessions backed by the same VM state, which is architecturally incorrect. Aggregation correctly reflects that one LLDB attach covers all pages in the process.
 - **Future improvement**: If the architecture evolves so that each page gets its own isolated VM (and thus its own `WasmDebugServer`), replace the aggregated URL with a per-page `WasmDebuggerDebuggable` so each URL appears as a distinct, independently attachable target.
 
-### WASM Stack Value Type Support
-
-- **Issue**: Current implementation only supports WASM local variable inspection, missing WASM stack value types
-- **Current Support**: Local variables with types (parameters and locals in function scope)
-- **Missing Support**: Stack values with types
-- **Solution**: Extend debugging protocol to expose WASM operand stack contents with proper type information
-- **Benefits**: Complete variable inspection during debugging, better understanding of WASM execution state
-
 ### Extended Opcode Test Coverage
 
 - **Issue**: Current unit tests only cover base OpType opcodes; ExtGCOpType has partial coverage with stub implementations
@@ -234,8 +250,9 @@ The following references correspond to the numbered citations used throughout th
 - [19] [qWasmInstance](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasminstance-qsupported-feature) —
   advertised in the `qSupported` reply to opt into naming a module instance in a Wasm query. It
   adds the form `qWasmGlobal:<global-index>;instance:<instance-id>;`, which reads a global from a
-  named instance rather than from the instance a stack frame is executing. The instance id is the
-  id a Wasm virtual address carries in bits 61:32, which is a module id. Added to LLDB by
+  named instance rather than from the instance a stack frame is executing. The instance ID is the
+  ID a Wasm virtual address carries in bits 61:32. Added to LLDB by
   [llvm/llvm-project#213176](https://github.com/llvm/llvm-project/pull/213176), resolving
-  [llvm/llvm-project#212833](https://github.com/llvm/llvm-project/issues/212833). A module with no
-  live instance, or with more than one, has no single value to report and answers with an error.
+  [llvm/llvm-project#212833](https://github.com/llvm/llvm-project/issues/212833). An ID with no
+  live instance answers with an error.
+- [20] [qWasmStackValue](https://lldb.llvm.org/resources/lldbgdbremote.html#qwasmstackvalue)

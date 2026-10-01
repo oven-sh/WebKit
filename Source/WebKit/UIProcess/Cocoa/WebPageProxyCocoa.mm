@@ -38,6 +38,7 @@
 #import "DataDetectionResult.h"
 #import "ExtensionCapabilityGranter.h"
 #import "InsertTextOptions.h"
+#import "InteractionInformationAtPosition.h"
 #import "LegacyWebArchiveCallbackAggregator.h"
 #import "LoadParameters.h"
 #import "MessageSenderInlines.h"
@@ -659,7 +660,7 @@ _WKRemoteObjectRegistry *WebPageProxy::remoteObjectRegistry()
 RemoteObjectRegistry* WebPageProxy::uiRemoteObjectRegistry()
 {
     if (RetainPtr registry = remoteObjectRegistry())
-        return &[registry remoteObjectRegistry];
+        return [registry remoteObjectRegistry];
     return nullptr;
 }
 
@@ -1300,13 +1301,13 @@ void WebPageProxy::setMediaCapability(RefPtr<MediaCapability>&& capability)
         return;
     }
 
-    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "setMediaCapability: creating (envID=%{public}s) for URL '%{sensitive}s'", internals().mediaCapability->environmentIdentifier().utf8().data(), internals().mediaCapability->webPageURL().string().utf8().data());
+    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "setMediaCapability: creating (envID=%{public}s) for URL '%{sensitive}s'", internals().mediaCapability->environmentIdentifier().utf8(), internals().mediaCapability->webPageURL().string().utf8());
     protect(legacyMainFrameProcess())->send(Messages::WebPage::SetDisplayCaptureEnvironment(protect(internals().mediaCapability)->environmentIdentifier()), webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::deactivateMediaCapability(MediaCapability& capability)
 {
-    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateMediaCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8().data(), capability.webPageURL().string().utf8().data());
+    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateMediaCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8(), capability.webPageURL().string().utf8());
     Ref processPool = protect(legacyMainFrameProcess())->processPool();
     Ref granter = processPool->extensionCapabilityGranter();
     granter->setMediaCapabilityActive(capability, false);
@@ -1394,13 +1395,13 @@ void WebPageProxy::setDisplayCaptureCapability(RefPtr<MediaCapability>&& capabil
         return;
     }
 
-    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "setDisplayCaptureCapability: creating (envID=%{public}s) for URL '%{sensitive}s'", internals().displayCaptureCapability->environmentIdentifier().utf8().data(), internals().displayCaptureCapability->webPageURL().string().utf8().data());
+    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "setDisplayCaptureCapability: creating (envID=%{public}s) for URL '%{sensitive}s'", internals().displayCaptureCapability->environmentIdentifier().utf8(), internals().displayCaptureCapability->webPageURL().string().utf8());
     protect(legacyMainFrameProcess())->send(Messages::WebPage::SetDisplayCaptureEnvironment(protect(internals().displayCaptureCapability)->environmentIdentifier()), webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::deactivateDisplayCaptureCapability(MediaCapability& capability)
 {
-    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateDisplayCaptureCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8().data(), capability.webPageURL().string().utf8().data());
+    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateDisplayCaptureCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8(), capability.webPageURL().string().utf8());
     Ref processPool = protect(legacyMainFrameProcess())->processPool();
     Ref granter = processPool->extensionCapabilityGranter();
     granter->setMediaCapabilityActive(capability, false);
@@ -1584,6 +1585,14 @@ void WebPageProxy::removeTextEffectForID(IPC::Connection& connection, const WTF:
 }
 #endif // ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
 
+static bool isValidTextAnimationData(const WebCore::TextAnimationData& styleData)
+{
+    if (styleData.style != WebCore::TextAnimationType::Source)
+        return true;
+
+    return styleData.destinationAnimationUUID && styleData.destinationAnimationUUID->isValid();
+}
+
 void WebPageProxy::addTextAnimationForAnimationID(IPC::Connection& connection, const WTF::UUID& uuid, const WebCore::TextAnimationData& styleData, const RefPtr<WebCore::TextIndicator> textIndicator)
 {
     addTextAnimationForAnimationIDWithCompletionHandler(connection, uuid, styleData, textIndicator, { });
@@ -1591,10 +1600,13 @@ void WebPageProxy::addTextAnimationForAnimationID(IPC::Connection& connection, c
 
 void WebPageProxy::addTextAnimationForAnimationIDWithCompletionHandler(IPC::Connection& connection, const WTF::UUID& uuid, const WebCore::TextAnimationData& styleData, const RefPtr<WebCore::TextIndicator> textIndicator, CompletionHandler<void(WebCore::TextAnimationRunMode)>&& completionHandler)
 {
-    if (completionHandler)
+    if (completionHandler) {
         MESSAGE_CHECK_COMPLETION(uuid.isValid(), connection, completionHandler({ }));
-    else
+        MESSAGE_CHECK_COMPLETION(isValidTextAnimationData(styleData), connection, completionHandler({ }));
+    } else {
         MESSAGE_CHECK(uuid.isValid(), connection);
+        MESSAGE_CHECK(isValidTextAnimationData(styleData), connection);
+    }
 
     internals().textIndicatorForAnimationID.add(uuid, textIndicator);
 
@@ -1782,14 +1794,7 @@ void WebPageProxy::setTextIndicatorFromFrame(FrameIdentifier frameID, RefPtr<Web
     if (!textIndicator)
         return;
 
-    auto rect = textIndicator->textBoundingRectInRootViewCoordinates();
-    convertRectToMainFrameCoordinates(rect, frame->rootFrame()->frameID(), [weakThis = WeakPtr { *this }, textIndicator = WTF::move(textIndicator), lifetime] (std::optional<FloatRect> convertedRect) mutable {
-        RefPtr protectedThis = weakThis.get();
-        if (!protectedThis || !convertedRect)
-            return;
-        textIndicator->setTextBoundingRectInRootViewCoordinates(*convertedRect);
-        protectedThis->setTextIndicator(WTF::move(textIndicator), lifetime);
-    });
+    setTextIndicator(WTF::move(textIndicator), lifetime);
 }
 
 void WebPageProxy::setTextIndicator(RefPtr<WebCore::TextIndicator>&& textIndicator, WebCore::TextIndicatorLifetime lifetime)
@@ -1827,14 +1832,7 @@ void WebPageProxy::updateTextIndicatorFromFrame(FrameIdentifier frameID, RefPtr<
     if (!textIndicator)
         return;
 
-    auto rect = textIndicator->textBoundingRectInRootViewCoordinates();
-    convertRectToMainFrameCoordinates(rect, frame->rootFrame()->frameID(), [weakThis = WeakPtr { *this }, textIndicator = WTF::move(textIndicator)] (std::optional<FloatRect> convertedRect) mutable {
-        RefPtr protectedThis = weakThis.get();
-        if (!protectedThis || !convertedRect)
-            return;
-        textIndicator->setTextBoundingRectInRootViewCoordinates(*convertedRect);
-        protectedThis->updateTextIndicator(WTF::move(textIndicator));
-    });
+    updateTextIndicator(WTF::move(textIndicator));
 }
 
 void WebPageProxy::updateTextIndicator(RefPtr<WebCore::TextIndicator>&& textIndicator)
@@ -2237,15 +2235,57 @@ void WebPageProxy::selectWithGesture(std::optional<WebCore::FrameIdentifier> fra
     } });
 }
 
-void WebPageProxy::didReceivePositionInformation(const InteractionInformationAtPosition& info)
+void WebPageProxy::didReceivePositionInformation(const InteractionInformationAtPosition& info, std::optional<WebCore::FrameIdentifier> frameID)
 {
     if (RefPtr pageClient = this->pageClient())
-        pageClient->positionInformationDidChange(info);
+        pageClient->positionInformationDidChange(info, frameID);
+}
+
+std::optional<std::pair<IPC::AsyncReplyID, Ref<IPC::Connection>>> WebPageProxy::takeOutstandingPositionInformationReply()
+{
+    auto outstandingRequest = std::exchange(internals().outstandingPositionInformationRequest, std::nullopt);
+    if (!outstandingRequest)
+        return std::nullopt;
+    return { { outstandingRequest->replyID, WTF::move(outstandingRequest->connection) } };
 }
 
 void WebPageProxy::requestPositionInformation(const InteractionInformationRequest& request)
 {
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::RequestPositionInformation(request), webPageIDInMainFrameProcess());
+    auto& outstandingRequest = internals().outstandingPositionInformationRequest;
+    if (outstandingRequest && outstandingRequest->request.isValidForRequest(request))
+        return;
+
+    requestPositionInformationInFrame(std::nullopt, request.point, request);
+}
+
+void WebPageProxy::requestPositionInformationInFrame(std::optional<WebCore::FrameIdentifier> frameID, WebCore::IntPoint pointInFrameRootViewCoordinates, const InteractionInformationRequest& request)
+{
+    auto requestInFrame = request;
+    requestInFrame.point = pointInFrameRootViewCoordinates;
+
+    Ref process = processContainingFrame(frameID);
+    auto replyID = process->sendWithAsyncReply(Messages::WebPage::RequestPositionInformation(frameID, requestInFrame), [weakThis = WeakPtr { *this }, frameID, request] (auto&& reply) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+
+        auto& outstandingRequest = protectedThis->internals().outstandingPositionInformationRequest;
+        if (outstandingRequest && outstandingRequest->request.isValidForRequest(request))
+            outstandingRequest = std::nullopt;
+
+        WTF::switchOn(WTF::move(reply), [&](InteractionInformationAtPosition&& information) {
+            // The process that answered echoed the request back with its point converted out of and
+            // back into main frame coordinates. Report it exactly as it was asked instead, so that
+            // callers can match the information against their own request.
+            information.request = request;
+            protectedThis->didReceivePositionInformation(information, frameID);
+        }, [&](WebCore::RemoteUserInputEventData&& remoteUserInputEventData) {
+            protectedThis->requestPositionInformationInFrame(remoteUserInputEventData.targetFrameID, roundedIntPoint(FloatPoint { remoteUserInputEventData.transformedPoint }), request);
+        });
+    }, webPageIDInProcessForFrame(frameID));
+
+    if (replyID)
+        internals().outstandingPositionInformationRequest = { { request, *replyID, process->connection() } };
 }
 
 void WebPageProxy::selectPositionAtPoint(WebCore::IntPoint point, bool isInteractingWithFocusedElement, CompletionHandler<void()>&& callbackFunction)
@@ -2284,10 +2324,15 @@ void WebPageProxy::updateSelectionWithExtentPoint(WebCore::IntPoint point, bool 
     sendWithAsyncReplyToProcessContainingFrame(focusedFrame ? std::optional(focusedFrame->frameID()) : std::nullopt, Messages::WebPage::UpdateSelectionWithExtentPoint(point, isInteractingWithFocusedElement, respectSelectionAnchor), Messages::WebPage::UpdateSelectionWithExtentPoint::Reply { WTF::move(callback) });
 }
 
-void WebPageProxy::updateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point, WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, TextInteractionSource source, CompletionHandler<void(bool)>&& callback)
+void WebPageProxy::updateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point, WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, TextInteractionSource source, SelectionExtentAnchor anchor, CompletionHandler<void(bool)>&& callback)
 {
     RefPtr focusedFrame = focusedOrMainFrame();
-    sendWithAsyncReplyToProcessContainingFrame(focusedFrame ? std::optional(focusedFrame->frameID()) : std::nullopt, Messages::WebPage::UpdateSelectionWithExtentPointAndBoundary(point, granularity, isInteractingWithFocusedElement, source), Messages::WebPage::UpdateSelectionWithExtentPointAndBoundary::Reply { WTF::move(callback) });
+    sendWithAsyncReplyToProcessContainingFrame(focusedFrame ? std::optional(focusedFrame->frameID()) : std::nullopt, Messages::WebPage::UpdateSelectionWithExtentPointAndBoundary(point, granularity, isInteractingWithFocusedElement, source, anchor), Messages::WebPage::UpdateSelectionWithExtentPointAndBoundary::Reply { WTF::move(callback) });
+}
+
+void WebPageProxy::updateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point, WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, TextInteractionSource source, CompletionHandler<void(bool)>&& callback)
+{
+    updateSelectionWithExtentPointAndBoundary(point, granularity, isInteractingWithFocusedElement, source, SelectionExtentAnchor::GestureStart, WTF::move(callback));
 }
 
 void WebPageProxy::startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWindow)

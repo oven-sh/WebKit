@@ -111,6 +111,20 @@ static void expectGenerateError(const String& wgsl, const String& errorMessage)
     EXPECT_EQ(error.message(), errorMessage);
 }
 
+static void expectNoGenerateError(const String& wgsl)
+{
+    auto staticCheckResult = staticCheck(wgsl);
+    EXPECT_TRUE(std::holds_alternative<WGSL::SuccessfulCheck>(staticCheckResult));
+    auto& successfulCheck = std::get<WGSL::SuccessfulCheck>(staticCheckResult);
+
+    auto maybePrepareResult = prepare(successfulCheck);
+    EXPECT_TRUE(std::holds_alternative<WGSL::PrepareResult>(maybePrepareResult));
+    auto& prepareResult = std::get<WGSL::PrepareResult>(maybePrepareResult);
+
+    auto generationResult = generate(successfulCheck, prepareResult);
+    EXPECT_TRUE(std::holds_alternative<String>(generationResult));
+}
+
 class WGSLMetalCompilationTests : public testing::Test {
 protected:
     static void SetUpTestSuite()
@@ -566,6 +580,47 @@ TEST_F(WGSLMetalCompilationTests, Override)
 TEST_F(WGSLMetalCompilationTests, OverrideComplexExpression)
 {
     testCompilation(file("override-complex-expression.wgsl"_s));
+}
+
+TEST_F(WGSLMetalCompilationTests, OverrideShortCircuit)
+{
+    auto shader = [](ASCIILiteral condition, ASCIILiteral operation) {
+        return makeString(
+            "override cond = "_s, condition, ";"
+            "override shift = 32u;"
+            "@compute @workgroup_size(1) "
+            "fn main(@builtin(local_invocation_index) tid: u32) {"
+            "    var r = 0u;"
+            "    if (cond "_s, operation, " ((tid << shift) == 0u)) { r = 1u; }"
+            "    _ = r;"
+            "}"_s);
+    };
+    auto shiftError = "shift left value must be less than the bit width of the shifted value, which is 32"_s;
+
+    expectGenerateError(shader("true"_s, "&&"_s), shiftError);
+    expectGenerateError(shader("false"_s, "||"_s), shiftError);
+
+    expectNoGenerateError(shader("false"_s, "&&"_s));
+    expectNoGenerateError(shader("true"_s, "||"_s));
+
+    expectNoGenerateError(
+        "override shift = 32u;"
+        "@compute @workgroup_size(1) "
+        "fn main(@builtin(local_invocation_index) tid: u32) {"
+        "    var r = 0u;"
+        "    if (false && ((tid << shift) == 0u)) { r = 1u; }"
+        "    _ = r;"
+        "}"_s);
+
+    expectGenerateError(
+        "override cond = true;"
+        "override shift = 32u;"
+        "@compute @workgroup_size(1) "
+        "fn main(@builtin(local_invocation_index) tid: u32) {"
+        "    var r = 0u;"
+        "    if (cond && (cond && ((tid << shift) == 0u))) { r = 1u; }"
+        "    _ = r;"
+        "}"_s, shiftError);
 }
 
 TEST_F(WGSLMetalCompilationTests, PackUnpack)

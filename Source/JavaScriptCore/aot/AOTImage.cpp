@@ -889,7 +889,7 @@ Vector<uint8_t> ImageBuilder::finish()
     startsOfFunctions.append(std::numeric_limits<uint32_t>::max());
     if (Options::aotMapFilePath()) [[unlikely]] {
         // One line per function: its index, the offset and size of its code, and its key.
-        auto out = FilePrintStream::open(Options::aotMapFilePath(), "w");
+        auto out = FilePrintStream::open(byteCast<char>(Options::aotMapFilePath()), "w");
         RELEASE_ASSERT(out);
         for (unsigned index = 0; index < m_functions.size(); ++index) {
             auto& function = m_functions[index];
@@ -1992,7 +1992,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         return { };
     static std::once_flag once;
     std::call_once(once, [] {
-        if (const char* path = Options::aotImagePath()) {
+        if (const char* path = byteCast<char>(Options::aotImagePath())) {
             if (!Image::registerImageFromFile(path))
                 dataLogLn("AOT: ", path, " is not an image for this engine");
         }

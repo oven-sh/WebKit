@@ -32,7 +32,7 @@ void webkitScriptDialogAccept(WebKitScriptDialog* dialog)
         webkit_script_dialog_confirm_set_confirmed(dialog, TRUE);
     // W3C WebDriver tests expect an empty string instead of a null one when the prompt is accepted.
     if (dialog_type == WEBKIT_SCRIPT_DIALOG_PROMPT && dialog->text.isNull())
-        webkit_script_dialog_prompt_set_text(dialog, dialog->defaultText.isNull() ? "" : dialog->defaultText.data());
+        webkit_script_dialog_prompt_set_text(dialog, dialog->defaultText.isNull() ? "" : dialog->defaultText.legacyCStringPointer());
     webkit_script_dialog_unref(dialog);
 }
 
@@ -49,7 +49,7 @@ void webkitScriptDialogSetUserInput(WebKitScriptDialog* dialog, const String& in
     if (webkit_script_dialog_get_dialog_type(dialog) != WEBKIT_SCRIPT_DIALOG_PROMPT)
         return;
 
-    webkit_script_dialog_prompt_set_text(dialog, input.utf8().data());
+    webkit_script_dialog_prompt_set_text(dialog, input.utf8().legacyCStringPointer());
 }
 
 bool webkitScriptDialogIsUserHandled(WebKitScriptDialog* dialog)
