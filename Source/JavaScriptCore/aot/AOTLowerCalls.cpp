@@ -97,14 +97,14 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
     return patchpoint;
 }
 
-// A call of what a variable is proven to hold (KnownFunction::isProven): to where the function's code is, which is known when the image
+// A call of what a variable is proven to hold (KnownFunction::isExact): to where the function's code is, which is known when the image
 // is put together, with what the function has a use for and nothing else.
 bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegister, unsigned argv, const Arguments& arguments, CallMode mode, bool hasResult)
 {
     bool isConstruct = mode == CallMode::Construct;
-    bool isProven = false;
-    const KnownFunction* known = m_graph.knownCallee(node, &isProven);
-    if (!known || !isProven || !(isConstruct ? known->forConstruct : known->forCall))
+    bool isExact = false;
+    const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+    if (!known || !isExact || !(isConstruct ? known->forConstruct : known->forCall))
         return false;
     // Nothing gets here, going by the types; and nothing gets to the function from anywhere else, so there is no code for it. What does get here has been lied to.
     if (known->facts && !known->facts->isReached()) {
@@ -113,9 +113,9 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         m_out.appendTo(m_out.newBlock());
         if (hasResult || mode == CallMode::TailCall)
             setJSValue(node, m_out.constInt64(JSValue::encode(jsUndefined())));
-        if (node->numberOfThingsReturned) {
+        if (node->numberOfReturnValues) {
             // (Nothing gets here. Something of the right sort, for what comes next to be made of.)
-            for (Node* read : m_graph.outermost().readsOfThingsReturned.get(node)) {
+            for (Node* read : m_graph.outermost().returnValueReads.get(node)) {
                 Rep rep = read->rep();
                 read->lowered = rep == Rep::Double ? m_out.constDouble(0) : rep == Rep::Int32 || rep == Rep::Boolean ? m_out.int32Zero : rep == Rep::Int64 ? m_out.int64Zero : m_out.constInt64(JSValue::encode(jsUndefined()));
             }
@@ -140,7 +140,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         LBasicBlock isInitialized = m_out.newBlock();
         // (Or, if it is known by what it is and not by where it was read from: whatever else it may be.)
         Type typeOfCallee = node->use(calleeRegister)->type;
-        if (!Options::aotFollowsFunctions() || isSubtype(typeOfCallee, TFunction | TUndefined | TEmpty))
+        if (isSubtype(typeOfCallee, TFunction | TUndefined | TEmpty))
             m_out.branch(m_out.equal(callee, m_out.constInt64(JSValue::ValueUndefined)), rarely(isNotInitialized), usually(isInitialized));
         else {
             if (!isSubtype(typeOfCallee, TCell)) {
@@ -173,11 +173,11 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         }
     }
 
-    // What it hands back, if that is several things (Node::numberOfThingsReturned).
+    // What it hands back, if that is several things (Node::numberOfReturnValues).
     Vector<Rep, 8> things;
-    if (node->numberOfThingsReturned) {
+    if (node->numberOfReturnValues) {
         RELEASE_ASSERT(mode == CallMode::Call);
-        things = howThingsAreReturned(known->facts, node->numberOfThingsReturned);
+        things = returnValueReps(known->facts, node->numberOfReturnValues);
     }
     auto typeFor = [](Rep rep) -> LType { return rep == Rep::JSValue ? Int64 : rep == Rep::Double ? Double : Int32; };
     LType typeOfResult = mode == CallMode::TailCall ? Void : typeFor(how.result);
@@ -227,8 +227,8 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         Vector<LValue, 8> handedBack;
         for (unsigned i = 0; i < things.size(); ++i)
             handedBack.append(things.size() == 1 ? static_cast<LValue>(patchpoint) : m_out.extract(patchpoint, i));
-        for (Node* read : m_graph.outermost().readsOfThingsReturned.get(node))
-            setResult(read, handedBack[read->whichThing], things[read->whichThing]);
+        for (Node* read : m_graph.outermost().returnValueReads.get(node))
+            setResult(read, handedBack[read->returnValueIndex], things[read->returnValueIndex]);
         return true;
     }
     if (hasResult)
@@ -351,7 +351,7 @@ void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, Virt
     LBasicBlock otherwise = mode == CallMode::TailCall ? leaveIfFunction(node->use(calleeRegister), callee) : nullptr;
     // (Stub::TailCallVarargs is called.)
     m_graph.emitsCalls = true;
-    m_graph.emitsCallsWhateverIsLeft = true;
+    m_graph.alwaysEmitsCalls = true;
 
     for (;;) {
     PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
@@ -418,13 +418,13 @@ void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, L
         return { m_out.select(m_out.above(count, m_out.constIntPtr(skipped)), left, m_out.intPtrZero), m_out.add(argumentsPassed(), m_out.constIntPtr(skipped * sizeof(EncodedJSValue))) };
     };
 
-    bool isJustWhatWasPassed = items.size() == 1 && items[0].kind == ListDescriptor::Passed;
+    bool forwardsAllArguments = items.size() == 1 && items[0].kind == ListDescriptor::Passed;
     m_graph.emitsCalls = true;
-    m_graph.emitsCallsWhateverIsLeft = true;
+    m_graph.alwaysEmitsCalls = true;
     LValue first;
     LValue second = nullptr;
     uint32_t descriptor = ListDescriptor::ofItems(items.size());
-    if (isJustWhatWasPassed)
+    if (forwardsAllArguments)
         std::tie(first, second) = passed(items[0].node);
     else {
         unsigned word = 0;
@@ -452,19 +452,19 @@ void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, L
         if (second)
             patchpoint->append(ConstrainedValue(second, ValueRep::reg(argumentGPR(1))));
         finishCall(patchpoint, mode);
-        CallSite site { mode == CallMode::TailCall && isJustWhatWasPassed ? StubCall::noCallSite : callSiteBitsOf(node) };
-        patchpoint->setGenerator([graph = &m_graph, descriptor, isJustWhatWasPassed, mode, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        CallSite site { mode == CallMode::TailCall && forwardsAllArguments ? StubCall::noCallSite : callSiteBitsOf(node) };
+        patchpoint->setGenerator([graph = &m_graph, descriptor, forwardsAllArguments, mode, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             bool isConstruct = mode == CallMode::Construct;
-            Stub stub = isJustWhatWasPassed ? (isConstruct ? Stub::ConstructList : Stub::CallList) : (isConstruct ? Stub::ConstructVarargs : Stub::CallVarargs);
-            if (!isJustWhatWasPassed)
+            Stub stub = forwardsAllArguments ? (isConstruct ? Stub::ConstructList : Stub::CallList) : (isConstruct ? Stub::ConstructVarargs : Stub::CallVarargs);
+            if (!forwardsAllArguments)
                 jit.move(CCallHelpers::TrustedImm32(descriptor), argumentGPR(1));
             if (mode != CallMode::TailCall) {
                 graph->stubCalls.call(jit, stub, site);
                 return;
             }
             // (What this function was passed is not in its frame. The items are.)
-            if (isJustWhatWasPassed) {
+            if (forwardsAllArguments) {
                 emitEpilogueBeforeLeaving(jit, *graph, params.code());
                 graph->stubCalls.tailCall(jit, stub);
                 return;

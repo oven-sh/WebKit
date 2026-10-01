@@ -68,13 +68,13 @@ static constexpr unsigned numberOfTagBits = 40;
 static constexpr Type TAllTags = (Type(1) << numberOfTagBits) - 1;
 static constexpr unsigned bitsOfFunctionNumber = 18;
 static constexpr unsigned firstBitOfFunctionNumber = numberOfTagBits;
-static constexpr Type TWhicheverFunction = ((Type(1) << 2 * bitsOfFunctionNumber) - 1) << firstBitOfFunctionNumber;
+static constexpr Type TAnyFunctionNumber = ((Type(1) << 2 * bitsOfFunctionNumber) - 1) << firstBitOfFunctionNumber;
 static constexpr unsigned bitsOfLayoutNumber = 16;
 static constexpr unsigned firstBitOfLayoutNumber = firstBitOfFunctionNumber + 2 * bitsOfFunctionNumber;
-static constexpr Type TWhicheverLayout = ((Type(1) << 2 * bitsOfLayoutNumber) - 1) << firstBitOfLayoutNumber;
+static constexpr Type TAnyLayoutNumber = ((Type(1) << 2 * bitsOfLayoutNumber) - 1) << firstBitOfLayoutNumber;
 static_assert(firstBitOfLayoutNumber + 2 * bitsOfLayoutNumber <= 128);
 static constexpr Type TFunctionTag = Type(1) << 8;
-static constexpr Type TFunction = TFunctionTag | TWhicheverFunction; // JSFunctionType or InternalFunctionType.
+static constexpr Type TFunction = TFunctionTag | TAnyFunctionNumber; // JSFunctionType or InternalFunctionType.
 static constexpr Type TArray = Type(1) << 9; // ArrayType or DerivedArrayType.
 static constexpr Type TOtherObject = Type(1) << 10; // Every object that is none of the others. It may be one that can be called.
 static constexpr Type TCellOther = Type(1) << 11; // Cells that are not JS values, which bytecode passes around (SymbolTable, ...).
@@ -86,7 +86,7 @@ static constexpr unsigned firstBitAfterTypedArrays = 25;
 static_assert(firstTypedArrayBit + NumberOfTypedArrayTypesExcludingDataView <= firstBitAfterTypedArrays);
 // Objects that are told apart by their JSType. None of them can be called.
 static constexpr Type TFinalObjectTag = Type(1) << 25;
-static constexpr Type TFinalObject = TFinalObjectTag | TWhicheverLayout; // What an object literal makes, and `new` of a function or a class that extends nothing.
+static constexpr Type TFinalObject = TFinalObjectTag | TAnyLayoutNumber; // What an object literal makes, and `new` of a function or a class that extends nothing.
 static constexpr Type TMap = Type(1) << 26;
 static constexpr Type TSet = Type(1) << 27;
 static constexpr Type TWeakMap = Type(1) << 28;
@@ -128,7 +128,7 @@ static constexpr Type TPrimitive = TNumber | TBoolean | TOther | TString | TSymb
 static constexpr Type TTop = TPrimitive | TAnyObject | TCellOther; // Any value a program can see.
 static constexpr Type TAll = TTop | TEmpty;
 
-constexpr Type numberOnRails(uint32_t number, unsigned firstBit, unsigned bits)
+constexpr Type dualRailEncode(uint32_t number, unsigned firstBit, unsigned bits)
 {
     Type result = 0;
     for (unsigned i = 0; i < bits; ++i)
@@ -136,15 +136,15 @@ constexpr Type numberOnRails(uint32_t number, unsigned firstBit, unsigned bits)
     return result;
 }
 // The lowest and the highest that the rails allow. If some bit has neither rail there is no such value, and lowest > highest.
-struct NumbersOnRails {
+struct DualRailNumbers {
     uint32_t lowest;
     uint32_t highest;
     bool isOne() const { return lowest == highest; }
     bool isNone() const { return lowest > highest; }
 };
-constexpr NumbersOnRails numbersOnRails(Type type, unsigned firstBit, unsigned bits)
+constexpr DualRailNumbers dualRailDecode(Type type, unsigned firstBit, unsigned bits)
 {
-    NumbersOnRails result { 0, 0 };
+    DualRailNumbers result { 0, 0 };
     for (unsigned i = 0; i < bits; ++i) {
         unsigned rails = static_cast<unsigned>(type >> (firstBit + 2 * i)) & 3;
         if (!rails)
@@ -157,8 +157,8 @@ constexpr NumbersOnRails numbersOnRails(Type type, unsigned firstBit, unsigned b
     return result;
 }
 // Functions and layouts are numbered from 1.
-constexpr Type typeOfFunction(uint32_t number) { return TFunctionTag | numberOnRails(number, firstBitOfFunctionNumber, bitsOfFunctionNumber); }
-constexpr Type typeOfObjectWithLayout(uint32_t layout) { return TFinalObjectTag | numberOnRails(layout, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
+constexpr Type typeOfFunction(uint32_t number) { return TFunctionTag | dualRailEncode(number, firstBitOfFunctionNumber, bitsOfFunctionNumber); }
+constexpr Type typeOfObjectWithLayout(uint32_t layout) { return TFinalObjectTag | dualRailEncode(layout, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
 // One of first to last. (And, as it may be, some others: what the two have in common, from the top bit down, is all that can be said.)
 constexpr Type typeOfObjectWithLayoutInRange(uint32_t first, uint32_t last)
 {
@@ -171,13 +171,13 @@ constexpr Type typeOfObjectWithLayoutInRange(uint32_t first, uint32_t last)
     return result;
 }
 // The one function that the value is, if it is a function. Zero: there is no telling.
-constexpr uint32_t functionThatIs(Type type)
+constexpr uint32_t functionNumberOf(Type type)
 {
-    auto numbers = numbersOnRails(type, firstBitOfFunctionNumber, bitsOfFunctionNumber);
+    auto numbers = dualRailDecode(type, firstBitOfFunctionNumber, bitsOfFunctionNumber);
     return (type & TFunctionTag) && numbers.isOne() ? numbers.lowest : 0;
 }
 // What the value was born as, if it is what a literal or a constructor makes. 0 among them: it may be of no layout at all.
-constexpr NumbersOnRails layoutRangeOf(Type type) { return numbersOnRails(type, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
+constexpr DualRailNumbers layoutRangeOf(Type type) { return dualRailDecode(type, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
 
 inline bool isSubtype(Type type, Type of) { return !(type & ~of); }
 inline bool mayBe(Type type, Type what) { return type & what; }

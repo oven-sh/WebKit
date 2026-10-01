@@ -84,8 +84,8 @@ static int compareSelectors(const StringImpl& a, const StringImpl& b) { return c
 
 // ---- What error messages quote, of a program that goes without its text
 
-static constexpr unsigned longestQuoteKeptWhole = 64;
-static constexpr unsigned longestCalleeKept = 96;
+static constexpr unsigned maxUntruncatedQuoteLength = 64;
+static constexpr unsigned maxCalleeQuoteLength = 96;
 static constexpr unsigned lengthOfTheEndsOfALongQuote = 40;
 
 // In "f.g(a, (b))": where the "(" is that goes with the ")" at the end. As functionCallBase() finds it (ExceptionHelpers.cpp).
@@ -134,9 +134,9 @@ void collectQuotes(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBlock, Str
         Quote quote { offset, static_cast<uint32_t>(start), Quote::Exact, { } };
         if (start < stop) {
             StringView said = text.substring(start, stop - start);
-            if (said.length() <= longestQuoteKeptWhole)
+            if (said.length() <= maxUntruncatedQuoteLength)
                 quote.text = said.utf8();
-            else if (size_t open = whereArgumentsStart(said); open != notFound && open < longestCalleeKept) {
+            else if (size_t open = whereArgumentsStart(said); open != notFound && open < maxCalleeQuoteLength) {
                 quote.kind = Quote::Call;
                 quote.text = said.left(open + 1).utf8();
             } else {
@@ -415,7 +415,7 @@ void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
 bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flags> flags)
 {
     Locker locker { m_lock };
-    flags = ImageRegExp::flagsThatMatter(flags);
+    flags = ImageRegExp::significantFlags(flags);
     auto asked = m_regExpsAsked.add(makeString(flags.toRaw(), '/', pattern), false);
     if (!asked.isNewEntry)
         return asked.iterator->value;
@@ -1087,8 +1087,8 @@ Vector<uint8_t> ImageBuilder::finish()
 
     // Code that goes by the tables of a static heap is no use without one, and that says which function nearly every executable is.
     // So it is for whoever makes it to keep the keys of the rest (StaticHeap::keysOfImage()): the table comes after the image.
-    bool keysAreLeftOut = !!m_numberOfIdentifiersOfProgram;
-    header.tableCapacity = keysAreLeftOut ? 0 : capacity;
+    bool keysAreOmitted = !!m_numberOfIdentifiersOfProgram;
+    header.tableCapacity = keysAreOmitted ? 0 : capacity;
     header.recordsOffset = header.tableOffset + header.tableCapacity * sizeof(ImageKey);
     header.recordsSize = recordsSize;
     header.environmentsSize = m_environmentsSize;
@@ -1203,10 +1203,10 @@ Vector<uint8_t> ImageBuilder::finish()
         header.stubOffsets[i] = stubs.offsets[i];
 
     Vector<uint8_t> image;
-    image.fill(0, header.size + (keysAreLeftOut ? capacity * sizeof(ImageKey) : 0));
+    image.fill(0, header.size + (keysAreOmitted ? capacity * sizeof(ImageKey) : 0));
     uint8_t* base = image.mutableSpan().data();
     memcpy(base, &header, sizeof(header));
-    auto* table = reinterpret_cast<ImageKey*>(base + (keysAreLeftOut ? header.size : header.tableOffset));
+    auto* table = reinterpret_cast<ImageKey*>(base + (keysAreOmitted ? header.size : header.tableOffset));
     uint8_t* records = base + header.recordsOffset;
     uint8_t* code = base + header.codeOffset;
 
@@ -1541,13 +1541,13 @@ Image* Image::withCode()
     return nullptr;
 }
 
-// What whatIsAt() goes by, where it takes no finding. There is one image with code in it, for good.
+// What classifyAddress() goes by, where it takes no finding. There is one image with code in it, for good.
 static const ImageHeader* s_headerOfImageWithCode;
 static uintptr_t s_codeOfImageWithCode;
 static const uint32_t* s_startsOfFunctions;
 static const uint32_t* s_granulesOfCode;
 
-WhatIsAt whatIsAt(const void* address)
+ImageAddressInfo classifyAddress(const void* address)
 {
     if (!s_headerOfImageWithCode) [[unlikely]] {
         Image* image = Image::withCode();
@@ -1569,15 +1569,15 @@ WhatIsAt whatIsAt(const void* address)
             continue;
         for (uint32_t inAdapter : header.returnsIntoAdapters) {
             if (inAdapter == inStubs)
-                return { WhatIsAt::Adapter, 0, 0 };
+                return { ImageAddressInfo::Adapter, 0, 0 };
         }
-        return { WhatIsAt::Stub, 0, 0 };
+        return { ImageAddressInfo::Stub, 0, 0 };
     }
     const uint32_t* starts = s_startsOfFunctions;
     uint32_t index = s_granulesOfCode[offset >> shiftOfGranuleOfCode];
     while (starts[index + 1] <= offset)
         ++index;
-    return { WhatIsAt::Function, index, static_cast<uint32_t>(offset - starts[index]) };
+    return { ImageAddressInfo::Function, index, static_cast<uint32_t>(offset - starts[index]) };
 }
 
 bool hasCode()
@@ -1713,10 +1713,10 @@ const void* Image::addressOfStub(Stub stub)
 
 auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -> std::optional<CodeForRegExp>
 {
-    if (!hasAny() || !Options::aotCompileRegExps())
+    if (!hasAny())
         return std::nullopt;
     uint32_t hash = ImageRegExp::hashOf(pattern, flags);
-    uint32_t rawFlags = ImageRegExp::flagsThatMatter(flags).toRaw();
+    uint32_t rawFlags = ImageRegExp::significantFlags(flags).toRaw();
     auto& all = registry();
     Locker locker { all.lock };
     for (Image* image : all.images) {
@@ -1957,7 +1957,7 @@ Ref<JITCode> codeFromImage(ImageCode code, UnlinkedCodeBlock* unlinkedCodeBlock)
     return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, JITCode::wayInto(unlinkedCodeBlock)));
 }
 
-bool canDoWithoutUnlinkedCode(JSGlobalObject* globalObject, ImageCode code)
+bool canRunWithoutUnlinkedCode(JSGlobalObject* globalObject, ImageCode code)
 {
     return !!FunctionRef { &Instance::ensure(globalObject), code.function->index }.facts();
 }

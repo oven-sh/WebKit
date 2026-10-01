@@ -50,7 +50,7 @@ class VM;
 // unless it has been stored to since the program started: the write barrier says which those are (Heap::addToRememberedSet()).
 //
 // They are made for the first VM of the process, and say so: what a cell says it is, it says with a Structure of that VM's. But
-// nothing writes to them, so any other VM can refer to them as well (Options::useStaticHeapInEveryVM()), for as long as the first
+// nothing writes to them, so any other VM can refer to them as well, for as long as the first
 // is there. The exception is what is in the arenas for what is written to, which is for the first VM alone (isOnlyForFirstVM()).
 class StaticHeap {
 public:
@@ -68,9 +68,9 @@ public:
         const Vector<ReportableSitesOfFunction>& sites; // By the numbers that the functions have in the image of the code.
         Function<bool(uint32_t entryOffsetOfModule, LineColumn inModule, CString& nameOfSource, LineColumn& inSource)> find;
     };
-    // What comes before `whatIsKeptOfPayloadStartsAt` in the payload is left out, if that is not zero: it had better be where
+    // What comes before `keptPayloadStart` in the payload is left out, if that is not zero: it had better be where
     // BytecodeLinkRegions::ExpressionInfo starts. Then nothing of the program can be interpreted, or decoded again.
-    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { }, size_t whatIsKeptOfPayloadStartsAt = 0, const PositionsToKeep* = nullptr, std::span<const ReportableSitesOfFunction> reportableSites = { }, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules = { });
+    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { }, size_t keptPayloadStart = 0, const PositionsToKeep* = nullptr, std::span<const ReportableSitesOfFunction> reportableSites = { }, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules = { });
     static bool isBuilding() { return s_isBuilding; }
     static JSString* emptyStringWhileBuilding(VM&); // Not the VM's own.
     static WTF::SymbolRegistry& symbolRegistryWhileBuilding(bool isPrivate); // Likewise.
@@ -89,8 +89,8 @@ public:
         size_t sizeOfStrings;
         size_t offsetOfPayload;
         size_t sizeOfPayload;
-        bool payloadIsLeftOut; // Not all of it is there, so it is nowhere.
-        uintptr_t addressOfPayload; // payloadThatIsLeftOut().data(), when the program runs.
+        bool payloadIsOmitted; // Not all of it is there, so it is nowhere.
+        uintptr_t addressOfPayload; // omittedPayload().data(), when the program runs.
         bool hasPositionsOfCallSites; // See PositionsToKeep.
     };
     JS_EXPORT_PRIVATE static std::optional<Copies> copiesIn(std::span<const uint8_t> image);
@@ -121,15 +121,15 @@ public:
     // most of it is not there to be read.
     // One that is where takePlaceForSourceProvider() said.
     static bool isProviderOfModule(const SourceProvider& provider) { return bmalloc::StaticRegion::contains(&provider); }
-    JS_EXPORT_PRIVATE static bool payloadIsLeftOut();
+    JS_EXPORT_PRIVATE static bool payloadIsOmitted();
     // See PositionsToKeep, and AOT::FunctionRef::reportedPositionFor().
     static bool hasPositionsOfCallSites();
     static bool hasIdentifiersOfProgram();
     static WTF::UniquedStringImpl* const* identifiersOfProgram(); // By number. Null if there are none.
     JS_EXPORT_PRIVATE static String nameOfSource(uint32_t); // From one.
     // Of what is said to be a payload: it is that one, or the static heap it would be in has not been mapped at all.
-    static bool isNoPayloadToRead(std::span<const uint8_t> bytes) { return contains(bytes.data()) && (!isMapped() || payloadIsLeftOut()); }
-    JS_EXPORT_PRIVATE static std::span<const uint8_t> payloadThatIsLeftOut();
+    static bool isNoPayloadToRead(std::span<const uint8_t> bytes) { return contains(bytes.data()) && (!isMapped() || payloadIsOmitted()); }
+    JS_EXPORT_PRIVATE static std::span<const uint8_t> omittedPayload();
     // Likewise what linking the result of decodeBuiltinFunction() would give, for a builtin whose entry in the payload is there,
     // and whose source is that. Its source() is what makeSource() would have returned. Only in the realm that the program is run in.
     JS_EXPORT_PRIVATE static FunctionExecutable* builtinFunctionFor(JSGlobalObject*, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
@@ -159,7 +159,7 @@ public:
     static UnlinkedFunctionExecutable* unlinkedFunctionOf(const RowOfFunction& row) { return reinterpret_cast<UnlinkedFunctionExecutable*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Cells) + row.unlinkedFunction); }
     static SourceProvider* sourceProviderOfModule(size_t index) { return reinterpret_cast<SourceProvider*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfSourceProvidersInBss + index * sizeOfPlaceForSourceProvider); }
     JS_EXPORT_PRIVATE static LineColumn whereFunctionStarts(uint32_t indexOfFunction);
-    // The next cell is an UnlinkedFunctionExecutable. See keepWhatIsWantedOfFunctions().
+    // The next cell is an UnlinkedFunctionExecutable. See retainNeededFunctionData().
     static void willAllocateUnlinkedFunction()
     {
         if (s_isBuilding) [[unlikely]]
@@ -208,12 +208,12 @@ public:
     // The image's table of keys, if it goes without: those of the functions whose executables are made when the program runs.
     static std::span<const AOT::ImageKey> keysOfImage();
     static const AOT::ImageFunction* imageFunctionOfFunction(uint32_t index);
-    // AOT::Instance::factsOfFunctions, and what the numbers in AOT::FunctionFacts are: how far into an arena.
+    // AOT::Instance::factsOfFunctions, and what the numbers in AOT::FunctionMetadata are: how far into an arena.
     static const uint32_t* factsOfFunctions(VM&);
     template<typename T> static const T* inData(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Data) + offset); }
     template<typename T> static const T* inMalloc(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Malloc) + offset); }
     // For the code of a function, which was left in the payload. `placed` is what UnlinkedFunctionExecutable::leaveCodeInPayload() was given.
-    static Ref<Decoder> decoderOfWhatWasLeftInPayload(VM&, Decoder& placed);
+    static Ref<Decoder> decoderForKeptPayload(VM&, Decoder& placed);
     static void ensureDecoder(VM&, size_t indexOfModule, SourceProvider&);
     // What the VM has got for an executable of the static heap, if it has had to: see UnlinkedFunctionExecutable::unlinkedCodeBlockFor().
     // An executable like any other, of the VM's own, for the same function as one of the static heap's: for where that one's code
@@ -252,7 +252,7 @@ private:
 
     JS_EXPORT_PRIVATE static bool s_isBuilding;
     JS_EXPORT_PRIVATE static void willAllocateUnlinkedFunctionSlow();
-    static void keepWhatIsWantedOfFunctions(VM&, Header&);
+    static void retainNeededFunctionData(VM&, Header&);
     JS_EXPORT_PRIVATE static const RowOfFunction* s_rowsOfFunctions;
     JS_EXPORT_PRIVATE static VM* s_vm;
     JS_EXPORT_PRIVATE static bool s_isShared;

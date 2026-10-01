@@ -46,7 +46,7 @@ public:
             changed |= std::exchange(m_elementTypesChanged, false);
             // An array that the function is not seen to put anything in has been given what it holds by somebody else. (Not until now:
             // what is put in an array may go by what is taken from it.)
-            if (!changed && !std::exchange(m_arraysNothingIsPutInHoldAnything, true))
+            if (!changed && !std::exchange(m_treatsEmptyArraysAsUntyped, true))
                 changed = true;
         }
         for (BasicBlock* block : m_graph.m_rpo) {
@@ -56,7 +56,7 @@ public:
                 switch (node->opcode) {
                 case op_ret:
                     m_returnType |= node->use(node->as<OpRet>().m_value)->type;
-                    noteThingsReturnedBy(node);
+                    recordReturnValueTypesOf(node);
                     break;
                 case op_tail_call:
                     m_returnType |= resultOfCall(node);
@@ -67,14 +67,14 @@ public:
                 default:
                     break;
                 }
-                if (calleesGivenMore && isReached()) {
+                if (calleesWithWidenedInputs && isReached()) {
                     noteArgumentsOf(node);
                     noteWhatIsPutInVariablesBy(node);
-                    noteWhetherObjectReturnedIsWantedBy(node);
+                    recordWhetherReturnObjectIsNeededBy(node);
                 }
             }
         }
-        if (calleesGivenMore && Options::aotFollowsFunctions() && functionsOfProgram() && isReached()) {
+        if (calleesWithWidenedInputs && functionsOfProgram() && isReached()) {
             for (BasicBlock* block : m_graph.m_rpo) {
                 for (Node* phi : block->phis)
                     noteWhereValuesGoIn(phi);
@@ -92,7 +92,7 @@ public:
             for (Node* node : block->nodes) {
                 if (!node->type) {
                     node->type = TAll;
-                    node->wasTakenNeverToBeReached = true;
+                    node->wasInferredUnreachable = true;
                 }
             }
         }
@@ -101,72 +101,72 @@ public:
     // Whether anything is seen to get to the code, so far. If not it does nothing, so far: it is looked at again if something turns out to.
     bool isReached() const { return !m_graph.facts() || m_graph.facts()->isReached(); }
     Type returnType() const { return m_returnType; }
-    Vector<const KnownFunction*>* calleesConsulted { nullptr };
-    Vector<const KnownFunction*>* calleesGivenMore { nullptr };
+    Vector<const KnownFunction*>* calleesRead { nullptr };
+    Vector<const KnownFunction*>* calleesWithWidenedInputs { nullptr };
     std::optional<UsersOfNodes> m_users;
 
 private:
-    // ---- Options::aotFollowsFunctions(). See abi/DESIGN-types.md, for now.
+    // ---- Function identity tracking.
 
     // The value gets somewhere that is not reckoned with.
     // Whether that is news.
-    bool expose(Type type, uint32_t why)
+    bool markEscaping(Type type, uint32_t why)
     {
-        const KnownFunction* function = functionsOfProgram()->function(functionThatIs(type));
+        const KnownFunction* function = functionsOfProgram()->function(functionNumberOf(type));
         if (!function || !function->facts)
             return false;
-        Vector<Type, ProgramFacts::mostParameters + 1> hadBeenPassed;
-        if (!function->facts->expose(why, [&](Type passed) { hadBeenPassed.append(passed); }))
+        Vector<Type, FunctionSummary::mostParameters + 1> hadBeenPassed;
+        if (!function->facts->markEscaping(why, [&](Type passed) { hadBeenPassed.append(passed); }))
             return false;
-        if (!calleesGivenMore->contains(function))
-            calleesGivenMore->append(function);
+        if (!calleesWithWidenedInputs->contains(function))
+            calleesWithWidenedInputs->append(function);
         for (Type passed : hadBeenPassed)
-            expose(passed, ProgramFacts::OneOfSeveralInParameter);
+            markEscaping(passed, FunctionSummary::MergedInParameter);
         return true;
     }
 
     // It is now part of something of which it can no longer be told that it is there: nobody who gets it from there knows to say where it goes.
     void noteThatItIsPartOf(Type whole, Type part, uint32_t why)
     {
-        if (uint32_t function = functionThatIs(part); function && functionThatIs(whole) != function)
-            expose(part, why);
+        if (uint32_t function = functionNumberOf(part); function && functionNumberOf(whole) != function)
+            markEscaping(part, why);
     }
     void noteJoin(Type before, Type added, uint32_t why)
     {
         noteThatItIsPartOf(before | added, before, why);
         noteThatItIsPartOf(before | added, added, why);
     }
-    static uint32_t usedBy(Node* user) { return ProgramFacts::UsedBy | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8; }
+    static uint32_t usedBy(Node* user) { return FunctionSummary::UsedBy | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8; }
 
-    void exposeWhatIsUsedBy(Node* user)
+    void markOperandsEscaping(Node* user)
     {
         for (auto& use : user->uses)
-            expose(use.node->type, usedBy(user));
+            markEscaping(use.node->type, usedBy(user));
     }
 
     void noteWhereArgumentsGo(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv)
     {
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
-        bool isProven = false;
-        const KnownFunction* known = m_graph.knownCallee(node, &isProven);
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
         // (What noteArgumentsOf() passes on is passed on. The rest of what is passed, nobody keeps track of.)
-        unsigned followed = known && isProven && known->forCall && known->facts && known->facts->isClosed ? std::min<unsigned>(known->forCall->numParameters(), ProgramFacts::mostParameters) : 0;
+        unsigned followed = known && isExact && known->forCall && known->facts && known->facts->isNonEscaping ? std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::mostParameters) : 0;
         for (auto& use : node->uses) {
             // Calling something is not a way of getting hold of it, for anybody but itself.
             if (use.reg == calleeRegister && use.reg.offset() != firstArgument) {
                 if (!followed)
-                    noteCallOfWhoKnowsWhat(use.node->type);
+                    recordIndirectCall(use.node->type);
                 continue;
             }
             int index = use.reg.offset() - firstArgument;
             if (index >= 1 && static_cast<unsigned>(index) < followed && static_cast<unsigned>(index) < argc)
                 continue;
-            expose(use.node->type, !followed ? ProgramFacts::PassedToWhoKnowsWhat : !index ? ProgramFacts::PassedAsThis : ProgramFacts::PassedBeyondParameters);
+            markEscaping(use.node->type, !followed ? FunctionSummary::PassedToUnknownCallee : !index ? FunctionSummary::PassedAsThis : FunctionSummary::PassedAsExtraArgument);
         }
     }
 
     // A call that is not made as a call of that function and no other: it passes what it passes.
-    void noteCallOfWhoKnowsWhat(Type callee) { expose(callee, ProgramFacts::CalledInSomeOtherWay); }
+    void recordIndirectCall(Type callee) { markEscaping(callee, FunctionSummary::CalledIndirectly); }
 
     void noteWhereValuesGoIn(Node* user)
     {
@@ -174,10 +174,10 @@ private:
         case NodeKind::Phi:
         case NodeKind::Narrow:
             for (auto& use : user->uses)
-                noteThatItIsPartOf(user->type, use.node->type, ProgramFacts::OneOfSeveralInPhi);
+                noteThatItIsPartOf(user->type, use.node->type, FunctionSummary::MergedInPhi);
             return;
         case NodeKind::SetStack:
-            noteThatItIsPartOf(m_graph.homedTypes[m_graph.registerIndex(user->reg)], user->uses[0].node->type, ProgramFacts::OneOfSeveralInHomedRegister);
+            noteThatItIsPartOf(m_graph.homedTypes[m_graph.registerIndex(user->reg)], user->uses[0].node->type, FunctionSummary::MergedInFrameRegister);
             return;
         // (It looks. What it stands in front of is a user in its own right.)
         case NodeKind::Guard:
@@ -187,13 +187,13 @@ private:
         case NodeKind::Bytecode:
             break;
         default:
-            exposeWhatIsUsedBy(user);
+            markOperandsEscaping(user);
             return;
         }
         auto exposeAllBut = [&](VirtualRegister harmless) {
             for (auto& use : user->uses) {
                 if (use.reg != harmless)
-                    expose(use.node->type, usedBy(user));
+                    markEscaping(use.node->type, usedBy(user));
             }
         };
         switch (user->opcode) {
@@ -240,9 +240,9 @@ private:
             return;
         case op_get_from_scope: {
             // What it may well read, for all that it cannot be told for certain: then what it gets does not say which function it is.
-            bool isProven = false;
-            if (const KnownFunction* known = m_graph.knownFunctionReadBy(user, &isProven); known && !isProven)
-                expose(typeOfClosureOf(known->executable), ProgramFacts::ReadInAWayThatIsNotProven);
+            bool isExact = false;
+            if (const KnownFunction* known = m_graph.knownFunctionReadBy(user, &isExact); known && !isExact)
+                markEscaping(typeOfClosureOf(known->executable), FunctionSummary::ReadInexactly);
             return;
         }
         case op_get_by_val:
@@ -259,9 +259,9 @@ private:
             return exposeAllBut(user->as<OpPutByValDirect>().m_base);
         case op_define_data_property:
             // A method that nothing gets hold of but reads that say which it is (Graph::closedMethodReadBy()).
-            if (auto* classes = classesOfProgram(); classes && classes->isClosedMethod(functionThatIs(user->use(user->as<OpDefineDataProperty>().m_value)->type)))
+            if (auto* classes = classesOfProgram(); classes && classes->isNonEscapingMethod(functionNumberOf(user->use(user->as<OpDefineDataProperty>().m_value)->type)))
                 return exposeAllBut(user->as<OpDefineDataProperty>().m_value);
-            exposeWhatIsUsedBy(user);
+            markOperandsEscaping(user);
             return;
 
         // ---- The same thing by another name, if that is what is made of it.
@@ -272,7 +272,7 @@ private:
         case op_identity_with_profile:
         case op_resolve_scope:
             for (auto& use : user->uses)
-                noteThatItIsPartOf(user->type, use.node->type, ProgramFacts::LostByWhatHandsItOn | static_cast<uint32_t>(user->opcode) << 8);
+                noteThatItIsPartOf(user->type, use.node->type, FunctionSummary::LostThroughAlias | static_cast<uint32_t>(user->opcode) << 8);
             return;
 
         // ---- Scopes are not values. (What is put in them: noteWhatIsPutInVariablesBy().)
@@ -301,24 +301,24 @@ private:
         case op_ret:
             return noteWhatIsReturned(user->use(user->as<OpRet>().m_value)->type);
         default:
-            exposeWhatIsUsedBy(user);
+            markOperandsEscaping(user);
             return;
         }
     }
 
     void noteWhatIsReturned(Type type)
     {
-        const ProgramFacts* facts = m_graph.facts();
-        if (!facts || !facts->isClosed || facts->isExposed.load(std::memory_order_relaxed)) {
-            expose(type, ProgramFacts::ReturnedToWhoKnowsWhom);
+        const FunctionSummary* facts = m_graph.facts();
+        if (!facts || !facts->isNonEscaping || facts->escapes.load(std::memory_order_relaxed)) {
+            markEscaping(type, FunctionSummary::ReturnedToUnknownCaller);
             return;
         }
-        noteJoin(facts->returnType.join(type & TTop), type, ProgramFacts::OneOfSeveralReturned);
+        noteJoin(facts->returnType.join(type & TTop), type, FunctionSummary::MergedInReturn);
     }
 
     Type typeOfClosureOf(UnlinkedFunctionExecutable* executable)
     {
-        if (!Options::aotFollowsFunctions() || !functionsOfProgram())
+        if (!functionsOfProgram())
             return TFunction;
         uint32_t number = functionsOfProgram()->numberOf(executable);
         return number ? typeOfFunction(number) : TFunction;
@@ -326,7 +326,7 @@ private:
 
     void noteWhatIsPutInVariablesBy(Node* node)
     {
-        VariableFacts* facts = m_graph.variableFacts();
+        VariableSummaries* facts = m_graph.variableSummaries();
         if (!facts)
             return;
         auto noteInitialValue = [&](VirtualRegister initialValue) {
@@ -338,25 +338,25 @@ private:
             if (Variable variable = m_graph.variableAccessedBy(node)) {
                 Type put = node->use(node->as<OpPutToScope>().m_value)->type;
                 Type before = facts->join(variable, put);
-                if (Options::aotFollowsFunctions() && functionsOfProgram()) {
+                if (functionsOfProgram()) {
                     UniquedStringImpl* name = node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl();
                     // A variable of a module can be got at from outside it, in ways that are not reads of the variable, unless whoever put the program together says not.
                     const CalleeHints* hints = m_graph.calleeHints();
                     const KnownFunction* known = hints && hints->scopeOfVariables() == variable.scope ? hints->find(name, variable.offset) : nullptr;
                     bool isOfSomeModule = facts->isScopeOfModule(variable.scope);
-                    if (facts->hasGivenUpOn(variable, name))
-                        expose(put, ProgramFacts::PutInVariableGivenUpOn);
-                    else if (facts->isReadFromWhoKnowsWhere(name))
-                        expose(put, ProgramFacts::PutInVariableReadFromWhoKnowsWhere);
+                    if (facts->isUntracked(variable, name))
+                        markEscaping(put, FunctionSummary::StoredInUntrackedVariable);
+                    else if (facts->isDynamicallyRead(name))
+                        markEscaping(put, FunctionSummary::StoredInDynamicallyReadVariable);
                     else if (isOfSomeModule && (!known || known->isVisibleFromOutside))
-                        expose(put, ProgramFacts::PutInVariableOfModule);
+                        markEscaping(put, FunctionSummary::StoredInModuleVariable);
                     else
-                        noteJoin(before, put, ProgramFacts::OneOfSeveralInVariable);
+                        noteJoin(before, put, FunctionSummary::MergedInVariable);
                 }
                 if (!m_graph.nameForLog().isNull()) [[unlikely]]
                     dataLogLn("FACTLOG put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` scope ", RawPointer(variable.scope), " offset ", variable.offset, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), ": ", TypeDump(node->use(node->as<OpPutToScope>().m_value)->type));
-            } else if (Options::aotFollowsFunctions() && functionsOfProgram())
-                expose(node->use(node->as<OpPutToScope>().m_value)->type, ProgramFacts::PutWhoKnowsWhere);
+            } else if (functionsOfProgram())
+                markEscaping(node->use(node->as<OpPutToScope>().m_value)->type, FunctionSummary::StoredToUnknownLocation);
             if (!m_graph.variableAccessedBy(node) && !m_graph.nameForLog().isNull()) [[unlikely]]
                 dataLogLn("FACTLOG put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` WHO KNOWS WHERE in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset());
             return;
@@ -391,9 +391,9 @@ private:
         default:
             return;
         }
-        bool isProven = false;
-        const KnownFunction* known = m_graph.knownCallee(node, &isProven);
-        if (!known || !isProven || !known->forCall || !known->facts || !known->facts->isClosed)
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        if (!known || !isExact || !known->forCall || !known->facts || !known->facts->isNonEscaping)
             return;
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         // A call that nothing has been seen to get to, so far, passes nothing, so far.
@@ -411,13 +411,13 @@ private:
             dataLogLn("FACTLOG call of `", known->executable->name().impl(), "` @", known->key.module, ":", known->key.start, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), " passes", out.toString());
         }
         bool givesMore = false;
-        unsigned count = std::min<unsigned>(known->forCall->numParameters(), ProgramFacts::mostParameters);
+        unsigned count = std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::mostParameters);
         for (unsigned i = 1; i < count; ++i) {
             Type type = i < argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
             Type before = known->facts->parameterTypes[i].join(type);
             givesMore |= (before | type) != before;
-            if (Options::aotFollowsFunctions() && functionsOfProgram())
-                noteJoin(before, type, ProgramFacts::OneOfSeveralInParameter);
+            if (functionsOfProgram())
+                noteJoin(before, type, FunctionSummary::MergedInParameter);
         }
         {
             Type type = node->use(VirtualRegister(firstArgument))->type & TTop;
@@ -427,15 +427,13 @@ private:
         // (One with no parameters is reached all the same.)
         Type before = known->facts->parameterTypes[0].join(TTop);
         givesMore |= before != TTop;
-        if (givesMore && !calleesGivenMore->contains(known))
-            calleesGivenMore->append(known);
+        if (givesMore && !calleesWithWidenedInputs->contains(known))
+            calleesWithWidenedInputs->append(known);
     }
 
     // A call of one of the functions of the language itself, if that is what it is bound to be.
     std::optional<Type> resultOfCallOfBuiltin(Node* node)
     {
-        if (!Options::aotKnowsWhatBuiltinsReturn())
-            return std::nullopt;
         VirtualRegister calleeRegister;
         unsigned argc;
         unsigned argv;
@@ -502,7 +500,7 @@ private:
         return signature->result;
     }
 
-    // ---- ProgramFacts::typesOfThingsReturned, objectReturnedIsWanted.
+    // ---- FunctionSummary::returnValueTypes, needsReturnObject.
     const UsersOfNodes& users()
     {
         if (!m_users)
@@ -510,77 +508,77 @@ private:
         return *m_users;
     }
 
-    void noteThingsReturnedBy(Node* node)
+    void recordReturnValueTypesOf(Node* node)
     {
-        const ProgramFacts* facts = m_graph.facts();
-        if (!calleesGivenMore || node->graph != &m_graph)
+        const FunctionSummary* facts = m_graph.facts();
+        if (!calleesWithWidenedInputs || node->graph != &m_graph)
             return;
-        auto* names = thingsReturnedInRegistersBy(m_graph.codeBlock(), facts);
+        auto* names = registerReturnValuesOf(m_graph.codeBlock(), facts);
         if (!names)
             return;
         Node* object = node->use(node->as<OpRet>().m_value);
         RELEASE_ASSERT(object->isBytecode(op_new_object) && object->numberOfLiteralProperties == names->size());
         for (unsigned i = 0; i < names->size(); ++i) {
             Type type = object->use(NewObjectPlan::registerOf(i))->type;
-            Type old = facts->typesOfThingsReturned[i].join(type);
+            Type old = facts->returnValueTypes[i].join(type);
             if ((old | type) != old)
-                facts->moreIsKnownOfThingsReturned.store(true, std::memory_order_relaxed);
+                facts->returnValueTypesChanged.store(true, std::memory_order_relaxed);
         }
     }
 
-    void noteWhetherObjectReturnedIsWantedBy(Node* node)
+    void recordWhetherReturnObjectIsNeededBy(Node* node)
     {
-        if (!thingsReturnedByFunctions() || (node->opcode != op_call && node->opcode != op_tail_call))
+        if (!multiValueReturnTable() || (node->opcode != op_call && node->opcode != op_tail_call))
             return;
-        bool isProven = false;
-        const KnownFunction* known = m_graph.knownCallee(node, &isProven);
-        if (!known || !isProven || !known->forCall || !known->facts)
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        if (!known || !isExact || !known->forCall || !known->facts)
             return;
-        auto* names = thingsReturnedByFunctions()->namesOfThingsReturnedBy(known->forCall);
+        auto* names = multiValueReturnTable()->returnValueNamesOf(known->forCall);
         if (!names || (node->opcode == op_call && users().isOnlyRead(node, names->span(), 0)))
             return;
-        if (known->facts->objectReturnedIsWanted.exchange(true, std::memory_order_relaxed))
+        if (known->facts->needsReturnObject.exchange(true, std::memory_order_relaxed))
             return;
-        known->facts->moreIsKnownOfThingsReturned.store(true, std::memory_order_relaxed);
-        if (!calleesGivenMore->contains(known))
-            calleesGivenMore->append(known);
+        known->facts->returnValueTypesChanged.store(true, std::memory_order_relaxed);
+        if (!calleesWithWidenedInputs->contains(known))
+            calleesWithWidenedInputs->append(known);
     }
 
     // Of an op_get_by_id: what it reads is one of the things that a call was handed in registers.
-    std::optional<Type> typeOfThingReturnedThatIsReadBy(Node* read)
+    std::optional<Type> typeOfReturnValueReadBy(Node* read)
     {
-        if (!thingsReturnedByFunctions())
+        if (!multiValueReturnTable())
             return std::nullopt;
         Node* call = read->use(read->as<OpGetById>().m_base);
         while (call->kind == NodeKind::Narrow || call->isBytecode(op_check_type) || call->isBytecode(op_check_tdz) || call->isBytecode(op_type_tag))
             call = call->uses[0].node;
         if (!call->isBytecode(op_call))
             return std::nullopt;
-        bool isProven = false;
-        const KnownFunction* known = m_graph.knownCallee(call, &isProven);
-        if (!known || !isProven || !known->forCall)
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(call, &isExact);
+        if (!known || !isExact || !known->forCall)
             return std::nullopt;
-        auto* names = thingsReturnedInRegistersBy(known->forCall, known->facts);
+        auto* names = registerReturnValuesOf(known->forCall, known->facts);
         if (!names)
             return std::nullopt;
         size_t index = names->find(read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl());
         if (index == notFound || !users().isOnlyRead(call, names->span(), 0))
             return std::nullopt;
-        if (calleesConsulted && !calleesConsulted->contains(known))
-            calleesConsulted->append(known);
-        return known->facts->typesOfThingsReturned[index].load();
+        if (calleesRead && !calleesRead->contains(known))
+            calleesRead->append(known);
+        return known->facts->returnValueTypes[index].load();
     }
 
     Type resultOfCall(Node* node)
     {
         if (auto result = resultOfCallOfBuiltin(node))
             return *result;
-        bool isProven = false;
-        const KnownFunction* known = m_graph.knownCallee(node, &isProven);
-        if (!known || !isProven || !known->forCall)
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isExact);
+        if (!known || !isExact || !known->forCall)
             return TTop;
-        if (calleesConsulted && !calleesConsulted->contains(known))
-            calleesConsulted->append(known);
+        if (calleesRead && !calleesRead->contains(known))
+            calleesRead->append(known);
         return known->returnType.load();
     }
 
@@ -910,7 +908,7 @@ private:
             }
             return TFinalObject;
         case op_get_by_id:
-            if (auto type = typeOfThingReturnedThatIsReadBy(node))
+            if (auto type = typeOfReturnValueReadBy(node))
                 return *type;
             if (TypeTable::typedFieldsAreEnforced() && Options::aotTypesFields()) {
                 if (uint32_t method = Graph::closedMethodReadBy(node))
@@ -964,7 +962,7 @@ private:
         case op_push_with_scope:
             return TObject;
         case op_construct:
-            if (Node* callee = node->use(node->as<OpConstruct>().m_callee); callee->kind == NodeKind::Intrinsic && Options::aotKnowsWhatBuiltinsReturn()) {
+            if (Node* callee = node->use(node->as<OpConstruct>().m_callee); callee->kind == NodeKind::Intrinsic) {
                 if (auto result = resultOfConstructingIntrinsic(callee->intrinsic))
                     return *result;
             }
@@ -1036,7 +1034,7 @@ private:
                             for (auto& use : array->uses)
                                 elements |= use.node->type;
                         }
-                        if (!elements && !m_arraysNothingIsPutInHoldAnything)
+                        if (!elements && !m_treatsEmptyArraysAsUntyped)
                             return TNone;
                         if (elements && isSubtype(elements, TNumber))
                             return TNumber;
@@ -1091,13 +1089,13 @@ private:
         case op_resolve_scope_for_hoisting_func_decl_in_eval:
             return TObject | TUndefined;
         case op_get_from_scope: {
-            bool isProven = false;
-            if (const KnownFunction* known = m_graph.knownFunctionReadBy(node, &isProven); known && isProven)
+            bool isExact = false;
+            if (const KnownFunction* known = m_graph.knownFunctionReadBy(node, &isExact); known && isExact)
                 return known->isDeclaration ? typeOfClosureOf(known->executable) : typeOfClosureOf(known->executable) | TUndefined | TEmpty;
-            if (VariableFacts* facts = m_graph.variableFacts()) {
+            if (VariableSummaries* facts = m_graph.variableSummaries()) {
                 if (Variable variable = m_graph.variableAccessedBy(node)) {
                     auto bytecode = node->as<OpGetFromScope>();
-                    Type type = facts->read(variable, node->graph->codeBlock()->identifier(bytecode.m_var).impl(), m_graph.readerOfFacts());
+                    Type type = facts->read(variable, node->graph->codeBlock()->identifier(bytecode.m_var).impl(), m_graph.summaryReader());
                     // (A function that a module declares is made when it is first read, by whatever reads it.)
                     return bytecode.m_getPutInfo.resolveType() == ResolvedLazyClosureVar ? type | TFunction : type;
                 }
@@ -1114,16 +1112,16 @@ private:
     Type m_returnType { TNone };
     UncheckedKeyHashMap<Node*, Type> m_elementTypes; // Of the arrays that the function makes: everything it puts in them.
     bool m_elementTypesChanged { false };
-    bool m_arraysNothingIsPutInHoldAnything { false };
+    bool m_treatsEmptyArraysAsUntyped { false };
 };
 
 } // anonymous namespace
 
-Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesConsulted, Vector<const KnownFunction*>* calleesGivenMore)
+Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesRead, Vector<const KnownFunction*>* calleesWithWidenedInputs)
 {
     TypeInference inference(graph);
-    inference.calleesConsulted = calleesConsulted;
-    inference.calleesGivenMore = calleesGivenMore;
+    inference.calleesRead = calleesRead;
+    inference.calleesWithWidenedInputs = calleesWithWidenedInputs;
     inference.run();
     return inference.returnType();
 }

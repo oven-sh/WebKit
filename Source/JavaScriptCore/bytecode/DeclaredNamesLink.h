@@ -37,7 +37,7 @@ namespace JSC {
 // activation) from names that fall through to the global object.
 // `const f = function () { }`, `g = () => { }`, `class C { }`: what the statement puts in the variable is the function that it makes.
 // As whoever generated the bytecode saw in the syntax tree.
-struct FunctionPutInVariable {
+struct FunctionAssignment {
     unsigned identifier { 0 }; // Of the variable: UnlinkedCodeBlock::identifier().
     unsigned functionExpr { 0 }; // UnlinkedCodeBlock::functionExpr(). Of a class, its constructor.
     // If it is a variable of the code's own: the constant that has the symbol table of its scope, and where it is in that.

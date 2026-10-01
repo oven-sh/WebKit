@@ -1393,7 +1393,7 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
                             ConcurrentJSLocker locker(symbolTable->m_lock);
                             symbolTable->prepareForTypeProfiling(locker);
                         }
-                        if (i == moduleEnvironmentSymbolTableIndex || symbolTable->isItsOwnClone())
+                        if (i == moduleEnvironmentSymbolTableIndex || symbolTable->isSharedAcrossRealms())
                             break;
 
                         // We have to make sure to use a single code block for constant watchpointing.

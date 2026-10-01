@@ -205,7 +205,7 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Stac
     copy(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
 #if ENABLE(FTL_JIT)
     if (CallFrame* adapter = visitor->aotAdapterFrame())
-        copy(adapter, &AOT::registersThatAdapterSaves());
+        copy(adapter, &AOT::adapterSavedRegisters());
 #endif
 #else
     UNUSED_PARAM(visitor);

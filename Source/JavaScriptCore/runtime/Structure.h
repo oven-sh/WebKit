@@ -467,7 +467,7 @@ public:
     // inlineSlots: slots from that one on are outside the object (TypedLayoutTable::offsetOfSlot()).
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
     // What whoever adds a property says of the Structure, and adding it does not.
-    void saysOfAccessorsAndReadOnlyPropertiesWhat(const Structure& other)
+    void accessorAndReadOnlySummary(const Structure& other)
     {
         setHasAnyKindOfGetterSetterProperties(other.hasAnyKindOfGetterSetterProperties());
         setHasReadOnlyOrGetterSetterPropertiesExcludingProto(other.hasReadOnlyOrGetterSetterPropertiesExcludingProto());

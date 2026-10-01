@@ -210,7 +210,7 @@ static bool canBeCopiedFrom(JSValue value)
     return array && array->isIteratorProtocolFastAndNonObservable();
 }
 
-static unsigned lengthOfWhatCanBeCopiedFrom(JSValue value)
+static unsigned copyableLength(JSValue value)
 {
     if (auto* butterfly = dynamicDowncast<JSCellButterfly>(value.asCell()))
         return butterfly->length();
@@ -245,11 +245,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* glo
             bool threw = false;
             const void* returnAddress = removeCodePtrTag(callFrame->rawReturnPC());
             FunctionRef function = caller(globalObject, callFrame);
-            uint32_t callSite = callSiteAt(*function.info().function(), whatIsAt(returnAddress).offset);
+            uint32_t callSite = callSiteAt(*function.info().function(), classifyAddress(returnAddress).offset);
             forEachSpread([&](EncodedJSValue& item, unsigned index) {
                 if (threw)
                     return;
-                std::optional<SiteInPlaceOfCallSite> where;
+                std::optional<CallSiteOverride> where;
                 if (auto site = siteOfSpread(*function.info().function(), callSite, index))
                     where.emplace(*function.instance, returnAddress, *site);
                 JSCell* result = spread(globalObject, JSValue::decode(item));
@@ -269,7 +269,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* glo
                 ++word;
                 break;
             case ListDescriptor::Spread:
-                length += lengthOfWhatCanBeCopiedFrom(JSValue::decode(items[word++]));
+                length += copyableLength(JSValue::decode(items[word++]));
                 break;
             case ListDescriptor::Passed:
                 length += static_cast<uint64_t>(items[word]);

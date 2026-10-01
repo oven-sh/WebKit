@@ -39,7 +39,7 @@ protected:
     }
 
     // What is in the same registers throughout, and what is found from that.
-    void findWhatIsPinned();
+    void findPinnedRegisters();
 
     LValue isInt32(LValue v) { return m_out.aboveOrEqual(v, m_numberTag); }
     LValue isNotInt32(LValue v) { return m_out.below(v, m_numberTag); }

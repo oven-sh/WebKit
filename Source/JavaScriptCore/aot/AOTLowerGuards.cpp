@@ -73,9 +73,9 @@ LValue Lowering::trapBits()
 void Lowering::exitUnlessOfType(LValue value, Type from, Type wanted)
 {
     // Which function it is, or what it was born as, is not looked into: if that has to be known, and is not, it does not pass.
-    if ((from & wanted & TFunctionTag) && !isSubtype(from & TWhicheverFunction, wanted))
+    if ((from & wanted & TFunctionTag) && !isSubtype(from & TAnyFunctionNumber, wanted))
         wanted &= ~TFunction;
-    if ((from & wanted & TFinalObjectTag) && !isSubtype(from & TWhicheverLayout, wanted))
+    if ((from & wanted & TFinalObjectTag) && !isSubtype(from & TAnyLayoutNumber, wanted))
         wanted &= ~TFinalObject;
     from &= TAllTags;
     wanted &= TAllTags;
@@ -204,7 +204,7 @@ void Lowering::emitGuard(Node* guard)
         exitUnless(m_out.equal(m_out.castToInt32(loadSlotWord(slotOfPropertyGuard(guard->site), 0)), m_out.castToInt32(loadSlotWord(slotOfPropertyGuard(guard->otherSite), 0))));
         return;
     case GuardKind::SlotIsPlain:
-        exitUnless(m_out.logicalNot(hasFlag(m_out, loadSlotWord(slotOfPropertyGuard(guard->site), 0), Slot::isIntricate)));
+        exitUnless(m_out.logicalNot(hasFlag(m_out, loadSlotWord(slotOfPropertyGuard(guard->site), 0), Slot::isIndirect)));
         return;
     case GuardKind::BeginSlotChecks: {
         m_slotOfSlotChecks = allocateSlot();
@@ -235,7 +235,7 @@ void Lowering::emitGuard(Node* guard)
         return;
     case GuardKind::KnownCallee: {
         const KnownFunction* known = m_graph.knownCallee(guard);
-        if (m_graph.calleeIsProven(guard)) {
+        if (m_graph.calleeIsExact(guard)) {
             // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
             if (!known->isDeclaration)
                 exitUnless(isCell(lowJSValue(guard->uses[0].node)));
@@ -391,7 +391,7 @@ void Lowering::guardGetById(Node* guard)
     LBasicBlock plain = m_out.newBlock();
     LBasicBlock intricate = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(hasFlag(m_out, word, Slot::isIntricate), rarely(intricate), usually(plain));
+    m_out.branch(hasFlag(m_out, word, Slot::isIndirect), rarely(intricate), usually(plain));
 
     m_out.appendTo(plain, intricate);
     ValueFromBlock plainResult = m_out.anchor(m_out.load64(TypedPointer(heap, plainLocation(m_out, base, word))));
@@ -521,7 +521,7 @@ void Lowering::guardPutById(Node* guard)
     LBasicBlock plain = m_out.newBlock();
     LBasicBlock intricate = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(hasFlag(m_out, word, Slot::isIntricate), rarely(intricate), usually(plain));
+    m_out.branch(hasFlag(m_out, word, Slot::isIndirect), rarely(intricate), usually(plain));
 
     m_out.appendTo(plain, intricate);
     ValueFromBlock plainAddress = m_out.anchor(plainLocation(m_out, base, word));

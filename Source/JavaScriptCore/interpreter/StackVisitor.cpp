@@ -63,8 +63,8 @@ static CallFrame* skipFramesOfStubs(CallFrame* callFrame, EntryFrame*& entryFram
 {
 #if ENABLE(FTL_JIT)
     while (callFrame) {
-        switch (AOT::whatIsAt(removeCodePtrTag(returnPC)).kind) {
-        case AOT::WhatIsAt::Stub:
+        switch (AOT::classifyAddress(removeCodePtrTag(returnPC)).kind) {
+        case AOT::ImageAddressInfo::Stub:
             // One that was got to from outside the VM (Stub::ConstructByCalling is what Reflect.construct() may find itself calling) has made
             // its frame the way the engine makes one for a native function, and has to be taken for that: it is all there is between
             // one way in to the VM and the next, and whoever unwinds has to stop at each.
@@ -75,12 +75,12 @@ static CallFrame* skipFramesOfStubs(CallFrame* callFrame, EntryFrame*& entryFram
             returnPC = callFrame->rawReturnPC();
             callFrame = callFrame->callerFrame();
             continue;
-        case AOT::WhatIsAt::Adapter:
+        case AOT::ImageAddressInfo::Adapter:
             adapter = callFrame;
             callFrame = callerOf(callFrame, entryFrame, returnPC);
             continue;
-        case AOT::WhatIsAt::Function:
-        case AOT::WhatIsAt::SomethingElse:
+        case AOT::ImageAddressInfo::Function:
+        case AOT::ImageAddressInfo::NotInImage:
             return callFrame;
         }
     }
@@ -107,11 +107,11 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
             // What kind of frame it is has to be known before anything is read from it.
             if (AOT::hasCode()) {
                 void* returnPC = AOT::returnAddressInto(topFrame, __builtin_frame_address(0));
-                if (returnPC && AOT::whatIsAt(returnPC).kind != AOT::WhatIsAt::SomethingElse) {
+                if (returnPC && AOT::classifyAddress(returnPC).kind != AOT::ImageAddressInfo::NotInImage) {
                     CallFrame* adapter = nullptr;
                     topFrame = skipFramesOfStubs(topFrame, m_frame.m_entryFrame, returnPC, adapter);
                     m_previousReturnPC = returnPC;
-                    isTheEnginesOwn = AOT::whatIsAt(removeCodePtrTag(returnPC)).kind == AOT::WhatIsAt::SomethingElse;
+                    isTheEnginesOwn = AOT::classifyAddress(removeCodePtrTag(returnPC)).kind == AOT::ImageAddressInfo::NotInImage;
                     if (startFrame == vm.topCallFrame)
                         startFrame = topFrame;
                 }
@@ -213,7 +213,7 @@ void StackVisitor::readFrame(CallFrame* callFrame)
 #if ENABLE(FTL_JIT)
     {
         void* returnPC = m_frame.m_callFrame && m_frame.m_callFrame != callFrame ? m_frame.m_callerReturnPC : m_previousReturnPC;
-        if (AOT::WhatIsAt what = AOT::whatIsAt(removeCodePtrTag(returnPC)); what.kind == AOT::WhatIsAt::Function) {
+        if (AOT::ImageAddressInfo what = AOT::classifyAddress(removeCodePtrTag(returnPC)); what.kind == AOT::ImageAddressInfo::Function) {
             readAOTFrame(callFrame, removeCodePtrTag(returnPC), what.index);
             return;
         }
@@ -727,7 +727,7 @@ bool StackVisitor::Frame::isFrameOf(JSCell* function) const
         return false;
     if (JSCell* callee = this->callee().asCell())
         return callee == function;
-    // It was called as no object. That is only done to a function of which the realm has one closure (AOT::KnownFunction::isProven).
+    // It was called as no object. That is only done to a function of which the realm has one closure (AOT::KnownFunction::isExact).
     auto* jsFunction = dynamicDowncast<JSFunction>(function);
     return jsFunction && hasCode() && jsFunction->executable() == ownerExecutable();
 }

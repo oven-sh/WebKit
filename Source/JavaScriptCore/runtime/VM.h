@@ -512,7 +512,7 @@ public:
     Vector<AOT::Instance*, 1> m_aotInstances; // Each is its global object's.
     void* m_staticHeapOfVM { nullptr }; // See StaticHeap::isUsedBy().
     // The realm that functions of the engine's own are being made for, where that is known (BuiltinExecutables::staticExecutableFor()).
-    JSGlobalObject* m_realmThatBuiltinsAreMadeFor { nullptr };
+    JSGlobalObject* m_realmForBuiltins { nullptr };
     JSGlobalObject* m_firstRealm { nullptr }; // Not kept alive by this, and never looked into.
     bool m_firstRealmHasBuiltinsOfStaticHeap { false };
     Vector<FunctionExecutable*> m_builtinsOfStaticHeap; // What it has been given, by BuiltinCodeIndex. The collector has nothing to do with them.
@@ -1602,14 +1602,14 @@ JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 inline MakingBuiltinsFor::MakingBuiltinsFor(VM& vm, JSGlobalObject* realm)
     : m_vm(vm)
-    , m_before(vm.m_realmThatBuiltinsAreMadeFor)
+    , m_before(vm.m_realmForBuiltins)
 {
-    vm.m_realmThatBuiltinsAreMadeFor = realm;
+    vm.m_realmForBuiltins = realm;
 }
 
 inline MakingBuiltinsFor::~MakingBuiltinsFor()
 {
-    m_vm.m_realmThatBuiltinsAreMadeFor = m_before;
+    m_vm.m_realmForBuiltins = m_before;
 }
 
 } // namespace JSC

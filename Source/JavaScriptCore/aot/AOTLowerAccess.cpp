@@ -51,7 +51,7 @@ LValue Lowering::loadProperty(LValue object, LValue offset)
 TypedPointer Lowering::cachedPropertyAddress(LValue object, LValue word, const AbstractHeap* heap)
 {
     // (A direct slot may have a property name id above the location.)
-    LValue location = m_out.select(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIntricate) << 32)),
+    LValue location = m_out.select(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIndirect) << 32)),
         m_out.aShr(m_out.shl(word, m_out.constInt32(32 - Slot::offsetBits)), m_out.constInt32(64 - Slot::offsetBits)),
         m_out.bitAnd(m_out.lShr(word, m_out.constInt32(32)), m_out.constInt64(Slot::directLocationMask)));
     LValue storage = m_out.select(m_out.lessThan(location, m_out.int64Zero), m_out.loadPtr(object, m_heaps.JSObject_butterfly), object);
@@ -101,35 +101,35 @@ LValue Lowering::toFieldRepresentation(Node* valueNode, LValue value, TypeTable:
     return m_out.select(isInt32(value), boxDouble(m_out.intToDouble(unboxInt32(value))), value);
 }
 
-static Node* whatIsHandedOn(Node* node)
+static Node* skipAliases(Node* node)
 {
     while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz) || node->isBytecode(op_type_tag))
         node = node->uses[0].node;
     return node;
 }
 
-auto Lowering::fieldInHand(Node* base, const TypeTable::Field& field) const -> const FieldInHand*
+auto Lowering::availableField(Node* base, const TypeTable::Field& field) const -> const AvailableField*
 {
-    base = whatIsHandedOn(base);
-    for (auto& inHand : m_fieldsInHand) {
+    base = skipAliases(base);
+    for (auto& inHand : m_availableFields) {
         if (inHand.base == base && inHand.layoutID == field.first && inHand.slot == field.slot && inHand.id == field.id)
             return &inHand;
     }
     return nullptr;
 }
 
-void Lowering::noteFieldInHand(Node* base, const TypeTable::Field& field, LValue value, Rep rep, LValue asJSValue, bool isWritten)
+void Lowering::recordAvailableField(Node* base, const TypeTable::Field& field, LValue value, Rep rep, LValue asJSValue, bool isWritten)
 {
-    base = whatIsHandedOn(base);
+    base = skipAliases(base);
     // (Two values may be the one object. An object is of one family for life.)
-    m_fieldsInHand.removeAllMatching([&](auto& inHand) {
+    m_availableFields.removeAllMatching([&](auto& inHand) {
         return inHand.layoutID == field.first && inHand.slot == field.slot && (isWritten || inHand.base == base);
     });
-    m_fieldsInHand.append({ base, field.first, field.slot, field.id, rep, value, asJSValue });
+    m_availableFields.append({ base, field.first, field.slot, field.id, rep, value, asJSValue });
 }
 
 // Whatever the lowering makes of it, it neither writes to an object nor runs any of the program's code. This has to say no more than the lowerings deliver.
-bool Lowering::leavesFieldsAlone(Node* node)
+bool Lowering::preservesFields(Node* node)
 {
     switch (node->kind) {
     case NodeKind::Constant:
@@ -243,9 +243,9 @@ bool Lowering::leavesFieldsAlone(Node* node)
     }
 }
 
-bool Lowering::isThisOfWhatAnybodyMayCall(Node* node)
+bool Lowering::isThisOfEscapingFunction(Node* node)
 {
-    return Graph::isThisOfWhatAnybodyMayCall(node);
+    return Graph::isThisOfEscapingFunction(node);
 }
 
 void Lowering::checkTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID)
@@ -304,7 +304,7 @@ Lowering::FieldStorage Lowering::fieldStorageFor(Node* onBehalfOf, Node* baseNod
         return { base, false };
     // (An access whose base is in a register that is not followed has no op_type_tag ahead of it, and says so itself.)
     uint32_t tag = Graph::typeTagOf(onBehalfOf);
-    if (!TypeTable::shared()->isOpen(layoutID) || (tag && TypeTable::shared()->isTrusted(tag) && TypeTable::shared()->layoutIDOf(tag) == layoutID && !isThisOfWhatAnybodyMayCall(baseNode))) {
+    if (!TypeTable::shared()->isOpen(layoutID) || (tag && TypeTable::shared()->isTrusted(tag) && TypeTable::shared()->layoutIDOf(tag) == layoutID && !isThisOfEscapingFunction(baseNode))) {
         checkTypedLayout(onBehalfOf, baseNode, base, layoutID);
         return { base, false };
     }
@@ -374,16 +374,16 @@ void Lowering::lowerGetById(Node* node)
         LValue base = lowJSValue(baseNode);
         if (Options::aotTypesFields() && TypeTable::hasTypedFields() && field->id) {
             // The slots of the family are verified: it is for the object's Structure to say whether the field is in its slot. Whatever is known of the object.
-            bool undefinedWillDo = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
-            Stub stub = static_cast<Stub>(static_cast<unsigned>(undefinedWillDo ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
+            bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
+            Stub stub = static_cast<Stub>(static_cast<unsigned>(allowsUndefined ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
             auto throughStub = [&]() -> LValue {
-                return callStub(stub, Int64, { { base, GPRInfo::argumentGPR0 } }, { { GPRInfo::argumentGPR1, field->id } }, StubClobbers::WhatCallsDo, node);
+                return callStub(stub, Int64, { { base, GPRInfo::argumentGPR0 } }, { { GPRInfo::argumentGPR1, field->id } }, StubClobbers::CallerSavedRegisters, node);
             };
-            const FieldInHand* inHand = fieldInHand(baseNode, *field);
+            const AvailableField* inHand = availableField(baseNode, *field);
             LValue whatItGave = inHand ? inHand->asJSValue : nullptr;
             // (The long way may come to a getter: whatever else is in hand is let go of.)
-            m_fieldsInHand.shrink(0);
-            m_nodeLeavesFieldsAlone = true;
+            m_availableFields.shrink(0);
+            m_nodePreservesFields = true;
             if (whatItGave) {
                 // Nothing has been done since that could have changed it. It is given again if reading it is all that reading it has ever come to (Instance::fieldsNotJustRead).
                 unsigned index = field->slot << 16 | field->id;
@@ -398,13 +398,13 @@ void Lowering::lowerGetById(Node* node)
                 m_out.appendTo(continuation);
                 LValue value = m_out.phi(Int64, kept, readAgain);
                 setJSValue(node, value);
-                noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
+                recordAvailableField(baseNode, *field, value, Rep::JSValue, value, false);
                 return;
             }
             if (isCompact()) {
                 LValue value = throughStub();
                 setJSValue(node, value);
-                noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
+                recordAvailableField(baseNode, *field, value, Rep::JSValue, value, false);
                 return;
             }
             LBasicBlock isThere = m_out.newBlock();
@@ -426,15 +426,15 @@ void Lowering::lowerGetById(Node* node)
             m_out.appendTo(continuation);
             LValue value = m_out.phi(Int64, found, foundOut);
             setJSValue(node, value);
-            noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
+            recordAvailableField(baseNode, *field, value, Rep::JSValue, value, false);
             return;
         }
         if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
             // The property is in its slot, or the object has none.
             auto [storageOfBase, mayStandForSomethingElse] = fieldStorageFor(node, baseNode, base, field->first);
             if (!mayStandForSomethingElse) {
-                m_nodeLeavesFieldsAlone = true;
-                if (const FieldInHand* inHand = fieldInHand(baseNode, *field)) {
+                m_nodePreservesFields = true;
+                if (const AvailableField* inHand = availableField(baseNode, *field)) {
                     if (inHand->asJSValue && node->rep() == Rep::JSValue)
                         setJSValue(node, inHand->asJSValue);
                     else {
@@ -446,31 +446,31 @@ void Lowering::lowerGetById(Node* node)
                 }
             }
             LValue whatIsThere = m_out.load64(addressOfField(storageOfBase, *field));
-            bool undefinedWillDo = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
+            bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
             if (mayStandForSomethingElse) {
                 RELEASE_ASSERT(field->isInObject());
-                LBasicBlock theLongWay = newColdBlock();
+                LBasicBlock slowCase = newColdBlock();
                 LBasicBlock continuation = m_out.newBlock();
                 Vector<ValueFromBlock, 3> results;
                 results.append(m_out.anchor(whatIsThere));
-                if ((field->isOptional || field->mayBeEmpty) && undefinedWillDo) {
+                if ((field->isOptional || field->mayBeEmpty) && allowsUndefined) {
                     LBasicBlock nothingIsThere = m_out.newBlock();
                     m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(nothingIsThere));
                     m_out.appendTo(nothingIsThere);
                     results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
-                    m_out.branch(m_out.equal(storageOfBase, base), usually(continuation), rarely(theLongWay));
+                    m_out.branch(m_out.equal(storageOfBase, base), usually(continuation), rarely(slowCase));
                 } else
-                    m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(theLongWay));
-                m_out.appendTo(theLongWay);
+                    m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(slowCase));
+                m_out.appendTo(slowCase);
                 // (What comes next takes it for what the slot holds. So it is that, or this does not come back.)
-                uint64_t which = static_cast<uint64_t>(numberOf(bytecode.m_property)) | static_cast<uint64_t>(field->first) << 32 | static_cast<uint64_t>(field->slot) << 48 | static_cast<uint64_t>(undefinedWillDo) << 56 | 1ull << 63; // (The last so that it is not taken for an address.)
-                results.append(m_out.anchor(coldCallForValue(node, Entry::operationAOTGetFieldTheLongWay, base, m_out.constInt64(which))));
+                uint64_t which = static_cast<uint64_t>(numberOf(bytecode.m_property)) | static_cast<uint64_t>(field->first) << 32 | static_cast<uint64_t>(field->slot) << 48 | static_cast<uint64_t>(allowsUndefined) << 56 | 1ull << 63; // (The last so that it is not taken for an address.)
+                results.append(m_out.anchor(coldCallForValue(node, Entry::operationAOTGetFieldSlow, base, m_out.constInt64(which))));
                 m_out.jump(continuation);
                 m_out.appendTo(continuation);
                 setJSValue(node, m_out.phi(Int64, results));
                 return;
             }
-            if (field->isOptional || (field->mayBeEmpty && undefinedWillDo))
+            if (field->isOptional || (field->mayBeEmpty && allowsUndefined))
                 whatIsThere = m_out.select(m_out.isZero64(whatIsThere), m_out.constInt64(JSValue::encode(jsUndefined())), whatIsThere);
             else if (field->mayBeEmpty) {
                 // The type says it is there. What comes next takes it for what the type says.
@@ -483,7 +483,7 @@ void Lowering::lowerGetById(Node* node)
                 m_out.appendTo(isThere);
             }
             setJSValue(node, whatIsThere);
-            noteFieldInHand(baseNode, *field, node->lowered, node->rep(), whatIsThere, false);
+            recordAvailableField(baseNode, *field, node->lowered, node->rep(), whatIsThere, false);
             return;
         }
         bool resultIsTyped = Options::aotTypesFields() && field->fieldType.isConstrained();
@@ -527,18 +527,18 @@ void Lowering::lowerGetById(Node* node)
         ValueFromBlock lacking = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
         m_out.jump(continuation);
         m_out.appendTo(otherwise, continuation);
-        LValue readTheLongWay = getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property);
+        LValue slowCaseResult = getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property);
         if (resultIsTyped) {
             // What comes next takes it for what the field is said to hold.
             LBasicBlock isThat = m_out.newBlock();
             LBasicBlock undecided = m_out.newBlock();
-            emitTypeTests(nullptr, TTop, readTheLongWay, field->fieldType.kinds, isThat, undecided);
+            emitTypeTests(nullptr, TTop, slowCaseResult, field->fieldType.kinds, isThat, undecided);
             m_out.appendTo(undecided);
-            vmCall(node, Void, Entry::operationAOTCheckType, m_globalObject, readTheLongWay, m_out.constInt32(field->fieldType.kinds));
+            vmCall(node, Void, Entry::operationAOTCheckType, m_globalObject, slowCaseResult, m_out.constInt32(field->fieldType.kinds));
             m_out.jump(isThat);
             m_out.appendTo(isThat);
         }
-        ValueFromBlock other = m_out.anchor(readTheLongWay);
+        ValueFromBlock other = m_out.anchor(slowCaseResult);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, found, lacking, other));
@@ -597,7 +597,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     ValueFromBlock fastResult;
     if (stub) {
         // Whatever takes more than a load from the base itself is the stub's business: a getter, what is inherited, what is out of line.
-        m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter | Slot::isIntricate) << 32)), usually(hit), rarely(slowCase));
+        m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter | Slot::isIndirect) << 32)), usually(hit), rarely(slowCase));
         m_out.appendTo(hit, slowCase);
         LValue location = m_out.bitAnd(m_out.lShr(word, m_out.constInt32(32)), m_out.constInt64(Slot::directLocationMask));
         fastResult = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(base, m_out.shl(location, m_out.constInt32(3))))));
@@ -608,8 +608,8 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
         // (Unless there is more to it than a place in the base, what is there is the name: Slot::name.)
         m_out.appendTo(hit, slowCase);
         LValue holder = m_out.loadPtr(slotWord(slot, 1));
-        LValue isElsewhere = m_out.bitAnd(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIntricate) << 32)), m_out.notNull(holder));
-        fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isElsewhere, holder, base), word)));
+        LValue isOnHolder = m_out.bitAnd(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIndirect) << 32)), m_out.notNull(holder));
+        fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isOnHolder, holder, base), word)));
     }
     m_out.jump(continuation);
 
@@ -646,11 +646,11 @@ void Lowering::lowerPutById(Node* node)
             // (If it may not be what the slot holds, what is here is not on every way to what comes next.)
             if (!mayStandForSomethingElse && !mayBeRejected) {
                 // (Giving an object a field it did not have may take a call. It is of the engine's own code, and it does nothing to any other field.)
-                m_nodeLeavesFieldsAlone = true;
+                m_nodePreservesFields = true;
                 if (valueNode->type && isSubtype(valueNode->type, TNumber))
-                    noteFieldInHand(baseNode, *field, lowDouble(valueNode), Rep::Double, storedValue, true);
+                    recordAvailableField(baseNode, *field, lowDouble(valueNode), Rep::Double, storedValue, true);
                 else
-                    noteFieldInHand(baseNode, *field, storedValue, Rep::JSValue, storedValue, true);
+                    recordAvailableField(baseNode, *field, storedValue, Rep::JSValue, storedValue, true);
             }
             // (What is no struct is seen as one with nothing in it, and nothing is ever put there.)
             if (field->isOptional || field->mayBeEmpty || mayStandForSomethingElse) {
@@ -800,7 +800,7 @@ void Lowering::lowerGetByVal(Node* node)
     Node* baseNode = node->use(bytecode.m_base);
     Node* propertyNode = node->use(bytecode.m_property);
     LValue base = lowJSValue(baseNode);
-    bool emptyWillDo = node->graph->readsElementsOrEmpty;
+    bool allowsEmpty = node->graph->readsElementsOrEmpty;
 
     if (node->hasFact(FactElement, 32)) {
         LBasicBlock inBounds = m_out.newBlock();
@@ -819,27 +819,27 @@ void Lowering::lowerGetByVal(Node* node)
 
     if (auto* view = viewOf(node, baseNode)) {
         LBasicBlock inBounds = m_out.newBlock();
-        LBasicBlock theLongWay = newColdBlock();
+        LBasicBlock slowCase = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         LValue index = lowInt64(propertyNode);
-        m_out.branch(m_out.below(index, view->limit), usually(inBounds), rarely(theLongWay));
+        m_out.branch(m_out.below(index, view->limit), usually(inBounds), rarely(slowCase));
         m_out.appendTo(inBounds);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, view->butterfly, index));
         ValueFromBlock fast = m_out.anchor(element);
         // (An array that keeps its elements this way has nothing at an index where it keeps nothing: what it inherits from has no elements, or it would keep them another way.)
-        if (emptyWillDo)
+        if (allowsEmpty)
             m_out.jump(continuation);
         else
-            m_out.branch(m_out.notZero64(element), usually(continuation), rarely(theLongWay));
-        m_out.appendTo(theLongWay);
-        ValueFromBlock slow = m_out.anchor(coldCallForValue(node, emptyWillDo ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode), ColdCall::ChangesNothing));
+            m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
+        m_out.appendTo(slowCase);
+        ValueFromBlock slow = m_out.anchor(coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode), ColdCall::ChangesNothing));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, fast, slow));
         return;
     }
 
-    if (isCompact() && !emptyWillDo) {
+    if (isCompact() && !allowsEmpty) {
         if (propertyNode->rep() == Rep::Int64)
             setJSValue(node, callBinaryStub(node, Stub::GetByValAtIndex, Int64, base, lowRaw(propertyNode)));
         else
@@ -849,8 +849,8 @@ void Lowering::lowerGetByVal(Node* node)
 
     bool isOfArray = isSubtype(baseNode->type, TArray);
     // (Of what is not known for an array, nothing is made of there being nothing where an element would be kept: it is asked.)
-    bool nothingKeptIsNothingThere = emptyWillDo && isOfArray;
-    if (emptyWillDo && !isOfArray && Options::aotVerbose()) [[unlikely]] {
+    bool missingMeansAbsent = allowsEmpty && isOfArray;
+    if (allowsEmpty && !isOfArray && Options::aotVerbose()) [[unlikely]] {
         dataLog("AOT: LEAN an element is read from what is not known for an array: ");
         baseNode->dump(WTF::dataFile());
         dataLogLn(m_block->isGeneric ? " (in the second copy of a loop)" : "", m_block->isInLoop ? " (in a loop)" : "");
@@ -887,7 +887,7 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.appendTo(inBounds, slowCase);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
         results.append(m_out.anchor(element));
-        if (nothingKeptIsNothingThere)
+        if (missingMeansAbsent)
             m_out.jump(continuation);
         else
             m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
@@ -895,10 +895,10 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
-    if (emptyWillDo && !isOfArray)
+    if (allowsEmpty && !isOfArray)
         results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetElementOrEmpty, m_globalObject, base, lowJSValue(propertyNode))));
     else if (isOfArray)
-        results.append(m_out.anchor(coldCallForValue(node, emptyWillDo ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode))));
+        results.append(m_out.anchor(coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode))));
     else if constexpr (usesStubs)
         results.append(m_out.anchor(callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode))));
     else
@@ -998,7 +998,7 @@ B3::Variable* Lowering::variableOfEnvironment(Node* environment, unsigned offset
     return variables[offset];
 }
 
-LValue Lowering::scopeThatIsOutFrom(Node* scope, unsigned hops)
+LValue Lowering::ancestorScope(Node* scope, unsigned hops)
 {
     LValue current = lowCell(scope);
     for (unsigned i = 0; i < hops; ++i)
@@ -1009,7 +1009,7 @@ LValue Lowering::scopeThatIsOutFrom(Node* scope, unsigned hops)
 LValue Lowering::scopeToResolveFrom(Node* resolve)
 {
     if (resolve->environmentsPassedOver)
-        return scopeThatIsOutFrom(resolve->scopeToStartFrom, resolve->hopsFromThere);
+        return ancestorScope(resolve->scopeToStartFrom, resolve->hopsFromThere);
     return lowCell(resolve->use(resolve->as<OpResolveScope>().m_scope));
 }
 
@@ -1021,7 +1021,7 @@ void Lowering::lowerResolveScope(Node* node)
         return;
     }
     if (node->scopeToStartFrom && !node->environmentsPassedOver) {
-        setJSValue(node, scopeThatIsOutFrom(node->scopeToStartFrom, node->hopsFromThere));
+        setJSValue(node, ancestorScope(node->scopeToStartFrom, node->hopsFromThere));
         return;
     }
     LValue scope = scopeToResolveFrom(node);

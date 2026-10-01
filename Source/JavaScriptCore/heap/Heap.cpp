@@ -3801,9 +3801,9 @@ void Heap::addCoreConstraints()
         "Ao", "Instances of Statically Compiled Code",
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
-            bool onlyWhatIsNew = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
+            bool onlyNew = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
             for (AOT::Instance* instance : vm().m_aotInstances)
-                instance->visit(visitor, onlyWhatIsNew);
+                instance->visit(visitor, onlyNew);
         })),
         ConstraintVolatility::GreyedByMarking);
 #endif

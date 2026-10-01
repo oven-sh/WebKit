@@ -83,7 +83,7 @@ enum class Builtin : uint8_t {
     FOR_EACH_AOT_BUILTIN(AOT_DEFINE_BUILTIN)
 #undef AOT_DEFINE_BUILTIN
 };
-Builtin builtinThatIs(unsigned intrinsic); // By its number.
+Builtin builtinWithNumber(unsigned intrinsic); // By its number.
 
 // What a method may be called on, for it to be known what the method is without looking: a string, or an object that is as the realm makes them
 // (Instance::structureIDsOfReceivers).

@@ -22,7 +22,7 @@ namespace bmalloc {
 bool StaticRegion::s_isBuilding = false;
 static size_t s_used[StaticRegion::numberOfArenas];
 static thread_local bool t_isAllocating = false;
-static thread_local bool t_isAllocatingWhatIsMutable = false;
+static thread_local bool t_isAllocatingMutable = false;
 static uint32_t* s_sizes; // See sizeOfImmutable().
 static size_t s_capacityOfSizes;
 
@@ -92,19 +92,19 @@ bool StaticRegion::isAllocatingOnThisThread()
 }
 
 StaticRegion::MutableScope::MutableScope()
-    : m_previous(t_isAllocatingWhatIsMutable)
+    : m_previous(t_isAllocatingMutable)
 {
-    t_isAllocatingWhatIsMutable = true;
+    t_isAllocatingMutable = true;
 }
 
 StaticRegion::MutableScope::~MutableScope()
 {
-    t_isAllocatingWhatIsMutable = m_previous;
+    t_isAllocatingMutable = m_previous;
 }
 
-bool StaticRegion::isAllocatingWhatIsMutable()
+bool StaticRegion::isAllocatingMutable()
 {
-    return t_isAllocatingWhatIsMutable;
+    return t_isAllocatingMutable;
 }
 
 void StaticRegion::mapBss()
@@ -253,7 +253,7 @@ size_t StaticRegion::bytesThatAreFree()
     return bytes;
 }
 
-void StaticRegion::forgetWhatIsFree()
+void StaticRegion::clearFreeLists()
 {
     for (size_t which : { immutableAtMultipleOf16, mutableOnes, immutableOthers }) {
         for (size_t index = 0; index < numberOfFreeLists; ++index) {
@@ -302,7 +302,7 @@ void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
 {
     if (!t_isAllocating)
         return nullptr;
-    if (!t_isAllocatingWhatIsMutable)
+    if (!t_isAllocatingMutable)
         return mallocImmutable(size, alignment);
     if (alignment < 16)
         alignment = 16;

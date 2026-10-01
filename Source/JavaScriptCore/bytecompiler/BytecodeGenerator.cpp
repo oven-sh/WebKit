@@ -379,8 +379,8 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     if (!m_codeBlock->finalize(m_writer.finalize())) [[unlikely]]
         return ParserError(ParserError::OutOfMemory);
 #if ENABLE(FTL_JIT)
-    if (!m_functionsPutInVariables.isEmpty()) [[unlikely]]
-        AOT::noteFunctionsPutInVariables(m_codeBlock->codeBlock(), WTF::move(m_functionsPutInVariables));
+    if (!m_functionAssignments.isEmpty()) [[unlikely]]
+        AOT::recordFunctionAssignments(m_codeBlock->codeBlock(), WTF::move(m_functionAssignments));
 #endif
 
     // We limit total bytecode sequence size to int32_t so that we can use int32_t jump offsets.
@@ -3707,7 +3707,7 @@ void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, Functio
     }
 }
 
-void BytecodeGenerator::noteFunctionPutInVariable(const Identifier& ident, const Variable& var, ExpressionNode* right)
+void BytecodeGenerator::recordFunctionAssignment(const Identifier& ident, const Variable& var, ExpressionNode* right)
 {
     if (!Options::resolveAllScopeSlotsStatically()) [[likely]]
         return;
@@ -3718,7 +3718,7 @@ void BytecodeGenerator::noteFunctionPutInVariable(const Identifier& ident, const
     auto it = m_indicesOfFunctionExprs.find(static_cast<BaseFuncExprNode*>(right)->metadata());
     if (it == m_indicesOfFunctionExprs.end())
         return;
-    FunctionPutInVariable note;
+    FunctionAssignment note;
     note.identifier = addConstant(ident);
     note.functionExpr = it->value;
     if (var.isResolved()) {
@@ -3728,7 +3728,7 @@ void BytecodeGenerator::noteFunctionPutInVariable(const Identifier& ident, const
         note.symbolTableConstantIndex = var.symbolTableConstantIndex();
         note.scopeOffset = var.offset().scopeOffset().offset();
     }
-    m_functionsPutInVariables.append(note);
+    m_functionAssignments.append(note);
 }
 
 RegisterID* BytecodeGenerator::emitNewFunctionExpression(RegisterID* dst, FuncExprNode* func)
@@ -5208,8 +5208,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
     // time it is asked for the next: so does this. There is nothing to be done when the loop is left early, so nothing has to be caught.
     // Which iterator an array has, and what its `next` is, is asked once, before the loop: it is what it is for any array unless the array,
     // or a class of its own that it belongs to, says otherwise, and what any array says cannot be changed (useImmutableIntrinsics).
-    if (forLoopNode && subjectNode->isSoundTypeCheckNode() && static_cast<SoundTypeCheckNode*>(subjectNode)->mask() == SoundTypeArray
-        && Options::iterateCheckedArraysByIndex() && Options::useImmutableIntrinsics()) {
+    if (forLoopNode && subjectNode->isSoundTypeCheckNode() && static_cast<SoundTypeCheckNode*>(subjectNode)->mask() == SoundTypeArray && Options::useImmutableIntrinsics()) {
         RefPtr<RegisterID> array = newTemporary();
         emitNode(array.get(), subjectNode);
         {

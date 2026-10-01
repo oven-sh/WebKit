@@ -32,8 +32,8 @@ std::optional<uint32_t> locationOfProperty(PropertyOffset);
 //     has, something that looks enough like an object that has undefined there.
 // structureBefore: the base's, if it is a cell, before the property was looked up: getting it may have run anything.
 // Says why not, if it did not.
-// mayBeOfSeveral: whoever reads the slot knows what to make of Slot::isOfSeveral().
-void cacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache, bool mayBeOfSeveral = false);
+// mayBePolymorphic: whoever reads the slot knows what to make of Slot::isPolymorphic().
+void cacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache, bool mayBePolymorphic = false);
 
 //     cache->structureID: the structure of the base. cache->pointer: the private name, or the brand.
 //     cache->offset: the location of the field, if this is about one.

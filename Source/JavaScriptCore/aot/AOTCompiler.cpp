@@ -67,8 +67,8 @@ static void estimateFrequencies(B3::Procedure& proc)
     }
 
     for (B3::BasicBlock* block : proc) {
-        constexpr unsigned depthThatCounts = 6;
-        double frequency = pow(10.0, std::min(loops.loopDepth(block), depthThatCounts));
+        constexpr unsigned significantDepth = 6;
+        double frequency = pow(10.0, std::min(loops.loopDepth(block), significantDepth));
         block->setFrequency(likely.contains(block) ? frequency : frequency * Lowering::coldFrequency);
     }
 }
@@ -77,7 +77,7 @@ static void estimateFrequencies(B3::Procedure& proc)
 static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
 {
     // (Nothing takes as many slots as it takes bytes.)
-    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::mostSlotsSaid) || !constantsAreOfNoRealm(unlinkedCodeBlock, SymbolTablesWillDo::Yes))
+    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots) || !constantsAreOfNoRealm(unlinkedCodeBlock, SymbolTablesAreShared::Yes))
         return false;
     for (const auto& instruction : unlinkedCodeBlock->instructions()) {
         if (instruction->opcodeID() == op_loop_hint)
@@ -121,7 +121,7 @@ static void usePinnedRegistersWhereTheyAre(B3::Air::Code& code)
 bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
 {
     // (What is caught is caught in a frame.)
-    if (code.frameSize() || code.calleeSaveRegisterAtOffsetList().registerCount() || graph.emitsCallsWhateverIsLeft || !graph.catchEntrypoints.isEmpty())
+    if (code.frameSize() || code.calleeSaveRegisterAtOffsetList().registerCount() || graph.alwaysEmitsCalls || !graph.catchEntrypoints.isEmpty())
         return false;
     if (!graph.emitsCalls)
         return true;
@@ -204,14 +204,14 @@ static bool loopsWillDoWhole(Graph& graph)
     return hasLoop;
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const ProgramFacts* facts, VariableFacts* variableFacts, const CodeOfProgram* program, bool triesLoopsWhole = true)
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* facts, VariableSummaries* variableSummaries, const CodeOfProgram* program, bool triesLoopsWhole = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     triesLoopsWhole &= Options::aotKeepsLoopsWhole() && Options::useImmutableIntrinsics() && !Options::aotAssertsTypes();
     graph.loopsAreNotSplit = triesLoopsWhole;
     graph.setCalleeHints(hints);
     graph.setFacts(facts);
-    graph.setVariableFacts(variableFacts);
+    graph.setVariableSummaries(variableSummaries);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     graph.startsCold = mayStartCold(unlinkedCodeBlock);
     auto declined = [&] {
@@ -228,12 +228,12 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         return declined();
     if (program)
         inlineCalls(graph, *program);
-    doWithoutObjectsThatAreOnlyRead(graph);
+    scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
-    findThingsReturnedInRegisters(graph);
+    planMultiValueReturns(graph);
     // (With no loop split there is no choice to make: LoopOptimizer::viewArrays() looks at each loop by itself.)
     if (triesLoopsWhole && Options::aotSplitLoops() && Options::aotLoopsToSplit() && !loopsWillDoWhole(graph))
-        return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableFacts, program, false);
+        return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableSummaries, program, false);
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();
@@ -282,8 +282,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         jit.emitFunctionPrologue();
         // The limit leaves room for the runtime to do what it has to when the stack is used up, which is a great deal more than this.
         // However deep the calls go, whatever made the last of them has checked.
-        constexpr unsigned frameSizeThatNeedsNoCheck = 256;
-        if (graph.makesCalls || code.frameSize() > frameSizeThatNeedsNoCheck)
+        constexpr unsigned maxFrameSizeWithoutStackCheck = 256;
+        if (graph.makesCalls || code.frameSize() > maxFrameSizeWithoutStackCheck)
             stubCalls.call(jit, Stub::Prologue, code.frameSize(), CallSite { });
         else if (code.frameSize())
             jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
@@ -353,7 +353,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.quotableSites = WTF::move(graph.quotableSites);
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
-    info.isOnlyCalledDirectly = facts && facts->isClosed;
+    info.isOnlyCalledDirectly = facts && facts->isNonEscaping;
     if (program) {
         auto noteKeysOf = [&](UnlinkedFunctionExecutable* executable, Vector<ImageKey>& keys) {
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
@@ -381,7 +381,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.shapes = WTF::move(graph.shapes);
     info.usesStaticImports = graph.usesStaticImports;
     info.startsCold = graph.startsCold;
-    RELEASE_ASSERT(!info.startsCold || info.numSlots <= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::mostSlotsSaid));
+    RELEASE_ASSERT(!info.startsCold || info.numSlots <= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots));
     info.calleeSaveRegisters = proc.calleeSaveRegisterAtOffsetList();
     for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i)
         info.catchEntrypoints.append({ graph.catchEntrypoints[i]->bytecodeBegin, offsetOf(proc.code().entrypointLabel(i + 1)) });
@@ -408,45 +408,45 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     return true;
 }
 
-bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FactsOfExecutables& factsOfExecutables, VariableFacts* variableFacts)
+bool recordUsesOfKnownFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& factsOfExecutables, VariableSummaries* variableSummaries)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     if (!parseBytecode(graph))
         return false;
-    graph.noteUsesOfProvenFunctions(factsOfExecutables);
+    graph.recordUsesOfKnownFunctions(factsOfExecutables);
     graph.noteFieldsComparedWithStrings();
-    noteThingsReturned(graph);
+    recordReturnedLiterals(graph);
     graph.noteClassesDefined();
-    if (variableFacts)
-        graph.noteWhatCannotBeToldOfVariables(*variableFacts);
+    if (variableSummaries)
+        graph.recordUntrackableVariableAccesses(*variableSummaries);
     return true;
 }
 
-Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, uint32_t& parametersThatEscape, const String& nameForLog)
+Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* facts, VariableSummaries* variableSummaries, unsigned summaryReader, Vector<const KnownFunction*>& calleesRead, Vector<const KnownFunction*>& calleesWithWidenedInputs, uint32_t& escapingParameters, const String& nameForLog)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     graph.setFacts(facts);
-    graph.setVariableFacts(variableFacts, readerOfFacts);
+    graph.setVariableSummaries(variableSummaries, summaryReader);
     graph.setNameForLog(nameForLog);
     if (!parseBytecode(graph)) {
-        parametersThatEscape = std::numeric_limits<uint32_t>::max();
+        escapingParameters = std::numeric_limits<uint32_t>::max();
         return TTop;
     }
-    doWithoutObjectsThatAreOnlyRead(graph);
-    Type result = inferTypes(graph, &calleesConsulted, &calleesGivenMore) & TTop;
-    parametersThatEscape = facts ? AOT::parametersThatEscape(graph, &calleesConsulted) : std::numeric_limits<uint32_t>::max();
+    scalarReplaceReadOnlyObjects(graph);
+    Type result = inferTypes(graph, &calleesRead, &calleesWithWidenedInputs) & TTop;
+    escapingParameters = facts ? AOT::escapingParameters(graph, &calleesRead) : std::numeric_limits<uint32_t>::max();
     return result;
 }
 
-bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, const CodeOfProgram* program)
+bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* facts, VariableSummaries* variableSummaries, const CodeOfProgram* program)
 {
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
-    bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableFacts, program);
+    bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableSummaries, program);
     if (!ok && Options::aotVerbose()) [[unlikely]]
         dataLogLn("AOT: declined: ", reason, " ", reasonOpcode != op_nop ? opcodeNames[reasonOpcode] : ""_s);
     return ok;

@@ -108,8 +108,8 @@ inline constexpr JSONEscapeExpansion jsonEscapeExpansion = [] {
 }();
 
 // As many whole vectors as there are in the first `count` characters. Text has a line break every few dozen characters: whether a vector has something to escape in it is not to be
-// guessed, so nothing hangs on it. skipsWhatIsClean: for text that has next to nothing to escape, where it is.
-template<bool skipsWhatIsClean, typename OutputCharacterType>
+// guessed, so nothing hangs on it. skipsCleanPages: for text that has next to nothing to escape, where it is.
+template<bool skipsCleanPages, typename OutputCharacterType>
 ALWAYS_INLINE static void appendEscapedJSONVectors(std::span<OutputCharacterType>& output, std::span<const Latin1Character>& input, size_t count)
 {
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -134,7 +134,7 @@ ALWAYS_INLINE static void appendEscapedJSONVectors(std::span<OutputCharacterType
         auto bits = simde_vandq_u8(escaped, weight);
         unsigned low = simde_vaddv_u8(simde_vget_low_u8(bits));
         unsigned high = simde_vaddv_u8(simde_vget_high_u8(bits));
-        if constexpr (skipsWhatIsClean) {
+        if constexpr (skipsCleanPages) {
             if (!(low | high)) {
                 put(characters);
                 to += 16;

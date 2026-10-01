@@ -93,7 +93,7 @@ struct ImageHeader {
     uint32_t regExpsOffset; // ImageRegExp, in the order of their hashes.
     uint32_t numberOfRegExps;
     uint32_t textOfRegExpsOffset;
-    // For telling what an address is in (whatIsAt()).
+    // For telling what an address is in (classifyAddress()).
     uint32_t numbersOfFunctionsOffset; // uint32_t, by index: what the function goes by in a type (typeOfFunction()). Only Options::aotVerifiesFacts() looks.
     uint32_t startsOfFunctionsOffset; // uint32_t, by index, which is the order they are in: where each starts, in the code. And one more, which is beyond everything.
     uint32_t granulesOfCodeOffset; // uint32_t: for each 1 << shiftOfGranuleOfCode bytes of the code, the last function to start no later than they do.
@@ -109,9 +109,9 @@ struct ImageHeader {
 
 // The code for a regular expression, however the program comes by one that says that.
 struct ImageRegExp {
-    static uint32_t hashOf(const String& pattern, OptionSet<Yarr::Flags> flags) { return pattern.hash() * 31 + flagsThatMatter(flags).toRaw(); }
+    static uint32_t hashOf(const String& pattern, OptionSet<Yarr::Flags> flags) { return pattern.hash() * 31 + significantFlags(flags).toRaw(); }
     // The others make no difference to what the pattern matches at a given place, which is all that the code says.
-    static OptionSet<Yarr::Flags> flagsThatMatter(OptionSet<Yarr::Flags> flags) { return flags - OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::HasIndices }; }
+    static OptionSet<Yarr::Flags> significantFlags(OptionSet<Yarr::Flags> flags) { return flags - OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::HasIndices }; }
 
     uint32_t hash;
     uint32_t text; // Where the pattern is, in bytes, in the text of them.
@@ -285,7 +285,7 @@ public:
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
     JS_EXPORT_PRIVATE void* addressOfStub(Stub) const;
     // The image goes without its table of keys, which is what follows it in `data`. Whoever this is for keeps what is wanted of it.
-    bool keysAreLeftOut() const { return !header().tableCapacity; }
+    bool keysAreOmitted() const { return !header().tableCapacity; }
     JS_EXPORT_PRIVATE std::span<const ImageKey> keys() const; // The table: those with no record are empty places in it.
     JS_EXPORT_PRIVATE uint32_t indexOfFunctionWith(const ImageKey&) const; // One of the table's own.
     size_t numberOfFunctions() const { return header().numberOfFunctions; }
@@ -327,7 +327,7 @@ ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlo
 bool moduleIsLinkedAsCompiled(JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 Ref<JITCode> codeOfFunctionFromImage(ImageCode, CodeSpecializationKind);
-bool canDoWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // There are FunctionFacts.
+bool canRunWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // There are FunctionMetadata.
 
 } } // namespace JSC::AOT
 

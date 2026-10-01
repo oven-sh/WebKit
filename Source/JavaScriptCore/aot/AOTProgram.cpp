@@ -24,9 +24,9 @@
 
 namespace JSC { namespace AOT {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(VariableFacts);
-WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(VariableFacts::Cell);
-WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(ProgramFacts);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(VariableSummaries);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(VariableSummaries::Cell);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(FunctionSummary);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CalleeHints);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ModuleHints);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ModuleLinkage);
@@ -53,16 +53,16 @@ const DeclaredNamesLink* declaredNamesFor(UnlinkedCodeBlock* codeBlock)
     return it == declaredNames().end() ? nullptr : it->value.get();
 }
 
-static UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<FunctionPutInVariable>>& functionsPutInVariables() WTF_REQUIRES_LOCK(s_declaredNamesLock)
+static UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<FunctionAssignment>>& functionAssignments() WTF_REQUIRES_LOCK(s_declaredNamesLock)
 {
-    static NeverDestroyed<UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<FunctionPutInVariable>>> map;
+    static NeverDestroyed<UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<FunctionAssignment>>> map;
     return map;
 }
 
-void noteFunctionsPutInVariables(UnlinkedCodeBlock* codeBlock, Vector<FunctionPutInVariable>&& functions)
+void recordFunctionAssignments(UnlinkedCodeBlock* codeBlock, Vector<FunctionAssignment>&& functions)
 {
     Locker locker { s_declaredNamesLock };
-    functionsPutInVariables().set(codeBlock, WTF::move(functions));
+    functionAssignments().set(codeBlock, WTF::move(functions));
 }
 
 static UncheckedKeyHashMap<uint32_t, std::unique_ptr<KnownFunction>>& bodiesOfFacts()
@@ -84,10 +84,10 @@ const KnownFunction* bodyOfFact(uint32_t body)
     return it == bodiesOfFacts().end() ? nullptr : it->value.get();
 }
 
-Vector<FunctionPutInVariable> functionsPutInVariablesBy(UnlinkedCodeBlock* codeBlock)
+Vector<FunctionAssignment> functionAssignmentsIn(UnlinkedCodeBlock* codeBlock)
 {
     Locker locker { s_declaredNamesLock };
-    return functionsPutInVariables().get(codeBlock);
+    return functionAssignments().get(codeBlock);
 }
 
 static const NumbersOfIdentifiers* s_numbersOfIdentifiersOfProgram;
@@ -121,35 +121,35 @@ void forgetDeclaredNames()
 {
     Locker locker { s_declaredNamesLock };
     declaredNames().clear();
-    functionsPutInVariables().clear();
+    functionAssignments().clear();
 }
 
-void VariableFacts::giveUpOnName(UniquedStringImpl* name)
+void VariableSummaries::giveUpOnName(UniquedStringImpl* name)
 {
     Locker locker { m_givenUpLock };
-    m_namesGivenUpOn.add(name);
+    m_untrackedNames.add(name);
 }
 
-void VariableFacts::noteThatNameIsReadFromWhoKnowsWhere(UniquedStringImpl* name)
+void VariableSummaries::recordDynamicReadOfName(UniquedStringImpl* name)
 {
     Locker locker { m_givenUpLock };
-    m_namesReadFromWhoKnowsWhere.add(name);
+    m_dynamicallyReadNames.add(name);
 }
 
-void VariableFacts::giveUpOnScope(const void* scope)
+void VariableSummaries::giveUpOnScope(const void* scope)
 {
     Locker locker { m_givenUpLock };
-    m_scopesGivenUpOn.add(scope);
+    m_untrackedScopes.add(scope);
 }
 
-bool VariableFacts::hasGivenUpOn(Variable variable, UniquedStringImpl* name) const
+bool VariableSummaries::isUntracked(Variable variable, UniquedStringImpl* name) const
 {
-    return m_scopesGivenUpOn.contains(variable.scope) || m_namesGivenUpOn.contains(name);
+    return m_untrackedScopes.contains(variable.scope) || m_untrackedNames.contains(name);
 }
 
-Type VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned reader)
+Type VariableSummaries::read(Variable variable, UniquedStringImpl* name, unsigned reader)
 {
-    if (hasGivenUpOn(variable, name))
+    if (isUntracked(variable, name))
         return TAll;
     Type type = 0;
     for (unsigned offset : { variable.offset, Variable::initialValue }) {
@@ -167,41 +167,41 @@ Type VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned re
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionsOfProgram);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ClassesOfProgram);
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(ThingsReturnedByFunctions);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MultiValueReturnTable);
 
-static ThingsReturnedByFunctions* s_thingsReturnedByFunctions;
-void setThingsReturnedByFunctions(ThingsReturnedByFunctions* things) { s_thingsReturnedByFunctions = things; }
-ThingsReturnedByFunctions* thingsReturnedByFunctions() { return s_thingsReturnedByFunctions; }
+static MultiValueReturnTable* s_multiValueReturnTable;
+void setMultiValueReturnTable(MultiValueReturnTable* things) { s_multiValueReturnTable = things; }
+MultiValueReturnTable* multiValueReturnTable() { return s_multiValueReturnTable; }
 
-void ThingsReturnedByFunctions::note(UnlinkedCodeBlock* code, Names&& names)
+void MultiValueReturnTable::note(UnlinkedCodeBlock* code, Names&& names)
 {
     Locker locker { m_lock };
     m_names.set(code, WTF::move(names));
 }
 
-const ThingsReturnedByFunctions::Names* thingsReturnedInRegistersBy(UnlinkedCodeBlock* code, const ProgramFacts* facts)
+const MultiValueReturnTable::Names* registerReturnValuesOf(UnlinkedCodeBlock* code, const FunctionSummary* facts)
 {
-    if (!s_thingsReturnedByFunctions || !facts || !facts->isClosed || facts->isExposed.load(std::memory_order_relaxed) || facts->objectReturnedIsWanted.load(std::memory_order_relaxed))
+    if (!s_multiValueReturnTable || !facts || !facts->isNonEscaping || facts->escapes.load(std::memory_order_relaxed) || facts->needsReturnObject.load(std::memory_order_relaxed))
         return nullptr;
-    return s_thingsReturnedByFunctions->namesOfThingsReturnedBy(code);
+    return s_multiValueReturnTable->returnValueNamesOf(code);
 }
 
 static ClassesOfProgram* s_classesOfProgram;
 void setClassesOfProgram(ClassesOfProgram* classes) { s_classesOfProgram = classes; }
 ClassesOfProgram* classesOfProgram() { return s_classesOfProgram; }
 
-void ClassesOfProgram::noteClosedMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function)
+void ClassesOfProgram::recordNonEscapingMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function)
 {
     Locker locker { m_lock };
     auto result = m_methods.add({ classType, name }, function);
     // Twice: the text was copied, and there is no saying which copy is meant.
     if (!result.isNewEntry && result.iterator->value != function) {
-        m_closedMethods.remove(result.iterator->value);
+        m_nonEscapingMethods.remove(result.iterator->value);
         result.iterator->value = 0;
         return;
     }
     if (result.iterator->value)
-        m_closedMethods.add(function);
+        m_nonEscapingMethods.add(function);
 }
 
 void ClassesOfProgram::noteThisIn(UnlinkedCodeBlock* code, uint16_t layoutID)
@@ -218,7 +218,7 @@ static const FunctionsOfProgram* s_functionsOfProgram;
 void setFunctionsOfProgram(const FunctionsOfProgram* functions) { s_functionsOfProgram = functions; }
 const FunctionsOfProgram* functionsOfProgram() { return s_functionsOfProgram; }
 
-Type VariableFacts::join(Variable variable, Type type)
+Type VariableSummaries::join(Variable variable, Type type)
 {
     Shard& shard = shardFor(variable);
     Locker locker { shard.lock };
@@ -231,7 +231,7 @@ Type VariableFacts::join(Variable variable, Type type)
     return before;
 }
 
-Vector<unsigned> VariableFacts::giveUpOnWhatIsReadAndNeverMade(unsigned& count)
+Vector<unsigned> VariableSummaries::untrackVariablesReadButNeverWritten(unsigned& count)
 {
     UncheckedKeyHashSet<const void*> made;
     for (auto& shard : m_shards) {
@@ -243,7 +243,7 @@ Vector<unsigned> VariableFacts::giveUpOnWhatIsReadAndNeverMade(unsigned& count)
     SetOfReaders result;
     for (auto& shard : m_shards) {
         for (auto& entry : shard.cells) {
-            if (made.contains(entry.key.first) || m_scopesGivenUpOn.contains(entry.key.first) || entry.value->readers.isEmpty())
+            if (made.contains(entry.key.first) || m_untrackedScopes.contains(entry.key.first) || entry.value->readers.isEmpty())
                 continue;
             for (unsigned reader : entry.value->readers)
                 result.add(reader);
@@ -251,14 +251,14 @@ Vector<unsigned> VariableFacts::giveUpOnWhatIsReadAndNeverMade(unsigned& count)
     }
     for (auto& shard : m_shards) {
         for (auto& entry : shard.cells) {
-            if (!made.contains(entry.key.first) && !entry.value->readers.isEmpty() && m_scopesGivenUpOn.add(entry.key.first).isNewEntry)
+            if (!made.contains(entry.key.first) && !entry.value->readers.isEmpty() && m_untrackedScopes.add(entry.key.first).isNewEntry)
                 ++count;
         }
     }
     return copyToVector(result);
 }
 
-Vector<unsigned> VariableFacts::takeReadersOfWhatGrew()
+Vector<unsigned> VariableSummaries::takeReadersOfWidenedVariables()
 {
     SetOfReaders result;
     for (auto& shard : m_shards) {
@@ -299,12 +299,12 @@ ModuleHints::ModuleHints(UnlinkedCodeBlock* codeBlock, std::span<const Binding> 
     }
 }
 
-void ModuleHints::noteFunctionsPutInVariablesBy(UnlinkedCodeBlock* codeBlock, const Describe& describe)
+void ModuleHints::recordFunctionAssignmentsIn(UnlinkedCodeBlock* codeBlock, const Describe& describe)
 {
     if (!m_module)
         return;
     const DeclaredNamesLink* declaredNames = nullptr;
-    for (auto& note : functionsPutInVariablesBy(codeBlock)) {
+    for (auto& note : functionAssignmentsIn(codeBlock)) {
         if (note.functionExpr >= codeBlock->numberOfFunctionExprs())
             continue;
         if (note.isOwn) {
@@ -326,11 +326,11 @@ void ModuleHints::prove()
 {
     for (auto& entry : m_variables) {
         Variable& variable = entry.value;
-        variable.function.isProven = variable.binding.keepsDeclaredValue && variable.numberOfFunctions == 1 && variable.isDescribed;
+        variable.function.isExact = variable.binding.keepsDeclaredValue && variable.numberOfFunctions == 1 && variable.isDescribed;
         variable.function.escapes = variable.binding.escapes;
         variable.function.isVisibleFromOutside = variable.binding.isVisibleFromOutside;
         // (It is strict code, which nobody can ask what it was called as. Function.prototype.caller can ask the other kind.)
-        variable.function.needsNoFunctionObject = variable.function.isProven && variable.function.forCall && !needsFunctionObject(variable.function.forCall);
+        variable.function.needsNoFunctionObject = variable.function.isExact && variable.function.forCall && !needsFunctionObject(variable.function.forCall);
     }
 }
 
@@ -377,30 +377,29 @@ std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant)
     return number ? std::optional { number } : std::nullopt;
 }
 
-HowValuesArePassed howValuesArePassed(const ProgramFacts* facts, Convention convention)
+HowValuesArePassed howValuesArePassed(const FunctionSummary* facts, Convention convention)
 {
     HowValuesArePassed result;
     // (What is checked is what a value is when it is boxed.)
-    if (!facts || !facts->isClosed || convention.signature != Signature::Registers || !Options::aotPassesValuesUnboxed()
-        || !Options::aotTypesParametersOfClosedFunctions() || Options::aotVerifiesFacts())
+    if (!facts || !facts->isNonEscaping || convention.signature != Signature::Registers || Options::aotVerifiesFacts())
         return result;
     auto repFor = [](Type type) {
         Rep rep = type ? repForType(type) : Rep::JSValue;
         return rep == Rep::Int32 || rep == Rep::Double || rep == Rep::Boolean ? rep : Rep::JSValue;
     };
-    static_assert(numberOfArgumentGPRs < ProgramFacts::mostParameters);
+    static_assert(numberOfArgumentGPRs < FunctionSummary::mostParameters);
     for (unsigned i = 0; i < convention.numberOfParameters; ++i)
         result.parameters[i] = repFor(facts->parameterTypes[i + 1].load());
     result.result = repFor(facts->returnType.load());
     return result;
 }
 
-Vector<Rep, 8> howThingsAreReturned(const ProgramFacts* facts, unsigned count)
+Vector<Rep, 8> returnValueReps(const FunctionSummary* facts, unsigned count)
 {
-    bool asTheyAre = Options::aotPassesValuesUnboxed() && Options::aotTypesParametersOfClosedFunctions() && !Options::aotVerifiesFacts();
+    bool asTheyAre = !Options::aotVerifiesFacts();
     Vector<Rep, 8> result;
     for (unsigned i = 0; i < count; ++i) {
-        Type type = facts->typesOfThingsReturned[i].load();
+        Type type = facts->returnValueTypes[i].load();
         Rep rep = asTheyAre && type ? repForType(type) : Rep::JSValue;
         result.append(rep == Rep::Int32 || rep == Rep::Double || rep == Rep::Boolean ? rep : Rep::JSValue);
     }
@@ -493,11 +492,11 @@ bool readsCallee(UnlinkedCodeBlock* codeBlock)
     return false;
 }
 
-unsigned ModuleHints::numberProven() const
+unsigned ModuleHints::numberOfSingleFunctionVariables() const
 {
     unsigned result = 0;
     for (auto& entry : m_variables)
-        result += entry.value.function.isProven;
+        result += entry.value.function.isExact;
     return result;
 }
 

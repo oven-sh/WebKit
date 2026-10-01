@@ -62,7 +62,7 @@ private:
     LBasicBlock blockFor(Node* branch, int relativeOffset);
     // Node::isPromoted
     B3::Variable* variableOfEnvironment(Node* environment, unsigned offset);
-    LValue scopeThatIsOutFrom(Node* scope, unsigned hops);
+    LValue ancestorScope(Node* scope, unsigned hops);
     UncheckedKeyHashMap<Node*, Vector<B3::Variable*>> m_variablesOfEnvironments;
     // See BasicBlock::arraysViewed.
     struct ArrayView {
@@ -142,7 +142,7 @@ private:
     LValue doubleToInt32(LValue); // ToInt32.
     LValue toBoolean(Node*);
 
-    TypedPointer addressFor(VirtualRegister); // Where a register that lives in memory does (Graph::isHomed()).
+    TypedPointer addressFor(VirtualRegister); // Where a register that lives in memory does (Graph::livesInFrame()).
     LValue wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool mayChange);
     void lowerEntry();
     // Of a function with Signature::List.
@@ -173,7 +173,7 @@ private:
     bool branchUnlessAccepted(Node* valueNode, LValue value, TypeTable::FieldType, LBasicBlock otherwise); // False: it always is, and nothing goes there.
     // What is in a field of a struct of a closed family, from its having been read or written, for as long as nothing happens that could change it. It goes for the rest of the block, and
     // for the blocks that can only be got to from there.
-    struct FieldInHand {
+    struct AvailableField {
         Node* base;
         uint16_t layoutID;
         uint16_t slot;
@@ -182,21 +182,21 @@ private:
         LValue value;
         LValue asJSValue; // Null: nobody has made that of it.
     };
-    Vector<FieldInHand> m_fieldsInHand;
-    UncheckedKeyHashMap<BasicBlock*, Vector<FieldInHand>> m_fieldsInHandAtEndOf;
-    bool m_nodeLeavesFieldsAlone { false }; // Says the lowering of the node, which knows better than leavesFieldsAlone().
-    const FieldInHand* fieldInHand(Node* base, const TypeTable::Field&) const;
-    void noteFieldInHand(Node* base, const TypeTable::Field&, LValue value, Rep, LValue asJSValue, bool isWritten);
-    static bool leavesFieldsAlone(Node*);
+    Vector<AvailableField> m_availableFields;
+    UncheckedKeyHashMap<BasicBlock*, Vector<AvailableField>> m_availableFieldsAtEndOf;
+    bool m_nodePreservesFields { false }; // Says the lowering of the node, which knows better than preservesFields().
+    const AvailableField* availableField(Node* base, const TypeTable::Field&) const;
+    void recordAvailableField(Node* base, const TypeTable::Field&, LValue value, Rep, LValue asJSValue, bool isWritten);
+    static bool preservesFields(Node*);
     // What the node is, if it is a string that the program spells out, of characters that take a byte each.
     static std::optional<String> stringWrittenInProgram(Node*);
     // If the value is a string at all it is an atom: it is written in the program, or comes from a slot whose strings are (TypeTable::Holds::atoms).
     static bool isAtomIfString(Node*, unsigned depth = 0);
     static bool isAtomIfShortString(Node*, unsigned depth = 0); // Or is a long one: TypedLayoutTable::maxLengthOfAtomizedString.
-    LValue areTheSameGivenThatStringsAreAtoms(Node* left, LValue, Node* right, LValue); // Neither is a number or a BigInt.
+    LValue areEqualAssumingAtomStrings(Node* left, LValue, Node* right, LValue); // Neither is a number or a BigInt.
     void atomizeIfString(Node*, LValue);
     // `this`, in the code of a function that is not closed.
-    static bool isThisOfWhatAnybodyMayCall(Node*);
+    static bool isThisOfEscapingFunction(Node*);
     LValue isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
     // Options::aotTypesFields(): what has just been made as that layout, with those in its slots (null: nothing), is left with nothing in a slot that the slot does not hold.
     void validateNewObject(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown = nullptr);
@@ -236,7 +236,7 @@ private:
     template<typename... Args> LValue plainCall(LType, Entry, Args...);
     void storeBarrier(LValue owner);
     // Of what is being lowered: whether anything but what comes right after it uses it. (Nearly everything is a call. So what is wanted for longer than that is kept where calls leave it alone.)
-    bool isWantedAfterWhatFollows(Node*) const;
+    bool isLiveAfterNextNode(Node*) const;
 
     // Calls to stubs (AOTStubs.h).
     struct StubArgument {
@@ -247,9 +247,9 @@ private:
         GPRReg reg;
         uint32_t value;
     };
-    enum class StubClobbers : uint8_t { WhatCallsDo, Temporaries, Nothing };
+    enum class StubClobbers : uint8_t { CallerSavedRegisters, Temporaries, Nothing };
     // place: where the function is to be said to be meanwhile, if not at what is being lowered.
-    B3::PatchpointValue* callStub(Stub, LType, const Vector<StubArgument, 8>&, const Vector<StubImmediate, 2>&, StubClobbers = StubClobbers::WhatCallsDo, Node* place = nullptr);
+    B3::PatchpointValue* callStub(Stub, LType, const Vector<StubArgument, 8>&, const Vector<StubImmediate, 2>&, StubClobbers = StubClobbers::CallerSavedRegisters, Node* place = nullptr);
     LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // No node: it does not throw.
     // What one of the helpers makes of those (generateHelper()). Null: it gave up.
     LValue callHelper(Stub, const Vector<LValue, 4>& arguments);
@@ -276,7 +276,7 @@ private:
         return (!m_block->isInLoop || m_block->isOnlyInLoopOfBuiltin) && !m_graph.callsItself;
     }
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
-    LValue differenceFromWhatIsWritten(LValue characters, std::span<const Latin1Character> written);
+    LValue compareWithLiteral(LValue characters, std::span<const Latin1Character> written);
     // The characters of a string, and how many, if they are narrow and are to be had for the looking: it is all in one piece, or is a slice of one that is (which is left a slice).
     // If not, how long it is all the same, at `otherwise`.
     struct NarrowCharacters {
@@ -439,9 +439,9 @@ private:
     LValue m_scratch { nullptr };
     LBasicBlock m_returnBlock { nullptr };
     Vector<ValueFromBlock, 4> m_returnValues;
-    // Graph::numberOfThingsReturnedInRegisters: each, from wherever it is returned; and how it goes.
+    // Graph::numberOfRegisterReturnValues: each, from wherever it is returned; and how it goes.
     Vector<Vector<ValueFromBlock, 4>, 8> m_thingsReturned;
-    Vector<Rep, 8> m_howThingsAreReturned;
+    Vector<Rep, 8> m_returnValueReps;
     LBasicBlock m_exit { nullptr }; // While a guard is lowered: the way to the generic copy.
     Vector<std::pair<BasicBlock*, LBasicBlock>, 2> m_edges; // While a branch is lowered: the ways to successors that have phis.
     LBasicBlock m_afterSlotChecks { nullptr };

@@ -278,7 +278,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
         OPERATION_RETURN(scope, object);
 
     // The site knows one function, and this is another: a class that extends the one whose constructor this is, as a rule.
-    if (cache->pointer && cache->pointer != constructor && !SharedData::contains(cache) && Options::aotCachesConstructionForManyFunctions()) {
+    if (cache->pointer && cache->pointer != constructor && !SharedData::contains(cache)) {
         if (first->propertyAccessesAreCacheable() && canUseMegamorphicPutFastPath(first))
             vm.ensureMegamorphicCache().initAsConstruction(first->id(), last->id(), cache);
         OPERATION_RETURN(scope, object);

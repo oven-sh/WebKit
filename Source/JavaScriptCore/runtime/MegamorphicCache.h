@@ -349,7 +349,7 @@ public:
     uint16_t epoch() const { return m_epoch; }
 
     // What is about to be cached about objects of that structure goes by the objects on their prototype chain, as far as `upTo` if that is
-    // given: they are marked (JSObject::isPrototypeThatMegamorphicCacheGoesBy()), so that a change to one of them is heard of, and
+    // given: they are marked (JSObject::isPrototypeUsedByMegamorphicCache()), so that a change to one of them is heard of, and
     // a change to any other object is not. False: which they are cannot be told from the structure, so it is not to be cached.
     JS_EXPORT_PRIVATE static bool NODELETE noteDependenceOnPrototypes(StructureID, JSCell* upTo = nullptr);
 

@@ -90,7 +90,7 @@ public:
     {
         m_status = newStatus;
         if (newStatus == Status::Evaluated)
-            releaseWhatLinkingNeeded();
+            releaseLinkingData();
     }
     void setEvaluationError(VM&, JSValue);
     void setDFSAncestorIndex(unsigned newIndex) { m_dfsAncestorIndex = newIndex; }

@@ -353,7 +353,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         }
 #endif
         // Then it takes the instructions, which are not there to be had.
-        if (StaticHeap::contains(unlinkedCodeBlock) && StaticHeap::payloadIsLeftOut()) [[unlikely]] {
+        if (StaticHeap::contains(unlinkedCodeBlock) && StaticHeap::payloadIsOmitted()) [[unlikely]] {
             throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time, and the program was built without its bytecode. The compiled code cannot be used here, and there is nothing else to run it from."_s));
             return nullptr;
         }
@@ -365,7 +365,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
     // The constructor of a class is compiled ahead of time to construct with. All that its code to be called with does is throw this.
-    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->unlinkedExecutable()) && StaticHeap::payloadIsLeftOut()) [[unlikely]] {
+    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->unlinkedExecutable()) && StaticHeap::payloadIsOmitted()) [[unlikely]] {
         String name = executable->name().string();
         throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
         return nullptr;
@@ -383,7 +383,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
 #if ENABLE(FTL_JIT)
     // What StaticHeap left in the payload stays there, if there is code and enough is known of it to run it.
     if (executable->m_unlinkedExecutable->isCached() && StaticHeap::contains(executable->m_unlinkedExecutable.get())) {
-        if (auto code = AOT::findInImage(executable, kind, nullptr, scope); code && AOT::canDoWithoutUnlinkedCode(globalObject, code)) {
+        if (auto code = AOT::findInImage(executable, kind, nullptr, scope); code && AOT::canRunWithoutUnlinkedCode(globalObject, code)) {
             executable->recordParse(
                 executable->m_unlinkedExecutable->features(),
                 executable->m_unlinkedExecutable->lexicallyScopedFeatures(),

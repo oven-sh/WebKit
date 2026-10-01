@@ -349,7 +349,7 @@ protected:
 #if USE(BUN_JSC_ADDITIONS)
     // Once the module has been evaluated nothing walks its requests or resolves its imports any more, as a rule. Both can be had
     // from the graph again.
-    void releaseWhatLinkingNeeded();
+    void releaseLinkingData();
     void fillPrelinkedRequestedModules();
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
     void initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);

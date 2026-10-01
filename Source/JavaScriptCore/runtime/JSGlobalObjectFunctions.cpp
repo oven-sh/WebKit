@@ -887,7 +887,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         int32_t setIndex = callFrame->uncheckedArgument(1).asUInt32AsAnyInt();
 #if ENABLE(FTL_JIT)
         // Code from the static compiler has no CodeBlock, and does not need one for this.
-        if (AOT::FunctionRef caller = AOT::functionThatCalled(callFrame))
+        if (AOT::FunctionRef caller = AOT::callerFunction(callFrame))
             excludedSet = &caller.constantIdentifierSet(setIndex);
 #endif
         if (!excludedSet) {

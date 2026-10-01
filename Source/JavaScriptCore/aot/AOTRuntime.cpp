@@ -162,7 +162,7 @@ RuntimeTable::RuntimeTable(VM& vm)
     installOperationFrontEnds(vm, m_entries);
 
     // (With a JIT it has boundFunctionCallGenerator()'s thunk.)
-    if (usesStubs && !Options::useJIT() && Options::aotCallsBoundFunctionsWithStub())
+    if (usesStubs && !Options::useJIT())
         vm.getBoundFunction(true, SourceTaintedOrigin::Untainted)->setCodeToBeCalledWith(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::CallBoundFunction))));
 }
 
@@ -184,7 +184,7 @@ struct Instance::Collections {
     // The slots that have, or have had, a transition. The collector goes over them again and again while it marks, and they are few.
     Vector<Slot*> transitions;
     Vector<Slot*> transitionsSinceLastCollection;
-    Vector<SlotsOfSite*> slotsOfSites;
+    Vector<PolymorphicSlots*> slotsOfSites;
     UncheckedKeyHashMap<String, Structure*> shapes; // By inline capacity and the addresses of the names. Null: there is no such structure.
     UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // By number: the ones that have been made.
     // Instance::adopt(): what an object of a Structure turns into when it is made one of a family. Null: it cannot be. (Both are kept.)
@@ -452,9 +452,9 @@ struct FrameRecord {
 SUPPRESS_ASAN Instance* instanceOfFrame(const void* frame)
 {
     for (auto* record = static_cast<const FrameRecord*>(frame);; record = record->previous) {
-        WhatIsAt::Kind kind = whatIsAt(removeCodePtrTag(record->returnAddress)).kind;
-        RELEASE_ASSERT(kind != WhatIsAt::SomethingElse);
-        if (kind == WhatIsAt::Adapter)
+        ImageAddressInfo::Kind kind = classifyAddress(removeCodePtrTag(record->returnAddress)).kind;
+        RELEASE_ASSERT(kind != ImageAddressInfo::NotInImage);
+        if (kind == ImageAddressInfo::Adapter)
             return *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(record->previous) + offsetOfInstanceInAdapter);
     }
 }
@@ -462,10 +462,10 @@ SUPPRESS_ASAN Instance* instanceOfFrame(const void* frame)
 SUPPRESS_ASAN bool canTellInstanceOfFrame(const void* frame)
 {
     for (auto* record = static_cast<const FrameRecord*>(frame); record; record = record->previous) {
-        WhatIsAt::Kind kind = whatIsAt(removeCodePtrTag(record->returnAddress)).kind;
-        if (kind == WhatIsAt::SomethingElse)
+        ImageAddressInfo::Kind kind = classifyAddress(removeCodePtrTag(record->returnAddress)).kind;
+        if (kind == ImageAddressInfo::NotInImage)
             return false;
-        if (kind == WhatIsAt::Adapter)
+        if (kind == ImageAddressInfo::Adapter)
             return true;
     }
     return false;
@@ -476,34 +476,34 @@ NEVER_INLINE bool topFrameIsNotTheEnginesOwn(const void* frame)
     if (!hasCode())
         return false;
     void* returnAddress = returnAddressInto(frame, __builtin_frame_address(0));
-    return returnAddress && whatIsAt(returnAddress).kind != WhatIsAt::SomethingElse;
+    return returnAddress && classifyAddress(returnAddress).kind != ImageAddressInfo::NotInImage;
 }
 
-SUPPRESS_ASAN FunctionRef functionThatCalled(const CallFrame* callFrame)
+SUPPRESS_ASAN FunctionRef callerFunction(const CallFrame* callFrame)
 {
     if (!hasCode())
         return { };
     for (auto* record = reinterpret_cast<const FrameRecord*>(callFrame);; record = record->previous) {
-        WhatIsAt what = whatIsAt(removeCodePtrTag(record->returnAddress));
-        if (what.kind == WhatIsAt::Function) {
+        ImageAddressInfo what = classifyAddress(removeCodePtrTag(record->returnAddress));
+        if (what.kind == ImageAddressInfo::Function) {
             FunctionRef function { instanceOfFrame(record->previous), what.index };
             // (What it is in the middle of may be what another does, that was made part of it.)
             if (function.info().function()->hasInlineFrames) [[unlikely]]
                 return function.placeAt(removeCodePtrTag(record->returnAddress)).function;
             return function;
         }
-        if (what.kind != WhatIsAt::Stub)
+        if (what.kind != ImageAddressInfo::Stub)
             return { };
     }
 }
 
-CodeBlock* codeBlockOfFunctionThatCalled(const CallFrame* callFrame)
+CodeBlock* codeBlockOfCaller(const CallFrame* callFrame)
 {
-    FunctionRef function = functionThatCalled(callFrame);
+    FunctionRef function = callerFunction(callFrame);
     return function ? function.ensureCodeBlock() : nullptr;
 }
 
-const RegisterAtOffsetList& registersThatAdapterSaves()
+const RegisterAtOffsetList& adapterSavedRegisters()
 {
     static LazyNeverDestroyed<RegisterAtOffsetList> list;
     static std::once_flag once;
@@ -520,7 +520,7 @@ const RegisterAtOffsetList& registersThatAdapterSaves()
     return list.get();
 }
 
-bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesWillDo symbolTablesWillDo)
+bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesAreShared symbolTablesAreShared)
 {
     auto& constants = unlinkedCodeBlock->constantRegisters();
     auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
@@ -532,7 +532,7 @@ bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesWil
         if (!constant || !constant.isCell())
             continue;
         if (auto* symbolTable = dynamicDowncast<SymbolTable>(constant.asCell())) {
-            if (symbolTablesWillDo == SymbolTablesWillDo::No && !symbolTable->isItsOwnClone())
+            if (symbolTablesAreShared == SymbolTablesAreShared::No && !symbolTable->isSharedAcrossRealms())
                 return false;
         } else if (constant.asCell()->inherits<JSTemplateObjectDescriptor>())
             return false;
@@ -551,7 +551,7 @@ static bool linkConstants(VM& vm, Data& data)
             data.constants = info.constants;
             return true;
         }
-        const uint32_t* list = StaticHeap::inData<uint32_t>(*data.function().facts()->find(FunctionFacts::RealmConstants));
+        const uint32_t* list = StaticHeap::inData<uint32_t>(*data.function().facts()->find(FunctionMetadata::RealmConstants));
         std::span constants { static_cast<const WriteBarrier<Unknown>*>(info.constants), list[0] };
         JSGlobalObject* globalObject = data.instance->globalObject;
         auto* copy = static_cast<WriteBarrier<Unknown>*>(fastZeroedMalloc(constants.size_bytes()));
@@ -586,7 +586,7 @@ static bool linkConstants(VM& vm, Data& data)
             continue;
         if (auto* symbolTable = dynamicDowncast<SymbolTable>(constant.asCell())) {
             // What becomes of these is a long story, about code from the other compilers (CodeBlock::setConstantRegisters()).
-            if (!symbolTable->isItsOwnClone()) {
+            if (!symbolTable->isSharedAcrossRealms()) {
                 data.constants = data.ensureCodeBlock()->constantRegisters().span().data();
                 return true;
             }
@@ -666,7 +666,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
             dataLogLn("AOT: nothing was known of function ", code.index(), " when the program was built");
         fillInfo(info, executable, unlinkedCodeBlock, code, data->constants);
     }
-    RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && (info.flags >> FunctionInfo::numberOfFlagBits) == std::min<uint32_t>(numSlots, FunctionInfo::mostSlotsSaid) && (!info.executable() || info.executable() == executable));
+    RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && (info.flags >> FunctionInfo::numberOfFlagBits) == std::min<uint32_t>(numSlots, FunctionInfo::maxEncodedSlots) && (!info.executable() || info.executable() == executable));
     return data;
 }
 
@@ -690,26 +690,26 @@ Data* Instance::ensureData(uint32_t index)
 
 FunctionRef FunctionRef::at(Instance* instance, const void* address)
 {
-    auto& asked = instance->placeAskedAbout(address);
+    auto& asked = instance->cachedAddressInfo(address);
     if (asked.address == address) [[likely]]
         return { instance, asked.function };
-    WhatIsAt what = whatIsAt(address);
-    RELEASE_ASSERT(what.kind == WhatIsAt::Function);
-    asked = { address, what.index, Instance::PlaceAskedAbout::siteNotLookedFor };
+    ImageAddressInfo what = classifyAddress(address);
+    RELEASE_ASSERT(what.kind == ImageAddressInfo::Function);
+    asked = { address, what.index, Instance::CachedAddressInfo::siteNotLookedFor };
     return { instance, what.index };
 }
 
-SiteInPlaceOfCallSite::SiteInPlaceOfCallSite(Instance& instance, const void* returnAddress, uint32_t site)
+CallSiteOverride::CallSiteOverride(Instance& instance, const void* returnAddress, uint32_t site)
     : m_instance(instance)
 {
-    RELEASE_ASSERT(!instance.returnAddressWithSiteInPlace);
-    instance.returnAddressWithSiteInPlace = returnAddress;
-    instance.siteInPlace = site;
+    RELEASE_ASSERT(!instance.overriddenReturnAddress);
+    instance.overriddenReturnAddress = returnAddress;
+    instance.overridingSite = site;
 }
 
-SiteInPlaceOfCallSite::~SiteInPlaceOfCallSite()
+CallSiteOverride::~CallSiteOverride()
 {
-    m_instance.returnAddressWithSiteInPlace = nullptr;
+    m_instance.overriddenReturnAddress = nullptr;
 }
 
 static FunctionRef::Place placeOfSite(FunctionRef function, uint32_t site)
@@ -726,13 +726,13 @@ static FunctionRef::Place placeOfSite(FunctionRef function, uint32_t site)
 
 FunctionRef::Place FunctionRef::placeAt(const void* returnAddress) const
 {
-    if (returnAddress == instance->returnAddressWithSiteInPlace) [[unlikely]]
-        return placeOfSite(*this, instance->siteInPlace);
-    using Asked = Instance::PlaceAskedAbout;
-    auto& asked = instance->placeAskedAbout(returnAddress);
+    if (returnAddress == instance->overriddenReturnAddress) [[unlikely]]
+        return placeOfSite(*this, instance->overridingSite);
+    using Asked = Instance::CachedAddressInfo;
+    auto& asked = instance->cachedAddressInfo(returnAddress);
     if (asked.address != returnAddress || asked.site == Asked::siteNotLookedFor) [[unlikely]] {
-        WhatIsAt what = whatIsAt(returnAddress);
-        RELEASE_ASSERT(what.kind == WhatIsAt::Function && what.index == index);
+        ImageAddressInfo what = classifyAddress(returnAddress);
+        RELEASE_ASSERT(what.kind == ImageAddressInfo::Function && what.index == index);
         auto site = tryCallSiteAt(*info().function(), what.offset);
         RELEASE_ASSERT(!site || *site < Asked::hasNoSite);
         asked = { returnAddress, index, site.value_or(Asked::hasNoSite) };
@@ -851,7 +851,7 @@ UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfThereIsOne() const
 // As many zeros as any function has bytes of instructions, in memory that is nobody's until somebody reads it.
 static std::span<const uint8_t> zerosForInstructions(size_t size)
 {
-    static constexpr size_t most = static_cast<size_t>(1) << (32 - FunctionFacts::shiftOfInstructionsSize);
+    static constexpr size_t most = static_cast<size_t>(1) << (32 - FunctionMetadata::shiftOfInstructionsSize);
     static const uint8_t* zeros;
     static std::once_flag once;
     std::call_once(once, [] {
@@ -864,10 +864,10 @@ static std::span<const uint8_t> zerosForInstructions(size_t size)
 }
 
 // It is not going to be interpreted, and whoever asks for one does not ask what the instructions are.
-UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromFacts() const
+UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromMetadata() const
 {
     auto* facts = this->facts();
-    const uint32_t* scalars = facts ? facts->find(FunctionFacts::Scalars) : nullptr;
+    const uint32_t* scalars = facts ? facts->find(FunctionMetadata::Scalars) : nullptr;
     if (!scalars)
         return nullptr;
     PartsOfFunctionCode parts { };
@@ -877,14 +877,14 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromFacts() const
     // which is known to nobody. As with the instructions, whoever asks for one of these does not ask.)
     parts.identifiers = StaticHeap::hasIdentifiersOfProgram() ? nullptr : static_cast<const Identifier*>(info().identifiers);
     parts.constants = static_cast<const WriteBarrier<Unknown>*>(info().constants);
-    if (const uint32_t* word = facts->find(FunctionFacts::RealmConstants)) {
+    if (const uint32_t* word = facts->find(FunctionMetadata::RealmConstants)) {
         const uint32_t* list = StaticHeap::inData<uint32_t>(*word);
         parts.linkTimeConstants = { list + 2, list[1] };
     }
     // (Nor for the functions in it, which are asked for here: functionDecl(), functionExpr().)
-    if (const uint32_t* words = facts->find(FunctionFacts::Handlers))
+    if (const uint32_t* words = facts->find(FunctionMetadata::Handlers))
         parts.handlers = { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
-    if (const uint32_t* word = facts->find(FunctionFacts::ExpressionInfo); word && !StaticHeap::hasPositionsOfCallSites())
+    if (const uint32_t* word = facts->find(FunctionMetadata::ExpressionInfo); word && !StaticHeap::hasPositionsOfCallSites())
         parts.expressionInfo = StaticHeap::inData<uint8_t>(*word);
     return makeFunctionCodeFromParts(*instance->vm, parts);
 }
@@ -900,9 +900,9 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
     // It is the Data's. (The executable was there when the program was built, and to store to it is to have a page of one's own
     // for the sake of a word.)
     Data* data = ensureData();
-    UnlinkedCodeBlock* result = makeUnlinkedCodeBlockFromFacts();
+    UnlinkedCodeBlock* result = makeUnlinkedCodeBlockFromMetadata();
     if (!result)
-        result = uncheckedDowncast<FunctionExecutable>(data->executable)->unlinkedExecutable()->decodeCodeLeftInPayload(vm, info().kind(), instance->globalObject);
+        result = uncheckedDowncast<FunctionExecutable>(data->executable)->unlinkedExecutable()->decodeCodeFromKeptPayload(vm, info().kind(), instance->globalObject);
     RELEASE_ASSERT(result);
     data->unlinkedCodeBlock = result;
     if (!data->hasBeenFilledSinceLastCollection)
@@ -910,13 +910,13 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
     return result;
 }
 
-const FunctionFacts* FunctionRef::facts() const
+const FunctionMetadata* FunctionRef::facts() const
 {
     if (!instance->factsOfFunctions)
         return nullptr;
     uint32_t at = instance->factsOfFunctions[index];
     // (Odd: see reportedPositionFor().)
-    return at && !(at & 1) ? StaticHeap::inData<FunctionFacts>(at) : nullptr;
+    return at && !(at & 1) ? StaticHeap::inData<FunctionMetadata>(at) : nullptr;
 }
 
 static uint64_t readVarint(const uint8_t*& at)
@@ -939,7 +939,7 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
     if (uint32_t word = instance->factsOfFunctions[index]; word & 1)
         at = StaticHeap::inData<uint8_t>(word - 1);
     else if (auto* facts = this->facts()) {
-        if (const uint32_t* where = facts->find(FunctionFacts::ExpressionInfo))
+        if (const uint32_t* where = facts->find(FunctionMetadata::ExpressionInfo))
             at = StaticHeap::inData<uint8_t>(*where);
     }
     if (!at)
@@ -991,7 +991,7 @@ CodeType FunctionRef::codeType() const
 bool FunctionRef::isBuiltinFunction() const
 {
     if (auto* facts = this->facts())
-        return facts->flagsAndInstructionsSize & FunctionFacts::isBuiltinFunction;
+        return facts->flagsAndInstructionsSize & FunctionMetadata::isBuiltinFunction;
     return unlinkedCodeBlockIfThereIsOne()->isBuiltinFunction();
 }
 
@@ -1017,7 +1017,7 @@ const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) cons
     auto* facts = this->facts();
     if (!facts)
         return unlinkedCodeBlockIfThereIsOne()->handlerForIndex(bytecodeOffset, RequiredHandler::AnyHandler);
-    const uint32_t* words = facts->find(FunctionFacts::Handlers);
+    const uint32_t* words = facts->find(FunctionMetadata::Handlers);
     if (!words)
         return nullptr;
     std::span<const UnlinkedHandlerInfo> handlers { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
@@ -1029,7 +1029,7 @@ const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned table
     auto* facts = this->facts();
     if (!facts)
         return unlinkedCodeBlockIfThereIsOne()->unlinkedStringSwitchJumpTable(tableIndex);
-    return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*facts->find(FunctionFacts::StringSwitchJumpTables))[tableIndex];
+    return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*facts->find(FunctionMetadata::StringSwitchJumpTables))[tableIndex];
 }
 
 const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
@@ -1037,7 +1037,7 @@ const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
     auto* facts = this->facts();
     if (!facts)
         return ensureUnlinkedCodeBlock()->constantIdentifierSets()[index];
-    return StaticHeap::inMalloc<IdentifierSet>(*facts->find(FunctionFacts::ConstantIdentifierSets))[index];
+    return StaticHeap::inMalloc<IdentifierSet>(*facts->find(FunctionMetadata::ConstantIdentifierSets))[index];
 }
 
 BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
@@ -1046,7 +1046,7 @@ BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
         return BytecodeIndex(0);
     int32_t offset = 0;
     if (auto* facts = this->facts()) {
-        if (const uint32_t* word = facts->find(FunctionFacts::ResumePoints)) {
+        if (const uint32_t* word = facts->find(FunctionMetadata::ResumePoints)) {
             const int32_t* table = StaticHeap::inData<int32_t>(*word);
             if (state >= table[0] && static_cast<uint32_t>(state - table[0]) < static_cast<uint32_t>(table[1]))
                 offset = table[2 + state - table[0]];
@@ -1056,7 +1056,7 @@ BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
     return BytecodeIndex(std::max(offset, 0));
 }
 
-static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(const FunctionFacts& facts, FunctionFacts::Fact which)
+static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(const FunctionMetadata& facts, FunctionMetadata::Fact which)
 {
     const uint32_t* words = facts.find(which);
     if (!words)
@@ -1067,14 +1067,14 @@ static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(con
 std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionDecls() const
 {
     if (auto* facts = this->facts())
-        return functionsIn(*facts, FunctionFacts::FunctionDecls);
+        return functionsIn(*facts, FunctionMetadata::FunctionDecls);
     return unlinkedCodeBlockIfThereIsOne()->functionDecls();
 }
 
 std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionExprs() const
 {
     if (auto* facts = this->facts())
-        return functionsIn(*facts, FunctionFacts::FunctionExprs);
+        return functionsIn(*facts, FunctionMetadata::FunctionExprs);
     return unlinkedCodeBlockIfThereIsOne()->functionExprs();
 }
 
@@ -1101,7 +1101,7 @@ void Data::destroy(Data* data)
     if (data->hasBeenFilledSinceLastCollection)
         removeFrom(instance.collections->filledSinceLastCollection, &Data::indexAmongFilled);
     delete data->watchpoints;
-    instance.collections->slotsOfSites.removeAllMatching([&](SlotsOfSite* several) {
+    instance.collections->slotsOfSites.removeAllMatching([&](PolymorphicSlots* several) {
         if (several->owner != data)
             return false;
         fastFree(several);
@@ -1149,7 +1149,7 @@ LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
     RELEASE_ASSERT(bytecodeIndex.offset() < instructionsSize());
     LineColumn lineColumn;
     if (auto* facts = this->facts()) {
-        if (const uint32_t* word = facts->find(FunctionFacts::ExpressionInfo))
+        if (const uint32_t* word = facts->find(FunctionMetadata::ExpressionInfo))
             lineColumn = decodeBorrowedExpressionInfo(StaticHeap::inData<uint8_t>(*word))->lineColumnForInstPC(bytecodeIndex.offset());
     } else
         lineColumn = unlinkedCodeBlockIfThereIsOne()->lineColumnForBytecodeIndex(bytecodeIndex);
@@ -1223,7 +1223,7 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
     uint32_t index = code->index();
     if (instance.isLinked(index))
         RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
-    else if (code->imageFunction()->startsCold && Options::aotStartFunctionsCold() && !instance.infos[index].sites && constantsAreOfNoRealm(unlinkedCodeBlock)) {
+    else if (code->imageFunction()->startsCold && !instance.infos[index].sites && constantsAreOfNoRealm(unlinkedCodeBlock)) {
         if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
             dataLogLn("AOT: nothing was known of function ", index, " when the program was built");
         fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
@@ -1246,7 +1246,7 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
         return true;
     if (instance->isLinked(index))
         return true;
-    if (const FunctionInfo& info = instance->infos[index]; info.flags & FunctionInfo::startsCold && Options::aotStartFunctionsCold()) {
+    if (const FunctionInfo& info = instance->infos[index]; info.flags & FunctionInfo::startsCold) {
         RELEASE_ASSERT(info.executable() == executable && info.kind() == kind);
         if (info.function()->usesStaticImports && !moduleIsLinkedAsCompiled(scope))
             return false;
@@ -1297,12 +1297,12 @@ static ALWAYS_INLINE bool hasTransition(const Slot& slot)
     return slot.structureID && slot.newStructureID && (!slot.fieldType || (slot.offset & Slot::hasFieldType)) && !slot.hasPointer();
 }
 
-SlotsOfSite* Instance::makeSlotsOfSite(Data* owner, UniquedStringImpl* name)
+PolymorphicSlots* Instance::makeSlotsOfSite(Data* owner, UniquedStringImpl* name)
 {
-    auto* several = static_cast<SlotsOfSite*>(fastZeroedMalloc(sizeof(SlotsOfSite)));
+    auto* several = static_cast<PolymorphicSlots*>(fastZeroedMalloc(sizeof(PolymorphicSlots)));
     several->name = name;
     several->owner = owner;
-    several->timesLeftToLearnAtOnce = SlotsOfSite::timesToLearnAtOnce;
+    several->timesLeftToLearnAtOnce = PolymorphicSlots::timesToLearnAtOnce;
     collections->slotsOfSites.append(several);
     return several;
 }
@@ -1314,9 +1314,9 @@ void Instance::noteTransitionCached(Slot* slot)
 
 // What was there at the last collection and has not been filled since refers to nothing that is young.
 template<typename Visitor>
-void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
+void Instance::visit(Visitor& visitor, bool onlyNew)
 {
-    for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
+    for (Data* data : onlyNew ? collections->filledSinceLastCollection : collections->all)
         data->visit(visitor);
     // Code that has cached a transition can put an object that has already been visited in the new structure.
     auto visitTransitions = [&](const Vector<Slot*>& slots) {
@@ -1326,7 +1326,7 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
         }
     };
     visitTransitions(collections->transitionsSinceLastCollection);
-    if (!onlyWhatIsNew)
+    if (!onlyNew)
         visitTransitions(collections->transitions);
     for (Structure* structure : collections->shapes.values()) {
         if (structure)
@@ -1551,7 +1551,7 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
             : Structure::create(vm, old->globalObject(), jsNull(), old->typeInfo(), old->classInfoForCells(), NonArray, old->inlineCapacity());
         converted = empty->inlineCapacity() == old->inlineCapacity() && empty->indexingType() == old->indexingType() ? Structure::createWithProperties(vm, empty, names.span(), slots.span(), capacity, inlineSlots, attributes.span()) : nullptr;
         if (converted)
-            converted->saysOfAccessorsAndReadOnlyPropertiesWhat(*old);
+            converted->accessorAndReadOnlySummary(*old);
         if (converted && usesFieldIDs) {
             // (As Structure::noteFieldAdded() would have it.)
             uint16_t fieldIDInSlot[Structure::numberOfSlotsWithFieldIDs] { };
@@ -1670,25 +1670,25 @@ void Instance::noteAddOfField(Structure* before, unsigned slot, Structure* after
     collections->hasAddsOfFields = true;
 }
 
-void Instance::finalizeUnconditionally(bool onlyWhatIsNew)
+void Instance::finalizeUnconditionally(bool onlyNew)
 {
     if (std::exchange(collections->hasAddsOfFields, false))
         zeroSpan(std::span { addsOfFields });
     zeroSpan(std::span { customGetters });
-    for (SlotsOfSite* several : collections->slotsOfSites) {
-        if (onlyWhatIsNew && !several->owner->hasBeenFilledSinceLastCollection)
+    for (PolymorphicSlots* several : collections->slotsOfSites) {
+        if (onlyNew && !several->owner->hasBeenFilledSinceLastCollection)
             continue;
         for (Slot& slot : several->slots)
             several->owner->finalizeSlot(*vm, slot);
     }
-    for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
+    for (Data* data : onlyNew ? collections->filledSinceLastCollection : collections->all)
         data->finalizeUnconditionally(*vm);
     for (Data* data : collections->filledSinceLastCollection)
         data->hasBeenFilledSinceLastCollection = false;
     collections->filledSinceLastCollection.shrink(0);
     collections->transitions.appendVector(collections->transitionsSinceLastCollection);
     collections->transitionsSinceLastCollection.shrink(0);
-    if (!onlyWhatIsNew) {
+    if (!onlyNew) {
         // Each once, and only those that still have one.
         auto& transitions = collections->transitions;
         std::ranges::sort(transitions);

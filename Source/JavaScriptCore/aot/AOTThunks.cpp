@@ -181,10 +181,6 @@ static void branchIfSlotIsStillOfUse(CCallHelpers& jit, GPRReg slot, JumpList& s
 {
     jit.load32(Address(slot, OBJECT_OFFSETOF(Slot, offset)), scratch0);
     jit.and32(TrustedImm32(Slot::attemptsMask), scratch0);
-    if (!Options::aotLooksInMegamorphicCacheUnlessSlotIsEmpty()) {
-        slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, TrustedImm32(Slot::attemptsMask)));
-        return;
-    }
     Jump hasGivenUp = jit.branch32(CCallHelpers::Equal, scratch0, TrustedImm32(Slot::attemptsMask));
     Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(slot, OBJECT_OFFSETOF(Slot, structureID)));
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), scratch0);
@@ -423,36 +419,34 @@ void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
 
     // The site knows one function, and this is another. See MegamorphicCache::ConstructionEntry.
     isAnotherFunction.link(&jit);
-    if (Options::aotCachesConstructionForManyFunctions()) {
-        using ConstructionEntry = MegamorphicCache::ConstructionEntry;
-        slowCases.append(jit.branchIfNotFunction(argument1));
-        jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
-        slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
-        jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), scratch1);
-        jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
-        slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
-        loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
-        jit.urshift32(scratch0, TrustedImm32(MegamorphicCache::constructionHashShift), scratch2);
-        jit.urshiftPtr(argument4, TrustedImm32(MegamorphicCache::constructionHashShift), scratch4);
-        jit.xor32(scratch4, scratch2);
-        jit.and32(TrustedImm32(MegamorphicCache::constructionCacheMask), scratch2);
-        static_assert(sizeof(ConstructionEntry) == 24);
-        jit.getEffectiveAddress(BaseIndex(scratch2, scratch2, CCallHelpers::TimesTwo), scratch2);
-        jit.getEffectiveAddress(BaseIndex(cacheGPR, scratch2, CCallHelpers::TimesEight, MegamorphicCache::offsetOfConstructionEntries()), scratch4);
-        slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, Address(scratch4, ConstructionEntry::offsetOfFirstStructureID())));
-        slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, argument4, Address(scratch4, ConstructionEntry::offsetOfSite())));
-        jit.load16(Address(scratch4, ConstructionEntry::offsetOfEpoch()), scratch2);
-        jit.load16(Address(cacheGPR, MegamorphicCache::offsetOfEpoch()), scratch0);
-        slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, scratch2));
-        // (As big as what it starts out as: there is as much room for properties in the one as in the other.)
-        jit.emitAllocateWithNonNullAllocator(scratch3, JITAllocator::variable(), scratch1, scratch2, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
-        jit.load32(Address(scratch4, ConstructionEntry::offsetOfLastStructureID()), scratch4);
-        loadEntry(jit, Entry::StructureIDBase, scratch0);
-        jit.addPtr(scratch0, scratch4);
-        jit.emitStoreStructureWithTypeInfo(scratch4, scratch3, scratch1);
-        jit.load8(Address(scratch4, Structure::inlineCapacityOffset()), scratch0);
-        emitFillAndReturnObject(jit, argument2, argument3);
-    }
+    using ConstructionEntry = MegamorphicCache::ConstructionEntry;
+    slowCases.append(jit.branchIfNotFunction(argument1));
+    jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
+    jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), scratch1);
+    jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
+    loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
+    jit.urshift32(scratch0, TrustedImm32(MegamorphicCache::constructionHashShift), scratch2);
+    jit.urshiftPtr(argument4, TrustedImm32(MegamorphicCache::constructionHashShift), scratch4);
+    jit.xor32(scratch4, scratch2);
+    jit.and32(TrustedImm32(MegamorphicCache::constructionCacheMask), scratch2);
+    static_assert(sizeof(ConstructionEntry) == 24);
+    jit.getEffectiveAddress(BaseIndex(scratch2, scratch2, CCallHelpers::TimesTwo), scratch2);
+    jit.getEffectiveAddress(BaseIndex(cacheGPR, scratch2, CCallHelpers::TimesEight, MegamorphicCache::offsetOfConstructionEntries()), scratch4);
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, Address(scratch4, ConstructionEntry::offsetOfFirstStructureID())));
+    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, argument4, Address(scratch4, ConstructionEntry::offsetOfSite())));
+    jit.load16(Address(scratch4, ConstructionEntry::offsetOfEpoch()), scratch2);
+    jit.load16(Address(cacheGPR, MegamorphicCache::offsetOfEpoch()), scratch0);
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, scratch2));
+    // (As big as what it starts out as: there is as much room for properties in the one as in the other.)
+    jit.emitAllocateWithNonNullAllocator(scratch3, JITAllocator::variable(), scratch1, scratch2, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+    jit.load32(Address(scratch4, ConstructionEntry::offsetOfLastStructureID()), scratch4);
+    loadEntry(jit, Entry::StructureIDBase, scratch0);
+    jit.addPtr(scratch0, scratch4);
+    jit.emitStoreStructureWithTypeInfo(scratch4, scratch3, scratch1);
+    jit.load8(Address(scratch4, Structure::inlineCapacityOffset()), scratch0);
+    emitFillAndReturnObject(jit, argument2, argument3);
     slowCases.link(&jit);
     tailCall(jit, Entry::RawCreateThisWithProperties);
 }

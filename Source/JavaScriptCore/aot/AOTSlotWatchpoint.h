@@ -39,7 +39,7 @@ public:
 
 private:
     Data* m_owner;
-    Slot* m_slot { nullptr }; // One of the owner's own, or of one of its SlotsOfSite.
+    Slot* m_slot { nullptr }; // One of the owner's own, or of one of its PolymorphicSlots.
     ObjectPropertyCondition m_key;
 };
 

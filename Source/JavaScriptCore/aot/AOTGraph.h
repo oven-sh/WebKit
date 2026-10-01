@@ -62,7 +62,7 @@ enum class NodeKind : uint8_t {
     Argument, // The value an argument register has on entry.
     Phi,
     Proj, // One of the registers defined by an instruction that defines several. uses[0] is the instruction.
-    GetStack, // Reads a register that lives in memory (see Graph::isHomed).
+    GetStack, // Reads a register that lives in memory (see Graph::livesInFrame).
     SetStack, // Writes one. uses[0] is the value.
     Guard, // Ends a block of a loop's fast copy (see BasicBlock::isGeneric). Reads what the instruction that comes next reads.
     Narrow, // uses[0], on its way back into the fast copy of a loop, known to be what `target` is (see BasicBlock::isReentry).
@@ -81,7 +81,7 @@ enum class GuardKind : uint8_t {
     Reentry, // That the values that the block's Narrow nodes are of are what those say.
     Structure, // That the base (uses[0]) is of the structure that the cache of `site` is for.
     SlotsAgree, // That the caches of `site` and `otherSite` are for the same structure.
-    SlotIsPlain, // That the cache of `site` is for a property in the base itself (not Slot::isIntricate).
+    SlotIsPlain, // That the cache of `site` is for a property in the base itself (not Slot::isIndirect).
     // Around guards of those two kinds, which have nothing to go by but caches: skipped if none has changed since they last held.
     BeginSlotChecks,
     EndSlotChecks,
@@ -128,7 +128,7 @@ struct Node;
 // What becomes of something that the function makes: whether anything can still get at it once the function has returned, and if so
 // the first thing that was seen to make that so (analyzeEscapes()).
 enum class Escape : uint8_t {
-    NotLookedAt,
+    NotAnalyzed,
     StaysHere, // Nothing sees it but the code of this function (and what has been made part of that).
     IsOnlyLent, // It is passed to functions that are known, and known to be done with it when they return.
     Returned,
@@ -145,7 +145,7 @@ enum class Escape : uint8_t {
     PassedToParameter,
     PassedToVariable,
     PassedToUnknown,
-    PassedToKnownThatKeepsIt,
+    PassedToKnownCalleeThatRetainsIt,
     PassedInList,
     PassedInTailCall,
     Constructed,
@@ -217,7 +217,7 @@ struct Node {
     Node* guard { nullptr }; // An instruction that is only got to when this has found that there is a short way to do it.
     Node* guarded { nullptr }; // The other way round.
     Node* target { nullptr }; // NodeKind::Narrow: the phi of the loop's header that the value is on its way to.
-    bool checksWhatItIsNarrowedTo { false }; // NodeKind::Narrow with narrowedTo: nothing has seen to it. It does, and what is not that is not let by (a TypeError).
+    bool checksNarrowedType { false }; // NodeKind::Narrow with narrowedTo: nothing has seen to it. It does, and what is not that is not let by (a TypeError).
     Type narrowedTo { TNone }; // NodeKind::Narrow, if there is no target: what a GuardKind::Field found the value to be.
     uint16_t slotOfField { 0 }; // GuardKind::Field
     uint16_t firstLayout { 0 }; // Likewise, and the Narrow that comes after it.
@@ -268,7 +268,7 @@ struct Node {
     bool structureIsChecked { false }; // A guard of a property access: another guard has seen to the base's structure.
     bool slotIsPlain { false }; // Likewise: another guard has seen to that.
     bool calleeIsChecked { false };
-    bool wasTakenNeverToBeReached { false }; // inferTypes(): nothing was found that it could give. For Options::aotVerifiesFacts().
+    bool wasInferredUnreachable { false }; // inferTypes(): nothing was found that it could give. For Options::aotVerifiesFacts().
     bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
     // An op_get_by_id of a closed method whose value nothing wants: all that is left of it is that it throws if there is no object to read from.
     bool isReadOnlyToBeCalled { false };
@@ -283,7 +283,7 @@ struct Node {
     unsigned hopsFromThere { 0 };
     // Of an op_resolve_scope: that is not what it gives, only where it starts looking, which is this many scopes out from where it says to. (Those are not there. What it looks for is in none of them.)
     unsigned environmentsPassedOver { 0 };
-    Escape escape { Escape::NotLookedAt }; // If it makes something (kindOfAllocation()).
+    Escape escape { Escape::NotAnalyzed }; // If it makes something (kindOfAllocation()).
     uint32_t fact { 0 }; // EXPERIMENT: Options::aotFacts().
     uint8_t iteratedFact { 0 }; // Likewise: it is an array. What an element holds, plus one.
     bool hasFact(unsigned kind, unsigned bitOfOption) const { return fact >> 28 == kind && (Options::aotFacts() & bitOfOption); }
@@ -292,9 +292,9 @@ struct Node {
     // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
     // op_create_this: how many properties the object is made with (NewObjectPlan). Their values are the uses at NewObjectPlan::registerOf().
     unsigned numberOfLiteralProperties { 0 };
-    // An op_call of a function that hands back that many things in registers (findThingsReturnedInRegisters()). Nothing wants what the call itself gives.
-    uint8_t numberOfThingsReturned { 0 };
-    uint8_t whichThing { 0 }; // A NodeKind::Proj of such a call, which was the op_get_by_id that read it: which of them.
+    // An op_call of a function that hands back that many things in registers (planMultiValueReturns()). Nothing wants what the call itself gives.
+    uint8_t numberOfReturnValues { 0 };
+    uint8_t returnValueIndex { 0 }; // A NodeKind::Proj of such a call, which was the op_get_by_id that read it: which of them.
     // An op_get_by_val or op_get_length of an array, in a loop that changes no array: the header of the loop ahead of which the array is looked at (BasicBlock::arraysViewed).
     BasicBlock* viewedAheadOf { nullptr };
     Node* arrayViewed { nullptr }; // Which of those it is: what the base is, as it comes to the loop.
@@ -394,7 +394,7 @@ struct BasicBlock {
     Vector<BasicBlock*, 2> predecessors;
     Vector<BasicBlock*, 2> successors; // For a conditional jump: taken, then not taken. For a switch: the cases in table order, then the default.
     BitVector liveIn; // Indexed by Graph::registerIndex().
-    // Of the registers that live in memory (Graph::isHomed()): those that a handler reads that something in the block can throw to; and
+    // Of the registers that live in memory (Graph::livesInFrame()): those that a handler reads that something in the block can throw to; and
     // those that some handler that can be got to from the end of the block reads, unless they are written first.
     BitVector readByHandlersOfBlock;
     BitVector readByHandlersAfterBlock;
@@ -465,7 +465,7 @@ public:
     Vector<UnlinkedFunctionExecutable*> functionsMade; // Of the outermost: what the code that comes of it makes a function object of.
     // One of the forms of a method of arrays that are only ever part of a caller (builtins/ArrayPrototype.js): an op_get_by_val gives nothing at all (JSValue()) where there is no element.
     bool readsElementsOrEmpty { false };
-    bool isBuiltinThatIsPartOfCaller { false }; // One of the engine's own functions.
+    bool isInlinedBuiltin { false }; // One of the engine's own functions.
     bool wasCalledInLoop { false }; // Part of a caller: the call was in a loop.
     unsigned numberOfNodes() const { return m_nodes.size(); }
     Node* lastNode() { return &m_nodes.last(); }
@@ -497,12 +497,12 @@ public:
 
     // A register that is live into an exception handler lives in memory for the whole function: control gets to a handler
     // from the unwinder, with nothing in machine registers.
-    bool isHomed(VirtualRegister reg) const { return m_homed.get(registerIndex(reg)); }
-    bool hasHomedRegisters() const { return !m_homed.isEmpty(); }
+    bool livesInFrame(VirtualRegister reg) const { return m_homed.get(registerIndex(reg)); }
+    bool hasFrameRegisters() const { return !m_homed.isEmpty(); }
     // Where: they are next to each other in the frame, and this is which of them it is.
     unsigned homeOf(VirtualRegister reg) const
     {
-        ASSERT(isHomed(reg));
+        ASSERT(livesInFrame(reg));
         unsigned result = 0;
         for (unsigned index : m_homed) {
             if (index == registerIndex(reg))
@@ -512,7 +512,7 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
         return 0;
     }
-    unsigned numberOfHomes() const { return m_homed.bitCount(); }
+    unsigned numberOfFrameRegisters() const { return m_homed.bitCount(); }
     Convention convention() const { return m_convention; }
     HowValuesArePassed howValuesArePassed() const { return AOT::howValuesArePassed(m_facts, m_convention); }
 
@@ -537,7 +537,7 @@ public:
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
     // TypeTable::tableHasTypedFields(): the field that an op_get_by_id or op_put_by_id gets at without asking, if it does.
     static std::optional<TypeTable::Field> typedFieldAccessedBy(const Node*);
-    static bool isThisOfWhatAnybodyMayCall(const Node*);
+    static bool isThisOfEscapingFunction(const Node*);
     // Of structs: the field of that name of the family that the value is proven to have been born into, if it is proven to have been born into one.
     static std::optional<TypeTable::Field> fieldOfTypedBase(const Node* base, UniquedStringImpl* name);
     static uint16_t layoutIDOfNewObject(const Node*); // TypeTable::tableHasTypedFields(): what an op_new_object makes is born as that. Zero: nothing.
@@ -563,14 +563,14 @@ public:
     // An array that the function makes itself: what it puts in it is a good guess at what is in it.
     static bool isArrayMadeHere(const Node* node) { return node->isBytecode(op_new_array) || node->isBytecode(op_new_array_with_size); }
     // The function that the call or construction is probably of, if there is any telling.
-    const KnownFunction* knownCallee(const Node*, bool* isProven = nullptr) const;
-    const KnownFunction* knownCalleeWithoutFacts(const Node*, bool* isProven) const;
+    const KnownFunction* knownCallee(const Node*, bool* isExact = nullptr) const;
+    const KnownFunction* knownCalleeIgnoringSummaries(const Node*, bool* isExact) const;
     // What is iterated by an op_iterator_open, op_iterator_next or op_iterator_close_check is an array: Node::iteratedFact. Or 0.
     static unsigned iteratedFactOf(const Node*);
-    bool calleeIsProven(const Node*) const; // See KnownFunction::isProven.
+    bool calleeIsExact(const Node*) const; // See KnownFunction::isExact.
     // Before there is a graph to tell which scope a read is from: unless the code has a variable of its own of that name, there.
     const KnownFunction* probablyFunctionInVariableOfModule(unsigned identifier, unsigned scopeOffset) const;
-    const KnownFunction* knownFunctionReadBy(const Node* getFromScope, bool* isProven = nullptr) const;
+    const KnownFunction* knownFunctionReadBy(const Node* getFromScope, bool* isExact = nullptr) const;
     // A call of a function that wants nothing of the object it is called as (KnownFunction::needsNoFunctionObject). None is passed.
     bool passesNoFunctionObject(const Node* call);
     // Whether this function is one of those, and whether its scope is where the module's environment is.
@@ -586,8 +586,8 @@ public:
     static bool isIteratorMethodOfAnyArray(const Node*); // Array.prototype.values, which is Array.prototype[Symbol.iterator].
     void findBuiltinsCalled(); // Node::directMethod. Once the types are known.
     bool hasTwoCopiesOfAll { false }; // Options::aotAssertsTypes(): not just of its loops.
-    // See ProgramFacts.
-    void noteUsesOfProvenFunctions(const FactsOfExecutables&);
+    // See FunctionSummary.
+    void recordUsesOfKnownFunctions(const FunctionSummaryMap&);
     void noteFieldsComparedWithStrings(); // TypeTable::noteComparedWithString()
     // f(a, ...b), f.apply(o, arguments): what the callee is passed is put together from where it is (Stub::CallVarargs, Stub::CallList).
     // What would have been made only to be copied from, right before the call, is not (Node::isElided). Nor is an array of the rest of
@@ -608,28 +608,28 @@ public:
     bool isScopeThatStandsForNoThis(const Node*);
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
     // What the program says of the function that this is the code of, for a call.
-    void setFacts(const ProgramFacts* facts) { m_facts = facts; }
-    const ProgramFacts* facts() const { return m_facts; }
-    // reader: who is to look again if there turns out to be more to what it has read (VariableFacts::read()).
-    void setVariableFacts(VariableFacts* facts, unsigned reader = VariableFacts::nobody)
+    void setFacts(const FunctionSummary* facts) { m_facts = facts; }
+    const FunctionSummary* facts() const { return m_facts; }
+    // reader: who is to look again if there turns out to be more to what it has read (VariableSummaries::read()).
+    void setVariableSummaries(VariableSummaries* facts, unsigned reader = VariableSummaries::nobody)
     {
-        m_variableFacts = facts;
-        m_readerOfFacts = reader;
+        m_variableSummaries = facts;
+        m_summaryReader = reader;
     }
-    VariableFacts* variableFacts() const { return m_variableFacts; }
+    VariableSummaries* variableSummaries() const { return m_variableSummaries; }
     // Options::aotLogsFacts(): what to call the code, when it comes to saying what it contributes.
     void setNameForLog(const String& name) { m_nameForLog = name; }
     const String& nameForLog() const { return m_nameForLog; }
-    unsigned readerOfFacts() const { return m_readerOfFacts; }
+    unsigned summaryReader() const { return m_summaryReader; }
     // Which scope of the source the value is an environment record of (Variable::scope). Null: there is no telling.
     const void* identityOfScope(const Node*, unsigned depth = 0);
     // op_get_from_scope, op_put_to_scope. None: it is not in an environment record, or there is no telling which.
     Variable variableAccessedBy(const Node*);
-    // What has to be known of variables before anything is said of what they hold: see VariableFacts.
-    void noteWhatCannotBeToldOfVariables(VariableFacts&);
+    // What has to be known of variables before anything is said of what they hold: see VariableSummaries.
+    void recordUntrackableVariableAccesses(VariableSummaries&);
     Type typeOfArgumentOnEntry(unsigned indexIncludingThis) const
     {
-        if (!m_facts || !m_facts->isClosed || indexIncludingThis >= ProgramFacts::mostParameters)
+        if (!m_facts || !m_facts->isNonEscaping || indexIncludingThis >= FunctionSummary::mostParameters)
             return TTop;
         if (!indexIncludingThis)
             return m_facts->thisType.load();
@@ -639,11 +639,11 @@ public:
     unsigned indexOfKnownCallee(const ImageKey&);
     Vector<ImageKey> knownCallees;
     bool callsItself { false }; // As good as a loop.
-    unsigned numberOfThingsReturnedInRegisters { 0 }; // By this function. None: it returns what it returns.
-    UncheckedKeyHashMap<Node*, Vector<Node*, 8>> readsOfThingsReturned; // By the call: Node::whichThing.
+    unsigned numberOfRegisterReturnValues { 0 }; // By this function. None: it returns what it returns.
+    UncheckedKeyHashMap<Node*, Vector<Node*, 8>> returnValueReads; // By the call: Node::returnValueIndex.
     bool makesCalls { false }; // Of functions, in frames of their own.
     bool emitsCalls { false }; // There may be an instruction in the code that calls something, if only a stub. (A jump is not one.)
-    bool emitsCallsWhateverIsLeft { false }; // And there is no telling by looking at what the code has come to.
+    bool alwaysEmitsCalls { false }; // And there is no telling by looking at what the code has come to.
     mutable std::optional<bool> callsAreLeft; // hasNoFrame()
     // Integers of the program's that are as big as addresses are (see the check for those in AOTCompiler.cpp).
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> wideIntegerConstants;
@@ -734,12 +734,12 @@ private:
     UnlinkedCodeBlock* m_codeBlock;
     ScopeChain m_scopeChain;
     const CalleeHints* m_hints { nullptr };
-    const ProgramFacts* m_facts { nullptr };
-    VariableFacts* m_variableFacts { nullptr };
+    const FunctionSummary* m_facts { nullptr };
+    VariableSummaries* m_variableSummaries { nullptr };
     String m_nameForLog;
-    unsigned m_readerOfFacts { VariableFacts::nobody };
-    UncheckedKeyHashMap<int, Vector<Node*>, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> m_storesToHomed; // See identityOfScope().
-    bool m_hasStoresToHomed { false };
+    unsigned m_summaryReader { VariableSummaries::nobody };
+    UncheckedKeyHashMap<int, Vector<Node*>, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> m_storesToFrameRegisters; // See identityOfScope().
+    bool m_hasStoresToFrameRegisters { false };
     const ModuleLinkage* m_linkage { nullptr };
     const DeclaredNamesLink* m_declaredNames { nullptr };
     BitVector m_namesAssignedTo; // By index of the identifier: op_put_to_scope by name.
@@ -783,20 +783,20 @@ private:
 
 // Phases. Each returns false (and Graph::failed() says why) if the function is not for the static compiler.
 bool parseBytecode(Graph&);
-// What the function returns. calleesConsulted: the functions whose KnownFunction::returnType that went by.
-// calleesGivenMore: the closed functions that it calls with something that nobody was known to pass them (ProgramFacts::parameterTypes).
-Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesConsulted = nullptr, Vector<const KnownFunction*>* calleesGivenMore = nullptr);
+// What the function returns. calleesRead: the functions whose KnownFunction::returnType that went by.
+// calleesWithWidenedInputs: the closed functions that it calls with something that nobody was known to pass them (FunctionSummary::parameterTypes).
+Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesRead = nullptr, Vector<const KnownFunction*>* calleesWithWidenedInputs = nullptr);
 void inferRanges(Graph&);
 void optimizeLoops(Graph&);
 void simplify(Graph&);
 void inlineCalls(Graph&, const CodeOfProgram&);
 void analyzeEscapes(Graph&); // Node::escape
 void promoteEnvironments(Graph&); // Node::isPromoted
-void doWithoutObjectsThatAreOnlyRead(Graph&); // Before the types are worked out.
-void noteThingsReturned(Graph&); // ThingsReturnedByFunctions::note(). Of code as it is written.
-void findThingsReturnedInRegisters(Graph&); // Once the types are worked out, and before anything is made of them.
-// ProgramFacts::parametersThatEscape, going by what is said so far of the functions it calls (calleesConsulted).
-uint32_t parametersThatEscape(Graph&, Vector<const KnownFunction*>* calleesConsulted);
+void scalarReplaceReadOnlyObjects(Graph&); // Before the types are worked out.
+void recordReturnedLiterals(Graph&); // MultiValueReturnTable::note(). Of code as it is written.
+void planMultiValueReturns(Graph&); // Once the types are worked out, and before anything is made of them.
+// FunctionSummary::escapingParameters, going by what is said so far of the functions it calls (calleesRead).
+uint32_t escapingParameters(Graph&, Vector<const KnownFunction*>* calleesRead);
 
 } } // namespace JSC::AOT
 

@@ -135,7 +135,7 @@ private:
     HashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> m_importSlotIndices; // filled with m_importSlotNames
     CodeFeatures m_features;
     TriState m_isLinkedAsInImage { TriState::Indeterminate };
-    bool m_gaveStaticExecutables { false }; // ScriptExecutable::givesStaticExecutables() of the executable, once that has been let go of.
+    bool m_gaveStaticExecutables { false }; // ScriptExecutable::usesStaticExecutables() of the executable, once that has been let go of.
 
     struct UninstantiatedFunctionDeclarations {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);

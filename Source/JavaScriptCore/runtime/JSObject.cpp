@@ -2131,7 +2131,7 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
         Structure* newStructure = Structure::changePrototypeTransition(vm, structure(), prototype, deferred);
         setStructure(vm, newStructure);
         // Prototype-chain gets changed for the already cached structures. Invalidate the cache.
-        if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
+        if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype);
     } else
         putDirectOffset(vm, knownPolyProtoOffset, prototype);
@@ -2424,7 +2424,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             if (offset != invalidOffset)
                 thisObject->locationForOffset(offset)->clear();
         }
-        if (thisObject->isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
+        if (thisObject->isPrototypeUsedByMegamorphicCache()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Remove);
     } else
         slot.setConfigurableMiss();
@@ -2464,7 +2464,7 @@ void JSObject::evictTypedField(VM& vm, PropertyName propertyName)
     });
     putDirectOffset(vm, movedTo, value);
     locationForOffset(offset)->clear();
-    if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
+    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
 #endif
@@ -2970,7 +2970,7 @@ void JSObject::fixProperties(JSGlobalObject* globalObject)
     Structure* oldStructure = structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
     setStructure(vm, Structure::fixPropertiesTransition(vm, oldStructure, &deferred));
-    if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
+    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
 
@@ -2984,7 +2984,7 @@ void JSObject::freeze(VM& vm)
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::freezeTransition(vm, oldStructure, &deferred));
-        if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
+        if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
     }
 }
@@ -4206,7 +4206,7 @@ void JSObject::convertToUncacheableDictionary(VM& vm)
         return;
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, oldStructure);
     setStructure(vm, Structure::toUncacheableDictionaryTransition(vm, oldStructure, &deferredWatchpointFire));
-    if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
+    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
 
@@ -4419,7 +4419,7 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
         // We fall through to the generic case and consume the rest of put operations if batching stopped in the middle.
         i = offsets.size();
 
-        if (isPrototypeThatMegamorphicCacheGoesBy())
+        if (isPrototypeUsedByMegamorphicCache())
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     }
 

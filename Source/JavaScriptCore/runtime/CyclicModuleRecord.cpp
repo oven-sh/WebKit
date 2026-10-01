@@ -531,9 +531,9 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 24.a.i.1. Perform ! env.CreateImmutableBinding(dn, true).
         // 24.a.ii. Else,
         // 24.a.ii.1. Perform ! env.CreateMutableBinding(dn, false).
-        FunctionExecutable* executableThereIsForGood = unlinkedCodeBlock->executableOfFunctionDecl(i);
-        UnlinkedFunctionExecutable* unlinkedFunctionExecutable = executableThereIsForGood ? nullptr : unlinkedCodeBlock->functionDecl(i);
-        const Identifier& name = executableThereIsForGood ? executableThereIsForGood->name() : unlinkedFunctionExecutable->name();
+        FunctionExecutable* staticExecutable = unlinkedCodeBlock->executableOfFunctionDecl(i);
+        UnlinkedFunctionExecutable* unlinkedFunctionExecutable = staticExecutable ? nullptr : unlinkedCodeBlock->functionDecl(i);
+        const Identifier& name = staticExecutable ? staticExecutable->name() : unlinkedFunctionExecutable->name();
         std::optional<ScopeOffset> whereItIs;
         if (auto* slots = isTableOfStaticHeap ? unlinkedCodeBlock->heapAllocatedFunctionDeclSlots() : nullptr; slots && i < slots->size())
             whereItIs = slots->at(i);

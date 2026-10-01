@@ -125,8 +125,8 @@ public:
     bool canUseOSRExitFuzzing() const { return !isShortForm() && inFull()->m_canUseOSRExitFuzzing; }
     bool isInsideOrdinaryFunction() const { return isShortForm() ? StaticHeap::rowOf(indexOfShortForm()).isInsideOrdinaryFunction : inFull()->m_isInsideOrdinaryFunction; }
     // The code of a module: the executables of its functions are the ones that were made when the program was built.
-    bool givesStaticExecutables() const { return !isShortForm() && inFull()->m_givesStaticExecutables; }
-    void setGivesStaticExecutables() { inFull()->m_givesStaticExecutables = true; }
+    bool usesStaticExecutables() const { return !isShortForm() && inFull()->m_usesStaticExecutables; }
+    void setUsesStaticExecutables() { inFull()->m_usesStaticExecutables = true; }
     
     bool* addressOfDidTryToEnterInLoop() LIFETIME_BOUND
     {
@@ -246,7 +246,7 @@ protected:
     bool m_canUseOSRExitFuzzing : 1;
     bool m_codeForGeneratorBodyWasGenerated : 1;
     bool m_isInsideOrdinaryFunction : 1;
-    bool m_givesStaticExecutables : 1 { false };
+    bool m_usesStaticExecutables : 1 { false };
     unsigned m_derivedContextType : 2; // DerivedContextType
     unsigned m_evalContextType : 2; // EvalContextType
 };

@@ -99,7 +99,7 @@ public:
     std::optional<Field> fieldOfLayout(uint32_t layoutID, UniquedStringImpl* name) const;
 
     // What is said at the `{` of the body of a class. Its instances are born into that family (zero: into none). A method of it that is CLOSED is one that nothing gets hold of but
-    // reads that say so (classOfMethodGotAt()): so whoever calls it is known, all of them.
+    // reads that say so (classOfMethodReadBy()): so whoever calls it is known, all of them.
     bool isArray(uint32_t type) const { auto words = record(type); return words.size() == 2 && words[0] == Array; }
     bool isShape(uint32_t type) const { auto words = record(type); return words.size() >= 3 && words[0] == Shape; }
     bool isClass(uint32_t type) const { auto words = record(type); return words.size() >= 3 && words[0] == IsClass; }
@@ -108,9 +108,9 @@ public:
         auto words = record(classType);
         return words.size() >= 3 && words[0] == IsClass && words[1] && isUsable(words[1]) ? safeCast<uint16_t>(words[1]) : uint16_t(0);
     }
-    bool isClosedMethod(uint32_t classType, UniquedStringImpl* name) const;
+    bool isNonEscapingMethod(uint32_t classType, UniquedStringImpl* name) const;
     // Of a type that is a shape: reading the property gives one method and no other, which is closed; this is the class that declares it. Zero: there is no telling.
-    uint32_t classOfMethodGotAt(uint32_t type, UniquedStringImpl* name) const;
+    uint32_t classOfMethodReadBy(uint32_t type, UniquedStringImpl* name) const;
 
     // Version 4 of the table: the objects are structs (TypedLayoutTable::Named). What an object was born as is the number of its family, so Field::first and
     // Field::last are that, as are those of Holds; every name of the family has a slot in every object of it, and an object that has no such property has nothing there.

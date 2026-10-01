@@ -100,11 +100,11 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
 #if ENABLE(FTL_JIT)
-    if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !givesStaticExecutables()
+    if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables()
         && AOT::Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
         if (auto*& slot = StaticHeap::topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
             slot = this;
-            setGivesStaticExecutables();
+            setUsesStaticExecutables();
         }
     }
 #endif
@@ -126,7 +126,7 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
                 clone->invalidateInferencesOfAbandonedClone(vm);
         }
     } else {
-        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->isItsOwnClone() ? symbolTable : symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->isSharedAcrossRealms() ? symbolTable : symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
         m_codeGenerationMode = codeGenerationMode;
         Locker locker { cellLock() };
         m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
@@ -247,7 +247,7 @@ void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
 
 void ModuleProgramExecutable::destroy(JSCell* cell)
 {
-    if (auto* executable = static_cast<ModuleProgramExecutable*>(cell); executable->givesStaticExecutables())
+    if (auto* executable = static_cast<ModuleProgramExecutable*>(cell); executable->usesStaticExecutables())
         StaticHeap::topLevelExecutableOfModuleWithProvider(executable->vm(), executable->source().provider()) = nullptr;
     static_cast<ModuleProgramExecutable*>(cell)->ModuleProgramExecutable::~ModuleProgramExecutable();
 }

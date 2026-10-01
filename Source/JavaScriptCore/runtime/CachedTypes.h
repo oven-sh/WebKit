@@ -298,7 +298,7 @@ public:
     // Neither is ever destroyed.
     static Decoder& createForStaticHeap(void* address, VM&, Ref<CachedBytecode>, RefPtr<SourceProvider>);
     bool isForStaticHeap() const { return m_isForStaticHeap; }
-    // Building one: the code of a function is decoded to see what is in it, and only some of that is kept (AOT::FunctionFacts).
+    // Building one: the code of a function is decoded to see what is in it, and only some of that is kept (AOT::FunctionMetadata).
     bool leavesFunctionCodeInPayload() const;
     CachedBytecode& cachedBytecode() const { return m_cachedBytecode.get(); }
     // (What refers to one of those was, for the most part, made in another process.)
@@ -312,7 +312,7 @@ public:
         if (!m_isForStaticHeap) [[likely]]
             RefCounted::deref();
     }
-    void forgetWhatWasDecoded(); // What it remembers of that is in memory it does not get to keep.
+    void clearDecodedObjects(); // What it remembers of that is in memory it does not get to keep.
     void setExternalStrings(DecoderStringTable& strings) { m_externalStrings = &strings; }
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
@@ -411,7 +411,7 @@ UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM&, const PartsOfFunctionC
 
 // The same for an entry that encodeBuiltinFunction() or BytecodeLinkEncoder::addBuiltinFunction() wrote.
 bool entryIsOfBuiltinFunction(Decoder&);
-UnlinkedFunctionExecutable* decodeAllOfBuiltinForStaticHeap(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
+UnlinkedFunctionExecutable* decodeBuiltinForStaticHeap(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
 RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder&, const void* recordOfExecutable);
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);

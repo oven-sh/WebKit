@@ -309,7 +309,7 @@ public:
     }
     void leaveCodeInPayload(Decoder&, std::pair<int32_t, int32_t> offsetsOfCachedCodeBlocks);
     // Which leaves this as it is: the code is `owner`'s to keep.
-    UnlinkedFunctionCodeBlock* decodeCodeLeftInPayload(VM&, CodeSpecializationKind, JSCell* owner);
+    UnlinkedFunctionCodeBlock* decodeCodeFromKeptPayload(VM&, CodeSpecializationKind, JSCell* owner);
     void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
 
     JSC::DerivedContextType derivedContextType() const {return static_cast<JSC::DerivedContextType>(m_derivedContextType); }

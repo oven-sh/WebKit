@@ -218,7 +218,7 @@ std::optional<TypeTable::Field> TypeTable::fieldOfLayout(uint32_t number, Unique
     return std::nullopt;
 }
 
-bool TypeTable::isClosedMethod(uint32_t classType, UniquedStringImpl* name) const
+bool TypeTable::isNonEscapingMethod(uint32_t classType, UniquedStringImpl* name) const
 {
     auto words = record(classType);
     if (words.size() < 3 || words[0] != IsClass)
@@ -230,7 +230,7 @@ bool TypeTable::isClosedMethod(uint32_t classType, UniquedStringImpl* name) cons
     return false;
 }
 
-uint32_t TypeTable::classOfMethodGotAt(uint32_t type, UniquedStringImpl* name) const
+uint32_t TypeTable::classOfMethodReadBy(uint32_t type, UniquedStringImpl* name) const
 {
     auto words = record(type);
     if (words.size() < 3 || words[0] != Shape)

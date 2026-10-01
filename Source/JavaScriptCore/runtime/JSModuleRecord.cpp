@@ -233,7 +233,7 @@ void JSModuleRecord::didFinishWithExecutable(VM& vm)
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
     if (!executable)
         return;
-    m_gaveStaticExecutables = executable && executable->givesStaticExecutables();
+    m_gaveStaticExecutables = executable && executable->usesStaticExecutables();
     m_moduleProgramExecutable.clear();
     executable->didFinishEvaluation(vm);
 }
@@ -499,7 +499,7 @@ bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
 bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const Function<bool(JSModuleRecord*)>& mayImportFrom)
 {
     // Its functions are the ones that were made when the program was built, which is what the code takes what it calls to be.
-    bool result = isPrelinked() && (m_moduleProgramExecutable ? m_moduleProgramExecutable->givesStaticExecutables() : m_gaveStaticExecutables);
+    bool result = isPrelinked() && (m_moduleProgramExecutable ? m_moduleProgramExecutable->usesStaticExecutables() : m_gaveStaticExecutables);
     // Where the code takes it to be, if it takes it to be anywhere.
     auto environmentIsInItsPlace = [&](AbstractModuleRecord* record) {
         AOT::ImageEnvironment environment = AOT::Image::environmentOf(record->prelinkedIndex());

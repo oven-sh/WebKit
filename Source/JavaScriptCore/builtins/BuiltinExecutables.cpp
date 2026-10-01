@@ -365,7 +365,7 @@ std::optional<unsigned> BuiltinExecutables::indexOf(UnlinkedFunctionExecutable* 
 
 FunctionExecutable* BuiltinExecutables::staticExecutableFor(BuiltinCodeIndex index, const char* text, size_t length)
 {
-    JSGlobalObject* realm = m_vm.m_realmThatBuiltinsAreMadeFor;
+    JSGlobalObject* realm = m_vm.m_realmForBuiltins;
     if (!realm) [[likely]]
         return nullptr;
     return StaticHeap::builtinOfEngineFor(realm, static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });

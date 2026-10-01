@@ -269,7 +269,7 @@ public:
     const UnlinkedStringJumpTable& unlinkedStringSwitchJumpTable(int tableIndex) const { ASSERT(m_rareData); return m_rareData->m_unlinkedStringSwitchJumpTables[tableIndex]; }
 
     // In what StaticHeap has made, one of the functions in the code that is marked is not what it says it is, but the function's
-    // FunctionExecutable, which is there for good (StaticHeap::keepWhatIsWantedOfFunctions()). To be asked first.
+    // FunctionExecutable, which is there for good (StaticHeap::retainNeededFunctionData()). To be asked first.
     static constexpr uintptr_t isExecutable = 1;
     static FunctionExecutable* executableIn(const WriteBarrier<UnlinkedFunctionExecutable>& entry)
     {

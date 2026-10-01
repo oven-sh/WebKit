@@ -44,7 +44,7 @@ bool MegamorphicCache::noteDependenceOnPrototypes(StructureID structureID, JSCel
         if (!prototype.isObject())
             return true;
         JSObject* object = asObject(prototype);
-        object->setIsPrototypeThatMegamorphicCacheGoesBy();
+        object->setIsPrototypeUsedByMegamorphicCache();
         if (object == upTo)
             return true;
         structure = object->structure();

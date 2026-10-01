@@ -25,78 +25,78 @@ class VM;
 
 namespace AOT {
 
-// What the whole of the program says of a function that is proven (KnownFunction::isProven). Every piece of code there is has its say,
+// What the whole of the program says of a function that is proven (KnownFunction::isExact). Every piece of code there is has its say,
 // on any thread, and what is said only ever adds to what has been said. It means what it says once they have all had it.
-struct ProgramFacts {
-    WTF_MAKE_STRUCT_TZONE_ALLOCATED(ProgramFacts);
+struct FunctionSummary {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(FunctionSummary);
 
     // The function gets somewhere as a value: it is stored, passed, compared, constructed with, asked for a property; or it is called
     // in a way that is not a call of this function and no other. If not, whoever calls it is known, all of them.
     std::atomic<bool> valueIsUsed { false };
-    // The first thing that was seen to make that so, for the log. See Graph::noteUsesOfProvenFunctions().
-    enum WhyValueIsUsed : uint32_t { NotSaid, WhereItIsMade, CalleeButReadIsNotProven, CalleeButCallIsNotProven, Operand };
-    std::atomic<uint32_t> whyValueIsUsed { 0 }; // WhyValueIsUsed | what uses it (an opcode, or 1000 + a kind of node) << 8
+    // The first thing that was seen to make that so, for the log. See Graph::recordUsesOfKnownFunctions().
+    enum ValueUseReason : uint32_t { NotSaid, AtCreationSite, CalleeWithInexactRead, CalleeWithInexactCall, Operand };
+    std::atomic<uint32_t> valueUseReason { 0 }; // ValueUseReason | what uses it (an opcode, or 1000 + a kind of node) << 8
     std::atomic<uint32_t> directCalls { 0 };
     // Called from inside a loop, or handed to something of the language's that calls what it is handed once for each of many things. That is all that is known of how often it runs.
     std::atomic<bool> isUsedInLoop { false };
 
     // Once that is settled. Nobody gets to call it but the calls that are calls of this function and no other.
-    bool isClosed { false };
-    // Options::aotFollowsFunctions(). The function has got somewhere that is not reckoned with: from there anybody may call it, with anything, and
+    bool isNonEscaping { false };
+    // The function has got somewhere that is not reckoned with: from there anybody may call it, with anything, and
     // does who knows what with what it returns. If that never happens it is closed. (While that is being worked out isClosed is
     // set for all of them: one that turns out to be exposed is passed anything, which is as good as saying nothing.)
-    mutable std::atomic<bool> isExposed { false };
+    mutable std::atomic<bool> escapes { false };
     uint32_t number { 0 }; // FunctionsOfProgram
     // The first thing that was seen to make that so, for the log.
-    enum WhyExposed : uint32_t {
-        NotExposed, BundlerSaysItEscapes, IsNotMadeWhereItCanBeSeen, MayGetHoldOfItself, IsNotOfTheProgram, HasNoCodeForACall,
+    enum EscapeReason : uint32_t {
+        DoesNotEscape, ReportedByBundler, CreationSiteUnknown, ReferencesItself, ExternalFunction, NotCallable,
         UsedBy, // | an opcode << 8, or 1000 + a kind of node
-        PassedToWhoKnowsWhat, PassedAsThis, PassedBeyondParameters, CalledInSomeOtherWay, ReturnedToWhoKnowsWhom,
-        OneOfSeveralInPhi, OneOfSeveralInHomedRegister, OneOfSeveralInVariable, OneOfSeveralInParameter, OneOfSeveralReturned, LostByWhatHandsItOn,
-        PutInVariableOfModule, PutInVariableGivenUpOn, PutWhoKnowsWhere, PutInVariableReadFromWhoKnowsWhere, ReadInAWayThatIsNotProven,
+        PassedToUnknownCallee, PassedAsThis, PassedAsExtraArgument, CalledIndirectly, ReturnedToUnknownCaller,
+        MergedInPhi, MergedInFrameRegister, MergedInVariable, MergedInParameter, MergedInReturn, LostThroughAlias,
+        StoredInModuleVariable, StoredInUntrackedVariable, StoredToUnknownLocation, StoredInDynamicallyReadVariable, ReadInexactly,
     };
-    mutable std::atomic<uint32_t> whyExposed { 0 };
+    mutable std::atomic<uint32_t> escapeReason { 0 };
     // Whether that is news. hadBeenPassed: told what each parameter had been passed. It is one of all the things that the parameter may be passed now, and the code of the function
     // no longer knows what it is: so what could be told apart until now has got somewhere that is not reckoned with, too.
     template<typename Functor>
-    bool expose(uint32_t why, const Functor& hadBeenPassed)
+    bool markEscaping(uint32_t why, const Functor& hadBeenPassed)
     {
-        if (isExposed.exchange(true, std::memory_order_relaxed))
+        if (escapes.exchange(true, std::memory_order_relaxed))
             return false;
-        whyExposed.store(why, std::memory_order_relaxed);
+        escapeReason.store(why, std::memory_order_relaxed);
         for (auto& type : parameterTypes)
             hadBeenPassed(type.join(TTop));
         hadBeenPassed(thisType.join(TTop));
         return true;
     }
     // (Before anything has been passed to anything.)
-    bool expose(uint32_t why) { return expose(why, [](Type) { }); }
+    bool markEscaping(uint32_t why) { return markEscaping(why, [](Type) { }); }
     // If closed: everything that it is called on. (parameterTypes[0] says whether it is reached at all.)
     AtomicType thisType;
-    bool isReached() const { return !isClosed || isExposed.load(std::memory_order_relaxed) || parameterTypes[0].load(); }
+    bool isReached() const { return !isNonEscaping || escapes.load(std::memory_order_relaxed) || parameterTypes[0].load(); }
     // If closed: everything that is passed for each parameter, `this` being the first, from nothing up (see KnownFunction::returnType).
     // One that there are more of than this has nothing said of the rest.
     static constexpr unsigned mostParameters = 12;
     std::array<AtomicType, mostParameters> parameterTypes { };
     // KnownFunction::returnType, where the function itself finds it.
     mutable AtomicType returnType;
-    // What it returns is, every time, an object that a literal has just made with properties of the same names (ThingsReturnedByFunctions). If it is closed, and nobody who calls it does
+    // What it returns is, every time, an object that a literal has just made with properties of the same names (MultiValueReturnTable). If it is closed, and nobody who calls it does
     // anything with the object but read those, there is no object: what it would have been made with is handed back as it is, each thing in a register, as a function in Go hands back several.
-    static constexpr unsigned mostThingsReturned = 8;
-    mutable std::array<AtomicType, mostThingsReturned> typesOfThingsReturned { }; // From nothing up, like the rest.
+    static constexpr unsigned maxReturnValues = 8;
+    mutable std::array<AtomicType, maxReturnValues> returnValueTypes { }; // From nothing up, like the rest.
     // Somebody who calls it does something else with what it returns. From false to true, and never back.
-    mutable std::atomic<bool> objectReturnedIsWanted { false };
+    mutable std::atomic<bool> needsReturnObject { false };
     // One or the other has changed since whoever goes round asking last asked.
-    mutable std::atomic<bool> moreIsKnownOfThingsReturned { false };
+    mutable std::atomic<bool> returnValueTypesChanged { false };
     // What the function is passed that something may still be able to get at when it has returned: a bit for each parameter, `this` being
     // the first. It goes by the code of the function and of what that calls, whoever calls it: from nothing up, like the rest.
     // It takes for granted that reading and writing properties of what was passed runs nobody's code.
-    static constexpr unsigned mostParametersToldOfEscaping = 31;
+    static constexpr unsigned maxTrackedEscapingParameters = 31;
     static constexpr uint32_t whatIsPassedBeyondParametersEscapes = 1u << 31;
-    mutable std::atomic<uint32_t> parametersThatEscape { 0 };
+    mutable std::atomic<uint32_t> escapingParameters { 0 };
 };
 // (One for the code of a function, however many variables hold it.)
-using FactsOfExecutables = UncheckedKeyHashMap<UnlinkedFunctionExecutable*, ProgramFacts*>;
+using FunctionSummaryMap = UncheckedKeyHashMap<UnlinkedFunctionExecutable*, FunctionSummary*>;
 
 // A variable that lives in an environment record: of a module, or of a function whose inner functions use it.
 struct Variable {
@@ -109,32 +109,32 @@ struct Variable {
 
 // Everything that is ever put in each variable, from nothing up. Nothing gets to write one but the code of the program, which is all
 // there to be looked at; where that cannot tell which variable it writes, or something else can write it, nothing is said of it.
-class VariableFacts {
-    WTF_MAKE_TZONE_ALLOCATED(VariableFacts);
-    WTF_MAKE_NONCOPYABLE(VariableFacts);
+class VariableSummaries {
+    WTF_MAKE_TZONE_ALLOCATED(VariableSummaries);
+    WTF_MAKE_NONCOPYABLE(VariableSummaries);
 public:
-    VariableFacts() = default;
+    VariableSummaries() = default;
 
     // Before any of the rest: any thread.
     void giveUpOnName(UniquedStringImpl*);
     void giveUpOnScope(const void*);
     // Something reads a variable of that name, and there is no telling which. What it gets is anything, as far as it knows: so whatever is in a
     // variable of that name has got somewhere nobody keeps track of.
-    void noteThatNameIsReadFromWhoKnowsWhere(UniquedStringImpl*);
-    bool isReadFromWhoKnowsWhere(UniquedStringImpl* name) const { return m_namesReadFromWhoKnowsWhere.contains(name); }
+    void recordDynamicReadOfName(UniquedStringImpl*);
+    bool isDynamicallyRead(UniquedStringImpl* name) const { return m_dynamicallyReadNames.contains(name); }
     void noteScopeOfModule(const void* scope) { m_scopesOfModules.add(scope); } // One thread.
     bool isScopeOfModule(const void* scope) const { return m_scopesOfModules.contains(scope); }
 
-    // Any thread. reader: told of by takeReadersOfWhatGrew() if there turns out to be more to it. TAll: nothing is known.
+    // Any thread. reader: told of by takeReadersOfWidenedVariables() if there turns out to be more to it. TAll: nothing is known.
     static constexpr unsigned nobody = std::numeric_limits<unsigned>::max();
     Type read(Variable, UniquedStringImpl* name, unsigned reader);
     Type join(Variable, Type); // What was there before.
 
     // Not while any of that is going on.
-    Vector<unsigned> takeReadersOfWhatGrew();
+    Vector<unsigned> takeReadersOfWidenedVariables();
     // A variable that is read holds what its scope was made with, if nothing else. One that nothing at all is known to be in is one
     // whose scope is not the one it was taken for, or is only read by code that nothing gets to. Nothing is said of those any more.
-    Vector<unsigned> giveUpOnWhatIsReadAndNeverMade(unsigned& count);
+    Vector<unsigned> untrackVariablesReadButNeverWritten(unsigned& count);
     template<typename Functor> void forEach(const Functor& functor) const
     {
         for (auto& shard : m_shards) {
@@ -142,7 +142,7 @@ public:
                 functor(Variable { entry.key.first, entry.key.second }, entry.value->type.load());
         }
     }
-    bool hasGivenUpOn(Variable, UniquedStringImpl* name) const;
+    bool isUntracked(Variable, UniquedStringImpl* name) const;
 
 private:
     using SetOfReaders = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
@@ -161,9 +161,9 @@ private:
 
     std::array<Shard, numberOfShards> m_shards;
     Lock m_givenUpLock;
-    UncheckedKeyHashSet<UniquedStringImpl*> m_namesGivenUpOn;
-    UncheckedKeyHashSet<UniquedStringImpl*> m_namesReadFromWhoKnowsWhere;
-    UncheckedKeyHashSet<const void*> m_scopesGivenUpOn;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_untrackedNames;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_dynamicallyReadNames;
+    UncheckedKeyHashSet<const void*> m_untrackedScopes;
     UncheckedKeyHashSet<const void*> m_scopesOfModules;
 };
 
@@ -178,7 +178,7 @@ struct KnownFunction {
     // The variable it was found in holds a closure of it from when it is initialized, and never anything else: the bundler, which
     // has seen every use there is of the variable, says so (ModuleHints::prove()). Then a call of what is read from that variable needs no check that this is the callee, once it is seen
     // to have been initialized.
-    bool isProven { false };
+    bool isExact { false };
     bool isDeclaration { false }; // The variable is initialized before any code of the module runs.
     // What the variable holds can get somewhere other than into a call of it: PrelinkedModuleGraph::Binding::Escapes.
     bool escapes { true };
@@ -190,7 +190,7 @@ struct KnownFunction {
     // If proven: everything that a call of it can return. It is worked out for all of them together, from nothing up
     // (inferReturnTypeForImage()), and means what it says once that has come to an end.
     mutable AtomicType returnType;
-    mutable ProgramFacts* facts { nullptr }; // If proven, and whoever compiles the program keeps them.
+    mutable FunctionSummary* facts { nullptr }; // If proven, and whoever compiles the program keeps them.
 
     KnownFunction() = default;
     KnownFunction(const KnownFunction& other) { *this = other; }
@@ -202,7 +202,7 @@ struct KnownFunction {
         key = other.key;
         conventionForCall = other.conventionForCall;
         conventionForConstruct = other.conventionForConstruct;
-        isProven = other.isProven;
+        isExact = other.isExact;
         isDeclaration = other.isDeclaration;
         escapes = other.escapes;
         isVisibleFromOutside = other.isVisibleFromOutside;
@@ -223,9 +223,9 @@ struct KnownFunction {
 // Whether the code reads the object it is called as, other than to get at the scope.
 bool readsCallee(UnlinkedCodeBlock*);
 // Whoever is called is told what it was called as. Most code makes nothing of that.
-JS_EXPORT_PRIVATE bool mayGetHoldOfItself(UnlinkedCodeBlock*);
+JS_EXPORT_PRIVATE bool mayReferenceItself(UnlinkedCodeBlock*);
 
-// Options::aotFollowsFunctions(): every function of the program, by the number it goes by in a type (typeOfFunction()).
+// Every function of the program, by the number it goes by in a type (typeOfFunction()).
 class FunctionsOfProgram {
     WTF_MAKE_TZONE_ALLOCATED(FunctionsOfProgram);
     WTF_MAKE_NONCOPYABLE(FunctionsOfProgram);
@@ -263,42 +263,42 @@ public:
     ClassesOfProgram() = default;
 
     // While every piece of code has its say (Graph::noteClassesDefined()): any thread.
-    JS_EXPORT_PRIVATE void noteClosedMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function);
+    JS_EXPORT_PRIVATE void recordNonEscapingMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function);
     JS_EXPORT_PRIVATE void noteThisIn(UnlinkedCodeBlock*, uint16_t layoutID);
 
     // After that: any thread.
     uint32_t closedMethod(uint32_t classType, UniquedStringImpl* name) const { return m_methods.get({ classType, name }); } // Zero: none.
-    bool isClosedMethod(uint32_t function) const { return function && m_closedMethods.contains(function); }
+    bool isNonEscapingMethod(uint32_t function) const { return function && m_nonEscapingMethods.contains(function); }
     uint16_t layoutIDOfThisIn(UnlinkedCodeBlock* code) const { return m_layoutIDOfThis.get(code); } // Zero: there is no telling.
-    template<typename Functor> void forEachClosedMethod(const Functor& functor) const
+    template<typename Functor> void forEachNonEscapingMethod(const Functor& functor) const
     {
-        for (uint32_t function : m_closedMethods)
+        for (uint32_t function : m_nonEscapingMethods)
             functor(function);
     }
-    unsigned numberOfClosedMethods() const { return m_closedMethods.size(); }
+    unsigned numberOfNonEscapingMethods() const { return m_nonEscapingMethods.size(); }
 
 private:
     Lock m_lock;
     UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint32_t> m_methods;
-    UncheckedKeyHashSet<uint32_t> m_closedMethods;
+    UncheckedKeyHashSet<uint32_t> m_nonEscapingMethods;
     UncheckedKeyHashMap<UnlinkedCodeBlock*, uint16_t> m_layoutIDOfThis;
 };
 JS_EXPORT_PRIVATE void setClassesOfProgram(ClassesOfProgram*); // Not while anything is being compiled.
 ClassesOfProgram* classesOfProgram();
 
 // The functions that return, every time, an object that a literal has just made and nothing else has seen, with properties of the same names in the same order. From the bytecode alone.
-class ThingsReturnedByFunctions {
-    WTF_MAKE_TZONE_ALLOCATED(ThingsReturnedByFunctions);
-    WTF_MAKE_NONCOPYABLE(ThingsReturnedByFunctions);
+class MultiValueReturnTable {
+    WTF_MAKE_TZONE_ALLOCATED(MultiValueReturnTable);
+    WTF_MAKE_NONCOPYABLE(MultiValueReturnTable);
 public:
-    ThingsReturnedByFunctions() = default;
+    MultiValueReturnTable() = default;
     using Names = Vector<UniquedStringImpl*, 8>;
 
-    // While every piece of code has its say (noteThingsReturned()): any thread.
+    // While every piece of code has its say (recordReturnedLiterals()): any thread.
     JS_EXPORT_PRIVATE void note(UnlinkedCodeBlock*, Names&&);
 
     // After that: any thread.
-    const Names* namesOfThingsReturnedBy(UnlinkedCodeBlock* code) const
+    const Names* returnValueNamesOf(UnlinkedCodeBlock* code) const
     {
         auto it = m_names.find(code);
         return it == m_names.end() ? nullptr : &it->value;
@@ -309,10 +309,10 @@ private:
     Lock m_lock;
     UncheckedKeyHashMap<UnlinkedCodeBlock*, Names> m_names;
 };
-JS_EXPORT_PRIVATE void setThingsReturnedByFunctions(ThingsReturnedByFunctions*); // Not while anything is being compiled.
-ThingsReturnedByFunctions* thingsReturnedByFunctions();
+JS_EXPORT_PRIVATE void setMultiValueReturnTable(MultiValueReturnTable*); // Not while anything is being compiled.
+MultiValueReturnTable* multiValueReturnTable();
 // If that is how it hands them back, as things stand.
-JS_EXPORT_PRIVATE const ThingsReturnedByFunctions::Names* thingsReturnedInRegistersBy(UnlinkedCodeBlock*, const ProgramFacts*);
+JS_EXPORT_PRIVATE const MultiValueReturnTable::Names* registerReturnValuesOf(UnlinkedCodeBlock*, const FunctionSummary*);
 
 class CalleeHints;
 struct ModuleLinkage;
@@ -323,7 +323,7 @@ public:
     struct About {
         const CalleeHints* hints { nullptr };
         const ModuleLinkage* linkage { nullptr };
-        const ProgramFacts* facts { nullptr };
+        const FunctionSummary* facts { nullptr };
         ImageKey key;
     };
     virtual std::optional<About> about(UnlinkedCodeBlock*) const = 0; // Any thread.
@@ -339,9 +339,9 @@ struct HowValuesArePassed {
     Rep result { Rep::JSValue };
     HowValuesArePassed() { parameters.fill(Rep::JSValue); }
 };
-HowValuesArePassed howValuesArePassed(const ProgramFacts*, Convention);
+HowValuesArePassed howValuesArePassed(const FunctionSummary*, Convention);
 // Likewise the things that are returned in registers: the first in the first register that a parameter would have, and so on.
-Vector<Rep, 8> howThingsAreReturned(const ProgramFacts*, unsigned count);
+Vector<Rep, 8> returnValueReps(const FunctionSummary*, unsigned count);
 
 // A constant that is whatever the realm has for it (SourceCodeRepresentation::LinkTimeConstant): the number of that among what cannot be
 // changed (ImmutableIntrinsics), if it is one of those. Then code gets it from there, and has no use for the constant.
@@ -367,7 +367,7 @@ public:
 };
 
 // The variables at the top of a module that a declaration gives a function or a class. Which those are is in the syntax tree
-// (function declarations, FunctionPutInVariable). What becomes of them after that takes the whole program to know: which is what the
+// (function declarations, FunctionAssignment). What becomes of them after that takes the whole program to know: which is what the
 // bundler had in hand.
 class ModuleHints final : public CalleeHints {
     WTF_MAKE_TZONE_ALLOCATED(ModuleHints);
@@ -387,15 +387,15 @@ public:
     const KnownFunction* find(UniquedStringImpl*, std::optional<unsigned> scopeOffset) const final;
     const void* scopeOfVariables() const final;
 
-    void noteFunctionsPutInVariablesBy(UnlinkedCodeBlock*, const Describe&); // The code of the module, and every function there is in it, however deep.
+    void recordFunctionAssignmentsIn(UnlinkedCodeBlock*, const Describe&); // The code of the module, and every function there is in it, however deep.
     void prove(); // After that.
     void noteEscape(unsigned scopeOffset); // After that.
     unsigned numberOfVariables() const { return m_variables.size(); }
-    unsigned numberProven() const;
-    template<typename Functor> void forEachProven(const Functor& functor) const
+    unsigned numberOfSingleFunctionVariables() const;
+    template<typename Functor> void forEachSingleFunctionVariable(const Functor& functor) const
     {
         for (auto& entry : m_variables) {
-            if (entry.value.function.isProven)
+            if (entry.value.function.isExact)
                 functor(entry.value.function);
         }
     }
@@ -447,8 +447,8 @@ private:
 // Options::resolveAllScopeSlotsStatically(): what the code around a function declares, kept from when the function's bytecode was
 // generated until it is compiled. For the code of a module itself: as its own functions see it.
 void noteDeclaredNames(UnlinkedCodeBlock*, RefPtr<DeclaredNamesLink>&&);
-void noteFunctionsPutInVariables(UnlinkedCodeBlock*, Vector<FunctionPutInVariable>&&);
-Vector<FunctionPutInVariable> functionsPutInVariablesBy(UnlinkedCodeBlock*); // Any thread.
+void recordFunctionAssignments(UnlinkedCodeBlock*, Vector<FunctionAssignment>&&);
+Vector<FunctionAssignment> functionAssignmentsIn(UnlinkedCodeBlock*); // Any thread.
 
 // EXPERIMENT: Options::aotFacts(). All are noted before any is asked for.
 void noteBodyOfFact(uint32_t body, const KnownFunction&);

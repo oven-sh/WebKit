@@ -128,19 +128,19 @@ protected:
         CalleeBits unsafeCallee = m_callFrame->unsafeCallee();
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
 #if ENABLE(FTL_JIT)
-        switch (m_whatIsAtPC.kind) {
-        case AOT::WhatIsAt::Function: {
-            AOT::FunctionRef function { m_vm.m_aotInstanceOfProgram ? m_vm.m_aotInstanceOfProgram : m_vm.m_aotInstances[0], m_whatIsAtPC.index };
-            auto callSite = AOT::tryCallSiteAt(*function.info().function(), m_whatIsAtPC.offset);
+        switch (m_pcInfo.kind) {
+        case AOT::ImageAddressInfo::Function: {
+            AOT::FunctionRef function { m_vm.m_aotInstanceOfProgram ? m_vm.m_aotInstanceOfProgram : m_vm.m_aotInstances[0], m_pcInfo.index };
+            auto callSite = AOT::tryCallSiteAt(*function.info().function(), m_pcInfo.offset);
             stackTrace[m_depth] = UnprocessedStackFrame(nullptr, CalleeBits(), CallSiteIndex(callSite.value_or(0)));
             stackTrace[m_depth].aotFunction = function;
             m_depth++;
             return;
         }
-        case AOT::WhatIsAt::Stub:
-        case AOT::WhatIsAt::Adapter:
+        case AOT::ImageAddressInfo::Stub:
+        case AOT::ImageAddressInfo::Adapter:
             return;
-        case AOT::WhatIsAt::SomethingElse:
+        case AOT::ImageAddressInfo::NotInImage:
             break;
         }
 #endif
@@ -193,7 +193,7 @@ protected:
     {
 #if ENABLE(FTL_JIT)
         void* pc = removeCodePtrTag(m_callFrame->rawReturnPC());
-        if (m_whatIsAtPC.kind == AOT::WhatIsAt::Function || m_whatIsAtPC.kind == AOT::WhatIsAt::Stub) {
+        if (m_pcInfo.kind == AOT::ImageAddressInfo::Function || m_pcInfo.kind == AOT::ImageAddressInfo::Stub) {
             m_callFrame = m_callFrame->callerFrame();
             m_pc = pc;
             return;
@@ -229,8 +229,8 @@ protected:
 
 #if ENABLE(FTL_JIT)
         // What kind of frame it is says what there is in it to look at.
-        m_whatIsAtPC = AOT::whatIsAt(m_pc);
-        if (m_whatIsAtPC.kind != AOT::WhatIsAt::SomethingElse)
+        m_pcInfo = AOT::classifyAddress(m_pc);
+        if (m_pcInfo.kind != AOT::ImageAddressInfo::NotInImage)
             return;
 #endif
 
@@ -273,7 +273,7 @@ protected:
     CallFrame* m_callFrame;
     void* m_pc;
 #if ENABLE(FTL_JIT)
-    AOT::WhatIsAt m_whatIsAtPC { };
+    AOT::ImageAddressInfo m_pcInfo { };
 #endif
     EntryFrame* m_entryFrame;
     const AbstractLocker& m_codeBlockSetLocker;
@@ -471,7 +471,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 // We're okay to take a normal stack trace when the PC
                 // is in LLInt code.
 #if ENABLE(FTL_JIT)
-            } else if (AOT::whatIsAt(machinePC).kind != AOT::WhatIsAt::SomethingElse) {
+            } else if (AOT::classifyAddress(machinePC).kind != AOT::ImageAddressInfo::NotInImage) {
                 // Likewise. (The frame is that of the caller if the function has none, or has not made it yet: then the caller is left out.)
 #endif
             } else {

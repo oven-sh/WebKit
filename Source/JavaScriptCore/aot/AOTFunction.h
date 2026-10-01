@@ -31,7 +31,7 @@ struct UnlinkedStringJumpTable;
 namespace AOT {
 
 struct Data;
-struct FunctionFacts;
+struct FunctionMetadata;
 struct FunctionInfo;
 struct ImageFunction;
 struct Instance;
@@ -82,7 +82,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE ScriptExecutable* executable() const;
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlockIfThereIsOne() const; // There is, if there are no facts().
     JS_EXPORT_PRIVATE CodeBlock* codeBlockIfThereIsOne() const;
-    const FunctionFacts* facts() const;
+    const FunctionMetadata* facts() const;
     // What the unlinked code says, whether it is there or not.
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
@@ -100,7 +100,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE LineColumn lineColumnFor(BytecodeIndex) const; // CodeBlock::lineColumnForBytecodeIndex()
     // Decoded now, if it is not there. For what nothing else will do for, which is little. As for ensureData().
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* ensureUnlinkedCodeBlock() const;
-    UnlinkedCodeBlock* makeUnlinkedCodeBlockFromFacts() const;
+    UnlinkedCodeBlock* makeUnlinkedCodeBlockFromMetadata() const;
     JS_EXPORT_PRIVATE CodeBlock* ensureCodeBlock() const;
     // Its own, which it gets now if it has been doing without. Not while the collector is at work, and on no thread but the VM's.
     JS_EXPORT_PRIVATE Data* ensureData() const;
@@ -141,9 +141,9 @@ struct FunctionRef::Place {
 //
 // A frame of this compiler's code has nothing in it that says so. What it is a frame of is told from the address that is going to be
 // returned to in it, which is in the frame of whatever it called.
-struct WhatIsAt {
+struct ImageAddressInfo {
     enum Kind : uint8_t {
-        SomethingElse, // Not in an image.
+        NotInImage,
         Function, // In the code of a function: `index` says which, and `offset` how far in.
         // In a stub. Its frame, if it has one, is nobody's: whoever walks the stack goes on to the next, which is that of what
         // called the stub.
@@ -152,17 +152,17 @@ struct WhatIsAt {
         // what such a caller puts there, its caller is found the way such a frame's is, and it has saved registers.
         Adapter,
     };
-    Kind kind { SomethingElse };
+    Kind kind { NotInImage };
     uint32_t index { 0 };
     uint32_t offset { 0 };
 };
-JS_EXPORT_PRIVATE WhatIsAt whatIsAt(const void* address); // Any thread.
+JS_EXPORT_PRIVATE ImageAddressInfo classifyAddress(const void* address); // Any thread.
 // The address that is going to be returned to in `frame`: found by going from frame to frame, starting at one that is further in
 // (that of a function of C++ that is running, or the EntryFrame of code that `frame` is waiting for). Null: it is not out from there.
 JS_EXPORT_PRIVATE void* returnAddressInto(const void* frame, const void* startingFrom);
 // Where in its bytecode a function is that is going to be returned to that far into its code (CallSiteIndex::bits()).
 JS_EXPORT_PRIVATE uint32_t callSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
-JS_EXPORT_PRIVATE const RegisterAtOffsetList& registersThatAdapterSaves();
+JS_EXPORT_PRIVATE const RegisterAtOffsetList& adapterSavedRegisters();
 JS_EXPORT_PRIVATE bool hasCode(); // There is an image with code in it: otherwise none of this comes to anything.
 // Nothing: nobody was to ask about what is called from there, or it is not where anything is going to return to.
 JS_EXPORT_PRIVATE std::optional<uint32_t> tryCallSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
@@ -177,11 +177,11 @@ struct InlineFrameOfImage {
 };
 JS_EXPORT_PRIVATE InlineFrameOfImage inlineFrameOf(const ImageFunction&, unsigned frame);
 // For as long as there is one of these, the function that is going to be returned to there is somewhere else as far as anybody can tell.
-class SiteInPlaceOfCallSite {
-    WTF_MAKE_NONCOPYABLE(SiteInPlaceOfCallSite);
+class CallSiteOverride {
+    WTF_MAKE_NONCOPYABLE(CallSiteOverride);
 public:
-    SiteInPlaceOfCallSite(Instance&, const void* returnAddress, uint32_t site);
-    ~SiteInPlaceOfCallSite();
+    CallSiteOverride(Instance&, const void* returnAddress, uint32_t site);
+    ~CallSiteOverride();
 private:
     Instance& m_instance;
 };
@@ -195,8 +195,8 @@ JS_EXPORT_PRIVATE bool canTellInstanceOfFrame(const void* frame);
 JS_EXPORT_PRIVATE bool topFrameIsNotTheEnginesOwn(const void* frame);
 // frame: one in the engine's own convention, of a host function, say. The function that made the call, if it is code from the static compiler.
 // (The function whose bytecode it is that made the call: see FunctionRef::placeAt().)
-JS_EXPORT_PRIVATE FunctionRef functionThatCalled(const CallFrame*);
+JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 // Its CodeBlock, made now if there is none, for whoever has to have one to report an error with. Null if it is not such code.
-JS_EXPORT_PRIVATE CodeBlock* codeBlockOfFunctionThatCalled(const CallFrame*);
+JS_EXPORT_PRIVATE CodeBlock* codeBlockOfCaller(const CallFrame*);
 
 } } // namespace JSC::AOT

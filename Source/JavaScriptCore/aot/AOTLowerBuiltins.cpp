@@ -127,7 +127,7 @@ void Lowering::lowerReadOfBuiltin(Node* node, Node* baseNode)
 // what it gives in `results`, on the way to `afterwards`; and this is where it is not, for the call to be made as any call is.
 bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, unsigned argv, const Arguments& arguments, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results)
 {
-    Builtin builtin = builtinThatIs(node->builtinCalled);
+    Builtin builtin = builtinWithNumber(node->builtinCalled);
     Receiver receiver = static_cast<Receiver>(node->receiverOfBuiltin);
     unsigned count = argc - 1;
     int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
@@ -574,7 +574,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
             m_out.branch(m_out.aboveOrEqual(length, needed), unsure(isLongEnough), unsure(settled));
             m_out.appendTo(isLongEnough);
             LValue where = atStart ? characters : m_out.add(characters, m_out.zeroExtPtr(m_out.sub(length, needed)));
-            answers.append(m_out.anchor(m_out.isZero64(differenceFromWhatIsWritten(where, written->span8()))));
+            answers.append(m_out.anchor(m_out.isZero64(compareWithLiteral(where, written->span8()))));
             m_out.jump(settled);
             m_out.appendTo(notForTheLooking);
             m_out.phi(Int32, lengthsOtherwise);

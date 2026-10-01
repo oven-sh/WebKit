@@ -58,9 +58,9 @@ namespace AOT {
     v(Get, "get", 1, Any) \
     v(Has, "has", 1, Any) \
     v(Set, "set", 2, Wanted) \
-    v(SetAndForget, "set", 2, NotWanted) \
+    v(SetIgnoringResult, "set", 2, ResultUnused) \
     v(Add, "add", 1, Wanted) \
-    v(AddAndForget, "add", 1, NotWanted) \
+    v(AddIgnoringResult, "add", 1, ResultUnused) \
 
 enum class StubIntrinsic : uint8_t {
     None,
@@ -70,14 +70,14 @@ enum class StubIntrinsic : uint8_t {
     NumberOfStubIntrinsics
 };
 static constexpr unsigned numberOfStubIntrinsics = static_cast<unsigned>(StubIntrinsic::NumberOfStubIntrinsics) - 1;
-StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool resultIsWanted);
+StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool usesResult);
 
 // What an adapter (see adapt()) saves, from its frame pointer.
 static constexpr ptrdiff_t offsetOfInstanceRegisterInAdapter = -24; // (In the order a RegisterAtOffsetList has them in.)
 static constexpr ptrdiff_t offsetOfNumberTagRegisterInAdapter = -16;
 static constexpr ptrdiff_t offsetOfNotCellMaskRegisterInAdapter = -8;
 static constexpr ptrdiff_t offsetOfInstanceInAdapter = -32; // And there: the Instance of the code that it lets in.
-static constexpr unsigned sizeOfWhatAdapterSaves = 32;
+static constexpr unsigned adapterSaveAreaSize = 32;
 
 // Instance::granulesOfCode has an entry for each so many bytes of an image's code.
 static constexpr unsigned shiftOfGranuleOfCode = 10;
@@ -393,24 +393,24 @@ std::optional<unsigned> thunkFor(Stub, uint32_t valueOfT9);
 // is given to a stub is wanted afterwards as well, so it is in a register that calls leave alone, and would have to be copied: at every one
 // of hundreds of thousands of places.
 // Whether there are such ways in. (valueOfT9: of a stub that calls an operation, which. It is put there on the way, as by thunkFor().)
-bool takesOperandAnywhere(Stub, std::optional<uint32_t> valueOfT9);
+bool acceptsOperandInAnyRegister(Stub, std::optional<uint32_t> valueOfT9);
 // Where the stub itself takes it.
-GPRReg whereOperandIsTaken(Stub);
+GPRReg defaultOperandRegister(Stub);
 // Whether it may be there. What may not hold it is for whoever calls the stub to keep it out of.
 bool operandMayBeIn(Stub, GPRReg);
-// Whether the way in leaves whereOperandIsTaken() as it was.
-bool leavesAloneWhereOperandIsTaken(Stub);
+// Whether the way in leaves defaultOperandRegister() as it was.
+bool preservesOperandRegister(Stub);
 unsigned thunkForOperandIn(Stub, std::optional<uint32_t> valueOfT9, GPRReg);
 // Likewise the first two things it is given, which it takes in the first two argument registers. (Not in T9 to T15. Anywhere else will do: if there is no way in for it, they are moved.)
-bool takesTwoOperandsAnywhere(Stub);
+bool acceptsTwoOperandsInAnyRegisters(Stub);
 // And what it hands back: in a register that calls leave alone, which is where it would be copied to if it is wanted for long. (It cannot be had in one that the call clobbers.)
-bool givesResultAnywhere(Stub, std::optional<uint32_t> valueOfT9);
+bool returnsResultInAnyRegister(Stub, std::optional<uint32_t> valueOfT9);
 
 struct StubBlob {
     Vector<uint8_t> bytes;
     unsigned offsets[numberOfStubs];
     Vector<unsigned> thunkOffsets; // By thunkFor().
-    Vector<unsigned> returnsIntoAdapters; // Where what an adapter calls comes back to: see WhatIsAt::Adapter.
+    Vector<unsigned> returnsIntoAdapters; // Where what an adapter calls comes back to: see ImageAddressInfo::Adapter.
     void* inJITMemory; // A copy that code in the JIT's memory can call.
 };
 const StubBlob& stubBlob();
@@ -503,9 +503,9 @@ class StubCalls {
 public:
     void call(CCallHelpers&, Stub, CallSite);
     void call(CCallHelpers&, Stub, uint32_t valueOfT9, CallSite);
-    void callWithOperandIn(CCallHelpers&, Stub, std::optional<uint32_t> valueOfT9, GPRReg, CallSite); // takesOperandAnywhere()
-    void callWithOperandsIn(CCallHelpers&, Stub, GPRReg first, GPRReg second, CallSite); // takesTwoOperandsAnywhere()
-    void callForResultIn(CCallHelpers&, Stub, uint32_t valueOfT9, GPRReg operand, GPRReg result, CallSite); // givesResultAnywhere(). operand: where the first is, which is where it is taken unless takesOperandAnywhere().
+    void callWithOperandIn(CCallHelpers&, Stub, std::optional<uint32_t> valueOfT9, GPRReg, CallSite); // acceptsOperandInAnyRegister()
+    void callWithOperandsIn(CCallHelpers&, Stub, GPRReg first, GPRReg second, CallSite); // acceptsTwoOperandsInAnyRegisters()
+    void callForResultIn(CCallHelpers&, Stub, uint32_t valueOfT9, GPRReg operand, GPRReg result, CallSite); // returnsResultInAnyRegister(). operand: where the first is, which is where it is taken unless acceptsOperandInAnyRegister().
     void tailCall(CCallHelpers&, Stub);
     void tailCall(CCallHelpers&, Stub, uint32_t valueOfT9);
     void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite);

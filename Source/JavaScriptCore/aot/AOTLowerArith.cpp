@@ -39,7 +39,7 @@ static std::optional<Stub> stubFor(OpcodeID opcode)
 
 LValue Lowering::callBinaryStub(Node* node, Stub stub, LType type, LValue a, LValue b)
 {
-    return callStub(stub, type, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { }, StubClobbers::WhatCallsDo, node);
+    return callStub(stub, type, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { }, StubClobbers::CallerSavedRegisters, node);
 }
 
 static Entry operationFor(OpcodeID opcode)
@@ -552,7 +552,7 @@ bool Lowering::isAtomIfShortString(Node* node, unsigned depth)
     }
 }
 
-LValue Lowering::areTheSameGivenThatStringsAreAtoms(Node* left, LValue a, Node* right, LValue b)
+LValue Lowering::areEqualAssumingAtomStrings(Node* left, LValue a, Node* right, LValue b)
 {
     auto implOf = [&](LValue string) { return m_out.loadPtr(string, m_heaps.JSRopeString_fiber0); };
     if (isSubtype(left->type, TString) && isSubtype(right->type, TString))
@@ -604,7 +604,7 @@ void Lowering::atomizeIfString(Node* node, LValue value)
 }
 
 // Zero if those are the characters, of which there are known to be as many.
-LValue Lowering::differenceFromWhatIsWritten(LValue characters, std::span<const Latin1Character> written)
+LValue Lowering::compareWithLiteral(LValue characters, std::span<const Latin1Character> written)
 {
     LValue difference = m_out.int64Zero;
     for (unsigned at = 0; at < written.size();) {
@@ -700,7 +700,7 @@ LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value
     Vector<ValueFromBlock, 2> lengthsOtherwise;
     auto [characters, length] = narrowCharactersOf(value, notForTheLooking, lengthsOtherwise);
     decideIf(m_out.notEqual(length, m_out.constInt32(said.length())), false, true);
-    results.append(m_out.anchor(m_out.isZero64(differenceFromWhatIsWritten(characters, said.span8()))));
+    results.append(m_out.anchor(m_out.isZero64(compareWithLiteral(characters, said.span8()))));
     m_out.jump(continuation);
 
     // (How long it is settles it as a rule, whatever it takes to look at it.)
@@ -769,9 +769,9 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
         if ((isAtomIfString(left) && isAtomIfString(right))
             || (stringWrittenInProgram(right) && isAtomIfString(right) && isAtomIfShortString(left))
             || (stringWrittenInProgram(left) && isAtomIfString(left) && isAtomIfShortString(right)))
-            return areTheSameGivenThatStringsAreAtoms(left, a, right, b);
+            return areEqualAssumingAtomStrings(left, a, right, b);
     }
-    if (Options::aotComparesWithStringsInPlace() && !isCompact() && (strict || isSubtype(both, TString))) {
+    if (!isCompact() && (strict || isSubtype(both, TString))) {
         if (auto said = stringWrittenInProgram(right))
             return isStringEqualTo(node, left, a, *said, b);
         if (auto said = stringWrittenInProgram(left))

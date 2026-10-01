@@ -1557,13 +1557,13 @@ Decoder& Decoder::createForStaticHeap(void* address, VM& vm, Ref<CachedBytecode>
 
 bool Decoder::leavesFunctionCodeInPayload() const
 {
-    return m_isForStaticHeap && StaticHeap::isBuilding() && !Options::staticHeapKeepsFunctionCode();
+    return m_isForStaticHeap && StaticHeap::isBuilding();
 }
 
 // Inside CachedFunctionCodeBlock::decode(), which allocates nothing in the static heap that is being built: what does go there.
-class KeptByStaticHeap {
+class RetainedByStaticHeap {
 public:
-    explicit KeptByStaticHeap(Decoder& decoder)
+    explicit RetainedByStaticHeap(Decoder& decoder)
     {
         if (decoder.leavesFunctionCodeInPayload()) [[unlikely]]
             m_scope.emplace(true);
@@ -1578,7 +1578,7 @@ size_t Decoder::entryOffset() const
     return m_cachedBytecode->entryOffset();
 }
 
-void Decoder::forgetWhatWasDecoded()
+void Decoder::clearDecodedObjects()
 {
     for (auto& finalizer : std::exchange(m_finalizers, { }))
         finalizer();
@@ -2757,7 +2757,7 @@ public:
         m_privateBrandRequirement = rareData.m_privateBrandRequirement;
     }
 
-    bool hasWhatStaticHeapKeeps() const { return m_unlinkedStringSwitchJumpTables.size() || m_constantIdentifierSets.size(); }
+    bool hasDataRetainedByStaticHeap() const { return m_unlinkedStringSwitchJumpTables.size() || m_constantIdentifierSets.size(); }
 
     UnlinkedCodeBlock::RareData* decode(Decoder& decoder) const
     {
@@ -3074,7 +3074,7 @@ public:
     SymbolTable* decode(Decoder& decoder) const
     {
 #if USE(BUN_JSC_ADDITIONS)
-        // It goes where what may not be kept goes, like a function: most turn out to say what some other says (StaticHeap::keepOneOfEachSymbolTable()).
+        // It goes where what may not be kept goes, like a function: most turn out to say what some other says (StaticHeap::deduplicateSymbolTables()).
         if (decoder.isForStaticHeap()) [[unlikely]]
             StaticHeap::willAllocateUnlinkedFunction();
 #endif
@@ -3085,7 +3085,7 @@ public:
             symbolTable->singleton().invalidate(decoder.vm(), StringFireDetail("It is in the static heap"));
         if (decoder.canDeferIntoPayload() && m_map.entryCount() && !decoder.isForStaticHeap())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
-        else if (decoder.isForStaticHeap()) // As a clone has them: see SymbolTable::isItsOwnClone().
+        else if (decoder.isForStaticHeap()) // As a clone has them: see SymbolTable::isSharedAcrossRealms().
             m_map.decodeIf(decoder, symbolTable->m_map, [](const CachedSymbolTableEntry& entry) { return entry.isScope(); });
         else
 #endif
@@ -4374,8 +4374,8 @@ public:
         if (!e)
             return nullptr;
         // (The tables of switches on strings stay where they are decoded to, and the sets of names.)
-        std::optional<KeptByStaticHeap> kept;
-        if (decoder.leavesFunctionCodeInPayload() && !e->rareData.isEmpty() && e->rareData->hasWhatStaticHeapKeeps()) [[unlikely]]
+        std::optional<RetainedByStaticHeap> kept;
+        if (decoder.leavesFunctionCodeInPayload() && !e->rareData.isEmpty() && e->rareData->hasDataRetainedByStaticHeap()) [[unlikely]]
             kept.emplace(decoder);
         return e->rareData.decode(decoder);
     }
@@ -4640,7 +4640,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (unsigned expected = strings ? strings->expectedAtomTableInserts(layout.identifiers.count) : layout.identifiers.count + layout.constants.count; expected >= 64)
         AtomStringImpl::reserveCapacityForCurrentThread(expected);
     if (layout.constants.count) {
-        KeptByStaticHeap kept(decoder);
+        RetainedByStaticHeap kept(decoder);
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
         CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock, strings ? HeadPrefetch::All : HeadPrefetch::None);
     }
@@ -4658,7 +4658,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
 #endif
         codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
     {
-        KeptByStaticHeap kept(decoder);
+        RetainedByStaticHeap kept(decoder);
         decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
     }
     unsigned firstFunctionDeclToDecode = 0;
@@ -4696,7 +4696,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     } else
 #endif
     {
-        KeptByStaticHeap kept(decoder);
+        RetainedByStaticHeap kept(decoder);
         if (firstFunctionDeclToDecode) {
             unsigned count = layout.functionDecls.count;
             codeBlock.m_functionDecls = UnlinkedCodeBlock::FunctionExpressionVector(count);
@@ -5756,7 +5756,7 @@ public:
 
     unsigned sourceLength() const { return m_sourceLength; }
     unsigned embedderStamp() const { return m_embedderStamp; }
-    bool isWhatItIsTakenFor() const { return tag() == CachedCodeBlockTag::CachedBuiltinFunctionTag; }
+    bool matchesAssumedType() const { return tag() == CachedCodeBlockTag::CachedBuiltinFunctionTag; }
 
 private:
     unsigned m_sourceLength { 0 };
@@ -5931,7 +5931,7 @@ struct BytecodeLinkEncoder::Impl {
 #endif
 
     // Functions that whoever compiles the program never gets to see: with no code, that were not placed, with nothing to go by.
-    std::array<unsigned, 3> functionsLeftOut { };
+    std::array<unsigned, 3> omittedFunctions { };
 
     // Every function of the module that has code: keeps the code, and says where it goes.
     void placeCodeOf(UnlinkedFunctionExecutable& executable, unsigned module, const SourceCode& around, Encoder::LinkClass aroundGoes)
@@ -5940,13 +5940,13 @@ struct BytecodeLinkEncoder::Impl {
         // All the code it is going to have has been generated (see generateUnlinkedFunctionCodeBlock()).
         executable.takeParentDeclaredNames();
         if (!forCall && !forConstruct) {
-            functionsLeftOut[0]++;
+            omittedFunctions[0]++;
             return;
         }
         SourceCode source = executable.linkedSourceCode(around);
         auto goes = encoder.placeLinkedFunction(executable, source, module, aroundGoes, forCall, forConstruct);
         if (!goes) {
-            functionsLeftOut[1]++;
+            omittedFunctions[1]++;
             return;
         }
 #if ENABLE(FTL_JIT)
@@ -5954,7 +5954,7 @@ struct BytecodeLinkEncoder::Impl {
             if (auto key = orderFunctionKey(executable, source))
                 functionsToCompile.append({ module, *key, &executable, forCall, forConstruct });
             else
-                functionsLeftOut[2]++;
+                omittedFunctions[2]++;
         }
 #endif
         for (UnlinkedFunctionCodeBlock* codeBlock : { forCall, forConstruct }) {
@@ -6211,8 +6211,8 @@ struct BytecodeLinkEncoder::Impl {
         ImmutableIntrinsics::ensureShared(vm);
         AOT::TypeTable::load(vm);
         // What a variable can hold, and what a function can be passed, is worked out from every store and every call there is.
-        if (functionsLeftOut[0] || functionsLeftOut[1] || functionsLeftOut[2]) {
-            dataLogLn("AOT: not all of the program's code is here: ", functionsLeftOut[0], " functions have no code (was a limit put on how deep to generate it?), ", functionsLeftOut[1], " were not placed, ", functionsLeftOut[2], " have no key");
+        if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
+            dataLogLn("AOT: not all of the program's code is here: ", omittedFunctions[0], " functions have no code (was a limit put on how deep to generate it?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
             RELEASE_ASSERT_NOT_REACHED();
         }
         struct Job {
@@ -6260,7 +6260,7 @@ struct BytecodeLinkEncoder::Impl {
             if (!codeBlock)
                 continue;
             hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, bindingsOfModule(index).span(), describe);
-            hints[index]->noteFunctionsPutInVariablesBy(codeBlock, describe);
+            hints[index]->recordFunctionAssignmentsIn(codeBlock, describe);
         }
         if (Options::aotFacts() & 4) {
             unsigned bodies = 0;
@@ -6273,7 +6273,7 @@ struct BytecodeLinkEncoder::Impl {
                     AOT::KnownFunction known;
                     known.executable = function.executable;
                     if (describe(function.executable, known)) {
-                        known.isProven = true;
+                        known.isExact = true;
                         known.isDeclaration = true;
                         known.needsNoFunctionObject = true;
                         known.returnType.store(AOT::TTop);
@@ -6315,7 +6315,7 @@ struct BytecodeLinkEncoder::Impl {
                 continue;
             // (The two are made from the one syntax tree.)
             if (auto* codeBlock = function.forCall ? function.forCall : function.forConstruct)
-                hints[function.module]->noteFunctionsPutInVariablesBy(codeBlock, describe);
+                hints[function.module]->recordFunctionAssignmentsIn(codeBlock, describe);
         }
         unsigned variables = 0;
         unsigned proven = 0;
@@ -6324,7 +6324,7 @@ struct BytecodeLinkEncoder::Impl {
                 continue;
             hintsOfModule->prove();
             variables += hintsOfModule->numberOfVariables();
-            proven += hintsOfModule->numberProven();
+            proven += hintsOfModule->numberOfSingleFunctionVariables();
         }
         if (Options::aotVerbose()) [[unlikely]]
             dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that the bundler tells of or that are given one");
@@ -6347,85 +6347,82 @@ struct BytecodeLinkEncoder::Impl {
                 thread->waitForCompletion();
         };
 
-        // What becomes of each function that is proven: see AOT::ProgramFacts.
-        Vector<std::unique_ptr<AOT::ProgramFacts>> factsOfFunctions;
-        AOT::FactsOfExecutables factsOfExecutables;
-        UncheckedKeyHashMap<UnlinkedCodeBlock*, const AOT::ProgramFacts*> factsOfCode; // Of the code for a call.
-        AOT::VariableFacts factsOfAllVariables;
-        AOT::VariableFacts* variableFacts = Options::aotTypesVariables() ? &factsOfAllVariables : nullptr;
-        if (variableFacts) {
+        // What becomes of each function that is proven: see AOT::FunctionSummary.
+        Vector<std::unique_ptr<AOT::FunctionSummary>> factsOfFunctions;
+        AOT::FunctionSummaryMap factsOfExecutables;
+        UncheckedKeyHashMap<UnlinkedCodeBlock*, const AOT::FunctionSummary*> factsOfCode; // Of the code for a call.
+        AOT::VariableSummaries factsOfAllVariables;
+        AOT::VariableSummaries* variableSummaries = &factsOfAllVariables;
+        if (variableSummaries) {
             // What gets into the variables of a module other than by its code putting it there.
             for (unsigned index = 0; index < modules.size(); ++index) {
                 auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
                 if (!codeBlock)
                     continue;
                 JSCell* scope = codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell();
-                variableFacts->noteScopeOfModule(scope);
+                variableSummaries->noteScopeOfModule(scope);
                 if (!linkages[index]) {
-                    variableFacts->giveUpOnScope(scope);
+                    variableSummaries->giveUpOnScope(scope);
                     continue;
                 }
-                variableFacts->join({ scope, AOT::Variable::initialValue }, AOT::TEmpty | AOT::TUndefined);
+                variableSummaries->join({ scope, AOT::Variable::initialValue }, AOT::TEmpty | AOT::TUndefined);
                 if (auto* slots = codeBlock->heapAllocatedFunctionDeclSlots(); slots && !slots->hasDecodeSource()) {
                     for (unsigned i = 0; i < slots->size(); ++i)
-                        variableFacts->join({ scope, slots->at(i).offset() }, AOT::TFunction);
+                        variableSummaries->join({ scope, slots->at(i).offset() }, AOT::TFunction);
                 } else if (codeBlock->numberOfFunctionDecls())
-                    variableFacts->giveUpOnScope(scope);
+                    variableSummaries->giveUpOnScope(scope);
                 // AbstractModuleRecord::putWellKnownVariable(), and import.meta.
                 for (auto* name : { vm.propertyNames->starNamespacePrivateName.impl(), vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), vm.propertyNames->builtinNames().metaPrivateName().impl() }) {
                     SymbolTableEntry::Fast entry = uncheckedDowncast<SymbolTable>(scope)->get(name);
                     if (!entry.isNull() && entry.varOffset().isScope())
-                        variableFacts->join({ scope, entry.scopeOffset().offset() }, AOT::TAll);
+                        variableSummaries->join({ scope, entry.scopeOffset().offset() }, AOT::TAll);
                 }
             }
             for (auto& variable : variablesWrittenNativelyOfLink)
-                variableFacts->join(variable, AOT::TAll);
+                variableSummaries->join(variable, AOT::TAll);
         }
-        // Options::aotFollowsFunctions(): every function there is has a number, and something is kept of each.
+        // Every function has a number, and a summary is kept for each.
         Vector<unsigned> modulesOfNumberedFunctions { 0 };
         auto moduleOfFunctionNumbered = [&](uint32_t number) { return modulesOfNumberedFunctions[number]; };
         AOT::FunctionsOfProgram functionsOfProgram;
-        bool followsFunctions = Options::aotFollowsFunctions() && variableFacts && Options::aotTypesParametersOfClosedFunctions();
-        if (followsFunctions) {
-            std::map<std::tuple<uint32_t, uint32_t, uint32_t>, uint32_t> numberOfKey;
-            for (auto& function : functionsToCompile) {
-                auto result = numberOfKey.try_emplace({ modules[function.module].entryOffset + 1, function.key.start, static_cast<uint32_t>(function.key.kind) }, 0);
-                if (result.second) {
-                    AOT::KnownFunction known;
-                    known.executable = function.executable;
-                    RELEASE_ASSERT(describe(function.executable, known));
-                    known.isProven = true;
-                    factsOfFunctions.append(makeUnique<AOT::ProgramFacts>());
-                    known.facts = factsOfFunctions.last().get();
-                    result.first->second = functionsOfProgram.add(known);
-                    known.facts->number = result.first->second;
-                    modulesOfNumberedFunctions.append(function.module);
-                }
-                uint32_t number = result.first->second;
-                functionsOfProgram.isAlso(number, function.executable);
-                AOT::ProgramFacts* facts = functionsOfProgram.function(number)->facts;
-                factsOfExecutables.add(function.executable, facts);
-                if (function.forCall)
-                    factsOfCode.add(function.forCall, facts);
+        std::map<std::tuple<uint32_t, uint32_t, uint32_t>, uint32_t> numberOfKey;
+        for (auto& function : functionsToCompile) {
+            auto result = numberOfKey.try_emplace({ modules[function.module].entryOffset + 1, function.key.start, static_cast<uint32_t>(function.key.kind) }, 0);
+            if (result.second) {
+                AOT::KnownFunction known;
+                known.executable = function.executable;
+                RELEASE_ASSERT(describe(function.executable, known));
+                known.isExact = true;
+                factsOfFunctions.append(makeUnique<AOT::FunctionSummary>());
+                known.facts = factsOfFunctions.last().get();
+                result.first->second = functionsOfProgram.add(known);
+                known.facts->number = result.first->second;
+                modulesOfNumberedFunctions.append(function.module);
             }
-            AOT::setFunctionsOfProgram(&functionsOfProgram);
+            uint32_t number = result.first->second;
+            functionsOfProgram.isAlso(number, function.executable);
+            AOT::FunctionSummary* facts = functionsOfProgram.function(number)->facts;
+            factsOfExecutables.add(function.executable, facts);
+            if (function.forCall)
+                factsOfCode.add(function.forCall, facts);
         }
+        AOT::setFunctionsOfProgram(&functionsOfProgram);
         auto forgetFunctionsOfProgram = makeScopeExit([] { AOT::setFunctionsOfProgram(nullptr); });
         AOT::ClassesOfProgram classesOfProgram;
         AOT::setClassesOfProgram(&classesOfProgram);
         auto forgetClassesOfProgram = makeScopeExit([] { AOT::setClassesOfProgram(nullptr); });
-        AOT::ThingsReturnedByFunctions thingsReturnedByFunctions;
-        AOT::setThingsReturnedByFunctions(&thingsReturnedByFunctions);
-        auto forgetThingsReturnedByFunctions = makeScopeExit([] { AOT::setThingsReturnedByFunctions(nullptr); });
+        AOT::MultiValueReturnTable multiValueReturnTable;
+        AOT::setMultiValueReturnTable(&multiValueReturnTable);
+        auto forgetThingsReturnedByFunctions = makeScopeExit([] { AOT::setMultiValueReturnTable(nullptr); });
         {
             MonotonicTime before = MonotonicTime::now();
             for (auto& hintsOfModule : hints) {
                 if (!hintsOfModule)
                     continue;
-                hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
+                hintsOfModule->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
                     auto result = factsOfExecutables.add(function.executable, nullptr);
                     if (result.isNewEntry) {
-                        factsOfFunctions.append(makeUnique<AOT::ProgramFacts>());
+                        factsOfFunctions.append(makeUnique<AOT::FunctionSummary>());
                         result.iterator->value = factsOfFunctions.last().get();
                     }
                     function.facts = result.iterator->value;
@@ -6435,89 +6432,76 @@ struct BytecodeLinkEncoder::Impl {
             }
             std::atomic<unsigned> unreadable { 0 };
             inParallel(jobs.size(), [&](size_t index) {
-                if (!AOT::noteUsesOfProvenFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfExecutables, variableFacts))
+                if (!AOT::recordUsesOfKnownFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfExecutables, variableSummaries))
                     unreadable++;
             });
             AOT::TypeTable::finalizeAtomizedFields();
             RELEASE_ASSERT(!unreadable.load());
-            if (followsFunctions) {
-                classesOfProgram.forEachClosedMethod([&](uint32_t number) {
-                    const AOT::KnownFunction& function = *functionsOfProgram.function(number);
-                    function.needsNoFunctionObject.store(function.forCall && !AOT::needsFunctionObject(function.forCall), std::memory_order_relaxed);
-                });
-                dataLogLn("AOT: ", classesOfProgram.numberOfClosedMethods(), " methods are closed");
-            }
-            if (followsFunctions) {
-                // Where a function goes is seen from where it is made: by an instruction, or when a module is set up, for a variable that whoever
-                // put the program together has kept an eye on. One that comes about in any other way is anybody's.
-                BitVector isMadeWhereItCanBeSeen(functionsOfProgram.size() + 1);
-                for (auto& job : jobs) {
-                    for (const auto& instruction : job.codeBlock->instructions()) {
-                        UnlinkedFunctionExecutable* made = nullptr;
-                        switch (instruction->opcodeID()) {
-                        case op_new_func:
-                            made = job.codeBlock->functionDecl(instruction->as<OpNewFunc>().m_functionDecl);
-                            break;
-                        case op_new_func_exp:
-                            made = job.codeBlock->functionExpr(instruction->as<OpNewFuncExp>().m_functionDecl);
-                            break;
-                        case op_new_generator_func:
-                            made = job.codeBlock->functionDecl(instruction->as<OpNewGeneratorFunc>().m_functionDecl);
-                            break;
-                        case op_new_generator_func_exp:
-                            made = job.codeBlock->functionExpr(instruction->as<OpNewGeneratorFuncExp>().m_functionDecl);
-                            break;
-                        case op_new_async_func:
-                            made = job.codeBlock->functionDecl(instruction->as<OpNewAsyncFunc>().m_functionDecl);
-                            break;
-                        case op_new_async_func_exp:
-                            made = job.codeBlock->functionExpr(instruction->as<OpNewAsyncFuncExp>().m_functionDecl);
-                            break;
-                        case op_new_async_generator_func:
-                            made = job.codeBlock->functionDecl(instruction->as<OpNewAsyncGeneratorFunc>().m_functionDecl);
-                            break;
-                        case op_new_async_generator_func_exp:
-                            made = job.codeBlock->functionExpr(instruction->as<OpNewAsyncGeneratorFuncExp>().m_functionDecl);
-                            break;
-                        default:
-                            break;
-                        }
-                        if (made)
-                            isMadeWhereItCanBeSeen.set(functionsOfProgram.numberOf(made));
+            classesOfProgram.forEachNonEscapingMethod([&](uint32_t number) {
+                const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+                function.needsNoFunctionObject.store(function.forCall && !AOT::needsFunctionObject(function.forCall), std::memory_order_relaxed);
+            });
+            dataLogLn("AOT: ", classesOfProgram.numberOfNonEscapingMethods(), " methods are closed");
+            // Where a function goes is seen from where it is made: by an instruction, or when a module is set up, for a variable that whoever
+            // put the program together has kept an eye on. One that comes about in any other way is anybody's.
+            BitVector isMadeWhereItCanBeSeen(functionsOfProgram.size() + 1);
+            for (auto& job : jobs) {
+                for (const auto& instruction : job.codeBlock->instructions()) {
+                    UnlinkedFunctionExecutable* made = nullptr;
+                    switch (instruction->opcodeID()) {
+                    case op_new_func:
+                        made = job.codeBlock->functionDecl(instruction->as<OpNewFunc>().m_functionDecl);
+                        break;
+                    case op_new_func_exp:
+                        made = job.codeBlock->functionExpr(instruction->as<OpNewFuncExp>().m_functionDecl);
+                        break;
+                    case op_new_generator_func:
+                        made = job.codeBlock->functionDecl(instruction->as<OpNewGeneratorFunc>().m_functionDecl);
+                        break;
+                    case op_new_generator_func_exp:
+                        made = job.codeBlock->functionExpr(instruction->as<OpNewGeneratorFuncExp>().m_functionDecl);
+                        break;
+                    case op_new_async_func:
+                        made = job.codeBlock->functionDecl(instruction->as<OpNewAsyncFunc>().m_functionDecl);
+                        break;
+                    case op_new_async_func_exp:
+                        made = job.codeBlock->functionExpr(instruction->as<OpNewAsyncFuncExp>().m_functionDecl);
+                        break;
+                    case op_new_async_generator_func:
+                        made = job.codeBlock->functionDecl(instruction->as<OpNewAsyncGeneratorFunc>().m_functionDecl);
+                        break;
+                    case op_new_async_generator_func_exp:
+                        made = job.codeBlock->functionExpr(instruction->as<OpNewAsyncGeneratorFuncExp>().m_functionDecl);
+                        break;
+                    default:
+                        break;
                     }
+                    if (made)
+                        isMadeWhereItCanBeSeen.set(functionsOfProgram.numberOf(made));
                 }
-                for (auto& hintsOfModule : hints) {
-                    if (!hintsOfModule)
-                        continue;
-                    hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
-                        uint32_t number = functionsOfProgram.numberOf(function.executable);
-                        if (function.isVisibleFromOutside)
-                            function.facts->expose(AOT::ProgramFacts::BundlerSaysItEscapes);
-                        else if (function.isDeclaration)
-                            isMadeWhereItCanBeSeen.set(number);
-                    });
-                }
-                for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
-                    const AOT::KnownFunction& function = *functionsOfProgram.function(number);
-                    function.facts->isClosed = !!function.forCall;
-                    if (!function.forCall)
-                        function.facts->expose(AOT::ProgramFacts::HasNoCodeForACall);
-                    else if (!isModuleOfProgram(moduleOfFunctionNumbered(number)))
-                        function.facts->expose(AOT::ProgramFacts::IsNotOfTheProgram);
-                    else if (!isMadeWhereItCanBeSeen.get(number))
-                        function.facts->expose(AOT::ProgramFacts::IsNotMadeWhereItCanBeSeen);
-                    else if (AOT::mayGetHoldOfItself(function.forCall))
-                        function.facts->expose(AOT::ProgramFacts::MayGetHoldOfItself);
-                }
-            } else if (Options::aotTypesParametersOfClosedFunctions()) {
-                for (auto& hintsOfModule : hints) {
-                    if (!hintsOfModule)
-                        continue;
-                    hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
-                        // (One that can tell which object it was called as has that in hand, to call or to give away.)
-                        function.facts->isClosed = function.forCall && !function.escapes && !function.facts->valueIsUsed.load() && !AOT::needsFunctionObject(function.forCall);
-                    });
-                }
+            }
+            for (auto& hintsOfModule : hints) {
+                if (!hintsOfModule)
+                    continue;
+                hintsOfModule->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
+                    uint32_t number = functionsOfProgram.numberOf(function.executable);
+                    if (function.isVisibleFromOutside)
+                        function.facts->markEscaping(AOT::FunctionSummary::ReportedByBundler);
+                    else if (function.isDeclaration)
+                        isMadeWhereItCanBeSeen.set(number);
+                });
+            }
+            for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
+                const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+                function.facts->isNonEscaping = !!function.forCall;
+                if (!function.forCall)
+                    function.facts->markEscaping(AOT::FunctionSummary::NotCallable);
+                else if (!isModuleOfProgram(moduleOfFunctionNumbered(number)))
+                    function.facts->markEscaping(AOT::FunctionSummary::ExternalFunction);
+                else if (!isMadeWhereItCanBeSeen.get(number))
+                    function.facts->markEscaping(AOT::FunctionSummary::CreationSiteUnknown);
+                else if (AOT::mayReferenceItself(function.forCall))
+                    function.facts->markEscaping(AOT::FunctionSummary::ReferencesItself);
             }
         }
 
@@ -6528,10 +6512,10 @@ struct BytecodeLinkEncoder::Impl {
             using SetOfUnits = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
             struct Summary {
                 Vector<const AOT::KnownFunction*, 1> functions; // That this is the code of, for a call.
-                const AOT::ProgramFacts* facts { nullptr };
+                const AOT::FunctionSummary* facts { nullptr };
                 SetOfUnits dependents;
                 Vector<const AOT::KnownFunction*> callees;
-                Vector<const AOT::KnownFunction*> calleesGivenMore;
+                Vector<const AOT::KnownFunction*> calleesWithWidenedInputs;
                 bool changed { false };
             };
             Vector<Summary> summaries(jobs.size());
@@ -6542,7 +6526,7 @@ struct BytecodeLinkEncoder::Impl {
             for (unsigned module = 0; module < hints.size(); ++module) {
                 if (!hints[module])
                     continue;
-                hints[module]->forEachProven([&](const AOT::KnownFunction& function) {
+                hints[module]->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
                     if (!function.forCall)
                         return;
                     auto it = summaryOfCode.find(function.forCall);
@@ -6553,7 +6537,7 @@ struct BytecodeLinkEncoder::Impl {
                     summaries[it->value].facts = function.facts;
                 });
             }
-            for (uint32_t number = 1; followsFunctions && number <= functionsOfProgram.size(); ++number) {
+            for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
                 const AOT::KnownFunction* function = functionsOfProgram.function(number);
                 if (!function->forCall)
                     continue;
@@ -6572,7 +6556,7 @@ struct BytecodeLinkEncoder::Impl {
             size_t inferences = 0;
             unsigned scopesNeverMade = 0;
             // All that has been said, so far. (In an order, and of things, that are the same from one time the program is built to the next.)
-            auto digestOfFacts = [&] {
+            auto summaryDigest = [&] {
                 uint64_t digest = 0;
                 auto mix = [&](uint64_t value) {
                     digest = (digest ^ value) * 0x9e3779b97f4a7c15ull;
@@ -6584,22 +6568,22 @@ struct BytecodeLinkEncoder::Impl {
                 };
                 for (auto& summary : summaries) {
                     if (summary.facts) {
-                        mix(summary.facts->isExposed.load());
+                        mix(summary.facts->escapes.load());
                         for (auto& type : summary.facts->parameterTypes)
                             mixType(type.load());
                         mixType(summary.facts->thisType.load());
                         mixType(summary.facts->returnType.load());
-                        mix(summary.facts->parametersThatEscape.load());
-                        mix(summary.facts->objectReturnedIsWanted.load());
-                        for (auto& type : summary.facts->typesOfThingsReturned)
+                        mix(summary.facts->escapingParameters.load());
+                        mix(summary.facts->needsReturnObject.load());
+                        for (auto& type : summary.facts->returnValueTypes)
                             mixType(type.load());
                     }
                     for (auto* function : summary.functions)
                         mixType(function->returnType.load());
                 }
                 uint64_t variables = 0;
-                if (variableFacts) {
-                    variableFacts->forEach([&](AOT::Variable, AOT::Type type) {
+                if (variableSummaries) {
+                    variableSummaries->forEach([&](AOT::Variable, AOT::Type type) {
                         uint64_t low = static_cast<uint64_t>(type) * 0x9e3779b97f4a7c15ull;
                         uint64_t high = static_cast<uint64_t>(type >> 64) * 0xc2b2ae3d27d4eb4full;
                         variables += (low ^ low >> 31) + (high ^ high >> 29);
@@ -6609,8 +6593,8 @@ struct BytecodeLinkEncoder::Impl {
                 mix(scopesNeverMade);
                 return digest;
             };
-            unsigned timesAllWasLookedAtAgain = 0;
-            bool isLookingAtAllAgain = false;
+            unsigned fullReanalysisCount = 0;
+            bool isReanalyzingAll = false;
             uint64_t digestBefore = 0;
             for (;;) {
             while (!worklist.isEmpty()) {
@@ -6620,14 +6604,14 @@ struct BytecodeLinkEncoder::Impl {
                     unsigned index = worklist[at];
                     Summary& summary = summaries[index];
                     summary.callees.shrink(0);
-                    summary.calleesGivenMore.shrink(0);
+                    summary.calleesWithWidenedInputs.shrink(0);
                     uint32_t escaping = 0;
-                    AOT::Type type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, index, summary.callees, summary.calleesGivenMore, escaping);
+                    AOT::Type type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableSummaries, index, summary.callees, summary.calleesWithWidenedInputs, escaping);
                     summary.changed = false;
                     if (summary.facts) {
-                        uint32_t old = summary.facts->parametersThatEscape.fetch_or(escaping, std::memory_order_relaxed);
+                        uint32_t old = summary.facts->escapingParameters.fetch_or(escaping, std::memory_order_relaxed);
                         summary.changed |= (old | escaping) != old;
-                        summary.changed |= summary.facts->moreIsKnownOfThingsReturned.exchange(false, std::memory_order_relaxed);
+                        summary.changed |= summary.facts->returnValueTypesChanged.exchange(false, std::memory_order_relaxed);
                     }
                     for (auto* function : summary.functions) {
                         AOT::Type old = function->returnType.join(type);
@@ -6644,7 +6628,7 @@ struct BytecodeLinkEncoder::Impl {
                     }
                 }
                 for (unsigned index : worklist) {
-                    for (auto* callee : summaries[index].calleesGivenMore) {
+                    for (auto* callee : summaries[index].calleesWithWidenedInputs) {
                         if (auto it = indexOfSummary.find(callee); it != indexOfSummary.end())
                             next.add(it->value);
                     }
@@ -6653,40 +6637,38 @@ struct BytecodeLinkEncoder::Impl {
                     for (unsigned dependent : summaries[index].dependents)
                         next.add(dependent);
                 }
-                if (variableFacts) {
-                    for (unsigned reader : variableFacts->takeReadersOfWhatGrew())
+                if (variableSummaries) {
+                    for (unsigned reader : variableSummaries->takeReadersOfWidenedVariables())
                         next.add(reader);
                     if (next.isEmpty()) {
-                        for (unsigned reader : variableFacts->giveUpOnWhatIsReadAndNeverMade(scopesNeverMade))
+                        for (unsigned reader : variableSummaries->untrackVariablesReadButNeverWritten(scopesNeverMade))
                             next.add(reader);
                     }
                 }
                 worklist = copyToVector(next);
             }
             // Nothing that is known to go by something that has grown is left. If that is all there is to know, looking at everything again adds nothing.
-            uint64_t digest = digestOfFacts();
-            if (timesAllWasLookedAtAgain && digest == digestBefore)
+            uint64_t digest = summaryDigest();
+            if (fullReanalysisCount && digest == digestBefore)
                 break;
             digestBefore = digest;
-            ++timesAllWasLookedAtAgain;
-            isLookingAtAllAgain = true;
+            ++fullReanalysisCount;
+            isReanalyzingAll = true;
             for (unsigned i = 0; i < summaries.size(); ++i)
                 worklist.append(i);
             }
-            if (followsFunctions) {
-                unsigned withCode = 0;
-                unsigned closed = 0;
-                unsigned neverCalled = 0;
-                for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
-                    const AOT::KnownFunction& function = *functionsOfProgram.function(number);
-                    function.facts->isClosed = function.forCall && !function.facts->isExposed.load();
-                    withCode += !!function.forCall;
-                    closed += function.facts->isClosed;
-                    neverCalled += function.facts->isClosed && !function.facts->parameterTypes[0].load();
-                }
-                if (Options::aotVerbose()) [[unlikely]]
-                    dataLogLn("AOT: of ", withCode, " functions that there is code to call, ", closed, " get nowhere that is not reckoned with (CLOSED), of which ", neverCalled, " are never seen to be called");
+            unsigned withCode = 0;
+            unsigned closed = 0;
+            unsigned neverCalled = 0;
+            for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
+                const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+                function.facts->isNonEscaping = function.forCall && !function.facts->escapes.load();
+                withCode += !!function.forCall;
+                closed += function.facts->isNonEscaping;
+                neverCalled += function.facts->isNonEscaping && !function.facts->parameterTypes[0].load();
             }
+            if (Options::aotVerbose()) [[unlikely]]
+                dataLogLn("AOT: of ", withCode, " functions that there is code to call, ", closed, " get nowhere that is not reckoned with (CLOSED), of which ", neverCalled, " are never seen to be called");
             if (Options::aotLogsFacts()) [[unlikely]] {
                 // Once more, now that it is settled, for each to say what it goes by and what it adds.
                 auto nameOfJob = [&](unsigned index) {
@@ -6697,14 +6679,14 @@ struct BytecodeLinkEncoder::Impl {
                     Summary& summary = summaries[index];
                     if (summary.facts) {
                         StringPrintStream out;
-                        for (unsigned p = 1; p < std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::ProgramFacts::mostParameters); ++p)
+                        for (unsigned p = 1; p < std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::FunctionSummary::mostParameters); ++p)
                             out.print(" ", AOT::TypeDump(summary.facts->parameterTypes[p].load()));
-                        dataLogLn("FACTLOG function ", nameOfJob(index), summary.facts->isClosed ? " CLOSED, is passed" : " open", summary.facts->isClosed ? out.toString() : String(), ", returns ", AOT::TypeDump(summary.functions[0]->returnType.load()), ", direct calls ", summary.facts->directCalls.load());
+                        dataLogLn("FACTLOG function ", nameOfJob(index), summary.facts->isNonEscaping ? " CLOSED, is passed" : " open", summary.facts->isNonEscaping ? out.toString() : String(), ", returns ", AOT::TypeDump(summary.functions[0]->returnType.load()), ", direct calls ", summary.facts->directCalls.load());
                     }
                     Vector<const AOT::KnownFunction*> ignored;
                     Vector<const AOT::KnownFunction*> ignoredToo;
                     uint32_t ignoredAsWell = 0;
-                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, AOT::VariableFacts::nobody, ignored, ignoredToo, ignoredAsWell, nameOfJob(index));
+                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableSummaries, AOT::VariableSummaries::nobody, ignored, ignoredToo, ignoredAsWell, nameOfJob(index));
                 }
             }
         }
@@ -6737,7 +6719,7 @@ struct BytecodeLinkEncoder::Impl {
         auto work = [&] {
             for (size_t index = next++; index < jobs.size(); index = next++) {
                 // Whoever calls a closed function is known, all of them. One that nobody calls has no use for code.
-                if (const AOT::ProgramFacts* facts = factsOfCode.get(jobs[index].codeBlock); facts && !facts->isReached()) {
+                if (const AOT::FunctionSummary* facts = factsOfCode.get(jobs[index].codeBlock); facts && !facts->isReached()) {
                     functionsNeverReached++;
                     bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
                     if (Options::aotVerbose()) [[unlikely]]
@@ -6745,7 +6727,7 @@ struct BytecodeLinkEncoder::Impl {
                     continue;
                 }
                 AOT::CompiledCode code;
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfCode.get(jobs[index].codeBlock), variableFacts, &codeOfProgram)) {
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfCode.get(jobs[index].codeBlock), variableSummaries, &codeOfProgram)) {
                     // (A function's key says where its source starts, if it is a function that somebody wrote.)
                     {
                         auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
@@ -6779,7 +6761,7 @@ struct BytecodeLinkEncoder::Impl {
         };
         // See AOT::NumbersOfIdentifiers. The ones that most functions have come first, so that theirs are the small numbers.
         AOT::NumbersOfIdentifiers numbersOfIdentifiers;
-        if (Options::staticHeapLeavesOutPayload() && Options::aotNumbersIdentifiersOfProgram()) {
+        if (Options::staticHeapLeavesOutPayload()) {
             uint64_t inAll = 0;
             for (auto& job : jobs) {
                 for (auto& identifier : job.codeBlock->identifiers()) {
@@ -6806,7 +6788,7 @@ struct BytecodeLinkEncoder::Impl {
 
         // See AOT::NumbersOfConstants.
         AOT::NumbersOfConstants numbersOfConstants;
-        if (AOT::numbersOfIdentifiersOfProgram() && Options::aotNumbersConstantsOfProgram()) {
+        if (AOT::numbersOfIdentifiersOfProgram()) {
             UncheckedKeyHashMap<String, uint32_t> strings;
             uint64_t cells = 0;
             UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> others;
@@ -6815,7 +6797,7 @@ struct BytecodeLinkEncoder::Impl {
             for (auto& job : jobs) {
                 if (job.codeBlock->codeType() != FunctionCode)
                     continue;
-                if (!AOT::constantsAreOfNoRealm(job.codeBlock, AOT::SymbolTablesWillDo::Yes)) {
+                if (!AOT::constantsAreOfNoRealm(job.codeBlock, AOT::SymbolTablesAreShared::Yes)) {
                     ++withOwn;
                     continue;
                 }
@@ -6896,14 +6878,14 @@ struct BytecodeLinkEncoder::Impl {
             for (auto& hintsOfModule : hints) {
                 if (!hintsOfModule)
                     continue;
-                hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
+                hintsOfModule->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
                     if (function.needsNoFunctionObject.load(std::memory_order_relaxed) && declined.contains(function.forCall)) {
                         function.needsNoFunctionObject.store(false, std::memory_order_relaxed);
                         again = true;
                     }
                 });
             }
-            classesOfProgram.forEachClosedMethod([&](uint32_t number) {
+            classesOfProgram.forEachNonEscapingMethod([&](uint32_t number) {
                 const AOT::KnownFunction& function = *functionsOfProgram.function(number);
                 if (function.needsNoFunctionObject.load(std::memory_order_relaxed) && declined.contains(function.forCall)) {
                     function.needsNoFunctionObject.store(false, std::memory_order_relaxed);
@@ -6922,51 +6904,15 @@ struct BytecodeLinkEncoder::Impl {
         AOT::forgetDeclaredNames();
         AOT::setNumbersOfIdentifiersOfProgram(nullptr);
         AOT::setNumbersOfConstantsOfProgram(nullptr);
-        if (Options::aotCompileRegExps()) {
-            for (auto& job : jobs) {
-                for (auto& constant : job.codeBlock->constantRegisters()) {
-                    if (auto* regExp = constant.get().isCell() ? dynamicDowncast<RegExp>(constant.get().asCell()) : nullptr)
-                        builder.addRegExp(vm, regExp->pattern(), regExp->flags());
-                }
-            }
-            // A regular expression that the program makes out of a string finds its code by what it says. So it is worth having code
-            // for whatever string may be made one of, and it costs nothing but room to be wrong: a string in which something is
-            // escaped that only a regular expression has any call to escape.
-            if (Options::aotCompileStringsThatLookLikeRegExps()) {
-                uint64_t candidates = 0, compiled = 0;
-                UncheckedKeyHashSet<StringImpl*> seen;
-                for (auto& job : jobs) {
-                    for (auto& constant : job.codeBlock->constantRegisters()) {
-                        if (!constant.get().isString())
-                            continue;
-                        const StringImpl* impl = asString(constant.get())->tryGetValueImpl();
-                        if (!impl || impl->length() < 4 || impl->length() > 4096 || !seen.add(const_cast<StringImpl*>(impl)).isNewEntry)
-                            continue;
-                        StringView view { *impl };
-                        bool looksLikeOne = false;
-                        for (unsigned i = 0; i + 1 < view.length() && !looksLikeOne; ++i) {
-                            if (view[i] != '\\')
-                                continue;
-                            switch (view[++i]) {
-                            case 'b': case 'B': case 'd': case 'D': case 'w': case 'W': case 's': case 'S':
-                            case '.': case '(': case ')': case '[': case ']': case '{': case '}':
-                            case '+': case '*': case '?': case '^': case '$': case '|': case '/': case '-':
-                                looksLikeOne = true;
-                                break;
-                            default:
-                                break;
-                            }
-                        }
-                        if (!looksLikeOne)
-                            continue;
-                        ++candidates;
-                        String pattern { const_cast<StringImpl*>(impl) };
-                        compiled += builder.addRegExp(vm, pattern, { });
-                        compiled += builder.addRegExp(vm, pattern, { Yarr::Flags::IgnoreCase });
-                    }
-                }
+        for (auto& job : jobs) {
+            for (auto& constant : job.codeBlock->constantRegisters()) {
+                if (auto* regExp = constant.get().isCell() ? dynamicDowncast<RegExp>(constant.get().asCell()) : nullptr)
+                    builder.addRegExp(vm, regExp->pattern(), regExp->flags());
             }
         }
+        // A regular expression that the program makes out of a string finds its code by what it says. So it is worth having code
+        // for whatever string may be made one of, and it costs nothing but room to be wrong: a string in which something is
+        // escaped that only a regular expression has any call to escape.
         Vector<uint8_t> image = builder.finish();
         reportableSites = builder.takeReportableSites();
         return image;
@@ -7061,7 +7007,7 @@ auto BytecodeLinkEncoder::finish() -> Result
 {
     static_assert(numberOfRegions == BytecodeLinkRegions::Count);
 #if ENABLE(FTL_JIT)
-    if (m_impl->compilesAheadOfTime && Options::aotCompilesBuiltins() && Options::staticHeapHasBuiltinFunctions())
+    if (m_impl->compilesAheadOfTime)
         m_impl->addBuiltinsOfEngine();
 #endif
     Result result;
@@ -7108,10 +7054,8 @@ auto BytecodeLinkEncoder::finish() -> Result
         auto& module = m_impl->modules[index];
         if (!module.isOfEngine)
             result.entryOffsets.append(module.entryOffset);
-        if (module.root->classInfo() != UnlinkedFunctionExecutable::info() || Options::staticHeapHasBuiltinFunctions()) {
-            result.entryOffsetsOfModules.append(module.entryOffset);
-            result.variablesExportedByModules.append(m_impl->variablesExportedBy(index));
-        }
+        result.entryOffsetsOfModules.append(module.entryOffset);
+        result.variablesExportedByModules.append(m_impl->variablesExportedBy(index));
     }
     m_impl->modules.clear();
     m_impl->isFinished = true;
@@ -7279,10 +7223,10 @@ UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key, 
 
 bool entryIsOfBuiltinFunction(Decoder& decoder)
 {
-    return std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()))->isWhatItIsTakenFor();
+    return std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()))->matchesAssumedType();
 }
 
-UnlinkedFunctionExecutable* decodeAllOfBuiltinForStaticHeap(Decoder& decoder, unsigned& sourceLength, unsigned& embedderStamp, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
+UnlinkedFunctionExecutable* decodeBuiltinForStaticHeap(Decoder& decoder, unsigned& sourceLength, unsigned& embedderStamp, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
 {
     auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
     sourceLength = entry->sourceLength();

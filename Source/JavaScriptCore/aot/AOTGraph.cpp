@@ -144,7 +144,7 @@ void dumpType(PrintStream& out, Type type)
     take(TBigInt, "BigInt"_s);
     take(TFunction, "Function"_s);
     if (type & TFunctionTag) {
-        if (uint32_t function = functionThatIs(type))
+        if (uint32_t function = functionNumberOf(type))
             out.print(bar, "Function#", function);
         else
             out.print(bar, "Function#?");
@@ -606,20 +606,20 @@ std::optional<uint32_t> Graph::distanceOfEnvironmentResolvedTo(const Node* node)
     return distance;
 }
 
-bool Graph::calleeIsProven(const Node* node) const
+bool Graph::calleeIsExact(const Node* node) const
 {
     if (node->graph != this)
-        return node->graph->calleeIsProven(node);
-    bool isProven = false;
-    return knownCallee(node, &isProven) && isProven;
+        return node->graph->calleeIsExact(node);
+    bool isExact = false;
+    return knownCallee(node, &isExact) && isExact;
 }
 
-const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
+const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
 {
     if (node->graph != this)
-        return node->graph->knownCallee(node, isProven);
+        return node->graph->knownCallee(node, isExact);
     bool proven = false;
-    const KnownFunction* known = knownCalleeWithoutFacts(node, &proven);
+    const KnownFunction* known = knownCalleeIgnoringSummaries(node, &proven);
     // Only where nothing better is known: what is known of a closed function is known from the calls that are proven the other way.
     if ((!known || !proven) && node->hasFact(FactDirect, 4)) {
         if (const KnownFunction* body = bodyOfFact(node->fact & 0xfffffff)) {
@@ -636,7 +636,7 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
     }
     // Whatever way it got there, if there is one function that it can be. (Whatever else it may be cannot be called: whoever makes the call
     // sees to that.)
-    if ((!known || !proven) && Options::aotFollowsFunctions() && node->opcode != op_construct) {
+    if ((!known || !proven) && node->opcode != op_construct) {
         VirtualRegister calleeRegister;
         switch (node->opcode) {
         case op_call:
@@ -653,14 +653,14 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
         }
         if (calleeRegister.isValid() && functionsOfProgram()) {
             Type type = node->use(calleeRegister)->type;
-            if (const KnownFunction* function = mayBe(type, TOtherObject) ? nullptr : functionsOfProgram()->function(functionThatIs(type)); function && function->forCall) {
+            if (const KnownFunction* function = mayBe(type, TOtherObject) ? nullptr : functionsOfProgram()->function(functionNumberOf(type)); function && function->forCall) {
                 known = function;
                 proven = true;
             }
         }
     }
-    if (isProven)
-        *isProven = proven;
+    if (isExact)
+        *isExact = proven;
     return known;
 }
 
@@ -696,10 +696,10 @@ unsigned Graph::iteratedFactOf(const Node* node)
     return 0;
 }
 
-const KnownFunction* Graph::knownCalleeWithoutFacts(const Node* node, bool* isProven) const
+const KnownFunction* Graph::knownCalleeIgnoringSummaries(const Node* node, bool* isExact) const
 {
     if (node->graph != this)
-        return node->graph->knownCalleeWithoutFacts(node, isProven);
+        return node->graph->knownCalleeIgnoringSummaries(node, isExact);
     if (!m_hints)
         return nullptr;
     VirtualRegister calleeRegister;
@@ -740,13 +740,13 @@ const KnownFunction* Graph::knownCalleeWithoutFacts(const Node* node, bool* isPr
     if (!callee->isBytecode(op_get_from_scope))
         return nullptr;
     // (Through a phi it is a hint like any other.)
-    return knownFunctionReadBy(callee, callee == node->use(calleeRegister) ? isProven : nullptr);
+    return knownFunctionReadBy(callee, callee == node->use(calleeRegister) ? isExact : nullptr);
 }
 
-const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProven) const
+const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isExact) const
 {
     if (callee->graph != this)
-        return callee->graph->knownFunctionReadBy(callee, isProven);
+        return callee->graph->knownFunctionReadBy(callee, isExact);
     if (!m_hints)
         return nullptr;
     auto bytecode = callee->as<OpGetFromScope>();
@@ -761,15 +761,15 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProv
         if (scope != m_hints->scopeOfVariables())
             return nullptr;
         const KnownFunction* known = m_hints->find(name, bytecode.m_offset);
-        if (known && isProven)
-            *isProven = known->isProven;
+        if (known && isExact)
+            *isExact = known->isExact;
         return known;
     }
     if (type == Dynamic)
         return nullptr;
     if (auto variable = const_cast<Graph*>(this)->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type); variable.kind == StaticVariable::Import) {
-        if (isProven && variable.import.function)
-            *isProven = variable.import.function->isProven;
+        if (isExact && variable.import.function)
+            *isExact = variable.import.function->isExact;
         return variable.import.function;
     } else if (variable.kind == StaticVariable::ModuleImport && m_linkage) {
         // An import that this code is not compiled to read from where it is (resolveStatically()). It is read all the same.
@@ -786,8 +786,8 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProv
                 return nullptr;
             const KnownFunction* known = m_hints->find(name, resolution.offset);
             // Is the scope that it is read from the one that the name is found in?
-            if (known && known->isProven && isProven && Options::aotResolvesScopesItself())
-                *isProven = const_cast<Graph*>(this)->identityOfScope(callee->use(bytecode.m_scope)) == m_hints->scopeOfVariables();
+            if (known && known->isExact && isExact)
+                *isExact = const_cast<Graph*>(this)->identityOfScope(callee->use(bytecode.m_scope)) == m_hints->scopeOfVariables();
             return known;
         }
         case DeclaredNamesLink::Resolution::Stable:
@@ -824,9 +824,9 @@ bool Graph::passesNoFunctionObject(const Node* node)
         calleeRegister = node->as<OpTailCall>().m_callee;
     else
         return false;
-    bool isProven = false;
-    const KnownFunction* known = knownCallee(node, &isProven);
-    if (!known || !isProven || !known->needsNoFunctionObject.load(std::memory_order_relaxed))
+    bool isExact = false;
+    const KnownFunction* known = knownCallee(node, &isExact);
+    if (!known || !isExact || !known->needsNoFunctionObject.load(std::memory_order_relaxed))
         return false;
     if (closedMethodReadBy(node->use(calleeRegister))) {
         usesStaticImports = true;
@@ -848,7 +848,7 @@ uint32_t Graph::distanceOfEnvironmentOfModule()
 
 void Graph::findBuiltinsCalled()
 {
-    if (!Options::aotCallsMethodsDirectly() || !Options::useImmutableIntrinsics() || !ImmutableIntrinsics::shared())
+    if (!Options::useImmutableIntrinsics() || !ImmutableIntrinsics::shared())
         return;
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
@@ -871,7 +871,7 @@ void Graph::findBuiltinsCalled()
             Node* callee = node->use(calleeRegister);
             // Math.floor(): what it is has been settled.
             if (callee->kind == NodeKind::Intrinsic) {
-                if (builtinThatIs(callee->intrinsic) != Builtin::None)
+                if (builtinWithNumber(callee->intrinsic) != Builtin::None)
                     node->builtinCalled = callee->intrinsic;
                 continue;
             }
@@ -897,7 +897,7 @@ void Graph::findBuiltinsCalled()
             if (receiver == Receiver::None)
                 continue;
             unsigned number = intrinsicFoundOn(receiver, name);
-            if (!number || builtinThatIs(number) == Builtin::None)
+            if (!number || builtinWithNumber(number) == Builtin::None)
                 continue;
             node->builtinCalled = number;
             node->receiverOfBuiltin = static_cast<uint8_t>(receiver);
@@ -1010,8 +1010,8 @@ void Graph::elideReadsOfCalleesNotPassed()
                 read->isElided = true;
             continue;
         }
-        bool isProven = false;
-        read->isElided = knownFunctionReadBy(read, &isProven) && isProven;
+        bool isExact = false;
+        read->isElided = knownFunctionReadBy(read, &isExact) && isExact;
     }
 }
 
@@ -1049,16 +1049,16 @@ const void* Graph::identityOfScope(const Node* scope, unsigned depth)
                 break;
             case NodeKind::GetStack: {
                 // A register that lives in memory holds whatever was last put there.
-                if (!std::exchange(m_hasStoresToHomed, true)) {
+                if (!std::exchange(m_hasStoresToFrameRegisters, true)) {
                     for (BasicBlock* block : m_rpo) {
                         for (Node* store : block->nodes) {
                             if (store->kind == NodeKind::SetStack)
-                                m_storesToHomed.add(store->reg.offset(), Vector<Node*>()).iterator->value.append(store);
+                                m_storesToFrameRegisters.add(store->reg.offset(), Vector<Node*>()).iterator->value.append(store);
                         }
                     }
                 }
-                auto it = m_storesToHomed.find(node->reg.offset());
-                if (it == m_storesToHomed.end())
+                auto it = m_storesToFrameRegisters.find(node->reg.offset());
+                if (it == m_storesToFrameRegisters.end())
                     return nullptr;
                 for (Node* store : it->value)
                     worklist.append(store->uses[0].node);
@@ -1171,7 +1171,7 @@ Variable Graph::variableAccessedBy(const Node* node)
     return { };
 }
 
-void Graph::noteWhatCannotBeToldOfVariables(VariableFacts& facts)
+void Graph::recordUntrackableVariableAccesses(VariableSummaries& facts)
 {
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
@@ -1185,13 +1185,13 @@ void Graph::noteWhatCannotBeToldOfVariables(VariableFacts& facts)
                 auto bytecode = node->as<OpPutToScope>();
                 UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
                 ResolveType type = bytecode.m_getPutInfo.resolveType();
-                bool isElsewhere = false;
+                bool isOnHolder = false;
                 if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar && type != Dynamic && m_declaredNames) {
                     auto kind = m_declaredNames->resolve(name).kind;
                     // (Assigning to an import throws.)
-                    isElsewhere = kind == DeclaredNamesLink::Resolution::Global || kind == DeclaredNamesLink::Resolution::Stable;
+                    isOnHolder = kind == DeclaredNamesLink::Resolution::Global || kind == DeclaredNamesLink::Resolution::Stable;
                 }
-                if (!isElsewhere)
+                if (!isOnHolder)
                     facts.giveUpOnName(name);
                 break;
             }
@@ -1201,11 +1201,11 @@ void Graph::noteWhatCannotBeToldOfVariables(VariableFacts& facts)
                 auto bytecode = node->as<OpGetFromScope>();
                 UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
                 ResolveType type = bytecode.m_getPutInfo.resolveType();
-                bool isElsewhere = false;
+                bool isOnHolder = false;
                 if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar && type != Dynamic && m_declaredNames)
-                    isElsewhere = m_declaredNames->resolve(name).kind == DeclaredNamesLink::Resolution::Global;
-                if (!isElsewhere)
-                    facts.noteThatNameIsReadFromWhoKnowsWhere(name);
+                    isOnHolder = m_declaredNames->resolve(name).kind == DeclaredNamesLink::Resolution::Global;
+                if (!isOnHolder)
+                    facts.recordDynamicReadOfName(name);
                 break;
             }
             case op_create_scoped_arguments:
@@ -1239,7 +1239,7 @@ void Graph::noteWhatCannotBeToldOfVariables(VariableFacts& facts)
     }
 }
 
-void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutables)
+void Graph::recordUsesOfKnownFunctions(const FunctionSummaryMap& factsOfExecutables)
 {
     auto executableMadeBy = [&](Node* node) -> UnlinkedFunctionExecutable* {
         if (node->kind != NodeKind::Bytecode)
@@ -1253,12 +1253,12 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
             return nullptr;
         }
     };
-    auto valueIsUsed = [&](ProgramFacts* facts, ProgramFacts::WhyValueIsUsed why, Node* user) {
+    auto valueIsUsed = [&](FunctionSummary* facts, FunctionSummary::ValueUseReason why, Node* user) {
         facts->valueIsUsed.store(true, std::memory_order_relaxed);
         uint32_t nothing = 0;
-        facts->whyValueIsUsed.compare_exchange_strong(nothing, why | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8, std::memory_order_relaxed);
+        facts->valueUseReason.compare_exchange_strong(nothing, why | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8, std::memory_order_relaxed);
     };
-    auto callsWhatItIsHandedOverAndOver = [&](Node* user) {
+    auto callsCallbackRepeatedly = [&](Node* user) {
         Node* callee = user->isBytecode(op_call) ? user->use(user->as<OpCall>().m_callee) : user->isBytecode(op_call_ignore_result) ? user->use(user->as<OpCallIgnoreResult>().m_callee) : nullptr;
         if (!callee || !callee->isBytecode(op_get_by_id))
             return false;
@@ -1274,19 +1274,19 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
         // Where it is made, it is on its way to the variable. Anywhere else it goes, it has got out before it got there.
         if (auto* executable = executableMadeBy(use.node)) {
             if (auto* facts = factsOfExecutables.get(executable); facts && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value)) {
-                valueIsUsed(facts, ProgramFacts::WhereItIsMade, user);
-                if (callsWhatItIsHandedOverAndOver(user))
+                valueIsUsed(facts, FunctionSummary::AtCreationSite, user);
+                if (callsCallbackRepeatedly(user))
                     facts->isUsedInLoop.store(true, std::memory_order_relaxed);
             }
             return;
         }
         if (!use.node->isBytecode(op_get_from_scope))
             return;
-        bool readIsProven = false;
-        const KnownFunction* known = knownFunctionReadBy(use.node, &readIsProven);
+        bool readIsExact = false;
+        const KnownFunction* known = knownFunctionReadBy(use.node, &readIsExact);
         if (!known || !known->facts)
             return;
-        if (block->isInLoop || callsWhatItIsHandedOverAndOver(user))
+        if (block->isInLoop || callsCallbackRepeatedly(user))
             known->facts->isUsedInLoop.store(true, std::memory_order_relaxed);
         // (`f?.()` asks whether there is anything to call.)
         if (user->isBytecode(op_check_tdz) || user->isBytecode(op_jundefined_or_null) || user->isBytecode(op_jnundefined_or_null))
@@ -1299,11 +1299,11 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
         else if (user->isBytecode(op_tail_call))
             isCallee = use.reg == user->as<OpTailCall>().m_callee;
         // (What may be a read of some other variable of that name is no proof of anything, either way.)
-        if (isCallee && readIsProven && known->forCall && knownCallee(user) == known && calleeIsProven(user)) {
+        if (isCallee && readIsExact && known->forCall && knownCallee(user) == known && calleeIsExact(user)) {
             known->facts->directCalls.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        valueIsUsed(known->facts, !isCallee ? ProgramFacts::Operand : !readIsProven ? ProgramFacts::CalleeButReadIsNotProven : ProgramFacts::CalleeButCallIsNotProven, user);
+        valueIsUsed(known->facts, !isCallee ? FunctionSummary::Operand : !readIsExact ? FunctionSummary::CalleeWithInexactRead : FunctionSummary::CalleeWithInexactCall, user);
     };
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
@@ -1431,14 +1431,14 @@ void Graph::findListsOfArguments()
         return;
 
     // Of an array of the rest of the arguments or an arguments object: by calls that do not need there to be one.
-    UncheckedKeyHashMap<Node*, unsigned> numberOfUsesThatPassItOn;
+    UncheckedKeyHashMap<Node*, unsigned> numberOfAliasingUses;
     for (BasicBlock* block : m_rpo) {
         for (unsigned index = 0; index < block->nodes.size(); ++index) {
             Node* list = listOfArgumentsOf(block->nodes[index]);
             if (!list)
                 continue;
             if (list->isBytecode(op_create_cloned_arguments)) {
-                ++numberOfUsesThatPassItOn.add(list, 0).iterator->value;
+                ++numberOfAliasingUses.add(list, 0).iterator->value;
                 continue;
             }
             // The last first. Nothing is between them and the call, so nobody can tell when they are done.
@@ -1469,13 +1469,13 @@ void Graph::findListsOfArguments()
                 Node* spread = part->use(part->as<OpSpread>().m_argument);
                 // (Iterating over an array comes to what is in it for as long as nobody has said otherwise.)
                 if (spread->isBytecode(op_create_rest) && Options::useImmutableIntrinsics())
-                    ++numberOfUsesThatPassItOn.add(spread, 0).iterator->value;
+                    ++numberOfAliasingUses.add(spread, 0).iterator->value;
             }
         }
     }
 
     // (What this function was passed is its caller's, and nobody writes to it.)
-    for (auto& [node, uses] : numberOfUsesThatPassItOn)
+    for (auto& [node, uses] : numberOfAliasingUses)
         node->isElided = uses == numberOfUses.get(node);
 
     // An array that is made of others: [...a, ...b]. Likewise the spreads that nothing comes between and the making of it.
@@ -1530,14 +1530,14 @@ void Graph::notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words)
     plans.appendVector(words);
 }
 
-bool Graph::isThisOfWhatAnybodyMayCall(const Node* node)
+bool Graph::isThisOfEscapingFunction(const Node* node)
 {
     while (node->kind == NodeKind::Narrow || node->isBytecode(op_to_this) || node->isBytecode(op_check_type) || node->isBytecode(op_type_tag))
         node = node->uses[0].node;
     if (node->kind != NodeKind::Argument || node->reg != virtualRegisterForArgumentIncludingThis(0))
         return false;
-    const ProgramFacts* facts = node->graph->facts();
-    return !facts || !facts->isClosed;
+    const FunctionSummary* facts = node->graph->facts();
+    return !facts || !facts->isNonEscaping;
 }
 
 std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
@@ -1643,8 +1643,8 @@ void Graph::noteClassesDefined()
                         if (!impl || !impl->isAtom())
                             continue;
                         auto* uid = static_cast<UniquedStringImpl*>(const_cast<StringImpl*>(impl));
-                        if (TypeTable::shared()->isClosedMethod(classType, uid))
-                            classes->noteClosedMethod(classType, uid, number);
+                        if (TypeTable::shared()->isNonEscapingMethod(classType, uid))
+                            classes->recordNonEscapingMethod(classType, uid, number);
                     } else if (node->isBytecode(op_put_by_id)) {
                         auto bytecode = node->as<OpPutById>();
                         if (node->use(bytecode.m_base) == constructor && node->graph->codeBlock()->identifier(bytecode.m_property) == m_vm.propertyNames->builtinNames().instanceFieldInitializerPrivateName())
@@ -1664,7 +1664,7 @@ uint32_t Graph::closedMethodReadBy(const Node* node)
     if (!tag)
         return 0;
     UniquedStringImpl* name = node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl();
-    uint32_t classType = TypeTable::shared()->classOfMethodGotAt(tag, name);
+    uint32_t classType = TypeTable::shared()->classOfMethodReadBy(tag, name);
     return classType ? classesOfProgram()->closedMethod(classType, name) : 0;
 }
 
@@ -1810,7 +1810,7 @@ Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigne
         case ScopeChainEntry::Unknown:
             if (m_declaredNames && type == GlobalProperty) {
                 auto resolution = m_declaredNames->resolve(uid);
-                if (resolution.kind == DeclaredNamesLink::Resolution::Slot && Options::aotResolvesScopesItself()) {
+                if (resolution.kind == DeclaredNamesLink::Resolution::Slot) {
                     // (It is none of the function's own: whatever made the bytecode would have said so.)
                     result.kind = StaticVariable::Closure;
                     result.depth = depth + resolution.hops;
@@ -1982,7 +1982,7 @@ void Node::dump(PrintStream& out) const
             out.print(" .", graph->codeBlock()->identifier(as<OpGetById>().m_property).impl(), Graph::closedMethodReadBy(this) ? " (a closed method)" : "", isReadOnlyToBeCalled ? " (only to be called)" : "");
         else if (isBytecode(op_put_by_id))
             out.print(" .", graph->codeBlock()->identifier(as<OpPutById>().m_property).impl());
-        if (wasTakenNeverToBeReached)
+        if (wasInferredUnreachable)
             out.print(" (taken never to be reached)");
         break;
     case NodeKind::Constant:
@@ -2129,7 +2129,7 @@ public:
             computeReversePostOrder();
         }
         computeLiveness();
-        chooseHomedRegisters();
+        chooseFrameRegisters();
         for (BasicBlock* block : m_graph.m_rpo) {
             parseBlock(block);
             if (m_graph.failed())
@@ -2408,9 +2408,9 @@ private:
         guard->instruction = call;
         guard->bytecodeIndex = BytecodeIndex(offset);
         guard->uses.append({ bytecode.m_callee, get(block, bytecode.m_callee) });
-        bool isProven = false;
-        const KnownFunction* known = m_graph.knownCallee(guard, &isProven);
-        if (!known || !isProven || !canBeInlined(known, bytecode.m_argc))
+        bool isExact = false;
+        const KnownFunction* known = m_graph.knownCallee(guard, &isExact);
+        if (!known || !isExact || !canBeInlined(known, bytecode.m_argc))
             return nullptr;
         append(block, guard);
 
@@ -2549,7 +2549,7 @@ private:
     }
 
     // What the type of the base says of the property that the instruction gets at (GuardKind::Field).
-    std::optional<TypeTable::Field> fieldGotAtBy(unsigned offset)
+    std::optional<TypeTable::Field> fieldReadBy(unsigned offset)
     {
         if (!Options::aotAssertsTypes() || !TypeTable::shared())
             return std::nullopt;
@@ -2567,7 +2567,7 @@ private:
         return TypeTable::shared()->fieldOf(tag, m_codeBlock->identifier(identifier).impl());
     }
 
-    bool isCheckThatAnAssertionMakesUpFor(unsigned offset, unsigned end)
+    bool isCheckSubsumedByAssertion(unsigned offset, unsigned end)
     {
         const JSInstruction* instruction = m_instructions.at(offset).ptr();
         if (instruction->opcodeID() != op_check_type || isFact(instruction->as<OpCheckType>().m_mask) || !(instruction->as<OpCheckType>().m_mask & MaskOtherObject) || Options::aotAuditsTypes())
@@ -2653,7 +2653,7 @@ private:
                     for (auto& store : NewObjectPlan::forCreateThis(m_instructions, offset).stores)
                         partOfWhatIsMade.set(store.offset);
                 }
-                if (!partOfWhatIsMade.get(offset) && fieldGotAtBy(offset)) {
+                if (!partOfWhatIsMade.get(offset) && fieldReadBy(offset)) {
                     fieldAccesses.set(offset);
                     ++count;
                 }
@@ -2666,7 +2666,7 @@ private:
         struct OfBlock {
             Vector<unsigned, 8> guards;
             bool hasWhatIsBetterInFastCopy { false };
-            bool hasCallThatIsMade { false };
+            bool hasRealCall { false };
             // A call that the fast copy does not make, or an element got at by its index: each time round, that is a call less.
             bool hasWhatIsMuchBetterInFastCopy { false };
         };
@@ -2710,7 +2710,7 @@ private:
                             m_recentFunctions.append({ bytecode.m_dst, known });
                     }
                 }
-                bool isGuarded = canBeGuarded(instruction) && !goesByTypeWhereverItIs(offset) && !isCheckThatAnAssertionMakesUpFor(offset, block->bytecodeEnd);
+                bool isGuarded = canBeGuarded(instruction) && !goesByTypeWhereverItIs(offset) && !isCheckSubsumedByAssertion(offset, block->bytecodeEnd);
                 if (isGuarded)
                     ofBlock.guards.append(offset);
                 OpcodeID opcode = instruction->opcodeID();
@@ -2719,7 +2719,7 @@ private:
                         ofBlock.hasWhatIsBetterInFastCopy = true;
                         ofBlock.hasWhatIsMuchBetterInFastCopy = true;
                     } else
-                        ofBlock.hasCallThatIsMade = true;
+                        ofBlock.hasRealCall = true;
                 } else if (isBetterInFastCopy(opcode)) {
                     ofBlock.hasWhatIsBetterInFastCopy = true;
                     if (opcode == op_get_by_val || opcode == op_put_by_val)
@@ -2751,30 +2751,30 @@ private:
         for (auto& [header, body] : bodies) {
             bool hasWhatIsBetter = false;
             bool hasWhatIsMuchBetter = false;
-            bool hasCallThatIsMade = false;
+            bool hasRealCall = false;
             for (unsigned index : body) {
                 hasWhatIsBetter |= ofBlocks[index].hasWhatIsBetterInFastCopy;
                 hasWhatIsMuchBetter |= ofBlocks[index].hasWhatIsMuchBetterInFastCopy;
-                hasCallThatIsMade |= ofBlocks[index].hasCallThatIsMade;
+                hasRealCall |= ofBlocks[index].hasRealCall;
             }
-            bool isWorthIt = true;
+            bool isProfitable = true;
             switch (Options::aotLoopsToSplit()) {
             case 2:
-                isWorthIt = hasWhatIsBetter;
+                isProfitable = hasWhatIsBetter;
                 break;
             case 3:
-                isWorthIt = !hasCallThatIsMade;
+                isProfitable = !hasRealCall;
                 break;
             case 4:
-                isWorthIt = hasWhatIsBetter && !hasCallThatIsMade;
+                isProfitable = hasWhatIsBetter && !hasRealCall;
                 break;
             case 5:
-                isWorthIt = hasWhatIsMuchBetter || !hasCallThatIsMade;
+                isProfitable = hasWhatIsMuchBetter || !hasRealCall;
                 break;
             default:
                 break;
             }
-            if (isWorthIt)
+            if (isProfitable)
                 hasTwoCopies.merge(body);
         }
 
@@ -3094,7 +3094,7 @@ private:
     bool m_needsEveryStore { false };
     Vector<BitVector> m_defsOfBlocks;
 
-    void chooseHomedRegisters()
+    void chooseFrameRegisters()
     {
         m_graph.m_homed.ensureSize(m_graph.numRegisters());
         for (BasicBlock* entrypoint : m_graph.catchEntrypoints)
@@ -3104,7 +3104,6 @@ private:
         // It is for the sake of a handler that they do, which has nothing to go by but what is in memory. The number of a register is
         // put to one use after another: what is in it is only anybody's business where a handler that reads it is still to come.
         m_skippedStores.clear();
-        m_needsEveryStore = !Options::aotStoresHomedRegistersOnlyWhereRead();
         if (m_graph.catchEntrypoints.isEmpty() || m_needsEveryStore)
             return;
         unsigned numRegisters = m_graph.numRegisters();
@@ -3210,7 +3209,7 @@ private:
             return m_graph.constant(jsUndefined());
         }
         Node* value = block->valuesAtTail[m_graph.registerIndex(reg)];
-        if (!value && m_graph.isHomed(reg)) {
+        if (!value && m_graph.livesInFrame(reg)) {
             m_needsEveryStore = true;
             Node* node = m_graph.addNode(NodeKind::GetStack);
             node->reg = reg;
@@ -3230,7 +3229,7 @@ private:
             m_graph.fail("writes a register outside the frame"_s);
             return;
         }
-        if (m_graph.isHomed(reg)) {
+        if (m_graph.livesInFrame(reg)) {
             unsigned index = m_graph.registerIndex(reg);
             if (m_needsEveryStore || block->readByHandlersOfBlock.get(index) || block->readByHandlersAfterBlock.get(index)) {
                 Node* node = m_graph.addNode(NodeKind::SetStack);
@@ -3311,7 +3310,7 @@ private:
                 node->firstLayout = node->lastLayout = layoutID;
                 // (What a function that anybody may call is called on is whatever they please.)
                 if (layoutID)
-                    node->isTrusted = TypeTable::shared()->isTrusted(m_graph.typeTagAt(offset + instruction->size())) && !(TypeTable::shared()->isOpen(layoutID) && Graph::isThisOfWhatAnybodyMayCall(base));
+                    node->isTrusted = TypeTable::shared()->isTrusted(m_graph.typeTagAt(offset + instruction->size())) && !(TypeTable::shared()->isOpen(layoutID) && Graph::isThisOfEscapingFunction(base));
                 if (isArray)
                     node->narrowedTo = TArray;
                 node->reg = baseRegister;
@@ -3323,7 +3322,7 @@ private:
                 continue;
             }
             // What comes next lets less by.
-            if (isCheckThatAnAssertionMakesUpFor(offset, block->bytecodeEnd))
+            if (isCheckSubsumedByAssertion(offset, block->bytecodeEnd))
                 continue;
             if (opcode == op_check_type && isFact(instruction->as<OpCheckType>().m_mask)) {
                 // It is taken out here, and nothing further on knows of it but by what it leaves on the node.
@@ -3383,7 +3382,7 @@ private:
             case op_new_object: {
                 VirtualRegister reg = instruction->as<OpNewObject>().m_dst;
                 // A register that lives in memory is written where the instruction is.
-                if (!m_graph.isTracked(reg) || m_graph.isHomed(reg))
+                if (!m_graph.isTracked(reg) || m_graph.livesInFrame(reg))
                     break;
                 auto stores = Graph::storesOfLiteral(m_instructions, offset);
                 while (!stores.isEmpty() && stores.last() >= block->bytecodeEnd)
@@ -3402,7 +3401,7 @@ private:
             case op_create_this: {
                 // A register that lives in memory is written where the instruction is.
                 // (An instance of a class of structs has its fields where their names say, not one after the other: they are stored one by one, by stores that know where.)
-                if (m_graph.hasHomedRegisters() || block->isInLoop || m_graph.layoutIDOfThis())
+                if (m_graph.hasFrameRegisters() || block->isInLoop || m_graph.layoutIDOfThis())
                     break;
                 m_planOfObject = NewObjectPlan::forCreateThis(m_instructions, offset);
                 if (m_planOfObject.stores.isEmpty() || m_planOfObject.stores.last().offset >= block->bytecodeEnd)
@@ -3611,7 +3610,7 @@ private:
             forEachUse(instruction, [&](VirtualRegister reg) {
                 guard->uses.append({ reg, get(block, reg) });
             });
-            if (auto field = fieldGotAtBy(block->bytecodeEnd)) {
+            if (auto field = fieldReadBy(block->bytecodeEnd)) {
                 guard->guardKind = GuardKind::Field;
                 guard->slotOfField = field->slot;
                 guard->firstLayout = field->first;

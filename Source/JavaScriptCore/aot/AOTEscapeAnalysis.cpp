@@ -20,7 +20,7 @@ namespace JSC { namespace AOT {
 ASCIILiteral nameOf(Escape escape)
 {
     switch (escape) {
-    case Escape::NotLookedAt:
+    case Escape::NotAnalyzed:
         return "not looked at"_s;
     case Escape::StaysHere:
         return "STAYS: nothing but this code sees it"_s;
@@ -54,7 +54,7 @@ ASCIILiteral nameOf(Escape escape)
         return "passed to what was read from a variable, not proven"_s;
     case Escape::PassedToUnknown:
         return "passed to something else"_s;
-    case Escape::PassedToKnownThatKeepsIt:
+    case Escape::PassedToKnownCalleeThatRetainsIt:
         return "passed to a known function that lets it out"_s;
     case Escape::PassedInList:
         return "passed in a call that takes a list, or constructs"_s;
@@ -134,7 +134,7 @@ static bool keepsItsScopeToItself(UnlinkedCodeBlock* code)
     return true;
 }
 
-bool mayGetHoldOfItself(UnlinkedCodeBlock* code)
+bool mayReferenceItself(UnlinkedCodeBlock* code)
 {
     if (readsCallee(code))
         return true;
@@ -153,9 +153,9 @@ bool mayGetHoldOfItself(UnlinkedCodeBlock* code)
 
 class EscapeAnalysis {
 public:
-    EscapeAnalysis(Graph& graph, Vector<const KnownFunction*>* calleesConsulted)
+    EscapeAnalysis(Graph& graph, Vector<const KnownFunction*>* calleesRead)
         : m_graph(graph)
-        , m_calleesConsulted(calleesConsulted)
+        , m_calleesConsulted(calleesRead)
     {
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* phi : block->phis)
@@ -165,7 +165,7 @@ public:
         }
     }
 
-    void lookAtWhatIsMade()
+    void analyzeAllocations()
     {
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
@@ -175,8 +175,8 @@ public:
         }
     }
 
-    // A bit for each, `this` being the first; ProgramFacts::whatIsPassedBeyondParametersEscapes for the rest.
-    uint32_t parametersThatEscape()
+    // A bit for each, `this` being the first; FunctionSummary::whatIsPassedBeyondParametersEscapes for the rest.
+    uint32_t escapingParameters()
     {
         UnlinkedCodeBlock* code = m_graph.codeBlock();
         if (code->codeType() != FunctionCode || (code->parseMode() != SourceParseMode::NormalFunctionMode && code->parseMode() != SourceParseMode::ArrowFunctionMode && code->parseMode() != SourceParseMode::MethodMode))
@@ -192,7 +192,7 @@ public:
             case op_get_argument:
                 return std::numeric_limits<uint32_t>::max();
             case op_create_rest:
-                result |= ProgramFacts::whatIsPassedBeyondParametersEscapes;
+                result |= FunctionSummary::whatIsPassedBeyondParametersEscapes;
                 break;
             default:
                 break;
@@ -203,8 +203,8 @@ public:
                 if (node->kind != NodeKind::Argument || node->graph != &m_graph)
                     continue;
                 unsigned index = node->reg.toArgument();
-                if (index >= ProgramFacts::mostParametersToldOfEscaping) {
-                    result |= ProgramFacts::whatIsPassedBeyondParametersEscapes;
+                if (index >= FunctionSummary::maxTrackedEscapingParameters) {
+                    result |= FunctionSummary::whatIsPassedBeyondParametersEscapes;
                     continue;
                 }
                 if (!stays(fateOf(node, true)))
@@ -244,7 +244,7 @@ private:
         if (!isParameter && kindOfAllocation(value) == AllocationKind::Closure) {
             UnlinkedFunctionExecutable* executable = value->opcode == op_new_func ? value->graph->codeBlock()->functionDecl(value->as<OpNewFunc>().m_functionDecl) : value->graph->codeBlock()->functionExpr(value->as<OpNewFuncExp>().m_functionDecl);
             UnlinkedFunctionCodeBlock* code = executable->codeBlockIfThereIsOne(CodeSpecializationKind::CodeForCall);
-            if (!code || mayGetHoldOfItself(code))
+            if (!code || mayReferenceItself(code))
                 result = Escape::Other;
         }
         Vector<Node*, 8> worklist { value };
@@ -302,16 +302,16 @@ private:
         if (isTailCall && !isParameter)
             return escapes(Escape::PassedInTailCall);
 
-        bool isProven = false;
-        const KnownFunction* known = call->graph->knownCallee(call, &isProven);
-        if (known && isProven && known->forCall && known->facts) {
+        bool isExact = false;
+        const KnownFunction* known = call->graph->knownCallee(call, &isExact);
+        if (known && isExact && known->forCall && known->facts) {
             if (m_calleesConsulted && !m_calleesConsulted->contains(known))
                 m_calleesConsulted->append(known);
-            uint32_t mask = known->facts->parametersThatEscape.load(std::memory_order_relaxed);
-            unsigned parameters = std::min<unsigned>(known->forCall->numParameters(), ProgramFacts::mostParametersToldOfEscaping);
-            bool letsItOut = static_cast<unsigned>(index) < parameters ? mask >> index & 1 : mask & ProgramFacts::whatIsPassedBeyondParametersEscapes;
+            uint32_t mask = known->facts->escapingParameters.load(std::memory_order_relaxed);
+            unsigned parameters = std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::maxTrackedEscapingParameters);
+            bool letsItOut = static_cast<unsigned>(index) < parameters ? mask >> index & 1 : mask & FunctionSummary::whatIsPassedBeyondParametersEscapes;
             if (letsItOut)
-                return escapes(Escape::PassedToKnownThatKeepsIt);
+                return escapes(Escape::PassedToKnownCalleeThatRetainsIt);
             return { Verdict::Lent };
         }
         Node* callee = call->use(calleeRegister);
@@ -742,7 +742,7 @@ void promoteEnvironments(Graph& graph)
 {
     // What a handler reads has to be in memory, and what a generator has in hand when it stops has to be kept for it.
     UnlinkedCodeBlock* code = graph.codeBlock();
-    if (!graph.catchEntrypoints.isEmpty() || graph.hasHomedRegisters() || code->codeType() != FunctionCode)
+    if (!graph.catchEntrypoints.isEmpty() || graph.hasFrameRegisters() || code->codeType() != FunctionCode)
         return;
     switch (code->parseMode()) {
     case SourceParseMode::NormalFunctionMode:
@@ -835,12 +835,12 @@ std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std
 }
 
 // None: it has one of them twice.
-static std::optional<ThingsReturnedByFunctions::Names> namesOfLiteral(Node* node)
+static std::optional<MultiValueReturnTable::Names> namesOfLiteral(Node* node)
 {
     auto& instructions = node->graph->codeBlock()->instructions();
     auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
     RELEASE_ASSERT(stores.size() >= node->numberOfLiteralProperties);
-    ThingsReturnedByFunctions::Names names;
+    MultiValueReturnTable::Names names;
     for (unsigned i = 0; i < node->numberOfLiteralProperties; ++i) {
         UniquedStringImpl* name = node->graph->codeBlock()->identifier(instructions.at(stores[i])->as<OpPutById>().m_property).impl();
         if (names.contains(name))
@@ -850,9 +850,9 @@ static std::optional<ThingsReturnedByFunctions::Names> namesOfLiteral(Node* node
     return names;
 }
 
-void noteThingsReturned(Graph& graph)
+void recordReturnedLiterals(Graph& graph)
 {
-    ThingsReturnedByFunctions* all = thingsReturnedByFunctions();
+    MultiValueReturnTable* all = multiValueReturnTable();
     UnlinkedCodeBlock* code = graph.codeBlock();
     if (!all || code->codeType() != FunctionCode || code->isConstructor())
         return;
@@ -860,7 +860,7 @@ void noteThingsReturned(Graph& graph)
     if (code->parseMode() != SourceParseMode::NormalFunctionMode && code->parseMode() != SourceParseMode::ArrowFunctionMode && code->parseMode() != SourceParseMode::MethodMode)
         return;
     std::optional<UsersOfNodes> users;
-    std::optional<ThingsReturnedByFunctions::Names> names;
+    std::optional<MultiValueReturnTable::Names> names;
     for (BasicBlock* block : graph.m_rpo) {
         for (Node* node : block->nodes) {
             if (node->kind != NodeKind::Bytecode)
@@ -871,7 +871,7 @@ void noteThingsReturned(Graph& graph)
             if (node->opcode != op_ret)
                 continue;
             Node* object = node->use(node->as<OpRet>().m_value);
-            if (!object->isBytecode(op_new_object) || !object->numberOfLiteralProperties || object->numberOfLiteralProperties > ProgramFacts::mostThingsReturned)
+            if (!object->isBytecode(op_new_object) || !object->numberOfLiteralProperties || object->numberOfLiteralProperties > FunctionSummary::maxReturnValues)
                 return;
             if (!users)
                 users.emplace(graph);
@@ -888,11 +888,11 @@ void noteThingsReturned(Graph& graph)
 }
 
 
-void findThingsReturnedInRegisters(Graph& graph)
+void planMultiValueReturns(Graph& graph)
 {
-    if (!thingsReturnedByFunctions())
+    if (!multiValueReturnTable())
         return;
-    if (auto* names = thingsReturnedInRegistersBy(graph.codeBlock(), graph.facts())) {
+    if (auto* names = registerReturnValuesOf(graph.codeBlock(), graph.facts())) {
         for (BasicBlock* block : graph.m_rpo) {
             for (Node* node : block->nodes) {
                 if (!node->isBytecode(op_ret) || node->graph != &graph)
@@ -902,18 +902,18 @@ void findThingsReturnedInRegisters(Graph& graph)
                 object->isElided = true;
             }
         }
-        graph.numberOfThingsReturnedInRegisters = names->size();
+        graph.numberOfRegisterReturnValues = names->size();
     }
     std::optional<UsersOfNodes> users;
     for (BasicBlock* block : graph.m_rpo) {
         for (Node* node : block->nodes) {
             if (!node->isBytecode(op_call) || node->isElided)
                 continue;
-            bool isProven = false;
-            const KnownFunction* known = graph.knownCallee(node, &isProven);
-            if (!known || !isProven || !known->forCall)
+            bool isExact = false;
+            const KnownFunction* known = graph.knownCallee(node, &isExact);
+            if (!known || !isExact || !known->forCall)
                 continue;
-            auto* names = thingsReturnedInRegistersBy(known->forCall, known->facts);
+            auto* names = registerReturnValuesOf(known->forCall, known->facts);
             if (!names)
                 continue;
             if (!users)
@@ -921,13 +921,13 @@ void findThingsReturnedInRegisters(Graph& graph)
             auto onlyRead = users->isOnlyRead(node, names->span(), 0);
             // (Or it would have said that the object is wanted.)
             RELEASE_ASSERT(onlyRead);
-            node->numberOfThingsReturned = names->size();
-            auto& reads = graph.readsOfThingsReturned.add(node, Vector<Node*, 8> { }).iterator->value;
+            node->numberOfReturnValues = names->size();
+            auto& reads = graph.returnValueReads.add(node, Vector<Node*, 8> { }).iterator->value;
             for (auto [read, index] : onlyRead->reads) {
                 read->kind = NodeKind::Proj;
                 read->uses.shrink(0);
                 read->uses.append({ VirtualRegister(), node });
-                read->whichThing = index;
+                read->returnValueIndex = index;
                 reads.append(read);
             }
             for (Node* test : onlyRead->tests) {
@@ -945,7 +945,7 @@ void findThingsReturnedInRegisters(Graph& graph)
 }
 
 
-void doWithoutObjectsThatAreOnlyRead(Graph& graph)
+void scalarReplaceReadOnlyObjects(Graph& graph)
 {
     auto resolve = [](Node* node) {
         while (node->replacement)
@@ -1010,12 +1010,12 @@ void doWithoutObjectsThatAreOnlyRead(Graph& graph)
 void analyzeEscapes(Graph& graph)
 {
     EscapeAnalysis analysis(graph, nullptr);
-    analysis.lookAtWhatIsMade();
+    analysis.analyzeAllocations();
 }
 
-uint32_t parametersThatEscape(Graph& graph, Vector<const KnownFunction*>* calleesConsulted)
+uint32_t escapingParameters(Graph& graph, Vector<const KnownFunction*>* calleesRead)
 {
-    return EscapeAnalysis(graph, calleesConsulted).parametersThatEscape();
+    return EscapeAnalysis(graph, calleesRead).escapingParameters();
 }
 
 } } // namespace JSC::AOT

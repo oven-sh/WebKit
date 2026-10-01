@@ -90,10 +90,10 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
         // There is one way out, however many returns there are: what it takes to leave is not worth having twice.
         if (!m_returnBlock)
             m_returnBlock = m_out.newBlock();
-        if (m_graph.numberOfThingsReturnedInRegisters) {
+        if (m_graph.numberOfRegisterReturnValues) {
             Node* object = node->use(node->as<OpRet>().m_value);
             for (unsigned i = 0; i < m_thingsReturned.size(); ++i)
-                m_thingsReturned[i].append(m_out.anchor(lowAs(object->use(NewObjectPlan::registerOf(i)), m_howThingsAreReturned[i])));
+                m_thingsReturned[i].append(m_out.anchor(lowAs(object->use(NewObjectPlan::registerOf(i)), m_returnValueReps[i])));
         } else
             m_returnValues.append(m_out.anchor(lowAs(node->use(node->as<OpRet>().m_value), m_howValuesArePassed.result)));
         m_out.jump(m_returnBlock);
@@ -220,13 +220,13 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
         return;
     }
 
-    LBasicBlock theLongWay = newColdBlock();
+    LBasicBlock slowCase = newColdBlock();
     LBasicBlock dispatch = m_out.newBlock();
     LBasicBlock ifOfSuchALength = m_out.newBlock();
     Vector<ValueFromBlock, 2> lengthsOtherwise;
-    auto [charactersAsItIs, lengthAsItIs] = narrowCharactersOf(value, ifOfSuchALength, lengthsOtherwise);
-    ValueFromBlock plainCharacters = m_out.anchor(charactersAsItIs);
-    ValueFromBlock plainLength = m_out.anchor(lengthAsItIs);
+    auto [rawCharacters, rawLength] = narrowCharactersOf(value, ifOfSuchALength, lengthsOtherwise);
+    ValueFromBlock plainCharacters = m_out.anchor(rawCharacters);
+    ValueFromBlock plainLength = m_out.anchor(rawLength);
     m_out.jump(dispatch);
 
     // One that is in pieces, or has room for characters that none of these has. How long it is is plain all the same, and as a rule that settles it.
@@ -240,13 +240,13 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
             for (auto& one : all)
                 lengths |= 1ull << one.checkStore->length();
             m_graph.wideIntegerConstants.add(static_cast<int64_t>(lengths));
-            m_out.branch(m_out.testNonZero64(m_out.lShr(m_out.constInt64(lengths), itsLength), m_out.constInt64(1)), unsure(theLongWay), unsure(defaultBlock));
+            m_out.branch(m_out.testNonZero64(m_out.lShr(m_out.constInt64(lengths), itsLength), m_out.constInt64(1)), unsure(slowCase), unsure(defaultBlock));
         } else
-            m_out.jump(theLongWay);
+            m_out.jump(slowCase);
     }
 
     // What is written in the program is an atom: so if it says the same as any of them, there is an atom that says so.
-    m_out.appendTo(theLongWay);
+    m_out.appendTo(slowCase);
     LValue atom = vmCall(place, pointerType(), Entry::operationAOTFindEqualAtom, m_globalObject, value);
     goesOnIf(m_out.notNull(atom), defaultBlock);
     ValueFromBlock charactersOfAtom = m_out.anchor(m_out.loadPtr(atom, m_heaps.StringImpl_data));
@@ -272,7 +272,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
         m_out.appendTo(ofThatLength);
         for (unsigned i = first; i < end; ++i) {
             LBasicBlock next = i + 1 < end ? m_out.newBlock() : defaultBlock;
-            m_out.branch(m_out.isZero64(differenceFromWhatIsWritten(characters, all[i].checkStore->span8())), unsure(all[i].target), unsure(next));
+            m_out.branch(m_out.isZero64(compareWithLiteral(characters, all[i].checkStore->span8())), unsure(all[i].target), unsure(next));
             if (i + 1 < end)
                 m_out.appendTo(next);
         }
@@ -686,7 +686,7 @@ bool Lowering::tryLowerMisc(Node* node)
         return true;
     case op_get_parent_scope:
         if (node->scopeToStartFrom) {
-            setJSValue(node, scopeThatIsOutFrom(node->scopeToStartFrom, node->hopsFromThere));
+            setJSValue(node, ancestorScope(node->scopeToStartFrom, node->hopsFromThere));
             return true;
         }
         setJSValue(node, m_out.loadPtr(lowCell(node->use(node->as<OpGetParentScope>().m_scope)), m_heaps.JSScope_next));
@@ -746,10 +746,6 @@ bool Lowering::tryLowerMisc(Node* node)
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
             m_sameAs = nullptr;
-            return true;
-        }
-        if (Options::aotTrustsDeclaredTypes()) [[unlikely]] {
-            setJSValue(node, lowJSValue(value));
             return true;
         }
 

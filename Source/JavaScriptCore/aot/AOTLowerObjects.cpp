@@ -323,21 +323,21 @@ bool Lowering::tryLowerAllocation(Node* node)
         for (unsigned i = 0; i < elements.size(); ++i)
             m_out.store64(lowJSValue(elements[i]), scratchWord(i));
         LValue values = m_scratch;
-        auto theLongWay = [&] {
+        auto slowCase = [&] {
             return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread));
         };
         if (!someHaveBeenSpread && Options::useImmutableIntrinsics())
-            setJSValue(node, withHelper(Stub::HelperNewArrayWithSpread, { values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread) }, theLongWay));
+            setJSValue(node, withHelper(Stub::HelperNewArrayWithSpread, { values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread) }, slowCase));
         else
-            setJSValue(node, theLongWay());
+            setJSValue(node, slowCase());
         return true;
     }
     case op_new_array_with_species: {
         auto bytecode = node->as<OpNewArrayWithSpecies>();
         LValue length = lowJSValue(node->use(bytecode.m_length));
         LValue array = lowCell(node->use(bytecode.m_array));
-        auto theLongWay = [&] { return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpecies, m_globalObject, length, array); };
-        setJSValue(node, Options::useImmutableIntrinsics() ? withHelper(Stub::HelperNewArrayWithSpecies, { length, array }, theLongWay) : theLongWay());
+        auto slowCase = [&] { return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpecies, m_globalObject, length, array); };
+        setJSValue(node, Options::useImmutableIntrinsics() ? withHelper(Stub::HelperNewArrayWithSpecies, { length, array }, slowCase) : slowCase());
         return true;
     }
     case op_spread:

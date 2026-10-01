@@ -47,7 +47,7 @@ struct AddressOfLabel {
     CCallHelpers::Label target;
 };
 static Vector<AddressOfLabel>* s_addressesOfLabels;
-static CCallHelpers::Label s_whereCallVarargsMakesTheCall;
+static CCallHelpers::Label s_callVarargsReturnAddress;
 static CCallHelpers::Label s_whereCallVarargsIsReturnedTo;
 
 static void callStubFromStub(CCallHelpers& jit, Stub stub)
@@ -357,7 +357,7 @@ static void callPreservingRegistersAndReturn(CCallHelpers& jit, Entry operation,
     jit.ret();
 }
 
-// What a stub that takes its operand anywhere (takesOperandAnywhere()) does when there is no quick way is the same wherever the operand was: it is
+// What a stub that takes its operand anywhere (acceptsOperandInAnyRegister()) does when there is no quick way is the same wherever the operand was: it is
 // in T9 by then. The one that takes it where the stub is said to take it comes first, and has this.
 static CCallHelpers::Label s_longWayOfWriteBarrier;
 static CCallHelpers::Label s_longWayOfToBoolean;
@@ -1364,14 +1364,14 @@ static void getFromMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers:
 static void generateGetByIdWith(CCallHelpers&, Entry);
 // Where the stub goes on when the property is not in the object itself at the place the slot says. With the base in A0, the slot in A1 and (the first two) the slot's first word in T11.
 struct WaysOnOfGetById {
-    CCallHelpers::Label isIntricate;
+    CCallHelpers::Label isIndirect;
     CCallHelpers::Label isOfAnotherStructure;
     CCallHelpers::Label miss;
 };
 static WaysOnOfGetById s_waysOnOfGetById[2];
 static WaysOnOfGetById& waysOnOfGetById(Entry operation) { return s_waysOnOfGetById[operation == Entry::operationAOTGetByIdWellKnown]; }
 
-// takesOperandAnywhere(): what generateGetByIdWith() starts with, of a base that is somewhere else.
+// acceptsOperandInAnyRegister(): what generateGetByIdWith() starts with, of a base that is somewhere else.
 static void generateGetByIdFrom(CCallHelpers& jit, Entry operation, GPRReg base)
 {
     ASSERT(base != A0 && base != A1 && base != T11 && base != T12);
@@ -1379,15 +1379,15 @@ static void generateGetByIdFrom(CCallHelpers& jit, Entry operation, GPRReg base)
     jit.load64(slotWord(A1, 0), T11);
     jit.load32(Address(base, JSCell::structureIDOffset()), T12);
     Jump isOfAnotherStructure = jit.branch32(CCallHelpers::NotEqual, T11, T12);
-    Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+    Jump isIndirect = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
     jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
     jit.load64(CCallHelpers::BaseIndex(base, T11, CCallHelpers::TimesEight), A0);
     jit.ret();
 
     auto& waysOn = waysOnOfGetById(operation);
-    isIntricate.link(&jit);
+    isIndirect.link(&jit);
     jit.move(base, A0);
-    jit.jump().linkTo(waysOn.isIntricate, &jit);
+    jit.jump().linkTo(waysOn.isIndirect, &jit);
     isOfAnotherStructure.link(&jit);
     jit.move(base, A0);
     jit.jump().linkTo(waysOn.isOfAnotherStructure, &jit);
@@ -1404,8 +1404,8 @@ struct WaysOnOfReadSlot {
 };
 static WaysOnOfReadSlot s_waysOnOfReadSlot[2][Structure::numberOfSlotsWithFieldIDs];
 
-// base: takesOperandAnywhere().
-static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWillDo, GPRReg base = A0)
+// base: acceptsOperandInAnyRegister().
+static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool allowsUndefined, GPRReg base = A0)
 {
     static_assert(Structure::numberOfSlotsWithFieldIDs == 8);
     ASSERT(base != A1 && base != T11 && base != T12 && base != T13);
@@ -1422,7 +1422,7 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWil
     jit.load64(Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)), A0);
     jit.ret();
 
-    auto& waysOn = s_waysOnOfReadSlot[undefinedWillDo][slot];
+    auto& waysOn = s_waysOnOfReadSlot[allowsUndefined][slot];
     if (base != A0) {
         isNotThere.link(&jit);
         jit.move(base, A0);
@@ -1436,7 +1436,7 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWil
     isNotThere.link(&jit);
     waysOn.isNotThere = jit.label();
     CCallHelpers::JumpList miss;
-    if (undefinedWillDo) {
+    if (allowsUndefined) {
         // Nothing of the object's family is in the slot: so if that is the family of the field, the object has no such property. (Nor does it inherit one: Instance::adopt().)
         miss.append(jit.branchTest32(CCallHelpers::NonZero, T11));
         jit.load16(Address(T13, Structure::offsetOfTypedLayoutID()), T11);
@@ -1451,7 +1451,7 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWil
     miss.link(&jit);
     isNotCell.link(&jit);
     waysOn.miss = jit.label();
-    jit.or32(TrustedImm32(slot << 16 | undefinedWillDo << 24), A1);
+    jit.or32(TrustedImm32(slot << 16 | allowsUndefined << 24), A1);
     callBinaryOperation(jit, Entry::operationAOTReadField);
 }
 
@@ -1489,7 +1489,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
     Jump isOfAnotherStructure = jit.branch32(CCallHelpers::NotEqual, T11, T12);
     // In the object itself, which is what it comes to more often than not.
-    Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+    Jump isIndirect = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
 #if CPU(ARM64)
     jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
 #else
@@ -1499,8 +1499,8 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
     jit.ret();
 
-    isIntricate.link(&jit);
-    waysOnOfGetById(operation).isIntricate = jit.label();
+    isIndirect.link(&jit);
+    waysOnOfGetById(operation).isIndirect = jit.label();
     // Outside it, or in an object that every base of this structure inherits it from.
     jit.loadPtr(slotWord(A1, 1), T12);
     jit.moveConditionallyTest64(CCallHelpers::NonZero, T12, T12, T12, A0, T12);
@@ -1516,14 +1516,14 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
 
     isOfAnotherStructure.link(&jit);
     waysOnOfGetById(operation).isOfAnotherStructure = jit.label();
-    CCallHelpers::JumpList findOutAndRemember;
+    CCallHelpers::JumpList missAndUpdateCache;
     if (operation == Entry::operationAOTGetById) {
         constexpr GPRReg several = T13;
         constexpr GPRReg ownSlotOfSite = T14;
         {
             // A direct slot with a property name id: the base's Structure may have the same name at the same inline offset (a base-class field in another subclass, say).
             // T11 = the slot's first word, T12 = the base's StructureID.
-            Jump isIndirect = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+            Jump isIndirect = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
             jit.extractUnsignedBitfield64(T11, TrustedImm32(32 + Slot::nameIDShift), TrustedImm32(16), T13);
             Jump hasNoNameID = jit.branchTest32(CCallHelpers::Zero, T13);
             jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T14);
@@ -1538,40 +1538,40 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
             isAnotherName.link(&jit);
         }
         // The slot is for some other structure: this is the second that the place has seen.
-        findOutAndRemember.append(jit.branchTest32(CCallHelpers::NonZero, T11));
-        // It has none. Either it has nothing at all or the place has seen several (Slot::isOfSeveral()).
+        missAndUpdateCache.append(jit.branchTest32(CCallHelpers::NonZero, T11));
+        // It has none. Either it has nothing at all or the place has seen several (Slot::isPolymorphic()).
         jit.urshift64(T11, TrustedImm32(32), T12);
         jit.and32(TrustedImm32(Slot::flagsMask), T12);
-        miss.append(jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(Slot::flagsIfOfSeveral)));
+        miss.append(jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(Slot::polymorphicFlags)));
         jit.loadPtr(slotWord(A1, 1), several);
         jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
         static_assert(!OBJECT_OFFSETOF(Slot, structureID));
-        Jump isThatOne[SlotsOfSite::numberOfSlots];
-        for (unsigned i = 0; i < SlotsOfSite::numberOfSlots; ++i)
-            isThatOne[i] = jit.branch32(CCallHelpers::Equal, T12, Address(several, SlotsOfSite::offsetOfSlots() + i * sizeof(Slot)));
+        Jump isThatOne[PolymorphicSlots::numberOfSlots];
+        for (unsigned i = 0; i < PolymorphicSlots::numberOfSlots; ++i)
+            isThatOne[i] = jit.branch32(CCallHelpers::Equal, T12, Address(several, PolymorphicSlots::offsetOfSlots() + i * sizeof(Slot)));
 
         // None of them.
-        findOutAndRemember.append(jit.branchTest32(CCallHelpers::NonZero, Address(several, SlotsOfSite::offsetOfTimesLeftToLearnAtOnce())));
-        jit.load32(Address(several, SlotsOfSite::offsetOfMisses()), T12);
+        missAndUpdateCache.append(jit.branchTest32(CCallHelpers::NonZero, Address(several, PolymorphicSlots::offsetOfTimesLeftToLearnAtOnce())));
+        jit.load32(Address(several, PolymorphicSlots::offsetOfMisses()), T12);
         jit.add32(TrustedImm32(1), T12);
-        jit.store32(T12, Address(several, SlotsOfSite::offsetOfMisses()));
-        findOutAndRemember.append(jit.branchTest32(CCallHelpers::Zero, T12, TrustedImm32(SlotsOfSite::missesBetweenLearning - 1)));
-        findOutAndRemember.append(jit.branchIfNotObject(A0));
-        jit.loadPtr(Address(several, SlotsOfSite::offsetOfName()), A2);
-        getFromMegamorphicCache(jit, A2, findOutAndRemember);
+        jit.store32(T12, Address(several, PolymorphicSlots::offsetOfMisses()));
+        missAndUpdateCache.append(jit.branchTest32(CCallHelpers::Zero, T12, TrustedImm32(PolymorphicSlots::missesBetweenLearning - 1)));
+        missAndUpdateCache.append(jit.branchIfNotObject(A0));
+        jit.loadPtr(Address(several, PolymorphicSlots::offsetOfName()), A2);
+        getFromMegamorphicCache(jit, A2, missAndUpdateCache);
 
         // One of them. From here on it is the slot, as far as what is done with a slot that is for the structure goes.
         CCallHelpers::JumpList haveSlot;
-        for (unsigned i = 0; i < SlotsOfSite::numberOfSlots; ++i) {
+        for (unsigned i = 0; i < PolymorphicSlots::numberOfSlots; ++i) {
             isThatOne[i].link(&jit);
             jit.move(A1, ownSlotOfSite);
-            jit.addPtr(TrustedImm32(SlotsOfSite::offsetOfSlots() + i * sizeof(Slot)), several, A1);
-            if (i + 1 < SlotsOfSite::numberOfSlots)
+            jit.addPtr(TrustedImm32(PolymorphicSlots::offsetOfSlots() + i * sizeof(Slot)), several, A1);
+            if (i + 1 < PolymorphicSlots::numberOfSlots)
                 haveSlot.append(jit.jump());
         }
         haveSlot.link(&jit);
         jit.load64(slotWord(A1, 0), T11);
-        Jump isIntricateThere = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+        Jump isIntricateThere = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
         jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
         jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
         jit.ret();
@@ -1589,7 +1589,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         callGetter(jit, cannotCallGetter);
         cannotCallGetter.link(&jit);
         jit.move(ownSlotOfSite, A1);
-        findOutAndRemember.append(jit.jump());
+        missAndUpdateCache.append(jit.jump());
     }
 
     miss.link(&jit);
@@ -1638,21 +1638,16 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         notFound.append(jit.branchIfNotObject(A0));
         jit.load32(Address(A1, OBJECT_OFFSETOF(Slot, offset)), T11);
         jit.and32(TrustedImm32(Slot::attemptsMask), T11);
-        if (!Options::aotLooksInMegamorphicCacheUnlessSlotIsEmpty()) {
-            notFound.append(jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(Slot::attemptsMask)));
-            loadInstanceAndDataOfSlot(jit, A1, T9, T10);
-        } else {
-            Jump hasGivenUp = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(Slot::attemptsMask));
-            loadInstanceAndDataOfSlot(jit, A1, T9, T10);
-            Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(A1, OBJECT_OFFSETOF(Slot, structureID)));
-            jit.loadPtr(Address(T9, Instance::offsetOfSharedData()), T11);
-            notFound.append(jit.branchPtr(CCallHelpers::NotEqual, T10, T11));
-            Jump isNobodys = jit.jump();
-            hasGivenUp.link(&jit);
-            loadInstanceAndDataOfSlot(jit, A1, T9, T10);
-            isTaken.link(&jit);
-            isNobodys.link(&jit);
-        }
+        Jump hasGivenUp = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(Slot::attemptsMask));
+        loadInstanceAndDataOfSlot(jit, A1, T9, T10);
+        Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(A1, OBJECT_OFFSETOF(Slot, structureID)));
+        jit.loadPtr(Address(T9, Instance::offsetOfSharedData()), T11);
+        notFound.append(jit.branchPtr(CCallHelpers::NotEqual, T10, T11));
+        Jump isNobodys = jit.jump();
+        hasGivenUp.link(&jit);
+        loadInstanceAndDataOfSlot(jit, A1, T9, T10);
+        isTaken.link(&jit);
+        isNobodys.link(&jit);
         siteOfSlot(jit, T10, A1, T13);
         loadInfo(jit, T9, T10);
         jit.loadPtr(Address(T10, FunctionInfo::offsetOfSites()), T11);
@@ -1664,9 +1659,9 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         notFound.link(&jit);
     }
     missAtSite(jit, operation, 1, Returns::Value);
-    if (!findOutAndRemember.empty()) {
+    if (!missAndUpdateCache.empty()) {
         // Not by way of what looks in the megamorphic cache first (generateFrontEndGetById()): what is found there would keep the place from ever remembering anything.
-        findOutAndRemember.link(&jit);
+        missAndUpdateCache.link(&jit);
         missAtSite(jit, Entry::RawGetById, 1, Returns::Value);
     }
 }
@@ -2171,8 +2166,8 @@ static void adapt(CCallHelpers& jit, GPRReg word, GPRReg instance)
 {
     ASSERT(noOverlap(word, instance, thisGPR, countGPR, calleeGPR, T13));
     jit.emitFunctionPrologue();
-    static_assert(!(sizeOfWhatAdapterSaves % stackAlignmentBytes()));
-    jit.subPtr(TrustedImm32(sizeOfWhatAdapterSaves), CCallHelpers::stackPointerRegister);
+    static_assert(!(adapterSaveAreaSize % stackAlignmentBytes()));
+    jit.subPtr(TrustedImm32(adapterSaveAreaSize), CCallHelpers::stackPointerRegister);
     jit.storePtr(instanceGPR, Address(GPRInfo::callFrameRegister, offsetOfInstanceRegisterInAdapter));
     jit.storePtr(GPRInfo::numberTagRegister, Address(GPRInfo::callFrameRegister, offsetOfNumberTagRegisterInAdapter));
     jit.storePtr(GPRInfo::notCellMaskRegister, Address(GPRInfo::callFrameRegister, offsetOfNotCellMaskRegisterInAdapter));
@@ -2366,7 +2361,7 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     constexpr GPRReg passed = GPRInfo::regT3;
     constexpr GPRReg value = GPRInfo::regT4;
     constexpr GPRReg vm = T10;
-    CCallHelpers::JumpList theLongWay;
+    CCallHelpers::JumpList slowCase;
 
     loadCalleeOfFrameBeingMadeAndItsVM(jit, bound, vm);
     jit.emitFunctionPrologue();
@@ -2385,7 +2380,7 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     jit.negPtr(scratch);
     jit.addPtr(CCallHelpers::stackPointerRegister, scratch);
     jit.loadPtr(Address(vm, VM::offsetOfSoftStackLimit()), T11);
-    theLongWay.append(jit.branchPtr(CCallHelpers::Above, T11, scratch));
+    slowCase.append(jit.branchPtr(CCallHelpers::Above, T11, scratch));
     jit.move(scratch, CCallHelpers::stackPointerRegister);
 
     jit.store32(total, CCallHelpers::calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis));
@@ -2435,13 +2430,13 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     // (One in the short form does not say. See ExecutableBase::wayIntoShortForm().)
     Jump saysHowToGetIn = jit.branchIfNotType(total, ShortFunctionExecutableType);
     jit.loadPtr(Address(total, FunctionExecutable::offsetOfAOTEntryFor(CodeSpecializationKind::CodeForCall)), scratch);
-    theLongWay.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    slowCase.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
     jit.loadPtr(Address(vm, VM::offsetOfAOTRuntimeTable()), scratch);
     jit.loadPtr(Address(scratch, static_cast<unsigned>(Entry::EnterStaticFunctionForCall) * sizeof(void*)), scratch);
     Jump knowsHowToGetIn = jit.jump();
     saysHowToGetIn.link(&jit);
     jit.loadPtr(Address(total, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), scratch);
-    theLongWay.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    slowCase.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
     Jump isNative = jit.branchIfNotType(total, FunctionExecutableType);
     jit.loadPtr(Address(total, FunctionExecutable::offsetOfCodeBlockForCall()), passed);
     jit.storePtr(passed, CCallHelpers::calleeFrameCodeBlockBeforeCall());
@@ -2451,7 +2446,7 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     jit.emitFunctionEpilogue();
     jit.ret();
 
-    theLongWay.link(&jit);
+    slowCase.link(&jit);
     jit.emitFunctionEpilogue();
     jit.loadPtr(Address(vm, VM::offsetOfAOTRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::NativeCallTrampoline) * sizeof(void*)), T11);
@@ -2565,8 +2560,8 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
 {
     if (kind == CodeSpecializationKind::CodeForCall && !count)
         s_startOfCallOfAnyCount = jit.label();
-    CCallHelpers::JumpList theLongWay;
-    findCodeOfCallee(jit, kind, theLongWay);
+    CCallHelpers::JumpList slowCase;
+    findCodeOfCallee(jit, kind, slowCase);
     Jump takesList = jit.branchTest64(CCallHelpers::NonZero, T12, CCallHelpers::TrustedImm64(1LL << EntryWord::bitOfIsList));
     jit.urshift64(T12, TrustedImm32(EntryWord::shiftOfNumberOfParameters), T13);
     jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), T12);
@@ -2603,7 +2598,7 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
     jit.emitFunctionEpilogue();
     jit.ret();
 
-    theLongWay.link(&jit);
+    slowCase.link(&jit);
     if (kind == CodeSpecializationKind::CodeForCall)
         callWhatCallIsBoundTo(jit);
     spill();
@@ -2613,8 +2608,8 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
 // See Stub::CallList.
 static void generateCallListTo(CCallHelpers& jit, CodeSpecializationKind kind)
 {
-    CCallHelpers::JumpList theLongWay;
-    findCodeOfCallee(jit, kind, theLongWay);
+    CCallHelpers::JumpList slowCase;
+    findCodeOfCallee(jit, kind, slowCase);
     Jump takesRegisters = jit.branchTest64(CCallHelpers::Zero, T12, CCallHelpers::TrustedImm64(1LL << EntryWord::bitOfIsList));
     jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), T12);
     jit.farJump(T12, JSEntryPtrTag);
@@ -2635,7 +2630,7 @@ static void generateCallListTo(CCallHelpers& jit, CodeSpecializationKind kind)
     }
     jit.farJump(T12, JSEntryPtrTag);
 
-    theLongWay.link(&jit);
+    slowCase.link(&jit);
     jit.emitFunctionPrologue();
     jit.move(argumentGPR(0), countGPR);
     jit.move(argumentGPR(1), T13);
@@ -2754,10 +2749,10 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
         none.link(&jit);
         jit.move(frame, GPRInfo::callFrameRegister);
         jit.move(to, CCallHelpers::stackPointerRegister);
-        jit.jump().linkTo(s_whereCallVarargsMakesTheCall, &jit);
+        jit.jump().linkTo(s_callVarargsReturnAddress, &jit);
     } else {
         if (kind == CodeSpecializationKind::CodeForCall)
-            s_whereCallVarargsMakesTheCall = jit.label();
+            s_callVarargsReturnAddress = jit.label();
         callStubFromStub(jit, kind == CodeSpecializationKind::CodeForCall ? Stub::CallList : Stub::ConstructList);
         if (kind == CodeSpecializationKind::CodeForCall)
             s_whereCallVarargsIsReturnedTo = jit.label();
@@ -2788,13 +2783,13 @@ static void getWellKnownInFrameOfStub(CCallHelpers& jit, WellKnownIdentifier ide
     jit.load64(slotWord(A1, 0), T11);
     jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
     Jump isOfAnotherStructure = jit.branch32(CCallHelpers::NotEqual, T11, T12);
-    Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+    Jump isIndirect = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIndirect) << 32));
     jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T11);
     jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
     Jump found = jit.jump();
 
     isOfAnotherStructure.link(&jit);
-    isIntricate.link(&jit);
+    isIndirect.link(&jit);
     jit.move(A1, A3);
     jit.move(A0, A1);
     jit.move(TrustedImm32(static_cast<uint32_t>(identifier)), A2);
@@ -3304,15 +3299,15 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
     case StubIntrinsic::Get:
     case StubIntrinsic::Has:
     case StubIntrinsic::Set:
-    case StubIntrinsic::SetAndForget:
+    case StubIntrinsic::SetIgnoringResult:
     case StubIntrinsic::Add:
-    case StubIntrinsic::AddAndForget: {
-        bool isOfMap = intrinsic == StubIntrinsic::Get || intrinsic == StubIntrinsic::Set || intrinsic == StubIntrinsic::SetAndForget;
-        bool isOfSet = intrinsic == StubIntrinsic::Add || intrinsic == StubIntrinsic::AddAndForget;
+    case StubIntrinsic::AddIgnoringResult: {
+        bool isOfMap = intrinsic == StubIntrinsic::Get || intrinsic == StubIntrinsic::Set || intrinsic == StubIntrinsic::SetIgnoringResult;
+        bool isOfSet = intrinsic == StubIntrinsic::Add || intrinsic == StubIntrinsic::AddIgnoringResult;
         // findInMapOrSet() has a use for the registers that `this` and the arguments are kept in, and leaves these alone.
         CCallHelpers::JumpList putBack;
         ifNotTheCallee = &putBack;
-        bool hasValue = intrinsic == StubIntrinsic::Set || intrinsic == StubIntrinsic::SetAndForget;
+        bool hasValue = intrinsic == StubIntrinsic::Set || intrinsic == StubIntrinsic::SetIgnoringResult;
         jit.move(argument(0), A1);
         jit.move(argument(1), A2);
         if (hasValue)
@@ -3411,15 +3406,15 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
     }
 }
 
-StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool resultIsWanted)
+StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool usesResult)
 {
-    enum { Any, Wanted, NotWanted };
+    enum { Any, Wanted, ResultUnused };
     if constexpr (!usesStubs)
         return StubIntrinsic::None;
-    if (!Options::aotCallIntrinsics() || name->length() > 11 || name->isSymbol())
+    if (name->length() > 11 || name->isSymbol())
         return StubIntrinsic::None;
 #define AOT_STUB_INTRINSIC_FOR(intrinsic, text, argumentCount, result) \
-    if (argumentCount + 1 == argumentCountIncludingThis && (result == Any || (result == Wanted) == resultIsWanted) && WTF::equal(name, text ""_s)) \
+    if (argumentCount + 1 == argumentCountIncludingThis && (result == Any || (result == Wanted) == usesResult) && WTF::equal(name, text ""_s)) \
         return StubIntrinsic::intrinsic;
     FOR_EACH_AOT_STUB_INTRINSIC(AOT_STUB_INTRINSIC_FOR)
 #undef AOT_STUB_INTRINSIC_FOR
@@ -3515,32 +3510,32 @@ FOR_EACH_AOT_STUB(AOT_NO_STUB)
 #endif // CPU(ARM64)
 
 // What calls an operation is told which by where it is in the runtime's table. What calls a function is told how many arguments.
-static constexpr Stub stubsThatCallOperations[] = {
+static constexpr Stub operationCallStubs[] = {
     Stub::OperationValue, Stub::OperationVoid, Stub::OperationDouble, Stub::OperationValueWithGlobalObject, Stub::OperationVoidWithGlobalObject, Stub::OperationDoubleWithGlobalObject,
     Stub::PlainOperation, Stub::PlainOperationWithGlobalObject, Stub::PlainOperationWithVM,
     Stub::ColdOperationVoid, Stub::ColdOperationVoidOfLeaf, Stub::ColdOperationValue, Stub::ColdOperationValueOfLeaf,
 };
-static constexpr Stub stubsThatCallFunctions[] = { Stub::Call, Stub::Construct };
+static constexpr Stub functionCallStubs[] = { Stub::Call, Stub::Construct };
 static constexpr unsigned numberOfCountsWithThunk = numberOfArgumentGPRs + 1; // From none to as many as there are registers for.
 // The prologue is told how big the frame is, which is a multiple of this.
 static constexpr unsigned unitOfFrameSize = stackAlignmentBytes();
 static constexpr unsigned biggestFrameWithThunk = 64 * unitOfFrameSize;
-static constexpr unsigned firstThunkOfCalls = std::size(stubsThatCallOperations) * numberOfEntries;
-static constexpr unsigned firstThunkOfPrologue = firstThunkOfCalls + std::size(stubsThatCallFunctions) * numberOfCountsWithThunk;
+static constexpr unsigned firstThunkOfCalls = std::size(operationCallStubs) * numberOfEntries;
+static constexpr unsigned firstThunkOfPrologue = firstThunkOfCalls + std::size(functionCallStubs) * numberOfCountsWithThunk;
 static constexpr unsigned firstThunkOfIntrinsics = firstThunkOfPrologue + biggestFrameWithThunk / unitOfFrameSize;
-// takesOperandAnywhere(). These have all that is quick about them over again for each register...
-static constexpr Stub stubsThatTakeOperandAnywhere[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
+// acceptsOperandInAnyRegister(). These have all that is quick about them over again for each register...
+static constexpr Stub stubsWithAnyRegisterOperand[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
     // ... and these are got to by way of a move.
     Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
     Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringEqualTo, Stub::GetLength, Stub::HelperAddField,
     Stub::ReadSlot0, Stub::ReadSlot1, Stub::ReadSlot2, Stub::ReadSlot3, Stub::ReadSlot4, Stub::ReadSlot5, Stub::ReadSlot6, Stub::ReadSlot7,
     Stub::ReadSlotOrUndefined0, Stub::ReadSlotOrUndefined1, Stub::ReadSlotOrUndefined2, Stub::ReadSlotOrUndefined3, Stub::ReadSlotOrUndefined4, Stub::ReadSlotOrUndefined5, Stub::ReadSlotOrUndefined6, Stub::ReadSlotOrUndefined7 };
 // And so are these, which are got to by way of something that says which operation as it is.
-struct OperationThatTakesOperandAnywhere {
+struct OperationWithAnyRegisterOperand {
     Stub stub;
     Entry operation;
 };
-static constexpr OperationThatTakesOperandAnywhere operationsThatTakeOperandAnywhere[] = {
+static constexpr OperationWithAnyRegisterOperand operationsWithAnyRegisterOperand[] = {
     { Stub::ColdOperationVoid, Entry::operationAOTCheckType }, { Stub::ColdOperationVoidOfLeaf, Entry::operationAOTCheckType },
     { Stub::ColdOperationVoid, Entry::operationAOTCheckTypedLayout }, { Stub::ColdOperationVoidOfLeaf, Entry::operationAOTCheckTypedLayout },
     { Stub::ColdOperationValue, Entry::operationAOTGetElementOrEmpty }, { Stub::ColdOperationValueOfLeaf, Entry::operationAOTGetElementOrEmpty },
@@ -3558,25 +3553,25 @@ static constexpr OperationThatTakesOperandAnywhere operationsThatTakeOperandAnyw
 // x0 to x29. Not that it can be in all of those. But it can be in one that always has the same thing in it, if that is what is given: nought as a value is the tag of numbers.
 static constexpr unsigned numberOfRegistersForOperand = 30;
 static constexpr unsigned firstThunkOfOperands = firstThunkOfIntrinsics + numberOfStubIntrinsics;
-static constexpr unsigned firstThunkOfOperandsOfOperations = firstThunkOfOperands + std::size(stubsThatTakeOperandAnywhere) * numberOfRegistersForOperand;
-// takesTwoOperandsAnywhere(): got to by way of two moves.
-static constexpr Stub stubsThatTakeTwoOperandsAnywhere[] = { Stub::StrictEqual, Stub::LooseEqual, Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::HelperAddField };
+static constexpr unsigned firstThunkOfOperandsOfOperations = firstThunkOfOperands + std::size(stubsWithAnyRegisterOperand) * numberOfRegistersForOperand;
+// acceptsTwoOperandsInAnyRegisters(): got to by way of two moves.
+static constexpr Stub stubsWithTwoAnyRegisterOperands[] = { Stub::StrictEqual, Stub::LooseEqual, Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::HelperAddField };
 static constexpr unsigned numberOfRegistersForPair = 16; // x0 to x8, x19 to x25
-// givesResultAnywhere(). All of Stub::OperationValueWithGlobalObject, of which there is one for each register.
-struct OperationThatGivesResultAnywhere {
+// returnsResultInAnyRegister(). All of Stub::OperationValueWithGlobalObject, of which there is one for each register.
+struct OperationWithAnyRegisterResult {
     Entry operation;
-    bool takesOperandAnywhere; // It is among operationsThatTakeOperandAnywhere.
+    bool acceptsOperandInAnyRegister; // It is among operationsWithAnyRegisterOperand.
 };
-static constexpr OperationThatGivesResultAnywhere operationsThatGiveResultAnywhere[] = {
+static constexpr OperationWithAnyRegisterResult operationsWithAnyRegisterResult[] = {
     { Entry::operationAOTNewFunction, true }, { Entry::operationAOTToString, true }, { Entry::operationAOTToThis, true }, { Entry::operationAOTCreateLexicalEnvironment, true },
     { Entry::operationAOTCloneObject, true }, { Entry::operationAOTReadLazyClosureVar, true },
     { Entry::operationAOTNewObjectLiteral, false }, { Entry::operationAOTNewInternalFieldObject, false }, { Entry::operationAOTNewObject, false }, { Entry::operationAOTNewArray, false },
     { Entry::operationAOTNewArrayWithSpecies, false }, { Entry::operationMakeRope2, false }, { Entry::operationMakeRope3, false },
 };
 static constexpr unsigned numberOfRegistersForResult = 7; // x19 to x25
-static constexpr unsigned firstThunkOfPairs = firstThunkOfOperandsOfOperations + std::size(operationsThatTakeOperandAnywhere) * numberOfRegistersForOperand;
-static constexpr unsigned firstThunkOfResults = firstThunkOfPairs + std::size(stubsThatTakeTwoOperandsAnywhere) * numberOfRegistersForPair * numberOfRegistersForPair;
-static constexpr unsigned numberOfThunks = firstThunkOfResults + std::size(operationsThatGiveResultAnywhere) * numberOfRegistersForResult * numberOfRegistersForOperand;
+static constexpr unsigned firstThunkOfPairs = firstThunkOfOperandsOfOperations + std::size(operationsWithAnyRegisterOperand) * numberOfRegistersForOperand;
+static constexpr unsigned firstThunkOfResults = firstThunkOfPairs + std::size(stubsWithTwoAnyRegisterOperands) * numberOfRegistersForPair * numberOfRegistersForPair;
+static constexpr unsigned numberOfThunks = firstThunkOfResults + std::size(operationsWithAnyRegisterResult) * numberOfRegistersForResult * numberOfRegistersForOperand;
 static_assert(numberOfThunks < std::numeric_limits<uint16_t>::max());
 
 static bool thereAreNoWaysInByRegister()
@@ -3589,40 +3584,40 @@ static std::optional<unsigned> firstThunkForOperandOf(Stub stub, std::optional<u
     if (thereAreNoWaysInByRegister())
         return std::nullopt;
     if (!valueOfT9) {
-        for (unsigned i = 0; i < std::size(stubsThatTakeOperandAnywhere); ++i) {
-            if (stubsThatTakeOperandAnywhere[i] == stub)
+        for (unsigned i = 0; i < std::size(stubsWithAnyRegisterOperand); ++i) {
+            if (stubsWithAnyRegisterOperand[i] == stub)
                 return firstThunkOfOperands + i * numberOfRegistersForOperand;
         }
         return std::nullopt;
     }
-    for (unsigned i = 0; i < std::size(operationsThatTakeOperandAnywhere); ++i) {
-        if (operationsThatTakeOperandAnywhere[i].stub == stub && static_cast<unsigned>(operationsThatTakeOperandAnywhere[i].operation) * sizeof(void*) == *valueOfT9)
+    for (unsigned i = 0; i < std::size(operationsWithAnyRegisterOperand); ++i) {
+        if (operationsWithAnyRegisterOperand[i].stub == stub && static_cast<unsigned>(operationsWithAnyRegisterOperand[i].operation) * sizeof(void*) == *valueOfT9)
             return firstThunkOfOperandsOfOperations + i * numberOfRegistersForOperand;
     }
     return std::nullopt;
 }
 
-bool takesOperandAnywhere(Stub stub, std::optional<uint32_t> valueOfT9)
+bool acceptsOperandInAnyRegister(Stub stub, std::optional<uint32_t> valueOfT9)
 {
     return !!firstThunkForOperandOf(stub, valueOfT9);
 }
 
 static bool callsOperation(Stub stub)
 {
-    for (Stub other : stubsThatCallOperations) {
+    for (Stub other : operationCallStubs) {
         if (other == stub)
             return true;
     }
     return false;
 }
 
-GPRReg whereOperandIsTaken(Stub stub)
+GPRReg defaultOperandRegister(Stub stub)
 {
     // (All of those above are given the global object first, which they find for themselves.)
     return callsOperation(stub) ? GPRInfo::argumentGPR1 : GPRInfo::argumentGPR0;
 }
 
-bool leavesAloneWhereOperandIsTaken(Stub stub)
+bool preservesOperandRegister(Stub stub)
 {
     return stub == Stub::WriteBarrier;
 }
@@ -3661,11 +3656,11 @@ unsigned thunkForOperandIn(Stub stub, std::optional<uint32_t> valueOfT9, GPRReg 
     return *firstThunkForOperandOf(stub, valueOfT9) + static_cast<unsigned>(reg);
 }
 
-bool takesTwoOperandsAnywhere(Stub stub)
+bool acceptsTwoOperandsInAnyRegisters(Stub stub)
 {
     if (thereAreNoWaysInByRegister())
         return false;
-    for (Stub other : stubsThatTakeTwoOperandsAnywhere) {
+    for (Stub other : stubsWithTwoAnyRegisterOperands) {
         if (other == stub)
             return true;
     }
@@ -3688,32 +3683,32 @@ static GPRReg registerForPair(unsigned number)
     return static_cast<GPRReg>(number <= 8 ? number : number + 10);
 }
 
-static std::optional<unsigned> whichThatGivesResultAnywhere(Stub stub, std::optional<uint32_t> valueOfT9)
+static std::optional<unsigned> indexOfOperationWithAnyRegisterResult(Stub stub, std::optional<uint32_t> valueOfT9)
 {
     if (thereAreNoWaysInByRegister() || stub != Stub::OperationValueWithGlobalObject || !valueOfT9)
         return std::nullopt;
-    for (unsigned i = 0; i < std::size(operationsThatGiveResultAnywhere); ++i) {
-        if (static_cast<unsigned>(operationsThatGiveResultAnywhere[i].operation) * sizeof(void*) == *valueOfT9)
+    for (unsigned i = 0; i < std::size(operationsWithAnyRegisterResult); ++i) {
+        if (static_cast<unsigned>(operationsWithAnyRegisterResult[i].operation) * sizeof(void*) == *valueOfT9)
             return i;
     }
     return std::nullopt;
 }
 
-bool givesResultAnywhere(Stub stub, std::optional<uint32_t> valueOfT9)
+bool returnsResultInAnyRegister(Stub stub, std::optional<uint32_t> valueOfT9)
 {
-    return !!whichThatGivesResultAnywhere(stub, valueOfT9);
+    return !!indexOfOperationWithAnyRegisterResult(stub, valueOfT9);
 }
 
 std::optional<unsigned> thunkFor(Stub stub, uint32_t valueOfT9)
 {
     if constexpr (!usesStubs)
         return std::nullopt;
-    for (unsigned i = 0; i < std::size(stubsThatCallOperations); ++i) {
-        if (stubsThatCallOperations[i] == stub)
+    for (unsigned i = 0; i < std::size(operationCallStubs); ++i) {
+        if (operationCallStubs[i] == stub)
             return valueOfT9 % sizeof(void*) || valueOfT9 / sizeof(void*) >= numberOfEntries ? std::nullopt : std::optional<unsigned> { i * numberOfEntries + valueOfT9 / sizeof(void*) };
     }
-    for (unsigned i = 0; i < std::size(stubsThatCallFunctions); ++i) {
-        if (stubsThatCallFunctions[i] == stub)
+    for (unsigned i = 0; i < std::size(functionCallStubs); ++i) {
+        if (functionCallStubs[i] == stub)
             return valueOfT9 >= numberOfCountsWithThunk ? std::nullopt : std::optional<unsigned> { firstThunkOfCalls + i * numberOfCountsWithThunk + valueOfT9 };
     }
     if (stub == Stub::Prologue && valueOfT9 && valueOfT9 <= biggestFrameWithThunk && !(valueOfT9 % unitOfFrameSize))
@@ -3772,7 +3767,7 @@ const StubBlob& stubBlob()
 
         Vector<CCallHelpers::Label> thunkLabels;
         if constexpr (usesStubs) {
-            for (Stub stub : stubsThatCallOperations) {
+            for (Stub stub : operationCallStubs) {
                 for (unsigned entry = 0; entry < numberOfEntries; ++entry) {
                     thunkLabels.append(jit.label());
                     jit.move(CCallHelpers::TrustedImm32(entry * sizeof(void*)), GPRInfo::regT9);
@@ -3780,7 +3775,7 @@ const StubBlob& stubBlob()
                 }
             }
             // These are on the way of everything a program does, and short: each has the stub all over again, right after it.
-            for (Stub stub : stubsThatCallFunctions) {
+            for (Stub stub : functionCallStubs) {
                 for (unsigned count = 0; count < numberOfCountsWithThunk; ++count) {
                     jit.align();
                     thunkLabels.append(jit.label());
@@ -3803,15 +3798,15 @@ const StubBlob& stubBlob()
                 otherwise.link(&jit);
                 jit.move(T14, argumentGPR(0));
                 jit.move(T15, argumentGPR(1));
-                static_assert(stubsThatCallFunctions[0] == Stub::Call);
+                static_assert(functionCallStubs[0] == Stub::Call);
                 jit.jump().linkTo(thunkLabels[firstThunkOfCalls + argumentCountOf(intrinsic)], &jit);
             }
 #if CPU(ARM64)
             static_assert(!static_cast<unsigned>(ARM64Registers::x0));
-            for (Stub stub : stubsThatTakeOperandAnywhere) {
+            for (Stub stub : stubsWithAnyRegisterOperand) {
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
                     GPRReg reg = static_cast<GPRReg>(number);
-                    if (!operandMayBeIn(stub, reg) || reg == whereOperandIsTaken(stub)) {
+                    if (!operandMayBeIn(stub, reg) || reg == defaultOperandRegister(stub)) {
                         thunkLabels.append(labels[static_cast<unsigned>(stub)]);
                         continue;
                     }
@@ -3835,21 +3830,21 @@ const StubBlob& stubBlob()
                             generateReadSlot(jit, read->first, read->second, reg);
                             break;
                         }
-                        jit.move(reg, whereOperandIsTaken(stub));
+                        jit.move(reg, defaultOperandRegister(stub));
                         jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
                         break;
                     }
                 }
             }
-            for (auto& [stub, operation] : operationsThatTakeOperandAnywhere) {
+            for (auto& [stub, operation] : operationsWithAnyRegisterOperand) {
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
                     thunkLabels.append(jit.label());
-                    jit.move(static_cast<GPRReg>(number), whereOperandIsTaken(stub));
+                    jit.move(static_cast<GPRReg>(number), defaultOperandRegister(stub));
                     jit.move(CCallHelpers::TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), GPRInfo::regT9);
                     jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
                 }
             }
-            for (Stub stub : stubsThatTakeTwoOperandsAnywhere) {
+            for (Stub stub : stubsWithTwoAnyRegisterOperands) {
                 for (unsigned i = 0; i < numberOfRegistersForPair; ++i) {
                     for (unsigned j = 0; j < numberOfRegistersForPair; ++j) {
                         thunkLabels.append(jit.label());
@@ -3864,15 +3859,15 @@ const StubBlob& stubBlob()
                 handsBackIn[i] = jit.label();
                 generateOperation(jit, Returns::Value, true, static_cast<GPRReg>(static_cast<unsigned>(ARM64Registers::x19) + i));
             }
-            for (auto& [operation, takesOperandAnywhere] : operationsThatGiveResultAnywhere) {
+            for (auto& [operation, acceptsOperandInAnyRegister] : operationsWithAnyRegisterResult) {
                 for (unsigned i = 0; i < numberOfRegistersForResult; ++i) {
                     for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
-                        if (!takesOperandAnywhere && number) {
+                        if (!acceptsOperandInAnyRegister && number) {
                             thunkLabels.append(thunkLabels.last());
                             continue;
                         }
                         thunkLabels.append(jit.label());
-                        if (takesOperandAnywhere)
+                        if (acceptsOperandInAnyRegister)
                             jit.move(static_cast<GPRReg>(number), GPRInfo::argumentGPR1);
                         jit.move(CCallHelpers::TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), GPRInfo::regT9);
                         jit.jump().linkTo(handsBackIn[i], &jit);
@@ -3918,11 +3913,11 @@ const StubBlob& stubBlob()
                 dataLogLn("AOT: stub ", names[i], " ", blob->offsets[i]);
             // (In the order they are made in, above.)
             unsigned thunk = 0;
-            for (Stub stub : stubsThatCallOperations) {
+            for (Stub stub : operationCallStubs) {
                 dataLogLn("AOT: stub ThunksOf", names[static_cast<unsigned>(stub)], " ", blob->thunkOffsets[thunk]);
                 thunk += numberOfEntries;
             }
-            for (Stub stub : stubsThatCallFunctions) {
+            for (Stub stub : functionCallStubs) {
                 for (unsigned count = 0; count < numberOfCountsWithThunk; ++count)
                     dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], count, " ", blob->thunkOffsets[thunk++]);
             }
@@ -3930,23 +3925,23 @@ const StubBlob& stubBlob()
                 dataLogLn("AOT: stub Prologue", frameSize, " ", blob->thunkOffsets[thunk++]);
             for (unsigned i = 1; i <= numberOfStubIntrinsics; ++i)
                 dataLogLn("AOT: stub Intrinsic", i, " ", blob->thunkOffsets[thunk++]);
-            for (Stub stub : stubsThatTakeOperandAnywhere) {
+            for (Stub stub : stubsWithAnyRegisterOperand) {
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number, ++thunk) {
                     if (blob->thunkOffsets[thunk] != blob->offsets[static_cast<unsigned>(stub)])
                         dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "OfX", number, " ", blob->thunkOffsets[thunk]);
                 }
             }
-            for (auto& [stub, operation] : operationsThatTakeOperandAnywhere) {
+            for (auto& [stub, operation] : operationsWithAnyRegisterOperand) {
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number)
                     dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "#", static_cast<unsigned>(operation), "OfX", number, " ", blob->thunkOffsets[thunk++]);
             }
-            for (Stub stub : stubsThatTakeTwoOperandsAnywhere) {
+            for (Stub stub : stubsWithTwoAnyRegisterOperands) {
                 for (unsigned i = 0; i < numberOfRegistersForPair * numberOfRegistersForPair; ++i)
                     dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "OfPair", i, " ", blob->thunkOffsets[thunk++]);
             }
-            for (auto& [operation, takesOperandAnywhere] : operationsThatGiveResultAnywhere) {
+            for (auto& [operation, acceptsOperandInAnyRegister] : operationsWithAnyRegisterResult) {
                 for (unsigned i = 0; i < numberOfRegistersForResult * numberOfRegistersForOperand; ++i, ++thunk) {
-                    if (takesOperandAnywhere || !(i % numberOfRegistersForOperand))
+                    if (acceptsOperandInAnyRegister || !(i % numberOfRegistersForOperand))
                         dataLogLn("AOT: stub OperationValueWithGlobalObject#", static_cast<unsigned>(operation), "ToX", 19 + i / numberOfRegistersForOperand, "OfX", i % numberOfRegistersForOperand, " ", blob->thunkOffsets[thunk]);
                 }
             }
@@ -3973,7 +3968,7 @@ void StubCalls::call(CCallHelpers& jit, Stub stub, uint32_t valueOfT9, CallSite 
 
 void StubCalls::callWithOperandIn(CCallHelpers& jit, Stub stub, std::optional<uint32_t> valueOfT9, GPRReg operand, CallSite site)
 {
-    if (operand == whereOperandIsTaken(stub)) {
+    if (operand == defaultOperandRegister(stub)) {
         if (valueOfT9)
             call(jit, stub, *valueOfT9, site);
         else
@@ -3986,7 +3981,7 @@ void StubCalls::callWithOperandIn(CCallHelpers& jit, Stub stub, std::optional<ui
 
 void StubCalls::callWithOperandsIn(CCallHelpers& jit, Stub stub, GPRReg first, GPRReg second, CallSite site)
 {
-    if (second == GPRInfo::argumentGPR1 && (first == GPRInfo::argumentGPR0 || (takesOperandAnywhere(stub, std::nullopt) && operandMayBeIn(stub, first)))) {
+    if (second == GPRInfo::argumentGPR1 && (first == GPRInfo::argumentGPR0 || (acceptsOperandInAnyRegister(stub, std::nullopt) && operandMayBeIn(stub, first)))) {
         callWithOperandIn(jit, stub, std::nullopt, first, site);
         return;
     }
@@ -3994,7 +3989,7 @@ void StubCalls::callWithOperandsIn(CCallHelpers& jit, Stub stub, GPRReg first, G
     auto numberOfSecond = numberAmongRegistersForPair(second);
     if (!numberOfFirst || !numberOfSecond) {
         // (Compared with nought as a rule, which is in a register of its own: that is moved, and the other stays.)
-        if (first != GPRInfo::argumentGPR1 && takesOperandAnywhere(stub, std::nullopt) && operandMayBeIn(stub, first)) {
+        if (first != GPRInfo::argumentGPR1 && acceptsOperandInAnyRegister(stub, std::nullopt) && operandMayBeIn(stub, first)) {
             jit.move(second, GPRInfo::argumentGPR1);
             callWithOperandIn(jit, stub, std::nullopt, first, site);
             return;
@@ -4003,8 +3998,8 @@ void StubCalls::callWithOperandsIn(CCallHelpers& jit, Stub stub, GPRReg first, G
         call(jit, stub, site);
         return;
     }
-    for (unsigned i = 0; i < std::size(stubsThatTakeTwoOperandsAnywhere); ++i) {
-        if (stubsThatTakeTwoOperandsAnywhere[i] != stub)
+    for (unsigned i = 0; i < std::size(stubsWithTwoAnyRegisterOperands); ++i) {
+        if (stubsWithTwoAnyRegisterOperands[i] != stub)
             continue;
         m_pending.append({ jit.nearCall(), stub, false, site.bits });
         m_pending.last().thunk = safeCast<uint16_t>(firstThunkOfPairs + (i * numberOfRegistersForPair + *numberOfFirst) * numberOfRegistersForPair + *numberOfSecond + 1);
@@ -4016,16 +4011,16 @@ void StubCalls::callWithOperandsIn(CCallHelpers& jit, Stub stub, GPRReg first, G
 void StubCalls::callForResultIn(CCallHelpers& jit, Stub stub, uint32_t valueOfT9, GPRReg operand, GPRReg result, CallSite site)
 {
     if (result == GPRInfo::returnValueGPR) {
-        if (operand == whereOperandIsTaken(stub))
+        if (operand == defaultOperandRegister(stub))
             call(jit, stub, valueOfT9, site);
         else
             callWithOperandIn(jit, stub, valueOfT9, operand, site);
         return;
     }
-    unsigned which = *whichThatGivesResultAnywhere(stub, valueOfT9);
+    unsigned which = *indexOfOperationWithAnyRegisterResult(stub, valueOfT9);
     unsigned numberOfResult = static_cast<unsigned>(result) - static_cast<unsigned>(ARM64Registers::x19);
     RELEASE_ASSERT(numberOfResult < numberOfRegistersForResult);
-    RELEASE_ASSERT(operationsThatGiveResultAnywhere[which].takesOperandAnywhere ? operandMayBeIn(stub, operand) : operand == whereOperandIsTaken(stub));
+    RELEASE_ASSERT(operationsWithAnyRegisterResult[which].acceptsOperandInAnyRegister ? operandMayBeIn(stub, operand) : operand == defaultOperandRegister(stub));
     m_pending.append({ jit.nearCall(), stub, false, site.bits });
     m_pending.last().thunk = safeCast<uint16_t>(firstThunkOfResults + (which * numberOfRegistersForResult + numberOfResult) * numberOfRegistersForOperand + static_cast<unsigned>(operand) + 1);
 }

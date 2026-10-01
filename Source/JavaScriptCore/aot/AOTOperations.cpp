@@ -34,7 +34,7 @@ namespace JSC { namespace AOT {
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
-    countOperationOnBehalfOf(globalObject, callFrame); \
+    countOperationFor(globalObject, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
@@ -155,7 +155,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
         auto& known = instance.customGetterFor(base.asCell()->structureID().bits(), ident.impl());
         if (known.uid == ident.impl() && known.structureID == base.asCell()->structureID().bits() && vm.megamorphicCache() && known.epoch == vm.megamorphicCache()->epoch()) {
             auto getter = GetValueFunc(std::bit_cast<GetValueFunc::Ptr>(known.getter));
-            OPERATION_RETURN(scope, getter(known.holder->globalObject(), known.isGivenHolder ? JSValue::encode(known.holder) : encodedBase, ident));
+            OPERATION_RETURN(scope, getter(known.holder->globalObject(), known.passesHolder ? JSValue::encode(known.holder) : encodedBase, ident));
         }
     }
     PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
@@ -558,7 +558,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthTheLongWay, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(encodedBase).get(globalObject, vm.propertyNames->length)));
@@ -602,12 +602,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (JSGlo
     OPERATION_RETURN(scope, static_cast<EncodedJSValue>(std::bit_cast<uintptr_t>(&s_emptyTypedObject[0])));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint64_t which))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint64_t which))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     uint16_t layoutID = static_cast<uint16_t>(which >> 32);
     unsigned slot = which >> 48 & 0xff;
-    bool undefinedWillDo = which >> 56 & 1;
+    bool allowsUndefined = which >> 56 & 1;
     JSValue base = JSValue::decode(encodedBase);
     UniquedStringImpl* uid = StaticHeap::identifiersOfProgram()[static_cast<uint32_t>(which)];
     JSValue value;
@@ -620,7 +620,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlob
         value = getByIdAndFillMegamorphicCache(globalObject, base, Identifier::fromUid(vm, uid), slot);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
-    if (value.isUndefined() && undefinedWillDo)
+    if (value.isUndefined() && allowsUndefined)
         OPERATION_RETURN(scope, JSValue::encode(value));
     if (TypedLayoutTable::checkStore(layoutID, slot, value) == TypedLayoutTable::StoreCheck::Rejected) {
         throwTypeError(globalObject, scope, "Type check failed: a property is not what the type of the object says it is"_s);
@@ -634,7 +634,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     unsigned slot = which >> 16 & 0xff;
-    bool undefinedWillDo = which >> 24 & 1;
+    bool allowsUndefined = which >> 24 & 1;
     const TypedLayoutTable::Field& field = TypedLayoutTable::fieldWithID(slot, static_cast<uint16_t>(which));
     uint16_t layoutID = TypedLayoutTable::layoutIDOf(field);
     JSValue base = JSValue::decode(encodedBase);
@@ -649,7 +649,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
             if (there == field.id) {
                 if (JSValue value = object->getDirect(static_cast<PropertyOffset>(slot)))
                     OPERATION_RETURN(scope, JSValue::encode(value));
-            } else if (!there && undefinedWillDo)
+            } else if (!there && allowsUndefined)
                 OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         }
     }
@@ -667,7 +667,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
         if (!base.isObject() || (propertySlot.isUnset() ? propertySlot.isTaintedByOpaqueObject() : !propertySlot.isCacheableValue()))
             globalObject->aotInstance()->noteNotJustRead(slot, field.id);
     }
-    if (value.isUndefined() && undefinedWillDo)
+    if (value.isUndefined() && allowsUndefined)
         OPERATION_RETURN(scope, JSValue::encode(value));
     // (What comes next takes it for what the field holds. So it is that, or this does not come back.)
     if (TypedLayoutTable::checkStore(field, value) == TypedLayoutTable::StoreCheck::Rejected) {
@@ -704,7 +704,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject*
 
 // Options::aotVerifiesFacts()
 // That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
 {
     Type type = static_cast<Type>(highHalfOfType) << 64 | lowHalfOfType;
     Type actual = typeOfValue(JSValue::decode(encodedValue));
@@ -721,7 +721,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObjec
                     actual = (actual & ~TFunction) | typeOfFunction(number);
             } else if (!function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)) {
                 // One that there is no code for: every call of it was made part of whoever made it. There is no telling which it is.
-                actual = (actual & ~TWhicheverFunction) | (type & TWhicheverFunction);
+                actual = (actual & ~TAnyFunctionNumber) | (type & TAnyFunctionNumber);
             }
         }
     }

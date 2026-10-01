@@ -57,14 +57,14 @@ JSC_DECLARE_JIT_OPERATION(operationAOTFillImportSlot, JSObject*, (JSGlobalObject
 JSC_DECLARE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject*, JSObject* scope, EncodedJSValue value, uint32_t identifierIndex, Slot*, uint32_t how));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrow, void, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject*, EncodedJSValue, uint32_t mask));
-JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthTheLongWay, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (JSGlobalObject*, EncodedJSValue, uint32_t layoutID)); // Lowering::checkTypedLayout()
 JSC_DECLARE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t layoutID)); // Lowering::coerceToTypedLayout()
 // which: the number of the name | family << 32 | slot << 48 | whether undefined will do << 56.
 JSC_DECLARE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint32_t which)); // Stub::ReadSlot0: id | slot << 16 | undefined will do << 24
-JSC_DECLARE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint64_t which));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint64_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject*, JSObject*)); // Lowering::validateNewObject()
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject*, EncodedJSValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlobalObject*, EncodedJSValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));
 JSC_DECLARE_JIT_OPERATION(operationAOTHandleTraps, void, (JSGlobalObject*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM*));

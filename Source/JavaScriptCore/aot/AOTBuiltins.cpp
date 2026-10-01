@@ -219,7 +219,7 @@ unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name)
     return intrinsics->at(number).canonical;
 }
 
-Builtin builtinThatIs(unsigned number)
+Builtin builtinWithNumber(unsigned number)
 {
     const Tables* all = tables();
     if (!all || number >= all->builtins.size())
@@ -316,7 +316,7 @@ Receiver receiverLikelyToHave(Type type, const StringImpl& name)
     for (Receiver receiver : receiversThereAre) {
         if (receiver == Receiver::Number || !mayBe(type, typeOf(receiver)))
             continue;
-        if (builtinThatIs(intrinsicFoundOn(receiver, name)) == Builtin::None)
+        if (builtinWithNumber(intrinsicFoundOn(receiver, name)) == Builtin::None)
             continue;
         if (found != Receiver::None)
             return Receiver::None;

@@ -31,7 +31,7 @@ ALWAYS_INLINE BytecodeIndex bytecodeIndexOfCaller(JSGlobalObject* globalObject, 
 
 // Whatever a function that has no Data of its own comes to an operation for, it may well be for want of one. See Instance::misses.
 // (One in so many is looked at, and counts for as many: finding out whose it is takes longer than some operations do.)
-ALWAYS_INLINE void countOperationOnBehalfOf(JSGlobalObject* globalObject, CallFrame* callFrame)
+ALWAYS_INLINE void countOperationFor(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     constexpr uint32_t oneIn = 8;
     if (++globalObject->aotInstance()->operationsNotCounted % oneIn) [[likely]]
@@ -45,7 +45,7 @@ ALWAYS_INLINE void countOperationOnBehalfOf(JSGlobalObject* globalObject, CallFr
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
-    countOperationOnBehalfOf(globalObject, callFrame); \
+    countOperationFor(globalObject, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 

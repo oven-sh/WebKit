@@ -31,7 +31,7 @@ std::optional<uint32_t> locationOfProperty(PropertyOffset offset)
     constexpr int32_t limit = 1 << (Slot::offsetBits - 1);
     if (location < -limit || location >= limit)
         return std::nullopt;
-    return (static_cast<uint32_t>(location) & Slot::offsetMask) | (location < 0 ? Slot::isIntricate : 0);
+    return (static_cast<uint32_t>(location) & Slot::offsetMask) | (location < 0 ? Slot::isIndirect : 0);
 }
 
 // Read as an object whose first inline property is undefined.
@@ -44,7 +44,7 @@ static void fill(VM& vm, Data* data, Slot* cache, Structure* structure, uint32_t
     // that the collector, which reads them at any time, never sees a structure with a second word that is not its own.
     uint32_t attempts = cache->offset & Slot::attemptsMask;
     if (offsetAndFlags & (Slot::isGetter | Slot::pointerIsCell | Slot::pointerIsNotCell))
-        offsetAndFlags |= Slot::isIntricate;
+        offsetAndFlags |= Slot::isIndirect;
     cache->structureID = StructureID();
     WTF::storeStoreFence();
     cache->offset = offsetAndFlags | attempts;
@@ -137,10 +137,10 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
 
 static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, const Identifier& ident)
 {
-    if (!cache->isOfSeveral()) {
+    if (!cache->isPolymorphic()) {
         if (!cache->structureID || cache->structureID == structure->id())
             return cache;
-        SlotsOfSite* several = data->instance->makeSlotsOfSite(data, ident.impl());
+        PolymorphicSlots* several = data->instance->makeSlotsOfSite(data, ident.impl());
         // What it had is as good as it was. (The collector looks at any time: it never sees a structure with a second word that is not its own.)
         Slot& first = several->slots[0];
         first.offset = cache->offset & ~Slot::attemptsMask;
@@ -150,11 +150,11 @@ static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, c
         first.structureID = cache->structureID;
         cache->structureID = StructureID();
         WTF::storeStoreFence();
-        cache->offset = Slot::flagsIfOfSeveral;
+        cache->offset = Slot::polymorphicFlags;
         cache->pointer = several;
         didFillSlot(vm, data);
     }
-    auto* several = static_cast<SlotsOfSite*>(cache->pointer);
+    auto* several = static_cast<PolymorphicSlots*>(cache->pointer);
     if (several->timesLeftToLearnAtOnce)
         several->timesLeftToLearnAtOnce--;
     for (Slot& slot : several->slots) {
@@ -165,7 +165,7 @@ static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, c
         if (!slot.structureID && (slot.offset & Slot::attemptsMask) != Slot::attemptsMask)
             return &slot;
     }
-    Slot& leaving = several->slots[several->next++ % SlotsOfSite::numberOfSlots];
+    Slot& leaving = several->slots[several->next++ % PolymorphicSlots::numberOfSlots];
     stopWatching(data, &leaving);
     leaving.clear();
     leaving.offset = 0;
@@ -173,11 +173,11 @@ static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, c
     return &leaving;
 }
 
-void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache, bool mayBeOfSeveral)
+void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache, bool mayBePolymorphic)
 {
     if (SharedData::contains(cache))
         return;
-    if (mayBeOfSeveral && usesStubs && base.isCell() && base.asCell()->structure() == structureBefore) {
+    if (mayBePolymorphic && usesStubs && base.isCell() && base.asCell()->structure() == structureBefore) {
         // The slot is monomorphic for another Structure with the same name at the same offset. Now that this Structure says so too, the stub hits on both: the site stays monomorphic.
         if (uint16_t id = recordPropertyNameInStructure(globalObject->vm(), base.asCell(), structureBefore, ident, slot)) {
             uint32_t sameAccess = *locationOfProperty(slot.cachedOffset()) | static_cast<uint32_t>(id) << Slot::nameIDShift;
@@ -185,7 +185,7 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
                 return;
         }
     }
-    if (mayBeOfSeveral && usesStubs && base.isCell())
+    if (mayBePolymorphic && usesStubs && base.isCell())
         cache = slotToFill(globalObject->vm(), data, cache, base.asCell()->structure(), ident);
     if (!tryCacheGetById(globalObject, data, base, structureBefore, ident, slot, cache))
         countFailure(cache);
@@ -238,7 +238,7 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
             stopWatching(data, cache);
         // (Where there is no more to it than a place in the object, the second word is for the name: Slot::name.)
         uint32_t nameID = usesStubs ? recordPropertyNameInStructure(vm, cell, structure, ident, slot) : 0;
-        fill(vm, data, cache, structure, *location | getterFlag | nameID << Slot::nameIDShift, (*location | getterFlag) & (Slot::isIntricate | Slot::isGetter) ? nullptr : ident.impl());
+        fill(vm, data, cache, structure, *location | getterFlag | nameID << Slot::nameIDShift, (*location | getterFlag) & (Slot::isIndirect | Slot::isGetter) ? nullptr : ident.impl());
         return true;
     }
 
@@ -314,10 +314,10 @@ void noteCustomGetter(JSGlobalObject* globalObject, Instance& instance, JSObject
             return;
     }
     // (Which is all that the check that the function is given the right kind of object comes to, of an object of a Structure that is known.)
-    bool isGivenHolder = !(slot.attributes() & PropertyAttribute::CustomAccessor);
-    if (auto domAttribute = slot.domAttribute(); domAttribute && !(isGivenHolder ? holder : base)->inherits(domAttribute->classInfo))
+    bool passesHolder = !(slot.attributes() & PropertyAttribute::CustomAccessor);
+    if (auto domAttribute = slot.domAttribute(); domAttribute && !(passesHolder ? holder : base)->inherits(domAttribute->classInfo))
         return;
-    instance.customGetterFor(structure->id().bits(), ident.impl()) = { structure->id().bits(), vm.megamorphicCache()->epoch(), isGivenHolder, ident.impl(), std::bit_cast<void*>(slot.customGetter().taggedPtr()), holder };
+    instance.customGetterFor(structure->id().bits(), ident.impl()) = { structure->id().bits(), vm.megamorphicCache()->epoch(), passesHolder, ident.impl(), std::bit_cast<void*>(slot.customGetter().taggedPtr()), holder };
 }
 
 void cachePrivateName(VM& vm, Data* data, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset> offset)
@@ -372,7 +372,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         cache->structureID = StructureID();
         WTF::storeStoreFence();
         uint32_t fieldType = slot.type() == PutPropertySlot::ExistingTypedField || slot.type() == PutPropertySlot::NewTypedField ? slot.fieldType() : 0;
-        cache->offset = *location | attempts | (structureAfterwards ? Slot::isIntricate : 0) | (fieldType ? Slot::hasFieldType : 0);
+        cache->offset = *location | attempts | (structureAfterwards ? Slot::isIndirect : 0) | (fieldType ? Slot::hasFieldType : 0);
         cache->pointer = nullptr;
         cache->newStructureID = structureAfterwards ? structureAfterwards->id() : StructureID();
         cache->fieldType = fieldType;

@@ -225,7 +225,7 @@ SourceCode UnlinkedFunctionExecutable::linkedSourceCode(const SourceCode& passed
 
 FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* topLevelExecutable, const SourceCode& passedParentSource, std::optional<int> overrideLineNumber, Intrinsic intrinsic, bool isInsideOrdinaryFunction)
 {
-    if (m_staticExecutable && topLevelExecutable && topLevelExecutable->givesStaticExecutables() && !overrideLineNumber) [[likely]]
+    if (m_staticExecutable && topLevelExecutable && topLevelExecutable->usesStaticExecutables() && !overrideLineNumber) [[likely]]
         return m_staticExecutable;
 
     SourceCode source = linkedSourceCode(passedParentSource);
@@ -281,13 +281,13 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         if (UnlinkedFunctionCodeBlock* kept = StaticHeap::codeOf(vm, *this, specializationKind))
             return kept;
         UnlinkedFunctionCodeBlock* result = nullptr;
-        if (StaticHeap::payloadIsLeftOut() && source.provider()->hasNoText()) {
+        if (StaticHeap::payloadIsOmitted() && source.provider()->hasNoText()) {
             dataLogLn("AOT: there is no code to run `", name().string(), "` from (it starts at ", source.startOffset(), ", for ", isCall(specializationKind) ? "a call" : "construction", ")");
             error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
             return nullptr;
         }
-        if (!StaticHeap::payloadIsLeftOut() && (isCall(specializationKind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset))
-            result = decodeCodeLeftInPayload(vm, specializationKind, vm.structureStructure.get());
+        if (!StaticHeap::payloadIsOmitted() && (isCall(specializationKind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset))
+            result = decodeCodeFromKeptPayload(vm, specializationKind, vm.structureStructure.get());
         else {
             result = generateUnlinkedFunctionCodeBlock(vm, this, source, specializationKind, codeGenerationMode, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, error, parseMode, optimize);
             if (error.isValid())
@@ -369,12 +369,12 @@ void UnlinkedFunctionExecutable::leaveCodeInPayload(Decoder& decoder, std::pair<
     m_isCached = true;
 }
 
-UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::decodeCodeLeftInPayload(VM& vm, CodeSpecializationKind kind, JSCell* owner)
+UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::decodeCodeFromKeptPayload(VM& vm, CodeSpecializationKind kind, JSCell* owner)
 {
     RELEASE_ASSERT(m_isCached && m_decoder->isForStaticHeap() && !StaticHeap::isBuilding());
     int32_t offset = isCall(kind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset;
     RELEASE_ASSERT(offset);
-    Ref decoder = StaticHeap::decoderOfWhatWasLeftInPayload(vm, *m_decoder);
+    Ref decoder = StaticHeap::decoderForKeptPayload(vm, *m_decoder);
     DeferGC deferGC(vm);
     WriteBarrier<UnlinkedFunctionCodeBlock> result;
     if (offset > 0)
@@ -393,7 +393,7 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     RefPtr<Decoder> decoder = WTF::move(m_decoder);
     // (What comes of it now is nothing that was there when the program was built.)
     if (decoder->isForStaticHeap() && !StaticHeap::isBuilding()) [[unlikely]]
-        decoder = StaticHeap::decoderOfWhatWasLeftInPayload(vm, *decoder);
+        decoder = StaticHeap::decoderForKeptPayload(vm, *decoder);
     int32_t cachedCodeBlockForCallOffset = m_cachedCodeBlockForCallOffset;
     int32_t cachedCodeBlockForConstructOffset = m_cachedCodeBlockForConstructOffset;
 

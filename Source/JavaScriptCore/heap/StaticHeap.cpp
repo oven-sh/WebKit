@@ -101,7 +101,7 @@ struct StaticHeap::Header {
     uint64_t guardedFrom;
     uint64_t guardedTo;
     uint64_t numberOfFunctions;
-    // See PositionsToKeep. If there are any, FunctionFacts::ExpressionInfo is where the positions of a function's call sites are, and
+    // See PositionsToKeep. If there are any, FunctionMetadata::ExpressionInfo is where the positions of a function's call sites are, and
     // an odd number among factsOfFunctions is one more than where those of code that has no facts are.
     uint64_t namesOfSources; // uint32_t[numberOfSources + 1]: where each starts in what follows them, which is UTF-8.
     uint64_t numberOfSources;
@@ -191,8 +191,8 @@ PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
     return PreciseAllocation::containerOfStaticCells();
 }
 
-// See keepWhatIsWantedOfFunctions().
-static bool s_functionsAreMadeInScratch;
+// See retainNeededFunctionData().
+static bool s_allocatesFunctionsInScratch;
 static bool s_nextCellIsOfAFunction;
 static Vector<FunctionExecutable*> s_executablesInScratch;
 static UncheckedKeyHashSet<void*> s_cellsInScratch;
@@ -201,7 +201,7 @@ const StaticHeap::RowOfFunction* StaticHeap::s_rowsOfFunctions;
 
 bool StaticHeap::keepsNothingForGeneratingCode()
 {
-    return s_functionsAreMadeInScratch;
+    return s_allocatesFunctionsInScratch;
 }
 
 void StaticHeap::willAllocateUnlinkedFunctionSlow()
@@ -305,13 +305,13 @@ void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
     }
     if (!Region::isAllocatingOnThisThread())
         return nullptr;
-    if (std::exchange(s_nextCellIsOfAFunction, false) && s_functionsAreMadeInScratch) {
+    if (std::exchange(s_nextCellIsOfAFunction, false) && s_allocatesFunctionsInScratch) {
         void* cell = Region::allocate(Region::Arena::Scratch, size, 16, sizeOfCellHeader);
         Region::AllocationScope notInRegion(false);
         s_cellsInScratch.add(cell);
         return cell;
     }
-    bool isMutable = Region::isAllocatingWhatIsMutable();
+    bool isMutable = Region::isAllocatingMutable();
     void* cell = Region::allocate(isMutable ? Region::Arena::MutableCells : Region::Arena::Cells, size, 16, sizeOfCellHeader);
     Region::AllocationScope notInRegion(false);
     s_cellsBeingBuilt[isMutable].append({ cell, size });
@@ -392,122 +392,12 @@ private:
 
 } // anonymous namespace
 
-#if OS(DARWIN)
-// Every word that may be the address of something that is not in the region. Some are not addresses.
-// Whatever it is had better not be followed.
-static void reportWhatPointsInto(uint64_t start, uint64_t end, std::span<const uint32_t> factsOfFunctions)
-{
-    UncheckedKeyHashMap<String, unsigned> found;
-    auto isInside = [&](uint64_t word) { return word - start < end - start; };
-    for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-        forEachCell(arena, [&](void* pointer, size_t size) {
-            auto* words = static_cast<uint64_t*>(pointer);
-            for (size_t i = 0; i < size / 8; ++i) {
-                if (isInside(words[i]))
-                    found.add(makeString("cell "_s, String::fromLatin1(static_cast<JSCell*>(pointer)->classInfo()->className.characters()), " +"_s, i * 8), 0).iterator->value++;
-            }
-        });
-    }
-    for (auto arena : { Region::Arena::Malloc, Region::Arena::MutableMalloc, Region::Arena::Data }) {
-        auto* words = reinterpret_cast<const uint64_t*>(Region::startOf(arena));
-        unsigned count = 0;
-        for (size_t i = 0; i < Region::used(arena) / 8; ++i) {
-            if (!isInside(std::bit_cast<uint64_t>(&words[i])) && isInside(words[i]))
-                ++count;
-        }
-        if (count)
-            found.add(makeString("words of arena "_s, static_cast<unsigned>(arena)), count);
-    }
-    unsigned facts = 0;
-    for (uint32_t at : factsOfFunctions) {
-        if (!at)
-            continue;
-        auto* all = StaticHeap::inData<AOT::FunctionFacts>(at);
-        for (auto fact : { AOT::FunctionFacts::ExpressionInfo, AOT::FunctionFacts::Handlers, AOT::FunctionFacts::RealmConstants, AOT::FunctionFacts::ResumePoints, AOT::FunctionFacts::Scalars }) {
-            if (const uint32_t* word = all->find(fact); word && isInside(Region::startOf(Region::Arena::Data) + *word))
-                ++facts;
-        }
-    }
-    if (facts)
-        found.add("facts of functions"_s, facts);
-    dataLogLn("StaticHeap: ", (end - start), " bytes of the payload are left out. What points there:");
-    for (auto& entry : found)
-        dataLogLn("StaticHeap:     ", entry.key, ": ", entry.value);
-}
-
-static void reportWhatMayPointOut()
-{
-    UncheckedKeyHashMap<uint64_t, bool> isMappedPage;
-    auto looksLikePointerOut = [&](uint64_t word) {
-        if ((word & 7) || word < 4 * GB || word >= (1ULL << 47) || Region::contains(reinterpret_cast<void*>(word)))
-            return false;
-        return isMappedPage.ensure(word >> 14, [&] {
-            mach_vm_address_t address = word;
-            mach_vm_size_t size = 0;
-            vm_region_basic_info_data_64_t info;
-            mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-            mach_port_t object;
-            return mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) == KERN_SUCCESS && address <= word && info.protection;
-        }).iterator->value;
-    };
-    auto describeTarget = [&](uint64_t word) -> String {
-        Dl_info info;
-        if (dladdr(reinterpret_cast<void*>(word), &info) && info.dli_sname && reinterpret_cast<uint64_t>(info.dli_saddr) + 65536 > word)
-            return makeString("symbol "_s, String::fromUTF8(info.dli_sname).left(90));
-        return "heap"_s;
-    };
-    UncheckedKeyHashMap<String, unsigned> found;
-    for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-        forEachCell(arena, [&](void* pointer, size_t size) {
-            auto* words = static_cast<uint64_t*>(pointer);
-            for (size_t i = 0; i < size / 8; ++i) {
-                if (looksLikePointerOut(words[i]))
-                    found.add(makeString("cell "_s, String::fromLatin1(static_cast<JSCell*>(pointer)->classInfo()->className.characters()), " +"_s, i * 8, " -> "_s, describeTarget(words[i])), 0).iterator->value++;
-            }
-        });
-    }
-    // (Not Arena::Malloc, where nothing says where one thing ends and the next begins.)
-    for (auto arena : { Region::Arena::MutableMalloc }) {
-        uintptr_t start = Region::startOf(arena);
-        size_t used = Region::used(arena);
-        // Each allocation is preceded by its size, and starts at a multiple of 16 (or more, which leaves a gap of zeros).
-        for (size_t offset = 8; offset < used;) {
-            size_t size = *reinterpret_cast<size_t*>(start + offset);
-            if (!size) {
-                offset += 16;
-                continue;
-            }
-            auto* words = reinterpret_cast<uint64_t*>(start + offset + 8);
-            for (size_t i = 0; i < size / 8; ++i) {
-                if (looksLikePointerOut(words[i])) {
-                    auto& count = found.add(makeString("malloc("_s, size > 512 ? 999999 : size, ") +"_s, i > 12 ? 999 : i * 8, " -> "_s, describeTarget(words[i])), 0).iterator->value;
-                    if (++count <= 2) {
-                        dataLog("StaticHeap: OUT example, ", size, " bytes at ", RawPointer(words), ":");
-                        for (size_t j = 0; j < std::min<size_t>(size / 8, 8); ++j)
-                            dataLog(" ", RawHex(words[j]));
-                        auto* target = reinterpret_cast<uint64_t*>(words[i]);
-                        dataLogLn("  target: ", RawHex(target[0]), " ", RawHex(target[1]), " ", RawHex(target[2]), " ", RawHex(target[3]));
-                    }
-                }
-            }
-            offset += (8 + size + 15) & ~static_cast<size_t>(15);
-        }
-    }
-    Vector<std::pair<unsigned, String>> sorted;
-    for (auto& entry : found)
-        sorted.append({ entry.value, entry.key });
-    std::ranges::sort(sorted, [](auto& a, auto& b) { return a.first > b.first; });
-    for (auto& entry : sorted)
-        dataLogLn("StaticHeap: OUT ", entry.first, "  ", entry.second);
-}
-#endif
-
 static void* addressOfSourceProvider(size_t moduleIndex)
 {
     return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + Region::offsetOfSourceProvidersInBss + moduleIndex * StaticHeap::sizeOfPlaceForSourceProvider);
 }
 
-// AOT::FunctionFacts of a function whose code is not going to be here. What they refer to stays (UnlinkedCodeBlock::leaveToStaticHeap()).
+// AOT::FunctionMetadata of a function whose code is not going to be here. What they refer to stays (UnlinkedCodeBlock::leaveToStaticHeap()).
 static std::span<uint32_t> s_factsBeingBuilt;
 static const StaticHeap::PositionsToKeep* s_positionsToKeep;
 static UncheckedKeyHashMap<CString, uint32_t>* s_sourcesBeingBuilt;
@@ -616,7 +506,7 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
 
 static const uint8_t* copyInCommon(std::span<const uint8_t>, size_t alignment); // One copy of what is the same, while there is an ArraysInCommon.
 
-static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t entryOffsetOfModule)
+static void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t entryOffsetOfModule)
 {
     if (s_factsBeingBuilt.empty() || s_factsBeingBuilt[index])
         return;
@@ -626,7 +516,7 @@ static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecut
             s_factsBeingBuilt[index] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(makePositions(index, codeBlock, 1, 1, entryOffsetOfModule)) - Region::startOf(Region::Arena::Data)) | 1;
         return;
     }
-    using Facts = AOT::FunctionFacts;
+    using Facts = AOT::FunctionMetadata;
     auto in = [](Region::Arena arena, const void* pointer) {
         uintptr_t offset = std::bit_cast<uintptr_t>(pointer) - Region::startOf(arena);
         RELEASE_ASSERT(offset && offset < Region::used(arena));
@@ -665,7 +555,7 @@ static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecut
         words[0] |= Facts::StringSwitchJumpTables;
         words.append(in(Region::Arena::Malloc, &codeBlock->unlinkedStringSwitchJumpTable(0)));
     }
-    if (!AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesWillDo::Yes)) {
+    if (!AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesAreShared::Yes)) {
         auto& representations = codeBlock->constantsSourceCodeRepresentation();
         Vector<uint32_t, 16> list { static_cast<uint32_t>(representations.size()), 0 };
         for (unsigned i = 0; i < representations.size(); ++i) {
@@ -752,7 +642,7 @@ static const uint8_t* copyInCommon(std::span<const uint8_t> content, size_t alig
 
 namespace {
 std::span<const ReportableSitesOfFunction> s_reportableSites;
-static thread_local bool s_realmIsKnownToBeThatOfProgram;
+static thread_local bool s_realmIsProgramRealm;
 std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdentifiers.
 std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
 }
@@ -760,15 +650,15 @@ std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
 static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, CodeSpecializationKind kind)
 {
     // (Its SymbolTables are being made here and now.)
-    bool constantsWillDo = AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesWillDo::Yes);
-    RELEASE_ASSERT(constantsWillDo || !function.startsCold);
+    bool constantsAreRealmIndependent = AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesAreShared::Yes);
+    RELEASE_ASSERT(constantsAreRealmIndependent || !function.startsCold);
     info.constants = codeBlock->constantRegisters().span().data();
     info.identifiers = codeBlock->identifiers().span().data();
     // Of code that is not going to be here, nothing is left that has these as anything but so many words in a row. One copy will do
     // for all that have the same, with nothing before it or after it.
     const Vector<uint32_t>* numbersOfConstants = s_constantsOfProgram.empty() ? nullptr : &s_reportableSites[function.index].numbersOfConstants;
     if (numbersOfConstants && !numbersOfConstants->isEmpty()) {
-        RELEASE_ASSERT(constantsWillDo && codeBlock->codeType() == FunctionCode && numbersOfConstants->size() == codeBlock->constantRegisters().size());
+        RELEASE_ASSERT(constantsAreRealmIndependent && codeBlock->codeType() == FunctionCode && numbersOfConstants->size() == codeBlock->constantRegisters().size());
         for (unsigned i = 0; i < numbersOfConstants->size(); ++i) {
             JSValue value = codeBlock->constantRegisters()[i].get();
             uint32_t number = numbersOfConstants->at(i);
@@ -811,10 +701,10 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
         info.identifiers = s_identifiersOfProgram.data();
     }
     info.sites = function.sites;
-    info.setExecutable(executable, kind, constantsWillDo);
+    info.setExecutable(executable, kind, constantsAreRealmIndependent);
     info.flags = (function.hasSiteConstants ? AOT::FunctionInfo::hasSiteConstants : AOT::FunctionInfo::sitesHaveTheirConstants) | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0) | AOT::FunctionInfo::slotsAmongFlags(function.numSlots);
     RELEASE_ASSERT(info.function() == function.function);
-    fillFacts(function.index, codeBlock, executable, s_entryOffsetOfModuleBeingBuilt);
+    fillMetadata(function.index, codeBlock, executable, s_entryOffsetOfModuleBeingBuilt);
 }
 
 // The functions of `codeBlock`, whose source is `source`, and theirs.
@@ -855,12 +745,12 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
                 executable = uncheckedDowncast<FunctionExecutable>(byIndex[function->index].executable());
         }
         if (executable) {
-            bool hasAllOfIt = true;
+            bool isComplete = true;
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto& function = code[static_cast<unsigned>(kind)])
-                    hasAllOfIt &= byIndex[function->index].executable() == executable && byIndex[function->index].kind() == kind;
+                    isComplete &= byIndex[function->index].executable() == executable && byIndex[function->index].kind() == kind;
             }
-            if (!hasAllOfIt)
+            if (!isComplete)
                 return;
             unlinked->setStaticExecutable(executable);
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
@@ -871,7 +761,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         }
         s_nextCellIsOfAFunction = true;
         executable = unlinked->link(vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
-        if (s_functionsAreMadeInScratch) {
+        if (s_allocatesFunctionsInScratch) {
             Region::AllocationScope notInRegion(false);
             s_executablesInScratch.append(executable);
         }
@@ -921,7 +811,7 @@ static bool isLookedUpByName(ResolveType type)
 
 // Adds what the code, and the code of the functions in it, looks up. Nothing else can see the scopes that the code makes.
 // exportedByModule: of the code of a module, where the variables are that it exports, if that is known.
-static void forgetNamesThatNothingLooksUp(UnlinkedCodeBlock* codeBlock, NamesLookedUp& lookedUp, uint64_t& tables, uint64_t& tablesWithNames, const Vector<uint32_t>* exportedByModule = nullptr)
+static void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, NamesLookedUp& lookedUp, uint64_t& tables, uint64_t& tablesWithNames, const Vector<uint32_t>* exportedByModule = nullptr)
 {
     NamesLookedUp own;
     {
@@ -955,7 +845,7 @@ static void forgetNamesThatNothingLooksUp(UnlinkedCodeBlock* codeBlock, NamesLoo
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto* nested = function->codeBlockIfThereIsOne(kind)) {
                 hasCode = true;
-                forgetNamesThatNothingLooksUp(nested, own, tables, tablesWithNames);
+                dropUnreferencedVariableNames(nested, own, tables, tablesWithNames);
             }
         }
         // (Then there is no telling.)
@@ -1020,7 +910,7 @@ const uint32_t* StaticHeap::factsOfFunctions(VM& vm)
     return hasExecutablesOfFunctions(vm) ? std::bit_cast<const uint32_t*>(s_header->factsOfFunctions) : nullptr;
 }
 
-Ref<Decoder> StaticHeap::decoderOfWhatWasLeftInPayload(VM& vm, Decoder& placed)
+Ref<Decoder> StaticHeap::decoderForKeptPayload(VM& vm, Decoder& placed)
 {
     RELEASE_ASSERT(isUsedBy(vm));
     static NeverDestroyed<UncheckedKeyHashMap<Decoder*, Ref<Decoder>>> decodersOfFirstVM;
@@ -1042,7 +932,7 @@ FunctionExecutable* StaticHeap::standInFor(VM& vm, FunctionExecutable* executabl
     return result;
 }
 
-static decltype(StaticHeapOfVM::code)& codeKeptBy(VM& vm)
+static decltype(StaticHeapOfVM::code)& retainedCodeOf(VM& vm)
 {
     RELEASE_ASSERT(StaticHeap::isUsedBy(vm));
     static NeverDestroyed<decltype(StaticHeapOfVM::code)> codeOfFirstVM;
@@ -1051,14 +941,14 @@ static decltype(StaticHeapOfVM::code)& codeKeptBy(VM& vm)
 
 UnlinkedFunctionCodeBlock* StaticHeap::codeOf(VM& vm, const UnlinkedFunctionExecutable& executable, CodeSpecializationKind kind)
 {
-    auto& code = codeKeptBy(vm);
+    auto& code = retainedCodeOf(vm);
     auto it = code.find(&executable);
     return it == code.end() ? nullptr : it->value[static_cast<unsigned>(kind)].get();
 }
 
 void StaticHeap::setCodeOf(VM& vm, const UnlinkedFunctionExecutable& executable, CodeSpecializationKind kind, UnlinkedFunctionCodeBlock* codeBlock)
 {
-    codeKeptBy(vm).add(&executable, std::array<Strong<UnlinkedFunctionCodeBlock>, 2> { }).iterator->value[static_cast<unsigned>(kind)].set(vm, codeBlock);
+    retainedCodeOf(vm).add(&executable, std::array<Strong<UnlinkedFunctionCodeBlock>, 2> { }).iterator->value[static_cast<unsigned>(kind)].set(vm, codeBlock);
 }
 
 UniquedStringImpl* const* StaticHeap::identifiersOfProgram()
@@ -1153,7 +1043,7 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
 // - Both as they are, for a function that there is more to say about.
 // - The UnlinkedFunctionExecutable as it is, of a builtin, which is found by it.
 // The code that a function is in refers to its FunctionExecutable (UnlinkedCodeBlock::executableIn()).
-void StaticHeap::keepWhatIsWantedOfFunctions(VM& vm, Header& header)
+void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
 {
     auto isScratch = [](uintptr_t bits) { return bits - Region::startOf(Region::Arena::Scratch) < Region::used(Region::Arena::Scratch) && s_cellsInScratch.contains(std::bit_cast<void*>(bits)); };
     auto place = [&](const void* bytes, size_t size) {
@@ -1188,7 +1078,7 @@ void StaticHeap::keepWhatIsWantedOfFunctions(VM& vm, Header& header)
         size_t module = (std::bit_cast<uintptr_t>(executable->source().provider()) - std::bit_cast<uintptr_t>(addressOfSourceProvider(0))) / sizeOfPlaceForSourceProvider;
         auto saysWhereItStarts = [&] {
             uint32_t at = factsOfFunctions[index];
-            return at && !(at & 1) && inData<AOT::FunctionFacts>(at)->find(AOT::FunctionFacts::ExpressionInfo);
+            return at && !(at & 1) && inData<AOT::FunctionMetadata>(at)->find(AOT::FunctionMetadata::ExpressionInfo);
         };
         bool canBeShort = hasCode && unlinked->canBeSharedByStaticExecutables() && saysWhereItStarts()
             && isPlaceOfSourceProvider(executable->source().provider()) && module < (1u << RowOfFunction::bitsOfModule)
@@ -1270,8 +1160,8 @@ void StaticHeap::keepWhatIsWantedOfFunctions(VM& vm, Header& header)
     for (uint32_t at : factsOfFunctions) {
         if (!at || at & 1)
             continue;
-        auto* facts = inData<AOT::FunctionFacts>(at);
-        for (auto fact : { AOT::FunctionFacts::FunctionDecls, AOT::FunctionFacts::FunctionExprs }) {
+        auto* facts = inData<AOT::FunctionMetadata>(at);
+        for (auto fact : { AOT::FunctionMetadata::FunctionDecls, AOT::FunctionMetadata::FunctionExprs }) {
             const uint32_t* words = facts->find(fact);
             if (!words)
                 continue;
@@ -1312,9 +1202,9 @@ void StaticHeap::keepWhatIsWantedOfFunctions(VM& vm, Header& header)
 }
 
 // The tables of the variables of scopes are made in Arena::Scratch too (CachedSymbolTable::decode()). By now the names that nothing looks up are gone from them
-// (forgetNamesThatNothingLooksUp()), and what is left of most is how many variables there are and what kind of scope it is. Nothing writes to them, and nothing tells one from another
+// (dropUnreferencedVariableNames()), and what is left of most is how many variables there are and what kind of scope it is. Nothing writes to them, and nothing tells one from another
 // that says the same. Whatever refers to one is a word that has its address.
-static void keepOneOfEachSymbolTable()
+static void deduplicateSymbolTables()
 {
     Region::AllocationScope notInRegion(false);
     UncheckedKeyHashMap<String, uintptr_t> kept;
@@ -1350,7 +1240,7 @@ static void keepOneOfEachSymbolTable()
     }
 }
 
-Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
+Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t keptPayloadStart, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
 {
     s_reportableSites = reportableSites;
     s_identifiersOfProgram = { };
@@ -1358,7 +1248,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     auto forgetCells = makeScopeExit([] {
         for (auto& cells : s_cellsBeingBuilt)
             cells = { };
-        s_functionsAreMadeInScratch = false;
+        s_allocatesFunctionsInScratch = false;
         s_nextCellIsOfAFunction = false;
         s_executablesInScratch = { };
         s_cellsInScratch = { };
@@ -1366,7 +1256,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         s_rowsOfFunctions = nullptr;
     });
     if (positionsToKeep)
-        whatIsKeptOfPayloadStartsAt = payload.size();
+        keptPayloadStart = payload.size();
     UncheckedKeyHashMap<CString, uint32_t> sources;
     Vector<CString> namesOfSources;
     s_positionsToKeep = positionsToKeep;
@@ -1426,7 +1316,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 table.atomFor(vm, ordinal);
                 // So that nothing that is decoded when the program runs has to make one, which would be writing to the slot. If
                 // nothing is going to be, the ones that are wanted are the ones that what is decoded here and now asks for.
-                if (!whatIsKeptOfPayloadStartsAt)
+                if (!keptPayloadStart)
                     table.jsStringFor(vm, ordinal);
             }
             unsigned numberOfAtomsOfStrings = atoms->table().size();
@@ -1448,25 +1338,23 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     infosOfFunctions = { static_cast<AOT::FunctionInfo*>(Region::allocate(Region::Arena::MutableMalloc, size, pageSizeOfImage)), imageView->numberOfFunctions() };
                     memset(static_cast<void*>(infosOfFunctions.data()), 0, size);
                     header.infosOfFunctions = std::bit_cast<uint64_t>(infosOfFunctions.data());
-                    if (!Options::staticHeapKeepsFunctionCode()) {
-                        s_arraysBeingBuilt = &arraysInCommon;
-                        if (uint32_t count = imageView->numberOfIdentifiersOfProgram()) {
-                            RELEASE_ASSERT(reportableSites.size() == imageView->numberOfFunctions());
-                            header.hasIdentifiersOfProgram = true;
-                            if (uint32_t constants = imageView->numberOfConstantsOfProgram()) {
-                                s_constantsOfProgram = { static_cast<EncodedJSValue*>(Region::allocate(Region::Arena::Data, constants * sizeof(EncodedJSValue), sizeof(EncodedJSValue))), constants };
-                                zeroSpan(s_constantsOfProgram);
-                                header.constantsOfProgram = std::bit_cast<uint64_t>(s_constantsOfProgram.data());
-                            }
-                            s_identifiersOfProgram = { static_cast<UniquedStringImpl**>(Region::allocate(Region::Arena::Data, count * sizeof(UniquedStringImpl*), sizeof(UniquedStringImpl*))), count };
-                            zeroSpan(s_identifiersOfProgram);
-                            header.identifiersOfProgram = std::bit_cast<uint64_t>(s_identifiersOfProgram.data());
+                    s_arraysBeingBuilt = &arraysInCommon;
+                    if (uint32_t count = imageView->numberOfIdentifiersOfProgram()) {
+                        RELEASE_ASSERT(reportableSites.size() == imageView->numberOfFunctions());
+                        header.hasIdentifiersOfProgram = true;
+                        if (uint32_t constants = imageView->numberOfConstantsOfProgram()) {
+                            s_constantsOfProgram = { static_cast<EncodedJSValue*>(Region::allocate(Region::Arena::Data, constants * sizeof(EncodedJSValue), sizeof(EncodedJSValue))), constants };
+                            zeroSpan(s_constantsOfProgram);
+                            header.constantsOfProgram = std::bit_cast<uint64_t>(s_constantsOfProgram.data());
                         }
-                        s_factsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
-                        zeroSpan(s_factsBeingBuilt);
-                        header.factsOfFunctions = std::bit_cast<uint64_t>(s_factsBeingBuilt.data());
-                        s_functionsAreMadeInScratch = whatIsKeptOfPayloadStartsAt && positionsToKeep && Options::staticHeapMakesShortFunctionExecutables();
+                        s_identifiersOfProgram = { static_cast<UniquedStringImpl**>(Region::allocate(Region::Arena::Data, count * sizeof(UniquedStringImpl*), sizeof(UniquedStringImpl*))), count };
+                        zeroSpan(s_identifiersOfProgram);
+                        header.identifiersOfProgram = std::bit_cast<uint64_t>(s_identifiersOfProgram.data());
                     }
+                    s_factsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
+                    zeroSpan(s_factsBeingBuilt);
+                    header.factsOfFunctions = std::bit_cast<uint64_t>(s_factsBeingBuilt.data());
+                    s_allocatesFunctionsInScratch = keptPayloadStart && positionsToKeep;
                     header.numberOfFunctions = infosOfFunctions.size();
                 }
                 uint64_t numberOfExecutables = 0;
@@ -1504,7 +1392,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         if (isBuiltinFunction) {
                             // Without code for it there is nothing to be had from its being here.
                             if (imageView)
-                                builtinFunction = decodeAllOfBuiltinForStaticHeap(decoder, lengthOfBuiltin, stampOfBuiltin, functions);
+                                builtinFunction = decodeBuiltinForStaticHeap(decoder, lengthOfBuiltin, stampOfBuiltin, functions);
                             if (builtinFunction) {
                                 static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
                                 SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(lengthOfBuiltin), 1, 1 };
@@ -1528,7 +1416,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
                                 fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall);
                         }
-                        if (decoder.leavesFunctionCodeInPayload() && Options::staticHeapForgetsNamesOfVariables()) {
+                        if (decoder.leavesFunctionCodeInPayload()) {
                             NamesLookedUp lookedUp;
                             if (codeBlock) {
                                 const Vector<uint32_t>* exported = nullptr;
@@ -1536,12 +1424,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                                     if (entryOffsetsOfModules[index] == sortedOffsets[i] && variablesExportedByModules[index])
                                         exported = &*variablesExportedByModules[index];
                                 }
-                                forgetNamesThatNothingLooksUp(codeBlock, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames, exported);
+                                dropUnreferencedVariableNames(codeBlock, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames, exported);
                             }
                             else if (builtinFunction) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                                     if (auto* code = builtinFunction->codeBlockIfThereIsOne(kind))
-                                        forgetNamesThatNothingLooksUp(code, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames);
+                                        dropUnreferencedVariableNames(code, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames);
                                 }
                             }
                             Region::AllocationScope notInRegion(false);
@@ -1550,7 +1438,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         if (decoder.leavesFunctionCodeInPayload()) {
                             for (auto& [function, offsets] : functions) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                                    if (auto* code = function->codeBlockIfThereIsOne(kind); code && s_functionsAreMadeInScratch) {
+                                    if (auto* code = function->codeBlockIfThereIsOne(kind); code && s_allocatesFunctionsInScratch) {
                                         Region::AllocationScope notInRegion(false);
                                         s_listsOfFunctionsInFunctions.append(code->functionDecls());
                                         s_listsOfFunctionsInFunctions.append(code->functionExprs());
@@ -1567,12 +1455,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock), false };
                     }
                     // (Not destroyed: it is referred to. It has one reference to what is let go of right after.)
-                    decoder.forgetWhatWasDecoded();
+                    decoder.clearDecodedObjects();
                     cachedBytecode->deref();
                     memset(address, 0, sizeof(Decoder));
                 }
                 s_tdzBeingBuilt = nullptr;
-                if (imageView && imageView->keysAreLeftOut()) {
+                if (imageView && imageView->keysAreOmitted()) {
                     // An executable made here says which function it is. The rest are made when the program runs, and are looked up.
                     auto isLookedUp = [&](const AOT::ImageKey& key) {
                         return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !infosOfFunctions[imageView->indexOfFunctionWith(key)].executable();
@@ -1626,7 +1514,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 }
                 s_factsBeingBuilt = { };
                 // (See parentScopeTDZVariablesOf().)
-                if (whatIsKeptOfPayloadStartsAt) {
+                if (keptPayloadStart) {
                     Region::AllocationScope notInRegion(false);
                     tdz = { };
                 }
@@ -1667,9 +1555,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             registry->becomeStatic();
     }
 
-    if (s_functionsAreMadeInScratch) {
-        keepWhatIsWantedOfFunctions(vm, header);
-        keepOneOfEachSymbolTable();
+    if (s_allocatesFunctionsInScratch) {
+        retainNeededFunctionData(vm, header);
+        deduplicateSymbolTables();
     }
 
     // What the collector never looks at must not be all that keeps something alive.
@@ -1719,9 +1607,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         });
     }
 
-    if (whatIsKeptOfPayloadStartsAt && header.payload && header.factsOfFunctions) {
+    if (keptPayloadStart && header.payload && header.factsOfFunctions) {
         uint64_t start = roundUpToMultipleOf<pageSizeOfImage>(header.payload);
-        uint64_t end = (header.payload + whatIsKeptOfPayloadStartsAt) & ~static_cast<uint64_t>(pageSizeOfImage - 1);
+        uint64_t end = (header.payload + keptPayloadStart) & ~static_cast<uint64_t>(pageSizeOfImage - 1);
         if (end > start) {
             header.holeInData = start - Region::startOf(Region::Arena::Data);
             header.sizeOfHoleInData = end - start;
@@ -1734,7 +1622,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             bigInt->hash();
     });
 
-    Region::forgetWhatIsFree();
+    Region::clearFreeLists();
     Vector<uint8_t> image;
     if (ok) {
         size_t size = pageSizeOfImage;
@@ -1832,7 +1720,7 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
 
 void StaticHeap::prepareThread()
 {
-    if (!s_header || !s_vm || !Options::useStaticHeapInEveryVM() || t_threadIsPrepared)
+    if (!s_header || !s_vm || t_threadIsPrepared)
         return;
     AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
     if (!atoms->table().isEmpty())
@@ -1907,13 +1795,13 @@ RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedF
     if (found == all.end() || found->executable != std::bit_cast<uint64_t>(&executable))
         return nullptr;
     // (They are for whoever compiles what is inside the function. There is nothing to compile it from.)
-    if (payloadIsLeftOut())
+    if (payloadIsOmitted())
         return nullptr;
     // (Which is there: the executable came out of a code block that codeFor() returned.)
     // What comes of it is of a VM. The one that is there is of whichever VM got there first, which may be no more: it says which
     // module, and that is all it is asked.
     auto& placed = *static_cast<Decoder*>(addressOfDecoder(found->moduleIndex));
-    return decodeParentScopeTDZVariablesForStaticHeap(decoderOfWhatWasLeftInPayload(executable.vm(), placed).get(), std::bit_cast<const void*>(found->record));
+    return decodeParentScopeTDZVariablesForStaticHeap(decoderForKeptPayload(executable.vm(), placed).get(), std::bit_cast<const void*>(found->record));
 }
 
 bool StaticHeap::hasIdentifiersOfProgram()
@@ -1940,7 +1828,7 @@ LineColumn StaticHeap::whereFunctionStarts(uint32_t indexOfFunction)
     RELEASE_ASSERT(s_header && s_header->hasPositionsOfCallSites && indexOfFunction < s_header->numberOfFunctions);
     uint32_t word = std::bit_cast<const uint32_t*>(s_header->factsOfFunctions)[indexOfFunction];
     RELEASE_ASSERT(word && !(word & 1));
-    const uint32_t* where = inData<AOT::FunctionFacts>(word)->find(AOT::FunctionFacts::ExpressionInfo);
+    const uint32_t* where = inData<AOT::FunctionMetadata>(word)->find(AOT::FunctionMetadata::ExpressionInfo);
     RELEASE_ASSERT(where);
     const uint8_t* at = inData<uint8_t>(*where);
     auto readVarint = [&] {
@@ -1956,14 +1844,14 @@ LineColumn StaticHeap::whereFunctionStarts(uint32_t indexOfFunction)
     return { line, readVarint() };
 }
 
-bool StaticHeap::payloadIsLeftOut()
+bool StaticHeap::payloadIsOmitted()
 {
     return s_header && s_header->sizeOfHoleInData;
 }
 
-std::span<const uint8_t> StaticHeap::payloadThatIsLeftOut()
+std::span<const uint8_t> StaticHeap::omittedPayload()
 {
-    RELEASE_ASSERT(payloadIsLeftOut());
+    RELEASE_ASSERT(payloadIsOmitted());
     return { std::bit_cast<const uint8_t*>(s_header->payload), static_cast<size_t>(s_header->payloadSize) };
 }
 
@@ -1972,7 +1860,7 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
     ASSERT(isUsedBy(vm));
     if (!s_header->numberOfModules || !cachedBytecode.payloadIsPersistent() || cachedBytecode.size() < s_header->payloadSize)
         return nullptr;
-    if (payloadIsLeftOut() && cachedBytecode.span().data() != payloadThatIsLeftOut().data())
+    if (payloadIsOmitted() && cachedBytecode.span().data() != omittedPayload().data())
         return nullptr;
     // A recording is of what is read out of the payload.
     if (BytecodeOrderRecorder::ofVM(vm)) [[unlikely]]
@@ -2053,9 +1941,9 @@ FunctionExecutable* StaticHeap::builtinOfEngineFor(JSGlobalObject* globalObject,
         vm.m_builtinsOfStaticHeap.fill(nullptr, entries->size());
     if (FunctionExecutable* given = vm.m_builtinsOfStaticHeap[index])
         return given;
-    s_realmIsKnownToBeThatOfProgram = true;
+    s_realmIsProgramRealm = true;
     FunctionExecutable* result = builtinFunctionFor(globalObject, entries.get()[index] - 1, BuiltinExecutables::stampOf(index), StringImpl::createWithoutCopying(text), SourceOrigin(), String());
-    s_realmIsKnownToBeThatOfProgram = false;
+    s_realmIsProgramRealm = false;
     if (result)
         vm.m_firstRealmHasBuiltinsOfStaticHeap = true;
     vm.m_builtinsOfStaticHeap[index] = result;
@@ -2073,7 +1961,7 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
         return nullptr;
     if (modules[index].keyHash != embedderStamp || modules[index].keyLength != text.length())
         return nullptr;
-    if (!s_realmIsKnownToBeThatOfProgram && &AOT::Instance::ensure(globalObject) != vm.m_aotInstanceOfProgram)
+    if (!s_realmIsProgramRealm && &AOT::Instance::ensure(globalObject) != vm.m_aotInstanceOfProgram)
         return nullptr;
 
     SourceProvider* provider = nullptr;
@@ -2091,7 +1979,7 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
     // What the functions inside it are given for the executable of the code that they are all in. It is written to.
     if (auto*& slot = topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
         slot = standInFor(vm, executable);
-        slot->setGivesStaticExecutables();
+        slot->setUsesStaticExecutables();
     }
     return executable;
 }

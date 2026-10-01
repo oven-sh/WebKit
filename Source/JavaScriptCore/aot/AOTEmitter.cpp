@@ -24,7 +24,7 @@ namespace JSC { namespace AOT {
 
 using namespace B3;
 
-void Emitter::findWhatIsPinned()
+void Emitter::findPinnedRegisters()
 {
     m_instance = registerOnEntry(instanceGPR);
     m_numberTag = registerOnEntry(GPRInfo::numberTagRegister);
@@ -655,7 +655,7 @@ public:
         LBasicBlock giveUp = m_out.newBlock();
         m_out.appendTo(start);
         m_out.initializeConstants(m_proc, start);
-        findWhatIsPinned();
+        findPinnedRegisters();
         LValue arguments[4];
         for (unsigned i = 0; i < std::size(arguments); ++i)
             arguments[i] = registerOnEntry(GPRInfo::toArgumentRegister(i));

@@ -269,7 +269,7 @@ void AbstractModuleRecord::initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&& 
     fillPrelinkedRequestedModules();
 }
 
-void AbstractModuleRecord::releaseWhatLinkingNeeded()
+void AbstractModuleRecord::releaseLinkingData()
 {
     if (!m_prelinked || m_prelinkedEntriesMaterialized)
         return;

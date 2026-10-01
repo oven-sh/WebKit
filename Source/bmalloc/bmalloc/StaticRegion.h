@@ -75,7 +75,7 @@ public:
     private:
         bool m_previous;
     };
-    BEXPORT static bool isAllocatingWhatIsMutable();
+    BEXPORT static bool isAllocatingMutable();
 
     // ---- When it runs.
 
@@ -117,7 +117,7 @@ private:
     BEXPORT static void didFreeSlow(void*);
     BEXPORT static void* tryMallocSlow(size_t, size_t alignment);
 public:
-    BEXPORT static void forgetWhatIsFree(); // When all is built.
+    BEXPORT static void clearFreeLists(); // When all is built.
     BEXPORT static size_t bytesThatAreFree(); // Before that: what was freed and is in the file all the same.
 private:
 

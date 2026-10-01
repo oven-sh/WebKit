@@ -99,11 +99,11 @@ public:
     }
 
     // isCalledInLoop: or may be, for all that is known.
-    static bool isWorthIt(UnlinkedCodeBlock* callee, const ProgramFacts* facts, bool isCalledInLoop = true)
+    static bool isProfitable(UnlinkedCodeBlock* callee, const FunctionSummary* facts, bool isCalledInLoop = true)
     {
         unsigned size = callee->instructionsSize();
         // There is going to be no other copy of it.
-        if (facts && facts->isClosed && facts->directCalls.load(std::memory_order_relaxed) == 1)
+        if (facts && facts->isNonEscaping && facts->directCalls.load(std::memory_order_relaxed) == 1)
             return size <= Options::aotInlinesOnlyCallUpTo();
         // Every copy of it is that much more code, unless it is no longer than the call. That is worth it where it may be run over and over, which is all
         // that there is to go by. (In a big program: 5.4MB for what is between 30 and 60 bytes, and 0.07MB for what is up to 18.)
@@ -206,7 +206,7 @@ private:
             if (!callee || readsCallee(callee))
                 return false;
             scopeOfClosure = resolve(calleeNode->use(bytecode.m_scope));
-        } else if (unsigned intrinsic = methodOfArraysThatMayWellBeCalled(call, calleeNode, argc, argv)) {
+        } else if (unsigned intrinsic = likelyArrayMethod(call, calleeNode, argc, argv)) {
             callee = m_program.codeOfBuiltin(ImmutableIntrinsics::shared()->at(intrinsic).builtinCode - 1);
             if (!callee || readsCallee(callee))
                 return notTaken(callee ? "it reads its callee"_s : "there is no code for it"_s);
@@ -219,9 +219,9 @@ private:
             }
             isCertainlyTheIntrinsic = Options::aotTypesFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(calleeNode));
         } else {
-            bool isProven = false;
-            const KnownFunction* known = caller.knownCallee(call, &isProven);
-            if (!known || !isProven || !known->forCall || !(known->isDeclaration || Graph::closedMethodReadBy(calleeNode)) || !caller.passesNoFunctionObject(call))
+            bool isExact = false;
+            const KnownFunction* known = caller.knownCallee(call, &isExact);
+            if (!known || !isExact || !known->forCall || !(known->isDeclaration || Graph::closedMethodReadBy(calleeNode)) || !caller.passesNoFunctionObject(call))
                 return false;
             callee = known->forCall;
         }
@@ -229,9 +229,9 @@ private:
         // (A closure that is called where it is made is as good as called from one place.)
         if (intrinsicToCheckFor && (!about || !canBePartOfAnother(callee)))
             return notTaken(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
-        if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::aotInlinesOnlyCallUpTo() : isWorthIt(callee, about->facts, block->isInLoop)))
+        if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::aotInlinesOnlyCallUpTo() : isProfitable(callee, about->facts, block->isInLoop)))
             return intrinsicToCheckFor ? notTaken("it is too big"_s) : false;
-        if (m_sizeTakenOver + callee->instructionsSize() > Options::aotInlinesAtMost() || m_graph.inlineFrames.size() > PackedSite::mostInlineFrames)
+        if (m_inlinedBytecodeSize + callee->instructionsSize() > Options::aotInlinesAtMost() || m_graph.inlineFrames.size() > PackedSite::mostInlineFrames)
             return intrinsicToCheckFor ? notTaken("the caller has taken over enough"_s) : false;
         unsigned depth = 0;
         for (unsigned frame = caller.inlineFrame(); frame; frame = m_graph.inlineFrames[frame].parent)
@@ -245,13 +245,13 @@ private:
 
         auto inlinee = makeUniqueWithoutFastMallocCheck<Graph>(m_graph.vm(), callee, unknownScopeChain());
         inlinee->setCalleeHints(about->hints);
-        inlinee->setVariableFacts(m_graph.variableFacts());
+        inlinee->setVariableSummaries(m_graph.variableSummaries());
         inlinee->setLinkage(about->linkage, declaredNamesFor(callee));
         inlinee->loopsAreNotSplit = !!intrinsicToCheckFor || m_graph.loopsAreNotSplit;
-        inlinee->isBuiltinThatIsPartOfCaller = !!intrinsicToCheckFor;
+        inlinee->isInlinedBuiltin = !!intrinsicToCheckFor;
         if (!scopeOfClosure && !intrinsicToCheckFor && (inlinee->needsFunctionObject() || !inlinee->scopeIsEnvironmentOfModule()))
             return false;
-        if (!parseBytecode(*inlinee) || !inlinee->catchEntrypoints.isEmpty() || inlinee->hasHomedRegisters())
+        if (!parseBytecode(*inlinee) || !inlinee->catchEntrypoints.isEmpty() || inlinee->hasFrameRegisters())
             return intrinsicToCheckFor ? notTaken("its bytecode is not parsed, or it catches, or it has registers with homes"_s) : false;
 
         // Where it returns, and what.
@@ -281,7 +281,7 @@ private:
         // ---- Nothing is in the way.
         dataLogLnIf(Options::aotVerbose() && intrinsicToCheckFor, "AOT: a builtin is made part of its caller at bc#", call->bytecodeIndex.offset());
         m_didInline = true;
-        m_sizeTakenOver += callee->instructionsSize();
+        m_inlinedBytecodeSize += callee->instructionsSize();
         m_parents.add(inlinee.get(), &caller);
         inlinee->isInTailPosition = call->opcode == op_tail_call && caller.isInTailPosition;
 
@@ -295,7 +295,7 @@ private:
             receiverOfLeanForm->narrowedTo = TArray;
             receiverOfLeanForm->uses.append({ VirtualRegister(), call->use(VirtualRegister(firstArgument)) });
             if (isCertainlyTheIntrinsic) {
-                receiverOfLeanForm->checksWhatItIsNarrowedTo = true;
+                receiverOfLeanForm->checksNarrowedType = true;
                 receiverOfLeanForm->graph = call->graph;
                 receiverOfLeanForm->opcode = call->opcode;
                 receiverOfLeanForm->instruction = call->instruction;
@@ -475,7 +475,7 @@ private:
         }
         if (block->isInLoop) {
             // (The loop is one of the engine's own function's, and that was in none itself. Or the caller is there for the same reason.)
-            bool isForBuiltin = block->isOnlyInLoopOfBuiltin || (caller.isBuiltinThatIsPartOfCaller && !caller.wasCalledInLoop);
+            bool isForBuiltin = block->isOnlyInLoopOfBuiltin || (caller.isInlinedBuiltin && !caller.wasCalledInLoop);
             for (BasicBlock* itsBlock : inlinee->m_rpo) {
                 if (isForBuiltin && !itsBlock->isInLoop)
                     itsBlock->isOnlyInLoopOfBuiltin = true;
@@ -497,7 +497,7 @@ private:
     // The name a method is called by is a reason to have the code for it, and no more: whether it is that one is looked at when the call
     // is made. It is worth it when what is passed is a closure made for the occasion, which then need not be made at all.
     // The form of a method of arrays that will do for an array as the realm makes them, if all that it is passed is a function (builtins/ArrayPrototype.js). argc counts `this`.
-    static std::optional<BuiltinCodeIndex> leanFormOf(UniquedStringImpl* name, unsigned argc, bool resultIsWanted)
+    static std::optional<BuiltinCodeIndex> leanFormOf(UniquedStringImpl* name, unsigned argc, bool usesResult)
     {
         StringView method { name };
         if (argc == 3)
@@ -508,9 +508,9 @@ private:
             return BuiltinCodeIndex::arrayPrototypeForEachOfArrayCode;
         // (An array that nobody wants is not made.)
         if (method == "map"_s)
-            return resultIsWanted ? BuiltinCodeIndex::arrayPrototypeMapOfArrayCode : BuiltinCodeIndex::arrayPrototypeMapOfArrayForEffectCode;
+            return usesResult ? BuiltinCodeIndex::arrayPrototypeMapOfArrayCode : BuiltinCodeIndex::arrayPrototypeMapOfArrayForEffectCode;
         if (method == "filter"_s)
-            return resultIsWanted ? BuiltinCodeIndex::arrayPrototypeFilterOfArrayCode : BuiltinCodeIndex::arrayPrototypeFilterOfArrayForEffectCode;
+            return usesResult ? BuiltinCodeIndex::arrayPrototypeFilterOfArrayCode : BuiltinCodeIndex::arrayPrototypeFilterOfArrayForEffectCode;
         if (method == "some"_s)
             return BuiltinCodeIndex::arrayPrototypeSomeOfArrayCode;
         if (method == "every"_s)
@@ -518,9 +518,9 @@ private:
         return std::nullopt;
     }
 
-    unsigned methodOfArraysThatMayWellBeCalled(Node* call, Node* calleeNode, unsigned argc, unsigned argv)
+    unsigned likelyArrayMethod(Node* call, Node* calleeNode, unsigned argc, unsigned argv)
     {
-        if (!Options::aotInlinesBuiltins() || !Options::useImmutableIntrinsics() || !calleeNode->isBytecode(op_get_by_id) || argc < 2)
+        if (!Options::useImmutableIntrinsics() || !calleeNode->isBytecode(op_get_by_id) || argc < 2)
             return 0;
         const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
         if (!intrinsics) {
@@ -533,8 +533,8 @@ private:
             return 0;
         // A closure made for the occasion, or a function that is known: either way what the method calls is plain.
         if (Node* passed = resolve(call->use(VirtualRegister(firstArgument + 1))); !passed->isBytecode(op_new_func_exp)) {
-            bool isProven = false;
-            if (!passed->isBytecode(op_get_from_scope) || !passed->graph->knownFunctionReadBy(passed, &isProven) || !isProven)
+            bool isExact = false;
+            if (!passed->isBytecode(op_get_from_scope) || !passed->graph->knownFunctionReadBy(passed, &isExact) || !isExact)
                 return 0;
         }
         static const unsigned prototype = [&] {
@@ -561,7 +561,7 @@ private:
     UncheckedKeyHashMap<Graph*, Graph*> m_parents;
     Vector<Node*, 8> m_calleesRead;
     Vector<Node*, 4> m_callsAfterAll;
-    unsigned m_sizeTakenOver { 0 };
+    unsigned m_inlinedBytecodeSize { 0 };
     bool m_didInline { false };
 };
 
@@ -575,9 +575,9 @@ void inlineCalls(Graph& graph, const CodeOfProgram& program)
     Inliner(graph, program).run();
 }
 
-bool mayBecomePartOfAnother(UnlinkedCodeBlock* codeBlock, const ProgramFacts* facts)
+bool mayBecomePartOfAnother(UnlinkedCodeBlock* codeBlock, const FunctionSummary* facts)
 {
-    return Options::aotInlines() && Inliner::isWorthIt(codeBlock, facts) && Inliner::canBePartOfAnother(codeBlock);
+    return Options::aotInlines() && Inliner::isProfitable(codeBlock, facts) && Inliner::canBePartOfAnother(codeBlock);
 }
 
 } } // namespace JSC::AOT

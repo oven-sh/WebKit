@@ -480,7 +480,7 @@ private:
         return !loop.body.get(node->block->index);
     }
 
-    static bool handsOnWhatItIsGiven(Node* node)
+    static bool isAliasOfOperand(Node* node)
     {
         return node->kind == NodeKind::Narrow || node->isBytecode(op_type_tag) || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz);
     }
@@ -492,7 +492,7 @@ private:
         for (unsigned steps = 0; steps < 64; ++steps) {
             if (isInvariant(loop, node))
                 return node;
-            if (handsOnWhatItIsGiven(node)) {
+            if (isAliasOfOperand(node)) {
                 node = node->uses[0].node;
                 continue;
             }
@@ -509,7 +509,7 @@ private:
                 }
                 // (Round an inner loop as well, it may be. That is asking too much.)
                 for (unsigned inner = 0; input != node; ++inner) {
-                    if (inner == 64 || !handsOnWhatItIsGiven(input))
+                    if (inner == 64 || !isAliasOfOperand(input))
                         return nullptr;
                     input = input->uses[0].node;
                 }
