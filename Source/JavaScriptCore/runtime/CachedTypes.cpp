@@ -5911,7 +5911,7 @@ struct BytecodeLinkEncoder::Impl {
         unsigned added = 0;
         vm.builtinExecutables()->forEachStandaloneBuiltin([&](unsigned index, UnlinkedFunctionExecutable* executable, const SourceCode& source) {
             ParserError error;
-            recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, std::numeric_limits<unsigned>::max());
+            recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, std::numeric_limits<unsigned>::max(), OptimizeBytecode::Yes);
             if (error.isValid()) {
                 dataLogLn("AOT: cannot generate bytecode for the builtin function `", executable->name().string(), "`: ", error.message());
                 return;
