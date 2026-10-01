@@ -7,10 +7,14 @@
 
 #include "BAssert.h"
 #include "BPlatform.h"
+
+#if BENABLE(STATIC_REGION)
+
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <mutex>
 #include <utility>
 #include <sys/mman.h>
 
@@ -34,6 +38,8 @@ static size_t s_capacityOfSizes;
 bool StaticRegion::beginBuilding()
 {
     RELEASE_BASSERT(!s_isBuilding);
+    if (!mapRestOfBss())
+        return false;
     constexpr size_t size = numberOfArenasInFile * arenaReservation;
     void* result = mmap(reinterpret_cast<void*>(base), size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (result == MAP_FAILED)
@@ -119,11 +125,29 @@ void StaticRegion::mapBss()
         return;
     isMapped = true;
     void* wanted = reinterpret_cast<void*>(startOf(Arena::Bss));
-    void* result = mmap(wanted, arenaReservation, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
-    RELEASE_BASSERT(result == wanted);
+    void* result = mmap(wanted, offsetOfVTablesInBss, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (result != wanted) {
+        fprintf(stderr, "fatal: cannot map memory at %p: %s\n", wanted, result == MAP_FAILED ? strerror(errno) : "the address is taken");
+        BCRASH();
+    }
 }
 
-bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size_t size, size_t offsetInArena, bool isCode)
+bool StaticRegion::mapRestOfBss()
+{
+    static std::once_flag once;
+    static bool isMapped = false;
+    std::call_once(once, [] {
+        void* wanted = reinterpret_cast<void*>(startOf(Arena::Bss) + offsetOfVTablesInBss);
+        constexpr size_t size = arenaReservation - offsetOfVTablesInBss;
+        void* result = mmap(wanted, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+        isMapped = result == wanted;
+        if (!isMapped && result != MAP_FAILED)
+            munmap(result, size);
+    });
+    return isMapped;
+}
+
+bool StaticRegion::map(Arena arena, int fileDescriptor, int64_t offsetInFile, size_t size, size_t offsetInArena, bool isCode)
 {
     RELEASE_BASSERT(offsetInArena <= arenaReservation && size <= arenaReservation - offsetInArena);
     if (!size)
@@ -408,3 +432,34 @@ void StaticRegion::didFreeSlow(void* pointer)
 }
 
 } // namespace bmalloc
+
+#else // BENABLE(STATIC_REGION)
+
+namespace bmalloc {
+
+bool StaticRegion::s_isBuilding = false;
+alignas(16) char StaticRegion::s_bss[offsetOfVTablesInBss];
+
+bool StaticRegion::beginBuilding() { return false; }
+void StaticRegion::endBuilding() { }
+void* StaticRegion::allocate(Arena, size_t, size_t, size_t) { RELEASE_BASSERT_NOT_REACHED(); return nullptr; }
+size_t StaticRegion::used(Arena) { return 0; }
+StaticRegion::AllocationScope::AllocationScope(bool) : m_previous(false) { }
+StaticRegion::AllocationScope::~AllocationScope() { static_cast<void>(m_previous); }
+bool StaticRegion::isAllocatingOnThisThread() { return false; }
+StaticRegion::MutableScope::MutableScope() : m_previous(false) { }
+StaticRegion::MutableScope::~MutableScope() { static_cast<void>(m_previous); }
+bool StaticRegion::isAllocatingMutable() { return false; }
+void StaticRegion::mapBss() { }
+bool StaticRegion::mapRestOfBss() { return false; }
+bool StaticRegion::map(Arena, int, int64_t, size_t, size_t, bool) { return false; }
+size_t StaticRegion::mallocSize(const void*) { return 0; }
+void* StaticRegion::reallocate(void*, size_t) { return nullptr; }
+void StaticRegion::didFreeSlow(void*) { }
+void* StaticRegion::tryMallocSlow(size_t, size_t) { return nullptr; }
+void StaticRegion::clearFreeLists() { }
+size_t StaticRegion::bytesThatAreFree() { return 0; }
+
+} // namespace bmalloc
+
+#endif // BENABLE(STATIC_REGION)

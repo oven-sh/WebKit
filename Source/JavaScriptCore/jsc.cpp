@@ -1752,7 +1752,7 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
 #endif
 
     SourceCode moduleSource = jscSource(stringFromUTF(buffer), SourceOrigin { moduleURL }, WTF::move(moduleKey), TextPosition(), SourceProviderSourceType::Module);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // Only the first module fetched (the entry point) gets an image. The modules it imports are interpreted.
     if (Options::compileMainScriptAheadOfTime())
         aotCompileAndRegisterImage(vm, moduleSource, true);
@@ -2977,7 +2977,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNumberOfDFGCompiles, (JSGlobalObject* globalObj
 // Whether calls to a function run AOT code. The function must have been called at least once.
 JSC_DEFINE_HOST_FUNCTION(functionIsAOTCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0)); function && !function->isHostFunction())
         return JSValue::encode(jsBoolean(!!AOT::FunctionRef::of(globalObject->vm(), function->jsExecutable(), CodeSpecializationKind::CodeForCall)));
 #else
@@ -4573,7 +4573,7 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
         } else {
             NakedPtr<Exception> evaluationException;
             SourceCode source = jscSource(scriptBuffer, sourceOrigin, fileName);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
             // Only the first script gets an image. Later scripts, and code from load(), eval and Function, are interpreted.
             if (Options::compileMainScriptAheadOfTime())
                 aotCompileAndRegisterImage(vm, source, false);

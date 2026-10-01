@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "BytecodeIndex.h"
 #include "LineColumn.h"
@@ -1018,4 +1018,4 @@ void* addressOfStub(Stub);
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

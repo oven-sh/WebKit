@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTBuiltins.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTRuntime.h"
 #include "ImmutableIntrinsics.h"
@@ -341,4 +341,4 @@ Receiver receiverLikelyToHave(Type type, const StringImpl& name)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

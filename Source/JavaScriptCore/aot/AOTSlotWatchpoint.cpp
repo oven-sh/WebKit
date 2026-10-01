@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTSlotWatchpoint.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTRuntime.h"
 #include "CodeBlockInlines.h"
@@ -142,4 +142,4 @@ void moveWatching(Data* data, Slot* from, Slot* to)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

@@ -124,7 +124,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         CatchInfo() = default;
 
         CatchInfo(const HandlerInfo*, CodeBlock*);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         CatchInfo(const UnlinkedHandlerInfo*, const AOT::FunctionRef&);
 #endif
 #if ENABLE(WEBASSEMBLY)

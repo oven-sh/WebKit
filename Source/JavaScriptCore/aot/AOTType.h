@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "JSCJSValue.h"
 #include "JSType.h"
@@ -349,4 +349,4 @@ MAKE_PRINT_ADAPTOR(TypeDump, Type, dumpType);
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

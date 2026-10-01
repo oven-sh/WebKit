@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTProgram.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "LinkTimeConstant.h"
 #include "ImmutableIntrinsics.h"
@@ -494,4 +494,4 @@ const KnownFunction* ModuleHints::find(UniquedStringImpl*, std::optional<unsigne
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

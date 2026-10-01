@@ -100,13 +100,18 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     }
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables()
         && !isOfAnotherLoader() && AOT::Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
         if (auto*& slot = StaticHeap::topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
             slot = this;
             setUsesStaticExecutables();
         }
+    }
+    if (Options::verboseAOTCompilation() && StaticHeap::isUsedBy(vm) && !usesStaticExecutables()) [[unlikely]] {
+        SourceProvider* provider = source().provider();
+        bool isInPlace = StaticHeap::isPlaceOfSourceProvider(provider);
+        dataLogLn("AOT: ", provider->sourceURL(), " does not get the functions that were made when the program was built: its provider is ", isInPlace ? "" : "not ", "in its place, its code is ", StaticHeap::contains(unlinkedModuleProgramCode) ? "" : "not ", "in the static heap, it is ", isOfAnotherLoader() ? "" : "not ", "of another loader", isInPlace && StaticHeap::topLevelExecutableOfModuleWithProvider(vm, provider) ? ", and another executable has them" : "");
     }
 #endif
     // The symbol table and the function declarations' executables are made once and stay for as long as the executable
@@ -227,7 +232,7 @@ void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
         return;
     if (!Options::useRunOnceCodeRelease() || !canReleaseLinkedCodeNow(vm))
         return;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (CodeBlock* codeBlock = this->codeBlock())
         codeBlock->releaseAOTData();
 #endif

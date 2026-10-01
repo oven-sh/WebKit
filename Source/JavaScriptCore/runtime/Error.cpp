@@ -147,7 +147,7 @@ public:
         if (visitor->isImplementationVisibilityPrivate())
             return IterationStatus::Continue;
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         // What such a function's source says is in the image, if anywhere. There is no call for a CodeBlock.
         if (AOT::FunctionRef function = visitor->aotFunction(); function && function.executable()->source().provider()->hasNoText()) {
             m_aotFunction = function;
@@ -169,14 +169,14 @@ public:
 
     CodeBlock* NODELETE codeBlock() const { return m_codeBlock; }
     BytecodeIndex NODELETE bytecodeIndex() const { return m_bytecodeIndex; }
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     AOT::FunctionRef aotFunction() const { return m_aotFunction; }
 #endif
 
 private:
     CallFrame* m_startCallFrame;
     mutable CodeBlock* m_codeBlock { nullptr };
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     mutable AOT::FunctionRef m_aotFunction;
 #endif
     mutable bool m_foundStartCallFrame;
@@ -197,9 +197,11 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool us
 
 static FindFirstCallerFrameWithCodeblockFunctor findFirstCallerFrameWithCode(VM& vm, CallFrame* startCallFrame)
 {
+#if ENABLE(AOT)
     // (The frame belongs to an AOT stub, which stack walks skip.)
     if (startCallFrame && vm.topCallFrame == startCallFrame && AOT::topCallFrameIsAOTFrame(startCallFrame))
         startCallFrame = nullptr;
+#endif
     if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
         auto* entryFrame = vm.topEntryFrame;
         auto* callerFrame = startCallFrame->callerFrame(entryFrame);
@@ -214,7 +216,7 @@ static FindFirstCallerFrameWithCodeblockFunctor findFirstCallerFrameWithCode(VM&
 std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
 {
     auto functor = findFirstCallerFrameWithCode(vm, startCallFrame);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (functor.aotFunction())
         return { functor.aotFunction().ensureCodeBlock(), functor.bytecodeIndex() };
 #endif
@@ -223,7 +225,7 @@ std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startC
 
 std::optional<SourceQuote> quoteSourceWithoutText(VM& vm, CallFrame* startCallFrame)
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     auto functor = findFirstCallerFrameWithCode(vm, startCallFrame);
     if (!functor.aotFunction())
         return std::nullopt;

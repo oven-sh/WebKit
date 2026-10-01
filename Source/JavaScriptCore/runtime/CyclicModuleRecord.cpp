@@ -231,7 +231,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         // Code that was compiled with the whole program in front of it finds the variables of a module without looking for the
         // module: see AOT::Instance::placeForEnvironment().
         void* place = nullptr;
@@ -254,7 +254,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 #else
         env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
 #endif
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         if (place)
             StaticHeap::didPlaceCell(vm, env);
 #endif

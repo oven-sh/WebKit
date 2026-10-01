@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTGraph.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "BytecodeStructs.h"
 #include "JSCInlines.h"
@@ -507,4 +507,4 @@ void inferRanges(Graph& graph)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

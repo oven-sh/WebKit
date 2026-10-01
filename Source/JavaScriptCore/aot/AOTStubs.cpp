@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTStubs.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTEmitter.h"
 #include "AOTImage.h"
@@ -4414,4 +4414,4 @@ void retargetStubCall(uint8_t* base, size_t instruction, size_t target, bool isT
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

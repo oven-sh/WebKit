@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
@@ -342,4 +342,4 @@ bool canRunWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // True if FunctionM
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

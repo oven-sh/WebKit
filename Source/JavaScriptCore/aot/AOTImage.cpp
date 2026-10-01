@@ -8,7 +8,7 @@
 
 #include "AOTTypeTable.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTCompiler.h"
 #include "CachedTypes.h"
@@ -2258,4 +2258,4 @@ std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8
 
 } // namespace JSC
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

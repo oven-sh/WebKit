@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTRuntime.h"
 #include "Allocator.h"
@@ -66,4 +66,4 @@ void cacheObjectOfSite(VM&, Data*, Slot* cache, JSObject*);
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

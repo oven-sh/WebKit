@@ -1098,7 +1098,7 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 }
 #endif // ENABLE(JIT)
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 void CodeBlock::adoptAOTCode(AOT::JITCode& jitCode, AOT::Data* data)
 {
     ASSERT(!m_jitData);
@@ -1232,7 +1232,7 @@ CodeBlock::~CodeBlock()
     // m_incomingCalls linked lists through the execution of the ~CallLinkInfo
     // destructors.
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // (The Data is the Instance's.)
     if (aotData())
         m_jitData = nullptr;
@@ -2659,7 +2659,7 @@ void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSi
 
 LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // Code that was compiled ahead of time may have another way of saying.
     if (auto function = AOT::FunctionRef::of(const_cast<CodeBlock*>(this))) {
         if (auto position = function.reportedPositionFor(bytecodeIndex))
@@ -2678,7 +2678,7 @@ LineColumn CodeBlock::lineColumnForBytecodeIndexConcurrently(BytecodeIndex bytec
 
 ExpressionInfo::Entry CodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (auto function = AOT::FunctionRef::of(const_cast<CodeBlock*>(this))) {
         if (auto position = function.reportedPositionFor(bytecodeIndex)) {
             ExpressionInfo::Entry entry;
@@ -3945,7 +3945,7 @@ unsigned CodeBlock::frameRegisterCount()
     case JITType::FTLJIT:
         return jitCode()->dfgCommon()->frameRegisterCount;
 #endif // ENABLE(DFG_JIT)
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     case JITType::AOTJIT:
         return static_cast<AOT::JITCode*>(jitCode().get())->frameSizeInBytes() / sizeof(Register);
 #endif

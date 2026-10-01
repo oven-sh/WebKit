@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTStubs.h"
 
@@ -31,4 +31,4 @@ FOR_EACH_AOT_OPERATION_WITH_FRONT_END(AOT_DECLARE_FRONT_END)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

@@ -138,6 +138,8 @@ const RegisterAtOffsetList* JITCode::calleeSaveRegisters() const
 #if ENABLE(FTL_JIT)
     if (m_jitType == JITType::FTLJIT)
         return static_cast<const FTL::JITCode*>(this)->calleeSaveRegisters();
+#endif
+#if ENABLE(AOT)
     if (m_jitType == JITType::AOTJIT)
         return static_cast<const AOT::JITCode*>(this)->calleeSaveRegisters();
 #endif

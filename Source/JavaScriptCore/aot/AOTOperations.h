@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTRuntime.h"
 #include "OperationResult.h"
@@ -79,4 +79,4 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToInt32, int32_t, (double))
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

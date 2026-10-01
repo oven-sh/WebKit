@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTGraph.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTTypeTable.h"
 #include "BytecodeStructs.h"
@@ -1047,4 +1047,4 @@ uint32_t escapingParameters(Graph& graph, Vector<const KnownFunction*>* calleesR
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

@@ -87,7 +87,7 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, FunctionExecutable
 
 CodeBlock* StackFrame::makeCodeBlock() const
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
     VM& vm = jsFrame.aotExecutable->vm();
     if (vm.heap.mutatorState() != MutatorState::Running)
@@ -132,7 +132,7 @@ bool StackFrame::isBuiltinFunction() const
 JSGlobalObject* StackFrame::globalObjectOfCode() const
 {
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     if (jsFrame.aotExecutable) {
         AOT::FunctionRef function = AOT::FunctionRef::of(jsFrame.aotExecutable->vm(), jsFrame.aotExecutable.get(), jsFrame.aotKind);
         return function ? function.instance->globalObject : nullptr;
@@ -318,7 +318,7 @@ String StackFrame::functionName(VM& vm) const
 
 std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(AOT::FunctionRef::OfConstruction ofConstruction) const
 {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
     if (!jsFrame || !StaticHeap::hasPositionsOfCallSites())
         return std::nullopt;
@@ -342,7 +342,7 @@ LineColumn StackFrame::computeLineAndColumn() const
         if (!executable)
             return { };
         LineColumn lineColumn;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         if (jsFrame->aotExecutable) {
             if (AOT::FunctionRef function = AOT::FunctionRef::of(executable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind))
                 lineColumn = function.lineColumnFor(jsFrame->bytecodeIndex);

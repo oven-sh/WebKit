@@ -25,7 +25,7 @@
 #include "JSWebAssemblyInstance.h"
 #include "ParserError.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTProgram.h"
 #include "AOTImage.h"
@@ -1924,4 +1924,4 @@ bool JITCode::contains(void* address)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

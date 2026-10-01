@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTOperationsObjects.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTOperations.h"
 #include "AOTImage.h"
@@ -433,4 +433,4 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (JSGlobalOb
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

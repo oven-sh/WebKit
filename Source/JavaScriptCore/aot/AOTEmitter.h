@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTRuntime.h"
 #include "B3AbstractHeapRepository.h"
@@ -141,4 +141,4 @@ void generateHelper(CCallHelpers&, Stub);
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

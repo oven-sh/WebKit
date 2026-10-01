@@ -885,7 +885,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     std::optional<IdentifierSet> newlyCreatedSet;
     if (callFrame->argumentCount() > 1) {
         int32_t setIndex = callFrame->uncheckedArgument(1).asUInt32AsAnyInt();
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         // AOT code has no CodeBlock, and does not need one for this.
         if (AOT::FunctionRef caller = AOT::callerFunction(callFrame))
             excludedSet = &caller.constantIdentifierSet(setIndex);

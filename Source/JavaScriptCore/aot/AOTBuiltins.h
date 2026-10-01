@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTType.h"
 #include "JSType.h"
@@ -101,4 +101,4 @@ Receiver receiverLikelyToHave(Type, const StringImpl& name);
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

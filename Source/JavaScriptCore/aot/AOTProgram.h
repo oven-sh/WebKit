@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTStubs.h"
 #include "AOTType.h"
@@ -482,4 +482,4 @@ const Vector<uint32_t>* numbersOfConstantsOfProgramFor(UnlinkedCodeBlock*); // N
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

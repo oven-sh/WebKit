@@ -85,7 +85,7 @@ public:
     // `image` is the result of build(), located at the page-aligned `offsetInFile`. Call on the thread that will own the VM, before
     // that thread creates any atom string. Returns false if the image was built by a different engine build or the address range is
     // unavailable.
-    JS_EXPORT_PRIVATE static bool map(std::span<const uint8_t> image, int fileDescriptor, off_t offsetInFile);
+    JS_EXPORT_PRIVATE static bool map(std::span<const uint8_t> image, int fileDescriptor, int64_t offsetInFile);
     // The image contains its own copies of the string table and the bytecode payload, which its contents refer to. Reports where
     // they are, so that a container file does not need to store them twice.
     struct Copies {
@@ -187,7 +187,7 @@ public:
     static void* addressOfGlobalObject() { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfGlobalObjectInBss + sizeOfCellHeader); }
     // Space for embedder symbols that are identical in every VM, like JSC::Symbols. They are created here in a fixed order so that
     // build-time objects can refer to them.
-    static void* addressOfEmbedderSymbols() { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss); }
+    static void* addressOfEmbedderSymbols() { return reinterpret_cast<void*>(bmalloc::StaticRegion::addressInBss(bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss)); }
     static constexpr size_t sizeForEmbedderSymbols = bmalloc::StaticRegion::offsetOfVTablesInBss - bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss;
     static bool isMapped() { return !!s_header; }
     // The next cell allocated in the VM is placed at `address`. It is never collected or destroyed. After didPlaceCell(), every GC

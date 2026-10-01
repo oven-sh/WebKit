@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTGraph.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTBuiltins.h"
 #include "AOTTypeTable.h"
@@ -1144,4 +1144,4 @@ Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesRead, Vector<
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

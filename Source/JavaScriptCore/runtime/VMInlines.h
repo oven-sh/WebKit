@@ -89,7 +89,7 @@ inline CallFrame* VM::topJSCallFrame() const
     CallFrame* frame = topCallFrame;
     if (!frame) [[unlikely]]
         return frame;
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
     // There is nothing to be asked of it.
     if (AOT::topCallFrameIsAOTFrame(frame)) [[unlikely]]
         return nullptr;
@@ -98,7 +98,7 @@ inline CallFrame* VM::topJSCallFrame() const
         return frame;
     EntryFrame* entryFrame = topEntryFrame;
     do {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         // Likewise of its caller.
         if (AOT::classifyAddress(removeCodePtrTag(frame->rawReturnPC())).kind != AOT::ImageAddressInfo::NotInImage) [[unlikely]]
             return nullptr;

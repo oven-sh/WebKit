@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
 
 #include "AOTRuntime.h"
 #include "CodeBlock.h"
@@ -99,4 +99,4 @@ ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(JSGlobalObject* globalOb
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(AOT)

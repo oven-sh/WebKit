@@ -105,7 +105,7 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
 
 #if USE(BUN_JSC_ADDITIONS)
     if (hasNoText) {
-#if ENABLE(FTL_JIT)
+#if ENABLE(AOT)
         // What it said, as far as that was kept, is with the code.
         if (auto function = AOT::FunctionRef::of(codeBlock)) {
             if (auto quote = function.quoteAt(bytecodeIndex))
