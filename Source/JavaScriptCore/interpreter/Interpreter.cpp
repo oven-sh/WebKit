@@ -572,8 +572,9 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                     BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, currentGenerator);
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
 #if ENABLE(FTL_JIT)
-                } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall); function && function.instance->isLinked(function.index)) {
-                    // AOT code has no CodeBlock, and does not need one for this.
+                } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall); function && function.info().executable() == executable) {
+                    // AOT code has no CodeBlock, and does not need one for this. (What is known about the function is: from the
+                    // start if it is in the static heap, where a call that goes straight to its code links nothing.)
                     JSValue state = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
                     results.append(StackFrame(vm, owner, asyncFunction, executable, CodeSpecializationKind::CodeForCall, function.resumePointOf(state.isInt32() ? state.asInt32() : 0), /* isAsyncFrame */ true));
 #endif
