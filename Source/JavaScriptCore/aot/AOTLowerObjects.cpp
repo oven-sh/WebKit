@@ -918,7 +918,9 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
         auto bytecode = node->as<OpInByVal>();
         Node* baseNode = node->use(bytecode.m_base);
         Node* propertyNode = node->use(bytecode.m_property);
-        if (isCompact() || !mayBe(baseNode->type, TAnyObject) || !mayBe(propertyNode->type, TNumber))
+        // (The built-in methods of arrays ask `index in array` for each element, to skip holes. So in a loop the fast path is inline.)
+        bool isInLoop = m_block->isInLoop && !m_block->isGeneric;
+        if ((isCompact() && !isInLoop) || !mayBe(baseNode->type, TAnyObject) || !mayBe(propertyNode->type, TNumber))
             return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property)));
 
         // An element that is present in contiguous or int32 storage. For a hole, the runtime has to search the prototype chain.
