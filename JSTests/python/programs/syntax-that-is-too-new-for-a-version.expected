@@ -1,0 +1,137 @@
+annotated name -> [[0, ('Variable annotation syntax is only supported in Python 3.6 and greater', 1, 11, 1, 12, 'x: int = 1\n')], [6, 'ok']]
+annotated name, no value -> [[0, ('Variable annotation syntax is only supported in Python 3.6 and greater', 1, 7, 1, 8, 'x: int\n')], [6, 'ok']]
+annotated attribute -> [[0, ('Variable annotations syntax is only supported in Python 3.6 and greater', 1, 13, 1, 14, 'a.b: int = 1\n')], [6, 'ok']]
+annotated subscript -> [[0, ('Variable annotations syntax is only supported in Python 3.6 and greater', 1, 10, 1, 11, 'a[0]: int\n')], [6, 'ok']]
+annotated in parentheses -> [[0, ('Variable annotations syntax is only supported in Python 3.6 and greater', 1, 13, 1, 14, '(x): int = 1\n')], [6, 'ok']]
+@ -> [[0, ("The '@' operator is only supported in Python 3.5 and greater", 1, 6, 1, 7, 'a @ b\n')], [5, 'ok']]
+@= -> [[0, ("The '@' operator is only supported in Python 3.5 and greater", 1, 3, 1, 5, 'a @= b\n')], [5, 'ok']]
+@ twice -> [[0, ("The '@' operator is only supported in Python 3.5 and greater", 1, 7, 1, 8, 'a @ b @ c\n')], [5, 'ok']]
+@ in a call -> [[0, ("The '@' operator is only supported in Python 3.5 and greater", 1, 8, 1, 9, 'f(a @ b, 1)\n')], [5, 'ok']]
+a decorator is no operator -> [[0, 'ok']]
+async def -> [[0, ('Async functions are only supported in Python 3.5 and greater', 1, 20, 1, 21, 'async def f(): pass\n')], [5, 'ok']]
+async def with more -> [[0, ('Async functions are only supported in Python 3.5 and greater', 4, 0, 4, -1, 'y = 2\n')], [5, 'ok']]
+async for -> [[0, ('Async for loops are only supported in Python 3.5 and greater', 2, 27, 2, -1, '    async for x in y: pass\n')], [5, 'ok']]
+async with -> [[0, ('Async with statements are only supported in Python 3.5 and greater', 2, 23, 2, 24, '    async with a: pass\n')], [5, 'ok']]
+async with in parentheses -> [[0, ('Async with statements are only supported in Python 3.5 and greater', 2, 33, 2, 34, '    async with (a as b, c): pa')], [5, 'ok']]
+await -> [[0, ('Await expressions are only supported in Python 3.5 and greater', 2, 12, 2, 13, '    await x\n')], [5, 'ok']]
+await alone -> [[0, ('Await expressions are only supported in Python 3.5 and greater', 1, 8, 1, 9, 'await x\n')], [5, 'ok']]
+async comprehension -> [[0, ('Async comprehensions are only supported in Python 3.6 and greater', 2, 24, 2, 25, '    [x async for x in y]\n')], [6, 'ok']]
+async comprehension alone -> [[0, ('Async comprehensions are only supported in Python 3.6 and greater', 1, 20, 1, 21, '[x async for x in y]\n')], [6, 'ok']]
+async generator expression -> [[0, ('Async comprehensions are only supported in Python 3.6 and greater', 1, 20, 1, 21, '(x async for x in y)\n')], [6, 'ok']]
+positional only -> [[0, ('Positional-only parameters are only supported in Python 3.8 and greater', 1, 14, 1, 15, 'def f(a, /, b): pass\n')], [8, 'ok']]
+positional only, with defaults -> [[0, ('Positional-only parameters are only supported in Python 3.8 and greater', 1, 18, 1, 19, 'def f(a=1, /, b=2): pass\n')], [8, 'ok']]
+positional only alone -> [[0, ('Positional-only parameters are only supported in Python 3.8 and greater', 1, 11, 1, 12, 'def f(a, /): pass\n')], [8, 'ok']]
+in a lambda -> [[0, ('Positional-only parameters are only supported in Python 3.8 and greater', 1, 15, 1, 16, 'lambda a, /, b: 0\n')], [8, 'ok']]
+in a lambda, with defaults -> [[0, ('Positional-only parameters are only supported in Python 3.8 and greater', 1, 14, 1, 15, 'lambda a=1, /: 0\n')], [8, 'ok']]
+walrus -> [[0, ('Assignment expressions are only supported in Python 3.8 and greater', 1, 8, 1, 9, '(x := 1)\n')], [8, 'ok']]
+walrus in an if -> [[0, ('Assignment expressions are only supported in Python 3.8 and greater', 1, 12, 1, 13, 'if (n := 10) > 5: pass\n')], [8, 'ok']]
+walrus in a call -> [[0, ('Assignment expressions are only supported in Python 3.8 and greater', 1, 9, 1, 10, 'f(x := 1)\n')], [8, 'ok']]
+walrus in a comprehension -> [[0, ('Assignment expressions are only supported in Python 3.8 and greater', 1, 25, 1, 26, '[y for x in z if (y := x)]\n')], [8, 'ok']]
+with in parentheses -> [[0, 'ok']]
+with in parentheses, one -> [[0, 'ok']]
+with a tuple -> [[0, 'ok']]
+with in parentheses and a comma -> [[0, 'ok']]
+match -> [[0, ('Pattern matching is only supported in Python 3.10 and greater', 2, 17, 2, -1, '    case 1: pass\n')], [10, 'ok']]
+match with more -> [[0, ('Pattern matching is only supported in Python 3.10 and greater', 3, 17, 3, -1, '    case _: pass\n')], [10, 'ok']]
+match is a name -> [[0, 'ok']]
+match without a colon -> [[0, ("expected ':'", 1, 8, 1, 9, 'match x\n')]]
+except* -> [[0, ('Exception groups are only supported in Python 3.11 and greater', 2, 16, 2, -1, 'except* E: pass\n')], [11, 'ok']]
+except* as -> [[0, ('Exception groups are only supported in Python 3.11 and greater', 3, 11, 3, -1, 'else: pass\n')], [11, 'ok']]
+type -> [[0, ('Type statement is only supported in Python 3.12 and greater', 1, 13, 1, 14, 'type X = int\n')], [12, 'ok']]
+type with parameters -> [[0, ('Type parameter lists are only supported in Python 3.12 and greater', 1, 9, 1, 10, 'type X[T] = list[T]\n')], [12, 'ok']]
+type is a name -> [[0, 'ok']]
+def with parameters -> [[0, ('Type parameter lists are only supported in Python 3.12 and greater', 1, 8, 1, 9, 'def f[T](a: T): pass\n')], [12, 'ok']]
+class with parameters -> [[0, ('Type parameter lists are only supported in Python 3.12 and greater', 1, 10, 1, 11, 'class C[T]: pass\n')], [12, 'ok']]
+async def with parameters -> [[0, ('Type parameter lists are only supported in Python 3.12 and greater', 1, 14, 1, 15, 'async def f[T](): pass\n')], [12, 'ok']]
+a default -> [[0, ('Type parameter defaults are only supported in Python 3.13 and greater', 1, 14, 1, 15, 'def f[T = int](): pass\n')], [13, 'ok']]
+a default of a star -> [[0, ('Type parameter defaults are only supported in Python 3.13 and greater', 1, 15, 1, 16, 'def f[*T = int](): pass\n')], [13, 'ok']]
+a default of two stars -> [[0, ('Type parameter defaults are only supported in Python 3.13 and greater', 1, 16, 1, 17, 'def f[**T = int](): pass\n')], [13, 'ok']]
+a default in a class -> [[0, ('Type parameter defaults are only supported in Python 3.13 and greater', 1, 21, 1, 22, 'class C[T: int = int]: pass\n')], [13, 'ok']]
+a default in a type -> [[0, ('Type parameter defaults are only supported in Python 3.13 and greater', 1, 15, 1, 16, 'type X[T = int] = T\n')], [13, 'ok']]
+except without parentheses -> [[0, ('except expressions without parentheses are only supported in Python 3.14 and greater', 2, 18, 2, 19, 'except A, B: pass\n')], [14, 'ok']]
+except* without parentheses -> [[0, ('except expressions without parentheses are only supported in Python 3.14 and greater', 2, 19, 2, 20, 'except* A, B: pass\n')], [14, 'ok']]
+except with parentheses -> [[0, 'ok']]
+t-string -> [[0, ('t-strings are only supported in Python 3.14 and greater', 1, 7, 1, 8, "t'a{b}'\n")], [14, 'ok']]
+t-string alone -> [[0, ('t-strings are only supported in Python 3.14 and greater', 1, 3, 1, 4, "t''\n")], [14, 'ok']]
+t-strings together -> [[0, ('t-strings are only supported in Python 3.14 and greater', 1, 4, 1, 5, "t'a' t'b'\n")], [14, 'ok']]
+f-string -> [[0, 'ok']]
+f-string with = -> [[0, 'ok']]
+nested quotes in an f-string -> [[0, 'ok']]
+underscores -> [[0, ('Underscores in numeric literals are only supported in Python 3.6 and greater', 1, 1, 1, 6, '1_000\n')], [6, 'ok']]
+underscores in a float -> [[0, ('Underscores in numeric literals are only supported in Python 3.6 and greater', 1, 1, 1, 8, '1_0.0_1\n')], [6, 'ok']]
+underscores in hex -> [[0, ('Underscores in numeric literals are only supported in Python 3.6 and greater', 1, 1, 1, 6, '0x_ff\n')], [6, 'ok']]
+underscores in an exponent -> [[0, ('Underscores in numeric literals are only supported in Python 3.6 and greater', 1, 1, 1, 6, '1e1_0\n')], [6, 'ok']]
+underscores in a complex -> [[0, ('Underscores in numeric literals are only supported in Python 3.6 and greater', 1, 1, 1, 5, '1_0j\n')], [6, 'ok']]
+no underscores -> [[0, 'ok']]
+unpacking in a return -> [[0, 'ok']]
+unpacking in a subscript -> [[0, 'ok']]
+a star in an index -> [[0, 'ok']]
+decorator expression -> [[0, 'ok']]
+dict unpacking -> [[0, 'ok']]
+star in a call -> [[0, 'ok']]
+keyword after star -> [[0, 'ok']]
+trailing comma after star -> [[0, 'ok']]
+two things -> [[0, ('Variable annotation syntax is only supported in Python 3.6 and greater', 1, 11, 1, 12, 'x: int = 1\n')], [6, 'ok']]
+the later first -> [[0, ('Variable annotation syntax is only supported in Python 3.6 and greater', 3, 19, 3, 20, '        y: int = 1\n')], [6, ('Pattern matching is only supported in Python 3.10 and greater', 3, 19, 3, -1, '        y: int = 1\n')], [10, 'ok']]
+inside the newer -> [[0, ('Assignment expressions are only supported in Python 3.8 and greater', 2, 21, 2, 22, '    x: int = (y := 1)\n')], [8, 'ok']]
+a mistake besides -> [[0, ('Variable annotation syntax is only supported in Python 3.6 and greater', 1, 10, 1, 11, 'x: int = \n')], [6, ('invalid syntax', 1, 10, 1, 11, 'x: int = \n')]]
+a mistake before -> [[0, ("unmatched ')'", 1, 5, 1, 5, 'x = )')]]
+a mistake after -> [[0, ("unmatched ')'", 2, 5, 2, 5, 'x = )')]]
+many arguments -> [[0, 'ok']]
+many parameters -> [[0, 'ok']]
+===== how it is given
+None -> ok
+(3, 4) -> ('Async functions are only supported in Python 3.5 and greater', 1, 20, 1, 21, 'async def f(): pass\n')
+(3, 14) -> ok
+(3, 99) -> ok
+(3, 0) -> ('Async functions are only supported in Python 3.5 and greater', 1, 20, 1, 21, 'async def f(): pass\n')
+(3, -1) -> ok
+(2, 7) -> ValueError: Unsupported major version: 2
+(4, 0) -> ValueError: Unsupported major version: 4
+(3,) -> ValueError: not enough values to unpack (expected 2, got 1)
+(3, 4, 5) -> ValueError: too many values to unpack (expected 2, got 3)
+4 -> ('Async functions are only supported in Python 3.5 and greater', 1, 20, 1, 21, 'async def f(): pass\n')
+14 -> ok
+-1 -> ok
+-5 -> ok
+0 -> ('Async functions are only supported in Python 3.5 and greater', 1, 20, 1, 21, 'async def f(): pass\n')
+'3.4' -> TypeError: 'str' object cannot be interpreted as an integer
+3.4 -> TypeError: 'float' object cannot be interpreted as an integer
+[3, 4] -> TypeError: 'list' object cannot be interpreted as an integer
+(3, '4') -> TypeError: 'str' object cannot be interpreted as an integer
+(3.0, 4) -> ('Async functions are only supported in Python 3.5 and greater', 1, 20, 1, 21, 'async def f(): pass\n')
+True -> ('Async functions are only supported in Python 3.5 and greater', 1, 20, 1, 21, 'async def f(): pass\n')
+===== it is only for a tree
+0 -1 -> code
+0 4 -> code
+0 14 -> code
+0 2147483648 -> OverflowError: Python int too large to convert to C int
+0 -2147483649 -> OverflowError: Python int too large to convert to C int
+0 '4' -> TypeError: 'str' object cannot be interpreted as an integer
+0 None -> TypeError: 'NoneType' object cannot be interpreted as an integer
+1024 -1 -> Module
+1024 4 -> SyntaxError: Async functions are only supported in Python 3.5 and greater (<s>, line 1)
+1024 14 -> Module
+1024 2147483648 -> OverflowError: Python int too large to convert to C int
+1024 -2147483649 -> OverflowError: Python int too large to convert to C int
+1024 '4' -> TypeError: 'str' object cannot be interpreted as an integer
+1024 None -> TypeError: 'NoneType' object cannot be interpreted as an integer
+5120 -1 -> Module
+5120 4 -> SyntaxError: Async functions are only supported in Python 3.5 and greater (<s>, line 1)
+5120 14 -> Module
+5120 2147483648 -> OverflowError: Python int too large to convert to C int
+5120 -2147483649 -> OverflowError: Python int too large to convert to C int
+5120 '4' -> TypeError: 'str' object cannot be interpreted as an integer
+5120 None -> TypeError: 'NoneType' object cannot be interpreted as an integer
+33792 -1 -> Module
+33792 4 -> SyntaxError: Async functions are only supported in Python 3.5 and greater (<s>, line 1)
+33792 14 -> Module
+33792 2147483648 -> OverflowError: Python int too large to convert to C int
+33792 -2147483649 -> OverflowError: Python int too large to convert to C int
+33792 '4' -> TypeError: 'str' object cannot be interpreted as an integer
+33792 None -> TypeError: 'NoneType' object cannot be interpreted as an integer
+exec ("The '@' operator is only supported in Python 3.5 and greater", 1, 6, 1, 7, 'a @ b\n')
+eval ("The '@' operator is only supported in Python 3.5 and greater", 1, 5, 1, -1, 'a @ b')
+single ("The '@' operator is only supported in Python 3.5 and greater", 1, 6, 1, 7, 'a @ b\n')
+func_type ("The '@' operator is only supported in Python 3.5 and greater", 1, 7, 1, 8, '(a @ b) -> c')
+done

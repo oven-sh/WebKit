@@ -685,6 +685,8 @@ JSValue parseSource(JSGlobalObject* globalObject, const SourceCode& source, Modu
     arena.impliesDedent = !(options.futureFeatures & DoNotImplyDedent);
     arena.allowsIncompleteInput = options.futureFeatures & AllowIncompleteInput;
     arena.hasTypeComments = options.futureFeatures & TypeComments;
+    if (options.featureVersion >= 0)
+        arena.featureVersion = options.featureVersion;
     Vector<SyntaxWarning> warnings;
     SyntaxError error;
     Module* module = parse(vm, arena, source.provider()->source(), kind, warnings, error);

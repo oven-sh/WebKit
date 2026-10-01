@@ -177,6 +177,7 @@ struct Token {
     bool isInsideBrackets : 1 { false }; // Counting one that opens them, and not one that closes the last of them.
     bool isMadeOfTheEnd : 1 { false }; // Newline, which the end of the source has been taken for. It is nowhere, as that is.
     bool isNameOfConstant : 1 { false }; // A name that comes to True, False or None when it is normalized, which no name can be.
+    bool hasUnderscores : 1 { false }; // Of a number. It is only looked for where it matters: Arena::featureVersion.
     bool hasDecodingError : 1 { false }; // Of a middle: its escapes cannot be undone, and `text` is why. It is said when the whole string has been parsed.
 
     // In code units of the source.

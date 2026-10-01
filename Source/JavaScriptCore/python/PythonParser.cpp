@@ -436,6 +436,16 @@ private:
         return fail(WTF::move(message), token.line, token.column, token.endLine, token.endColumn, kind);
     }
 
+    // CHECK_VERSION(): whether something came into the language later than the version that was asked for, which has then been said. It is said when the whole of it has been parsed, and wherever the tokenizer has got to by then.
+    bool isTooNew(int version, ASCIILiteral what)
+    {
+        if (m_arena.featureVersion >= version) [[likely]]
+            return false;
+        SetForScope scope(m_failsInEitherPass, true);
+        failAtLastToken(concatenate(what, " only supported in Python 3."_s, version, " and greater"_s));
+        return true;
+    }
+
     // RAISE_SYNTAX_ERROR_STARTING_FROM(): from there to where the tokenizer is
     std::nullptr_t failStartingFrom(String&& message, unsigned line, unsigned column)
     {
@@ -968,7 +978,7 @@ private:
             Name* target = makeName(next(), ExpressionContext::Store);
             next();
             Expression* value = parseExpression();
-            if (!value)
+            if (!value || isTooNew(8, "Assignment expressions are"_s))
                 return nullptr;
             auto* named = make<NamedExpr>(start);
             named->target = target;
@@ -1423,6 +1433,8 @@ private:
                 m_index = index;
                 return left;
             }
+            if (info->op == BinaryOperator::MatMult && isTooNew(5, "The '@' operator is"_s))
+                return nullptr;
             auto* operation = make<BinOp>(start);
             operation->left = left;
             operation->op = info->op;
@@ -1509,7 +1521,7 @@ private:
         Mark start = mark();
         next();
         Expression* value = parsePrimary();
-        if (!value)
+        if (!value || isTooNew(5, "Await expressions are"_s))
             return nullptr;
         auto* await = make<Await>(start);
         await->value = value;
@@ -2135,6 +2147,9 @@ private:
         case TokenKind::Ellipsis:
             return makeConstant(next(), Constant::Type::Ellipsis);
         case TokenKind::Number:
+            // _PyPegen_number_token()
+            if (peek().hasUnderscores && isTooNew(6, "Underscores in numeric literals are"_s))
+                return nullptr;
             return makeNumber(next());
         case TokenKind::String:
         case TokenKind::FStringStart:
@@ -2512,6 +2527,8 @@ private:
                     return false;
                 conditions.append(condition);
             }
+            if (comprehension->isAsync && isTooNew(6, "Async comprehensions are"_s))
+                return false;
             comprehension->conditions = m_arena.copy(conditions);
             generators.append(comprehension);
         }
@@ -2677,6 +2694,8 @@ private:
             return failInEitherPass(String(decodingError->string()), end);
 
         if (isTemplate) {
+            if (isTooNew(14, "t-strings are"_s))
+                return nullptr;
             auto* result = m_arena.create<TemplateStr>();
             setRange(*result, open, end);
             result->values = m_arena.copy(values);
@@ -3029,6 +3048,8 @@ private:
                 break;
         }
 
+        if (sawSlash && isTooNew(8, "Positional-only parameters are"_s))
+            return nullptr;
         arguments->positionalOnly = m_arena.copy(positionalOnly);
         arguments->positional = m_arena.copy(positional);
         arguments->keywordOnly = m_arena.copy(keywordOnly);
@@ -3073,7 +3094,7 @@ private:
             Expression* defaultValue = nullptr;
             if (consume(TokenKind::Equal)) {
                 defaultValue = kind == TypeParameter::Kind::TypeVarTuple ? parseStarExpression() : parseExpression();
-                if (!defaultValue)
+                if (!defaultValue || isTooNew(13, "Type parameter defaults are"_s))
                     return false;
             }
             auto* parameter = make<TypeParameter>(start);
@@ -3085,7 +3106,7 @@ private:
             if (!consume(TokenKind::Comma))
                 break;
         }
-        if (!expect(TokenKind::RightBracket))
+        if (!expect(TokenKind::RightBracket) || isTooNew(12, "Type parameter lists are"_s))
             return false;
         result = m_arena.copy(parameters);
         return true;
@@ -3693,6 +3714,8 @@ private:
         // `type` is a name like any other unless the whole statement is this.
         if (!at(TokenKind::Newline) && !at(TokenKind::Semicolon))
             return nullptr;
+        if (isTooNew(12, "Type statement is"_s))
+            return nullptr;
         auto* alias = make<TypeAlias>(start);
         alias->name = name;
         alias->typeParameters = typeParameters;
@@ -3862,11 +3885,14 @@ private:
                 if (!value)
                     m_index = index;
             }
+            bool isSimple = first->is<Name>() && !first->isParenthesized;
+            if (isTooNew(6, isSimple ? "Variable annotation syntax is"_s : "Variable annotations syntax is"_s))
+                return nullptr;
             auto* statement = make<AnnAssign>(start);
             statement->target = first;
             statement->annotation = annotation;
             statement->value = value;
-            statement->isSimple = first->is<Name>() && !first->isParenthesized;
+            statement->isSimple = isSimple;
             return statement;
         }
 
@@ -3891,6 +3917,8 @@ private:
 
         if (auto op = augmentedOperator(peek().kind)) {
             if (!first->is<Name>() && !first->is<Attribute>() && !first->is<Subscript>())
+                return nullptr;
+            if (*op == BinaryOperator::MatMult && isTooNew(5, "The '@' operator is"_s))
                 return nullptr;
             setContext(*first, ExpressionContext::Store);
             next();
@@ -4172,6 +4200,8 @@ private:
         Sequence<Statement*> orElse;
         if (!parseBlock(body, "'for' statement"_s, start.line, !!typeComment) || !parseElse(orElse))
             return nullptr;
+        if (isAsync && isTooNew(5, "Async for loops are"_s))
+            return nullptr;
         auto* statement = make<For>(start);
         statement->typeComment = typeComment;
         statement->isAsync = isAsync;
@@ -4280,6 +4310,8 @@ private:
         Text typeComment = parseTypeComment();
         Sequence<Statement*> body;
         if (!parseBlock(body, "'with' statement"_s, start.line, !!typeComment))
+            return nullptr;
+        if (isAsync && isTooNew(5, "Async with statements are"_s))
             return nullptr;
         auto* statement = make<With>(start);
         statement->typeComment = typeComment;
@@ -4404,6 +4436,8 @@ private:
             Sequence<Statement*> handlerBody;
             if (!parseBlock(handlerBody, isStar ? "'except*' statement"_s : "'except' statement"_s, handlerStart.line))
                 return nullptr;
+            if (type && type->is<Tuple>() && !type->isParenthesized && isTooNew(14, "except expressions without parentheses are"_s))
+                return nullptr;
             auto* handler = make<ExceptHandler>(handlerStart);
             handler->type = type;
             handler->name = name;
@@ -4423,6 +4457,8 @@ private:
         } else if (handlers.isEmpty())
             return failAtLastToken("expected 'except' or 'finally' block"_s);
 
+        if (isStar && isTooNew(11, "Exception groups are"_s))
+            return nullptr;
         auto* statement = make<Try>(start);
         statement->isStar = isStar;
         statement->body = body;
@@ -4491,6 +4527,8 @@ private:
             cases.append(matchCase);
         }
         if (cases.isEmpty() || !expect(TokenKind::Dedent))
+            return nullptr;
+        if (isTooNew(10, "Pattern matching is"_s))
             return nullptr;
         auto* statement = make<Match>(start);
         statement->subject = subject;
@@ -4574,6 +4612,8 @@ private:
         }
         Sequence<Statement*> body;
         if (!parseBlock(body, "function definition"_s, start.line, !!typeComment))
+            return nullptr;
+        if (isAsync && isTooNew(5, "Async functions are"_s))
             return nullptr;
         auto* statement = make<FunctionDef>(start);
         statement->typeComment = typeComment;

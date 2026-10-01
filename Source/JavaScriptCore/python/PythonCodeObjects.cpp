@@ -561,7 +561,7 @@ PYTHON_NATIVE(builtinCompile)
     RETURN_IF_EXCEPTION(scope, { });
     int optimize = number(5, -1);
     RETURN_IF_EXCEPTION(scope, { });
-    number(6, -1);
+    int featureVersion = number(6, -1);
     RETURN_IF_EXCEPTION(scope, { });
 
     static constexpr int nested = 0x10; // PyCF_MASK_OBSOLETE
@@ -600,6 +600,8 @@ PYTHON_NATIVE(builtinCompile)
     // What the interpreter was started with is no optimization.
     unsigned optimizationLevel = optimize < 0 ? configuredOptimizationLevel(globalObject) : optimize;
     TreeOptions options { futureFeatures, optimizationLevel, !!(flags & onlyAST), (flags & optimizedAST) == optimizedAST };
+    if (featureVersion >= 0 && (flags & onlyAST))
+        options.featureVersion = featureVersion;
     if (isTree)
         RELEASE_AND_RETURN(scope, JSValue::encode(compileTree(globalObject, given, filename, moduleKind, options)));
 

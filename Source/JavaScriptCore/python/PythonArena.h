@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ParserArena.h"
+#include "PythonPlatform.h"
 #include <span>
 #include <wtf/Vector.h>
 
@@ -83,6 +84,8 @@ public:
     // enough of it is said to be that: PyCF_DONT_IMPLY_DEDENT and PyCF_ALLOW_INCOMPLETE_INPUT.
     bool impliesDedent { true };
     bool allowsIncompleteInput { false };
+    // compile(..., PyCF_ONLY_AST, _feature_version=n): what came into the language after Python 3.n is a syntax error.
+    int featureVersion { PYTHON_VERSION_MINOR };
     bool hasTypeComments { false }; // PyCF_TYPE_COMMENTS: `# type: int` is not a comment like any other.
     // Whether it is, or was, typed at a prompt of Python's own, and not only compiled as if it had been: `tok->prompt != NULL`. A line with nothing at all on it then ends whatever has been begun, and a first line with nothing
     // on it to speak of is a statement that does nothing.

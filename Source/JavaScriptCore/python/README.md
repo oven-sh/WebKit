@@ -725,6 +725,9 @@ compiled by itself, after what it is in. So what generates code keeps how many f
 (`generateFunctionCodeBlock()`). What evaluates the annotations of a function comes before the function, and of a module after everything else in it (`isGeneratedLast()`).
 `JSTests/python/programs/which-error-is-found-first.py`.
 
+**`ast.parse(source, feature_version=(3, n))`** has what came into the language after 3.n for a syntax error: `CHECK_VERSION()` in the grammar, `isTooNew()` here, at the same 26 places. It is said once the whole of the thing has been
+parsed, at wherever the tokenizer has got to by then, which `m_furthest` is. `programs/syntax-that-is-too-new-for-a-version.py` has each of them at each version.
+
 ### Syntax trees
 
 The module `_ast` is the syntax tree as objects, which `ast.py` is made of. `compile(source, ..., PyCF_ONLY_AST)` gives the tree, and `compile(tree, ...)` takes one, which a program may have made or changed:

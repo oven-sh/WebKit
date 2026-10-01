@@ -451,6 +451,8 @@ private:
         token.endLine = m_line;
         token.endColumn = columnOf(m_position);
         token.isInsideBrackets = !m_brackets.isEmpty();
+        if (kind == TokenKind::Number && m_arena.featureVersion < 6) [[unlikely]]
+            token.hasUnderscores = std::ranges::contains(m_source.subspan(start, m_position - start), '_');
         m_tokens.append(token);
         m_lineHasTokens = true;
         if (givesTokensAsWritten()) [[unlikely]]

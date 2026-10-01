@@ -73,6 +73,7 @@ struct TreeOptions {
     unsigned optimizationLevel { 0 };
     bool wantsTree { false }; // PyCF_ONLY_AST
     bool isOptimized { false }; // PyCF_OPTIMIZED_AST
+    int featureVersion { -1 }; // _feature_version, of a tree that is parsed. Less than nothing is whatever version this is.
 };
 // compile(tree, ...): a code object, or the tree over again.
 JSValue compileTree(JSGlobalObject*, JSValue tree, const String& filename, Module::Kind, const TreeOptions&);
