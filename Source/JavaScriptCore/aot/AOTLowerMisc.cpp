@@ -603,7 +603,7 @@ void Lowering::emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, u
             if (mayBe(candidates, TFinalObject))
                 passIf(isType(FinalObjectType));
             // The remaining object types that have a JSType of their own, if there are few enough candidates.
-            if (Type others = candidates & TObject & ~(TFinalObject | TOtherObject); others && std::popcount(others) <= 2) {
+            if (Type others = candidates & TObject & ~(TFinalObject | TOtherObject); others && numberOfBitsIn(others) <= 2) {
                 for (auto& kind : kindsOfObject) {
                     if (mayBe(others, kind.type))
                         passIf(isType(kind.jsType));

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CollectionScope.h"
+#include "HandlerInfo.h"
 #include <wtf/Lock.h>
 
 #include "JSCast.h"
