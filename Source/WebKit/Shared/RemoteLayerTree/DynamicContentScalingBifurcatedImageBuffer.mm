@@ -39,9 +39,9 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DynamicContentScalingBifurcatedImageBuffer);
 
-DynamicContentScalingBifurcatedImageBuffer::DynamicContentScalingBifurcatedImageBuffer(Parameters parameters, const WebCore::ImageBufferBackend::Info& backendInfo, const WebCore::ImageBufferCreationContext& creationContext, std::unique_ptr<WebCore::ImageBufferBackend>&& backend, WebCore::RenderingResourceIdentifier renderingResourceIdentifier)
-    : ImageBuffer(parameters, backendInfo, creationContext, WTF::move(backend), renderingResourceIdentifier)
-    , m_dynamicContentScalingBackend(DynamicContentScalingImageBufferBackend::create(ImageBuffer::backendParameters(parameters), creationContext))
+DynamicContentScalingBifurcatedImageBuffer::DynamicContentScalingBifurcatedImageBuffer(Parameters parameters, const WebCore::ImageBufferCreationContext& creationContext, std::unique_ptr<WebCore::ImageBufferBackend>&& backend, WebCore::RenderingResourceIdentifier renderingResourceIdentifier)
+    : ImageBuffer(parameters, creationContext, WTF::move(backend), renderingResourceIdentifier)
+    , m_dynamicContentScalingBackend(DynamicContentScalingImageBufferBackend::create(parameters, creationContext))
 {
 }
 

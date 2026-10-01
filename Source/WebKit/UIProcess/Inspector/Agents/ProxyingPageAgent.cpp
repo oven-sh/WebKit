@@ -51,7 +51,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ProxyingPageAgent);
 ProxyingPageAgent::ProxyingPageAgent(WebPageAgentContext& context)
     : InspectorAgentBase("Page"_s, context)
     , m_frontendDispatcher(makeUniqueRef<PageFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(PageBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(PageBackendDispatcher::create(protect(context.backendDispatcher), this))
     , m_inspectedPage(context.inspectedPage)
 {
 }
@@ -94,8 +94,10 @@ static String protocolFrameIdForFrameID(FrameIdentifier frameID)
     return IdentifierRegistry::protocolFrameId(frameID);
 }
 
-void ProxyingPageAgent::frameNavigated(FrameIdentifier frameID, const URL& url, const String& mimeType, SecurityOriginData&& securityOrigin, std::optional<FrameIdentifier> parentFrameID, const String& name, const String& loaderId)
+void ProxyingPageAgent::frameNavigated(FrameIdentifier frameID, const URL& url, const String& mimeType, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedSecurityOrigin, std::optional<FrameIdentifier> parentFrameID, const String& name, const String& loaderId)
 {
+    auto securityOrigin = WTF::move(untrustedSecurityOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
+
     // Cache the committing frame's real document info so getResourceTree()/buildFrameTree()
     // can report it for cross-origin children, whose commit the inspectedPage's WebFrameProxy
     // never observes (its url/origin stay stale). See webkit.org/b/308896.

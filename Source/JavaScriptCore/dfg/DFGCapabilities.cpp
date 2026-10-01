@@ -48,6 +48,20 @@ bool isSupportedForInlining(CodeBlock* codeBlock)
     return codeBlock->ownerExecutable()->isInliningCandidate();
 }
 
+bool isLazyStatePreparedForInlining(CodeBlock* codeBlock)
+{
+    CodeBlock* baseline = codeBlock->baselineAlternative();
+    if (baseline->isLazyStatePreparedForConcurrentCompilation())
+        return true;
+    if (!isCompilationThread()) {
+        baseline->prepareLazyStateForConcurrentCompilation();
+        return true;
+    }
+    // DFG::compile prepares the likely inlinees up front (prepareLazyStateOfInlineCandidates); this one was linked since.
+    dataLogLnIf(Options::verboseDFGFailure(), "Not inlining ", *baseline, ": lazy link-time state not prepared by the mutator.");
+    return false;
+}
+
 bool mightCompileEval(CodeBlock* codeBlock)
 {
     return isSupported()

@@ -123,6 +123,11 @@ static bool consumePositionTryDescriptor(CSSParserTokenRange&, const CSSParserCo
 // @function descriptors.
 static bool consumeFunctionDescriptor(CSSParserTokenRange&, const CSSParserContext&, CSSPropertyID, CSS::PropertyParserResult&);
 
+#if ENABLE(SPATIAL_PORTAL)
+// @environment-map descriptors.
+static bool consumeEnvironmentMapDescriptor(CSSParserTokenRange&, const CSSParserContext&, CSSPropertyID, CSS::PropertyParserResult&);
+#endif
+
 // MARK: - CSSPropertyID parsing
 
 template<typename CharacterType> static CSSPropertyID cssPropertyID(std::span<const CharacterType> characters)
@@ -259,6 +264,11 @@ bool CSSPropertyParser::parseValue(CSSPropertyID property, IsImportant important
     case StyleRuleType::Function:
         parseSuccess = consumeFunctionDescriptor(range, context, property, result);
         break;
+#if ENABLE(SPATIAL_PORTAL)
+    case StyleRuleType::EnvironmentMap:
+        parseSuccess = consumeEnvironmentMapDescriptor(range, context, property, result);
+        break;
+#endif
     default:
         parseSuccess = consumeStyleProperty(range, context, property, important, ruleType, result, namespaceMap);
         break;
@@ -270,7 +280,7 @@ bool CSSPropertyParser::parseValue(CSSPropertyID property, IsImportant important
     return parseSuccess;
 }
 
-RefPtr<CSSValue> CSSPropertyParser::parseStylePropertyLonghand(CSSPropertyID property, const String& string, const CSSParserContext& context)
+RefPtr<CSSValue> CSSPropertyParser::parseStylePropertyLonghand(CSSPropertyID property, StringView string, const CSSParserContext& context)
 {
     ASSERT(!WebCore::isShorthand(property));
 
@@ -324,7 +334,7 @@ RefPtr<CSSValue> CSSPropertyParser::parseStylePropertyLonghand(CSSPropertyID pro
     return value;
 }
 
-RefPtr<CSSValue> CSSPropertyParser::parseCounterStyleDescriptor(CSSPropertyID property, const String& string, const CSSParserContext& context)
+RefPtr<CSSValue> CSSPropertyParser::parseCounterStyleDescriptor(CSSPropertyID property, StringView string, const CSSParserContext& context)
 {
     auto tokenizer = CSSTokenizer(string);
     auto range = tokenizer.tokenRange();
@@ -753,7 +763,7 @@ bool consumePageDescriptor(CSSParserTokenRange& range, const CSSParserContext& c
             return false;
 
         // Portrait is the default and should not be serialized.
-        if (property == CSSPropertySize) {
+        if (property == CSSPropertyPageSize) {
             RefPtr pair = dynamicDowncast<CSSValuePair>(parsedValue);
             if (pair && valueID(pair->second()) == CSSValuePortrait)
                 parsedValue = &pair->first();
@@ -762,6 +772,10 @@ bool consumePageDescriptor(CSSParserTokenRange& range, const CSSParserContext& c
         result.addProperty(state, property, CSSPropertyInvalid, WTF::move(parsedValue), IsImportant::No);
         return true;
     }
+
+    // Don't fall back to parsing `size` as the width/height shorthand inside @page.
+    if (property == CSSPropertyPageSize)
+        return false;
 
     return consumeStyleProperty(range, context, property, important, StyleRuleType::Page, result);
 }
@@ -799,6 +813,27 @@ bool consumeViewTransitionDescriptor(CSSParserTokenRange& range, const CSSParser
     result.addProperty(state, property, CSSPropertyInvalid, WTF::move(parsedValue), IsImportant::No);
     return true;
 }
+
+#if ENABLE(SPATIAL_PORTAL)
+
+bool consumeEnvironmentMapDescriptor(CSSParserTokenRange& range, const CSSParserContext& context, CSSPropertyID property, CSS::PropertyParserResult& result)
+{
+    auto state = CSS::PropertyParserState {
+        .context = context,
+        .currentRule = StyleRuleType::EnvironmentMap,
+        .currentProperty = property,
+        .important = IsImportant::No,
+    };
+
+    RefPtr parsedValue = CSSPropertyParsing::parseEnvironmentMapDescriptor(range, property, state);
+    if (!parsedValue || !range.atEnd())
+        return false;
+
+    result.addProperty(state, property, CSSPropertyInvalid, WTF::move(parsedValue), IsImportant::No);
+    return true;
+}
+
+#endif // ENABLE(SPATIAL_PORTAL)
 
 // Checks whether a CSS property is allowed in @position-try.
 static bool propertyAllowedInPositionTryRule(CSSPropertyID property)

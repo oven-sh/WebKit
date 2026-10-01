@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // An integer FFI parameter validly accepts doubles / booleans / null (the conversion table),
 // so a call site that passes such values must NOT get an unconditional Int32Use check (which
 // would OSR-exit every call -> a deopt storm). The site must stay compiled and agree with the

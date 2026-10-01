@@ -28,6 +28,7 @@
 #include <WebCore/ContentsFormat.h>
 #include <WebCore/ScreenProperties.h>
 #include <memory>
+#include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/Platform.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -56,7 +57,7 @@ typedef struct CGColorSpace *CGColorSpaceRef;
 
 namespace WebCore {
 
-class DestinationColorSpace;
+class ColorSpace;
 class FloatPoint;
 class FloatRect;
 class FloatSize;
@@ -65,7 +66,7 @@ class Widget;
 int screenDepth(Widget*);
 int screenDepthPerComponent(Widget*);
 bool screenIsMonochrome(Widget*);
-WEBCORE_EXPORT DestinationColorSpace screenColorSpace(Widget* = nullptr);
+WEBCORE_EXPORT ColorSpace screenColorSpace(Widget* = nullptr);
 
 bool screenHasInvertedColors();
 
@@ -121,6 +122,7 @@ private:
 };
 
 WEBCORE_EXPORT ScreenProperties collectScreenProperties();
+WEBCORE_EXPORT void collectScreenPropertiesAsync(CompletionHandler<void(ScreenProperties&&)>&&);
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
 WEBCORE_EXPORT float currentEDRHeadroomForDisplay(PlatformDisplayID);

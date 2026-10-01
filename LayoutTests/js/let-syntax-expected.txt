@@ -391,7 +391,7 @@ PASS Has syntax error: ''use strict'; function f() { function x(){}; class x{}; 
 SyntaxError: Unexpected identifier 'y'
 SyntaxError: Unexpected identifier 'y'
 PASS Has syntax error: 'let x; with ({}) let y = 3;'
-ReferenceError: Can't find variable: let
+ReferenceError: let is not defined
 PASS Does not have syntax error: 'let;'
 SyntaxError: Unexpected token ';'. Expected a parameter pattern or a ')' in parameter list.
 SyntaxError: Unexpected token ';'. Expected a parameter pattern or a ')' in parameter list.

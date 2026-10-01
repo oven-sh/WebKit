@@ -63,7 +63,6 @@
 #include <WebCore/CredentialStorage.h>
 #include <WebCore/DatabaseTracker.h>
 #include <WebCore/HTMLMediaElement.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/NotificationResources.h>
 #include <WebCore/OriginLock.h>
 #include <WebCore/RegistrableDomain.h>
@@ -74,6 +73,8 @@
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/Site.h>
 #include <WebCore/StorageUtilities.h>
+#include <WebCore/ThirdPartyCookieBlockingMode.h>
+#include <WebCore/TrackingPreventionTypes.h>
 #include <WebCore/WebLockRegistry.h>
 #include <algorithm>
 #include <wtf/Borrow.h>
@@ -174,7 +175,7 @@ WebsiteDataStore::WebsiteDataStore(Ref<WebsiteDataStoreConfiguration>&& configur
     , m_client(makeUniqueRef<WebsiteDataStoreClient>())
     , m_webLockRegistry(WebCore::LocalWebLockRegistry::create())
 {
-    RELEASE_LOG(Storage, "%p - WebsiteDataStore::WebsiteDataStore sessionID=%" PRIu64 " identifier=%" PUBLIC_LOG_STRING, this, m_sessionID.toUInt64(), m_configuration->identifier() ? m_configuration->identifier()->toString().utf8().data() : "null"_s);
+    RELEASE_LOG(Storage, "%p - WebsiteDataStore::WebsiteDataStore sessionID=%" PRIu64 " identifier=%" PUBLIC_LOG_STRING, this, m_sessionID.toUInt64(), m_configuration->identifier() ? m_configuration->identifier()->toString().utf8() : "null"_s);
 
 #if PLATFORM(COCOA)
     determineTrackingPreventionState();
@@ -617,7 +618,7 @@ void WebsiteDataStore::fetchDataAndApply(OptionSet<WebsiteDataType> dataTypes, O
                 for (auto& record : records)
                     allTypes.add(record.types);
                 apply(WTF::move(records));
-                RELEASE_LOG(Storage, "WebsiteDataStore::fetchDataAndApply finished fetching data for session %" PRIu64 " ( fetched types: %" PUBLIC_LOG_STRING ")", sessionID.toUInt64(), loggingString(allTypes).utf8().data());
+                RELEASE_LOG(Storage, "WebsiteDataStore::fetchDataAndApply finished fetching data for session %" PRIu64 " ( fetched types: %" PUBLIC_LOG_STRING ")", sessionID.toUInt64(), loggingString(allTypes).utf8());
             });
         }
 
@@ -2137,6 +2138,21 @@ void WebsiteDataStore::setUserAgentStringQuirkForTesting(const String& domain, c
     completionHandler();
 }
 
+void WebsiteDataStore::setLocalNetworkAccessPermissionForTesting(const WebCore::ClientOrigin& origin, WebCore::IPAddressSpace addressSpace, WebCore::PermissionState state, CompletionHandler<void()>&& completionHandler)
+{
+    protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::SetLocalNetworkAccessPermissionForTesting(m_sessionID, origin, addressSpace, state), WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::removeLocalNetworkAccessPermissions(const WebCore::SecurityOriginData& topOrigin, CompletionHandler<void()>&& completionHandler)
+{
+    protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::RemoveLocalNetworkAccessPermissions(m_sessionID, topOrigin), WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::clearLocalNetworkAccessPermissionsForTesting(CompletionHandler<void()>&& completionHandler)
+{
+    protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::ClearLocalNetworkAccessPermissionsForTesting(m_sessionID), WTF::move(completionHandler));
+}
+
 void WebsiteDataStore::setPrivateTokenIPCForTesting(bool enabled)
 {
     protect(networkProcess())->send(Messages::NetworkProcess::SetShouldSendPrivateTokenIPCForTesting(sessionID(), enabled), 0);
@@ -2665,7 +2681,7 @@ void WebsiteDataStore::forwardAppBoundDomainsToITPIfInitialized(CompletionHandle
         store->setAppBoundDomainsForITP(domains, [callbackAggregator] { });
     };
 
-    propagateAppBoundDomains(protectedGlobalDefaultDataStore().get(), *appBoundDomains);
+    propagateAppBoundDomains(protect(protectedGlobalDefaultDataStore()), *appBoundDomains);
 
     for (auto& store : allDataStores().values())
         propagateAppBoundDomains(protect(store).ptr(), *appBoundDomains);
@@ -2806,9 +2822,9 @@ void WebsiteDataStore::getNotifications(const URL& registrationalURL, Completion
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
-void WebsiteDataStore::setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit)
+void WebsiteDataStore::setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency)
 {
-    protect(networkProcess())->setEmulatedConditions(sessionID(), WTF::move(bytesPerSecondLimit));
+    protect(networkProcess())->setEmulatedConditions(sessionID(), bandwidthBytesPerSecond, latency);
 }
 
 #endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)

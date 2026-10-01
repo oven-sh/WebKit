@@ -37,6 +37,10 @@
 #include <functional>
 #include <sstream>
 
+#if defined(ANGLE_USE_PERFETTO)
+#    include <perfetto/tracing/track.h>
+#endif
+
 // When --minimize-gpu-work is specified, we want to reduce GPU work to minimum and lift up the CPU
 // overhead to surface so that we can see how much CPU overhead each driver has for each app trace.
 // On some driver(s) the bufferSubData/texSubImage calls end up dominating the frame time when the
@@ -1029,11 +1033,6 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
 
-    if (traceNameIs("saint_seiya_awakening"))
-    {
-        addExtensionPrerequisite("GL_EXT_shadow_samplers");
-    }
-
     if (traceNameIs("magic_tiles_3"))
     {
         // Linux+NVIDIA doesn't support GL_KHR_texture_compression_astc_ldr (possibly others also)
@@ -1117,20 +1116,9 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
 
-    if (traceNameIs("pokemon_go"))
-    {
-        addExtensionPrerequisite("GL_EXT_texture_cube_map_array");
-        addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
-    }
-
     if (traceNameIs("cookie_run_kingdom"))
     {
         addExtensionPrerequisite("GL_OES_EGL_image_external");
-    }
-
-    if (traceNameIs("pubg_mobile_skydive") || traceNameIs("pubg_mobile_battle_royale"))
-    {
-        addExtensionPrerequisite("GL_EXT_texture_buffer");
     }
 
     if (traceNameIs("scrabble_go"))
@@ -1168,20 +1156,10 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
     }
 
-    if (traceNameIs("war_planet_online"))
-    {
-        addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
-    }
-
     if (traceNameIs("lords_mobile"))
     {
         // http://anglebug.com/42265475 - glTexStorage2DEXT is not exposed on Pixel 4 native
         addExtensionPrerequisite("GL_EXT_texture_storage");
-    }
-
-    if (traceNameIs("real_racing3"))
-    {
-        addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
     }
 
     if (traceNameIs("blade_and_soul_revolution"))
@@ -1356,6 +1334,12 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (gTraceTestValidation)
     {
+        mStepsToRun = frameCount();
+    }
+
+    if (gCapturedFrameCountOnly)
+    {
+        // Run exactly the number of frames that were captured
         mStepsToRun = frameCount();
     }
 
@@ -1594,7 +1578,7 @@ void TracePerfTest::sampleTime()
         {
             glGetInteger64v(GL_TIMESTAMP_EXT, &glTime);
         }
-        mTimeline.push_back({glTime, angle::GetHostTimeSeconds()});
+        mTimeline.push_back({glTime, angle::GetCurrentSystemTime()});
     }
 }
 
@@ -1661,7 +1645,7 @@ void TracePerfTest::drawBenchmark()
 
     char frameName[32];
     snprintf(frameName, sizeof(frameName), "Frame %u", mCurrentFrame);
-    beginInternalTraceEvent(frameName);
+    ANGLE_TRACE_EVENT_BEGIN("gpu.angle", perfetto::DynamicString(frameName));
 
     // Only insert gpu-timer calls for when requested
     if (mParams->trackGpuTime)
@@ -1670,9 +1654,15 @@ void TracePerfTest::drawBenchmark()
     }
     atraceCounter("TraceFrameIndex", mCurrentFrame);
 
-    const double beginReplayFrameTimeSec = mTrialTimer.getElapsedWallClockTime();
+    startVulkanApiTimer();
+    const double beginReplayFrameTimeSec =
+        gTrackFrameWallTime ? mTrialTimer.getElapsedWallClockTime() : 0.0;
     mTraceReplay->replayFrame(mCurrentFrame);
-    mFrameWallTimeSec += mTrialTimer.getElapsedWallClockTime() - beginReplayFrameTimeSec;
+    if (gTrackFrameWallTime)
+    {
+        mFrameWallTimeSec += mTrialTimer.getElapsedWallClockTime() - beginReplayFrameTimeSec;
+    }
+    stopVulkanApiTimer();
 
     if (!gAddSwapIntoGPUTime && mParams->trackGpuTime)
     {
@@ -1682,8 +1672,13 @@ void TracePerfTest::drawBenchmark()
     updatePerfCounters();
 
     // Need to exclude potentially expensive calls above from the Frame Time.
+    ASSERT(!gAddSwapIntoFrameWallTime || gTrackFrameWallTime);
     const double beginSwapTimeSec =
         gAddSwapIntoFrameWallTime ? mTrialTimer.getElapsedWallClockTime() : 0.0;
+    if (gAddSwapIntoFrameWallTime)
+    {
+        startVulkanApiTimer();
+    }
 
     if (mParams->surfaceType == SurfaceType::Offscreen)
     {
@@ -1806,6 +1801,7 @@ void TracePerfTest::drawBenchmark()
     {
         const double endSwapTimeSec = mTrialTimer.getElapsedWallClockTime();
         mFrameWallTimeSec += endSwapTimeSec - beginSwapTimeSec;
+        stopVulkanApiTimer();
     }
 
     if (gAddSwapIntoGPUTime && mParams->trackGpuTime)
@@ -1818,7 +1814,7 @@ void TracePerfTest::drawBenchmark()
         glFlush();
     }
 
-    endInternalTraceEvent(frameName);
+    ANGLE_TRACE_EVENT_END("gpu.angle");
 
     mTotalFrameCount++;
 
@@ -1854,14 +1850,24 @@ void TracePerfTest::drawBenchmark()
             GLint64 beginTimestamp = 0;
             glGetQueryObjecti64vEXT(query.beginTimestampQuery, GL_QUERY_RESULT, &beginTimestamp);
             glDeleteQueriesEXT(1, &query.beginTimestampQuery);
+#if defined(ANGLE_USE_PERFETTO)
             double beginHostTime = getHostTimeFromGLTime(beginTimestamp);
-            beginGLTraceEvent(fboName, beginHostTime);
+            uint64_t beginTimestampNs = static_cast<uint64_t>(beginHostTime * 1e9);
+            ANGLE_TRACE_EVENT_BEGIN("gpu.angle.gpu", perfetto::DynamicString(fboName),
+                                    perfetto::NamedTrack::FromPointer("GPU Work", this),
+                                    beginTimestampNs);
+#endif
 
             GLint64 endTimestamp = 0;
             glGetQueryObjecti64vEXT(query.endTimestampQuery, GL_QUERY_RESULT, &endTimestamp);
             glDeleteQueriesEXT(1, &query.endTimestampQuery);
+#if defined(ANGLE_USE_PERFETTO)
             double endHostTime = getHostTimeFromGLTime(endTimestamp);
-            endGLTraceEvent(fboName, endHostTime);
+            uint64_t endTimestampNs = static_cast<uint64_t>(endHostTime * 1e9);
+            ANGLE_TRACE_EVENT_END("gpu.angle.gpu",
+                                  perfetto::NamedTrack::FromPointer("GPU Work", this),
+                                  endTimestampNs);
+#endif
 
             mRunningQueries.erase(mRunningQueries.begin() + queryIndex);
         }

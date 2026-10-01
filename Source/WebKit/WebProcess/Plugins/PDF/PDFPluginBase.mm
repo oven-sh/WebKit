@@ -1345,7 +1345,15 @@ bool PDFPluginBase::showContextMenuAtPoint(const IntPoint& point)
     if (!frameView)
         return false;
     IntPoint contentsPoint = frameView->contentsToRootView(point);
-    WebMouseEvent event({ WebEventType::MouseDown, OptionSet<WebEventModifier> { }, MonotonicTime::now() }, WebMouseEventButton::Right, 0, contentsPoint, contentsPoint, 0, 0, 0, 1, WebCore::ForceAtClick, WebEventInputSource::UserDriven);
+    Ref event = WebMouseEvent::create({ WebEventType::MouseDown, OptionSet<WebEventModifier> { }, MonotonicTime::now() }, {
+        .button = WebMouseEventButton::Right,
+        .buttons = 0,
+        .position = contentsPoint,
+        .globalPosition = contentsPoint,
+        .clickCount = 1,
+        .force = WebCore::ForceAtClick,
+        .inputSource = WebEventInputSource::UserDriven,
+    });
     return handleContextMenuEvent(event);
 }
 
@@ -1446,7 +1454,7 @@ SelectionWasFlipped PDFPluginBase::moveSelectionEndpoint(FloatPoint, SelectionEn
     return SelectionWasFlipped::No;
 }
 
-SelectionEndpoint PDFPluginBase::extendInitialSelection(FloatPoint pointInRootView, TextGranularity)
+SelectionEndpoint PDFPluginBase::extendInitialSelection(FloatPoint pointInRootView, TextGranularity, SelectionExtentAnchor)
 {
     return SelectionEndpoint::Start;
 }
@@ -1486,7 +1494,7 @@ static void verboseLog(PDFIncrementalLoader* incrementalLoader, std::optional<ui
         stream << " not";
     stream << " complete";
 
-    LOG(IncrementalPDFVerbose, "%s", stream.release().utf8().data());
+    LOG(IncrementalPDFVerbose, "%s", stream.release().utf8());
 }
 #endif
 

@@ -71,7 +71,7 @@ CallFrameShuffler::CallFrameShuffler(CCallHelpers& jit, const CallFrameShuffleDa
             continue;
 
         if (reg.isGPR()) {
-            addNew(JSValueRegs(reg.gpr()), data.registers[reg]);
+            addNew(reg.gpr(), data.registers[reg]);
         } else
             addNew(reg.fpr(), data.registers[reg]);
     }
@@ -127,11 +127,11 @@ void CallFrameShuffler::dump(PrintStream& out) const
             out.print("        ");
         if (isValidOld(old)) {
             if (getOld(old)) {
-                auto str = toCString(old);
+                auto str = toUTF8CString(old);
                 if (isValidNew(newReg) && isDangerNew(newReg))
-                    out.printf(" X      %18s       X ", str.data());
+                    out.printf(" X      %18s       X ", str.legacyCStringPointer());
                 else
-                    out.printf(" |      %18s       | ", str.data());
+                    out.printf(" |      %18s       | ", str.legacyCStringPointer());
             } else if (isValidNew(newReg) && isDangerNew(newReg))
                 out.printf(" X%30s X ", "");
             else
@@ -140,17 +140,17 @@ void CallFrameShuffler::dump(PrintStream& out) const
             out.print(emptySpace);
         if (isValidNew(newReg)) {
             const char d = isDangerNew(newReg) ? 'X' : '|';
-            auto str = toCString(newReg);
+            auto str = toUTF8CString(newReg);
             if (getNew(newReg)) {
                 if (getNew(newReg)->recovery().isConstant())
-                    out.printf(" %c%8s <-           constant %c ", d, str.data(), d);
+                    out.printf(" %c%8s <-           constant %c ", d, str.legacyCStringPointer(), d);
                 else {
-                    auto recoveryStr = toCString(getNew(newReg)->recovery());
-                    out.printf(" %c%8s <- %18s %c ", d, str.data(),
-                        recoveryStr.data(), d);
+                    auto recoveryStr = toUTF8CString(getNew(newReg)->recovery());
+                    out.printf(" %c%8s <- %18s %c ", d, str.legacyCStringPointer(),
+                        recoveryStr.legacyCStringPointer(), d);
                 }
             } else if (newReg == VirtualRegister { CallFrameSlot::argumentCountIncludingThis })
-                out.printf(" %c%8s <- %18zu %c ", d, str.data(), argCount(), d);
+                out.printf(" %c%8s <- %18zu %c ", d, str.legacyCStringPointer(), argCount(), d);
             else
                 out.printf(" %c%30s %c ", d, "", d);
         } else
@@ -172,8 +172,8 @@ void CallFrameShuffler::dump(PrintStream& out) const
             continue;
         out.print("          ");
         if (oldCachedRecovery) {
-            auto str = toCString(reg);
-            out.printf("         %8s                  ", str.data());
+            auto str = toUTF8CString(reg);
+            out.printf("         %8s                  ", str.legacyCStringPointer());
         } else
             out.print(emptySpace);
         if (newCachedRecovery)
@@ -435,7 +435,7 @@ bool CallFrameShuffler::tryWrites(CachedRecovery& cachedRecovery)
         && cachedRecovery.targets().size() == 1
         && newAsOld(cachedRecovery.targets()[0]) == cachedRecovery.recovery().virtualRegister()) {
         cachedRecovery.clearTargets();
-        if (!cachedRecovery.wantedJSValueRegs() && cachedRecovery.wantedFPR() == InvalidFPRReg)
+        if (cachedRecovery.wantedGPR() == InvalidGPRReg && cachedRecovery.wantedFPR() == InvalidFPRReg)
             clearCachedRecovery(cachedRecovery.recovery());
         return true;
     }
@@ -461,7 +461,7 @@ bool CallFrameShuffler::tryWrites(CachedRecovery& cachedRecovery)
     if (verbose)
         dataLog("\n");
     cachedRecovery.clearTargets();
-    if (!cachedRecovery.wantedJSValueRegs() && cachedRecovery.wantedFPR() == InvalidFPRReg)
+    if (cachedRecovery.wantedGPR() == InvalidGPRReg && cachedRecovery.wantedFPR() == InvalidFPRReg)
         clearCachedRecovery(cachedRecovery.recovery());
 
     return true;
@@ -502,7 +502,7 @@ bool CallFrameShuffler::performSafeWrites()
                 }
                 continue;
             }
-            if (cachedRecovery->wantedJSValueRegs()) {
+            if (cachedRecovery->wantedGPR() != InvalidGPRReg) {
                 if (verbose) {
                     dataLog("   - ", cachedRecovery->recovery(), " writes to NEW ", reg,
                         " but is also needed in registers.\n");
@@ -540,7 +540,7 @@ bool CallFrameShuffler::performSafeWrites()
                     continue;
 
                 ASSERT(hasOnlySafeWrites(*cachedRecovery)
-                    && !cachedRecovery->wantedJSValueRegs()
+                    && cachedRecovery->wantedGPR() == InvalidGPRReg
                     && cachedRecovery->wantedFPR() == InvalidFPRReg);
                 if (!tryWrites(*cachedRecovery))
                     stillFailing.append(failed);
@@ -606,7 +606,7 @@ void CallFrameShuffler::prepareAny()
         }
 
         if (canLoadAndBox(*cachedRecovery) && hasOnlySafeWrites(*cachedRecovery)
-            && !cachedRecovery->wantedJSValueRegs()
+            && cachedRecovery->wantedGPR() == InvalidGPRReg
             && cachedRecovery->wantedFPR() == InvalidFPRReg) {
             emitLoad(*cachedRecovery);
             emitBox(*cachedRecovery);

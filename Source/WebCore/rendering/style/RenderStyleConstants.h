@@ -35,6 +35,7 @@
 #include <wtf/EnumTraits.h>
 
 namespace WTF {
+class String;
 class TextStream;
 }
 
@@ -48,6 +49,12 @@ enum class DumpStyleValues {
 enum class PrintColorAdjust : bool {
     Economy,
     Exact
+};
+
+// https://drafts.csswg.org/css-values-5/#interpolate-size
+enum class InterpolateSize : bool {
+    NumericOnly,
+    AllowKeywords
 };
 
 enum class PseudoElementType : uint8_t {
@@ -297,6 +304,11 @@ enum class PortalActionType : bool {
     Orbit
 };
 
+enum class PositionContextType : bool {
+    Container,
+    Anchor
+};
+
 enum class TextCombine : bool {
     None,
     All
@@ -413,14 +425,7 @@ enum class FlexDirection : uint8_t {
     ColumnReverse
 };
 
-enum class FlexWrap : uint8_t {
-    NoWrap,
-    Wrap,
-    Reverse
-};
-
 inline AxisDirection toAxisDirection(FlexDirection direction) { return static_cast<AxisDirection>(direction == FlexDirection::RowReverse || direction == FlexDirection::ColumnReverse); }
-inline AxisDirection toAxisDirection(FlexWrap wrap) { return static_cast<AxisDirection>(wrap == FlexWrap::Reverse); }
 
 enum class ItemPosition : uint8_t {
     Legacy,
@@ -561,6 +566,13 @@ enum class QuoteType : uint8_t {
     NoOpenQuote,
     NoCloseQuote
 };
+
+enum class SynthesizedGlyph : uint8_t {
+    PickerUp,
+    PickerDown
+};
+
+WTF::String fallbackText(SynthesizedGlyph);
 
 enum class AnimationFillMode : uint8_t {
     None,
@@ -788,9 +800,10 @@ enum class TransformBox : uint8_t {
     ViewBox
 };
 
-enum class OverflowContinue : bool {
+enum class OverflowContinue : uint8_t {
     Auto,
-    Discard
+    Discard,
+    WebkitLegacy
 };
 
 enum class Hyphens : uint8_t {
@@ -810,11 +823,6 @@ enum class TextEmphasisMark : uint8_t {
     DoubleCircle,
     Triangle,
     Sesame
-};
-
-enum class TextOverflow : bool {
-    Clip,
-    Ellipsis
 };
 
 enum class TextWrapMode : bool {
@@ -1200,12 +1208,12 @@ WTF::TextStream& operator<<(WTF::TextStream&, FillBox);
 WTF::TextStream& operator<<(WTF::TextStream&, FillRepeat);
 WTF::TextStream& operator<<(WTF::TextStream&, FillSizeType);
 WTF::TextStream& operator<<(WTF::TextStream&, FlexDirection);
-WTF::TextStream& operator<<(WTF::TextStream&, FlexWrap);
 WTF::TextStream& operator<<(WTF::TextStream&, Float);
 WTF::TextStream& operator<<(WTF::TextStream&, UsedFloat);
 WTF::TextStream& operator<<(WTF::TextStream&, Hyphens);
 WTF::TextStream& operator<<(WTF::TextStream&, ImageRendering);
 WTF::TextStream& operator<<(WTF::TextStream&, InsideLink);
+WTF::TextStream& operator<<(WTF::TextStream&, InterpolateSize);
 WTF::TextStream& operator<<(WTF::TextStream&, Isolation);
 WTF::TextStream& operator<<(WTF::TextStream&, ItemPosition);
 WTF::TextStream& operator<<(WTF::TextStream&, ItemPositionType);
@@ -1225,10 +1233,12 @@ WTF::TextStream& operator<<(WTF::TextStream&, OverflowAlignment);
 WTF::TextStream& operator<<(WTF::TextStream&, OverflowWrap);
 WTF::TextStream& operator<<(WTF::TextStream&, PointerEvents);
 WTF::TextStream& operator<<(WTF::TextStream&, PortalActionType);
+WTF::TextStream& operator<<(WTF::TextStream&, PositionContextType);
 WTF::TextStream& operator<<(WTF::TextStream&, PositionType);
 WTF::TextStream& operator<<(WTF::TextStream&, PrintColorAdjust);
 WTF::TextStream& operator<<(WTF::TextStream&, PseudoElementType);
 WTF::TextStream& operator<<(WTF::TextStream&, QuoteType);
+WTF::TextStream& operator<<(WTF::TextStream&, SynthesizedGlyph);
 WTF::TextStream& operator<<(WTF::TextStream&, ReflectionDirection);
 WTF::TextStream& operator<<(WTF::TextStream&, RubyPosition);
 WTF::TextStream& operator<<(WTF::TextStream&, RubyAlign);
@@ -1247,7 +1257,6 @@ WTF::TextStream& operator<<(WTF::TextStream&, TextEmphasisFill);
 WTF::TextStream& operator<<(WTF::TextStream&, TextEmphasisMark);
 WTF::TextStream& operator<<(WTF::TextStream&, TextGroupAlign);
 WTF::TextStream& operator<<(WTF::TextStream&, TextJustify);
-WTF::TextStream& operator<<(WTF::TextStream&, TextOverflow);
 WTF::TextStream& operator<<(WTF::TextStream&, TextSecurity);
 WTF::TextStream& operator<<(WTF::TextStream&, TextWrapMode);
 WTF::TextStream& operator<<(WTF::TextStream&, TextWrapStyle);

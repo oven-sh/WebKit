@@ -64,12 +64,12 @@ FileTimes fileTimes(const String& path)
 {
 #if HAVE(STAT_BIRTHTIME)
     struct stat fileInfo;
-    if (stat(FileSystem::fileSystemRepresentation(path).data(), &fileInfo))
+    if (FileSystem::statFile(FileSystem::fileSystemRepresentation(path).spanIncludingNullTerminator(), fileInfo))
         return { };
     return { WallTime::fromRawSeconds(fileInfo.st_birthtime), WallTime::fromRawSeconds(fileInfo.st_mtime) };
 #elif USE(SOUP)
     // There's no st_birthtime in some operating systems like Linux, so we use xattrs to set/get the creation time.
-    GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(FileSystem::fileSystemRepresentation(path).data()));
+    GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(FileSystem::fileSystemRepresentation(path).legacyCStringPointer()));
     GRefPtr<GFileInfo> fileInfo = adoptGRef(g_file_query_info(file.get(), "xattr::birthtime,time::modified", G_FILE_QUERY_INFO_NONE, nullptr, nullptr));
     if (!fileInfo)
         return { };

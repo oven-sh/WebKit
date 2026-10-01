@@ -83,7 +83,9 @@ class Navigation;
 }
 
 #if PLATFORM(MAC)
-typedef WebKit::NativeWebWheelEvent PlatformScrollEvent;
+// A reference rather than a value: events are refcounted now, and this is only ever passed through,
+// never stored.
+typedef const WebKit::NativeWebWheelEvent& PlatformScrollEvent;
 #elif PLATFORM(GTK)
 typedef struct {
     WebCore::FloatSize delta;
@@ -155,9 +157,11 @@ public:
     bool shouldIgnorePinnedState() { return m_pendingSwipeTracker.shouldIgnorePinnedState(); }
     void setShouldIgnorePinnedState(bool ignore) { m_pendingSwipeTracker.setShouldIgnorePinnedState(ignore); }
 
+    bool canBeginOrContinueSwipe() const { return hasActiveSwipeGesture() || m_pendingSwipeTracker.isPending(); }
+
     bool isPhysicallySwipingLeft(SwipeDirection) const;
 
-    double NODELETE magnification() const;
+    double magnification() const;
 
     void prepareMagnificationGesture(WebCore::FloatPoint);
     void applyMagnification();
@@ -356,6 +360,8 @@ private:
 
         bool shouldIgnorePinnedState() { return m_shouldIgnorePinnedState; }
         void setShouldIgnorePinnedState(bool ignore) { m_shouldIgnorePinnedState = ignore; }
+
+        bool isPending() const { return m_state != State::None; }
 
     private:
 

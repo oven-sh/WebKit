@@ -57,7 +57,7 @@
 #include "RenderLineBreak.h"
 #include "RenderListBox.h"
 #include "RenderListItem.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderMathMLBlock.h"
 #include "RenderMenuList.h"
 #include "RenderModel.h"
@@ -123,10 +123,10 @@ void BoxGeometryUpdater::clear()
     m_nestedListMarkerOffsets.clear();
 }
 
-void BoxGeometryUpdater::setListMarkerOffsetForMarkerOutside(const RenderListMarker& listMarker)
+void BoxGeometryUpdater::setListMarkerOffsetForMarkerOutside(const RenderListOutsideMarker& listMarker)
 {
     CheckedRef layoutBox = *listMarker.layoutBox();
-    ASSERT(layoutBox->isListMarkerOutside());
+    ASSERT(layoutBox->isListMarkerBox());
     auto* ancestor = listMarker.containingBlock();
 
     auto offsetFromParentListItem = [&] {
@@ -137,7 +137,7 @@ void BoxGeometryUpdater::setListMarkerOffsetForMarkerOutside(const RenderListMar
                 offset -= (ancestor->borderStart() + ancestor->paddingStart());
             if (is<RenderListItem>(*ancestor))
                 break;
-            offset -= (ancestor->marginStart());
+            offset -= (ancestor->marginStart(ancestor->writingMode()));
             if (ancestor->isFlexItem()) {
                 offset -= ancestor->logicalLeft();
                 hasAccountedForBorderAndPadding = true;
@@ -156,7 +156,7 @@ void BoxGeometryUpdater::setListMarkerOffsetForMarkerOutside(const RenderListMar
         }
         auto offset = offsetFromParentListItem;
         for (ancestor = ancestor->containingBlock(); ancestor; ancestor = ancestor->containingBlock()) {
-            offset -= (ancestor->marginStart() + ancestor->borderStart() + ancestor->paddingStart());
+            offset -= (ancestor->marginStart(ancestor->writingMode()) + ancestor->borderStart() + ancestor->paddingStart());
             if (ancestor == associatedListItem)
                 break;
         }
@@ -525,7 +525,7 @@ static std::optional<LayoutUnit> baselineForBox(const RenderBox& renderBox)
         return { };
     }
 
-    if (CheckedPtr listMarker = dynamicDowncast<RenderListMarker>(renderBox)) {
+    if (CheckedPtr listMarker = dynamicDowncast<RenderListOutsideMarker>(renderBox)) {
         if (CheckedPtr listItem = listMarker->listItem(); listItem && !listMarker->isImage())
             return fontMetricsBasedBaseline(*listMarker);
         return { };
@@ -567,7 +567,7 @@ static inline void setIntegrationBaseline(const RenderBox& renderBox)
         return;
 
     auto hasNonSyntheticBaseline = [&] {
-        if (auto* renderListMarker = dynamicDowncast<RenderListMarker>(renderBox))
+        if (auto* renderListMarker = dynamicDowncast<RenderListOutsideMarker>(renderBox))
             return !renderListMarker->isImage();
 
         if (is<RenderReplaced>(renderBox) && renderBox.style().display() == Style::DisplayType::InlineFlow)
@@ -675,15 +675,15 @@ void BoxGeometryUpdater::updateLineBreakBoxDimensions(const RenderLineBreak& lin
     layoutState().ensureGeometryForBox(*lineBreakBox.layoutBox()).reset();
 }
 
-void BoxGeometryUpdater::updateInlineBoxDimensions(const RenderInline& renderInline, std::optional<LayoutUnit> availableWidth, std::optional<Layout::IntrinsicWidthMode> intrinsicWidthMode)
+void BoxGeometryUpdater::updateInlineBoxDimensions(const RenderBoxModelObject& inlineBox, std::optional<LayoutUnit> availableWidth, std::optional<Layout::IntrinsicWidthMode> intrinsicWidthMode)
 {
-    auto& boxGeometry = layoutState().ensureGeometryForBox(*renderInline.layoutBox());
+    auto& boxGeometry = layoutState().ensureGeometryForBox(*inlineBox.layoutBox());
 
-    auto writingMode = renderInline.writingMode();
+    auto writingMode = inlineBox.writingMode();
 
-    auto inlineMargin = horizontalLogicalMargin(renderInline, availableWidth, writingMode);
-    auto border = logicalBorder(renderInline, writingMode, intrinsicWidthMode.has_value());
-    auto padding = logicalPadding(renderInline, availableWidth, writingMode);
+    auto inlineMargin = horizontalLogicalMargin(inlineBox, availableWidth, writingMode);
+    auto border = logicalBorder(inlineBox, writingMode, intrinsicWidthMode.has_value());
+    auto padding = logicalPadding(inlineBox, availableWidth, writingMode);
 
     if (intrinsicWidthMode) {
         boxGeometry.setHorizontalMargin(inlineMargin);
@@ -693,7 +693,7 @@ void BoxGeometryUpdater::updateInlineBoxDimensions(const RenderInline& renderInl
     }
 
     boxGeometry.setHorizontalMargin(inlineMargin);
-    boxGeometry.setVerticalMargin(verticalLogicalMargin(renderInline, availableWidth, writingMode));
+    boxGeometry.setVerticalMargin(verticalLogicalMargin(inlineBox, availableWidth, writingMode));
     boxGeometry.setBorder(border);
     boxGeometry.setPadding(padding);
 }
@@ -704,8 +704,9 @@ void BoxGeometryUpdater::setFormattingContextContentGeometry(std::optional<Layou
 
     if (rootLayoutBox().establishesInlineFormattingContext()) {
         for (auto walker = InlineWalker(downcast<RenderBlockFlow>(rootRenderer())); !walker.atEnd(); walker.advance()) {
-            if (!is<RenderText>(walker.current()))
-                updateBoxGeometry(downcast<RenderElement>(*walker.current()), availableLogicalWidth, intrinsicWidthMode);
+            if (walker.current()->isExcludedMarker() || is<RenderText>(walker.current()))
+                continue;
+            updateBoxGeometry(downcast<RenderElement>(*walker.current()), availableLogicalWidth, intrinsicWidthMode);
         }
         return;
     }
@@ -797,11 +798,10 @@ void BoxGeometryUpdater::updateBoxGeometryAfterIntegrationLayout(const Layout::E
         // FIXME: These should eventually be all absorbed by LFC layout.
         setIntegrationBaseline(*renderBox);
 
-        if (CheckedPtr renderListMarker = dynamicDowncast<RenderListMarker>(*renderBox)) {
+        if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(*renderBox)) {
             CheckedRef style = layoutBox.parent().style();
             boxGeometry.setHorizontalMargin(horizontalLogicalMargin(*renderListMarker, { }, style->writingMode()));
-            if (!renderListMarker->isInside())
-                setListMarkerOffsetForMarkerOutside(*renderListMarker);
+            setListMarkerOffsetForMarkerOutside(*renderListMarker);
             const_cast<Layout::ElementBox&>(layoutBox).setListMarkerLayoutBounds(renderListMarker->layoutBounds());
         }
 
@@ -841,7 +841,7 @@ void BoxGeometryUpdater::updateBoxGeometry(const RenderElement& renderer, std::o
 
     if (auto* renderBox = dynamicDowncast<RenderBox>(renderer)) {
         updateLayoutBoxDimensions(*renderBox, availableWidth, intrinsicWidthMode);
-        if (auto* renderListMarker = dynamicDowncast<RenderListMarker>(renderer); renderListMarker && !renderListMarker->isInside())
+        if (auto* renderListMarker = dynamicDowncast<RenderListOutsideMarker>(renderer))
             setListMarkerOffsetForMarkerOutside(*renderListMarker);
         return;
     }
@@ -849,8 +849,8 @@ void BoxGeometryUpdater::updateBoxGeometry(const RenderElement& renderer, std::o
     if (auto* renderLineBreak = dynamicDowncast<RenderLineBreak>(renderer))
         return updateLineBreakBoxDimensions(*renderLineBreak);
 
-    if (auto* renderInline = dynamicDowncast<RenderInline>(renderer))
-        return updateInlineBoxDimensions(*renderInline, availableWidth, intrinsicWidthMode);
+    if (auto* inlineBox = dynamicDowncast<RenderInline>(renderer))
+        return updateInlineBoxDimensions(*inlineBox, availableWidth, intrinsicWidthMode);
 }
 
 const Layout::ElementBox& BoxGeometryUpdater::rootLayoutBox() const

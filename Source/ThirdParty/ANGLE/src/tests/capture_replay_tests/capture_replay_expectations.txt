@@ -99,6 +99,9 @@
 524775154 : PbufferTestES3.ImportImageThenBindTexImageShouldOrphan/* = SKIP_FOR_CAPTURE
 524775154 : PbufferTestES3.ImportImageThenBindTexImageSourceShouldOrphan/* = SKIP_FOR_CAPTURE
 
+532592076 : PbufferTest.BindTexImageAnd*/* = SKIP_FOR_CAPTURE
+532592076 : PbufferTestES3.BindTexImageAnd*/* = SKIP_FOR_CAPTURE
+
 # Skip because Timeout
 
 # ES3 Flaky
@@ -146,6 +149,7 @@
 42265967 : Texture2DTest.TextureMaxSize/* = SKIP_FOR_CAPTURE
 42265844 : FramebufferTest_ES3.SurfaceDimensionsChangeAndFragCoord/* = SKIP_FOR_CAPTURE
 
+42265895 : MultithreadingTest.ConcurrentEGLGLCapture/* = SKIP_FOR_CAPTURE
 42265895 : MultithreadingTest.NoFlushNoContextReturnsTimeout/* = SKIP_FOR_CAPTURE
 42265895 : MultithreadingTestES3.ThreadBClientWaitBeforeThreadASyncFinish/* = SKIP_FOR_CAPTURE
 42265895 : MultithreadingTestES3.ThreadBClientWaitBeforeThreadASyncFlush/* = SKIP_FOR_CAPTURE
@@ -236,7 +240,6 @@
 42266906 : Texture2DTestES3Foveation.FoveatedFBDraw/* = SKIP_FOR_CAPTURE
 42266906 : Texture2DTestES3Foveation.FoveatedTextureDraw/* = SKIP_FOR_CAPTURE
 
-42266965 : EGLSyncTest.GlobalFenceSync/* = FAIL
 42264309 : Texture2DTestES3.TexStorage2DMultipleYuvSamplersSwitchSamplerUniformValues/* = SKIP_FOR_CAPTURE
 42264309 : Texture2DTestES3.TexStorage2DMultipleYuvSamplersSwitchBoundTextures/* = SKIP_FOR_CAPTURE
 
@@ -251,13 +254,14 @@
 42264614 LINUX : VulkanExternalImageTest.UninitializedOnGLImport* = SKIP_FOR_CAPTURE
 
 # error: duplicate case value '1'
-42264614 : EGLSyncTest.GlobalFenceSync/* = COMPILE_FAIL
+42264614 : EGLSyncTest.GlobalFenceSync*/* = COMPILE_FAIL
 433331119 : ValidationStateChangeTest.RebindBufferShouldPickupBufferChange/* = COMPILE_FAIL
 433331119 : ValidationStateChangeTestES31.RebindVertexBufferShouldPickupBufferChange/* = COMPILE_FAIL
 
 # VVL error
 42264614 LINUX : VulkanExternalImageTestES31.UninitializedOnGLImportAndStorageWrite/* = SKIP_FOR_CAPTURE
 42264614 LINUX : VulkanExternalImageTest.NonRenderableWithFlags/* = SKIP_FOR_CAPTURE
+540256225 : ImageTestES3.SourceYUVTextureTargetExternalRGBSample/* = SKIP_FOR_CAPTURE
 
 # CoherentBufferTracker deadlocks and flaky crashes
 42266529 LINUX : BufferDataTestES3.* = SKIP_FOR_CAPTURE
@@ -283,3 +287,6 @@
 
 # Crashes on win and linux trace bots
 372059358 : MultisampleTestES3.CopyTexImage2DFromMsaaDefaultFbo/* = SKIP_FOR_CAPTURE
+
+# Fails on win and linux trace bots
+499602793 : Texture2DArrayTestES3_ReattachTextureToFbo.IncreaseLayersWithFramebufferAttachedMultiContext/* = SKIP_FOR_CAPTURE

@@ -41,9 +41,9 @@
 #import "WebUIDelegatePrivate.h"
 #import "WebViewInternal.h"
 #import <WebCore/BitmapImage.h>
+#import <WebCore/ColorSpace.h>
 #import <WebCore/ContextMenu.h>
 #import <WebCore/ContextMenuController.h>
-#import <WebCore/DestinationColorSpace.h>
 #import <WebCore/Document.h>
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/ImageAdapter.h>
@@ -159,15 +159,15 @@ void WebContextMenuClient::sharingServicePickerWillBeDestroyed(WebSharingService
 
 WebCore::FloatRect WebContextMenuClient::screenRectForCurrentSharingServicePickerItem(WebSharingServicePickerController &)
 {
-    WebCore::Page* page = [m_webView page];
+    RefPtr page = [m_webView page].get();
     if (!page)
         return NSZeroRect;
 
-    WebCore::Node* node = page->contextMenuController().context().hitTestResult().innerNode();
+    RefPtr node = page->contextMenuController().context().hitTestResult().innerNode();
     if (!node)
         return NSZeroRect;
 
-    auto* frameView = node->document().view();
+    RefPtr frameView = node->document().view();
     if (!frameView) {
         // This method shouldn't be called in cases where the controlled node isn't in a rendered view.
         ASSERT_NOT_REACHED();
@@ -207,7 +207,7 @@ RetainPtr<NSImage> WebContextMenuClient::imageForCurrentSharingServicePickerItem
         return nil;
 
     // This is effectively a snapshot, and will be painted in an unaccelerated fashion in line with FrameSnapshotting.
-    auto buffer = WebCore::ImageBuffer::create(rect.size(), WebCore::RenderingMode::Unaccelerated, WebCore::RenderingPurpose::Unspecified, 1, WebCore::DestinationColorSpace::SRGB(), WebCore::PixelFormat::BGRA8);
+    auto buffer = WebCore::ImageBuffer::create(rect.size(), WebCore::RenderingMode::Unaccelerated, WebCore::RenderingPurpose::Unspecified, 1, WebCore::ColorSpace::SRGB(), WebCore::PixelFormat::BGRA8);
     if (!buffer)
         return nil;
 
@@ -238,12 +238,12 @@ NSMenu *WebContextMenuClient::contextMenuForEvent(NSEvent *event, NSView *view, 
 {
     isServicesMenu = false;
 
-    WebCore::Page* page = [m_webView page];
+    RefPtr page = [m_webView page].get();
     if (!page)
         return nil;
 
 #if ENABLE(SERVICE_CONTROLS)
-    if (WebCore::Image* image = page->contextMenuController().context().controlledImage()) {
+    if (RefPtr image = page->contextMenuController().context().controlledImage()) {
         ASSERT(page->contextMenuController().context().hitTestResult().innerNode());
 
         // FIXME: <rdar://165255055> Migrate from deprecated NSItemProvider APIs
@@ -267,10 +267,10 @@ void WebContextMenuClient::showContextMenu()
     auto page = [m_webView page];
     if (!page)
         return;
-    auto* frame = page->contextMenuController().hitTestResult().innerNodeFrame();
+    RefPtr frame = page->contextMenuController().hitTestResult().innerNodeFrame();
     if (!frame)
         return;
-    auto* frameView = frame->view();
+    RefPtr frameView = frame->view();
     if (!frameView)
         return;
 

@@ -99,7 +99,7 @@ static void drawTestPattern(ImageBuffer& buffer, int seed)
 
 static RefPtr<PixelBuffer> createPixelBufferTestPattern(IntSize size, AlphaPremultiplication alphaFormat, int seed)
 {
-    auto pattern = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1.0f, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto pattern = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1.0f, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!pattern)
         return nullptr;
     drawTestPattern(*pattern, 1);
@@ -108,7 +108,7 @@ static RefPtr<PixelBuffer> createPixelBufferTestPattern(IntSize size, AlphaPremu
         ASSERT_NOT_REACHED();
         return nullptr;
     }
-    PixelBufferFormat testFormat { alphaFormat, PixelFormat::BGRA8, DestinationColorSpace::SRGB() };
+    PixelBufferFormat testFormat { alphaFormat, PixelFormat::BGRA8, ColorSpace::SRGB() };
     return pattern->getPixelBuffer(testFormat, { { }, size }); 
 }
 
@@ -116,7 +116,7 @@ static RefPtr<PixelBuffer> createPixelBufferTestPattern(IntSize size, AlphaPremu
 // Test passes if the test compiles, there was a bug where the code wouldn't compile.
 TEST(ImageBufferTests, ImageBufferSubTypeCreateCreatesSubtypes)
 {
-    auto colorSpace = DestinationColorSpace::SRGB();
+    auto colorSpace = ColorSpace::SRGB();
     auto pixelFormat = PixelFormat::BGRA8;
     FloatSize size { 1.f, 1.f };
     float scale = 1.f;
@@ -129,7 +129,7 @@ TEST(ImageBufferTests, ImageBufferSubTypeCreateCreatesSubtypes)
 
 TEST(ImageBufferTests, ImageBufferSubPixelDrawing)
 {
-    auto colorSpace = DestinationColorSpace::SRGB();
+    auto colorSpace = ColorSpace::SRGB();
     auto pixelFormat = PixelFormat::BGRA8;
     FloatSize logicalSize { 392, 44 };
     float scale = 1.91326535;
@@ -168,6 +168,33 @@ TEST(ImageBufferTests, ImageBufferSubPixelDrawing)
     EXPECT_TRUE(imageBufferPixelIs(Color::green, *backImageBuffer, fillRect.maxXMaxYCorner() + FloatPoint(-1, -1)));
 }
 
+// The NativeImage drawPattern() overload's tile rect is in native (device) image pixels,
+// so drawPattern(ImageBuffer&) must scale the logical source rect by resolutionScale().
+// Latent at resolutionScale == 1.
+TEST(ImageBufferTests, DrawPatternScalesSourceRectByResolutionScale)
+{
+    constexpr float resolutionScale = 2;
+    FloatSize logicalSize { 60, 40 };
+
+    auto source = ImageBuffer::create(logicalSize, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, resolutionScale, ColorSpace::SRGB(), PixelFormat::BGRA8);
+    ASSERT_NE(source, nullptr);
+    drawTestPattern(*source, 0);
+    ASSERT_TRUE(hasTestPattern(*source, 0));
+
+    auto destination = ImageBuffer::create(logicalSize, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1.f, ColorSpace::SRGB(), PixelFormat::BGRA8);
+    ASSERT_NE(destination, nullptr);
+
+    // Tile the whole source into the whole destination: the pattern transform maps the native
+    // tile (logicalSize * resolutionScale) back down to logicalSize so a single tile fills it.
+    FloatRect logicalRect { { }, logicalSize };
+    AffineTransform patternTransform;
+    patternTransform.scale(1 / resolutionScale);
+
+    destination->context().drawPattern(*source, logicalRect, logicalRect, patternTransform, { }, { }, { CompositeOperator::Copy, InterpolationQuality::DoNotInterpolate });
+
+    EXPECT_TRUE(hasTestPattern(*destination, 0));
+}
+
 // Test that drawing an accelerated ImageBuffer to an unaccelerated does not store extra
 // memory to the accelerated ImageBuffer.
 // FIXME: The test is disabled as it appears that WTF::memoryFootprint() is not exact enough to
@@ -177,7 +204,7 @@ TEST(ImageBufferTests, ImageBufferSubPixelDrawing)
 // persist additional memory.
 TEST(ImageBufferTests, DISABLED_DrawImageBufferDoesNotReferenceExtraMemory)
 {
-    auto colorSpace = DestinationColorSpace::SRGB();
+    auto colorSpace = ColorSpace::SRGB();
     auto pixelFormat = PixelFormat::BGRA8;
     FloatSize logicalSize { 4096, 4096 };
     float scale = 1;
@@ -249,9 +276,9 @@ public:
 TEST_P(AnyScaleTest, SinkIntoNativeImageWorks)
 {
     FloatSize testSize { 50, 57 };
-    auto buffer = ImageBuffer::create(testSize, renderingMode(), RenderingPurpose::Unspecified, deviceScaleFactor(), DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto buffer = ImageBuffer::create(testSize, renderingMode(), RenderingPurpose::Unspecified, deviceScaleFactor(), ColorSpace::SRGB(), PixelFormat::BGRA8);
     ASSERT_NE(buffer, nullptr);
-    auto verifyBuffer = ImageBuffer::create(buffer->logicalSize(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1.f, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto verifyBuffer = ImageBuffer::create(buffer->logicalSize(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1.f, ColorSpace::SRGB(), PixelFormat::BGRA8);
     ASSERT_NE(verifyBuffer, nullptr);
     drawTestPattern(*buffer, 0);
 
@@ -267,19 +294,19 @@ TEST_P(AnyScaleTest, SinkIntoNativeImageWorks)
 TEST_P(AnyScaleTest, GetPixelBufferDimensionsContainScale)
 {
     IntSize testSize { 50, 57 };
-    auto buffer = ImageBuffer::create(testSize, renderingMode(), RenderingPurpose::Unspecified, deviceScaleFactor(), DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto buffer = ImageBuffer::create(testSize, renderingMode(), RenderingPurpose::Unspecified, deviceScaleFactor(), ColorSpace::SRGB(), PixelFormat::BGRA8);
     ASSERT_NE(buffer, nullptr);
     drawTestPattern(*buffer, 0);
 
     // Test that ImageBuffer::getPixelBuffer() returns pixel buffer with dimensions that are scaled to resolutionScale() of the source.
-    PixelBufferFormat testFormat { AlphaPremultiplication::Premultiplied, PixelFormat::BGRA8, DestinationColorSpace::SRGB() };
+    PixelBufferFormat testFormat { AlphaPremultiplication::Premultiplied, PixelFormat::BGRA8, ColorSpace::SRGB() };
     auto pixelBuffer = buffer->getPixelBuffer(testFormat, { { }, testSize });
     IntSize expectedSize = testSize;
     expectedSize.scale(deviceScaleFactor());
     EXPECT_EQ(expectedSize, pixelBuffer->size());
 
     // Test that the contents of the pixel buffer was as expected.
-    auto verifyBuffer = ImageBuffer::create(pixelBuffer->size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1.f, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto verifyBuffer = ImageBuffer::create(pixelBuffer->size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1.f, ColorSpace::SRGB(), PixelFormat::BGRA8);
     ASSERT_NE(verifyBuffer, nullptr);
     verifyBuffer->putPixelBuffer(*pixelBuffer, { { }, pixelBuffer->size() });
     EXPECT_TRUE(hasTestPattern(*verifyBuffer, 0));
@@ -296,9 +323,9 @@ public:
 TEST_P(AnyTwoImageBufferOptionsTest, PutPixelBufferAffectsDrawOutput)
 {
     IntSize testSize { 50, 57 };
-    auto source = ImageBuffer::create(testSize, renderingMode0(), RenderingPurpose::Unspecified, 1.0f, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto source = ImageBuffer::create(testSize, renderingMode0(), RenderingPurpose::Unspecified, 1.0f, ColorSpace::SRGB(), PixelFormat::BGRA8);
     ASSERT_NE(source, nullptr);
-    auto destination = ImageBuffer::create(testSize, renderingMode1(), RenderingPurpose::Unspecified, 1.0f, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto destination = ImageBuffer::create(testSize, renderingMode1(), RenderingPurpose::Unspecified, 1.0f, ColorSpace::SRGB(), PixelFormat::BGRA8);
     ASSERT_NE(destination, nullptr);
     auto pattern1Buffer = createPixelBufferTestPattern(testSize, AlphaPremultiplication::Unpremultiplied, 1);
     ASSERT_NE(pattern1Buffer, nullptr);
@@ -330,7 +357,7 @@ INSTANTIATE_TEST_SUITE_P(ImageBufferTests,
 
 TEST(ImageBufferTests, GetPixelBufferAllZeros)
 {
-    auto sourceColorSpace = DestinationColorSpace::SRGB();
+    auto sourceColorSpace = ColorSpace::SRGB();
     auto sourcePixelFormat = PixelFormat::BGRA8;
     FloatSize size { 1000, 1000 };
     FloatRect fillRect = FloatRect { { }, size };
@@ -344,7 +371,7 @@ TEST(ImageBufferTests, GetPixelBufferAllZeros)
 
     auto getPixelBufferAllZeros = [&](const FloatRect& rect) {
         RetainPtr platformColorSpace = adoptCF(CGColorSpaceCreateWithName(kCGColorSpaceGenericCMYK));
-        auto destinationColorSpace = DestinationColorSpace(WTF::move(platformColorSpace));
+        auto destinationColorSpace = ColorSpace(WTF::move(platformColorSpace));
         PixelBufferFormat destinationPixelFormat { AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA8, destinationColorSpace };
 
         RefPtr pixelBuffer = imageBuffer->getPixelBuffer(destinationPixelFormat, enclosingIntRect(rect));

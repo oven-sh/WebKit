@@ -212,7 +212,7 @@ void main()
         // Attach the texture to the fbo
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                *colorAttachment, 0);
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         ASSERT_GL_NO_ERROR();
 
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -507,6 +507,14 @@ TEST_P(SamplersTest, InvalidOverTextureSamplerMaxAnisotropyExt)
     maxValue += 1;
 
     validateInvalidAnisotropy(sampler, maxValue);
+}
+
+// Verify an error is thrown if we try to set a NaN value for
+// GL_TEXTURE_MAX_ANISOTROPY_EXT
+TEST_P(SamplersTest, InvalidNaNTextureSamplerMaxAnisotropyExt)
+{
+    GLSampler sampler;
+    validateInvalidAnisotropy(sampler, std::numeric_limits<float>::quiet_NaN());
 }
 
 // Test that updating a sampler uniform in a program behaves correctly.

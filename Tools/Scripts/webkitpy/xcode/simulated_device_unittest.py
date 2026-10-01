@@ -522,7 +522,7 @@ class SimulatedDeviceTest(unittest.TestCase):
         SimulatedDeviceManager.AVAILABLE_DEVICES = []
         SimulatedDeviceManager.INITIALIZED_DEVICES = None
         SimulatedDeviceManager._device_identifier_to_name = {}
-        SimulatedDeviceManager._managing_simulator_app = False
+        SimulatedDeviceManager._managed_simulator_ui_process = None
 
     def tearDown(self):
         SimulatedDeviceTest.reset_simulated_device_manager()
@@ -609,7 +609,7 @@ class SimulatedDeviceTest(unittest.TestCase):
         host = SimulatedDeviceTest.mock_host_for_simctl()
         SimulatedDeviceManager.available_devices(host)
 
-        SimulatedDeviceManager.initialize_devices(DeviceRequest(DeviceType.from_string('iPhone', Version(11))), host=host)
+        SimulatedDeviceManager.initialize_devices(DeviceRequest(DeviceType.from_string('iPhone', Version(11))), host=host, simulator_ui=False)
 
         self.assertEqual(1, len(SimulatedDeviceManager.INITIALIZED_DEVICES))
         self.assertEqual('34FB476C-6FA0-43C8-8945-1BD7A4EBF0DE', SimulatedDeviceManager.INITIALIZED_DEVICES[0].udid)
@@ -624,7 +624,7 @@ class SimulatedDeviceTest(unittest.TestCase):
         host = SimulatedDeviceTest.mock_host_for_simctl()
         SimulatedDeviceManager.available_devices(host)
 
-        SimulatedDeviceManager.initialize_devices(DeviceRequest(DeviceType.from_string('iphone 5s', Version(11))), host=host)
+        SimulatedDeviceManager.initialize_devices(DeviceRequest(DeviceType.from_string('iphone 5s', Version(11))), host=host, simulator_ui=False)
 
         self.assertEqual(1, len(SimulatedDeviceManager.INITIALIZED_DEVICES))
         self.assertEqual('34FB476C-6FA0-43C8-8945-1BD7A4EBF0DE', SimulatedDeviceManager.INITIALIZED_DEVICES[0].udid)
@@ -753,3 +753,94 @@ class LaunchdConfigurationDefaultTest(unittest.TestCase):
     def test_daemons_testing_needs_are_not_disabled(self):
         for label in ('com.apple.sharingd', 'com.apple.eligibilityd', 'com.apple.sleepd'):
             self.assertNotIn(label, disabled_launchd_jobs())
+
+
+class SimulatorUIAppTest(unittest.TestCase):
+    """Xcode 27 replaced Simulator.app with DeviceHub.app, so the active Xcode decides which app we launch.
+    The lookup is by path because `open -b` resolves through LaunchServices, which ignores xcode-select."""
+
+    XCODE_26_DIRS = [
+        '/Xcode26.app/Contents/Developer/Applications/Simulator.app',
+        '/Xcode26.app/Contents/Applications/Devices.app',
+    ]
+    XCODE_27_DIRS = ['/Xcode27.app/Contents/Applications/DeviceHub.app']
+
+    @staticmethod
+    def _host(developer_dir, dirs, running_processes=(), open_exit_code=0):
+        def run_command(args):
+            if args[0] == 'xcode-select':
+                return developer_dir + '\n'
+            if args[0] == 'killall':
+                return 0 if args[-1] in running_processes else 1
+            if args[0] == 'open':
+                return open_exit_code
+            return ''
+
+        return MockSystemHost(
+            executive=MockExecutive2(run_command_fn=run_command),
+            filesystem=MockFileSystem(dirs=dirs),
+        )
+
+    def setUp(self):
+        SimulatedDeviceManager.INITIALIZED_DEVICES = None
+        SimulatedDeviceManager._managed_simulator_ui_process = None
+
+    def tearDown(self):
+        SimulatedDeviceManager._managed_simulator_ui_process = None
+
+    def test_xcode_27_resolves_to_device_hub(self):
+        host = self._host('/Xcode27.app/Contents/Developer', self.XCODE_27_DIRS)
+        self.assertEqual(
+            ('/Xcode27.app/Contents/Applications/DeviceHub.app', [], 'DeviceHub'),
+            SimulatedDeviceManager._find_simulator_ui_app(host))
+
+    def test_xcode_26_resolves_to_simulator(self):
+        host = self._host('/Xcode26.app/Contents/Developer', self.XCODE_26_DIRS)
+        self.assertEqual(
+            ('/Xcode26.app/Contents/Developer/Applications/Simulator.app', ['-PasteboardAutomaticSync', '0'], 'Simulator'),
+            SimulatedDeviceManager._find_simulator_ui_app(host))
+
+    def test_xcode_without_a_ui_app_resolves_to_nothing(self):
+        host = self._host('/Xcode.app/Contents/Developer', ['/Xcode.app/Contents/Developer'])
+        self.assertIsNone(SimulatedDeviceManager._find_simulator_ui_app(host))
+
+    def test_device_hub_is_launched_without_pasteboard_arguments(self):
+        host = self._host('/Xcode27.app/Contents/Developer', self.XCODE_27_DIRS)
+        SimulatedDeviceManager._launch_simulator_ui(host)
+        self.assertIn(['open', '-g', '-a', '/Xcode27.app/Contents/Applications/DeviceHub.app'], host.executive.calls)
+        self.assertEqual('DeviceHub', SimulatedDeviceManager._managed_simulator_ui_process)
+
+    def test_simulator_is_launched_with_pasteboard_sync_disabled(self):
+        host = self._host('/Xcode26.app/Contents/Developer', self.XCODE_26_DIRS)
+        SimulatedDeviceManager._launch_simulator_ui(host)
+        self.assertIn(
+            ['open', '-g', '-a', '/Xcode26.app/Contents/Developer/Applications/Simulator.app', '--args', '-PasteboardAutomaticSync', '0'],
+            host.executive.calls)
+        self.assertEqual('Simulator', SimulatedDeviceManager._managed_simulator_ui_process)
+
+    def test_the_app_is_never_launched_by_bundle_identifier(self):
+        host = self._host('/Xcode26.app/Contents/Developer', self.XCODE_26_DIRS)
+        SimulatedDeviceManager._launch_simulator_ui(host)
+        for call in host.executive.calls:
+            self.assertNotIn('-b', call, 'LaunchServices would ignore xcode-select and may pick another Xcode')
+
+    def test_an_already_running_app_is_not_launched_again(self):
+        host = self._host('/Xcode27.app/Contents/Developer', self.XCODE_27_DIRS, running_processes=('DeviceHub',))
+        SimulatedDeviceManager._launch_simulator_ui(host)
+        self.assertFalse([call for call in host.executive.calls if call[0] == 'open'])
+        self.assertIsNone(
+            SimulatedDeviceManager._managed_simulator_ui_process,
+            'we did not launch it, so we must not kill it')
+
+    def test_a_failed_launch_is_not_torn_down(self):
+        host = self._host('/Xcode27.app/Contents/Developer', self.XCODE_27_DIRS, open_exit_code=1)
+        SimulatedDeviceManager._launch_simulator_ui(host)
+        self.assertIsNone(SimulatedDeviceManager._managed_simulator_ui_process)
+
+    def test_tear_down_kills_the_app_which_was_launched(self):
+        host = self._host('/Xcode26.app/Contents/Developer', self.XCODE_26_DIRS)
+        SimulatedDeviceManager._launch_simulator_ui(host)
+        SimulatedDeviceManager.tear_down(host)
+        # 'Simulator.app' would match no process at all; killall matches process names.
+        self.assertIn(['killall', '-9', 'Simulator'], host.executive.calls)
+        self.assertIsNone(SimulatedDeviceManager._managed_simulator_ui_process)

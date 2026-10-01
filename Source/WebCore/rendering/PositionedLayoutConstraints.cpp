@@ -31,6 +31,7 @@
 #include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorInlineBox.h"
 #include "LocalFrameViewInlines.h"
+#include "RenderBoxInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderGrid.h"
 #include "RenderInline.h"
@@ -138,6 +139,32 @@ bool PositionedLayoutConstraints::isParentOpposingContainingBlock() const
     bool physicalAxisIsCBBlock = m_containingWritingMode.isHorizontal() != (m_physicalAxis == BoxAxis::Horizontal);
     bool containingBlockFlipped = physicalAxisIsCBBlock && m_containingWritingMode.isBlockFlipped();
     return parentFlipped != containingBlockFlipped;
+}
+
+bool PositionedLayoutConstraints::usesStaticPosition(const Style::ComputedStyle& style, LogicalBoxAxis axis, bool isHorizontalWritingMode)
+{
+    if (!style.positionArea().isNone())
+        return false;
+    if (axis == LogicalBoxAxis::Inline)
+        return style.hasStaticInlinePosition(isHorizontalWritingMode) && !style.justifySelf().isAnchorCenter();
+    return style.hasStaticBlockPosition(isHorizontalWritingMode) && !style.alignSelf().isAnchorCenter();
+}
+
+LayoutSize PositionedLayoutConstraints::containingBlockOffsetForNonStaticAxes(const RenderBoxModelObject& container, const Style::ComputedStyle& outOfFlowBoxStyle)
+{
+    auto isHorizontal = container.writingMode().isHorizontal();
+    auto firstFragmentBorderBoxRect = container.firstFragmentBorderBoxRect();
+    if (container.writingMode().isBlockFlipped()) {
+        // firstFragmentBorderBoxRect() is flipped for painting while this offset is added to unflipped locations.
+        if (CheckedPtr containingBlock = container.containingBlock())
+            containingBlock->flipForWritingMode(firstFragmentBorderBoxRect);
+    }
+    auto offset = toLayoutSize(firstFragmentBorderBoxRect.location());
+    if (usesStaticPosition(outOfFlowBoxStyle, LogicalBoxAxis::Inline, isHorizontal))
+        isHorizontal ? offset.setWidth(0_lu) : offset.setHeight(0_lu);
+    if (usesStaticPosition(outOfFlowBoxStyle, LogicalBoxAxis::Block, isHorizontal))
+        isHorizontal ? offset.setHeight(0_lu) : offset.setWidth(0_lu);
+    return offset;
 }
 
 void PositionedLayoutConstraints::captureInsets()
@@ -468,8 +495,6 @@ LayoutUnit PositionedLayoutConstraints::resolveAlignmentShift(LayoutUnit unusedS
 {
     bool startIsBefore = this->startIsBefore();
     bool isOverflowing = unusedSpace < 0_lu;
-    if (isOverflowing && OverflowAlignment::Safe == m_alignment.overflow())
-        return startIsBefore ? 0_lu : unusedSpace;
 
     ItemPosition resolvedAlignment = resolveAlignmentValue();
     ASSERT(ItemPosition::Auto != resolvedAlignment);
@@ -487,7 +512,7 @@ LayoutUnit PositionedLayoutConstraints::resolveAlignmentShift(LayoutUnit unusedS
                     shift = unusedSpace;
             }
         }
-        if (!isOverflowing && OverflowAlignment::Default == m_alignment.overflow()) {
+        if (!isOverflowing && OverflowAlignment::Unsafe != m_alignment.overflow()) {
             // Avoid introducing overflow of the IMCB.
             if (shift < 0)
                 shift = 0;
@@ -500,12 +525,12 @@ LayoutUnit PositionedLayoutConstraints::resolveAlignmentShift(LayoutUnit unusedS
     }
 
     if (isOverflowing && ItemPosition::Normal != resolvedAlignment
-        && OverflowAlignment::Default == m_alignment.overflow()) {
+        && OverflowAlignment::Unsafe != m_alignment.overflow()) {
         // Allow overflow, but try to stay within the containing block.
         // See https://www.w3.org/TR/css-align-3/#auto-safety-position
 
         auto containingRange = m_originalContainingRange;
-        if (m_defaultAnchorBox && PositionType::Fixed == m_style.position()) {
+        if (m_defaultAnchorBox && PositionType::Fixed == m_style.position() && OverflowAlignment::Default == m_alignment.overflow()) {
             // We didn't modify the m_containingRange to include scrollable area for positioning,
             // but we should allow it for overflow management if we can scroll to reach that overflow.
             if (auto renderView = dynamicDowncast<RenderView>(m_container.get())) {
@@ -732,7 +757,7 @@ static LayoutPoint staticDistance(const RenderBoxModelObject& container, const R
         hasSeenNonInlineBoxContainer = true;
     }
 
-    if (!hasSeenNonInlineBoxContainer && is<RenderInline>(container)) {
+    if (!hasSeenNonInlineBoxContainer && container.isInlineBox()) {
         // This is a simple case of when the containing block is formed by a positioned inline box with no block boxes in-between (e.g <span style="position: relative">)
         return initialStaticPosition();
     }

@@ -74,6 +74,7 @@
 #include "Path2D.h"
 #include "PixelBufferConversion.h"
 #include "PixelFormat.h"
+#include "PlatformVideoColorSpace.h"
 #include "RenderElement.h"
 #include "RenderImage.h"
 #include "RenderLayer.h"
@@ -93,6 +94,7 @@
 #include "TextUtil.h"
 #include "WebCodecsVideoFrame.h"
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <numbers>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -110,8 +112,6 @@ static constexpr InterpolationQuality defaultInterpolationQuality = Interpolatio
 
 static constexpr ImageSmoothingQuality defaultSmoothingQuality = ImageSmoothingQuality::Low;
 
-const int CanvasRenderingContext2DBase::DefaultFontSize = 10;
-const ASCIILiteral CanvasRenderingContext2DBase::DefaultFontFamily = "sans-serif"_s;
 static constexpr ASCIILiteral DefaultFont = "10px sans-serif"_s;
 
 // putImageData data smaller than this is cached in anticipation for next getImageData.
@@ -415,7 +415,7 @@ String CanvasRenderingContext2DBase::State::fontString() const
         serializedFont.append("bold "_s);
     else if (weight != normalWeightValue())
         serializedFont.append(weight, " "_s);
-    serializedFont.append(font.computedSize(), "px"_s);
+    serializedFont.append(font.usedSize(), "px"_s);
 
     for (unsigned i = 0; i < font.familyCount(); ++i) {
         auto fontFamily = font.familyAt(i);
@@ -594,6 +594,9 @@ void CanvasRenderingContext2DBase::beginLayer()
     save();
     realizeSaves();
 
+    if (m_unrealizedSaveCount)
+        return;
+
     RefPtr<Filter> filter;
     if (!state().filter.isNone())
         filter = createFilter(backingStoreBounds());
@@ -694,7 +697,7 @@ void CanvasRenderingContext2DBase::setLineCap(const String& stringValue)
         cap = CanvasLineCap::Square;
     else
         return;
-    
+
     setLineCap(cap);
 }
 
@@ -800,11 +803,12 @@ void CanvasRenderingContext2DBase::setLineDash(const Vector<double>& dash)
         return;
 
     realizeSaves();
-    modifiableState().lineDash = dash;
+    auto& state = modifiableState();
+    state.lineDash = dash;
     // Spec requires the concatenation of two copies the dash list when the
     // number of elements is odd
     if (dash.size() % 2)
-        modifiableState().lineDash.appendVector(dash);
+        state.lineDash.appendVector(dash);
 
     applyLineDash();
 }
@@ -835,10 +839,11 @@ void CanvasRenderingContext2DBase::applyLineDash() const
     GraphicsContext* c = effectiveDrawingContext();
     if (!c)
         return;
-    DashArray convertedLineDash(state().lineDash.size());
-    for (size_t i = 0; i < state().lineDash.size(); ++i)
-        convertedLineDash[i] = static_cast<DashArrayElement>(state().lineDash[i]);
-    c->setLineDash(convertedLineDash, state().lineDashOffset);
+    auto& state = this->state();
+    DashArray convertedLineDash(state.lineDash.size());
+    for (size_t i = 0; i < state.lineDash.size(); ++i)
+        convertedLineDash[i] = static_cast<DashArrayElement>(state.lineDash[i]);
+    c->setLineDash(convertedLineDash, state.lineDashOffset);
 }
 
 void CanvasRenderingContext2DBase::setGlobalAlpha(double alpha)
@@ -1212,7 +1217,12 @@ void CanvasRenderingContext2DBase::fillInternal(const Path& path, CanvasFillRule
         clearCanvas();
         c->fillPath(path);
     } else {
-        willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : path.fastBoundingRect());
+#if !USE(COORDINATED_GRAPHICS)
+        if (isEntireBackingStoreDirty())
+            willUpdateContents(std::nullopt);
+        else
+#endif
+            willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : path.fastBoundingRect());
         c->fillPath(path);
     }
 
@@ -1248,7 +1258,12 @@ void CanvasRenderingContext2DBase::strokeInternal(const Path& path)
         clearCanvas();
         c->strokePath(path);
     } else {
-        willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : inflatedStrokeRect(path.fastBoundingRect()));
+#if !USE(COORDINATED_GRAPHICS)
+        if (isEntireBackingStoreDirty())
+            willUpdateContents(std::nullopt);
+        else
+#endif
+            willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : inflatedStrokeRect(path.fastBoundingRect()));
         c->strokePath(path);
     }
 }
@@ -1565,6 +1580,20 @@ static inline FloatSize size(ImageBitmap& imageBitmap)
     return FloatSize { static_cast<float>(imageBitmap.width()), static_cast<float>(imageBitmap.height()) };
 }
 
+static inline FloatSize size(CanvasElementImageSource& source)
+{
+    return WTF::switchOn(source,
+        [&](Ref<Element>& element) -> FloatSize {
+            if (CheckedPtr renderer = element->renderer())
+                return renderer->absoluteBoundingBoxRect().size();
+            return FloatSize();
+        },
+        [&](Ref<CanvasElementImage>& elementImage) {
+            return elementImage->size();
+        }
+    );
+}
+
 #if ENABLE(VIDEO)
 
 static inline FloatSize size(HTMLVideoElement& video)
@@ -1727,8 +1756,14 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(WebCodecsVideoFrame& f
     else
         willUpdateContents(normalizedDstRect);
 
+    ImagePaintingOptions options = {
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+        (isHDR() && usesITUR2100TF(internalFrame->colorSpace())) ? DrawsHDRContent::Yes : DrawsHDRContent::No
+#endif
+    };
+
     // FIXME: Add support for srcRect
-    context->drawVideoFrame(*internalFrame, dstRect, ImageOrientation::Orientation::None, frame.shoudlDiscardAlpha());
+    context->drawVideoFrame(*internalFrame, dstRect, frame.shoudlDiscardAlpha() ? ShouldDiscardAlpha::Yes : ShouldDiscardAlpha::No, options);
 
     return { };
 }
@@ -1777,6 +1812,9 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Ca
     if (RefPtr bitmapImage = dynamicDowncast<BitmapImage>(*image)) {
         // Drawing an animated image to a canvas should draw the first frame (except for a few layout tests)
         if (image->isAnimated() && !document.settings().animatedImageDebugCanvasDrawingEnabled()) {
+            // FIXME: This draws the SDR base image, so an animated HDR image loses its HDR
+            // content: the copy is backed by a NativeImageSource, which never reports a gain
+            // map and always prefers DecodingDestination::Base.
             bitmapImage = BitmapImage::create(image->nativeImage());
             if (!bitmapImage)
                 return { };
@@ -1792,6 +1830,11 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Ca
         orientation,
         document.settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
         document.settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+        ,
+        (isHDR() && image->hasHDRContent()) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
+        document.settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No
+#endif
     };
 
     auto willUpdateContentsOptions = shouldPostProcess ? defaultWillUpdateContentsOptions() : defaultWillUpdateContentsOptionsWithoutPostProcessing();
@@ -1801,7 +1844,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Ca
         c->drawImage(*image, normalizedDstRect, normalizedSrcRect, options);
     } else if (isFullCanvasCompositeMode(op)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedSrcRect, op);
+        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedSrcRect, op, options);
     } else if (op == CompositeOperator::Copy) {
         willUpdateEntireContents(willUpdateContentsOptions);
         clearCanvas();
@@ -1844,35 +1887,48 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(CanvasBase& sourceCanv
     Ref protectedCanvas { sourceCanvas };
     checkOrigin(&sourceCanvas);
 
+    RefPtr<ImageBuffer> copy;
     RefPtr image = sourceCanvas.copyNativeImage();
     if (!image)
         return { };
+
+    auto normalizedImageSrcRect = normalizedSrcRect;
+    if (&sourceCanvas == &canvasBase() && c->renderingMode() == RenderingMode::Accelerated) {
+        // Currently sourcing the draw target, i.e. draw from self, is slow. Draw to a copy, source
+        // the copy.
+        copy = createCompatibleImageBuffer(*c, normalizedSrcRect.size());
+        if (!copy)
+            return { };
+        copy->context().drawNativeImage(*image, { -normalizedSrcRect.location(), FloatSize { image->size() } }, { { }, FloatSize { image->size() } });
+        image = copy->copyNativeImage();
+        if (!image)
+            return { };
+        // The copy holds only normalizedSrcRect, so source it from the origin.
+        normalizedImageSrcRect = { { }, normalizedSrcRect.size() };
+    }
 
     auto shouldUseDrawOptionsWithoutPostProcessing = sourceCanvas.renderingContext() && sourceCanvas.renderingContext()->is2d() && !sourceCanvas.havePendingCanvasNoiseInjection();
     auto willUpdateContentsOptions = shouldUseDrawOptionsWithoutPostProcessing ? defaultWillUpdateContentsOptionsWithoutPostProcessing() : defaultWillUpdateContentsOptions();
 
     if (rectContainsCanvas(normalizedDstRect)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        c->drawNativeImage(*image, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
+        c->drawNativeImage(*image, normalizedDstRect, normalizedImageSrcRect, { state().globalComposite, state().globalBlend });
     } else if (isFullCanvasCompositeMode(state().globalComposite)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedSrcRect, state().globalComposite);
+        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedImageSrcRect, state().globalComposite);
     } else if (state().globalComposite == CompositeOperator::Copy) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        if (&sourceCanvas == &canvasBase()) {
-            if (auto copy = createCompatibleImageBuffer(*c, normalizedSrcRect.size())) {
-                copy->context().drawNativeImage(*image, { -normalizedSrcRect.location(), FloatSize { image->size() } }, { { }, FloatSize { image->size() } });
-                clearCanvas();
-                if (RefPtr copyImage = ImageBuffer::sinkIntoNativeImage(copy.releaseNonNull()))
-                    c->drawNativeImage(*copyImage, normalizedDstRect, { { }, normalizedSrcRect.size() }, { state().globalComposite, state().globalBlend });
-            }
-        } else {
-            clearCanvas();
-            c->drawNativeImage(*image, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
-        }
+        clearCanvas();
+        c->drawNativeImage(*image, normalizedDstRect, normalizedImageSrcRect, { state().globalComposite, state().globalBlend });
     } else {
         willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : normalizedDstRect, willUpdateContentsOptions);
-        c->drawNativeImage(*image, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
+        c->drawNativeImage(*image, normalizedDstRect, normalizedImageSrcRect, { state().globalComposite, state().globalBlend });
+    }
+
+    if (copy) {
+        // Avoid pending image copies when copy gets destroyed.
+        if (RefPtr targetBuffer = buffer())
+            targetBuffer->flushDrawingContextAsync();
     }
 
     return { };
@@ -1981,24 +2037,64 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(ImageBitmap& imageBitm
     return { };
 }
 
-ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&&, float, float)
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, float dx, float dy)
 {
-    return Exception { ExceptionCode::NotSupportedError };
+    FloatSize sourceSize = size(source);
+    return drawElementImage(WTF::move(source), FloatRect { 0.0f, 0.0f, sourceSize.width(), sourceSize.height() }, FloatRect { dx, dy, sourceSize.width(), sourceSize.height() });
 }
 
-ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&&, float, float, float, float)
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, float dx, float dy, float dwidth, float dheight)
 {
-    return Exception { ExceptionCode::NotSupportedError };
+    FloatSize sourceSize = size(source);
+    return drawElementImage(WTF::move(source), FloatRect { 0.0f, 0.0f, sourceSize.width(), sourceSize.height() }, FloatRect { dx, dy, dwidth, dheight });
 }
 
-ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&&, float, float, float, float, float, float)
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, float sx, float sy, float dx, float dy, float dwidth, float dheight)
 {
-    return Exception { ExceptionCode::NotSupportedError };
+    FloatSize sourceSize = size(source);
+    return drawElementImage(WTF::move(source), FloatRect { sx, sy, sourceSize.width(), sourceSize.height() }, FloatRect { dx, dy, dwidth, dheight });
 }
 
-ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&&, float, float, float, float, float, float, float, float)
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, float sx, float sy, float swidth, float sheight, float dx, float dy, float dwidth, float dheight)
 {
-    return Exception { ExceptionCode::NotSupportedError };
+    return drawElementImage(WTF::move(source), FloatRect { sx, sy, swidth, sheight }, FloatRect { dx, dy, dwidth, dheight });
+}
+
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, const FloatRect& srcRect, const FloatRect& dstRect)
+{
+    return WTF::switchOn(source,
+        [&](Ref<Element>& element) -> ExceptionOr<Ref<DOMMatrix>> {
+            if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(canvasBase())) {
+                if (auto snapshot = canvasElement->drawableElementSnapshot(element))
+                    return drawSnapshot(*snapshot, srcRect, dstRect);
+            }
+            return DOMMatrix::create(TransformationMatrix::identity, DOMMatrix::Is2D::Yes);
+        },
+        [&](Ref<CanvasElementImage>& elementImage) -> ExceptionOr<Ref<DOMMatrix>> {
+            return drawSnapshot(elementImage->snapshot(), srcRect, dstRect);
+        }
+    );
+}
+
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawSnapshot(const CanvasElementSnapshot& snapshot, const FloatRect& srcRect, const FloatRect& dstRect)
+{
+    auto* c = effectiveDrawingContext();
+    if (!c)
+        return Exception { ExceptionCode::NotSupportedError };
+
+    auto snapshotRect = FloatRect { { }, snapshot.size };
+    auto normalizedSrcRect = normalizeRect(intersection(srcRect, snapshotRect));
+    auto normalizedDstRect = normalizeRect(dstRect);
+    auto scale = normalizedDstRect.size() / normalizedSrcRect.size();
+
+    c->save();
+    c->clip(normalizedDstRect);
+    c->translate(dstRect.location() - toFloatSize(normalizedSrcRect.location()) * scale);
+    c->scale(scale);
+    c->drawDisplayList(snapshot.displayList);
+    c->restore();
+
+    return DOMMatrix::create(TransformationMatrix::identity, DOMMatrix::Is2D::Yes);
 }
 
 void CanvasRenderingContext2DBase::clearCanvas()
@@ -2009,7 +2105,7 @@ void CanvasRenderingContext2DBase::clearCanvas()
 
     c->save();
     c->setCTM(baseTransform());
-    c->clearRect(FloatRect(0, 0, protect(canvasBase())->width(), protect(canvasBase())->height()));
+    c->clearRect(backingStoreBounds());
     c->restore();
 }
 
@@ -2030,13 +2126,13 @@ Path CanvasRenderingContext2DBase::transformAreaToDevice(const FloatRect& rect) 
 bool CanvasRenderingContext2DBase::rectContainsCanvas(const FloatRect& rect) const
 {
     FloatQuad quad(rect);
-    FloatQuad canvasQuad(FloatRect(0, 0, protect(canvasBase())->width(), protect(canvasBase())->height()));
+    FloatQuad canvasQuad(backingStoreBounds());
     return state().transform.mapQuad(quad).containsQuad(canvasQuad);
 }
 
 template<class T> IntRect CanvasRenderingContext2DBase::calculateCompositingBufferRect(const T& area, IntSize* croppedOffset)
 {
-    IntRect canvasRect(0, 0, protect(canvasBase())->width(), protect(canvasBase())->height());
+    IntRect canvasRect(enclosingIntRect(backingStoreBounds()));
     canvasRect = baseTransform().mapRect(canvasRect);
     Path path = transformAreaToDevice(area);
     IntRect bufferRect = enclosingIntRect(path.fastBoundingRect());
@@ -2049,7 +2145,7 @@ template<class T> IntRect CanvasRenderingContext2DBase::calculateCompositingBuff
 
 void CanvasRenderingContext2DBase::compositeBuffer(ImageBuffer& buffer, const IntRect& bufferRect, CompositeOperator op)
 {
-    IntRect canvasRect(0, 0, protect(canvasBase())->width(), protect(canvasBase())->height());
+    IntRect canvasRect(enclosingIntRect(backingStoreBounds()));
     canvasRect = baseTransform().mapRect(canvasRect);
 
     auto* c = effectiveDrawingContext();
@@ -2083,7 +2179,7 @@ static void drawImageToContext(NativeImage& image, GraphicsContext& context, con
     context.drawNativeImage(image, dest, src, options);
 }
 
-template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawImage(T& image, const FloatRect& dest, const FloatRect& src, CompositeOperator op)
+template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawImage(T& image, const FloatRect& dest, const FloatRect& src, CompositeOperator op, ImagePaintingOptions options)
 {
     ASSERT(isFullCanvasCompositeMode(op));
 
@@ -2109,7 +2205,7 @@ template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawIma
     buffer->context().translate(-transformedAdjustedRect.location());
     buffer->context().translate(croppedOffset);
     buffer->context().concatCTM(effectiveTransform);
-    drawImageToContext(image, buffer->context(), adjustedDest, src, { CompositeOperator::SourceOver });
+    drawImageToContext(image, buffer->context(), adjustedDest, src, { options, CompositeOperator::SourceOver });
 
     compositeBuffer(*buffer, bufferRect, op);
 }
@@ -2268,7 +2364,7 @@ ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(C
 ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(HTMLImageElement& imageElement, bool repeatX, bool repeatY)
 {
     RefPtr cachedImage = imageElement.cachedImage();
-    
+
     // If the image loading hasn't started or the image is not complete, it is not fully decodable.
     if (!cachedImage || !imageElement.complete())
         return nullptr;
@@ -2320,25 +2416,21 @@ ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(C
 {
     if (!canvas.width() || !canvas.height())
         return Exception { ExceptionCode::InvalidStateError };
-    RefPtr copiedImage = canvas.copiedImage();
 
-    if (!copiedImage)
-        return Exception { ExceptionCode::InvalidStateError };
-    
-    auto nativeImage = copiedImage->nativeImage();
+    RefPtr nativeImage = canvas.copyNativeImage();
     if (!nativeImage)
         return Exception { ExceptionCode::InvalidStateError };
 
     return RefPtr<CanvasPattern> { CanvasPattern::create({ nativeImage.releaseNonNull() }, repeatX, repeatY, canvas.originClean()) };
 }
-    
+
 #if ENABLE(VIDEO)
 
 ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(HTMLVideoElement& videoElement, bool repeatX, bool repeatY)
 {
     if (videoElement.readyState() < HTMLMediaElement::HAVE_CURRENT_DATA)
         return nullptr;
-    
+
     checkOrigin(&videoElement);
     bool originClean = canvasBase().originClean();
 
@@ -2353,7 +2445,7 @@ ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(H
         return nullptr;
 
     videoElement.paintCurrentFrameInContext(imageBuffer->context(), FloatRect(FloatPoint(), size(videoElement)));
-    
+
     return RefPtr<CanvasPattern> { CanvasPattern::create({ imageBuffer.releaseNonNull() }, repeatX, repeatY, originClean) };
 }
 
@@ -2463,7 +2555,11 @@ void CanvasRenderingContext2DBase::clearAccumulatedDirtyRect()
 
 bool CanvasRenderingContext2DBase::isEntireBackingStoreDirty() const
 {
+#if USE(COORDINATED_GRAPHICS)
     return m_dirtyRect == backingStoreBounds();
+#else
+    return m_dirtyRect.contains(backingStoreBounds());
+#endif
 }
 
 const Vector<CanvasRenderingContext2DBase::State, 1>& CanvasRenderingContext2DBase::stateStack()
@@ -2558,7 +2654,7 @@ RefPtr<ArrayPixelBuffer> CanvasRenderingContext2DBase::cacheImageDataIfPossible(
     // This computation can be used for cache retrieval as well as the real putImageData.
     // We're not doing RGBA -> BGRA swizzle here, as that is not needed for cache retrieval and
     // the swizzle copy can be made at the putImageData copy site.
-    auto colorSpace = toDestinationColorSpace(imageData.colorSpace());
+    auto colorSpace = toColorSpace(imageData.colorSpace());
     auto pixelFormat = toPixelFormat(imageData.pixelFormat());
     unsigned bytesPerRow = static_cast<unsigned>(size.width()) * PixelBuffer::bytesPerPixel(pixelFormat);
     PixelBufferFormat cachedFormat { AlphaPremultiplication::Premultiplied, pixelFormat, colorSpace };
@@ -2646,21 +2742,20 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, i
     IntRect imageDataRect { sx, sy, sw, sh };
     auto outputImageDataPixelFormat = settings ? settings->pixelFormat : ImageDataPixelFormat::RgbaUnorm8;
     auto outputPixelFormat = toPixelFormat(outputImageDataPixelFormat);
+    auto computedColorSpace = ImageData::computeColorSpace(settings, m_settings.colorSpace);
 
     if (scriptContext && scriptContext->requiresScriptTrackingPrivacyProtection(ScriptTrackingPrivacyCategory::Canvas)) {
         RefPtr buffer = protect(canvasBase())->createImageForNoiseInjection();
         if (!buffer)
             return Exception { ExceptionCode::InvalidStateError };
 
-        auto format = PixelBufferFormat { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, buffer->colorSpace() };
+        auto format = PixelBufferFormat { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, toColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)) };
         RefPtr pixelBuffer = dynamicDowncast<ArrayPixelBuffer>(buffer->getPixelBuffer(format, imageDataRect));
         if (!pixelBuffer)
             return Exception { ExceptionCode::InvalidStateError };
 
         return { { ImageData::create(pixelBuffer.releaseNonNull(), outputImageDataPixelFormat) } };
     }
-
-    auto computedColorSpace = ImageData::computeColorSpace(settings, m_settings.colorSpace);
 
     if (outputImageDataPixelFormat == ImageDataPixelFormat::RgbaUnorm8) {
         if (auto imageData = makeImageDataIfContentsCached(imageDataRect, outputPixelFormat, computedColorSpace))
@@ -2671,7 +2766,7 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, i
     if (!buffer)
         return ImageData::create(imageDataRect.width(), imageDataRect.height(), m_settings.colorSpace, settings);
 
-    PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, toDestinationColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)) };
+    PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, toColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)) };
     RefPtr pixelBuffer = buffer->getPixelBuffer(format, imageDataRect);
     if (!pixelBuffer) {
         scriptContext->addConsoleMessage(MessageSource::Rendering, MessageLevel::Error,
@@ -2679,7 +2774,7 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, i
         return Exception { ExceptionCode::InvalidStateError };
     }
 
-    ASSERT(pixelBuffer->format().colorSpace == toDestinationColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)));
+    ASSERT(pixelBuffer->format().colorSpace == toColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)));
 
     if (RefPtr imageData = ImageData::create(pixelBuffer.releaseNonNull(), outputImageDataPixelFormat))
         return { { imageData.releaseNonNull() } };
@@ -2736,7 +2831,7 @@ FloatRect CanvasRenderingContext2DBase::inflatedStrokeRect(const FloatRect& rect
     // Fast approximation of the stroke's bounding rect.
     // This yields a slightly oversized rect but is very fast
     // compared to Path::strokeBoundingRect().
-    static const float root2 = sqrtf(2);
+    static constexpr float root2 = std::numbers::sqrt2_v<float>;
     float delta = state().lineWidth / 2;
     if (state().lineJoin == LineJoin::Miter)
         delta *= state().miterLimit;
@@ -2902,18 +2997,17 @@ static bool canUseCachedShapedText(const TextRun& textRun)
 
 void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, double x, double y, bool fill, std::optional<double> maxWidth)
 {
-    auto& fontCascade = this->fontProxy()->fontCascade();
-    auto& fontMetrics = fontProxy()->metricsOfPrimaryFont();
-
     auto* cachedShapedText = [&]() -> TextShapingResultAndDisplayList* {
         if (!canUseCachedShapedText(textRun))
             return nullptr;
-        RefPtr fonts = fontCascade.fonts();
+
+        CheckedRef fontCascade = fontProxy()->fontCascade();
+        RefPtr fonts = fontCascade->fonts();
         ASSERT(fonts);
         return fonts->getOrCreateCachedShapedText(textRun, fontCascade, 0, std::nullopt, ForTextEmphasis::No);
     }();
 
-    float fontWidth = cachedShapedText ? cachedShapedText->textShapingResult.width : fontCascade.width(textRun);
+    float fontWidth = cachedShapedText ? cachedShapedText->textShapingResult.width : protect(fontProxy()->fontCascade())->width(textRun);
 
     bool useMaxWidth = maxWidth && maxWidth.value() < fontWidth;
     float width = useMaxWidth ? maxWidth.value() : fontWidth;
@@ -2921,22 +3015,26 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
     location += textOffset(width, textRun.direction());
 
     // The slop built in to this mask rect matches the heuristic used in FontCGWin.cpp for GDI text.
-    FloatRect textRect = FloatRect(location.x() - fontMetrics.intHeight() / 2, location.y() - fontMetrics.intAscent() - fontMetrics.intLineGap(),
-        width + fontMetrics.intHeight(), fontMetrics.intLineSpacing());
+    FloatRect textRect = [&] () {
+        const auto& fontMetrics = fontProxy()->metricsOfPrimaryFont();
+        return FloatRect(
+            location.x() - fontMetrics.intHeight() / 2,
+            location.y() - fontMetrics.intAscent() - fontMetrics.intLineGap(),
+            width + fontMetrics.intHeight(),
+            fontMetrics.intLineSpacing()
+        );
+    }();
     if (!fill)
         textRect = inflatedStrokeRect(textRect);
 
     auto targetSwitcher = CanvasFilterContextSwitcher::create(*this, textRect);
 
-    // FIXME: Need to refetch fontProxy. CanvasFilterContextSwitcher might have called save().
-    // https://bugs.webkit.org/show_bug.cgi?id=193077.
     auto* c = effectiveDrawingContext();
-    auto& fontProxy = *this->fontProxy();
 
     bool cachedDisplayListNeedsStateSave = false;
     // Any shadow could add display list items to draw glyphs a 2nd time with different context attributes.
     if (cachedShapedText && !cachedShapedText->displayList && !cachedShapedText->textShapingResult.glyphBuffer.isEmpty() && !c->dropShadow()) {
-        cachedShapedText->displayList = fontCascade.displayListForGlyphBuffer(*c, cachedShapedText->textShapingResult.glyphBuffer, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
+        cachedShapedText->displayList = protect(fontProxy()->fontCascade())->displayListForGlyphBuffer(*c, cachedShapedText->textShapingResult.glyphBuffer, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
 
         if (cachedShapedText->displayList) {
             for (auto& item : cachedShapedText->displayList->items()) {
@@ -2965,16 +3063,16 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
                     }
                 } else {
                     FloatPoint startPoint = point + WebCore::size(glyphBuffer.initialAdvance());
-                    fontCascade.drawGlyphBuffer(context, glyphBuffer, startPoint, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
+                    protect(fontProxy()->fontCascade())->drawGlyphBuffer(context, glyphBuffer, startPoint, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
                 }
             }
         } else
-            fontProxy.drawBidiText(context, textRun, point, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
+            fontProxy()->drawBidiText(context, textRun, point, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
     };
 
 #if USE(CG)
     const CanvasStyle& drawStyle = fill ? state().fillStyle : state().strokeStyle;
-    if (drawStyle.canvasGradient() || drawStyle.canvasPattern()) {
+    if (drawStyle.isGradientOrPattern()) {
         IntRect maskRect = enclosingIntRect(textRect);
 
         willUpdateContents(FloatRect { maskRect });
@@ -3189,9 +3287,9 @@ static constexpr AllowExtendedColorSpace allowExtendedColorSpace(CanvasRendering
     return AllowExtendedColorSpace::No;
 }
 
-DestinationColorSpace CanvasRenderingContext2DBase::colorSpace() const
+ColorSpace CanvasRenderingContext2DBase::colorSpace() const
 {
-    return toDestinationColorSpace(m_settings.colorSpace, allowExtendedColorSpace(m_settings.colorType));
+    return toColorSpace(m_settings.colorSpace, allowExtendedColorSpace(m_settings.colorType));
 }
 
 bool CanvasRenderingContext2DBase::willReadFrequently() const
@@ -3215,9 +3313,8 @@ std::optional<RenderingMode> CanvasRenderingContext2DBase::renderingModeForTesti
 std::optional<CanvasRenderingContext2DBase::RenderingMode> CanvasRenderingContext2DBase::getEffectiveRenderingModeForTesting()
 {
     if (RefPtr buffer = this->buffer()) {
-        buffer->ensureBackendCreated();
-        if (buffer->hasBackend())
-            return buffer->renderingMode();
+        if (auto renderingMode = buffer->getEffectiveRenderingModeForTesting())
+            return *renderingMode;
     }
     return std::nullopt;
 }
@@ -3347,10 +3444,10 @@ ImageBuffer* CanvasRenderingContext2DBase::buffer() const
 {
     if (m_hasCreatedImageBuffer)
         return m_buffer;
-    m_hasCreatedImageBuffer = true;
     RefPtr buffer = allocateImageBuffer();
     if (!buffer)
         return nullptr;
+    m_hasCreatedImageBuffer = true;
     auto& context = buffer->context();
     context.setShadowsIgnoreTransforms(true);
     context.setImageInterpolationQuality(defaultInterpolationQuality);

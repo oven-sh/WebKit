@@ -1850,11 +1850,32 @@ void BBQJIT::pushArrayNewFromSegment(ArraySegmentOperation operation, TypeSignat
 
 [[nodiscard]] PartialResult BBQJIT::addAnyConvertExtern(ExpressionType reference, ExpressionType& result)
 {
-    Vector<Value, 8> arguments = {
-        reference
-    };
+    GPRReg resultGPR;
+    {
+        ScratchScope<1, 0> scratches(*this);
+        resultGPR = scratches.gpr(0);
+        if (reference.isConst())
+            emitMoveConst(reference, Location::fromGPR(resultGPR));
+        else
+            emitMove(reference.type(), loadIfNecessary(reference), Location::fromGPR(resultGPR));
+
+        JumpList done;
+        done.append(m_jit.branchIfInt32(resultGPR, DoNotHaveTagRegisters));
+        done.append(m_jit.branchIfNotNumber(resultGPR, DoNotHaveTagRegisters));
+        JumpList slowPath;
+        slowPath.append(m_jit.jump());
+        MacroAssembler::Label doneLabel(m_jit);
+        done.link(m_jit);
+        m_slowPaths.append({ origin(), WTF::move(slowPath), WTF::move(doneLabel), copyBindings(), [resultGPR](BBQJIT&, CCallHelpers& jit) {
+            jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
+            jit.setupArguments<decltype(operationWasmAnyConvertExtern)>(resultGPR);
+            jit.callOperation<OperationPtrTag>(operationWasmAnyConvertExtern);
+            jit.move(GPRInfo::returnValueGPR, resultGPR);
+        } });
+        consume(reference);
+    }
     result = topValue(TypeKind::Anyref);
-    emitCCall(&operationWasmAnyConvertExtern, arguments, result);
+    bind(result, Location::fromGPR(resultGPR));
 
     LOG_INSTRUCTION("AnyConvertExtern", reference, RESULT(result));
     return { };
@@ -3215,16 +3236,27 @@ PartialResult BBQJIT::addI32Extend8S(Value operand, Value& result)
 
 [[nodiscard]] PartialResult BBQJIT::addRefFunc(FunctionSpaceIndex index, Value& result)
 {
-    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    TypeKind returnType = TypeKind::Ref;
+    GPRReg resultGPR;
+    {
+        ScratchScope<1, 0> scratches(*this);
+        resultGPR = scratches.gpr(0);
 
-    Vector<Value, 8> arguments = {
-        instanceValue(),
-        Value::fromI32(index)
-    };
-    result = topValue(returnType);
-    emitCCall(&operationWasmRefFunc, arguments, result);
+        m_jit.load64(Address(GPRInfo::wasmContextInstancePointer, safeCast<int32_t>(JSWebAssemblyInstance::offsetOfFunctionWrapper(m_info, index))), resultGPR);
 
+        JumpList slowPath = m_jit.branchTest64(ResultCondition::Zero, resultGPR);
+        MacroAssembler::Label done(m_jit);
+        m_slowPaths.append({ origin(), WTF::move(slowPath), WTF::move(done), copyBindings(), [index, resultGPR](BBQJIT&, CCallHelpers& jit) {
+            jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
+            jit.setupArguments<decltype(operationWasmRefFunc)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(static_cast<uint32_t>(index)));
+            jit.callOperation<OperationPtrTag>(operationWasmRefFunc);
+            jit.move(GPRInfo::returnValueGPR, resultGPR);
+        } });
+    }
+
+    result = topValue(TypeKind::Ref);
+    bind(result, Location::fromGPR(resultGPR));
+
+    LOG_INSTRUCTION("RefFunc", index, RESULT(result));
     return { };
 }
 
@@ -5838,7 +5870,7 @@ void BBQJIT::emitArrayElementAddress(StorageType elementType, Value array, Value
 
 } // namespace JSC::Wasm::BBQJITImpl
 
-Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileBBQ(CompilationContext& compilationContext, IPIntCallee& profiledCallee, BBQCallee& callee, const FunctionData& function, const RTT& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, Module& module, CalleeGroup& calleeGroup, const ModuleInformation& info, MemoryMode mode, FunctionCodeIndex functionIndex)
+std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileBBQ(CompilationContext& compilationContext, IPIntCallee& profiledCallee, BBQCallee& callee, const FunctionData& function, const RTT& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, Module& module, CalleeGroup& calleeGroup, const ModuleInformation& info, MemoryMode mode, FunctionCodeIndex functionIndex)
 {
     CompilerTimingScope totalTime("BBQ"_s, "Total BBQ"_s);
 

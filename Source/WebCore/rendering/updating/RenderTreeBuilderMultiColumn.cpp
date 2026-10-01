@@ -28,7 +28,7 @@
 #include "RenderChildIterator.h"
 #include "RenderElementInlines.h"
 #include "RenderInline.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
@@ -103,7 +103,8 @@ static bool isValidColumnSpanner(const RenderMultiColumnFlow& fragmentedFlow, co
     if (descendantBox->isLegend())
         return false;
 
-    if (!is<RenderBlockFlow>(descendantBox->parent()) && !is<RenderInline>(descendantBox->parent()))
+    auto* parent = descendantBox->parent();
+    if (!is<RenderBlockFlow>(parent) && !(parent && parent->isInlineBox()))
         return false;
 
     // We need to have the flow thread as the containing block. A spanner cannot break out of the flow thread.
@@ -308,8 +309,8 @@ void RenderTreeBuilder::MultiColumn::createFragmentedFlow(RenderBlockFlow& flow)
 
     // An excluded marker takes no part in multi-column layout, and the list item positions it against its first
     // formatted line afterwards, which it can only do while the marker is still its own child.
-    CheckedPtr<RenderListMarker> excludedMarker;
-    for (auto& marker : childrenOfType<RenderListMarker>(flow)) {
+    CheckedPtr<RenderListOutsideMarker> excludedMarker;
+    for (auto& marker : childrenOfType<RenderListOutsideMarker>(flow)) {
         if (marker.isExcludedMarker()) {
             excludedMarker = &marker;
             break;

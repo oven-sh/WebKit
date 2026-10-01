@@ -53,6 +53,7 @@
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSRetainPtr.h>
+#include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/JSValueRef.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/OpaqueJSString.h>
@@ -63,6 +64,13 @@
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ScriptController.h>
 #include <WebCore/SharedMemory.h>
+#if USE(SKIA)
+#include <WebCore/ColorSpace.h>
+#include <WebCore/SkiaSpanExtras.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkColorSpace.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+#endif
 #include <wtf/PageBlock.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Scope.h>
@@ -433,6 +441,7 @@ private:
     static JSValueRef createStreamClientConnection(JSContextRef, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
     static JSValueRef createSemaphore(JSContextRef, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
     static JSValueRef createSharedMemory(JSContextRef, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
+    static JSValueRef serializedSRGBColorSpace(JSContextRef, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
     static JSValueRef addTesterReceiver(JSContextRef, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
     static JSValueRef removeTesterReceiver(JSContextRef, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
 
@@ -1895,6 +1904,7 @@ const JSStaticFunction* JSIPC::staticFunctions()
         { "createStreamClientConnection", createStreamClientConnection, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "createSemaphore", createSemaphore, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "createSharedMemory", createSharedMemory, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
+        { "serializedSRGBColorSpace", serializedSRGBColorSpace, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "addTesterReceiver", addTesterReceiver, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "removeTesterReceiver", removeTesterReceiver, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { 0, 0, 0 }
@@ -2689,6 +2699,35 @@ JSValueRef JSIPC::createSharedMemory(JSContextRef context, JSObjectRef, JSObject
     return JSSharedMemory::create(*size)->createJSWrapper(context);
 }
 
+JSValueRef JSIPC::serializedSRGBColorSpace(JSContextRef context, JSObjectRef, JSObjectRef thisObject, size_t, const JSValueRef[], JSValueRef* exception)
+{
+    if (!toWrapped(context, thisObject)) {
+        *exception = createTypeError(context, "Wrong type"_s);
+        return JSValueMakeUndefined(context);
+    }
+
+#if USE(SKIA)
+    auto* globalObject = toJS(context);
+    auto& vm = globalObject->vm();
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    sk_sp<SkData> data = WebCore::ColorSpace::SRGB().serializableColorSpace()->serialize();
+    auto bytes = WebCore::span(data);
+
+    JSC::JSObject* array = JSC::constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, JSValueMakeUndefined(context));
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        array->putDirectIndex(globalObject, i, JSC::jsNumber(bytes[i]));
+        RETURN_IF_EXCEPTION(scope, JSValueMakeUndefined(context));
+    }
+    return toRef(vm, array);
+#else
+    *exception = createTypeError(context, "serializedSRGBColorSpace is only available on Skia ports"_s);
+    return JSValueMakeUndefined(context);
+#endif
+}
+
 JSValueRef JSIPC::addTesterReceiver(JSContextRef context, JSObjectRef, JSObjectRef thisObject, size_t, const JSValueRef[], JSValueRef* exception)
 {
     auto* globalObject = toJS(context);
@@ -2831,7 +2870,7 @@ JSValueRef JSIPC::objectIdentifiers(JSContextRef context, JSObjectRef thisObject
 
     auto identifiers = IPC::serializedIdentifiers();
     for (size_t i = 0; i < identifiers.size(); i++) {
-        array->putDirectIndex(globalObject, i, toJS(globalObject, JSValueMakeString(context, adopt(JSStringCreateWithUTF8CString(identifiers[i].characters())).get())));
+        array->putDirectIndex(globalObject, i, toJS(globalObject, JSValueMakeString(context, createJSString(identifiers[i]).get())));
         RETURN_IF_EXCEPTION(scope, JSValueMakeUndefined(context));
     }
 

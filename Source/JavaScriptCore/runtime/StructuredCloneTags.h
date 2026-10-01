@@ -25,13 +25,17 @@
 
 #pragma once
 
+#include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/TypedArrayType.h>
 #include <wtf/PrintStream.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringCommon.h>
 
 namespace JSC {
+
+namespace Wasm { class Module; }
 
 /*
  * Object serialization is performed according to the following grammar, all tags
@@ -92,7 +96,7 @@ namespace JSC {
  *    | DOMQuad
  *    | ImageBitmapTransferTag <value:uint32_t>
  *    | RTCCertificateTag
- *    | ImageBitmapTag <imageBitmapSerializationFlags:uint8_t> <logicalWidth:int32_t> <logicalHeight:int32_t> <resolutionScale:double> DestinationColorSpace <byteLength:uint32_t>(<imageByteData:uint8_t>)
+ *    | ImageBitmapTag <imageBitmapSerializationFlags:uint8_t> <logicalWidth:int32_t> <logicalHeight:int32_t> <resolutionScale:double> ColorSpace <byteLength:uint32_t>(<imageByteData:uint8_t>)
  *    | OffscreenCanvasTransferTag <value:uint32_t>
  *    | WasmMemoryTag <value:uint32_t>
  *    | RTCDataChannelTransferTag <identifier:uint32_t>
@@ -223,13 +227,13 @@ namespace JSC {
  *      | PredefinedColorSpaceTag::SRGBLinear
  *      | PredefinedColorSpaceTag::DisplayP3Linear
  *
- * DestinationColorSpace :-
- *        DestinationColorSpaceSRGBTag
- *      | DestinationColorSpaceLinearSRGBTag
- *      | DestinationColorSpaceDisplayP3Tag
- *      | DestinationColorSpaceCGColorSpaceNameTag <nameDataLength:uint32_t> <nameData:uint8_t>{nameDataLength}
- *      | DestinationColorSpaceCGColorSpacePropertyListTag <propertyListDataLength:uint32_t> <propertyListData:uint8_t>{propertyListDataLength}
- *      | DestinationColorSpaceLinearDisplayP3Tag
+ * ColorSpace :-
+ *        ColorSpaceSRGBTag
+ *      | ColorSpaceLinearSRGBTag
+ *      | ColorSpaceDisplayP3Tag
+ *      | ColorSpaceCGColorSpaceNameTag <nameDataLength:uint32_t> <nameData:uint8_t>{nameDataLength}
+ *      | ColorSpaceCGColorSpacePropertyListTag <propertyListDataLength:uint32_t> <propertyListData:uint8_t>{propertyListDataLength}
+ *      | ColorSpaceLinearDisplayP3Tag
  */
 
 enum SerializationTag {
@@ -342,6 +346,49 @@ enum ArrayBufferViewSubtag {
     BigInt64ArrayTag = 10,
     BigUint64ArrayTag = 11,
     Float16ArrayTag = 12,
+};
+
+using ArrayBufferContentsArray = Vector<ArrayBufferContents>;
+#if ENABLE(WEBASSEMBLY)
+using WasmModuleArray = Vector<Ref<Wasm::Module>>;
+using WasmMemoryHandleArray = Vector<RefPtr<SharedArrayBufferContents>>;
+#endif
+
+constexpr uint64_t autoLengthMarker = UINT64_MAX;
+
+inline constexpr unsigned NODELETE typedArrayElementSize(ArrayBufferViewSubtag tag)
+{
+    switch (tag) {
+#define JSC_TYPED_ARRAY_SUBTAG_ELEMENT_SIZE(name) \
+    case name##ArrayTag: \
+        return elementSize(Type##name);
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_SUBTAG_ELEMENT_SIZE)
+#undef JSC_TYPED_ARRAY_SUBTAG_ELEMENT_SIZE
+    case DataViewTag:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+struct CloneSerializationSideChannels {
+    ArrayBufferContentsArray sharedBuffers;
+#if ENABLE(WEBASSEMBLY)
+    WasmModuleArray wasmModules;
+    WasmMemoryHandleArray wasmMemoryHandles;
+#endif
+};
+
+// Caller-owned side arrays threaded through the deserializer. Unlike the serializer's, these
+// are optional (nullable) since not every embedder use of deserialization provides them.
+struct CloneDeserializationSideChannels {
+    // Not const as this is used for transferring ArrayBuffer contents.
+    ArrayBufferContentsArray* arrayBufferContents { nullptr };
+    const ArrayBufferContentsArray* sharedBuffers { nullptr };
+#if ENABLE(WEBASSEMBLY)
+    const WasmModuleArray* wasmModules { nullptr };
+    const WasmMemoryHandleArray* wasmMemoryHandles { nullptr };
+#endif
 };
 
 enum class SerializationReturnCode {

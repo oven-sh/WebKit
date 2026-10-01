@@ -47,10 +47,12 @@
 #include "Synchronousness.h"
 #include "WeakHandleOwner.h"
 #include <JavaScriptCore/SubspaceAccess.h>
+#include <wtf/ApproximateTime.h>
 #include <wtf/AutomaticThread.h>
 #include <wtf/Box.h>
 #include <wtf/ConcurrentPtrHashSet.h>
 #include <wtf/Deque.h>
+#include <wtf/DoublyLinkedList.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -58,6 +60,7 @@
 #include <wtf/NotFound.h>
 #include <wtf/ParallelHelperPool.h>
 #include <wtf/SegmentedVector.h>
+#include <wtf/SentinelLinkedList.h>
 #include <wtf/Threading.h>
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -102,6 +105,7 @@ class RunningScope;
 class SlotVisitor;
 class SpaceTimeMutatorScheduler;
 class StopIfNecessaryTimer;
+class StructureAlignedMemoryAllocator;
 class SweepingScope;
 class VM;
 class VerifierSlotVisitor;
@@ -129,7 +133,7 @@ class Heap;
     v(calleeSpace, cellHeapCellType, JSCallee) \
     v(clonedArgumentsSpace, cellHeapCellType, ClonedArguments) \
     v(customGetterSetterSpace, cellHeapCellType, CustomGetterSetter) \
-    v(dateInstanceSpace, dateInstanceHeapCellType, DateInstance) \
+    v(dateInstanceSpace, cellHeapCellType, DateInstance) \
     v(domAttributeGetterSetterSpace, cellHeapCellType, DOMAttributeGetterSetter) \
     v(exceptionSpace, destructibleCellHeapCellType, Exception) \
     v(functionSpace, cellHeapCellType, JSFunction) \
@@ -343,12 +347,6 @@ public:
     static JSC::Heap* heap(const JSValue); // 0 for immediate values
     static JSC::Heap* heap(const HeapCell*);
 
-    // This constant determines how many blocks we iterate between checks of our 
-    // deadline when calling Heap::isPagedOut. Decreasing it will cause us to detect 
-    // overstepping our deadline more quickly, while increasing it will cause 
-    // our scan to run faster. 
-    static constexpr unsigned s_timeCheckResolution = 16;
-
     bool isMarked(const void*);
     static bool testAndSetMarked(HeapVersion, const void*);
 
@@ -392,6 +390,19 @@ public:
 
     MutatorState mutatorState() const { return m_mutatorState; }
     std::optional<CollectionScope> collectionScope() const { return m_collectionScope; }
+    std::optional<CollectionScope> lastCollectionScope() const { return m_lastCollectionScope; }
+#if USE(BUN_JSC_ADDITIONS)
+    // The most recent collection boundary: the end of the last one, or the start of the one in progress.
+    MonotonicTime lastGCBoundaryTime() const { return std::max(m_lastGCEndTime, m_currentGCStartTime); }
+    // Live size of the heap (cells and extra memory) as of the last finished collection, eden or full.
+    size_t sizeAfterLastCollection() const { return m_sizeAfterLastCollect; }
+    // Everything the mutator has allocated (cells and reported extra memory), the current cycle included. Mutator thread only.
+    uint64_t totalBytesAllocated() const { return m_bytesAllocatedInPastCycles + m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    // How much the mutator may allocate before the heap collects by itself: what updateAllocationLimits() decided after the last
+    // collection. For an embedder that wants to say "this program is allocating a lot" in the heap's own terms and not in bytes
+    // per second of its own choosing. Mutator thread only.
+    size_t allocationBudgetThisCycle() { return effectiveMaxEdenSize(); }
+#endif
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
     bool worldIsRunning() const { return !worldIsStopped(); }
@@ -515,15 +526,54 @@ public:
     size_t sizeBeforeLastFullCollection() const { return m_sizeBeforeLastFullCollect; }
     size_t sizeAfterLastFullCollection() const { return m_sizeAfterLastFullCollect; }
 
-    void deleteAllCodeBlocks(DeleteAllCodeEffort);
-    void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
+    void deleteAllCodeBlocks(DeleteAllCodeEffort, bool keepWhatNeedsParsing = false);
+    void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort, OptionSet<UnlinkedCodeToDelete> = UnlinkedCodeToDelete::Generated);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // When a collection last began that found the mutator had allocated more than a trickle since the one before: the
+    // mutator was at work then. Idle optimized code ages against this (CodeBlock::shouldJettisonDueToOldAge), and an
+    // embedder can. Written by whichever thread runs the collection, read from any. ApproximateTime() (zero) until the
+    // first such collection: a VM that has not allocated Options::optimizedCodeAgingQuietAllocationMB in total yet reads
+    // as quiet since the epoch, which is the right answer for "has it been busy lately".
+    ApproximateTime lastActiveCollectionTime() const { return m_lastActiveCollectionTime.load(std::memory_order_relaxed); }
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Moves the butterflies out of the sparse blocks of the Auxiliary subspace (those whose live bytes are at most
+    // maximumOccupancy of a block) into denser ones, so that the sparse blocks die with the next full collection, which
+    // the caller should request. For a program at rest; see the definition for the mechanism and for what is not moved.
+    // Never asserts on the caller's state: if this is not a moment at which it can run, nothing happens and
+    // AuxiliaryEvacuationResult::skipped says why.
+    //
+    // What this asks of an embedder: a raw pointer into an object's out-of-line storage (Butterfly*, the data() of
+    // contiguous() / contiguousDouble() / contiguousInt32(), a WriteBarrier<Unknown>* to an out-of-line property or an
+    // element) may be kept across a call that can reach this function only in a local variable or register of the VM's
+    // own thread, where the conservative scan finds it and leaves the storage in place. Anything kept elsewhere (the C++
+    // heap, another thread's stack) must be revalidated against JSObject::butterfly() afterwards, the way
+    // JSArrayIterator revalidates. No thread may read a butterfly without holding the JSLock. Typed array vectors and
+    // everything else in the Gigacage's primitive subspace are never moved: compiled code embeds their addresses.
+    struct AuxiliaryEvacuationResult {
+        ASCIILiteral skipped; // Null if the evacuation ran, otherwise the reason it did not.
+        unsigned candidateBlocks { 0 };
+        unsigned evacuatedBlocks { 0 };
+        unsigned movedCells { 0 };
+        unsigned pinnedCells { 0 };
+        unsigned cellsWithoutSingleOwner { 0 };
+        size_t movedBytes { 0 };
+        Seconds duration;
+    };
+    JS_EXPORT_PRIVATE AuxiliaryEvacuationResult evacuateSparseAuxiliaryBlocks(double maximumOccupancy);
+    void evacuateAuxiliaryBlocksIfDue();
+#endif
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
-    bool isPagedOut();
-    
+
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     
-    void addReference(JSCell*, ArrayBuffer*);
+    // bytesAlreadyReported is the part of the buffer that this heap has already counted as allocated, because the
+    // buffer adopted storage that reportExtraMemoryAllocated() had reported. The first reference counts only the rest
+    // as allocated. The size of the heap (extraMemorySize()) gets the whole buffer either way.
+    void addReference(JSCell*, ArrayBuffer*, size_t bytesAlreadyReported = 0);
     
     bool isDeferred() const { return !!m_deferralDepth; }
 
@@ -538,8 +588,9 @@ public:
 
     JS_EXPORT_PRIVATE void registerWeakGCHashTable(WeakGCHashTable*);
     JS_EXPORT_PRIVATE void unregisterWeakGCHashTable(WeakGCHashTable*);
+    void addDirtyWeakGCHashTable(WeakGCHashTable*);
 
-    void addLogicallyEmptyWeakBlock(WeakBlock*);
+    unsigned weakBlockCount() const { return m_weakBlockCount; }
 
 #if ENABLE(RESOURCE_USAGE)
     size_t blockBytesAllocated() const { return m_blockBytesAllocated; }
@@ -696,6 +747,7 @@ private:
     friend class IncrementalSweeper;
     friend class VM;
     friend class VerifierSlotVisitor;
+    friend class WeakBlock;
     friend class WeakSet;
 
     class HeapThread;
@@ -720,6 +772,13 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the
+    // clock for every block it visits.
+    ApproximateTime currentGCStartApproximateTime() const { return m_currentGCStartApproximateTime; }
+    // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
+    bool isIdleCollection() const { return m_currentRequest.isIdle; }
+#endif
 
     bool shouldCollectInCollectorThread(const AbstractLocker&);
     void collectInCollectorThread();
@@ -796,11 +855,10 @@ private:
 
     void cancelDeferredWorkIfNeeded();
     void reapWeakHandles();
-    void pruneStaleEntriesFromWeakGCHashTables();
+    void reconcileWeakGCHashTables();
     void sweepArrayBuffers();
     void snapshotUnswept();
     void deleteSourceProviderCaches();
-    void notifyIncrementalSweeper();
     void harvestWeakReferences();
 
     template<typename CellType, typename CellSet>
@@ -809,17 +867,25 @@ private:
     void reconcileWeakReferencesAtGCEnd();
 
     void deleteUnmarkedCompiledCode();
+    void releaseUnusedSharedBaselineCode();
     JS_EXPORT_PRIVATE void addToRememberedSet(const JSCell*);
     void updateAllocationLimits();
     void didFinishCollection();
     void resumeCompilerThreads();
+#if USE(BUN_JSC_ADDITIONS)
+    ASCIILiteral reasonNotToEvacuateAuxiliaryBlocksNow();
+#endif
     void gatherExtraHeapData(HeapProfiler&);
     void removeDeadHeapSnapshotNodes(HeapProfiler&);
     void runCollectionEpilogue();
     void sweepEagerlyInEpilogue();
     
-    void sweepAllLogicallyEmptyWeakBlocks();
-    bool sweepNextLogicallyEmptyWeakBlock();
+    void addDetachedWeakBlock(WeakBlock*);
+    void releaseDetachedWeakBlock(WeakBlock*);
+    void returnWeakBlockToPool(WeakBlock*);
+    WeakBlock* takeWeakBlockFromPool();
+    void destroyAllPooledWeakBlocks();
+    unsigned maxPooledWeakBlocks();
 
     bool shouldDoFullCollection();
 
@@ -871,6 +937,15 @@ private:
     const size_t m_ramSize;
     const size_t m_minBytesPerCycle;
     size_t m_bytesAllocatedBeforeLastEdenCollect { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    std::atomic<ApproximateTime> m_lastActiveCollectionTime { ApproximateTime() };
+    ApproximateTime m_currentGCStartApproximateTime;
+    size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
+    uint64_t m_bytesAllocatedInPastCycles { 0 };
+    bool m_isCollectionPrevented { false }; // Between preventCollection() and allowCollection(), which do not nest.
+    bool m_auxiliaryEvacuationIsDue { false };
+    HeapVersion m_lastAuxiliaryEvacuationVersion { 0 }; // The marking version (one per full collection) when cells were last moved.
+#endif
     size_t m_sizeAfterLastCollect { 0 };
     size_t m_sizeAfterLastFullCollect { 0 };
     size_t m_sizeBeforeLastFullCollect { 0 };
@@ -949,8 +1024,10 @@ private:
     Seconds m_lastEdenGCLength { 10_ms };
 #endif
 
-    Vector<WeakBlock*> m_logicallyEmptyWeakBlocks;
-    size_t m_indexOfNextLogicallyEmptyWeakBlockToSweep { WTF::notFound };
+    DoublyLinkedList<WeakBlock> m_detachedWeakBlocks;
+    DoublyLinkedList<WeakBlock> m_pooledWeakBlocks;
+    unsigned m_pooledWeakBlockCount { 0 };
+    unsigned m_weakBlockCount { 0 };
 
 #if ASSERT_ENABLED
     // JS_EXPORT_PRIVATE matches GCOwnedDataScope.h. Heap.h does not include it, so
@@ -988,6 +1065,7 @@ private:
     unsigned m_deferralDepth { 0 };
 
     UncheckedKeyHashSet<WeakGCHashTable*> m_weakGCHashTables;
+    SentinelLinkedList<WeakGCHashTable, BasicRawSentinelNode<WeakGCHashTable>> m_dirtyWeakGCHashTables;
     
 #if ENABLE(WEBASSEMBLY)
     UncheckedKeyHashSet<Ref<Wasm::Callee>> m_wasmCalleesPendingDestruction WTF_GUARDED_BY_LOCK(m_wasmCalleesPendingDestructionLock);
@@ -1003,13 +1081,13 @@ private:
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
     unsigned m_numberOfActiveParallelMarkers { 0 };
-    unsigned m_numberOfWaitingParallelMarkers { 0 };
+    unsigned m_numberOfWaitingParallelMarkers WTF_GUARDED_BY_LOCK(m_markingMutex) { 0 };
 
     ConcurrentPtrHashSet m_opaqueRoots;
     static constexpr size_t s_blockFragmentLength = 32;
 
     ParallelHelperClient m_helperClient;
-    RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask;
+    RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask WTF_GUARDED_BY_LOCK(m_markingMutex);
 
 #if ENABLE(RESOURCE_USAGE)
     size_t m_blockBytesAllocated { 0 };
@@ -1045,7 +1123,7 @@ private:
     bool m_threadShouldStop { false };
     bool m_mutatorDidRun { true };
     bool m_didDeferGCWork { false };
-    bool m_shouldStopCollectingContinuously { false };
+    bool m_shouldStopCollectingContinuously WTF_GUARDED_BY_LOCK(m_collectContinuouslyLock) { false };
     bool m_isCompilerThreadsSuspended { false };
 
     uint64_t m_mutatorExecutionVersion { 0 };
@@ -1089,7 +1167,6 @@ public:
     IsoHeapCellType callbackObjectHeapCellType;
     IsoHeapCellType customGetterFunctionHeapCellType;
     IsoHeapCellType customSetterFunctionHeapCellType;
-    IsoHeapCellType dateInstanceHeapCellType;
     IsoHeapCellType errorInstanceHeapCellType;
     IsoHeapCellType finalizationRegistryCellType;
     IsoHeapCellType globalLexicalEnvironmentHeapCellType;
@@ -1146,6 +1223,7 @@ public:
     // AlignedMemoryAllocators
     std::unique_ptr<FastMallocAlignedMemoryAllocator> fastMallocAllocator;
     std::unique_ptr<GigacageAlignedMemoryAllocator> primitiveGigacageAllocator;
+    std::unique_ptr<StructureAlignedMemoryAllocator> structureAllocator;
 
     // Subspaces
     CompleteSubspace primitiveGigacageAuxiliarySpace; // Typed arrays, strings, bitvectors, etc go here.
@@ -1302,7 +1380,7 @@ public:
     FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_NON_ISO_SUBSPACE_MEMBER)
 #undef DEFINE_NON_ISO_SUBSPACE_MEMBER
 
-    CString m_signpostMessage;
+    UTF8CString m_signpostMessage;
 };
 
 namespace GCClient {

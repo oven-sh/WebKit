@@ -85,11 +85,6 @@ inline bool AccessibilityObject::hasTreeRole() const
     return element && hasRole(*element, "tree"_s);
 }
 
-inline AXTextMarkerRange AccessibilityObject::textMarkerRange() const
-{
-    return simpleRange();
-}
-
 inline LocalFrame* AccessibilityObject::frame() const
 {
     Node* node = this->node();
@@ -114,7 +109,8 @@ inline SRGBA<uint8_t> AccessibilityObject::colorValue() const
 
 inline bool AccessibilityObject::isInlineText() const
 {
-    return is<RenderInline>(renderer());
+    auto* renderer = this->renderer();
+    return renderer && renderer->isInlineBox();
 }
 
 inline Element* AccessibilityObject::element() const

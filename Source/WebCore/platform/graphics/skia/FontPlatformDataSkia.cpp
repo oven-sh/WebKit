@@ -289,7 +289,7 @@ Vector<FontPlatformData::FontVariationAxis> FontPlatformData::variationAxes(Shou
 
     return WTF::map(defaultFontVariationValues(*typeface), [](auto&& entry) {
         auto& [tag, values] = entry;
-        return FontPlatformData::FontVariationAxis { values.axisName, String(tag), values.defaultValue, values.minimumValue, values.maximumValue };
+        return FontPlatformData::FontVariationAxis { values.axisName, String::fromLatin1(tag), values.defaultValue, values.minimumValue, values.maximumValue };
     });
 }
 

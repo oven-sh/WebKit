@@ -26,8 +26,8 @@
 
 #pragma once
 
-#include "ColorInterpolationMethod.h"
 #include "StyleColor.h"
+#include "StyleColorInterpolationMethod.h"
 #include "StylePrimitiveNumericTypes.h"
 #include <optional>
 #include <wtf/UniqueRef.h>
@@ -41,6 +41,8 @@ struct ColorMix;
 }
 
 namespace Style {
+
+class ResolvedColors;
 
 struct ColorResolutionState;
 
@@ -68,7 +70,7 @@ inline bool operator==(const UniqueRef<ColorMix>& a, const UniqueRef<ColorMix>& 
 }
 
 Color toStyleColor(const CSS::ColorMix&, ColorResolutionState&);
-WebCore::Color resolveColor(const ColorMix&, const WebCore::Color& currentColor);
+WebCore::Color resolveColor(const ColorMix&, const ResolvedColors&);
 bool containsCurrentColor(const ColorMix&);
 
 void serializationForCSSTokenization(StringBuilder&, const CSS::SerializationContext&, const ColorMix&);

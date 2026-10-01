@@ -46,7 +46,7 @@ struct UnderlineOffsetArguments {
     std::optional<Style::TextUnderlineOffset> offsetOverride { };
 };
 
-static bool NODELETE isAncestorAndWithinBlock(const RenderInline& ancestor, const RenderObject* child)
+static bool NODELETE isAncestorAndWithinBlock(const RenderBoxModelObject& ancestor, const RenderObject* child)
 {
     const RenderObject* object = child;
     while (object && (!object->isRenderBlock() || object->isInline())) {
@@ -108,7 +108,7 @@ static inline float defaultGap(const Style::ComputedStyle& style)
 {
     // This represents the gap between the baseline and the closest edge of the underline.
     const float textDecorationBaseFontSize = 16.f;
-    return std::max(1.f, ceilf(style.computedFontSize() / textDecorationBaseFontSize / 2.f));
+    return std::max(1.f, ceilf(style.usedFontSize() / textDecorationBaseFontSize / 2.f));
 }
 
 static float computedUnderlineOffset(const UnderlineOffsetArguments& context, const RenderObject* renderer)
@@ -180,7 +180,7 @@ static InkOverflowForDecorations computedInkOverflowForDecorations(const Style::
     InkOverflowForDecorations overflowResult;
 
     if (decorationStyle == TextDecorationStyle::Wavy) {
-        wavyStrokeParameters = WebCore::wavyStrokeParameters(lineStyle.computedFontSize());
+        wavyStrokeParameters = WebCore::wavyStrokeParameters(lineStyle.usedFontSize());
         wavyOffset = wavyOffsetFromDecoration();
         overflowResult.left() = strokeThickness;
         overflowResult.right() = strokeThickness;
@@ -231,7 +231,7 @@ static InkOverflowForDecorations computedInkOverflowForDecorations(const Style::
     // or it gets clipped / left unrepainted. A positive inset (and 'auto', which only trims inward)
     // needs no expansion. We expand both inline edges by the largest outward amount, which is a safe
     // superset regardless of writing mode / direction.
-    auto outwardInset = std::max<float>({ 0.f, -lineStyle.textDecorationInset().resolvedStart(lineStyle, 0.f), -lineStyle.textDecorationInset().resolvedEnd(lineStyle, 0.f) });
+    auto outwardInset = lineStyle.textDecorationInset().outwardExtent(lineStyle, 0.f);
     if (outwardInset) {
         overflowResult.left() = std::max(overflowResult.left(), LayoutUnit(ceilf(outwardInset)));
         overflowResult.right() = std::max(overflowResult.right(), LayoutUnit(ceilf(outwardInset)));

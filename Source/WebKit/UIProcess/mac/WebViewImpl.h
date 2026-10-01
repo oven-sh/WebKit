@@ -86,6 +86,7 @@ OBJC_CLASS NSView;
 OBJC_CLASS QLPreviewPanel;
 OBJC_CLASS WebTextIndicatorLayer;
 OBJC_CLASS WKAccessibilitySettingsObserver;
+OBJC_CLASS WKAXCustomColorModePreferencesController;
 OBJC_CLASS WKDOMPasteMenuDelegate;
 OBJC_CLASS WKEditorUndoTarget;
 OBJC_CLASS WKFullScreenWindowController;
@@ -140,7 +141,7 @@ enum class HysteresisState : bool;
 }
 
 namespace WebCore {
-class DestinationColorSpace;
+class ColorSpace;
 class IntPoint;
 struct DataDetectorElementInfo;
 struct ExceptionData;
@@ -416,7 +417,7 @@ public:
 
     RetainPtr<NSView> hitTest(CGPoint);
 
-    WebCore::DestinationColorSpace colorSpace();
+    WebCore::ColorSpace colorSpace();
 
     void setUnderlayColor(NSColor *);
     RetainPtr<NSColor> underlayColor() const;
@@ -535,6 +536,10 @@ public:
 
     void preferencesDidChange();
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void updateAXCustomColorModeControlsVisibility();
+#endif
+
     void updateNeedsViewFrameInWindowCoordinatesIfNeeded();
 
     void teardownTextIndicatorLayer();
@@ -612,7 +617,7 @@ public:
     void shareSheetDidDismiss(WKShareSheet *);
 
 #if ENABLE(WEB_AUTHN)
-    void showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData&, WTF::CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&, WKWebView*);
+    void showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData&, WTF::CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&&, WKWebView*);
     void dismissDigitalCredentialsChooser(WTF::CompletionHandler<void(bool)>&&, WKWebView*);
 #endif
 
@@ -921,7 +926,7 @@ public:
 #endif
 
 #if ENABLE(VIDEO)
-    void showCaptionDisplaySettings(WebCore::HTMLMediaElementIdentifier, const WebCore::ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(Expected<void, WebCore::ExceptionData>&&)>&&);
+    void showCaptionDisplaySettings(WebCore::HTMLMediaElementIdentifier, const WebCore::ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(std::expected<void, WebCore::ExceptionData>&&)>&&);
 #endif
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
@@ -1060,6 +1065,8 @@ private:
     bool m_clipsToVisibleRect { false };
     bool m_needsViewFrameInWindowCoordinates;
     bool m_didScheduleWindowAndViewFrameUpdate { false };
+    // Whether this view has pushed its frames since accessibility was turned on.
+    bool m_didUpdateFramesForAccessibility { false };
     bool m_windowOcclusionDetectionEnabled { true };
     bool m_windowIsEnteringOrExitingFullScreen { false };
 
@@ -1278,6 +1285,10 @@ private:
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     RetainPtr<WKAppKitGestureController> m_appKitGestureController;
     RetainPtr<WKTextSelectionController> m_textSelectionController;
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    RetainPtr<WKAXCustomColorModePreferencesController> m_axCustomColorModeControlsController;
 #endif
 } SWIFT_SHARED_REFERENCE(incrementCheckedPtrCountOnWebViewImpl, decrementCheckedPtrCountOnWebViewImpl) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
 

@@ -65,6 +65,14 @@ checkRequiredSystemConfig();
 setConfiguration();
 chdirWebKit();
 
+if (isCMakeBuild()) {
+    if ($clean) {
+        print STDERR "--clean is not supported for the CMake build; it would clean the whole build directory.\n";
+        exit 1;
+    }
+    exit(buildCMakeProjectOrExit(0, "", "lldbWebKitTester"));
+}
+
 my @xcodeOptions = XcodeOptions();
 
 $result = exitStatus(buildXcodeScheme("lldbWebKitTester", $clean, @xcodeOptions, @ARGV));

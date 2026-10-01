@@ -104,6 +104,8 @@ Ref<InspectorCanvas> InspectorCanvas::create(GPUDevice& device)
     return adoptRef(*new InspectorCanvas(device));
 }
 
+InspectorCanvas::~InspectorCanvas() = default;
+
 InspectorCanvas::InspectorCanvas(CanvasRenderingContext& context)
     : m_identifier(makeString("canvas:"_s, IdentifiersFactory::createIdentifier()))
     , m_context(context)
@@ -250,7 +252,7 @@ ScriptExecutionContext* InspectorCanvas::scriptExecutionContext() const
     return WTF::switchOn(m_context,
         [](const WeakRef<CanvasRenderingContext>& weakContext) {
             Ref context = weakContext;
-            return context->canvasBase().scriptExecutionContext();
+            return protect(context->canvasBase())->scriptExecutionContext();
         },
         [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
             Ref device = weakDevice;
@@ -295,7 +297,7 @@ HashSet<Ref<Element>> InspectorCanvas::cssCanvasClientNodes() const
     return WTF::switchOn(m_context,
         [](const WeakRef<CanvasRenderingContext>& weakContext) {
             Ref context = weakContext;
-            return context->canvasBase().cssCanvasClients();
+            return protect(context->canvasBase())->cssCanvasClients();
         },
         [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
             Ref device = weakDevice;
@@ -305,7 +307,7 @@ HashSet<Ref<Element>> InspectorCanvas::cssCanvasClientNodes() const
                 if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
                     continue;
 
-                for (Ref cssCanvasClientNode : context->canvasBase().cssCanvasClients())
+                for (Ref cssCanvasClientNode : protect(context->canvasBase())->cssCanvasClients())
                     cssCanvasClientNodes.add(WTF::move(cssCanvasClientNode));
             }
             return cssCanvasClientNodes;
@@ -475,12 +477,13 @@ void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArgume
     }
 
     m_lastRecordedAction = buildAction(WTF::move(name), WTF::move(arguments));
+    Ref lastRecordedAction = *m_lastRecordedAction;
     if (receiver) {
-        protect(m_lastRecordedAction)->addItem(-1); // Add the result placeholder.
-        protect(m_lastRecordedAction)->addItem(receiver.releaseNonNull());
+        lastRecordedAction->addItem(-1); // Add the result placeholder.
+        lastRecordedAction->addItem(receiver.releaseNonNull());
     }
-    m_bufferUsed += protect(m_lastRecordedAction)->memoryCost();
-    protect(m_currentActions)->addItem(*m_lastRecordedAction);
+    m_bufferUsed += lastRecordedAction->memoryCost();
+    protect(m_currentActions)->addItem(lastRecordedAction);
 }
 
 static Ref<JSON::ArrayOf<int>> buildActionObject(int identifier, RecordingSwizzleType swizzleType)
@@ -493,7 +496,7 @@ static Ref<JSON::ArrayOf<int>> buildActionObject(int identifier, RecordingSwizzl
 
 void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArgument&& receiver, InspectorCanvasProcessedArguments&& arguments)
 {
-    auto identifier = receiver.value->asInteger();
+    auto identifier = protect(receiver.value)->asInteger();
     RELEASE_ASSERT(identifier);
 
     bool shouldSnapshot = shouldSnapshotWebGPUAction(receiver.swizzleType, name);
@@ -509,7 +512,7 @@ void InspectorCanvas::recordActionResult(InspectorCanvasProcessedArgument&& resu
     if (!m_lastRecordedAction)
         return;
 
-    auto identifier = result.value->asInteger();
+    auto identifier = protect(result.value)->asInteger();
     RELEASE_ASSERT(identifier);
 
     Ref lastRecordedAction = *m_lastRecordedAction;
@@ -793,8 +796,12 @@ Ref<Inspector::Protocol::Recording::Recording> InspectorCanvas::releaseObjectFor
 
 Inspector::Protocol::ErrorStringOr<String> InspectorCanvas::getContentAsDataURL(CanvasRenderingContext& context)
 {
-    auto surfaceBuffer = context.compositingResultsNeedUpdating() ? CanvasRenderingContext::SurfaceBuffer::DrawingBuffer : CanvasRenderingContext::SurfaceBuffer::DisplayBufferForInspector;
-    return encodeDataURL(context.surfaceBufferToImageBuffer(surfaceBuffer), "image/png"_s);
+    RefPtr<NativeImage> image;
+    if (context.compositingResultsNeedUpdating())
+        image = protect(context.canvasBase())->copyNativeImage();
+    else
+        image = context.surfaceBufferToNativeImage(CanvasRenderingContext::SurfaceBuffer::DisplayBufferForInspector);
+    return encodeDataURL(WTF::move(image), "image/png"_s);
 }
 
 Inspector::Protocol::ErrorStringOr<String> InspectorCanvas::getContentAsDataURL()
@@ -892,7 +899,7 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
         [&](Ref<HTMLVideoElement>& videoElement) {
             unsigned videoWidth = videoElement->videoWidth();
             unsigned videoHeight = videoElement->videoHeight();
-            RefPtr imageBuffer = ImageBuffer::create(FloatSize(videoWidth, videoHeight), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+            RefPtr imageBuffer = ImageBuffer::create(FloatSize(videoWidth, videoHeight), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
             if (imageBuffer)
                 videoElement->paintCurrentFrameInContext(imageBuffer->context(), FloatRect(0, 0, videoWidth, videoHeight));
             index = indexForData(encodeDataURL(WTF::move(imageBuffer), "image/png"_s, std::nullopt));
@@ -1026,8 +1033,9 @@ Ref<Inspector::Protocol::Recording::InitialState> InspectorCanvas::buildInitialS
 
     if (RefPtr context = canvasContext()) {
         auto attributesPayload = JSON::Object::create();
-        attributesPayload->setInteger("width"_s, context->canvasBase().width());
-        attributesPayload->setInteger("height"_s, context->canvasBase().height());
+        Ref canvasBase = context->canvasBase();
+        attributesPayload->setInteger("width"_s, canvasBase->width());
+        attributesPayload->setInteger("height"_s, canvasBase->height());
 
         auto statesPayload = JSON::ArrayOf<JSON::Object>::create();
 

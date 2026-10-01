@@ -31,6 +31,7 @@
 
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
+#include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
 #include "CharacterPropertyDataGenerator.h"
@@ -42,6 +43,7 @@
 #include "DOMJITGetterSetter.h"
 #include "Debugger.h"
 #include "ExecutableBaseInlines.h"
+#include "FastMallocAlignedMemoryAllocator.h"
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "GetterSetter.h"
@@ -51,13 +53,21 @@
 #include "InterpreterInlines.h"
 #include "JITSizeStatistics.h"
 #include "JSArray.h"
+#include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSGenerator.h"
 #include "JSGlobalProxyInlines.h"
+#include "JSModuleNamespaceObject.h"
+#include "JSModuleRecord.h"
 #include "JSONObject.h"
+#include "JSModuleLoader.h"
+#include "JSLexicalEnvironmentInlines.h"
 #include "JSPromise.h"
 #include "JSString.h"
 #include "LinkBuffer.h"
+#include "MarkedSpaceInlines.h"
 #include "NativeCallee.h"
+#include "ObjectConstructor.h"
 #include "ObjectPropertyCondition.h"
 #include "OperationResult.h"
 #include "Options.h"
@@ -378,6 +388,12 @@ public:
         Root* root = new (NotNull, allocateCell<Root>(vm)) Root(vm, structure);
         root->finishCreation(vm);
         return root;
+    }
+
+    static void destroy(JSCell* cell)
+    {
+        DollarVMAssertScope assertScope;
+        static_cast<Root*>(cell)->Root::~Root();
     }
 
     DECLARE_INFO;
@@ -1159,7 +1175,7 @@ public:
             snippet->requireGlobalObject = true;
             snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
                 DollarVMAssertScope assertScope;
-                JSValueRegs results = params[0].jsValueRegs();
+                GPRReg results = params[0].gpr();
                 GPRReg domGPR = params[1].gpr();
                 GPRReg globalObjectGPR = params[2].gpr();
                 params.addSlowPathCall(jit.jump(), jit, domJITGetterSlowCall, results, globalObjectGPR, domGPR);
@@ -1266,7 +1282,7 @@ public:
             snippet->requireGlobalObject = true;
             snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
                 DollarVMAssertScope assertScope;
-                JSValueRegs results = params[0].jsValueRegs();
+                GPRReg results = params[0].gpr();
                 GPRReg domGPR = params[1].gpr();
                 GPRReg globalObjectGPR = params[2].gpr();
                 params.addSlowPathCall(jit.jump(), jit, domJITGetterNoEffectSlowCall, results, globalObjectGPR, domGPR);
@@ -1369,7 +1385,7 @@ public:
             snippet->requireGlobalObject = true;
             snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
                 DollarVMAssertScope assertScope;
-                JSValueRegs results = params[0].jsValueRegs();
+                GPRReg results = params[0].gpr();
                 GPRReg domGPR = params[1].gpr();
                 GPRReg globalObjectGPR = params[2].gpr();
                 for (unsigned i = 0; i < numGPScratchRegisters; ++i)
@@ -1635,7 +1651,7 @@ public:
             snippet->requireGlobalObject = true;
             snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
                 DollarVMAssertScope assertScope;
-                JSValueRegs results = params[0].jsValueRegs();
+                GPRReg results = params[0].gpr();
                 GPRReg domGPR = params[1].gpr();
                 GPRReg globalObjectGPR = params[2].gpr();
                 params.addSlowPathCall(jit.jump(), jit, domJITGetterBaseJSObjectSlowCall, results, globalObjectGPR, domGPR);
@@ -2162,6 +2178,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCpuClflush);
 static JSC_DECLARE_HOST_FUNCTION(functionLLintTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionBaselineJITTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionNoInline);
+static JSC_DECLARE_HOST_FUNCTION(functionSetStartupJITDeferralScale);
 static JSC_DECLARE_HOST_FUNCTION(functionTriggerMemoryPressure);
 static JSC_DECLARE_HOST_FUNCTION(functionGC);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
@@ -2173,6 +2190,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
 static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockForFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
+static JSC_DECLARE_HOST_FUNCTION(functionHasDecodedExpressionInfo);
+static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
+static JSC_DECLARE_HOST_FUNCTION(functionHasValueProfilePredictions);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDataLog);
@@ -2239,7 +2259,17 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionShrinkFootprintWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache);
+static JSC_DECLARE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
+static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
+static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -2249,6 +2279,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionInstallPropertyInlineCacheClearingWatch
 static JSC_DECLARE_HOST_FUNCTION(functionDeltaBetweenButterflies);
 static JSC_DECLARE_HOST_FUNCTION(functionCurrentCPUTime);
 static JSC_DECLARE_HOST_FUNCTION(functionTotalGCTime);
+static JSC_DECLARE_HOST_FUNCTION(functionWarmUpMarkedBlocksAreEnabled);
+static JSC_DECLARE_HOST_FUNCTION(functionWarmUpMarkedBlockCount);
+static JSC_DECLARE_HOST_FUNCTION(functionSetWarmUpMarkedBlockAllocationShouldFail);
 static JSC_DECLARE_HOST_FUNCTION(functionParseCount);
 static JSC_DECLARE_HOST_FUNCTION(functionIsWasmSupported);
 static JSC_DECLARE_HOST_FUNCTION(functionWasmCanonicalTypeCount);
@@ -2258,6 +2291,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionMake16BitStringIfPossible);
 static JSC_DECLARE_HOST_FUNCTION(functionGetStructureTransitionList);;
 static JSC_DECLARE_HOST_FUNCTION(functionGetConcurrently);
 static JSC_DECLARE_HOST_FUNCTION(functionHasOwnLengthProperty);
+static JSC_DECLARE_HOST_FUNCTION(functionLineStartTableIsBuilt);
 static JSC_DECLARE_HOST_FUNCTION(functionRejectPromiseAsHandled);
 static JSC_DECLARE_HOST_FUNCTION(functionMarkPromiseAsHandled);
 static JSC_DECLARE_HOST_FUNCTION(functionSetUserPreferredLanguages);
@@ -2270,6 +2304,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionAsanEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionIsMemoryLimited);
+static JSC_DECLARE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations);
 static JSC_DECLARE_HOST_FUNCTION(functionUseJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
@@ -2285,6 +2320,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionEvaluateWithScopeExtension);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapExtraMemorySize);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionHeapTotalBytesAllocated);
+#endif
+static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockCensus);
 #if ENABLE(JIT)
 static JSC_DECLARE_HOST_FUNCTION(functionJITSizeStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpJITSizeStatistics);
@@ -2302,7 +2341,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallFromCPP);
 static JSC_DECLARE_HOST_FUNCTION(functionCachedCallFromCPP);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpLineBreakData);
 static JSC_DECLARE_HOST_FUNCTION(functionWeakCreate);
+static JSC_DECLARE_HOST_FUNCTION(functionWeakBlockCount);
 #if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
+static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -2664,6 +2706,41 @@ JSC_DEFINE_HOST_FUNCTION(functionNoInline, (JSGlobalObject*, CallFrame* callFram
     return JSValue::encode(jsUndefined());
 }
 
+// $vm.setStartupJITDeferralScale(n): VM::setStartupJITDeferralScale(n).
+JSC_DEFINE_HOST_FUNCTION(functionSetStartupJITDeferralScale, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double scale = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    vm.setStartupJITDeferralScale(scale);
+    return JSValue::encode(jsUndefined());
+}
+
+// Whether anything has yet asked the function's source for a line or column, which is what builds
+// the line-start table.
+// Usage: $vm.lineStartTableIsBuilt(func)
+JSC_DEFINE_HOST_FUNCTION(functionLineStartTableIsBuilt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1)
+        return throwVMError(globalObject, scope, "Not enough arguments"_s);
+
+    FunctionExecutable* executable = getExecutableForFunction(callFrame->uncheckedArgument(0));
+    if (!executable)
+        return throwVMError(globalObject, scope, "Argument must be a JS function"_s);
+
+    SourceProvider* provider = executable->source().provider();
+    if (!provider)
+        return throwVMError(globalObject, scope, "Function has no source provider"_s);
+
+    return JSValue::encode(jsBoolean(provider->lineStartTableIsBuilt()));
+}
+
 // Runs a full GC synchronously.
 // Usage: $vm.gc()
 JSC_DEFINE_HOST_FUNCTION(functionGC, (JSGlobalObject* globalObject, CallFrame*))
@@ -2868,6 +2945,43 @@ static CodeBlock* codeBlockFromArg(JSGlobalObject* globalObject, CallFrame* call
     else
         dataLog("Invalid codeBlock: ", value, "\n");
     return nullptr;
+}
+
+// Usage: $vm.hasDecodedExpressionInfo(functionObj) or $vm.hasDecodedExpressionInfo(codeBlockToken)
+// False while the source positions of the function's code are still in a bytecode cache payload, undefined if it has no code block.
+JSC_DEFINE_HOST_FUNCTION(functionHasDecodedExpressionInfo, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(!!codeBlock->unlinkedCodeBlock()->expressionInfoIfDecoded()));
+}
+
+// Usage: $vm.numberOfOwnCallLinkInfos(functionObj)
+// How many call sites of the function's LLInt / Baseline code own a CallLinkInfo (LazyCallLinkInfo): the ones that ran twice,
+// and the tail calls that ran. Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    MetadataTable* metadataTable = codeBlock->baselineAlternative()->metadataTable();
+    return JSValue::encode(jsNumber(metadataTable ? metadataTable->numberOfOwnCallSiteDatas() : 0));
+}
+
+// Usage: $vm.hasValueProfilePredictions(functionObj)
+// Whether the function's LLInt / Baseline code has the predictions of its value profiles (MetadataTable::valueProfilePredictions).
+// Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionHasValueProfilePredictions, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    MetadataTable* metadataTable = codeBlock->baselineAlternative()->metadataTable();
+    return JSValue::encode(jsBoolean(metadataTable && metadataTable->valueProfilePredictions()));
 }
 
 // Usage: $vm.print("codeblock = ", $vm.codeBlockFor(functionObj))
@@ -3269,7 +3383,13 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateGlobalObject, (JSGlobalObject* globalObje
     JSValue prototype = jsNull();
     if (JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0)))
         prototype = object;
-    return JSValue::encode(JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, prototype)));
+    JSGlobalObject* newGlobalObject = JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, prototype));
+#if defined(BUN_JSDOLLARVM_FORCE)
+    // The library omits $vm in this configuration, so JSGlobalObject::init() did not install it.
+    if (Options::useDollarVM())
+        newGlobalObject->exposeDollarVM(vm);
+#endif
+    return JSValue::encode(newGlobalObject);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCreateProxy, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -3753,12 +3873,20 @@ JSC_DEFINE_HOST_FUNCTION(functionFindTypeForExpression, (JSGlobalObject* globalO
     FunctionExecutable* executable = (dynamicDowncast<JSFunction>(functionValue.asCell()->getObject()))->jsExecutable();
 
     RELEASE_ASSERT(callFrame->argument(1).isString());
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto substring = asString(callFrame->argument(1))->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     String sourceCodeText = executable->source().view().toString();
-    unsigned offset = static_cast<unsigned>(sourceCodeText.find(substring) + executable->source().startOffset());
-    
+    size_t index = sourceCodeText.find(substring);
+    unsigned startOffset = executable->source().startOffset();
+    if (index == notFound || index > std::numeric_limits<unsigned>::max() - startOffset)
+        return JSValue::encode(jsNull());
+    unsigned offset = static_cast<unsigned>(index) + startOffset;
+
     String jsonString = vm.typeProfiler()->typeInformationForExpressionAtOffset(TypeProfilerSearchDescriptorNormal, offset, executable->sourceID(), vm);
-    return JSValue::encode(JSONParse(globalObject, jsonString));
+    JSValue result = JSONParse(globalObject, jsonString);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionReturnTypeFor, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -3911,10 +4039,215 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
     return JSValue::encode(jsUndefined());
 }
 
+// shrinkFootprintWhenIdle(keepCodeThatNeedsParsing = true, keepCodeInUse = false): the embedder's deep-idle step, without
+// the collection, once this call has returned to the event loop.
+JSC_DEFINE_HOST_FUNCTION(functionShrinkFootprintWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    OptionSet<VM::ShrinkFootprint> mode { VM::ShrinkFootprint::LeaveCollectionToCaller };
+    if (!callFrame->argumentCount() || callFrame->argument(0).toBoolean(globalObject))
+        mode.add(VM::ShrinkFootprint::KeepCodeThatNeedsParsing);
+    if (callFrame->argument(1).toBoolean(globalObject))
+        mode.add(VM::ShrinkFootprint::KeepCodeInUse);
+    vm->shrinkFootprintWhenIdle(mode);
+    return JSValue::encode(jsUndefined());
+}
+
+// isGeneratorBodyCodeInBytecodeCache(generator): whether the unlinked code of the function that a generator or an async
+// generator resumes in has been returned to the bytecode cache it was decoded from; undefined for anything else. (The
+// object behind an async function's activation cannot be reached from script.)
+JSC_DEFINE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSValue next = jsUndefined();
+    if (auto* generator = dynamicDowncast<JSGenerator>(callFrame->argument(0)))
+        next = generator->internalField(JSGenerator::Field::Next).get();
+    else if (auto* asyncGenerator = dynamicDowncast<JSAsyncGenerator>(callFrame->argument(0)))
+        next = asyncGenerator->internalField(JSAsyncGenerator::Field::Next).get();
+    auto* function = dynamicDowncast<JSFunction>(next);
+    if (!function || function->isHostOrBuiltinFunction())
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(function->jsExecutable()->unlinkedExecutable()->isCached()));
+}
+
+// returnCodeToBytecodeCacheWhenIdle(onlyWithoutLinkedCode = false): Heap::deleteAllUnlinkedCodeBlocks for the code that can
+// be decoded again from a persistent bytecode cache and nothing else, the way an embedder can call it directly: linked
+// code stays, and so do the compiler threads' plans until the call itself finishes them.
+JSC_DEFINE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    OptionSet<UnlinkedCodeToDelete> which { UnlinkedCodeToDelete::RecoverableFromCache };
+    if (callFrame->argument(0).toBoolean(globalObject))
+        which.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
+    vm->whenIdle([=] () {
+        vm->heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, which);
+    });
+    return JSValue::encode(jsUndefined());
+}
+
+// { blocks, blocksWithDecommittedPages, decommittedPages, pagesPerBlock, blockSize }
+JSC_DEFINE_HOST_FUNCTION(functionMarkedBlockStatistics, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    unsigned blocks = 0;
+    unsigned blocksWithDecommittedPages = 0;
+    unsigned decommittedPages = 0;
+    vm.heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* handle) {
+        blocks++;
+        if (unsigned count = handle->numberOfDecommittedPages()) {
+            blocksWithDecommittedPages++;
+            decommittedPages += count;
+        }
+    });
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "blocks"_s), jsNumber(blocks));
+    result->putDirect(vm, Identifier::fromString(vm, "blocksWithDecommittedPages"_s), jsNumber(blocksWithDecommittedPages));
+    result->putDirect(vm, Identifier::fromString(vm, "decommittedPages"_s), jsNumber(decommittedPages));
+    result->putDirect(vm, Identifier::fromString(vm, "pagesPerBlock"_s), jsNumber(static_cast<unsigned>(MarkedBlock::blockSize / WTF::pageSize())));
+    result->putDirect(vm, Identifier::fromString(vm, "blockSize"_s), jsNumber(static_cast<unsigned>(MarkedBlock::blockSize)));
+    return JSValue::encode(result);
+}
+
+// What poisonDecommittedMarkedBlockPages left in some decommitted page: "asan", "pattern" or "none". Does not read a poisoned byte.
+JSC_DEFINE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    ASCIILiteral result = "none"_s;
+    size_t pageSize = WTF::pageSize();
+    vm.heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* handle) {
+        if (!handle->numberOfDecommittedPages())
+            return;
+        auto* base = std::bit_cast<uint8_t*>(&handle->block());
+        for (size_t offset = pageSize; offset < MarkedBlock::blockSize; offset += pageSize) {
+#if ASAN_ENABLED
+            if (__asan_address_is_poisoned(base + offset))
+                result = "asan"_s;
+#else
+            bool isPattern = true;
+            for (size_t i = 0; i < 64; ++i)
+                isPattern &= base[offset + i] == 0xbd;
+            if (isPattern)
+                result = "pattern"_s;
+#endif
+        }
+    });
+    return JSValue::encode(jsNontrivialString(vm, String(result)));
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+// The storage of holder.target. Does not leave a pointer to the target itself in its caller's frame.
+static NEVER_INLINE Butterfly* storageOfTargetOf(VM& vm, JSObject* holder)
+{
+    JSValue target = holder->getDirect(vm, Identifier::fromString(vm, "target"_s));
+    return target.isObject() ? asObject(target)->butterfly() : nullptr;
+}
+
+// evacuateAuxiliaryBlocks(maximumOccupancy = 1, holder = undefined): Heap::evacuateSparseAuxiliaryBlocks, with JS on the stack.
+// With a holder, this frame keeps a pointer to the storage of holder.target (and nothing else of the target) across the
+// evacuation; heldStorageStayed says whether that is still the target's storage afterwards.
+JSC_DEFINE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double maximumOccupancy = callFrame->argument(0).isUndefined() ? 1 : callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* holder = callFrame->argument(1).getObject();
+    Butterfly* heldStorage = holder ? storageOfTargetOf(vm, holder) : nullptr;
+
+    auto evacuation = vm.heap.evacuateSparseAuxiliaryBlocks(maximumOccupancy);
+
+    JSObject* result = constructEmptyObject(globalObject);
+    if (evacuation.skipped)
+        result->putDirect(vm, Identifier::fromString(vm, "skipped"_s), jsNontrivialString(vm, String(evacuation.skipped)));
+    result->putDirect(vm, Identifier::fromString(vm, "candidateBlocks"_s), jsNumber(evacuation.candidateBlocks));
+    result->putDirect(vm, Identifier::fromString(vm, "evacuatedBlocks"_s), jsNumber(evacuation.evacuatedBlocks));
+    result->putDirect(vm, Identifier::fromString(vm, "movedCells"_s), jsNumber(evacuation.movedCells));
+    result->putDirect(vm, Identifier::fromString(vm, "movedBytes"_s), jsNumber(evacuation.movedBytes));
+    result->putDirect(vm, Identifier::fromString(vm, "pinnedCells"_s), jsNumber(evacuation.pinnedCells));
+    result->putDirect(vm, Identifier::fromString(vm, "cellsWithoutSingleOwner"_s), jsNumber(evacuation.cellsWithoutSingleOwner));
+    result->putDirect(vm, Identifier::fromString(vm, "milliseconds"_s), jsNumber(evacuation.duration.milliseconds()));
+    if (heldStorage)
+        result->putDirect(vm, Identifier::fromString(vm, "heldStorageStayed"_s), jsBoolean(storageOfTargetOf(vm, holder) == heldStorage));
+    return JSValue::encode(result);
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(globalObject->vm().heap.globalObjectCount()));
+}
+
+// $vm.createModuleLoader(bindings?, sharing?): another module loader for this global object,
+// as { loader }. With `bindings`, the loader's modules see that object's own enumerable
+// properties as variables of a lexical environment between them and the global scope. With
+// `sharing` (an earlier result made with the same property names), that environment reuses
+// the symbol table of sharing.loader's, so the two loaders' modules share executables.
+static JSModuleLoader* moduleLoaderFromHolder(VM& vm, JSValue value)
+{
+    JSObject* holder = value.getObject();
+    JSValue loader = holder ? holder->getDirect(vm, Identifier::fromString(vm, "loader"_s)) : JSValue();
+    return loader ? dynamicDowncast<JSModuleLoader>(loader) : nullptr;
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSScope* moduleScope = globalObject->globalLexicalEnvironment();
+    if (JSObject* bindings = callFrame->argument(0).getObject()) {
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        bindings->methodTable()->getOwnPropertyNames(bindings, globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+        SymbolTable* symbolTable = nullptr;
+        if (!callFrame->argument(1).isUndefined()) {
+            JSModuleLoader* sharing = moduleLoaderFromHolder(vm, callFrame->argument(1));
+            auto* sharingScope = sharing ? dynamicDowncast<JSLexicalEnvironment>(sharing->moduleScope()) : nullptr;
+            if (!sharingScope || sharingScope->symbolTable()->scopeSize() != names.size())
+                return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader() with the same bindings"_s);
+            symbolTable = sharingScope->symbolTable();
+            for (auto& name : names) {
+                if (!symbolTable->contains(NoLockingNecessary, name.impl()))
+                    return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader() with the same bindings"_s);
+            }
+        } else {
+            symbolTable = SymbolTable::create(vm);
+            for (auto& name : names)
+                symbolTable->add(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
+        }
+        JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject, moduleScope, symbolTable, jsUndefined());
+        for (auto& name : names) {
+            JSValue value = bindings->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, {});
+            environment->variableAt(symbolTable->get(name.impl()).scopeOffset()).set(vm, environment, value);
+        }
+        moduleScope = environment;
+    }
+    JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, moduleScope);
+    JSObject* result = constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirect(vm, Identifier::fromString(vm, "loader"_s), loader);
+    return JSValue::encode(result);
+}
+
+// $vm.moduleLoaderImport({ loader }, specifier): import(specifier) through that loader, relative to the caller.
+JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSModuleLoader* loader = moduleLoaderFromHolder(vm, callFrame->argument(0));
+    if (!loader)
+        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
+    JSString* specifier = callFrame->argument(1).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
@@ -3927,6 +4260,24 @@ JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFr
         return JSValue::encode(jsUndefined());
     return JSValue::encode(result->globalThis());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// The embedder's AsyncLocalStorage frame slot (JSGlobalObject::m_asyncContextData
+// field 0), which promise reactions and async continuations capture and restore.
+JSC_DEFINE_HOST_FUNCTION(functionAsyncContext, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    globalObject->vm().setAsyncContextTrackingEnabled();
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(functionGetGetterSetter, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -4084,6 +4435,25 @@ JSC_DEFINE_HOST_FUNCTION(functionTotalGCTime, (JSGlobalObject* globalObject, Cal
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     return JSValue::encode(jsNumber(vm.heap.totalGCTime().seconds()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionWarmUpMarkedBlocksAreEnabled, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsBoolean(warmUpMarkedBlocksAreEnabledForTesting()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionWarmUpMarkedBlockCount, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(warmUpMarkedBlockCountForTesting()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetWarmUpMarkedBlockAllocationShouldFail, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    setWarmUpMarkedBlockAllocationShouldFailForTesting(callFrame->argument(0).toBoolean(globalObject));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionParseCount, (JSGlobalObject*, CallFrame*))
@@ -4359,6 +4729,20 @@ JSC_DEFINE_HOST_FUNCTION(functionIsMemoryLimited, (JSGlobalObject*, CallFrame*))
 #endif
 }
 
+// Returns how many function declarations of a module have not been instantiated yet (Options::useLazyModuleFunctionDeclarations()).
+// Usage: $vm.uninstantiatedFunctionDeclarations(moduleNamespaceObject)
+JSC_DEFINE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* namespaceObject = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
+    if (!namespaceObject)
+        return JSValue::encode(jsUndefined());
+    auto* moduleRecord = dynamicDowncast<JSModuleRecord>(namespaceObject->moduleRecord());
+    if (!moduleRecord)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(moduleRecord->numberOfUninstantiatedFunctionDeclarations()));
+}
+
 // Returns true if JIT is enabled.
 // Usage: $vm.useJIT()
 JSC_DEFINE_HOST_FUNCTION(functionUseJIT, (JSGlobalObject*, CallFrame*))
@@ -4505,11 +4889,26 @@ JSC_DEFINE_HOST_FUNCTION(functionEvaluateWithScopeExtension, (JSGlobalObject* gl
     return JSValue::encode(result);
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionCodeBlockCensus, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(VMInspector::codeBlockCensus(globalObject));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionHeapExtraMemorySize, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(globalObject->vm().heap.extraMemorySize()));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// Everything the heap counted as allocated so far, cells and reported extra memory. Collections are paced on it.
+JSC_DEFINE_HOST_FUNCTION(functionHeapTotalBytesAllocated, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().heap.totalBytesAllocated()));
+}
+#endif
 
 #if ENABLE(JIT)
 JSC_DEFINE_HOST_FUNCTION(functionJITSizeStatistics, (JSGlobalObject* globalObject, CallFrame*))
@@ -4584,7 +4983,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetCrashLogMessage, (JSGlobalObject* globalObje
     String message = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    WTF::setCrashLogMessage(message.utf8().data());
+    WTF::setCrashLogMessage(message.utf8());
 
     return JSValue::encode(jsUndefined());
 }
@@ -4696,6 +5095,12 @@ JSC_DEFINE_HOST_FUNCTION(functionWeakCreate, (JSGlobalObject* globalObject, Call
     DollarVMAssertScope assertScope;
     Weak<JSGlobalObject> unusedWeak(globalObject);
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionWeakBlockCount, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().heap.weakBlockCount()));
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -5484,6 +5889,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "baselineJITTrue"_s, functionBaselineJITTrue, 0);
 
     addFunction(vm, alwaysAllow, "noInline"_s, functionNoInline, 1);
+    addFunction(vm, alwaysAllow, "setStartupJITDeferralScale"_s, functionSetStartupJITDeferralScale, 1);
 
     addFunction(vm, alwaysAllow, "triggerMemoryPressure"_s, functionTriggerMemoryPressure, 0);
     addFunction(vm, alwaysAllow, "gc"_s, functionGC, 0);
@@ -5493,8 +5899,12 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockFor"_s, functionCodeBlockFor, 1);
+    addFunction(vm, allowIfNotFuzz, "hasDecodedExpressionInfo"_s, functionHasDecodedExpressionInfo, 1);
+    addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
+    addFunction(vm, allowIfNotFuzz, "hasValueProfilePredictions"_s, functionHasValueProfilePredictions, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
     addFunction(vm, allowIfNotFuzz, "dumpSourceFor"_s, functionDumpSourceFor, 1);
+    addFunction(vm, allowIfNotFuzz, "lineStartTableIsBuilt"_s, functionLineStartTableIsBuilt, 1);
     addFunction(vm, allowIfNotFuzz, "dumpBytecodeFor"_s, functionDumpBytecodeFor, 1);
 
     addFunction(vm, alwaysAllow, "dataLog"_s, functionDataLog, 1);
@@ -5579,8 +5989,18 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
+    addFunction(vm, alwaysAllow, "shrinkFootprintWhenIdle"_s, functionShrinkFootprintWhenIdle, 1);
+    addFunction(vm, alwaysAllow, "returnCodeToBytecodeCacheWhenIdle"_s, functionReturnCodeToBytecodeCacheWhenIdle, 1);
+    addFunction(vm, alwaysAllow, "isGeneratorBodyCodeInBytecodeCache"_s, functionIsGeneratorBodyCodeInBytecodeCache, 1);
+    addFunction(vm, alwaysAllow, "markedBlockStatistics"_s, functionMarkedBlockStatistics, 0);
+    addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "evacuateAuxiliaryBlocks"_s, functionEvacuateAuxiliaryBlocks, 2);
+#endif
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
+    addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
+    addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);
@@ -5593,6 +6013,9 @@ void JSDollarVM::finishCreation(VM& vm)
     
     addFunction(vm, alwaysAllow, "currentCPUTime"_s, functionCurrentCPUTime, 0);
     addFunction(vm, alwaysAllow, "totalGCTime"_s, functionTotalGCTime, 0);
+    addFunction(vm, alwaysAllow, "warmUpMarkedBlocksAreEnabled"_s, functionWarmUpMarkedBlocksAreEnabled, 0);
+    addFunction(vm, alwaysAllow, "warmUpMarkedBlockCount"_s, functionWarmUpMarkedBlockCount, 0);
+    addFunction(vm, alwaysAllow, "setWarmUpMarkedBlockAllocationShouldFail"_s, functionSetWarmUpMarkedBlockAllocationShouldFail, 1);
 
     addFunction(vm, alwaysAllow, "parseCount"_s, functionParseCount, 0);
 
@@ -5621,6 +6044,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "asanEnabled"_s, functionAsanEnabled, 0);
 
     addFunction(vm, alwaysAllow, "isMemoryLimited"_s, functionIsMemoryLimited, 0);
+    addFunction(vm, alwaysAllow, "uninstantiatedFunctionDeclarations"_s, functionUninstantiatedFunctionDeclarations, 1);
     addFunction(vm, alwaysAllow, "useJIT"_s, functionUseJIT, 0);
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
@@ -5641,6 +6065,10 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "evaluateWithScopeExtension"_s, functionEvaluateWithScopeExtension, 1);
 
     addFunction(vm, alwaysAllow, "heapExtraMemorySize"_s, functionHeapExtraMemorySize, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "heapTotalBytesAllocated"_s, functionHeapTotalBytesAllocated, 0);
+#endif
+    addFunction(vm, alwaysAllow, "codeBlockCensus"_s, functionCodeBlockCensus, 0);
 
 #if ENABLE(JIT)
     addFunction(vm, allowIfNotFuzz, "jitSizeStatistics"_s, functionJITSizeStatistics, 0);
@@ -5662,11 +6090,14 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "cachedCallFromCPP"_s, functionCachedCallFromCPP, 2);
     addFunction(vm, alwaysAllow, "dumpLineBreakData"_s, functionDumpLineBreakData, 0);
     addFunction(vm, alwaysAllow, "weakCreate"_s, functionWeakCreate, 0);
+    addFunction(vm, alwaysAllow, "weakBlockCount"_s, functionWeakBlockCount, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "createBufferAccessors"_s, functionCreateBufferAccessors, 0);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
+    addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);

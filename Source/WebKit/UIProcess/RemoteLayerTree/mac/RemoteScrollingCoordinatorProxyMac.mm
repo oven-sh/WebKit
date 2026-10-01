@@ -70,9 +70,9 @@ void RemoteScrollingCoordinatorProxyMac::cacheWheelEventScrollingAccelerationCur
     m_eventDispatcher->cacheWheelEventScrollingAccelerationCurve(nativeWheelEvent);
 }
 
-void RemoteScrollingCoordinatorProxyMac::handleWheelEvent(const WebWheelEvent& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
+void RemoteScrollingCoordinatorProxyMac::handleWheelEvent(Ref<WebWheelEvent>&& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
 {
-    m_eventDispatcher->handleWheelEvent(wheelEvent, rubberBandableEdges);
+    m_eventDispatcher->handleWheelEvent(WTF::move(wheelEvent), rubberBandableEdges);
 }
 
 void RemoteScrollingCoordinatorProxyMac::wheelEventHandlingCompleted(const PlatformWheelEvent& wheelEvent, std::optional<ScrollingNodeID> scrollingNodeID, std::optional<WheelScrollGestureState> gestureState, bool wasHandled)
@@ -286,6 +286,11 @@ void RemoteScrollingCoordinatorProxyMac::updateTimelinesRegistration(WebCore::Pr
     m_eventDispatcher->updateTimelinesRegistration(processIdentifier, timelinesUpdate, now);
 }
 
+void RemoteScrollingCoordinatorProxyMac::removeTimelines(WebCore::ProcessIdentifier processIdentifier)
+{
+    m_eventDispatcher->removeTimelines(processIdentifier);
+}
+
 RefPtr<const RemoteAnimationTimeline> RemoteScrollingCoordinatorProxyMac::timeline(const TimelineID& timelineID) const
 {
     return m_eventDispatcher->timeline(timelineID);
@@ -302,6 +307,14 @@ RefPtr<const RemoteAnimationStack> RemoteScrollingCoordinatorProxyMac::animation
 HashSet<Ref<RemoteProgressBasedTimeline>> RemoteScrollingCoordinatorProxyMac::timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID scrollingNodeID) const
 {
     return m_eventDispatcher->timelinesForScrollingNodeIDForTesting(scrollingNodeID);
+}
+
+HashSet<Ref<RemoteMonotonicTimeline>> RemoteScrollingCoordinatorProxyMac::monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier processIdentifier) const
+{
+    m_eventDispatcher->lockForAnimationChanges();
+    auto timelines = m_eventDispatcher->monotonicTimelinesForProcessForTesting(processIdentifier);
+    m_eventDispatcher->unlockForAnimationChanges();
+    return timelines;
 }
 #endif
 

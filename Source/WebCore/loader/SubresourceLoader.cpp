@@ -65,6 +65,7 @@
 #include <wtf/SystemTracing.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 #include "LocalFrameInlines.h"
 
 #if PLATFORM(IOS_FAMILY)
@@ -667,7 +668,7 @@ static void logResourceLoaded(LocalFrame* frame, CachedResource::Type type)
     protect(frame->page())->diagnosticLoggingClient().logDiagnosticMessage(DiagnosticLoggingKeys::resourceLoadedKey(), resourceType, ShouldSample::Yes);
 }
 
-Expected<void, String> SubresourceLoader::checkResponseCrossOriginAccessControl(const ResourceResponse& response)
+std::expected<void, String> SubresourceLoader::checkResponseCrossOriginAccessControl(const ResourceResponse& response)
 {
     if (!m_resource->isCrossOrigin() || options().mode != FetchOptions::Mode::Cors)
         return { };
@@ -690,7 +691,7 @@ Expected<void, String> SubresourceLoader::checkResponseCrossOriginAccessControl(
     return passesAccessControlCheck(response, options().credentials == FetchOptions::Credentials::Include ? StoredCredentialsPolicy::Use : StoredCredentialsPolicy::DoNotUse, *protect(m_origin), &CrossOriginAccessControlCheckDisabler::singleton());
 }
 
-Expected<void, String> SubresourceLoader::checkRedirectionCrossOriginAccessControl(const ResourceRequest& previousRequest, const ResourceResponse& redirectResponse, ResourceRequest& newRequest)
+std::expected<void, String> SubresourceLoader::checkRedirectionCrossOriginAccessControl(const ResourceRequest& previousRequest, const ResourceResponse& redirectResponse, ResourceRequest& newRequest)
 {
     bool crossOriginFlag = m_resource->isCrossOrigin();
     bool isNextRequestCrossOrigin = m_origin && !protect(m_origin)->canRequest(newRequest.url(), OriginAccessPatternsForWebProcess::singleton());
@@ -777,7 +778,7 @@ void SubresourceLoader::didFinishLoading(const NetworkLoadMetrics& networkLoadMe
     ASSERT(!resource->resourceToRevalidate());
     // FIXME (129394): We should cancel the load when a decode error occurs instead of continuing the load to completion.
     ASSERT(!resource->errorOccurred() || resource->status() == CachedResource::DecodeError || !resource->isLoading());
-    LOG(ResourceLoading, "Received '%s'.", resource->url().string().latin1().data());
+    LOG_WITH_STREAM(ResourceLoading, stream << "Received '"_s << resource->url().string() << "'."_s);
     logResourceLoaded(protect(frame()).get(), resource->type());
 
     m_loadTiming.markEndTime();
@@ -831,7 +832,7 @@ void SubresourceLoader::didFail(const ResourceError& error)
 
     ASSERT(!reachedTerminalState());
     RefPtr resource = m_resource;
-    LOG(ResourceLoading, "Failed to load '%s'.\n", resource->url().string().latin1().data());
+    LOG_WITH_STREAM(ResourceLoading, stream << "Failed to load '"_s << resource->url().string() << "'."_s);
 
     RefPtr frame = m_frame;
     if (frame && frame->document() && error.isAccessControl() && error.domain() != InspectorNetworkAgent::errorDomain() && resource->type() != CachedResource::Type::Ping)
@@ -874,7 +875,7 @@ void SubresourceLoader::willCancel(const ResourceError& error)
 
     Ref protectedThis { *this };
     RefPtr resource = m_resource;
-    LOG(ResourceLoading, "Cancelled load of '%s'.\n", resource->url().string().latin1().data());
+    LOG_WITH_STREAM(ResourceLoading, stream << "Cancelled load of '"_s << resource->url().string() << "'."_s);
 
 #if PLATFORM(IOS_FAMILY)
     m_state = m_state == Uninitialized ? CancelledWhileInitializing : Finishing;

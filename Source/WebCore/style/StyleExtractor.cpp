@@ -43,12 +43,15 @@
 #include "RenderObjectInlines.h"
 #include "SVGElement.h"
 #include "ShorthandSerializer.h"
+#include "StyleAppleColorFilter.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleCustomProperty.h"
 #include "StyleCustomPropertyRegistry.h"
 #include "StyleDocumentScope.h"
 #include "StyleExtractorGenerated.h"
 #include "StyleInterpolation.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StylePrimitiveNumericTypes+Serialization.h"
 #include "StylePropertyShorthand.h"
 #include "StyleResolver.h"
 #include "StyleZoomPrimitivesInlines.h"
@@ -114,7 +117,7 @@ RefPtr<CSSValue> Extractor::getFontSizeCSSValuePreferringKeyword() const
     if (auto sizeIdentifier = style->fontDescription().keywordSizeAsIdentifier())
         return CSSKeywordValue::create(sizeIdentifier);
 
-    return CSSPrimitiveValue::create(adjustFloatForAbsoluteZoom(style->fontDescription().computedSize(), *style), CSSUnitType::Px);
+    return CSSPrimitiveValue::create(unapplyingZoom<float>(style->fontDescription().usedSize(), *style), CSSUnitType::Px);
 }
 
 bool Extractor::useFixedFontDefaultSize() const
@@ -184,9 +187,6 @@ static inline bool hasValidStyleForProperty(Element& element, CSSPropertyID prop
 bool Extractor::updateStyleIfNeededForProperty(Element& element, CSSPropertyID propertyID)
 {
     Ref document = element.document();
-
-    if (RefPtr owner = document->ownerElement(); owner && !owner->renderer())
-        protect(owner->document())->updateStyleIfNeeded();
 
     document->styleScope().flushPendingUpdate();
 
@@ -336,6 +336,7 @@ static bool isLayoutDependent(CSSPropertyID propertyID, const Style::ComputedSty
     case CSSPropertyHeight:
     case CSSPropertyInlineSize:
     case CSSPropertyBlockSize:
+    case CSSPropertySize:
         if (!renderer)
             return false;
         if (renderer->isSVGRenderer()) {
@@ -567,7 +568,7 @@ WTF::String Extractor::propertyValueSerializationInStyle(const Style::ComputedSt
 
     auto valueSerialization = value->cssText(serializationContext);
 
-    RELEASE_ASSERT_WITH_MESSAGE(directSerialization == valueSerialization, "Direct serialization, '%s', does not match value serialization, '%s', for property '%s'", directSerialization.utf8().data(), valueSerialization.utf8().data(), nameLiteral(propertyID).characters());
+    RELEASE_ASSERT_WITH_MESSAGE(directSerialization == valueSerialization, "Direct serialization, '%s', does not match value serialization, '%s', for property '%s'", directSerialization.utf8(), valueSerialization.utf8(), nameLiteral(propertyID).characters());
 
     return directSerialization;
 #else
@@ -612,6 +613,15 @@ Ref<MutableStyleProperties> Extractor::copyProperties() const
             return std::nullopt;
         return { { property, value.releaseNonNull() } };
     }).span());
+}
+
+WTF::String Extractor::appleColorFilterSerializationForTesting(Element& element)
+{
+    updateStyleIfNeededForProperty(element, CSSPropertyAppleColorFilter);
+
+    if (CheckedPtr style = element.computedStyle())
+        return serializationForCSS(CSS::defaultSerializationContext(), *style, style->appleColorFilter());
+    return { };
 }
 
 } // namespace Style

@@ -51,6 +51,10 @@ public:
 private:
     Vector<T*> m_vector;
     size_t m_bytes;
+    // m_bytes and m_vector.size() as the last sweep left them. The objects added since then are the ones past that
+    // size, and they are the only ones that an eden collection can find dead.
+    size_t m_bytesAfterLastSweep { 0 };
+    size_t m_sizeAfterLastSweep { 0 };
 };
 
 } // namespace JSC

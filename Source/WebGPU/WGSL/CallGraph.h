@@ -46,16 +46,29 @@ public:
         struct Resource {
             unsigned group;
             unsigned binding;
+
+            friend bool operator==(const Resource&, const Resource&) = default;
         };
 
         std::optional<Resource> resource;
         AST::Variable* declaration;
     };
 
+    // A texture and a sampler are used together when both are passed to the same sampling
+    // builtin. Which pairs a stage uses decides whether a pipeline layout is legal for it: a
+    // filtering sampler may only be paired with a filterable texture.
+    struct TextureSamplerPair {
+        Global::Resource texture;
+        Global::Resource sampler;
+
+        friend bool operator==(const TextureSamplerPair&, const TextureSamplerPair&) = default;
+    };
+
     struct Callee {
         AST::Function* target;
         Vector<std::tuple<AST::Function*, AST::CallExpression*>> callSites;
         HashSet<const Global*> usedGlobals { };
+        Vector<TextureSamplerPair> textureSamplerPairs { };
     };
 
     struct EntryPoint {
@@ -63,6 +76,7 @@ public:
         ShaderStage stage;
         String originalName;
         HashSet<const Global*> usedGlobals { };
+        Vector<TextureSamplerPair> textureSamplerPairs { };
     };
 
     const Vector<EntryPoint>& entrypoints() const LIFETIME_BOUND { return m_entrypoints; }

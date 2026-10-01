@@ -95,7 +95,7 @@ struct WebCore::WebCodecsEncodedVideoChunkData {
     WebCore::WebCodecsEncodedVideoChunkType type;
     int64_t timestamp;
     std::optional<uint64_t> duration;
-    Vector<uint8_t> buffer;
+    Ref<WebCore::SharedBuffer> buffer;
 };
 #endif
 
@@ -105,7 +105,7 @@ struct WebCore::WebCodecsEncodedAudioChunkData {
     WebCore::WebCodecsEncodedAudioChunkType type;
     int64_t timestamp;
     std::optional<uint64_t> duration;
-    Vector<uint8_t> buffer;
+    Ref<WebCore::SharedBuffer> buffer;
 };
 #endif
 
@@ -997,7 +997,7 @@ header: <WebCore/SourceBufferPrivateClient.h>
     uint64_t numMediaSamples;
 };
 
-using WebCore::SourceBufferPrivate::SamplesPromise::Result = Expected<Vector<String>, WebCore::PlatformMediaError>
+using WebCore::SourceBufferPrivate::SamplesPromise::Result = std::expected<Vector<String>, WebCore::PlatformMediaError>
 
 header: <WebCore/MediaSourceConfiguration.h>
 struct WebCore::MediaSourceConfiguration {

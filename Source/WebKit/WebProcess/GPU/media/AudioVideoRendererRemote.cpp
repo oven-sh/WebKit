@@ -331,7 +331,7 @@ void AudioVideoRendererRemote::paintCurrentVideoFrameInContext(GraphicsContext& 
         return;
 
     if (RefPtr videoFrame = currentVideoFrame())
-        context.drawVideoFrame(*videoFrame, rect, ImageOrientation::Orientation::None, false);
+        context.drawVideoFrame(*videoFrame, rect, ShouldDiscardAlpha::No);
 }
 
 RefPtr<NativeImage> AudioVideoRendererRemote::currentNativeImage() const
@@ -549,7 +549,7 @@ Ref<MediaTimePromise> AudioVideoRendererRemote::prepareToSeek(const MediaTime& t
 
             if (auto producer = std::exchange(protectedThis->m_prepareSeekPromise, std::nullopt))
                 producer->settle(WTF::move(result));
-        })->track(m_prepareSeekRequest);
+        })->track(protect(m_prepareSeekRequest));
 
         return promise;
     });
@@ -590,7 +590,7 @@ Ref<GenericPromise> AudioVideoRendererRemote::finishSeek(const MediaTime& time)
 
             if (auto producer = std::exchange(protectedThis->m_finishSeekPromise, std::nullopt))
                 producer->settle(WTF::move(result));
-        })->track(m_finishSeekRequest);
+        })->track(protect(m_finishSeekRequest));
 
         return promise;
     });
@@ -629,7 +629,7 @@ std::optional<AudioVideoRendererRemote::TrackIdentifier> AudioVideoRendererRemot
         return std::nullopt;
 
     // the sendSync() call requires us to run on the connection's dispatcher, which is the main thread.
-    Expected<WebCore::SamplesRendererTrackIdentifier, WebCore::PlatformMediaError> result = makeUnexpected(PlatformMediaError::IPCError);
+    std::expected<WebCore::SamplesRendererTrackIdentifier, WebCore::PlatformMediaError> result = makeUnexpected(PlatformMediaError::IPCError);
     callOnMainRunLoopAndWait([&] {
         // FIXME: Uses a new Connection for remote playback, and not the main GPUProcessConnection's one.
         auto sendResult = gpuProcessConnection->connection().sendSync(Messages::RemoteAudioVideoRendererProxyManager::AddTrack(m_identifier, type), 0);
@@ -782,7 +782,7 @@ Ref<MediaTimePromise> AudioVideoRendererRemote::notifyTimeReachedAndStall(const 
             protect(protectedThis->m_stallRequest)->complete();
             if (auto producer = std::exchange(protectedThis->m_stallProducer, std::nullopt))
                 producer->settle(WTF::move(result));
-        })->track(m_stallRequest);
+        })->track(protect(m_stallRequest));
         return promise;
     });
 }

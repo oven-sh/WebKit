@@ -40,10 +40,11 @@
 #import "WebProcessProxy.h"
 #import "WebResourceLoadStatisticsStore.h"
 #import "WebsiteDataStoreParameters.h"
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/RegistrableDomain.h>
 #import <WebCore/SearchPopupMenuCocoa.h>
 #import <WebCore/SecurityOriginData.h>
+#import <WebCore/ThirdPartyCookieBlockingMode.h>
+#import <WebCore/TrackingPreventionTypes.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <pal/spi/cocoa/NetworkSPI.h>
 #import <wtf/FileSystem.h>
@@ -247,7 +248,7 @@ void WebsiteDataStore::platformSetNetworkParameters(WebsiteDataStoreParameters& 
 
     if (m_uiProcessCookieStorageIdentifier.isEmpty()) {
         auto utf8File = cookieFile.utf8();
-        auto url = adoptCF(CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (const UInt8 *)utf8File.data(), (CFIndex)utf8File.length(), true));
+        RetainPtr url = adoptCF(CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, byteCast<UInt8>(utf8File.span()).data(), static_cast<CFIndex>(utf8File.length()), true));
         RetainPtr cfCookieStorage = adoptCF(CFHTTPCookieStorageCreateFromFile(kCFAllocatorDefault, url.get(), nullptr));
         m_uiProcessCookieStorageIdentifier = identifyingDataFromCookieStorage(cfCookieStorage.get());
     }
@@ -324,10 +325,10 @@ void WebsiteDataStore::removeDataStoreWithIdentifier(const WTF::UUID& identifier
     ASSERT(isMainRunLoop());
 
     auto completionHandler = [identifier, callback = WTF::move(callback)](const String& error) mutable {
-        RELEASE_LOG(Storage, "WebsiteDataStore::removeDataStoreWithIdentifier: Removal completed for identifier %" PUBLIC_LOG_STRING " (error '%" PUBLIC_LOG_STRING "')", identifier.toString().utf8().data(), error.isEmpty() ? "null"_s : error.utf8().data());
+        RELEASE_LOG(Storage, "WebsiteDataStore::removeDataStoreWithIdentifier: Removal completed for identifier %" PUBLIC_LOG_STRING " (error '%" PUBLIC_LOG_STRING "')", identifier.toString().utf8(), error.isEmpty() ? "null"_s : error.utf8());
         callback(error);
     };
-    RELEASE_LOG(Storage, "WebsiteDataStore::removeDataStoreWithIdentifier: Removal started for identifier %" PUBLIC_LOG_STRING, identifier.toString().utf8().data());
+    RELEASE_LOG(Storage, "WebsiteDataStore::removeDataStoreWithIdentifier: Removal started for identifier %" PUBLIC_LOG_STRING, identifier.toString().utf8());
     if (!identifier.isValid())
         return completionHandler("Identifier is invalid"_s);
 

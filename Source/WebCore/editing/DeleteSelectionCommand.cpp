@@ -564,7 +564,7 @@ void DeleteSelectionCommand::removeNode(Node& node, ShouldAssumeContentIsAlwaysE
         
         ASSERT(is<Element>(node));
         auto element = downcast<Element>(WTF::move(protectedNode));
-        document().updateLayoutIgnorePendingStylesheets();
+        protect(document())->updateLayoutIgnorePendingStylesheets();
         // Check if we need to insert a placeholder for descendant table cells.
         RefPtr descendant { ElementTraversal::next(element, element.ptr()) };
         while (descendant) {
@@ -758,7 +758,7 @@ void DeleteSelectionCommand::handleGeneralDelete()
 
 void DeleteSelectionCommand::fixupWhitespace()
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    protect(document())->updateLayoutIgnorePendingStylesheets();
     // FIXME: isRenderedCharacter should be removed, and we should use VisiblePosition::characterAfter and VisiblePosition::characterBefore
     if (m_leadingWhitespace.isNotNull() && !m_leadingWhitespace.isRenderedCharacter()) {
         if (RefPtr textNode = dynamicDowncast<Text>(*m_leadingWhitespace.deprecatedNode())) {
@@ -853,7 +853,7 @@ void DeleteSelectionCommand::mergeParagraphs()
     auto rangeToBeReplaced = makeSimpleRange(mergeDestination);
     if (!rangeToBeReplaced)
         return;
-    if (!document().editor().client()->shouldMoveRangeAfterDelete(*range, *rangeToBeReplaced))
+    if (!protect(document().editor().client())->shouldMoveRangeAfterDelete(*range, *rangeToBeReplaced))
         return;
 
     // moveParagraphs will insert placeholders if it removes blocks that would require their use, don't let block
@@ -960,7 +960,7 @@ String DeleteSelectionCommand::originalStringForAutocorrectionAtBeginningOfSelec
         return String();
 
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
-    for (auto& marker : document().markers().markersInRange(*rangeOfFirstCharacter, DocumentMarkerType::Autocorrected)) {
+    for (auto& marker : protect(document().markers())->markersInRange(*rangeOfFirstCharacter, DocumentMarkerType::Autocorrected)) {
         int startOffset = marker->startOffset();
         if (startOffset == startOfSelection.deepEquivalent().offsetInContainerNode())
             return marker->description();
@@ -998,12 +998,13 @@ void DeleteSelectionCommand::doApply()
     if (!m_selectionToDelete.isNonOrphanedRange() || !m_selectionToDelete.isContentEditable())
         return;
 
+    Ref editor = protect(document())->editor();
     String originalString = originalStringForAutocorrectionAtBeginningOfSelection();
 
     // If the deletion is occurring in a text field, and we're not deleting to replace the selection, then let the frame call across the bridge to notify the form delegate. 
     if (!m_replace) {
         if (RefPtr textControl = enclosingTextFormControl(m_selectionToDelete.start()); textControl && textControl->focused())
-            protect(document())->editor().textWillBeDeletedInTextField(*textControl);
+            editor->textWillBeDeletedInTextField(*textControl);
     }
 
     // save this to later make the selection with
@@ -1078,7 +1079,7 @@ void DeleteSelectionCommand::doApply()
     calculateTypingStyleAfterDelete();
 
     if (!originalString.isEmpty())
-        protect(document())->editor().deletedAutocorrectionAtPosition(m_endingPosition, originalString);
+        editor->deletedAutocorrectionAtPosition(m_endingPosition, originalString);
 
     setEndingSelection(VisibleSelection(VisiblePosition(m_endingPosition, affinity), endingSelection().directionality()));
     clearTransientState();

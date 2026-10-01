@@ -94,7 +94,7 @@ private:
         if (!m_client.drawRect)
             return;
 
-        auto imageBuffer = graphicsContext.createAlignedImageBuffer(dirtyRect.size(), WebCore::DestinationColorSpace::SRGB(), WebCore::RenderingMethod::Local);
+        auto imageBuffer = graphicsContext.createAlignedImageBuffer(dirtyRect.size(), WebCore::ColorSpace::SRGB(), WebCore::RenderingMethod::Local);
         if (!imageBuffer)
             return;
 
@@ -151,7 +151,7 @@ private:
         if (!actionContext || !apiRange)
             return std::nullopt;
 
-        return { { actionContext, makeSimpleRange(WebKit::toImpl(apiRange)->coreRange()) } };
+        return { { actionContext, makeSimpleRange(protect(WebKit::toImpl(apiRange)->coreRange())) } };
     }
 
     void dataDetectorsDidPresentUI(WebKit::WebPageOverlay& pageOverlay) override

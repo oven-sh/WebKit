@@ -159,6 +159,10 @@ PixelFormat PlaceholderRenderingContext::pixelFormat() const
 
 RefPtr<ImageBuffer> PlaceholderRenderingContext::surfaceBufferToImageBuffer(SurfaceBuffer)
 {
+    if (!m_buffer) {
+        // Transparent black bitmaps are not cached.
+        return canvas().createTransparentBlackImageBuffer();
+    }
     return m_buffer;
 }
 
@@ -167,8 +171,10 @@ RefPtr<NativeImage> PlaceholderRenderingContext::surfaceBufferToNativeImage(Surf
     if (m_bufferNativeImage)
         return m_bufferNativeImage;
     RefPtr buffer = m_buffer;
-    if (!buffer)
-        return nullptr;
+    if (!buffer) {
+        // No frame has been committed yet, so the placeholder reads as transparent black.
+        return ImageBuffer::sinkIntoNativeImage(canvas().createTransparentBlackImageBuffer());
+    }
     m_bufferNativeImage = buffer->copyNativeImage();
     return m_bufferNativeImage;
 }

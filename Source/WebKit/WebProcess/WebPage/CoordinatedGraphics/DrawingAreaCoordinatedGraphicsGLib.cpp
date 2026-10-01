@@ -140,12 +140,6 @@ void DrawingAreaCoordinatedGraphics::updatePreferences(const WebPreferencesStore
         settings.setAsyncFrameScrollingEnabled(false);
         settings.setAsyncOverflowScrollingEnabled(false);
     }
-
-    if (settings.useSkiaForComposition()) {
-        static auto useSkiaForComposition = String::fromLatin1(getenv("WEBKIT_USE_SKIA_FOR_COMPOSITION"));
-        if (!useSkiaForComposition.isEmpty() && useSkiaForComposition == "0"_s)
-            settings.setUseSkiaForComposition(false);
-    }
 }
 
 bool DrawingAreaCoordinatedGraphics::enterAcceleratedCompositingModeIfNeeded()
@@ -291,6 +285,16 @@ void DrawingAreaCoordinatedGraphics::dispatchPendingCallbacksAfterEnsuringDrawin
 }
 
 #if PLATFORM(GTK)
+void DrawingAreaCoordinatedGraphics::didDiscardBackingStore()
+{
+    if (!m_renderer)
+        return;
+
+    protect(m_webPage)->corePage()->forceRepaintAllFrames();
+    m_renderer->setNeedsDisplay();
+    m_renderer->scheduleRenderingUpdate();
+}
+
 void DrawingAreaCoordinatedGraphics::adjustTransientZoom(double scale, FloatPoint origin)
 {
     if (!m_transientZoom) {

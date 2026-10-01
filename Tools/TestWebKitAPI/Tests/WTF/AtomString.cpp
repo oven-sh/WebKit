@@ -66,7 +66,7 @@ TEST(WTF, AtomStringExistingHash)
 static inline const char* testAtomStringNumber(double number)
 {
     static char testBuffer[100] = { };
-    std::strncpy(testBuffer, AtomString::number(number).string().utf8().data(), 99);
+    std::strncpy(testBuffer, AtomString::number(number).string().utf8().legacyCStringPointer(), 99);
     return testBuffer;
 }
 

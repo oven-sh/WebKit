@@ -400,6 +400,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSContainerRule.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSContainerRule.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSCounterStyleRule.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSCounterStyleRule.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSEnvironmentMapRule.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSEnvironmentMapRule.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSFontFaceDescriptors.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSFontFaceDescriptors.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSFontFaceRule.cpp
@@ -1177,8 +1179,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFragmentDirective.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFragmentDirective.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFullscreenOptions.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFullscreenOptions.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGCObservation.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGCObservation.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPU.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPU.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUAdapter.cpp
@@ -2451,6 +2451,10 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSQueuingStrategy.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSQueuingStrategy.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSQueuingStrategySize.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSQueuingStrategySize.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSQuotaExceededError.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSQuotaExceededError.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSQuotaExceededErrorOptions.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSQuotaExceededErrorOptions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRTCAnswerOptions.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRTCAnswerOptions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRTCCertificate.cpp
@@ -2909,6 +2913,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollAxis.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollAxis.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollBehavior.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollBehavior.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollIntoViewContainer.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollIntoViewContainer.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollIntoViewOptions.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollIntoViewOptions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSScrollLogicalPosition.cpp

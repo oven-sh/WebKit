@@ -136,7 +136,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         int32_t m_int32;
         size_t m_size;
         OptionRange m_optionRange;
-        const char* m_optionString;
+        const char8_t* m_optionString;
         GCLogging::Level m_gcLogLevel;
         OSLogType m_osLogType;
     };
@@ -265,13 +265,13 @@ std::optional<OptionsStorage::OptionRange> parse(const char* string)
 template<>
 std::optional<OptionsStorage::OptionString> parse(const char* string)
 {
-    const char* value = nullptr;
+    const char8_t* value = nullptr;
     if (!strlen(string))
         return value;
 
     // FIXME <https://webkit.org/b/169057>: This could leak if this option is set more than once.
     // Given that Options are typically used for testing, this isn't considered to be a problem.
-    value = WTF::fastStrDup(string);
+    value = byteCast<char8_t>(WTF::fastStrDup(string));
     return value;
 }
 
@@ -422,7 +422,7 @@ bool Options::overrideAliasedOptionWithHeuristic(const char* name)
         return false;
 
     auto aliasedOption = makeString(unsafeSpan(&name[4]), '=', unsafeSpan(stringValue));
-    if (Options::setOption(aliasedOption.utf8().data()))
+    if (Options::setOption(aliasedOption.utf8().legacyCStringPointer()))
         return true;
 
     fprintf(stderr, "WARNING: failed to parse %s=%s\n", name, stringValue);
@@ -1333,7 +1333,7 @@ bool Options::setAliasedOption(const char* arg, bool verify)
                 return false;                                           \
             unaliasedOption = makeString(unaliasedOption, '=', invertedValueStr); \
         }                                                               \
-        return setOptionWithoutAlias(unaliasedOption.utf8().data(), verify);    \
+        return setOptionWithoutAlias(unaliasedOption.utf8().legacyCStringPointer(), verify);    \
     }
 
     FOR_EACH_JSC_ALIASED_OPTION(FOR_EACH_OPTION)
@@ -1381,7 +1381,7 @@ void Options::dumpAllOptions(DumpLevel level, ASCIILiteral title)
 {
     StringBuilder builder;
     dumpAllOptions(builder, level, title, { }, "   "_s, "\n"_s, DumpDefaults);
-    dataLog(builder.toString().utf8().data());
+    dataLog(builder.toString());
 }
 
 void Options::dumpOption(StringBuilder& builder, DumpLevel level, Options::ID id,
@@ -1505,7 +1505,7 @@ void Option::dump(StringBuilder& builder) const
         builder.append(unsafeSpan(m_optionRange.rangeString()));
         break;
     case Options::Type::OptionString:
-        builder.append('"', m_optionString ? unsafeSpan(m_optionString) : ""_span, '"');
+        builder.append('"', unsafeSpan(m_optionString), '"');
         break;
     case Options::Type::GCLogLevel:
         builder.append(m_gcLogLevel);
@@ -1534,7 +1534,7 @@ bool Option::operator==(const Option& other) const
         return m_optionRange.rangeString() == other.m_optionRange.rangeString();
     case Options::Type::OptionString:
         return (m_optionString == other.m_optionString)
-            || (m_optionString && other.m_optionString && !strcmp(m_optionString, other.m_optionString));
+            || (m_optionString && other.m_optionString && equalSpans(unsafeSpan(m_optionString), unsafeSpan(other.m_optionString)));
     case Options::Type::GCLogLevel:
         return m_gcLogLevel == other.m_gcLogLevel;
     case Options::Type::OSLogType:

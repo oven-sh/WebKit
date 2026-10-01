@@ -36,23 +36,24 @@
 
 namespace WTF {
 
-CString FileSystem::fileSystemRepresentation(const String& path)
+UTF8CString FileSystem::fileSystemRepresentation(const String& path)
 {
     RetainPtr<CFStringRef> cfString = path.createCFString();
 
     if (!cfString)
-        return CString();
+        return { };
 
     CFIndex size = CFStringGetMaximumSizeOfFileSystemRepresentation(cfString.get());
 
     Vector<char> buffer(size);
 
     if (!CFStringGetFileSystemRepresentation(cfString.get(), buffer.mutableSpan().data(), buffer.size())) {
-        LOG_ERROR("Failed to get filesystem representation to create CString from cfString");
-        return CString();
+        LOG_ERROR("Failed to get filesystem representation to create UTF8CString from cfString");
+        return { };
     }
 
-    return buffer.span().data();
+    // CFStringGetFileSystemRepresentation() produces UTF-8, null-terminated within the buffer.
+    return UTF8CString { byteCast<char8_t>(buffer.span().data()) };
 }
 
 String FileSystem::stringFromFileSystemRepresentation(const char* fileSystemRepresentation)

@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "BuiltinNames.h"
 #include "Debugger.h"
 #include "JSCInlines.h"
 #include "JSWebAssemblyCompileError.h"
@@ -76,6 +77,8 @@ void JSWebAssemblyModule::finishCreation(VM& vm)
     {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
         exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
+        offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+        exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), SymbolTableEntry(VarOffset(offset)));
     }
     for (auto& exp : moduleInformation.exports) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
@@ -109,6 +112,20 @@ const Wasm::RTT& JSWebAssemblyModule::rttFromFunctionIndexSpace(Wasm::FunctionSp
 Wasm::Module& JSWebAssemblyModule::module()
 {
     return m_module.get();
+}
+
+std::span<const JSWebAssemblyModule::ImportName> JSWebAssemblyModule::importNames(VM& vm)
+{
+    const auto& imports = moduleInformation().imports;
+    if (m_importNames.size() != imports.size()) {
+        m_importNames = FixedVector<ImportName>::map(imports, [&](const Wasm::Import& import) {
+            return ImportName {
+                Identifier::fromString(vm, makeAtomString(import.module)),
+                Identifier::fromString(vm, makeAtomString(import.field)),
+            };
+        });
+    }
+    return m_importNames.span();
 }
 
 template<typename Visitor>

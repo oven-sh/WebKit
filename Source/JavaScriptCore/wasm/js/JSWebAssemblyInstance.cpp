@@ -136,6 +136,7 @@ JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, JSWeb
     }
 
     memset(reinterpret_cast<uint8_t*>(baselineDatas().data()), 0, baselineDatas().size_bytes());
+    zeroSpan(asMutableByteSpan(functionWrappers()));
     if (m_moduleInformation->hasGCObjectTypes()) {
         memset(reinterpret_cast<uint8_t*>(gcObjectStructureIDs().data()), 0, gcObjectStructureIDs().size_bytes());
         CompleteSubspace* subspace = JSWebAssemblyArray::subspaceFor<JSWebAssemblyArray, SubspaceAccess::OnMainThread>(vm);
@@ -222,9 +223,9 @@ void JSWebAssemblyInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
             visitor.append(thisObject->gcObjectStructureID(i));
     }
 
-    Locker locker { cell->cellLock() };
     for (auto& wrapper : thisObject->functionWrappers())
-        visitor.appendUnbarriered(wrapper.get());
+        visitor.append(wrapper);
+    Locker locker { cell->cellLock() };
     for (auto& entry : thisObject->m_constantExpressionValues)
         visitor.append(entry.value);
     for (auto& entry : thisObject->m_tagWrappers)
@@ -308,13 +309,11 @@ Identifier JSWebAssemblyInstance::createPrivateModuleKey()
 
 size_t JSWebAssemblyInstance::allocationSize(const Wasm::ModuleInformation& info)
 {
-    if (info.hasGCObjectTypes())
-        return offsetOfAllocatorForGCObject(info, MarkedSpace::numSizeClasses);
-    return offsetOfBaselineData(info, info.internalFunctionCount());
+    return offsetOfFunctionWrapper(info, info.functionIndexSpaceSize());
 }
 
 
-JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* instanceStructure, JSGlobalObject* globalObject, const Identifier& moduleKey, JSWebAssemblyModule* jsModule, JSObject* importObject, CreationMode creationMode, RefPtr<SourceProvider>&& provider)
+JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* instanceStructure, JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, JSWebAssemblyModule* jsModule, JSObject* importObject, CreationMode creationMode, RefPtr<SourceProvider>&& provider)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -329,7 +328,7 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
     if (!globalObject->webAssemblyEnabled())
         return exception(createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage()));
 
-    WebAssemblyModuleRecord* moduleRecord = WebAssemblyModuleRecord::create(globalObject, vm, globalObject->webAssemblyModuleRecordStructure(), moduleKey, moduleInformation);
+    WebAssemblyModuleRecord* moduleRecord = WebAssemblyModuleRecord::create(globalObject, vm, globalObject->webAssemblyModuleRecordStructure(), moduleLoader, moduleKey, moduleInformation);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     // FIXME: These objects could be pretty big we should try to throw OOM here.
@@ -349,14 +348,29 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
             return exception(createTypeError(globalObject, "can't make WebAssembly.Instance because there is no imports Object and the WebAssembly.Module requires imports"_s));
     }
 
+    auto isReservedESMName = [](const Wasm::Name& name) {
+        return startsWith(name.span(), "wasm:"_s) || startsWith(name.span(), "wasm-js:"_s);
+    };
+    const bool fromModuleLoader = creationMode == CreationMode::FromModuleLoader;
+
     // For each import i in module.imports:
     {
+        const auto importNames = jsModule->importNames(vm);
         IdentifierSet specifiers;
-        for (auto& import : moduleInformation.imports) {
-            auto moduleName = Identifier::fromString(vm, makeAtomString(import.module));
-            auto fieldName = Identifier::fromString(vm, makeAtomString(import.field));
+        for (size_t importIndex = 0; importIndex < moduleInformation.imports.size(); ++importIndex) {
+            const auto& import = moduleInformation.imports[importIndex];
+            const auto& moduleName = importNames[importIndex].module;
+            const auto& fieldName = importNames[importIndex].field;
+            bool skipRequestedModule = false;
+            if (fromModuleLoader) {
+                if (startsWith(import.module.span(), "wasm-js:"_s))
+                    return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import module '"_s, StringView(moduleName.impl()), "' is reserved"_s)));
+                if (isReservedESMName(import.field))
+                    return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import name '"_s, StringView(fieldName.impl()), "' is reserved"_s)));
+                skipRequestedModule = moduleInformation.importedStringConstantsEquals(import.module) || moduleInformation.builtinSetsInclude(import.module);
+            }
             auto result = specifiers.add(moduleName.impl());
-            if (result.isNewEntry)
+            if (result.isNewEntry && !skipRequestedModule)
                 moduleRecord->appendRequestedModule(moduleName, nullptr);
             moduleRecord->addImportEntry(WebAssemblyModuleRecord::ImportEntry {
                 WebAssemblyModuleRecord::ImportEntryType::Single,
@@ -368,6 +382,13 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
             });
         }
         ASSERT(moduleRecord->importEntries().size() == moduleInformation.imports.size());
+    }
+
+    if (fromModuleLoader) {
+        for (auto& exp : moduleInformation.exports) {
+            if (isReservedESMName(exp.field))
+                return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Export name '"_s, makeString(exp.field), "' is reserved"_s)));
+        }
     }
 
     for (unsigned i = 0; i < moduleInformation.memoryCount(); i++) {
@@ -445,18 +466,17 @@ void JSWebAssemblyInstance::setGlobal(unsigned i, JSValue value)
 
 JSValue JSWebAssemblyInstance::getFunctionWrapper(unsigned i) const
 {
-    JSValue value = m_functionWrappers.get(i).get();
-    if (value.isEmpty())
-        return jsNull();
-    return value;
+    ASSERT(i < functionWrappers().size());
+    JSValue value = functionWrappers()[i].get();
+    return value ? value : jsNull();
 }
 
 void JSWebAssemblyInstance::setFunctionWrapper(unsigned i, JSValue value)
 {
+    ASSERT(i < functionWrappers().size());
     ASSERT(value.isCallable());
-    ASSERT(!m_functionWrappers.contains(i));
-    Locker locker { cellLock() };
-    m_functionWrappers.set(i, WriteBarrier<Unknown>(vm(), this, value));
+    ASSERT(!functionWrappers()[i].get());
+    functionWrappers()[i].set(vm(), this, value);
     ASSERT(getFunctionWrapper(i) == value);
 }
 
@@ -740,26 +760,26 @@ void JSWebAssemblyInstance::copyElementSegment(JSWebAssemblyArray* array, const 
     }
 }
 
-bool JSWebAssemblyInstance::evaluateConstantExpression(uint64_t index, Type expectedType, uint64_t& result)
+std::expected<uint64_t, String> JSWebAssemblyInstance::evaluateConstantExpression(uint64_t constantExpressionIndex)
 {
-    const auto& constantExpression = m_moduleInformation->constantExpressions[index];
-    auto evalResult = evaluateExtendedConstExpr(constantExpression, this, m_moduleInformation.get(), expectedType);
-    if (!evalResult.has_value()) [[unlikely]]
-        return false;
-
-    result = evalResult.value();
-    return true;
+    const auto& constantExpression = m_moduleInformation->constantExpressions[constantExpressionIndex];
+    return evaluateExtendedConstExpr(constantExpression, this, m_moduleInformation.get());
 }
 
 bool JSWebAssemblyInstance::ensureConstantExpressionValue(uint64_t constantExpressionIndex, Type expectedType, uint64_t& result)
 {
+    // The memo is scanned by the GC as a JSValue, so only reference-typed results may go in it.
+    ASSERT_UNUSED(expectedType, isRefType(expectedType));
+
     if (auto found = m_constantExpressionValues.getOptional(constantExpressionIndex)) {
         result = JSValue::encode(found.value().get());
         return true;
     }
 
-    if (!evaluateConstantExpression(constantExpressionIndex, expectedType, result)) [[unlikely]]
+    auto evalResult = evaluateConstantExpression(constantExpressionIndex);
+    if (!evalResult.has_value()) [[unlikely]]
         return false;
+    result = evalResult.value();
 
     Locker locker { cellLock() };
     m_constantExpressionValues.set(constantExpressionIndex, WriteBarrier<Unknown>(vm(), this, JSValue::decode(result)));

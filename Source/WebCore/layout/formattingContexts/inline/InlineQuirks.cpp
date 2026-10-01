@@ -56,7 +56,7 @@ InlineLayoutUnit InlineQuirks::initialLineHeight() const
     return 0.f;
 }
 
-bool InlineQuirks::lineBreakBoxAffectsParentInlineBox(const LineBox& lineBox)
+bool InlineQuirks::lineBreakBoxIsOnlyContentOnLine(const LineBox& lineBox)
 {
     // In quirks mode linebreak boxes (<br>) stop affecting the line box when (assume <br> is nested e.g. <span style="font-size: 100px"><br></span>)
     // 1. the root inline box has content <div>content<br>/div>
@@ -67,6 +67,18 @@ bool InlineQuirks::lineBreakBoxAffectsParentInlineBox(const LineBox& lineBox)
     if (lineBox.hasAtomicInlineBox())
         return false;
     // At this point we either have only the <br> on the line or inline boxes with or without content.
+    for (auto& inlineLevelBox : lineBox.nonRootInlineLevelBoxes()) {
+        // Filter out empty inline boxes e.g. <div><span></span><span></span><br></div>
+        if (inlineLevelBox.isInlineBox() && inlineLevelBox.hasContent())
+            return false;
+    }
+    return true;
+}
+
+bool InlineQuirks::lineBreakBoxAffectsParentInlineBox(const LineBox& lineBox)
+{
+    if (!lineBreakBoxIsOnlyContentOnLine(lineBox))
+        return false;
     auto& inlineLevelBoxes = lineBox.nonRootInlineLevelBoxes();
     ASSERT(!inlineLevelBoxes.isEmpty());
     if (inlineLevelBoxes.size() == 1) {
@@ -74,11 +86,6 @@ bool InlineQuirks::lineBreakBoxAffectsParentInlineBox(const LineBox& lineBox)
         // the BR's own layout bounds will drive the line height directly.
         auto& lineBreakBox = inlineLevelBoxes.first();
         return lineBreakBox.isLineBreakBox() && lineBreakBox.isPreferredLineHeightFontMetricsBased();
-    }
-    for (auto& inlineLevelBox : lineBox.nonRootInlineLevelBoxes()) {
-        // Filter out empty inline boxes e.g. <div><span></span><span></span><br></div>
-        if (inlineLevelBox.isInlineBox() && inlineLevelBox.hasContent())
-            return false;
     }
     return true;
 }
@@ -115,9 +122,9 @@ std::optional<LayoutUnit> InlineQuirks::initialLetterAlignmentOffset(const Box& 
         return { };
     auto& primaryFontMetrics = lineBoxStyle.fontCascade().metricsOfPrimaryFont();
     auto lineHeight = [&]() -> InlineLayoutUnit {
-        if (lineBoxStyle.lineHeight().isNormal())
+        if (lineBoxStyle.textAutosizingAdjustedLineHeight().isNormal())
             return primaryFontMetrics.ascent(FontBaseline::Alphabetic) + primaryFontMetrics.descent(FontBaseline::Alphabetic);
-        return lineBoxStyle.computedLineHeight();
+        return lineBoxStyle.usedLineHeight();
     };
     auto& floatBoxGeometry = formattingContext().geometryForBox(floatBox);
     auto fontHeight = primaryFontMetrics.ascent() + primaryFontMetrics.descent();
@@ -227,14 +234,9 @@ bool InlineQuirks::shouldCollapseLineBoxHeight(const Line::RunList& lineContent,
     if (!markerBox)
         return false;
 
-    if (!marker.isListMarkerOutside()) {
-        ASSERT(marker.isListMarkerInside());
-        return false;
-    }
-
     size_t emptyInlineBoxCount = 0;
     for (auto& run : lineContent) {
-        if (run.isListMarkerOutside())
+        if (run.isListMarker())
             continue;
         if (Line::Run::isContentfulOrHasDecoration(run, formattingContext()))
             return false;
@@ -248,11 +250,6 @@ bool InlineQuirks::shouldCollapseLineBoxHeight(const Line::RunList& lineContent,
     // is not supposed to produce a collapsed line box.
     // The underlying issue is the assumption that we shouldn’t collapse when rootBox is a list item (see below).
     if (emptyInlineBoxCount && emptyInlineBoxCount == lineContent.size() - 1)
-        return true;
-
-    // When an outside marker ends up in an anonymous block because blockification (e.g., by a flex/grid container)
-    // prevented finding a line box parent, collapse the line box so it doesn’t inflate the list item.
-    if (markerBox->shouldCollapseAnonymousBlockParentForListMarker())
         return true;
 
     auto& rootBox = formattingContext().root();

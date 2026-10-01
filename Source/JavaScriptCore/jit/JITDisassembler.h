@@ -51,11 +51,11 @@ public:
     ~JITDisassembler();
     
     void setStartOfCode(MacroAssembler::Label label) { m_startOfCode = label; }
-    void setForBytecodeMainPath(unsigned bytecodeIndex, MacroAssembler::Label label, const CString& string = CString())
+    void setForBytecodeMainPath(unsigned bytecodeIndex, MacroAssembler::Label label, const UTF8CString& string = { })
     {
         m_labelForBytecodeIndexInMainPath[bytecodeIndex] = std::make_pair(label, string);
     }
-    void setForBytecodeSlowPath(unsigned bytecodeIndex, MacroAssembler::Label label, const CString& string = CString())
+    void setForBytecodeSlowPath(unsigned bytecodeIndex, MacroAssembler::Label label, const UTF8CString& string = { })
     {
         m_labelForBytecodeIndexInSlowPath[bytecodeIndex] = std::make_pair(label, string);
     }
@@ -73,19 +73,19 @@ private:
     
     struct DumpedOp {
         BytecodeIndex bytecodeIndex;
-        CString disassembly;
+        UTF8CString disassembly;
     };
-    Vector<DumpedOp> dumpVectorForInstructions(LinkBuffer&, const char* prefix, Vector<std::pair<MacroAssembler::Label, CString>>& labels, MacroAssembler::Label endLabel);
+    Vector<DumpedOp> dumpVectorForInstructions(LinkBuffer&, const char* prefix, Vector<std::pair<MacroAssembler::Label, UTF8CString>>& labels, MacroAssembler::Label endLabel);
 
-    void dumpForInstructions(PrintStream&, LinkBuffer&, const char* prefix, Vector<std::pair<MacroAssembler::Label, CString>>& labels, MacroAssembler::Label endLabel);
-    void reportInstructions(Profiler::Compilation*, LinkBuffer&, const char* prefix, Vector<std::pair<MacroAssembler::Label, CString>>& labels, MacroAssembler::Label endLabel);
+    void dumpForInstructions(PrintStream&, LinkBuffer&, const char* prefix, Vector<std::pair<MacroAssembler::Label, UTF8CString>>& labels, MacroAssembler::Label endLabel);
+    void reportInstructions(Profiler::Compilation*, LinkBuffer&, const char* prefix, Vector<std::pair<MacroAssembler::Label, UTF8CString>>& labels, MacroAssembler::Label endLabel);
     
     void dumpDisassembly(PrintStream&, LinkBuffer&, MacroAssembler::Label from, MacroAssembler::Label to);
     
     CodeBlock* const m_codeBlock;
     MacroAssembler::Label m_startOfCode;
-    Vector<std::pair<MacroAssembler::Label, CString>> m_labelForBytecodeIndexInMainPath;
-    Vector<std::pair<MacroAssembler::Label, CString>> m_labelForBytecodeIndexInSlowPath;
+    Vector<std::pair<MacroAssembler::Label, UTF8CString>> m_labelForBytecodeIndexInMainPath;
+    Vector<std::pair<MacroAssembler::Label, UTF8CString>> m_labelForBytecodeIndexInSlowPath;
     MacroAssembler::Label m_endOfSlowPath;
     MacroAssembler::Label m_endOfCode;
     void* m_codeStart { nullptr };

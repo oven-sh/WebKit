@@ -28,6 +28,7 @@
 
 #include "InlineDisplayContentBuilder.h"
 #include "LayoutBoxGeometry.h"
+#include "LayoutIntegrationUtils.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TextUtil.h"
 
@@ -138,8 +139,13 @@ InlineDisplay::Line InlineDisplayLineBuilder::build(const LineLayoutResult& line
         ? rootInlineBoxRect.left()
         : lineBoxLogicalRect.width() - lineLayoutResult.contentGeometry.logicalRightIncludingNegativeMargin; // Note that with hanging content lineLayoutResult.contentGeometry.logicalRight is not the same as rootLineBoxRect.right().
 
-    auto hasInflowContent = [&] {
+    auto hasContentfulContent = [&] {
         if (lineLayoutResult.hasContentfulInFlowContent())
+            return true;
+        return lineLayoutResult.isFirstLast.isFirstFormattedLine == IsFirstFormattedLine::Yes && !formattingContext().layoutState().excludedMarkerLayoutBounds().isEmpty();
+    };
+    auto hasInflowContent = [&] {
+        if (hasContentfulContent())
             return true;
         for (auto& run : lineLayoutResult.runs) {
             if (!run.isOutOfFlow())
@@ -149,7 +155,7 @@ InlineDisplay::Line InlineDisplayLineBuilder::build(const LineLayoutResult& line
     };
     auto writingMode = root().writingMode();
     return InlineDisplay::Line { hasInflowContent()
-        , lineLayoutResult.hasContentfulInFlowContent()
+        , hasContentfulContent()
         , lineLayoutResult.isBlockContent()
         , lineBoxLogicalRect
         , mapLineRectLogicalToVisual(lineBoxLogicalRect, constraints.formattingRootBorderBoxSize(), writingMode)
@@ -493,12 +499,28 @@ std::optional<InlineDisplay::Line::Ellipsis> InlineDisplayLineBuilder::applyElli
     if (truncationPolicy == LineEndingTruncationPolicy::NoTruncation || !displayBoxes.size())
         return { };
 
+    CheckedRef rootBox = displayBoxes[0].layoutBox();
+    CheckedRef styleForTruncation = rootBox->isAnonymous() ? IntegrationUtils::firstNonAnonymousAncestorStyle(rootBox) : rootBox->style();
+
     auto ellipsisText = [&] -> AtomString {
-        if (truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInInlineDirection || isLegacyLineClamp) {
+        if (truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInInlineDirection) {
+            return WTF::switchOn(styleForTruncation->textOverflow(),
+                [&](const CSS::Keyword::Clip&) -> AtomString {
+                    return nullAtom();
+                },
+                [&](const CSS::Keyword::Ellipsis&) -> AtomString {
+                    return TextUtil::ellipsisTextInInlineDirection(displayLine.isHorizontal());
+                },
+                [&](const Style::String& string) -> AtomString {
+                    return AtomString { string.value };
+                }
+            );
+        }
+        if (isLegacyLineClamp) {
             // Legacy line clamp always uses ...
             return TextUtil::ellipsisTextInInlineDirection(displayLine.isHorizontal());
         }
-        return WTF::switchOn(displayBoxes[0].layoutBox().style().blockEllipsis(),
+        return WTF::switchOn(styleForTruncation->blockEllipsis(),
             [&](const CSS::Keyword::NoEllipsis&) -> AtomString {
                 return nullAtom();
             },

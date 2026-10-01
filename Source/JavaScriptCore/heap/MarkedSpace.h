@@ -149,8 +149,6 @@ public:
     size_t size();
     size_t NODELETE capacity();
 
-    bool isPagedOut();
-    
     HeapVersion markingVersion() const { return m_markingVersion; }
     HeapVersion newlyAllocatedVersion() const { return m_newlyAllocatedVersion; }
     HeapVersion edenVersion() const { return m_edenVersion; }

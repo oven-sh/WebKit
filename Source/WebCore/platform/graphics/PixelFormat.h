@@ -32,11 +32,15 @@
 namespace WebCore {
 
 enum class PixelFormat : uint8_t {
+    RGBX8,
     RGBA8,
     BGRX8,
     BGRA8,
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     RGBA16F,
+#endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    RGBA16, // NOLINT
 #endif
 #if ENABLE(PIXEL_FORMAT_RGB10)
     RGB10,
@@ -51,6 +55,7 @@ enum class UseLosslessCompression : bool { No, Yes };
 constexpr ContentsFormat convertToContentsFormat(PixelFormat format)
 {
     switch (format) {
+    case PixelFormat::RGBX8:
     case PixelFormat::RGBA8:
     case PixelFormat::BGRX8:
     case PixelFormat::BGRA8:
@@ -67,6 +72,11 @@ constexpr ContentsFormat convertToContentsFormat(PixelFormat format)
     case PixelFormat::RGBA16F:
         return ContentsFormat::RGBA16F;
 #endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case PixelFormat::RGBA16:
+        // No layer contents format holds 16 bit unorm, so this one is never layer backing store.
+        break;
+#endif
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -76,6 +86,7 @@ constexpr ContentsFormat convertToContentsFormat(PixelFormat format)
 constexpr bool pixelFormatIsOpaque(PixelFormat format)
 {
     switch (format) {
+    case PixelFormat::RGBX8:
     case PixelFormat::BGRX8:
 #if ENABLE(PIXEL_FORMAT_RGB10)
     case PixelFormat::RGB10:
@@ -88,6 +99,9 @@ constexpr bool pixelFormatIsOpaque(PixelFormat format)
 #endif
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     case PixelFormat::RGBA16F:
+#endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case PixelFormat::RGBA16:
 #endif
         return false;
     }
@@ -115,9 +129,13 @@ enum class AllowExtendedColorSpace : bool { No, Yes };
 constexpr AllowExtendedColorSpace allowExtendedColorSpace(PixelFormat format)
 {
     switch (format) {
+    case PixelFormat::RGBX8:
     case PixelFormat::RGBA8:
     case PixelFormat::BGRX8:
     case PixelFormat::BGRA8:
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case PixelFormat::RGBA16:
+#endif
         return AllowExtendedColorSpace::No;
 #if ENABLE(PIXEL_FORMAT_RGB10)
     case PixelFormat::RGB10:

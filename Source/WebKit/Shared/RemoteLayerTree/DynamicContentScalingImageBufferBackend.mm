@@ -49,20 +49,20 @@ namespace WebKit {
 
 using namespace WebCore;
 
-static CFDictionaryRef makeContextOptions(const DynamicContentScalingImageBufferBackend::Parameters& parameters)
+static CFDictionaryRef makeContextOptions(const WebCore::ColorSpace& colorSpace)
 {
-    RetainPtr colorSpace = parameters.colorSpace.platformColorSpace();
-    if (!colorSpace)
+    RetainPtr platformColorSpace = colorSpace.platformColorSpace();
+    if (!platformColorSpace)
         return nil;
     return (CFDictionaryRef)@{
-        @"colorspace" : (id)colorSpace.get()
+        @"colorspace" : (id)platformColorSpace.get()
     };
 }
 
 class GraphicsContextDynamicContentScaling : public WebCore::GraphicsContextCG {
 public:
-    GraphicsContextDynamicContentScaling(const DynamicContentScalingImageBufferBackend::Parameters& parameters, WebCore::RenderingMode renderingMode)
-        : GraphicsContextCG(adoptCF(RECGCommandsContextCreate(parameters.backendSize, makeContextOptions(parameters))).autorelease(), GraphicsContextCG::Unknown, renderingMode)
+    GraphicsContextDynamicContentScaling(const WebCore::IntSize& backendSize, const WebCore::ColorSpace& colorSpace, WebCore::RenderingMode renderingMode)
+        : GraphicsContextCG(adoptCF(RECGCommandsContextCreate(backendSize, makeContextOptions(colorSpace))).autorelease(), GraphicsContextCG::Unknown, renderingMode)
     {
     }
 
@@ -71,22 +71,15 @@ public:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DynamicContentScalingImageBufferBackend);
 
-size_t DynamicContentScalingImageBufferBackend::calculateMemoryCost(const Parameters& parameters)
+std::unique_ptr<DynamicContentScalingImageBufferBackend> DynamicContentScalingImageBufferBackend::create(const WebCore::ImageBufferParameters& parameters, const WebCore::ImageBufferCreationContext& creationContext)
 {
-    // FIXME: This is fairly meaningless, because we don't actually have a bitmap, and
-    // should really be based on the encoded data size.
-    return WebCore::ImageBufferBackend::calculateMemoryCost(parameters.backendSize, calculateBytesPerRow(parameters.backendSize, parameters.bufferFormat.pixelFormat));
-}
-
-std::unique_ptr<DynamicContentScalingImageBufferBackend> DynamicContentScalingImageBufferBackend::create(const Parameters& parameters, const WebCore::ImageBufferCreationContext& creationContext)
-{
-    if (parameters.backendSize.isEmpty())
+    if (parameters.backendSize().isEmpty())
         return nullptr;
 
     return std::unique_ptr<DynamicContentScalingImageBufferBackend>(new DynamicContentScalingImageBufferBackend(parameters, creationContext, WebCore::RenderingMode::Unaccelerated));
 }
 
-DynamicContentScalingImageBufferBackend::DynamicContentScalingImageBufferBackend(const Parameters& parameters, const WebCore::ImageBufferCreationContext& creationContext, WebCore::RenderingMode renderingMode)
+DynamicContentScalingImageBufferBackend::DynamicContentScalingImageBufferBackend(const WebCore::ImageBufferParameters& parameters, const WebCore::ImageBufferCreationContext& creationContext, WebCore::RenderingMode renderingMode)
     : ImageBufferCGBackend { parameters }
     , m_resourceCache(creationContext.dynamicContentScalingResourceCache)
     , m_renderingMode(renderingMode)
@@ -138,7 +131,7 @@ std::optional<DynamicContentScalingDisplayList> DynamicContentScalingImageBuffer
 WebCore::GraphicsContext& DynamicContentScalingImageBufferBackend::context()
 {
     if (!m_context) {
-        m_context = makeUnique<GraphicsContextDynamicContentScaling>(m_parameters, m_renderingMode);
+        m_context = makeUnique<GraphicsContextDynamicContentScaling>(size(), colorSpace(), m_renderingMode);
         applyBaseTransform(*m_context);
     }
     return *m_context;
@@ -146,7 +139,7 @@ WebCore::GraphicsContext& DynamicContentScalingImageBufferBackend::context()
 
 unsigned DynamicContentScalingImageBufferBackend::bytesPerRow() const
 {
-    return calculateBytesPerRow(m_parameters.backendSize, m_parameters.bufferFormat.pixelFormat);
+    return calculateBytesPerRow(size(), pixelFormat());
 }
 
 void DynamicContentScalingImageBufferBackend::releaseGraphicsContext()

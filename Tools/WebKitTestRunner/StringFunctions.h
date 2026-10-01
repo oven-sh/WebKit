@@ -67,7 +67,7 @@ inline WKRetainPtr<WKStringRef> toWK(const std::string& string)
 
 inline WKRetainPtr<WKStringRef> toWK(const WTF::String& string)
 {
-    return toWK(string.utf8().data());
+    return toWK(string.utf8().legacyCStringPointer());
 }
 
 inline JSRetainPtr<JSStringRef> toJS(WKStringRef string)

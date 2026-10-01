@@ -72,7 +72,7 @@ std::pair<CStringView, String> GStreamerCodecUtilities::parseH264ProfileAndLevel
         level = String(byteCast<Latin1Character>(unsafeSpan(levelAsStringFallback)));
     }
 
-    GST_DEBUG("Codec %s translates to H.264 profile %s and level %s", codec.utf8().data(), GST_STR_NULL(profile.utf8()), level.ascii().data());
+    GST_DEBUG("Codec %s translates to H.264 profile %s and level %s", codec.utf8().legacyCStringPointer(), GST_STR_NULL(profile.utf8()), level.ascii().data());
     return { profile, level };
 }
 

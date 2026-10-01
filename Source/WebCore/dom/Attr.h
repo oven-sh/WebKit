@@ -27,6 +27,7 @@
 #include <WebCore/Node.h>
 #include <WebCore/QualifiedName.h>
 #include <wtf/Lock.h>
+#include <wtf/ThreadAssertions.h>
 
 namespace WebCore {
 
@@ -44,7 +45,7 @@ public:
 
     String name() const { return qualifiedName().toString(); }
     bool specified() const { return true; }
-    Element* ownerElement() const { return m_element.get(); }
+    Element* ownerElement() const { assertIsOwnerThread(); return m_element.get(); }
 
     WEBCORE_EXPORT AtomString value() const;
     WEBCORE_EXPORT ExceptionOr<void> setValue(const AtomString&);
@@ -78,7 +79,10 @@ private:
 
     // Attr wraps either an element/name, or a name/value pair (when it's a standalone Node.)
     // Note that m_name is always set, but m_element/m_standaloneValue may be null.
-    CheckedPtr<Element> m_element;
+    // m_element is only mutated on the main thread while holding m_elementLockForGC, so main-thread
+    // reads use assertIsOwnerThread() instead of locking; the GC thread must lock even to read.
+    CheckedPtr<Element> m_element WTF_GUARDED_BY_LOCK(m_elementLockForGC);
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_elementLockForGC, mainThreadLike);
     QualifiedName m_name;
     AtomString m_standaloneValue;
     RefPtr<MutableStyleProperties> m_style;

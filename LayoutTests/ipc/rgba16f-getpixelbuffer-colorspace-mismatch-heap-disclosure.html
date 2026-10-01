@@ -18,7 +18,7 @@ window.setTimeout(async () => {
     const PF = {};
     for (const e of IPC.serializedEnumInfo['WebCore::PixelFormat'].valueMap) PF[e.name] = e.value;
     const CS = {};
-    for (const e of IPC.serializedEnumInfo['WebCore::ColorSpace'].valueMap) CS[e.name] = e.value;
+    for (const e of IPC.serializedEnumInfo['WebCore::ColorSpaceName'].valueMap) CS[e.name] = e.value;
 
     if (PF.RGBA16F === undefined) {
         log("PASS");
@@ -31,7 +31,7 @@ window.setTimeout(async () => {
     ];
     const makeCS = (v) => ({
         serializableColorSpace: { alias: { optionalValue: {
-            m_cgColorSpace: { alias: { variantType: 'WebCore::ColorSpace', variant: v } }
+            m_cgColorSpace: { alias: { variantType: 'WebCore::ColorSpaceName', variant: v } }
         } } }
     });
     const SRGB_CS = makeCS(CS.SRGB);
@@ -61,9 +61,6 @@ window.setTimeout(async () => {
         contextIdentifier: ctxId
     });
     const ib = sc.newInterface('RemoteImageBuffer', bufId);
-    // Drain the unsolicited DidCreateBackend in-turn; otherwise it reaches the stream
-    // connection's dummy receiver, which ASSERT_NOT_REACHED()s in debug builds.
-    sc.connection.waitForMessage(bufId, IPC.messages.RemoteImageBufferProxy_DidCreateBackend.name);
 
     // Seed the IOSurface with Float16 1.0 (00 3C) as a sentinel.
     const sentinel = new Uint8Array(NBYTES);

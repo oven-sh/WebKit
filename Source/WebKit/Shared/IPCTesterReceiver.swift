@@ -31,6 +31,9 @@ final class IPCTesterReceiver {
     // Optional just because of an initialization order issue. Always occupied after initialization finished.
     private var messageForwarder: RefIPCTesterReceiverMessageForwarder?
 
+    private var deferredReply: CompletionHandlers.IPCTesterReceiver.DeferredReplyMessageCompletionHandler?
+    private var deferredReplyArgument: UInt32 = 0
+
     init() {
         self.messageForwarder = WebKit.IPCTesterReceiverMessageForwarder.create(target: self)
     }
@@ -42,8 +45,29 @@ final class IPCTesterReceiver {
         return messageForwarder
     }
 
-    func asyncMessage(data: UInt32, completionHandler: CompletionHandlers.IPCTesterReceiver.AsyncMessageCompletionHandler) {
-        completionHandler.pointee(data + 2)
+    func asyncMessage(
+        connection: IPC.Connection,
+        arg1: UInt32,
+        completionHandler: CompletionHandlers.IPCTesterReceiver.AsyncMessageCompletionHandler
+    ) {
+        completionHandler.pointee(arg1 + 2)
+    }
+
+    func deferredReplyMessage(
+        connection: IPC.Connection,
+        arg1: UInt32,
+        completionHandler: CompletionHandlers.IPCTesterReceiver.DeferredReplyMessageCompletionHandler
+    ) {
+        deferredReplyArgument = arg1
+        deferredReply = completionHandler
+    }
+
+    func completeDeferredReply(connection: IPC.Connection, arg1: UInt32) {
+        guard let reply = deferredReply else {
+            return
+        }
+        deferredReply = nil
+        reply.pointee(UInt64(deferredReplyArgument) + UInt64(arg1) + 2)
     }
 }
 

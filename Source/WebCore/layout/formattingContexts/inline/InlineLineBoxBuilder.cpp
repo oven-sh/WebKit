@@ -525,8 +525,7 @@ void LineBoxBuilder::constructInlineLevelBoxes(LineBox& lineBox)
                 lineBox.parentInlineBox(run).setHasContent();
             }
 
-            if (run.isListMarkerOutside())
-                m_outsideListMarkers.append(index);
+            m_outsideListMarkers.append(index);
 
             auto atomicInlineBox = InlineLevelBox::createAtomicInlineBox(listMarkerBox, style, logicalLeft, formattingContext.geometryForBox(listMarkerBox).borderBoxWidth());
             setVerticalPropertiesForInlineLevelBox(lineBox, atomicInlineBox);
@@ -861,7 +860,8 @@ void LineBoxBuilder::stretchRootInlineBoxForExcludedMarkers(LineBox& lineBox) co
 
 void LineBoxBuilder::computeLineBoxGeometry(LineBox& lineBox) const
 {
-    auto lineBoxLogicalHeight = applyTextBoxTrimOnLineBoxIfNeeded(LineBoxVerticalAligner { formattingContext() }.computeLogicalHeightAndAlign(lineBox, lineLayoutResult().hasContentfulInlineContent()), lineBox);
+    auto hasContentfulInlineContent = lineLayoutResult().hasContentfulInlineContent() || (isFirstFormattedLine() && !layoutState().excludedMarkerLayoutBounds().isEmpty());
+    auto lineBoxLogicalHeight = applyTextBoxTrimOnLineBoxIfNeeded(LineBoxVerticalAligner { formattingContext() }.computeLogicalHeightAndAlign(lineBox, hasContentfulInlineContent), lineBox);
     if (formattingContext().quirks().shouldCollapseLineBoxHeight(lineLayoutResult().runs, m_outsideListMarkers.size()))
         lineBoxLogicalHeight = { };
     lineBox.setLogicalRect({ lineLayoutResult().lineGeometry.logicalTopLeft, lineLayoutResult().lineGeometry.logicalWidth, lineBoxLogicalHeight });
@@ -877,7 +877,7 @@ void LineBoxBuilder::adjustOutsideListMarkersPosition(LineBox& lineBox)
     auto rootInlineBoxOffsetFromContentBoxOrIntrusiveFloat = lineBoxOffset + rootInlineBoxLogicalLeft;
     for (auto listMarkerBoxIndex : m_outsideListMarkers) {
         auto& listMarkerRun = lineLayoutResult().runs[listMarkerBoxIndex];
-        ASSERT(listMarkerRun.isListMarkerOutside());
+        ASSERT(listMarkerRun.isListMarker());
         auto& listMarkerBox = downcast<ElementBox>(listMarkerRun.layoutBox());
         auto& listMarkerInlineLevelBox = lineBox.inlineLevelBoxFor(listMarkerRun);
         // Move it to the logical left of the line box (from the logical left of the root inline box).

@@ -69,6 +69,9 @@ bool JITFinalizer::finalize()
     if (!data) [[unlikely]]
         return false;
     codeBlock->setDFGJITData(WTF::move(data));
+#if USE(BUN_JSC_ADDITIONS)
+    codeBlock->snapshotExecutionCounterForAging(codeBlock->dfgJITData()->tierUpCounter().count());
+#endif
 
 #if ENABLE(FTL_JIT)
     m_jitCode->optimizeAfterWarmUp(codeBlock);

@@ -40,7 +40,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ServiceWorkerAgent);
 ServiceWorkerAgent::ServiceWorkerAgent(WorkerAgentContext& context)
     : InspectorAgentBase("ServiceWorker"_s, context)
     , m_serviceWorkerGlobalScope(downcast<ServiceWorkerGlobalScope>(context.globalScope.get()))
-    , m_backendDispatcher(Inspector::ServiceWorkerBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(Inspector::ServiceWorkerBackendDispatcher::create(protect(context.backendDispatcher), this))
 {
     ASSERT(context.globalScope->isContextThread());
 }
@@ -59,7 +59,7 @@ Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::ServiceWorker::Confi
 {
     return Inspector::Protocol::ServiceWorker::Configuration::create()
         .setTargetId(protect(m_serviceWorkerGlobalScope)->inspectorIdentifier())
-        .setSecurityOrigin(m_serviceWorkerGlobalScope->securityOrigin()->toRawString())
+        .setSecurityOrigin(protect(m_serviceWorkerGlobalScope->securityOrigin())->toRawString())
         .setUrl(m_serviceWorkerGlobalScope->contextData().scriptURL.string())
         .setContent(m_serviceWorkerGlobalScope->contextData().script.toString())
         .release();

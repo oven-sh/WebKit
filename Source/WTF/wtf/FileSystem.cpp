@@ -60,10 +60,10 @@ static std::filesystem::path toStdFileSystemPath(StringView path)
 {
 #if HAVE(MISSING_U8STRING)
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    return std::filesystem::u8path(path.utf8().data());
+    return std::filesystem::u8path(path.utf8().legacyCStringPointer());
 ALLOW_DEPRECATED_DECLARATIONS_END
 #else
-    return { std::u8string(byteCast<char8_t>(path.utf8().data())) };
+    return { std::u8string(path.utf8().data()) };
 #endif
 }
 
@@ -531,6 +531,12 @@ bool moveFile(const String& oldPath, const String& newPath)
     return std::filesystem::remove_all(fsOldPath, ec);
 }
 #endif
+
+int statFile(std::span<const char> pathIncludingNullTerminator, struct stat& result)
+{
+    RELEASE_ASSERT(!pathIncludingNullTerminator.empty() && !pathIncludingNullTerminator.back());
+    return stat(pathIncludingNullTerminator.data(), &result);
+}
 
 std::optional<uint64_t> fileSize(const String& path)
 {

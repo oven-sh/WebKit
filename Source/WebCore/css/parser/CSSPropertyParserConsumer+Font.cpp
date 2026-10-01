@@ -30,8 +30,11 @@
 #include "CSSPropertyParserConsumer+Font.h"
 
 #include "CSSCalcSymbolTable.h"
+#include "CSSColorInterpolationMethod.h"
 #include "CSSFontFaceSrcValue.h"
 #include "CSSFontFeatureValue.h"
+#include "CSSFontPaletteMix.h"
+#include "CSSFontPaletteValue.h"
 #include "CSSFontStyleWithAngleValue.h"
 #include "CSSFontVariantLigaturesParser.h"
 #include "CSSFontVariantNumericParser.h"
@@ -43,6 +46,7 @@
 #include "CSSPropertyParserConsumer+AngleDefinitions.h"
 #include "CSSPropertyParserConsumer+CSSPrimitiveValueResolver.h"
 #include "CSSPropertyParserConsumer+Color.h"
+#include "CSSPropertyParserConsumer+ColorInterpolationMethod.h"
 #include "CSSPropertyParserConsumer+Ident.h"
 #include "CSSPropertyParserConsumer+IntegerDefinitions.h"
 #include "CSSPropertyParserConsumer+KeywordDefinitions.h"
@@ -455,7 +459,7 @@ static std::optional<UnresolvedFont> consumeUnresolvedFont(CSSParserTokenRange& 
     };
 }
 
-std::optional<UnresolvedFont> parseUnresolvedFont(const String& string, ScriptExecutionContext& context, std::optional<CSSParserMode> parserModeOverride)
+std::optional<UnresolvedFont> parseUnresolvedFont(StringView string, ScriptExecutionContext& context, std::optional<CSSParserMode> parserModeOverride)
 {
     auto parserContext = CSSParserContext(parserModeOverride ? *parserModeOverride : parserMode(context));
     auto tokenizer = CSSTokenizer(string);
@@ -483,6 +487,117 @@ RefPtr<CSSValue> consumeFontSizeAdjust(CSSParserTokenRange& range, CSS::Property
         return value;
 
     return CSSValuePair::create(metric.releaseNonNull(), value.releaseNonNull());
+}
+
+// MARK: 'font-palette'
+
+static std::optional<CSS::FontPaletteMixParameters::Component> consumeFontPaletteMixComponent(CSSParserTokenRange& args, CSS::PropertyParserState& state)
+{
+    // <font-palette-mix-component> = <'font-palette'> && <percentage [0,100]>?
+    // https://drafts.csswg.org/css-fonts-4/#funcdef-palette-mix (subset)
+
+    auto percentage = MetaConsumer<CSS::FontPaletteMixParameters::Component::Percentage>::consume(args, state);
+
+    auto palette = consumeFontPaletteUnresolved(args, state);
+    if (!palette)
+        return std::nullopt;
+
+    if (!percentage)
+        percentage = MetaConsumer<CSS::FontPaletteMixParameters::Component::Percentage>::consume(args, state);
+
+    return CSS::FontPaletteMixParameters::Component {
+        .palette = WTF::move(*palette),
+        .percentage = WTF::move(percentage)
+    };
+}
+
+static std::optional<CSS::FontPaletteMixFunction> consumeFontPaletteMixFunctionUnresolved(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    // <palette-mix()> = palette-mix( <color-interpolation-method>? , [ <'font-palette'> && <percentage [0,100]>? ]# )
+    // https://drafts.csswg.org/css-fonts-4/#funcdef-palette-mix
+    ASSERT(range.peek().functionId() == CSSValuePaletteMix);
+
+    if (!state.context.cssFontPaletteMixFunctionEnabled)
+        return std::nullopt;
+
+    auto args = consumeFunction(range);
+
+    std::optional<CSS::ColorInterpolationMethod> colorInterpolationMethod = CSS::defaultInterpolationMethodForPaletteMix;
+    if (args.peek().id() == CSSValueIn) {
+        colorInterpolationMethod = consumeColorInterpolationMethod(args, state);
+        if (!colorInterpolationMethod)
+            return std::nullopt;
+
+        if (!consumeCommaIncludingWhitespace(args))
+            return std::nullopt;
+    }
+
+    CommaSeparatedVector<CSS::FontPaletteMixParameters::Component> components;
+    do {
+        auto component = consumeFontPaletteMixComponent(args, state);
+        if (!component)
+            return std::nullopt;
+        components.value.append(WTF::move(*component));
+    } while (consumeCommaIncludingWhitespace(args));
+
+    if (!args.atEnd())
+        return std::nullopt;
+
+    return CSS::FontPaletteMixFunction {
+        CSS::FontPaletteMixFunctionValue {
+            .parameters = CSS::FontPaletteMixParameters {
+                .colorInterpolationMethod = WTF::move(*colorInterpolationMethod),
+                .components = WTF::move(components),
+            }
+        }
+    };
+}
+
+std::optional<CSS::FontPalette> consumeFontPaletteUnresolved(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    // <'font-palette'> = normal | light | dark | <palette-identifier> | <palette-mix()>
+    // https://drafts.csswg.org/css-fonts-4/#propdef-font-palette
+
+    switch (range.peek().id()) {
+    case CSSValueInvalid:
+        break;
+    case CSSValueNormal:
+        range.consumeIncludingWhitespace();
+        return CSS::FontPalette { CSS::Keyword::Normal { } };
+    case CSSValueLight:
+        range.consumeIncludingWhitespace();
+        return CSS::FontPalette { CSS::Keyword::Light { } };
+    case CSSValueDark:
+        range.consumeIncludingWhitespace();
+        return CSS::FontPalette { CSS::Keyword::Dark { } };
+    default:
+        return std::nullopt;
+    }
+
+    switch (range.peek().functionId()) {
+    case CSSValueInvalid:
+        break;
+    case CSSValuePaletteMix:
+        return consumeFontPaletteMixFunctionUnresolved(range, state);
+    default:
+        return std::nullopt;
+    }
+
+    auto paletteIdentifier = consumeUnresolvedDashedIdent(range, state);
+    if (!paletteIdentifier)
+        return std::nullopt;
+
+    return CSS::FontPalette { WTF::move(*paletteIdentifier) };
+}
+
+RefPtr<CSSValue> consumeFontPalette(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    // <'font-palette'> = normal | light | dark | <palette-identifier> | <palette-mix()>
+    // https://drafts.csswg.org/css-fonts-4/#propdef-font-palette
+
+    if (auto unresolved = consumeFontPaletteUnresolved(range, state))
+        return CSSFontPaletteValue::create(WTF::move(*unresolved));
+    return nullptr;
 }
 
 // MARK: - @-rule descriptor consumers:
@@ -633,7 +748,7 @@ RefPtr<CSSValueList> consumeFontFaceSrc(CSSParserTokenRange& range, CSS::Propert
     return CSSValueList::createCommaSeparated(WTF::move(values));
 }
 
-RefPtr<CSSValueList> parseFontFaceSrc(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValueList> parseFontFaceSrc(StringView string, ScriptExecutionContext& context)
 {
     RefPtr document = dynamicDowncast<Document>(context);
     CSSParserContext parserContext = document ? CSSParserContext(*document) : CSSParserContext(HTMLStandardMode);
@@ -655,7 +770,7 @@ RefPtr<CSSValueList> parseFontFaceSrc(const String& string, ScriptExecutionConte
 
 // MARK: @font-face 'size-adjust'
 
-RefPtr<CSSValue> parseFontFaceSizeAdjust(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceSizeAdjust(StringView string, ScriptExecutionContext& context)
 {
     // <'size-adjust'> = <percentage [0,∞]>
     // https://www.w3.org/TR/css-fonts-5/#descdef-font-face-size-adjust
@@ -677,7 +792,7 @@ RefPtr<CSSValue> parseFontFaceSizeAdjust(const String& string, ScriptExecutionCo
     return parsedValue;
 }
 
-static RefPtr<CSSValue> parseFontFaceMetricOverride(const String& string, ScriptExecutionContext& context,
+static RefPtr<CSSValue> parseFontFaceMetricOverride(StringView string, ScriptExecutionContext& context,
     NOESCAPE const Function<RefPtr<CSSValue>(CSSParserTokenRange&, CSS::PropertyParserState&)>& consumeMetricOverride)
 {
     // <font-metrics-override> = normal | <percentage [0,∞]>
@@ -700,24 +815,24 @@ static RefPtr<CSSValue> parseFontFaceMetricOverride(const String& string, Script
     return parsedValue;
 }
 
-RefPtr<CSSValue> parseFontFaceAscentOverride(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceAscentOverride(StringView string, ScriptExecutionContext& context)
 {
     return parseFontFaceMetricOverride(string, context, CSSPropertyParsing::consumeFontFaceAscentOverride);
 }
 
-RefPtr<CSSValue> parseFontFaceDescentOverride(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceDescentOverride(StringView string, ScriptExecutionContext& context)
 {
     return parseFontFaceMetricOverride(string, context, CSSPropertyParsing::consumeFontFaceDescentOverride);
 }
 
-RefPtr<CSSValue> parseFontFaceLineGapOverride(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceLineGapOverride(StringView string, ScriptExecutionContext& context)
 {
     return parseFontFaceMetricOverride(string, context, CSSPropertyParsing::consumeFontFaceLineGapOverride);
 }
 
 // MARK: @font-face 'unicode-range'
 
-RefPtr<CSSValueList> parseFontFaceUnicodeRange(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValueList> parseFontFaceUnicodeRange(StringView string, ScriptExecutionContext& context)
 {
     // <'unicode-range'> = <unicode-range-token>#
     // https://drafts.csswg.org/css-fonts/#descdef-font-face-unicode-range
@@ -740,7 +855,7 @@ RefPtr<CSSValueList> parseFontFaceUnicodeRange(const String& string, ScriptExecu
 
 // MARK: @font-face 'font-display'
 
-RefPtr<CSSValue> parseFontFaceDisplay(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceDisplay(StringView string, ScriptExecutionContext& context)
 {
     // <'font-display'> = auto | block | swap | fallback | optional
     // https://drafts.csswg.org/css-fonts/#descdef-font-face-font-display
@@ -763,7 +878,7 @@ RefPtr<CSSValue> parseFontFaceDisplay(const String& string, ScriptExecutionConte
 
 // MARK: @font-face 'font-style'
 
-RefPtr<CSSValue> parseFontFaceFontStyle(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceFontStyle(StringView string, ScriptExecutionContext& context)
 {
     // <'font-style'> = auto | normal | italic | oblique [ <angle [-90deg,90deg]>{1,2} ]?
     // https://drafts.csswg.org/css-fonts/#descdef-font-face-font-style
@@ -915,7 +1030,7 @@ RefPtr<CSSValue> consumeFeatureTagValue(CSSParserTokenRange& range, CSS::Propert
     return CSSFontFeatureValue::create(WTF::move(*tag), WTF::move(*tagValue));
 }
 
-RefPtr<CSSValue> parseFontFaceFeatureSettings(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceFeatureSettings(StringView string, ScriptExecutionContext& context)
 {
     // <'font-feature-settings'> = normal | <feature-tag-value>#
     // https://drafts.csswg.org/css-fonts/#descdef-font-face-font-feature-settings
@@ -961,7 +1076,7 @@ RefPtr<CSSValue> consumeVariationTagValue(CSSParserTokenRange& range, CSS::Prope
 
 // MARK: @font-face 'font-width'
 
-RefPtr<CSSValue> parseFontFaceFontWidth(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceFontWidth(StringView string, ScriptExecutionContext& context)
 {
     // <font-width> = auto | <'font-width'>{1,2}
     // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-width
@@ -985,7 +1100,7 @@ RefPtr<CSSValue> parseFontFaceFontWidth(const String& string, ScriptExecutionCon
 
 // MARK: @font-face 'font-weight'
 
-RefPtr<CSSValue> parseFontFaceFontWeight(const String& string, ScriptExecutionContext& context)
+RefPtr<CSSValue> parseFontFaceFontWeight(StringView string, ScriptExecutionContext& context)
 {
     // <'font-weight'> = auto | <font-weight-absolute>{1,2}
     // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-weight

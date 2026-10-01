@@ -297,10 +297,14 @@ public:
         m_additionalData.domAttribute = domAttribute;
     }
     
-    void setCacheableCustom(JSObject* slotBase, unsigned attributes, GetValueFunc getValue, PutValueFunc putValue = nullptr)
+    // Inline caches need the offset (which will be invalidOffset if e.g. served from a static property table,
+    // with no backing property, or the offset of the property holding the CustomGetterSetter otherwise) to
+    // recognize the case of an unbacked custom being shadowed by the addition of a property to a dictionary
+    // (that is, without a structure transition) and decline to cache.
+    void setCacheableCustom(JSObject* slotBase, unsigned attributes, GetValueFunc getValue, PutValueFunc putValue = nullptr, PropertyOffset offset = invalidOffset)
     {
         ASSERT(attributes == attributesForStructure(attributes));
-        
+
         ASSERT(getValue);
         m_data.custom.getValue = getValue;
         m_data.custom.putValue = putValue;
@@ -309,13 +313,14 @@ public:
         ASSERT(slotBase);
         m_slotBase = slotBase;
         m_propertyType = TypeCustom;
+        m_offset = offset;
 
         m_cacheability = CachingAllowed;
     }
 
-    void setCacheableCustom(JSObject* slotBase, unsigned attributes, GetValueFunc getValue, PutValueFunc putValue, DOMAttributeAnnotation domAttribute)
+    void setCacheableCustom(JSObject* slotBase, unsigned attributes, GetValueFunc getValue, PutValueFunc putValue, DOMAttributeAnnotation domAttribute, PropertyOffset offset = invalidOffset)
     {
-        setCacheableCustom(slotBase, attributes, getValue, putValue);
+        setCacheableCustom(slotBase, attributes, getValue, putValue, offset);
         m_additionalDataType = AdditionalDataType::DOMAttribute;
         m_additionalData.domAttribute = domAttribute;
     }

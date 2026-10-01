@@ -41,6 +41,29 @@ StringView stringViewFromUTF8(String& ref, const char* characters)
     return ref;
 }
 
+TEST(WTF, StringViewASCII)
+{
+    // Null StringView.
+    EXPECT_STREQ("", StringView().ascii().data());
+
+    // Empty StringView.
+    EXPECT_STREQ("", emptyStringView().ascii().data());
+
+    // 8-bit StringView.
+    String eightBit("foobar"_s);
+    EXPECT_STREQ("foobar", StringView(eightBit).ascii().data());
+
+    // Substring, to check the view's own length is used rather than the underlying string's.
+    EXPECT_STREQ("oob", StringView(eightBit).substring(1, 3).ascii().data());
+
+    // Characters outside 32..127 become '?', in both 8-bit and 16-bit views.
+    String backingStore;
+    EXPECT_STREQ("caf?", stringViewFromUTF8(backingStore, "caf\xC3\xA9").ascii().data());
+    EXPECT_STREQ("caf?", stringViewFromUTF8(backingStore, "caf\xE6\xBC\xA2").ascii().data());
+    String withTab("a\tb"_s);
+    EXPECT_STREQ("a?b", StringView(withTab).ascii().data());
+}
+
 TEST(WTF, StringViewStartsWithEmptyVsNull)
 {
     StringView nullView;
@@ -269,32 +292,32 @@ TEST(WTF, StringViewSplitBasic)
     Vector<String> expected({ "his is a sentence."_s });
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split('.'));
     expected = { "This is a sentence"_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split('a'));
     expected = { "This is "_s, " sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split(' '));
     expected = { "This"_s, "is"_s, "a"_s, "sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     // Non-existent separator
     actual = vectorFromSplitResult(a.split('z'));
     expected = { "This is a sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 }
 
 TEST(WTF, StringViewSplitWithConsecutiveSeparators)
@@ -306,13 +329,13 @@ TEST(WTF, StringViewSplitWithConsecutiveSeparators)
     Vector<String> expected({ "This"_s, "is"_s, "a"_s, "sentence."_s });
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.splitAllowingEmptyEntries(' '));
     expected = { ""_s, "This"_s, ""_s, ""_s, ""_s, ""_s, "is"_s, ""_s, "a"_s, ""_s, ""_s, ""_s, ""_s, ""_s, ""_s, "sentence."_s, ""_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 }
 
 TEST(WTF, StringViewEqualBasic)

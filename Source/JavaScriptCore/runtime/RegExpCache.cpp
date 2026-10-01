@@ -60,6 +60,9 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
     vm.addRegExpToTrace(regExp);
 #endif
 
+    if (!regExp->isValid())
+        return regExp;
+
     {
         Locker locker { m_lock };
         weakAdd(m_weakCache, key, Weak<RegExp>(regExp, this));
@@ -116,6 +119,19 @@ void RegExpCache::deleteAllCode()
     for (auto& [key, weakHandle] : m_weakCache) {
         RegExp* regExp = weakHandle.get();
         if (!regExp) // Skip zombies.
+            continue;
+        regExp->deleteCode();
+    }
+}
+
+// A RegExp that has matched since the last full collection began keeps its code; the others compile again when they
+// next match.
+void RegExpCache::deleteCodeNotUsedInCurrentFullCollectionCycle(VM& vm)
+{
+    Locker locker { m_lock };
+    for (auto& [key, weakHandle] : m_weakCache) {
+        RegExp* regExp = weakHandle.get();
+        if (!regExp || regExp->wasUsedInCurrentFullCollectionCycle(vm))
             continue;
         regExp->deleteCode();
     }

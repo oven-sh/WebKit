@@ -340,9 +340,14 @@ void SWServerJobQueue::runRegisterJob(const ServiceWorkerJobData& job)
 
     // If registration is not null (in our parlance "empty"), then:
     if (RefPtr registration = server->getRegistration(m_registrationKey)) {
+        if (job.isFromServiceWorkerPage) {
+            if (auto serviceWorkerPageIdentifier = job.serviceWorkerPageIdentifier())
+                server->didReconnectServiceWorkerPage(*registration, *serviceWorkerPageIdentifier);
+        }
+
         RefPtr newestWorker = registration->getNewestWorker();
         if (newestWorker && equalIgnoringFragmentIdentifier(job.scriptURL, newestWorker->scriptURL()) && job.workerType == newestWorker->type() && job.registrationOptions->updateViaCache == registration->updateViaCache()) {
-            RELEASE_LOG(ServiceWorker, "%p - SWServerJobQueue::runRegisterJob: Found directly reusable registration %" PRIu64 " for job %s (DONE)", this, registration->identifier().toUInt64(), job.identifier().loggingString().utf8().data());
+            RELEASE_LOG(ServiceWorker, "%p - SWServerJobQueue::runRegisterJob: Found directly reusable registration %" PRIu64 " for job %s (DONE)", this, registration->identifier().toUInt64(), job.identifier().loggingString().utf8());
             server->resolveRegistrationJob(job, registration->data(), ShouldNotifyWhenResolved::No);
             finishCurrentJob();
             return;
@@ -350,12 +355,12 @@ void SWServerJobQueue::runRegisterJob(const ServiceWorkerJobData& job)
         // This is not specified yet (https://github.com/w3c/ServiceWorker/issues/1189).
         if (registration->updateViaCache() != job.registrationOptions->updateViaCache)
             registration->setUpdateViaCache(job.registrationOptions->updateViaCache);
-        RELEASE_LOG(ServiceWorker, "%p - SWServerJobQueue::runRegisterJob: Found registration %" PRIu64 " for job %s but it needs updating", this, registration->identifier().toUInt64(), job.identifier().loggingString().utf8().data());
+        RELEASE_LOG(ServiceWorker, "%p - SWServerJobQueue::runRegisterJob: Found registration %" PRIu64 " for job %s but it needs updating", this, registration->identifier().toUInt64(), job.identifier().loggingString().utf8());
     } else {
         Ref newRegistration = SWServerRegistration::create(server.get(), m_registrationKey, job.registrationOptions->updateViaCache, job.scopeURL, job.scriptURL, job.serviceWorkerPageIdentifier(), NavigationPreloadState::defaultValue());
         server->addRegistration(WTF::move(newRegistration));
 
-        RELEASE_LOG(ServiceWorker, "%p - SWServerJobQueue::runRegisterJob: No existing registration for job %s, constructing a new one.", this, job.identifier().loggingString().utf8().data());
+        RELEASE_LOG(ServiceWorker, "%p - SWServerJobQueue::runRegisterJob: No existing registration for job %s, constructing a new one.", this, job.identifier().loggingString().utf8());
     }
 
     runUpdateJob(job);

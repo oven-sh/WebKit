@@ -58,11 +58,11 @@ struct DetectedText {
     Vector<Point2D> cornerPoints;
 };
 
-inline DetectedText convertFromBacking(const ShapeDetection::DetectedText& detectedText)
+inline DetectedText convertFromBacking(ShapeDetection::DetectedText&& detectedText)
 {
     return {
         DOMRectReadOnly::create(detectedText.boundingBox.x(), detectedText.boundingBox.y(), detectedText.boundingBox.width(), detectedText.boundingBox.height()),
-        detectedText.rawValue,
+        WTF::move(detectedText.rawValue),
         detectedText.cornerPoints.map([] (const auto& cornerPoint) {
             return Point2D { cornerPoint.x(), cornerPoint.y() };
         }),

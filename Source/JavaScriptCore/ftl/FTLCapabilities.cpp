@@ -152,6 +152,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case NewAsyncGeneratorFunction:
     case NewBoundFunction:
     case GetClosureVar:
+    case GetLazyClosureVar:
     case PutClosureVar:
     case GetInternalField:
     case PutInternalField:
@@ -527,7 +528,9 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case BufferReadFloat:
     case BufferWrite:
     case DateNow:
+    case DateGetStorage:
     case DateGetInt32OrNaN:
+    case DateGetMilliseconds:
     case DateGetTime:
     case DateSetTime:
     case ResolvePromiseFirstResolving:

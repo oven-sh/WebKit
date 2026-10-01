@@ -48,6 +48,7 @@ PASS :vertex_shader_type_matches_attribute_format:format="sint32x3"
 PASS :vertex_shader_type_matches_attribute_format:format="sint32x4"
 PASS :vertex_shader_type_matches_attribute_format:format="unorm10-10-10-2"
 PASS :vertex_shader_type_matches_attribute_format:format="unorm8x4-bgra"
+PASS :vertex_shader_type_matches_attribute_format:format="snorm10-10-10-2"
 PASS :vertex_attribute_offset_alignment:format="uint8";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":0,"add":0}
 PASS :vertex_attribute_offset_alignment:format="uint8";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":0,"add":1}
 PASS :vertex_attribute_offset_alignment:format="uint8";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":0,"add":2}
@@ -636,6 +637,18 @@ PASS :vertex_attribute_offset_alignment:format="unorm8x4-bgra";arrayStrideVarian
 PASS :vertex_attribute_offset_alignment:format="unorm8x4-bgra";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":1,"add":-4}
 PASS :vertex_attribute_offset_alignment:format="unorm8x4-bgra";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":1,"add":-6}
 PASS :vertex_attribute_offset_alignment:format="unorm8x4-bgra";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":1,"add":-8}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":0,"add":0}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":0,"add":2}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":0,"add":4}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":1,"add":-4}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":1,"add":-6}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":0,"add":256};offsetVariant={"mult":1,"add":-8}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":0,"add":0}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":0,"add":2}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":0,"add":4}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":1,"add":-4}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":1,"add":-6}
+PASS :vertex_attribute_offset_alignment:format="snorm10-10-10-2";arrayStrideVariant={"mult":1,"add":0};offsetVariant={"mult":1,"add":-8}
 PASS :vertex_attribute_contained_in_stride:format="uint8"
 PASS :vertex_attribute_contained_in_stride:format="uint8x2"
 PASS :vertex_attribute_contained_in_stride:format="uint8x4"
@@ -677,5 +690,6 @@ PASS :vertex_attribute_contained_in_stride:format="sint32x3"
 PASS :vertex_attribute_contained_in_stride:format="sint32x4"
 PASS :vertex_attribute_contained_in_stride:format="unorm10-10-10-2"
 PASS :vertex_attribute_contained_in_stride:format="unorm8x4-bgra"
+PASS :vertex_attribute_contained_in_stride:format="snorm10-10-10-2"
 PASS :many_attributes_overlapping:
 

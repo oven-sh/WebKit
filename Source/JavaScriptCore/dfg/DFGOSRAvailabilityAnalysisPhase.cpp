@@ -195,7 +195,7 @@ public:
                             dataLogLn();
                         }
 
-                        DFG_CRASH(m_graph, node, toCString("Live bytecode local not available: operand = ", operand, ", availabilityMap = ", availabilityMap, ", origin = ", exitOrigin).data());
+                        DFG_CRASH(m_graph, node, toUTF8CString("Live bytecode local not available: operand = ", operand, ", availabilityMap = ", availabilityMap, ", origin = ", exitOrigin).legacyCStringPointer());
                     }
                 }
             }
@@ -359,8 +359,10 @@ void LocalOSRAvailabilityCalculator::executeNode(Node* node)
     case LoadVarargs:
     case ForwardVarargs: {
         LoadVarargsData* data = node->loadVarargsData();
+        killHeaps(data->count);
         m_availability.m_locals.operand(data->count) = Availability(node->child1().node(), FlushedAt(FlushedInt32, data->machineCount));
         for (unsigned i = data->limit; i--;) {
+            killHeaps(data->start + i);
             m_availability.m_locals.operand(data->start + i) =
                 Availability(FlushedAt(FlushedJSValue, data->machineStart.isValid() ? (data->machineStart + i) : VirtualRegister()));
         }

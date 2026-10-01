@@ -117,6 +117,13 @@ inline void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_
     queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2 });
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+inline void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+{
+    queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
+}
+#endif
+
 template<bool useCallOnEachMicrotask>
 inline void MicrotaskQueue::performMicrotaskCheckpoint(VM& vm, NOESCAPE const Invocable<void(JSGlobalObject*, JSGlobalObject*)> auto& globalObjectSwitchCallback)
 {

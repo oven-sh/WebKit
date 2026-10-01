@@ -65,11 +65,6 @@ public:
         addBytes(std::as_bytes(input));
     }
 
-    void addBytes(const CString& input)
-    {
-        addBytes(std::as_bytes(input.span()));
-    }
-
     WTF_EXPORT_PRIVATE void addUTF8Bytes(StringView);
 
 #if USE(CF)
@@ -88,10 +83,10 @@ public:
     WTF_EXPORT_PRIVATE void computeHash(Digest&);
 
     // Get a hex hash from the digest.
-    WTF_EXPORT_PRIVATE static CString hexDigest(const Digest&);
+    WTF_EXPORT_PRIVATE static ASCIICString hexDigest(const Digest&);
 
     // Compute the hex digest directly.
-    WTF_EXPORT_PRIVATE CString computeHexDigest();
+    WTF_EXPORT_PRIVATE ASCIICString computeHexDigest();
 
 private:
 #if PLATFORM(COCOA)

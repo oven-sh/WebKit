@@ -6,6 +6,7 @@
 # found in the LICENSE file.
 
 set(libangle_common_headers
+    "src/common/base/anglebase/trace_event/trace_categories.h"
     "src/common/BinaryStream.h"
     "src/common/CircularBuffer.h"
     "src/common/Color.h"
@@ -15,6 +16,7 @@ set(libangle_common_headers
     "src/common/FixedQueue.h"
     "src/common/FixedVector.h"
     "src/common/MemoryBuffer.h"
+    "src/common/MemoryTagging.h"
     "src/common/Optional.h"
     "src/common/PackedEGLEnums_autogen.h"
     "src/common/PackedEnums.h"
@@ -29,6 +31,7 @@ set(libangle_common_headers
     "src/common/angleutils.h"
     "src/common/apple_platform_utils.h"
     "src/common/backtrace_utils.h"
+    "src/common/com_utils.h"
     "src/common/base/anglebase/base_export.h"
     "src/common/base/anglebase/containers/mru_cache.h"
     "src/common/base/anglebase/logging.h"
@@ -86,6 +89,7 @@ set(libangle_common_sources
     "src/common/android_util.cpp"
     "src/common/angleutils.cpp"
     "src/common/base/anglebase/sha1.cc"
+    "src/common/base/anglebase/trace_event/trace_categories.cc"
     "src/common/debug.cpp"
     "src/common/entry_points_enum_autogen.cpp"
     "src/common/event_tracer.cpp"
@@ -125,6 +129,13 @@ if(is_linux OR is_chromeos OR is_android OR is_fuchsia)
     list(APPEND libangle_common_sources
         "src/common/system_utils_linux.cpp"
         "src/common/system_utils_posix.cpp"
+    )
+endif()
+
+if(is_linux OR is_chromeos)
+    list(APPEND libangle_common_sources
+        "src/common/linux/window_system.cpp"
+        "src/common/linux/window_system.h"
     )
 endif()
 
@@ -295,11 +306,8 @@ set(libangle_headers
     "src/libANGLE/MemoryObject.h"
     "src/libANGLE/MemoryProgramCache.h"
     "src/libANGLE/MemoryShaderCache.h"
+    "src/libANGLE/ObjectMap.h"
     "src/libANGLE/Observer.h"
-    "src/libANGLE/Overlay.h"
-    "src/libANGLE/OverlayWidgets.h"
-    "src/libANGLE/Overlay_autogen.h"
-    "src/libANGLE/Overlay_font_autogen.h"
     "src/libANGLE/PixelLocalStorage.h"
     "src/libANGLE/Program.h"
     "src/libANGLE/ProgramExecutable.h"
@@ -359,7 +367,6 @@ set(libangle_headers
     "src/libANGLE/renderer/gl/functionsgl_enums.h"
     "src/libANGLE/renderer/ImageImpl.h"
     "src/libANGLE/renderer/MemoryObjectImpl.h"
-    "src/libANGLE/renderer/OverlayImpl.h"
     "src/libANGLE/renderer/ProgramImpl.h"
     "src/libANGLE/renderer/ProgramExecutableImpl.h"
     "src/libANGLE/renderer/ProgramPipelineImpl.h"
@@ -397,7 +404,6 @@ set(libangle_headers
     "src/libANGLE/validationES3_autogen.h"
     "src/libANGLE/validationESEXT.h"
     "src/libANGLE/validationESEXT_autogen.h"
-    "src/common/base/anglebase/trace_event/trace_event.h"
     "src/libANGLE/CLPlatform.h"
     "src/libANGLE/renderer/CLPlatformImpl.h"
     "src/libANGLE/CLObject.h"
@@ -442,10 +448,6 @@ set(libangle_sources
     "src/libANGLE/MemoryProgramCache.cpp"
     "src/libANGLE/MemoryShaderCache.cpp"
     "src/libANGLE/Observer.cpp"
-    "src/libANGLE/Overlay.cpp"
-    "src/libANGLE/OverlayWidgets.cpp"
-    "src/libANGLE/Overlay_autogen.cpp"
-    "src/libANGLE/Overlay_font_autogen.cpp"
     "src/libANGLE/PixelLocalStorage.cpp"
     "src/libANGLE/Platform.cpp"
     "src/libANGLE/Program.cpp"
@@ -593,6 +595,7 @@ set(libangle_mac_sources "src/libANGLE/renderer/driver_utils_mac.mm")
 
 list(APPEND libangle_sources
     "src/common/frame_capture_binary_data.h"
+    "src/common/frame_capture_shared.h"
     "src/common/frame_capture_utils.h"
     "src/common/frame_capture_utils_autogen.h"
     "src/common/gl_enum_utils.h"

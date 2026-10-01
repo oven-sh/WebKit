@@ -26,14 +26,86 @@
 #pragma once
 
 #include "StyleGridTrackBreadth.h"
+#include "StyleGridTrackSize.h"
 #include "StyleZoomPrimitives.h"
 
 namespace WebCore {
 namespace Layout {
 
+// https://drafts.csswg.org/css-grid-2/#typedef-track-size
+// fit-content() is only ever a max track sizing function.
+class MaxTrackSizingFunction {
+public:
+    MaxTrackSizingFunction(Style::GridTrackBreadth breadth)
+        : m_value(WTF::move(breadth)) { }
+
+    MaxTrackSizingFunction(Style::GridTrackSize::FitContent fitContent)
+        : m_value(WTF::move(fitContent)) { }
+
+    FORWARD_VARIANT_FUNCTIONS(MaxTrackSizingFunction, m_value)
+
+    // Absent for a fit-content() maximum.
+    std::optional<Style::GridTrackBreadth> tryBreadth() const
+    {
+        if (auto* breadth = std::get_if<Style::GridTrackBreadth>(&m_value))
+            return *breadth;
+        return { };
+    }
+
+    bool isAuto() const
+    {
+        auto breadth = tryBreadth();
+        return breadth && breadth->isAuto();
+    }
+
+    bool isFlex() const
+    {
+        auto breadth = tryBreadth();
+        return breadth && breadth->isFlex();
+    }
+
+    Style::GridTrackBreadth::Flex flex() const
+    {
+        ASSERT(isFlex());
+        return tryBreadth()->flex();
+    }
+
+    bool isFitContent() const
+    {
+        return std::holds_alternative<Style::GridTrackSize::FitContent>(m_value);
+    }
+
+    Style::GridTrackSize::FitContent fitContent() const
+    {
+        ASSERT(isFitContent());
+        return std::get<Style::GridTrackSize::FitContent>(m_value);
+    }
+
+    bool isContentSized() const
+    {
+        auto breadth = tryBreadth();
+        return !breadth || breadth->isContentSized();
+    }
+
+private:
+    Variant<Style::GridTrackBreadth, Style::GridTrackSize::FitContent> m_value;
+};
+
 struct TrackSizingFunctions {
+    // https://drafts.csswg.org/css-grid-1/#extra-space
+    // The resolved fit-content() argument, which a fit-content() track may not grow past.
+    std::optional<LayoutUnit> fitContentLimit(LayoutUnit availableSpace) const
+    {
+        if (!max.isFitContent())
+            return { };
+        auto fitContent = max.fitContent();
+        if (auto fixedArgument = fitContent->value.tryFixed())
+            return Style::evaluate<LayoutUnit>(*fixedArgument, zoom);
+        return Style::evaluate<LayoutUnit>(fitContent->value, availableSpace, zoom);
+    }
+
     Style::GridTrackBreadth min { CSS::Keyword::Auto { } };
-    Style::GridTrackBreadth max { CSS::Keyword::Auto { } };
+    MaxTrackSizingFunction max { Style::GridTrackBreadth { CSS::Keyword::Auto { } } };
     Style::ZoomFactor zoom;
 };
 

@@ -158,7 +158,8 @@ public:
             return false;
 
         auto backendHandle = sharing->createBackendHandle(SharedMemory::Protection::ReadOnly);
-        ASSERT(backendHandle);
+        if (!backendHandle)
+            return false;
 
         {
             Locker locker { m_surfaceLock };
@@ -270,7 +271,8 @@ void GraphicsLayerCARemote::setLayerContentsToImageBuffer(PlatformCALayer& layer
         return;
 
     auto backendHandle = sharing->createBackendHandle(SharedMemory::Protection::ReadOnly);
-    ASSERT(backendHandle);
+    if (!backendHandle)
+        return;
 
     layer.setAcceleratesDrawing(true);
 #if HAVE(SUPPORT_HDR_DISPLAY)

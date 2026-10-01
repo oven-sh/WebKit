@@ -141,7 +141,9 @@
 static const Seconds delayBeforeNoVisibleContentsRectsLogging = 1_s;
 static const Seconds delayBeforeNoCommitsLogging = 5_s;
 static constexpr Seconds delayBeforeUpdatingVisibleContentRectsWhenChangingObscuredInsetsInteractively = 100_ms;
+#if ENABLE(APP_HIGHLIGHTS)
 static const unsigned highlightMargin = 5;
+#endif
 
 static WebCore::IntDegrees deviceOrientationForUIInterfaceOrientation(UIInterfaceOrientation orientation)
 {
@@ -1421,7 +1423,7 @@ static void changeContentOffsetBoundedInValidRange(UIScrollView *scrollView, Web
     auto transform = CATransform3DMakeScale(deviceScale, deviceScale, 1);
 
     auto snapshotFormat = WebCore::convertToIOSurfaceFormat(WebCore::PlatformCALayer::contentsFormatForLayer());
-    auto surface = WebCore::IOSurface::create(nullptr, WebCore::expandedIntSize(snapshotSize), WebCore::DestinationColorSpace::SRGB(), WebCore::IOSurface::Name::Snapshot, snapshotFormat);
+    auto surface = WebCore::IOSurface::create(nullptr, WebCore::expandedIntSize(snapshotSize), WebCore::ColorSpace::SRGB(), WebCore::IOSurface::Name::Snapshot, snapshotFormat);
     if (!surface)
         return nullptr;
 
@@ -2094,7 +2096,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
         coordinator->setRootNodeIsInUserScroll(true);
 
         if (coordinator->scrollingPerformanceTestingEnabled() && _scrollPerfIntervalState == ScrollPerfIntervalState::Inactive) {
-            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES; currentURL=%s", _page->currentURL().utf8().data());
+            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES; currentURL=%s", _page->currentURL().utf8());
             _scrollPerfIntervalState = ScrollPerfIntervalState::FingerDown;
             _scrollPerfRubberbandingNotified = NO;
         }
@@ -2177,7 +2179,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
                 _scrollPerfIntervalState = ScrollPerfIntervalState::Inactive;
             }
             if (decelerate && _scrollPerfIntervalState == ScrollPerfIntervalState::Inactive) {
-                WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES; currentURL=%s", _page->currentURL().utf8().data());
+                WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES; currentURL=%s", _page->currentURL().utf8());
                 _scrollPerfIntervalState = ScrollPerfIntervalState::Momentum;
             }
         }
@@ -2277,10 +2279,10 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
     // this may not be a WKBEScrollViewScrollUpdatePhaseBegin event, nor even necessarily the first WKBEScrollViewScrollUpdatePhaseChanged event.
     if (!_wheelEventCountInCurrentScrollGesture)
         overridePhase = WebKit::WebWheelEvent::Phase::Began;
-    auto event = WebKit::WebIOSEventFactory::createWebWheelEvent(update, _contentView.get(), overridePhase);
+    Ref event = WebKit::WebWheelEvent::create(WebKit::WebIOSEventFactory::createWebWheelEvent(update, _contentView.get(), overridePhase));
 
     _wheelEventCountInCurrentScrollGesture++;
-    _page->handleWheelEventWithoutScrolling(event, [weakSelf = WeakObjCPtr<WKWebView>(self), strongCompletion = makeBlockPtr(completion), isCancelable, isHandledByDefault](bool defaultPrevented) {
+    _page->handleWheelEventWithoutScrolling(WTF::move(event), [weakSelf = WeakObjCPtr<WKWebView>(self), strongCompletion = makeBlockPtr(completion), isCancelable, isHandledByDefault](bool defaultPrevented) {
         RetainPtr strongSelf = weakSelf.get();
         if (!strongSelf) {
             if (isCancelable)
@@ -4658,10 +4660,12 @@ static bool isLockdownModeWarningNeeded()
     return nil;
 }
 
+#if HAVE(UIKIT_PRINTING)
 - (_WKWebViewPrintFormatter *)_webViewPrintFormatter
 {
     return checked_objc_cast<_WKWebViewPrintFormatter>(self.viewPrintFormatter);
 }
+#endif
 
 - (_WKDragInteractionPolicy)_dragInteractionPolicy
 {
@@ -5053,7 +5057,7 @@ static bool isLockdownModeWarningNeeded()
     NSString *displayName = self.window.screen.displayConfiguration.name;
     if (displayName && !self.window.hidden) {
         TraceScope snapshotScope(RenderServerSnapshotStart, RenderServerSnapshotEnd);
-        auto surface = WebCore::IOSurface::create(nullptr, WebCore::expandedIntSize(WebCore::FloatSize(imageSize)), WebCore::DestinationColorSpace::SRGB(), WebCore::IOSurface::Name::Snapshot);
+        auto surface = WebCore::IOSurface::create(nullptr, WebCore::expandedIntSize(WebCore::FloatSize(imageSize)), WebCore::ColorSpace::SRGB(), WebCore::IOSurface::Name::Snapshot);
         if (!surface) {
             completionHandler(nullptr);
             return;
@@ -5168,7 +5172,7 @@ static std::optional<WebCore::ViewportArguments> viewportArgumentsFromDictionary
         String keyString = key;
         String valueString = value;
         WebCore::setViewportFeature(viewportArguments, keyString, valueString, metaViewportInteractiveWidgetEnabled, [] (WebCore::ViewportErrorCode, const String& errorMessage) {
-            NSLog(@"-[WKWebView _overrideViewportWithArguments:]: Error parsing viewport argument: %s", errorMessage.utf8().data());
+            SAFE_WTFLOGALWAYS("-[WKWebView _overrideViewportWithArguments:]: Error parsing viewport argument: %s", errorMessage.utf8());
         });
     }).get()];
 
@@ -5568,6 +5572,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 #endif // ENABLE(FULLSCREEN_API)
 
+#if HAVE(UIKIT_PRINTING)
+
 @implementation WKWebView (_WKWebViewPrintFormatter)
 
 - (Class)_printFormatterClass
@@ -5584,6 +5590,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 }
 
 @end
+
+#endif // HAVE(UIKIT_PRINTING)
 
 #if ENABLE(TWO_PHASE_CLICKS)
 

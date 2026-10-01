@@ -26,8 +26,8 @@
 
 #pragma once
 
+#include <WebCore/ColorSpace.h>
 #include <WebCore/DecodingOptions.h>
-#include <WebCore/DestinationColorSpace.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/ImageAdapter.h>
 #include <WebCore/ImageOrientation.h>
@@ -63,7 +63,7 @@ public:
     virtual ~Image();
     
     WEBCORE_EXPORT static RefPtr<Image> create(ImageObserver&);
-    WEBCORE_EXPORT static std::optional<Ref<Image>> create(RefPtr<ShareableBitmap>&&);
+    WEBCORE_EXPORT static std::optional<Ref<Image>> create(RefPtr<ShareableBitmap>&&); // Uses `std::optional<Ref<...>>` to conform to the interface needed by IPC infrastructure.
     WEBCORE_EXPORT static bool supportsType(const String&);
 
     virtual bool isBitmapImage() const { return false; }
@@ -130,7 +130,7 @@ public:
     FragmentedSharedBuffer* data() { return m_encodedImageData.get(); }
     const FragmentedSharedBuffer* data() const { return m_encodedImageData.get(); }
 
-    virtual DestinationColorSpace colorSpace();
+    virtual ColorSpace colorSpace();
     virtual bool hasHDRContent() const { return false; }
 
     // Animation begins whenever someone draws the image, so startAnimation() is not normally called.
@@ -159,7 +159,7 @@ public:
 
     enum TileRule { StretchTile, RoundTile, SpaceTile, RepeatTile };
 
-    virtual RefPtr<NativeImage> nativeImage(const DestinationColorSpace& = DestinationColorSpace::SRGB());
+    virtual RefPtr<NativeImage> nativeImage(const ColorSpace& = ColorSpace::SRGB());
     virtual RefPtr<NativeImage> nativeImageAtIndex(unsigned);
     virtual RefPtr<NativeImage> currentNativeImage();
     virtual RefPtr<NativeImage> currentPreTransformedNativeImage(ImageOrientation = ImageOrientation::Orientation::FromImage);

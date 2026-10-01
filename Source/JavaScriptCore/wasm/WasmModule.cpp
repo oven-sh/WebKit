@@ -29,7 +29,6 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "JSWebAssemblyInstance.h"
-#include "WasmDebugServer.h"
 #include "WasmIPIntPlan.h"
 #include "WasmInstanceAnchor.h"
 #include "WasmMergedProfile.h"
@@ -47,19 +46,10 @@ Module::Module(IPIntPlan& plan, Name&& sourceURL)
 {
     if (!sourceURL.isEmpty())
         m_moduleInformation->sourceURL = WTF::move(sourceURL);
-
-#if ENABLE(WEBASSEMBLY_DEBUGGER)
-    if (Options::enableWasmDebugger()) [[unlikely]]
-        Wasm::DebugServer::singleton().trackModule(*this);
-#endif
 }
 
 Module::~Module()
 {
-#if ENABLE(WEBASSEMBLY_DEBUGGER)
-    if (Options::enableWasmDebugger()) [[unlikely]]
-        Wasm::DebugServer::singleton().untrackModule(*this);
-#endif
 }
 
 Wasm::RTT const& Module::rttFromFunctionIndexSpace(FunctionSpaceIndex functionIndexSpace) const
@@ -176,11 +166,6 @@ std::unique_ptr<MergedProfile> Module::createMergedProfile(const IPIntCallee& ca
     }
     return result;
 }
-
-#if ENABLE(WEBASSEMBLY_DEBUGGER)
-uint32_t Module::debugId() const { return m_moduleInformation->debugInfo->id; }
-void Module::setDebugId(uint32_t id) { m_moduleInformation->debugInfo->id = id; }
-#endif
 
 } } // namespace JSC::Wasm
 

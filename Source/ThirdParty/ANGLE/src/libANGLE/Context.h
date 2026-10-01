@@ -143,6 +143,7 @@ class ErrorSet : angle::NonCopyable
 
     const GLenum mResetStrategy;
     const bool mLoseContextOnOutOfMemory;
+    const bool mLoseContextOnInternalError;
 
     // Context-loss handling
     bool mContextLostForced;
@@ -639,6 +640,9 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     void deleteMemoryObject(MemoryObjectID memoryObject);
     void deleteSemaphore(SemaphoreID semaphore);
 
+    // Only used for capturing frame data in ANGLE_capture_enabled builds.
+    bool canProtectCoherentMemoryDirectly();
+
     void bindReadFramebuffer(FramebufferID framebufferHandle);
     void bindDrawFramebuffer(FramebufferID framebufferHandle);
 
@@ -734,8 +738,6 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     MemoryProgramCache *getMemoryProgramCache() const { return mMemoryProgramCache; }
     MemoryShaderCache *getMemoryShaderCache() const { return mMemoryShaderCache; }
 
-    angle::SimpleMutex &getProgramCacheMutex() const;
-
     bool hasBeenCurrent() const { return mHasBeenCurrent; }
     egl::Display *getDisplay() const { return mDisplay; }
     egl::Surface *getCurrentDrawSurface() const { return mCurrentDrawSurface; }
@@ -751,7 +753,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     }
 
     bool isShared() const { return mShared; }
-    bool isSharedContext() const { return mSharedContext; }
+    bool isSharedContext() const { return mSharedContext.load(std::memory_order_relaxed); }
     // Once a context is setShared() it cannot be undone
     void setShared()
     {
@@ -1067,7 +1069,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     State mState;
     bool mShared;
-    bool mSharedContext;
+    std::atomic<bool> mSharedContext;
     bool mDisplayTextureShareGroup;
     bool mDisplaySemaphoreShareGroup;
 
@@ -1171,8 +1173,6 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     mutable std::string mCachedSerializedStateString;
 
     mutable size_t mRefCount;
-
-    OverlayType mOverlay;
 
     bool mIsDestroyed;
     bool mDestroyedManagers;

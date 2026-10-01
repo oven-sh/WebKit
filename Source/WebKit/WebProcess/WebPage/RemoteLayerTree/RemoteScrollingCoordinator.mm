@@ -59,7 +59,7 @@ using namespace WebCore;
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteScrollingCoordinator);
 
 RemoteScrollingCoordinator::RemoteScrollingCoordinator(WebPage* page)
-    : AsyncScrollingCoordinator(page->corePage())
+    : AsyncScrollingCoordinator(protect(page->corePage()))
     , m_webPage(page)
     , m_pageIdentifier(page->identifier())
 {
@@ -338,6 +338,13 @@ void RemoteScrollingCoordinator::scrollingTreeNodeScrollbarMinimumThumbLengthDid
 
     if (CheckedPtr scrollableArea = frameView->scrollableAreaForScrollingNodeID(nodeID))
         scrollableArea->scrollbarsController().setScrollbarMinimumThumbLength(orientation, minimumThumbLength);
+}
+
+void RemoteScrollingCoordinator::requestFullScrollingTreeCommit(FrameIdentifier rootFrameID)
+{
+    // The UI process dropped the subtree we contributed to its scrolling tree, so the properties we
+    // would send in an ordinary incremental commit are no longer enough to rebuild it.
+    setAllScrollingStatePropertiesChangedForRootFrameID(rootFrameID);
 }
 
 } // namespace WebKit

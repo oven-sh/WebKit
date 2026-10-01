@@ -43,6 +43,7 @@
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/SecurityOriginHash.h>
+#include <WebCore/ThirdPartyCookieBlockingMode.h>
 #include <pal/SessionID.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Function.h>
@@ -52,6 +53,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/RefCounter.h>
 #include <wtf/RefPtr.h>
+#include <wtf/Seconds.h>
 #include <wtf/SwiftBridging.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakHashSet.h>
@@ -220,6 +222,9 @@ public:
     void clearResourceLoadStatisticsInWebProcesses(CompletionHandler<void()>&&);
     void setUserAgentStringQuirkForTesting(const String& domain, const String& userAgentString, CompletionHandler<void()>&&);
     void setPrivateTokenIPCForTesting(bool enabled);
+    void setLocalNetworkAccessPermissionForTesting(const WebCore::ClientOrigin&, WebCore::IPAddressSpace, WebCore::PermissionState, CompletionHandler<void()>&&);
+    void removeLocalNetworkAccessPermissions(const WebCore::SecurityOriginData& topOrigin, CompletionHandler<void()>&&);
+    void clearLocalNetworkAccessPermissionsForTesting(CompletionHandler<void()>&&);
 
     void fetchDomainsWithUserInteraction(CompletionHandler<void(std::optional<HashMap<WebCore::RegistrableDomain, WallTime>>&&)>&&);
 
@@ -477,7 +482,7 @@ public:
     void workerUpdatedAppBadge(const WebCore::SecurityOriginData&, std::optional<uint64_t>);
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    void setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit);
+    void setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency);
 #endif
 
     void addPage(WebPageProxy&);

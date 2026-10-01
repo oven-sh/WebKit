@@ -252,7 +252,7 @@ static void triggerAttributionWithSubresourceRedirect(Connection& connection, co
         connection.send(WTF::move(redirect), [connection, location] {
             connection.receiveHTTPRequest([connection, location] (Vector<char>&& request2) {
                 auto expectedHttpGetString = makeString("GET "_s, location, " HTTP/1.1\r\n"_s).utf8();
-                EXPECT_TRUE(contains(request2.span(), expectedHttpGetString.span()));
+                EXPECT_TRUE(contains(request2.span(), byteCast<uint8_t>(expectedHttpGetString.span())));
                 constexpr auto response = "HTTP/1.1 200 OK\r\n"
                     "Content-Length: 0\r\n\r\n"_s;
                 connection.send(response);
@@ -326,7 +326,7 @@ static void signUnlinkableTokenAndSendSecretToken(TokenSigningParty signingParty
                     connection.receiveHTTPRequest([signingParty, connection, &rsaPrivateKey, &modulusNBytes, &rng, &keyData, &done, &secKey] (Vector<char>&& request2) {
                         EXPECT_TRUE(contains(request2.span(), "POST / HTTP/1.1\r\n"_span));
 
-                        auto request2String = String(request2.span());
+                        auto request2String = String::fromLatin1(request2.span());
                         auto key = signingParty == TokenSigningParty::Source ? "source_unlinkable_token"_s : "destination_unlinkable_token"_s;
                         auto start = request2String.find(key);
                         start += key.length() + 3;
@@ -359,10 +359,10 @@ static void signUnlinkableTokenAndSendSecretToken(TokenSigningParty signingParty
                                         EXPECT_TRUE(contains(request4.span(), "POST / HTTP/1.1\r\n"_span));
                                         EXPECT_TRUE(contains(request4.span(), "{\"source_engagement_type\":\"click\",\"source_site\":\"127.0.0.1\",\"source_id\":42,\"attributed_on_site\":\"example.com\",\"trigger_data\":12,\"version\":3,"_span));
 
-                                        EXPECT_FALSE(contains(request4.span(), token.utf8().span()));
-                                        EXPECT_FALSE(contains(request4.span(), unlinkableToken.utf8().span()));
+                                        EXPECT_FALSE(contains(request4.span(), byteCast<uint8_t>(token.utf8().span())));
+                                        EXPECT_FALSE(contains(request4.span(), byteCast<uint8_t>(unlinkableToken.utf8().span())));
 
-                                        auto request4String = String(request4.span());
+                                        auto request4String = String::fromLatin1(request4.span());
 
                                         auto key = signingParty == TokenSigningParty::Source ? "source_secret_token"_s : "destination_secret_token"_s;
                                         auto start = request4String.find(key);
@@ -554,15 +554,13 @@ static void attemptConnectionInProcessWithoutEntitlement()
 {
 #if USE(APPLE_INTERNAL_SDK)
     __block bool done = false;
-    // FIXME: This is a false positive. <rdar://164843889>
-    SUPPRESS_RETAINPTR_CTOR_ADOPT OSObjectPtr connection = adoptOSObject(xpc_connection_create_mach_service("org.webkit.pcmtestdaemon.service", mainDispatchQueueSingleton(), 0));
+    OSObjectPtr connection = adoptOSObject(xpc_connection_create_mach_service("org.webkit.pcmtestdaemon.service", mainDispatchQueueSingleton(), 0));
     xpc_connection_set_event_handler(connection.get(), ^(xpc_object_t event) {
         EXPECT_EQ(event, XPC_ERROR_CONNECTION_INTERRUPTED);
         done = true;
     });
     xpc_connection_activate(connection.get());
-    // FIXME: This is a false positive. <rdar://164843889>
-    SUPPRESS_RETAINPTR_CTOR_ADOPT OSObjectPtr dictionary = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
+    OSObjectPtr dictionary = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
     xpc_connection_send_message(connection.get(), dictionary.get());
     TestWebKitAPI::Util::run(&done);
 #endif
@@ -617,7 +615,7 @@ TEST(PrivateClickMeasurement, DaemonDebugMode)
     cleanUpDaemon(tempDir);
 }
 
-static void setupSKAdNetworkTest(Vector<String>& consoleMessages, id<WKNavigationDelegate> navigationDelegate, NSString *html, id<WKUIDelegate> uiDelegate)
+static HTTPServer setupSKAdNetworkTest(Vector<String>& consoleMessages, id<WKNavigationDelegate> navigationDelegate, NSString *html, id<WKUIDelegate> uiDelegate)
 {
     HTTPServer server({ { "/app/id1234567890"_s, { "hello"_s } } }, HTTPServer::Protocol::HttpsProxy);
 
@@ -630,6 +628,7 @@ static void setupSKAdNetworkTest(Vector<String>& consoleMessages, id<WKNavigatio
     RetainPtr viewConfiguration = adoptNS([WKWebViewConfiguration new]);
     viewConfiguration.get().websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:storeConfiguration.get()]).get();
     viewConfiguration.get()._shouldSendConsoleLogsToUIProcessForTesting = YES;
+    viewConfiguration.get().preferences.siteSpecificQuirksModeEnabled = NO;
     auto webView = webViewWithOpenInspector(viewConfiguration.get(), uiDelegate);
 
     for (_WKFeature *feature in [WKPreferences _features]) {
@@ -651,6 +650,8 @@ static void setupSKAdNetworkTest(Vector<String>& consoleMessages, id<WKNavigatio
     webView.get().navigationDelegate = navigationDelegate;
 
     [webView clickOnElementID:@"anchorid"];
+
+    return server;
 }
 
 const char* expectedSKAdNetworkConsoleMessage = "Submitting potential install attribution for AdamId: 1234567890, adNetworkRegistrableDomain: destination, impressionId: MTIzNDU2Nzg5MDEyMzQ1Ng, sourceWebRegistrableDomain: example.com, version: 3";
@@ -668,7 +669,7 @@ TEST(PrivateClickMeasurement, SKAdNetwork)
     uiDelegate.get().didReceiveConsoleLogForTesting = ^(NSString *log) {
         consoleMessages.append(log);
     };
-    setupSKAdNetworkTest(consoleMessages, delegate.get(), linkToAppStoreHTML, uiDelegate.get());
+    auto server = setupSKAdNetworkTest(consoleMessages, delegate.get(), linkToAppStoreHTML, uiDelegate.get());
     while (consoleMessages.isEmpty())
         Util::spinRunLoop();
     EXPECT_WK_STREQ(consoleMessages[0], expectedSKAdNetworkConsoleMessage);
@@ -695,7 +696,7 @@ TEST(PrivateClickMeasurement, SKAdNetworkAboutBlank)
     NSString *linkToAppStoreHTMLWithAboutBlank = @"<body>"
     "    <a target='_blank' href='https://apps.apple.com/app/id1234567890' id='anchorid' attributiondestination='https://destination/' attributionSourceNonce='MTIzNDU2Nzg5MDEyMzQ1Ng'>anchor</a>"
     "</body>";
-    setupSKAdNetworkTest(consoleMessages, delegate.get(), linkToAppStoreHTMLWithAboutBlank, uiDelegate.get());
+    auto server = setupSKAdNetworkTest(consoleMessages, delegate.get(), linkToAppStoreHTMLWithAboutBlank, uiDelegate.get());
     while (consoleMessages.isEmpty())
         Util::spinRunLoop();
     EXPECT_WK_STREQ(consoleMessages[0], expectedSKAdNetworkConsoleMessage);
@@ -716,7 +717,7 @@ TEST(PrivateClickMeasurement, SKAdNetworkWithoutNavigatingToAppStoreLink)
     uiDelegate.get().didReceiveConsoleLogForTesting = ^(NSString *log) {
         consoleMessages.append(log);
     };
-    setupSKAdNetworkTest(consoleMessages, delegate.get(), linkToAppStoreHTML, uiDelegate.get());
+    auto server = setupSKAdNetworkTest(consoleMessages, delegate.get(), linkToAppStoreHTML, uiDelegate.get());
 
     while (consoleMessages.isEmpty())
         Util::spinRunLoop();

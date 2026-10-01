@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/PlatformVideoChromaLocation.h>
 #include <WebCore/PlatformVideoColorPrimaries.h>
 #include <WebCore/PlatformVideoMatrixCoefficients.h>
 #include <WebCore/PlatformVideoTransferCharacteristics.h>
@@ -39,12 +40,17 @@ struct PlatformVideoColorSpace {
     std::optional<PlatformVideoTransferCharacteristics> transfer { };
     std::optional<PlatformVideoMatrixCoefficients> matrix { };
     std::optional<bool> fullRange { };
+    // Must stay after fullRange: VideoColorSpaceInit aliases this struct, and the
+    // bindings generator initialises it positionally in VideoColorSpaceInit.idl order.
+    std::optional<PlatformVideoChromaLocation> chromaLocation { };
 
-    bool isValid() const { return primaries || transfer || matrix || fullRange; }
+    bool isValid() const { return primaries || transfer || matrix || fullRange || chromaLocation; }
     friend bool operator==(const PlatformVideoColorSpace&, const PlatformVideoColorSpace&) = default;
 };
 
 void overrideVideoColorSpaceAsNeeded(PlatformVideoColorSpace&, const std::optional<PlatformVideoColorSpace>&);
+
+WEBCORE_EXPORT bool usesITUR2100TF(const PlatformVideoColorSpace&);
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, PlatformVideoColorSpace);
 

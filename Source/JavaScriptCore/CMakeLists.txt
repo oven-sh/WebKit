@@ -197,6 +197,17 @@ set(JavaScriptCore_SCRIPTS_SOURCES_PATHS
     ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/wkbuiltins.py
 )
 
+# JavaScriptCore_SCRIPTS_DIR is the framework's PrivateHeaders here, which is where
+# clients above WebKit look for the inspector protocol generator.
+if (USE_FRAMEWORK_BUNDLES)
+    list(APPEND JavaScriptCore_SCRIPTS_SOURCES_PATHS
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/generate*.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate*.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/*generator*.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/models.py
+    )
+endif ()
+
 # The directory flattening performed below mirrors what the Mac port does with private headers.
 file(GLOB JavaScriptCore_SCRIPTS_SOURCES ${JavaScriptCore_SCRIPTS_SOURCES_PATHS})
 
@@ -288,8 +299,8 @@ add_custom_target(Bytecodes DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytec
 add_custom_command(
     OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h
     MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb
-    DEPENDS ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml WTF_CopyPreferences
-    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend JavaScriptCore --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}" --template ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml
+    DEPENDS ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml WTF_CopyPreferences ${WEB_PREFERENCES_ADDITIONS} ${WEBKITADDITIONS_HEADERS_DEPENDENCIES}
+    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend JavaScriptCore --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}" --template ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml ${WEB_PREFERENCES_ADDITIONS}
     VERBATIM)
 add_custom_target(JSCWebPreferenceOptions DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h")
 
@@ -580,6 +591,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     API/JSRemoteInspector.h
     API/JSRetainPtr.h
     API/JSScriptRefPrivate.h
+    API/JSStringRefCPP.h
     API/JSStringRefPrivate.h
     API/JSValueInternal.h
     API/JSValuePrivate.h
@@ -675,6 +687,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/ComplexGetStatus.h
     bytecode/DFGExitProfile.h
     bytecode/DataFormat.h
+    bytecode/DeclaredNamesLink.h
     bytecode/DeferredCompilationCallback.h
     bytecode/DeferredSourceDump.h
     bytecode/DeleteByStatus.h
@@ -1063,7 +1076,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     jit/ScratchRegisterAllocator.h
     jit/Snippet.h
     jit/SnippetParams.h
-    jit/SnippetReg.h
     jit/SnippetSlowPathCalls.h
     jit/SpillRegistersMode.h
     jit/TagRegistersMode.h
@@ -1090,6 +1102,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     parser/ParserModes.h
     parser/ParserTokens.h
     parser/ResultType.h
+    parser/SourceCharacters.h
     parser/SourceCode.h
     parser/SourceCodeKey.h
     parser/SourceProvider.h
@@ -1238,7 +1251,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/DateConstructorInlines.h
     runtime/DateConversion.h
     runtime/DateInstance.h
-    runtime/DateInstanceCache.h
     runtime/DateInstanceInlines.h
     runtime/DatePrototype.h
     runtime/DatePrototypeInlines.h
@@ -1537,6 +1549,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSStringIteratorInlines.h
     runtime/JSStringJoiner.h
     runtime/JSSymbolTableObject.h
+    runtime/JSSymbolTableObjectInlines.h
     runtime/JSTemplateObjectDescriptor.h
     runtime/JSTemplateObjectDescriptorInlines.h
     runtime/JSType.h
@@ -1629,6 +1642,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/PageCount.h
     runtime/ParseInt.h
     runtime/PinballCompletion.h
+    runtime/PrelinkedModuleGraph.h
     runtime/PrivateFieldPutKind.h
     runtime/PrivateName.h
     runtime/ProfilerSupport.h
@@ -2076,6 +2090,26 @@ if(USE_INSPECTOR_SOCKET_SERVER)
     )
 endif()
 
+# The corpse memory-analysis support is built on Mach task and corpse APIs, so
+# its headers have no content off Darwin and there is nothing to build or export.
+if (APPLE)
+    list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
+        "${JAVASCRIPTCORE_DIR}/corpse"
+    )
+    list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
+        corpse/CorpseAddress.h
+        corpse/CorpseByteParser.h
+        corpse/CorpseClient.h
+        corpse/CorpseError.h
+        corpse/CorpseExportsTrie.h
+        corpse/CorpseProcess.h
+        corpse/CorpseRegion.h
+        corpse/CorpseSnapshot.h
+        corpse/CorpseSymbol.h
+        corpse/CorpseThread.h
+    )
+endif ()
+
 # GENERATOR 1-B: particular LUT creator (for 1 file only)
 GENERATE_HASH_LUT(${CMAKE_CURRENT_SOURCE_DIR}/parser/Keywords.table ${JavaScriptCore_DERIVED_SOURCES_DIR}/Lexer.lut.h)
 
@@ -2221,7 +2255,6 @@ endif ()
 
 WEBKIT_FRAMEWORK_DECLARE(JavaScriptCore)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
-WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS(JavaScriptCore)
 WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(JavaScriptCore)
 
 if (COMPILER_IS_GCC_OR_CLANG)
@@ -2384,6 +2417,14 @@ endif()
 add_custom_target(JavaScriptCoreSharedScripts DEPENDS ${JavaScriptCore_SCRIPTS})
 add_dependencies(JavaScriptCore JavaScriptCoreSharedScripts ${JavaScriptCore_EXTRA_DEPENDENCIES})
 add_dependencies(JavaScriptCoreSharedScripts JSCBuiltins)
+
+# The corpse code is part of JavaScriptCoreTools, which ships as a static library used
+# only by tools for assisting in the development of JavaScriptCore and WebKit. This code
+# is not needed for JavaScriptCore and WebKit functionality as a browser engine. The
+# corpse code rely on Mach APIs which are only available on Apple platforms.
+if (APPLE)
+  add_subdirectory(corpse)
+endif ()
 
 if (ENABLE_JAVASCRIPT_SHELL)
   add_subdirectory(shell)

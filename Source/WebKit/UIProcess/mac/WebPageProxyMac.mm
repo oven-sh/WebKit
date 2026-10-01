@@ -52,6 +52,7 @@
 #import "WKQuickLookPreviewController.h"
 #import "WKSharingServicePickerDelegate.h"
 #import "WebContextMenuProxyMac.h"
+#import <WebCore/ColorSpace.h>
 #import "WebPageMessages.h"
 #import "WebPageProxyInternals.h"
 #import "WebPageProxyMessages.h"
@@ -60,7 +61,6 @@
 #import <WebCore/AXObjectCache.h>
 #import <WebCore/AttributedString.h>
 #import <WebCore/CornerRadii.h>
-#import <WebCore/DestinationColorSpace.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/DragItem.h>
 #import <WebCore/GraphicsLayer.h>
@@ -205,11 +205,12 @@ void WebPageProxy::searchTheWeb(const String& string)
 void WebPageProxy::windowAndViewFramesChanged(const FloatRect& viewFrameInWindowCoordinates, const FloatPoint& accessibilityViewCoordinates)
 {
     // In case the UI client overrides getWindowFrame(), we call it here to make sure we send the appropriate window frame.
-    m_uiClient->windowFrame(*this, [this, protectedThis = Ref { *this }, viewFrameInWindowCoordinates, accessibilityViewCoordinates] (FloatRect windowFrameInScreenCoordinates) {
+    m_uiClient->windowFrame(*this, [this, protectedThis = Ref { *this }, viewFrameInWindowCoordinates, accessibilityViewCoordinates] (std::optional<FloatRect> frameFromUIClient) {
         RefPtr pageClient = this->pageClient();
         if (!pageClient)
             return;
 
+        FloatRect windowFrameInScreenCoordinates = windowFrameRespectingHostingWindow(*pageClient, frameFromUIClient);
         FloatRect windowFrameInUnflippedScreenCoordinates = pageClient->convertToUserSpace(windowFrameInScreenCoordinates);
 
         m_viewWindowCoordinates = makeUnique<ViewWindowCoordinates>();
@@ -412,18 +413,18 @@ void WebPageProxy::executeSavedCommandBySelector(IPC::Connection& connection, co
     completionHandler(pageClient->executeSavedCommandBySelector(selector));
 }
 
-bool WebPageProxy::shouldDelayWindowOrderingForEvent(const WebKit::WebMouseEvent& event)
+bool WebPageProxy::shouldDelayWindowOrderingForEvent(Ref<WebKit::WebMouseEvent>&& event)
 {
     if (legacyMainFrameProcess().state() != WebProcessProxy::State::Running)
         return false;
 
     const Seconds messageTimeout(3);
-    auto sendResult = protect(legacyMainFrameProcess())->sendSync(Messages::WebPage::ShouldDelayWindowOrderingEvent(event), webPageIDInMainFrameProcess(), messageTimeout);
+    auto sendResult = protect(legacyMainFrameProcess())->sendSync(Messages::WebPage::ShouldDelayWindowOrderingEvent(WTF::move(event)), webPageIDInMainFrameProcess(), messageTimeout);
     auto [result] = sendResult.takeReplyOr(false);
     return result;
 }
 
-bool WebPageProxy::acceptsFirstMouse(int eventNumber, const WebKit::WebMouseEvent& event)
+bool WebPageProxy::acceptsFirstMouse(int eventNumber, Ref<WebKit::WebMouseEvent>&& event)
 {
     if (!hasRunningProcess())
         return false;
@@ -435,7 +436,7 @@ bool WebPageProxy::acceptsFirstMouse(int eventNumber, const WebKit::WebMouseEven
     if (shouldAvoidSynchronouslyWaitingToPreventDeadlock())
         return false;
 
-    legacyMainFrameProcess->send(Messages::WebPage::RequestAcceptsFirstMouse(eventNumber, event), webPageIDInMainFrameProcess(), IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
+    legacyMainFrameProcess->send(Messages::WebPage::RequestAcceptsFirstMouse(eventNumber, WTF::move(event)), webPageIDInMainFrameProcess(), IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
     bool receivedReply = protect(legacyMainFrameProcess->connection())->waitForAndDispatchImmediately<Messages::WebPageProxy::HandleAcceptsFirstMouse>(webPageIDInMainFrameProcess(), 250_ms, IPC::WaitForOption::InterruptWaitingIfSyncMessageArrives) == IPC::Error::NoError;
 
     if (!receivedReply) {
@@ -604,9 +605,9 @@ static NSString *temporaryPDFDirectoryPath()
     static NeverDestroyed path = [] {
         RetainPtr temporaryDirectory = NSTemporaryDirectory();
         RetainPtr temporaryDirectoryTemplate = [temporaryDirectory stringByAppendingPathComponent:@"WebKitPDFs-XXXXXX"];
-        CString templateRepresentation = [temporaryDirectoryTemplate fileSystemRepresentation];
-        if (mkdtemp(templateRepresentation.mutableSpanIncludingNullTerminator().data()))
-            return adoptNS((NSString *)[[[NSFileManager defaultManager] stringWithFileSystemRepresentation:templateRepresentation.data() length:templateRepresentation.length()] copy]);
+        UTF8CString templateRepresentation { byteCast<char8_t>([temporaryDirectoryTemplate fileSystemRepresentation]) };
+        if (mkdtemp(byteCast<char>(templateRepresentation.mutableSpanIncludingNullTerminator()).data()))
+            return adoptNS((NSString *)[[[NSFileManager defaultManager] stringWithFileSystemRepresentation:templateRepresentation.legacyCStringPointer() length:templateRepresentation.length()] copy]);
         return RetainPtr<NSString> { };
     }();
     return path.get().get();
@@ -624,14 +625,14 @@ static RetainPtr<NSString> pathToPDFOnDisk(const String& suggestedFilename)
 
     RetainPtr fileManager = [NSFileManager defaultManager];
     if ([fileManager fileExistsAtPath:path.get()]) {
-        auto [fileHandle, pathTemplateRepresentation] = FileSystem::createTemporaryFileInDirectory(pdfDirectoryPath.get(), makeString('-', suggestedFilename));
+        auto [fileHandle, temporaryFilePath] = FileSystem::createTemporaryFileInDirectory(pdfDirectoryPath.get(), makeString('-', suggestedFilename));
         if (!fileHandle) {
-            WTFLogAlways("Cannot create PDF file in the temporary directory (%s).", suggestedFilename.utf8().data());
+            SAFE_WTFLOGALWAYS("Cannot create PDF file in the temporary directory (%s).", suggestedFilename.utf8());
             return nil;
         }
 
         fileHandle = { };
-        path = [fileManager stringWithFileSystemRepresentation:pathTemplateRepresentation.data() length:pathTemplateRepresentation.length()];
+        path = temporaryFilePath.createNSString();
     }
 
     // Reject any path that resolves outside the temporary PDF directory.
@@ -675,7 +676,7 @@ void WebPageProxy::savePDFToTemporaryFolderAndOpenWithNativeApplication(const St
     RetainPtr nsData = toNSDataNoCopy(data, FreeWhenDone::No);
 
     if (![[NSFileManager defaultManager] createFileAtPath:nsPath.get() contents:nsData.get() attributes:fileAttributes.get()]) {
-        WTFLogAlways("Cannot create PDF file in the temporary directory (%s).", sanitizedFilename.utf8().data());
+        SAFE_WTFLOGALWAYS("Cannot create PDF file in the temporary directory (%s).", sanitizedFilename.utf8());
         return;
     }
     auto originatingURLString = frameInfo.request.url().string();
@@ -1213,25 +1214,19 @@ void WebPageProxy::platformUnlockPointer()
 void WebPageProxy::interruptSyntheticMomentumScrolling()
 {
     auto timestamp = MonotonicTime::now();
-    WebWheelEvent cancelEvent {
-        { WebEventType::Wheel, { }, timestamp, WTF::UUID::createVersion4() },
-        WebCore::IntPoint { },
-        WebCore::IntPoint { },
-        WebCore::FloatSize { },
-        WebCore::FloatSize { },
-        WebWheelEvent::Granularity::ScrollByPixelWheelEvent,
-        false,
-        WebWheelEvent::Phase::Cancelled,
-        WebWheelEvent::Phase::None,
-        true,
-        1,
-        WebCore::FloatSize { },
-        timestamp,
-        std::nullopt,
-        WebWheelEvent::MomentumEndType::Interrupted,
-        WebEventInputSource::Automation
-    };
-    handleNativeWheelEvent(NativeWebWheelEvent { cancelEvent });
+    Ref cancelEvent = WebWheelEvent::create({ WebEventType::Wheel, { }, timestamp }, {
+        .granularity = WebWheelEvent::Granularity::ScrollByPixelWheelEvent,
+        .directionInvertedFromDevice = false,
+        .phase = WebWheelEvent::Phase::Cancelled,
+        .momentumPhase = WebWheelEvent::Phase::None,
+        .hasPreciseScrollingDeltas = true,
+        .scrollCount = 1,
+        .ioHIDEventTimestamp = timestamp,
+        .rawPlatformDelta = std::nullopt,
+        .momentumEndType = WebWheelEvent::MomentumEndType::Interrupted,
+        .inputSource = WebEventInputSource::Automation,
+    });
+    handleNativeWheelEvent(NativeWebWheelEvent::create(cancelEvent));
 }
 
 } // namespace WebKit

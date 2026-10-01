@@ -13,11 +13,21 @@
 #    include "libANGLE/CLBitField.h"
 #    include "libANGLE/CLRefPointer.h"
 #    include "libANGLE/Debug.h"
+#    include "libANGLE/Error.h"
 #    include "libANGLE/angletypes.h"
 
+#    include "common/MemoryBuffer.h"
 #    include "common/PackedCLEnums_autogen.h"
+#    include "common/PackedEnums.h"
+#    include "common/SimpleMutex.h"
+#    include "common/SynchronizedValue.h"
 #    include "common/WorkerThread.h"
 #    include "common/angleutils.h"
+#    include "common/hash_containers.h"
+#    include "common/log_utils.h"
+#    include "common/mathutil.h"
+#    include "common/string_utils.h"
+#    include "common/system_utils.h"
 #    include "common/unsafe_buffers.h"
 
 // Include frequently used standard headers
@@ -274,6 +284,12 @@ struct NDRange
                 globalWorkSize[dim] =
                     static_cast<uint32_t>(ANGLE_UNSAFE_TODO(globalWorkSizeIn[dim]));
             }
+            else
+            {
+                // For versions >= 2.1, global work size can be a nullptr, in which case set dim to
+                // zero. Validation checks ensure that we are here only for >= 2.1 versions.
+                globalWorkSize[dim] = 0;
+            }
             if (localWorkSizeIn != nullptr)
             {
                 ASSERT(ANGLE_UNSAFE_TODO(localWorkSizeIn[dim]) <= UINT32_MAX);
@@ -317,7 +333,7 @@ struct NDRange
         {
             for (uint32_t dim = 0; dim < workDimensions; dim++)
             {
-                NDRange &region    = regions.at(regionPos);
+                NDRange &region = regions.at(regionPos);
                 uint32_t remainder =
                     ANGLE_UNSAFE_TODO(region.globalWorkSize[dim] % region.localWorkSize[dim]);
                 if (remainder != 0)
@@ -400,6 +416,8 @@ class Defer : public angle::Closure
   private:
     F mFunc;
 };
+
+constexpr cl_ulong kMaxAllocSentinel = 0;
 
 }  // namespace cl
 

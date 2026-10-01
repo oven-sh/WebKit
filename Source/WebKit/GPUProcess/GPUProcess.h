@@ -29,6 +29,8 @@
 
 #include "AuxiliaryProcess.h"
 #include "GPUProcessPreferences.h"
+#include "RemoteSerializedImageBufferIdentifier.h"
+#include <WebCore/ImageBufferTransferIdentifier.h>
 #include "RemoteSnapshotIdentifier.h"
 #include "SandboxExtension.h"
 #include "SecurityFlags.h"
@@ -132,9 +134,15 @@ public:
     WebCore::NowPlayingManager& nowPlayingManager() LIFETIME_BOUND;
 
     void recomputeNowPlayingOwner();
-    bool isNowPlayingArbiterActive() const { return m_isNowPlayingArbiterActive; }
+    void setNowPlayingFallbackSession(std::optional<WebCore::QualifiedMediaSessionIdentifier>);
+    void withdrawNowPlayingCandidate(WebCore::QualifiedPageIdentifier);
+    void nowPlayingClientDidClose(WebCore::ProcessIdentifier);
     bool isActiveNowPlayingPage(WebCore::ProcessIdentifier process, WebCore::PageIdentifier page) const { return m_activeNowPlayingOwner && m_activeNowPlayingOwner->process == process && m_activeNowPlayingOwner->page == page; }
     bool isActiveNowPlayingSession(WebCore::ProcessIdentifier process, WebCore::MediaSessionIdentifier session) const { return m_activeNowPlayingOwner && m_activeNowPlayingOwner->process == process && m_activeNowPlayingOwner->session == session; }
+    // Unlike remoteCommandTargetSessionInProcess(), safe to ask from any process: it compares rather than assuming
+    // the caller owns the target.
+    bool isRemoteCommandTargetSession(WebCore::ProcessIdentifier process, WebCore::MediaSessionIdentifier session) const { return m_remoteCommandTarget && *m_remoteCommandTarget == WebCore::QualifiedMediaSessionIdentifier { session, process }; }
+    std::optional<WebCore::MediaSessionIdentifier> remoteCommandTargetSessionInProcess(WebCore::ProcessIdentifier) const;
 
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
     WorkQueue& videoMediaStreamTrackRendererQueue();
@@ -174,6 +182,14 @@ public:
     Ref<RemoteSnapshot> getOrCreateSnapshot(RemoteSnapshotIdentifier);
     RefPtr<RemoteSnapshot> snapshot(RemoteSnapshotIdentifier);
 
+    // Hands an ImageBuffer from one web process's rendering backend to another's. Unlike
+    // m_snapshots, a buffer is claimable only by its current owner, so an identifier alone is not
+    // enough to obtain one. A depositing process cannot name its successor: it owns the buffer until
+    // the process brokering delivery hands ownership on.
+    bool depositTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier, WebCore::ProcessIdentifier owner, Ref<WebCore::ImageBuffer>&&);
+    RefPtr<WebCore::ImageBuffer> takeTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier, WebCore::ProcessIdentifier claimingProcess);
+    void removeTransferredImageBuffersForProcess(WebCore::ProcessIdentifier);
+
 #if PLATFORM(VISION) && ENABLE(MODEL_PROCESS)
 #if HAVE(CORE_RE)
     void requestSharedSimulationConnection(CoreIPCAuditToken&&, CompletionHandler<void(std::optional<IPC::SharedFileHandle>)>&&);
@@ -190,6 +206,8 @@ public:
 #endif
 
     void terminateWebProcess(WebCore::ProcessIdentifier, IPC::MessageName);
+
+    void authorizeImageBufferTransfers(Vector<WebCore::ImageBufferTransferIdentifier>&&, WebCore::ProcessIdentifier destinationProcess, CompletionHandler<void()>&&);
 
 private:
     GPUProcess();
@@ -215,7 +233,6 @@ private:
     void updateGPUProcessPreferences(GPUProcessPreferences&&);
     void createGPUConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, GPUProcessConnectionParameters&&, CompletionHandler<void()>&&);
     void sharedPreferencesForWebProcessDidChange(WebCore::ProcessIdentifier, SharedPreferencesForWebProcess&&, CompletionHandler<void()>&&);
-    void updateNowPlayingArbiterActive(const SharedPreferencesForWebProcess&);
     void securityFlagsDidChange(SecurityFlags&&);
     void addSession(PAL::SessionID, GPUProcessSessionParameters&&);
     void removeSession(PAL::SessionID);
@@ -306,6 +323,24 @@ private:
     Lock m_globalResourceLocker;
     HashMap<RemoteSnapshotIdentifier, Ref<RemoteSnapshot>> m_snapshots WTF_GUARDED_BY_LOCK(m_globalResourceLocker);
 
+    struct TransferredImageBuffer {
+        Markable<WebCore::ProcessIdentifier> owner;
+        RefPtr<WebCore::ImageBuffer> imageBuffer;
+    };
+    HashMap<WebCore::ImageBufferTransferIdentifier, TransferredImageBuffer> m_transferredImageBuffers WTF_GUARDED_BY_LOCK(m_globalResourceLocker);
+
+    // An authorization can arrive before the buffers it names have been deposited: a deposit travels
+    // on the depositing process's rendering backend work queue while the authorization arrives on the
+    // UI process's connection, so neither orders against the other. The reply is held back until
+    // every named buffer has landed, which is what lets the broker guarantee the recipient's claim
+    // cannot overtake the handover.
+    struct PendingImageBufferTransferAuthorization {
+        HashSet<WebCore::ImageBufferTransferIdentifier> awaitingDeposit;
+        CompletionHandler<void()> completionHandler;
+    };
+    Vector<PendingImageBufferTransferAuthorization> m_pendingImageBufferTransferAuthorizations WTF_GUARDED_BY_LOCK(m_globalResourceLocker);
+    Vector<CompletionHandler<void()>> takeSettledImageBufferTransferAuthorizations(NOESCAPE const Function<void(HashSet<WebCore::ImageBufferTransferIdentifier>&)>& prune) WTF_REQUIRES_LOCK(m_globalResourceLocker);
+
     struct GPUSession {
         String mediaCacheDirectory;
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA) || ENABLE(ENCRYPTED_MEDIA)
@@ -322,6 +357,8 @@ private:
         WebCore::MediaSessionIdentifier session;
     };
     std::optional<NowPlayingOwner> m_activeNowPlayingOwner;
+    std::optional<WebCore::QualifiedMediaSessionIdentifier> m_nowPlayingFallbackSession;
+    std::optional<WebCore::QualifiedMediaSessionIdentifier> m_remoteCommandTarget;
     String m_applicationVisibleName;
 #if PLATFORM(MAC)
     String m_uiProcessName;
@@ -336,8 +373,6 @@ private:
     bool m_haveEnabledVP9Decoder { false };
     bool m_haveEnabledSWVP9Decoder { false };
 #endif
-    bool m_isNowPlayingArbiterActive { false };
-
 };
 
 } // namespace WebKit

@@ -34,6 +34,7 @@
 #include "WebPermissionControllerProxyMessages.h"
 #include "WebProcess.h"
 #include <WebCore/Document.h>
+#include <WebCore/IPAddressSpace.h>
 #include <WebCore/Page.h>
 #include <WebCore/PermissionObserver.h>
 #include <WebCore/PermissionQuerySource.h>
@@ -67,7 +68,7 @@ WebPermissionController::~WebPermissionController()
     WebProcess::singleton().removeMessageReceiver(Messages::WebPermissionController::messageReceiverName());
 }
 
-void WebPermissionController::query(WebCore::ClientOrigin&& origin, WebCore::PermissionDescriptor descriptor, const WeakPtr<WebCore::Page>& page, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
+void WebPermissionController::query(WebCore::ClientOrigin&& origin, WebCore::PermissionDescriptor descriptor, WebCore::Page* page, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
 {
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
     if (WebCore::DeprecatedGlobalSettings::builtInNotificationsEnabled() && (descriptor.name == WebCore::PermissionName::Notifications || descriptor.name == WebCore::PermissionName::Push)) {
@@ -92,6 +93,15 @@ void WebPermissionController::query(WebCore::ClientOrigin&& origin, WebCore::Per
     if (source == WebCore::PermissionQuerySource::Window || source == WebCore::PermissionQuerySource::DedicatedWorker) {
         ASSERT(page);
         proxyIdentifier = WebPage::fromCorePage(*page)->webPageProxyIdentifier();
+    }
+
+    // Answered where the decision is enforced: the UI client could say granted and then have the
+    // request refused.
+    if (descriptor.name == WebCore::PermissionName::LocalNetwork || descriptor.name == WebCore::PermissionName::LoopbackNetwork) {
+        auto addressSpace = descriptor.name == WebCore::PermissionName::LocalNetwork ? WebCore::IPAddressSpace::Local : WebCore::IPAddressSpace::Loopback;
+        Ref networkProcess = WebProcess::singleton().ensureNetworkProcessConnection().connection();
+        networkProcess->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::QueryLocalNetworkAccessPermission(origin, addressSpace), WTF::move(completionHandler));
+        return;
     }
 
     if (descriptor.name == WebCore::PermissionName::StorageAccess) {
@@ -126,7 +136,7 @@ void WebPermissionController::notifyObserversIfNeeded(WebCore::PermissionName pe
         if (!observer->page() && (source == WebCore::PermissionQuerySource::Window || source == WebCore::PermissionQuerySource::DedicatedWorker))
             continue;
 
-        query(WebCore::ClientOrigin { observer->origin() }, WebCore::PermissionDescriptor { permissionName }, observer->page(), source, [weakObserver = WeakPtr { observer.get() }](auto newState) {
+        query(WebCore::ClientOrigin { observer->origin() }, WebCore::PermissionDescriptor { permissionName }, protect(observer->page()), source, [weakObserver = WeakPtr { observer.get() }](auto newState) {
             CheckedPtr observer = weakObserver.get();
             if (observer && newState != observer->currentState())
                 observer->stateChanged(*newState);

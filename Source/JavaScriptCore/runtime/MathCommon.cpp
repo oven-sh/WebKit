@@ -456,7 +456,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationToInt32, UCPUStrictInt32, (double val
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationToInt32SensibleSlow, UCPUStrictInt32, (double number))
 {
-    return toUCPUStrictInt32(toIntImpl<int32_t, ToIntMode::Int32AfterSensibleConversionAttempt>(number));
+    return toUCPUStrictInt32(toInt32AfterFailedTruncation(number));
 }
 
 extern "C" {

@@ -43,7 +43,7 @@
 
 namespace WebCore {
 class Filter;
-class Font;
+class FontBase;
 struct FontCustomPlatformData;
 }
 
@@ -64,14 +64,14 @@ public:
 
     Ref<RemoteNativeImageProxy> createNativeImage(const WebCore::IntSize&, WebCore::PlatformColorSpace&&, bool hasAlpha);
 
-    [[nodiscard]] bool recordNativeImageUse(const WebCore::NativeImage&, const WebCore::DestinationColorSpace&);
+    [[nodiscard]] bool recordNativeImageUse(const WebCore::NativeImage&, const WebCore::ColorSpace&);
 
     // Starts tracking a shared NativeImage whose contents live in the GPU process's
     // RemoteSharedResourceCache, and returns the read reference the rendering backend uses to adopt it
     // into its own cache.
     RemoteNativeImageReadReference recordSharedNativeImageUse(RemoteNativeImageProxy&);
     RemotePathImplIdentifier recordPathImplUse(const WebCore::PathImpl&);
-    void recordFontUse(WebCore::Font&);
+    void recordFontUse(WebCore::FontBase&);
     RemoteGradientIdentifier recordGradientUse(WebCore::Gradient&);
     void recordFilterUse(WebCore::Filter&);
     void recordFontCustomPlatformDataUse(const WebCore::FontCustomPlatformData&);

@@ -189,7 +189,7 @@ namespace JSC {
         static int NODELETE stackPointerOffsetFor(UnlinkedCodeBlock*);
         static int stackPointerOffsetFor(CodeBlock*);
 
-        JS_EXPORT_PRIVATE static UncheckedKeyHashMap<CString, Seconds> compileTimeStats();
+        JS_EXPORT_PRIVATE static UncheckedKeyHashMap<ASCIICString, Seconds> compileTimeStats();
         JS_EXPORT_PRIVATE static Seconds NODELETE totalCompileTime();
 
     private:
@@ -216,6 +216,9 @@ namespace JSC {
 
         template <typename Bytecode>
         void loadPtrFromMetadata(const Bytecode&, size_t offset, GPRReg);
+
+        template <typename Bytecode>
+        void loadPairPtrFromMetadata(const Bytecode&, size_t offset, GPRReg, GPRReg);
 
         template <typename Bytecode>
         void load32FromMetadata(const Bytecode&, size_t offset, GPRReg);
@@ -253,8 +256,7 @@ namespace JSC {
         static void loadConstant(CCallHelpers&, unsigned constantIndex, GPRReg);
         static void loadPropertyInlineCache(CCallHelpers&, PropertyInlineCacheIndex, GPRReg);
 
-        void loadCodeBlockConstant(VirtualRegister, JSValueRegs);
-        void loadCodeBlockConstantPayload(VirtualRegister, RegisterID);
+        void loadCodeBlockConstant(VirtualRegister, GPRReg);
 
         void exceptionCheck(Jump jumpToHandler);
         void exceptionCheck();
@@ -292,23 +294,23 @@ namespace JSC {
         using enum WriteBarrierMode;
         // value register in write barrier is used before any scratch registers
         // so may safely be the same as either of the scratch registers.
-        void emitWriteBarrier(JSValueRegs owner, WriteBarrierMode);
+        void emitWriteBarrier(GPRReg owner, WriteBarrierMode);
         void emitWriteBarrier(VirtualRegister owner, WriteBarrierMode);
         void emitWriteBarrier(VirtualRegister owner, VirtualRegister value, WriteBarrierMode);
         void emitWriteBarrier(JSCell* owner);
         void emitWriteBarrier(GPRReg owner);
 
-        template<typename Bytecode> void emitValueProfilingSite(const Bytecode&, JSValueRegs);
-        template<typename Bytecode> void emitValueProfilingSite(const Bytecode&, BytecodeIndex, JSValueRegs);
+        template<typename Bytecode> void emitValueProfilingSite(const Bytecode&, GPRReg);
+        template<typename Bytecode> void emitValueProfilingSite(const Bytecode&, BytecodeIndex, GPRReg);
 
         template<typename Op>
         static inline constexpr bool isProfiledOp = std::is_same_v<decltype(Op::Metadata::m_profile), ValueProfile>;
         template<typename Op>
         void emitValueProfilingSiteIfProfiledOpcode(Op bytecode)
         {
-            // This assumes that the value to profile is in jsRegT10.
+            // This assumes that the value to profile is in GPRInfo::regT0.
             if constexpr (isProfiledOp<Op>)
-                emitValueProfilingSite(bytecode, jsRegT10);
+                emitValueProfilingSite(bytecode, GPRInfo::regT0);
             else
                 UNUSED_PARAM(bytecode);
         }
@@ -323,22 +325,15 @@ namespace JSC {
         template<typename Op>
         ECMAMode ecmaMode(Op);
 
-        void emitGetVirtualRegister(VirtualRegister src, JSValueRegs dst);
-        void emitPutVirtualRegister(VirtualRegister dst, JSValueRegs src);
+        void emitGetVirtualRegister(VirtualRegister src, GPRReg dst);
+        void emitPutVirtualRegister(VirtualRegister dst, GPRReg src);
 
-        // Machine register variants purely for convenience
-        void emitGetVirtualRegister(VirtualRegister src, RegisterID dst);
-        void emitPutVirtualRegister(VirtualRegister dst, RegisterID from);
+        Jump emitJumpIfNotInt(GPRReg, GPRReg, GPRReg scratch);
+        void emitJumpSlowCaseIfNotInt(GPRReg, GPRReg, GPRReg scratch);
+        void emitJumpSlowCaseIfNotInt(GPRReg);
 
-        Jump emitJumpIfNotInt(RegisterID, RegisterID, RegisterID scratch);
-        void emitJumpSlowCaseIfNotInt(RegisterID, RegisterID, RegisterID scratch);
-        void emitJumpSlowCaseIfNotInt(RegisterID);
-
-        void emitJumpSlowCaseIfNotInt(JSValueRegs, JSValueRegs, RegisterID scratch);
-        void emitJumpSlowCaseIfNotInt(JSValueRegs);
-
-        void emitJumpSlowCaseIfNotJSCell(JSValueRegs);
-        void emitJumpSlowCaseIfNotJSCell(JSValueRegs, VirtualRegister);
+        void emitJumpSlowCaseIfNotJSCell(GPRReg);
+        void emitJumpSlowCaseIfNotJSCell(GPRReg, VirtualRegister);
 
         template<typename Op>
         void emit_compare(const JSInstruction*, RelationalCondition);
@@ -476,6 +471,7 @@ namespace JSC {
         void emit_op_new_async_generator_func_exp(const JSInstruction*);
         void emit_op_new_object(const JSInstruction*);
         void emit_op_new_reg_exp(const JSInstruction*);
+        void emit_op_new_reg_exp_shared(const JSInstruction*);
         void emit_op_create_lexical_environment(const JSInstruction*);
         void emit_op_create_direct_arguments(const JSInstruction*);
         void emit_op_create_scoped_arguments(const JSInstruction*);
@@ -603,6 +599,7 @@ namespace JSC {
 
         void emitSlowCaseCall(Vector<SlowCaseEntry>::iterator&, SlowPathFunction);
 
+        void emit_op_iterator_close_check(const JSInstruction*);
         void emit_op_iterator_open(const JSInstruction*);
         void emitSlow_op_iterator_open(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         template<typename Op> void emitIteratorOpenGeneric(const JSInstruction*);
@@ -763,11 +760,11 @@ namespace JSC {
 
         template<typename OperationType, typename... Args>
         requires OperationHasResult<OperationType>
-        MacroAssembler::Call callOperationWithResult(OperationType operation, JSValueRegs resultRegs, Args... args)
+        MacroAssembler::Call callOperationWithResult(OperationType operation, GPRReg resultGPR, Args... args)
         {
             setupArguments<OperationType>(args...);
             auto result = appendCallWithExceptionCheck<OperationType>(operation);
-            setupResults(resultRegs);
+            setupResults(resultGPR);
             return result;
         }
 

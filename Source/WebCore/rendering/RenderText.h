@@ -165,10 +165,8 @@ public:
 
     virtual void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle);
 
-#if ENABLE(TEXT_AUTOSIZING)
     float candidateComputedTextSize() const { return m_candidateComputedTextSize; }
     void setCandidateComputedTextSize(float size) { m_candidateComputedTextSize = size; }
-#endif
 
     StringView NODELETE stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
     
@@ -176,6 +174,7 @@ public:
 
     Vector<std::pair<unsigned, unsigned>> contentRangesBetweenOffsetsForType(const DocumentMarkerType, unsigned startOffset, unsigned endOffset) const;
 
+    bool hasInlineWrapperForDisplayContents() const { return m_hasInlineWrapperForDisplayContents; }
     RenderInline* NODELETE inlineWrapperForDisplayContents();
     void setInlineWrapperForDisplayContents(RenderInline*);
 
@@ -231,14 +230,12 @@ private:
     void container() const = delete; // Use parent() instead.
     void container(const RenderLayerModelObject&, bool&) const = delete; // Use parent() instead.
 
-    float maxWordFragmentWidth(const Style::ComputedStyle&, const FontCascade&, StringView word, unsigned minimumPrefixLength, unsigned minimumSuffixLength, bool currentCharacterIsSpace, unsigned characterIndex, float xPos, float entireWordWidth, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&);
+    float maxWordFragmentWidth(const Style::ComputedStyle&, const FontCascade&, StringView word, unsigned minimumPrefixLength, unsigned minimumSuffixLength, unsigned minimumWordLength, bool currentCharacterIsSpace, unsigned characterIndex, float xPos, float entireWordWidth, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&);
     float widthFromCacheConsideringPossibleTrailingSpace(const Style::ComputedStyle&, const FontCascade&, unsigned startIndex, unsigned wordLen, float xPos, bool currentCharacterIsSpace, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&) const;
     void initiateFontLoadingByAccessingGlyphDataAndComputeCanUseSimplifiedTextMeasuring(const String&);
 
-#if ENABLE(TEXT_AUTOSIZING)
     // FIXME: This should probably be part of the text sizing structures in Document instead. That would save some memory.
     float m_candidateComputedTextSize { 0 };
-#endif
     Markable<float> m_minWidth;
     Markable<float> m_maxWidth;
     float m_beginMinWidth { 0 };

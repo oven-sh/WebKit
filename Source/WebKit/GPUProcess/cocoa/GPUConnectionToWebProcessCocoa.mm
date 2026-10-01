@@ -99,7 +99,7 @@ void GPUConnectionToWebProcess::setTCCIdentity()
     }
 
     // FIXME: Adopting is needed here but static analysis is not able to tell.
-    SUPPRESS_RETAINPTR_CTOR_ADOPT auto identity = adoptOSObject(tcc_identity_create(TCC_IDENTITY_CODE_BUNDLE_ID, bundleIdentifier.utf8().data()));
+    SUPPRESS_RETAINPTR_CTOR_ADOPT OSObjectPtr identity = adoptOSObject(tcc_identity_create(TCC_IDENTITY_CODE_BUNDLE_ID, bundleIdentifier.utf8().legacyCStringPointer()));
     if (!identity) {
         RELEASE_LOG_ERROR(WebRTC, "tcc_identity_create returned null");
         return;

@@ -275,7 +275,7 @@ JSString* JSCell::toStringSlowCase(JSGlobalObject* globalObject) const
         RETURN_IF_EXCEPTION(scope, emptyString);
         return returnString;
     }
-    ASSERT(isSymbol());
+    RELEASE_ASSERT(isSymbol()); // And not, say, a sentinel cell that got out of a frame register.
     throwTypeError(globalObject, scope, SymbolCoercionError);
     return emptyString;
 }
@@ -317,7 +317,7 @@ NEVER_INLINE NO_RETURN_DUE_TO_CRASH NOT_TAIL_CALLED void reportZappedCellAndCras
     MarkedBlock* foundBlock = nullptr;
     if (foundBlockHandle) {
         foundBlock = &foundBlockHandle->block();
-        subspaceHash = SuperFastHash::computeHash(foundBlockHandle->subspace()->name());
+        subspaceHash = foundBlockHandle->subspace()->nameHash();
         cellSize = foundBlockHandle->cellSize();
 
         variousState |= static_cast<uint64_t>(foundBlockHandle->isFreeListed()) << 0;
@@ -353,7 +353,7 @@ NEVER_INLINE NO_RETURN_DUE_TO_CRASH NOT_TAIL_CALLED void reportZappedCellAndCras
             return IterationStatus::Continue;
         });
         if (foundPreciseAllocation) {
-            subspaceHash = SuperFastHash::computeHash(foundPreciseAllocation->subspace()->name());
+            subspaceHash = foundPreciseAllocation->subspace()->nameHash();
             cellSize = foundPreciseAllocation->cellSize();
 
             variousState |= static_cast<uint64_t>(isFreeListed) << 0;

@@ -235,7 +235,11 @@ void dumpBytecode(BytecodeDumperBase<JSInstructionStream>* dumper, JSInstruction
 EOF
 
             template.body = <<-EOF
+#{Opcode.operand_names(opcodes_filter { |s| s.config[:emit_in_structs_file] && !s.is_wasm? })}
+
 #{opcodes_filter { |s| s.config[:emit_in_structs_file] && !s.is_wasm? }.map(&:struct).join("\n")}
+
+#{Opcode.reemit_bytecode(opcodes_filter { |s| s.config[:emit_in_structs_file] && !s.is_wasm? })}
 
 EOF
             template.suffix = <<-EOF

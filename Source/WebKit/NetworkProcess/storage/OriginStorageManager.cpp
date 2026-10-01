@@ -428,6 +428,8 @@ void OriginStorageManager::StorageBucket::deleteLocalStorageData(WallTime time)
     if (FileSystem::fileModificationTime(currentLocalStoragePath) >= time) {
         if (m_localStorageManager)
             m_localStorageManager->clearDataOnDisk();
+
+        RELEASE_LOG(Storage, "OriginStorageManager::StorageBucket::deleteLocalStorageData deletes database file %" PRIVATE_LOG_STRING, currentLocalStoragePath.utf8());
         WebCore::SQLiteFileSystem::deleteDatabaseFile(currentLocalStoragePath);
     }
 
@@ -526,7 +528,7 @@ String OriginStorageManager::StorageBucket::resolvedLocalStoragePath()
         auto localStorageDirectory = typeStoragePath(StorageType::LocalStorage);
         auto localStoragePath = LocalStorageManager::localStorageFilePath(localStorageDirectory);
         if (!m_customLocalStoragePath.isEmpty() && !FileSystem::fileExists(localStoragePath) && FileSystem::fileExists(m_customLocalStoragePath)) {
-            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedLocalStoragePath New path '%" PUBLIC_LOG_STRING "'", this, localStoragePath.utf8().data());
+            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedLocalStoragePath New path '%" PUBLIC_LOG_STRING "'", this, localStoragePath.utf8());
             FileSystem::makeAllDirectories(localStorageDirectory);
             auto moved = WebCore::SQLiteFileSystem::moveDatabaseFile(m_customLocalStoragePath, localStoragePath);
             if (!moved && !FileSystem::fileExists(localStoragePath))
@@ -578,7 +580,7 @@ String OriginStorageManager::StorageBucket::resolvedCacheStoragePath()
     case UnifiedOriginStorageLevel::Standard:
         m_resolvedCacheStoragePath = typeStoragePath(StorageType::CacheStorage);
         if (!m_resolvedCacheStoragePath.isEmpty() && !m_customCacheStoragePath.isEmpty() && !FileSystem::fileExists(m_resolvedCacheStoragePath) && FileSystem::fileExists(m_customCacheStoragePath)) {
-            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedCacheStoragePath New path '%" PUBLIC_LOG_STRING "'", this, m_resolvedCacheStoragePath.utf8().data());
+            RELEASE_LOG(Storage, "%p - StorageBucket::resolvedCacheStoragePath New path '%" PUBLIC_LOG_STRING "'", this, m_resolvedCacheStoragePath.utf8());
             FileSystem::moveFile(m_customCacheStoragePath, m_resolvedCacheStoragePath);
         }
     }

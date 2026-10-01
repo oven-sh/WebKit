@@ -42,6 +42,7 @@
 #include "InternalFunction.h"
 #include "JITCode.h"
 #include "JITThunks.h"
+#include "JSGlobalObject.h"
 #include "JSJavaScriptCallFrame.h"
 #include "JavaScriptCallFrame.h"
 #include "MarkedSpaceInlines.h"
@@ -269,7 +270,7 @@ RefPtr<JSC::Breakpoint> InspectorDebuggerAgent::debuggerBreakpointFromPayload(Pr
 InspectorDebuggerAgent::InspectorDebuggerAgent(AgentContext& context)
     : InspectorAgentBase("Debugger"_s)
     , m_frontendDispatcher(makeUniqueRef<DebuggerFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(DebuggerBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(DebuggerBackendDispatcher::create(protect(context.backendDispatcher), this))
     , m_debugger(*CheckedRef { context.environment }->debugger())
     , m_injectedScriptManager(context.injectedScriptManager)
 {
@@ -859,9 +860,8 @@ static JSC::EncodedJSValue internalFunctionWithDebuggerHook(JSC::JSGlobalObject*
         }
     }
 
-    globalObject->vm().forEachDebugger([&] (JSC::Debugger& debugger) {
-        debugger.willCallInternalFunction(*internalFunction);
-    });
+    if (auto* debugger = globalObject->debugger())
+        debugger->willCallInternalFunction(*internalFunction);
 
     return original(globalObject, callFrame);
 }
@@ -939,10 +939,10 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::addSymbolicBreakpoint(cons
             auto& existingReplacedThunks = replacedThunks();
 
             for (auto* nativeExecutable : WTF::move(foundNativeExecutables)) {
-                if (auto existingIndex = existingReplacedThunks.find(nativeExecutable); existingIndex != notFound)
-                    ++existingReplacedThunks[existingIndex]->matchCount;
-                else
+                if (auto existingIndex = existingReplacedThunks.find(nativeExecutable); existingIndex == notFound)
                     newNativeExecutables.append(nativeExecutable);
+                else if (symbolicBreakpoint.matches(functionName(*nativeExecutable)))
+                    ++existingReplacedThunks[existingIndex]->matchCount;
             }
         }
         for (auto* nativeExecutable : WTF::move(newNativeExecutables))
@@ -954,10 +954,10 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::addSymbolicBreakpoint(cons
             auto& existingReplacedInternalFunctions = replacedInternalFunctions();
 
             for (auto* internalFunction : WTF::move(foundInternalFunctions)) {
-                if (auto existingIndex = existingReplacedInternalFunctions.find(internalFunction); existingIndex != notFound)
-                    ++existingReplacedInternalFunctions[existingIndex]->matchCount;
-                else
+                if (auto existingIndex = existingReplacedInternalFunctions.find(internalFunction); existingIndex == notFound)
                     newInternalFunctions.append(internalFunction);
+                else if (symbolicBreakpoint.matches(functionName(*internalFunction)))
+                    ++existingReplacedInternalFunctions[existingIndex]->matchCount;
             }
         }
         for (auto* internalFunction : WTF::move(newInternalFunctions))
@@ -1314,8 +1314,9 @@ void InspectorDebuggerAgent::registerIdleHandler()
     if (!m_registeredIdleCallback) {
         m_registeredIdleCallback = true;
         JSC::VM& vm = m_debugger.vm();
-        vm.whenIdle([this]() {
-            didBecomeIdle();
+        vm.whenIdle([weakThis = WeakPtr { *this }]() {
+            if (CheckedPtr agent = weakThis.get())
+                agent->didBecomeIdle();
         });
     }
 }
@@ -2168,8 +2169,7 @@ void InspectorDebuggerAgent::clearInspectorBreakpointState()
             if (!replacedInternalFunction->internalFunction)
                 return true;
 
-
-            if (&replacedInternalFunction->internalFunction->vm() == &m_debugger.vm())
+            if (&replacedInternalFunction->internalFunction->vm() != &m_debugger.vm())
                 return false;
 
             for (auto& symbolicBreakpoint : m_symbolicBreakpoints) {

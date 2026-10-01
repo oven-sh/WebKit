@@ -4,6 +4,8 @@
 // found in the LICENSE file.
 //
 
+#include <array>
+
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -317,10 +319,10 @@ void DepthStencilFormatsTestBase::depthStencilReadbackCase(const ReadbackTestPar
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, res, res, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex, 0);
-        EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     }
 
-    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     // use the default texture to render with while we return to the depth texture.
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -751,10 +753,10 @@ void main()
                              nullptr);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                        colorTex, 0);
-                EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+                EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
             }
 
-            EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+            EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
             // use the default texture to render with while we return to the depth texture.
             glBindTexture(GL_TEXTURE_2D, 0);
@@ -795,17 +797,16 @@ void main()
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
-            GLubyte actualPixels[destRes * destRes * 4];
-            glReadPixels(0, 0, destRes, destRes, GL_RGBA, GL_UNSIGNED_BYTE, actualPixels);
+            std::array<GLubyte, destRes * destRes * 4> actualPixels;
+            glReadPixels(0, 0, destRes, destRes, GL_RGBA, GL_UNSIGNED_BYTE, actualPixels.data());
             const GLfloat eps = 0.002;
             std::vector<GLfloat> expectedMin;
             std::vector<GLfloat> expectedMax;
             if (filterMode == GL_NEAREST)
             {
-                GLfloat init[] = {d00, d00, d10, d10, d00, d00, d10, d10,
-                                  d01, d01, d11, d11, d01, d01, d11, d11};
-                expectedMin.insert(expectedMin.begin(), init, ANGLE_UNSAFE_TODO(init + 16));
-                expectedMax.insert(expectedMax.begin(), init, ANGLE_UNSAFE_TODO(init + 16));
+                expectedMin = {d00, d00, d10, d10, d00, d00, d10, d10,
+                               d01, d01, d11, d11, d01, d01, d11, d11};
+                expectedMax = expectedMin;
 
                 for (int i = 0; i < 16; i++)
                 {
@@ -815,24 +816,21 @@ void main()
             }
             else
             {
-                GLfloat initMin[] = {
+                expectedMin = {
                     d00 - eps, d00, d00, d10 - eps, d00,       d00, d00, d10,
                     d00,       d00, d00, d10,       d01 - eps, d01, d01, d11 - eps,
                 };
-                GLfloat initMax[] = {
+                expectedMax = {
                     d00 + eps, d10, d10, d10 + eps, d01,       d11, d11, d11,
                     d01,       d11, d11, d11,       d01 + eps, d11, d11, d11 + eps,
                 };
-                expectedMin.insert(expectedMin.begin(), initMin, ANGLE_UNSAFE_TODO(initMin + 16));
-                expectedMax.insert(expectedMax.begin(), initMax, ANGLE_UNSAFE_TODO(initMax + 16));
             }
             for (int yy = 0; yy < destRes; ++yy)
             {
                 for (int xx = 0; xx < destRes; ++xx)
                 {
                     const int t        = xx + destRes * yy;
-                    const GLfloat was =
-                        (GLfloat)(ANGLE_UNSAFE_TODO(actualPixels[4 * t]) / 255.0);  // 4bpp
+                    const GLfloat was  = (GLfloat)(actualPixels[4 * t] / 255.0);  // 4bpp
                     const GLfloat eMin = expectedMin[t];
                     const GLfloat eMax = expectedMax[t];
                     EXPECT_TRUE(was >= eMin && was <= eMax)
@@ -906,14 +904,15 @@ TEST_P(DepthStencilFormatsTest, DepthBuffer24)
 
 TEST_P(DepthStencilFormatsTestES3, DrawWithDepth16)
 {
-    GLushort data[16];
+    std::array<GLushort, 16> data;
     for (unsigned int i = 0; i < 16; i++)
     {
-        ANGLE_UNSAFE_TODO(data[i]) = std::numeric_limits<GLushort>::max();
+        data[i] = std::numeric_limits<GLushort>::max();
     }
     glBindTexture(GL_TEXTURE_2D, mTexture);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT16, 4, 4);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, 4, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, data);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, 4, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT,
+                    data.data());
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -970,7 +969,7 @@ TEST_P(DepthStencilFormatsTestES3, DrawWithLargeViewport)
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D,
                                framebufferStencilTexture, 0);
 
-        EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         ASSERT_GL_NO_ERROR();
 
         GLint kStencilRef = 4;

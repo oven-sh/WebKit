@@ -547,7 +547,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
             if constexpr (shouldValidateKey == ShouldValidateKey::No)
                 ASSERT(isValidKey(value));
             else
-                RELEASE_ASSERT(isValidKey(value));
+                RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(isValidKey(value));
         }
 
         template<ShouldValidateKey shouldValidateKey = ShouldValidateKey::Yes> ValueType* lookup(const Key& key) { return lookup<IdentityTranslatorType, shouldValidateKey>(key); }
@@ -555,6 +555,12 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
         template<typename HashTranslator, ShouldValidateKey, typename T> ValueType* inlineLookup(const T&);
 
         ALWAYS_INLINE bool isNullStorage() const { return !m_table; }
+        // Starts the cache miss a lookup/add of a key with this hash will take on its first probe.
+        ALWAYS_INLINE void prefetchForHash(unsigned hash) const
+        {
+            if (ValueType* table = m_table)
+                __builtin_prefetch(table + (hash & tableSizeMask()));
+        }
 
 #if ASSERT_ENABLED
         void checkTableConsistency() const;

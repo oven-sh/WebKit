@@ -169,6 +169,13 @@ bool PolymorphicAccessJITStubRoutine::reconcileWeakReferencesAtGCEndImpl(VM& vm)
     bool isValid = true;
     for (StructureID weakReference : m_weakStructures)
         isValid &= vm.heap.isMarked(weakReference.decode());
+    // These watchpoints stay armed for as long as the routine lives and dereference their key when they fire.
+    for (auto* watchpoint : m_watchpoints) {
+        isValid &= WTF::switchOn(*watchpoint, [&](auto& watchpoint) {
+            const ObjectPropertyCondition& key = watchpoint.key();
+            return !key || key.isStillLive(vm);
+        });
+    }
     isValid &= Base::reconcileWeakReferencesAtGCEndImpl(vm);
     return isValid;
 }

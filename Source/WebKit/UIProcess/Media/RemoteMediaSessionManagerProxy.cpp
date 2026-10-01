@@ -28,6 +28,10 @@
 
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
 
+#if ENABLE(GPU_PROCESS)
+#include "GPUProcessMessages.h"
+#include "GPUProcessProxy.h"
+#endif
 #include "MessageSenderInlines.h"
 #include "RemoteMediaSessionManagerMessages.h"
 #include "RemoteMediaSessionManagerProxyMessages.h"
@@ -65,19 +69,22 @@ public:
     void audioHardwareDidBecomeActive()
     {
         setHardwareActivity(WebCore::AudioHardwareActivityType::IsActive);
-        m_client.audioHardwareDidBecomeActive();
+        if (RefPtr client = this->client())
+            client->audioHardwareDidBecomeActive();
     }
 
     void audioHardwareDidBecomeInactive()
     {
         setHardwareActivity(WebCore::AudioHardwareActivityType::IsInactive);
-        m_client.audioHardwareDidBecomeInactive();
+        if (RefPtr client = this->client())
+            client->audioHardwareDidBecomeInactive();
     }
 
     void audioOutputDeviceChanged(uint64_t bufferSizeMinimum, uint64_t bufferSizeMaximum)
     {
         setSupportedBufferSizes({ bufferSizeMinimum, bufferSizeMaximum });
-        m_client.audioOutputDeviceChanged();
+        if (RefPtr client = this->client())
+            client->audioOutputDeviceChanged();
     }
 };
 #endif
@@ -115,8 +122,10 @@ RemoteMediaSessionManagerProxy::RemoteMediaSessionManagerProxy()
 #endif
 
 #if PLATFORM(COCOA)
-    WebCore::AudioHardwareListener::setCreationFunction([protectedThis = Ref { *this }] (WebCore::AudioHardwareListener::Client& client) {
-        return protectedThis->ensureAudioHardwareListenerProxy(client);
+    WebCore::AudioHardwareListener::setCreationFunction([weakThis = ThreadSafeWeakPtr { *this }] (WebCore::AudioHardwareListener::Client& client) -> Ref<WebCore::AudioHardwareListener> {
+        if (RefPtr protectedThis = weakThis.get())
+            return protectedThis->ensureAudioHardwareListenerProxy(client);
+        return RemoteMediaSessionManagerAudioHardwareListener::create(client);
     });
 #endif
 }
@@ -138,6 +147,7 @@ void RemoteMediaSessionManagerProxy::addMediaSession(IPC::Connection& connection
         session->updateState(state);
 
     REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::addSession(session);
+    updateNowPlayingFallbackSession();
 }
 
 void RemoteMediaSessionManagerProxy::removeMediaSession(IPC::Connection& connection, RemoteMediaSessionState&& state)
@@ -146,11 +156,12 @@ void RemoteMediaSessionManagerProxy::removeMediaSession(IPC::Connection& connect
     if (RefPtr session = findAndUpdateSession(connection, state))
         removeSession(*session);
     m_sessionProxies.remove({ state.sessionIdentifier, processIdentifier });
+    updateNowPlayingFallbackSession();
 }
 
 void RemoteMediaSessionManagerProxy::webProcessWillShutDown(WebCore::ProcessIdentifier processIdentifier)
 {
-    Vector<WebCore::ProcessQualified<WebCore::MediaSessionIdentifier>> staleKeys;
+    Vector<WebCore::QualifiedMediaSessionIdentifier> staleKeys;
     for (auto& key : m_sessionProxies.keys()) {
         if (key.processIdentifier() == processIdentifier)
             staleKeys.append(key);
@@ -161,6 +172,7 @@ void RemoteMediaSessionManagerProxy::webProcessWillShutDown(WebCore::ProcessIden
             removeSession(*session);
         m_sessionProxies.remove(key);
     }
+    updateNowPlayingFallbackSession();
 
     // Audio-capture-source counts (getUserMedia) are tracked per page outside m_sessionProxies, so drop
     // this process's entries too; otherwise countActiveAudioCaptureSources() stays inflated and the audio
@@ -196,6 +208,8 @@ void RemoteMediaSessionManagerProxy::updateMediaSessionStates(IPC::Connection& c
         m_audioCaptureSourceCountsByPage.remove(key);
     else
         m_audioCaptureSourceCountsByPage.set(key, audioCaptureSourceCount);
+
+    updateNowPlayingFallbackSession();
 }
 
 int RemoteMediaSessionManagerProxy::countActiveAudioCaptureSources()
@@ -209,6 +223,7 @@ int RemoteMediaSessionManagerProxy::countActiveAudioCaptureSources()
 void RemoteMediaSessionManagerProxy::mediaSessionStateChanged(IPC::Connection& connection, WebKit::RemoteMediaSessionState&& state)
 {
     findAndUpdateSession(connection, state);
+    updateNowPlayingFallbackSession();
 }
 
 void RemoteMediaSessionManagerProxy::setCurrentSession(WebCore::PlatformMediaSessionInterface& session)
@@ -223,6 +238,36 @@ void RemoteMediaSessionManagerProxy::setCurrentSession(WebCore::PlatformMediaSes
     }
 
     REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::setCurrentSession(session);
+    updateNowPlayingFallbackSession();
+}
+
+#if ENABLE(GPU_PROCESS)
+std::optional<WebCore::QualifiedMediaSessionIdentifier> RemoteMediaSessionManagerProxy::computeNowPlayingFallbackSession() const
+{
+    for (auto& weakSession : copySessionsToVector()) {
+        RefPtr proxy = dynamicDowncast<RemoteMediaSessionProxy>(weakSession.get());
+        if (!proxy || !proxy->canReceiveRemoteControlCommands())
+            continue;
+
+        if (auto identifier = proxy->qualifiedSessionIdentifier())
+            return identifier;
+    }
+
+    return std::nullopt;
+}
+#endif
+
+void RemoteMediaSessionManagerProxy::updateNowPlayingFallbackSession()
+{
+#if ENABLE(GPU_PROCESS)
+    auto fallback = computeNowPlayingFallbackSession();
+    if (fallback == m_nowPlayingFallbackSession)
+        return;
+    m_nowPlayingFallbackSession = fallback;
+
+    if (RefPtr gpuProcess = GPUProcessProxy::singletonIfCreated())
+        gpuProcess->send(Messages::GPUProcess::SetNowPlayingFallbackSession(fallback), 0);
+#endif
 }
 
 void RemoteMediaSessionManagerProxy::mediaSessionWillBeginPlayback(IPC::Connection& connection, RemoteMediaSessionState&& state)
@@ -278,27 +323,33 @@ void RemoteMediaSessionManagerProxy::setPreferredBufferSize(size_t size)
 #if PLATFORM(COCOA)
 void RemoteMediaSessionManagerProxy::remoteAudioHardwareDidBecomeActive()
 {
-    if (m_audioHardwareListenerProxy)
-        Ref { *m_audioHardwareListenerProxy }->audioHardwareDidBecomeActive();
+    if (RefPtr listener = m_audioHardwareListenerProxy.get())
+        listener->audioHardwareDidBecomeActive();
 }
 
 void RemoteMediaSessionManagerProxy::remoteAudioHardwareDidBecomeInactive()
 {
-    if (m_audioHardwareListenerProxy)
-        Ref { *m_audioHardwareListenerProxy }->audioHardwareDidBecomeInactive();
+    if (RefPtr listener = m_audioHardwareListenerProxy.get())
+        listener->audioHardwareDidBecomeInactive();
 }
 
 void RemoteMediaSessionManagerProxy::remoteAudioOutputDeviceChanged(uint64_t bufferSizeMinimum, uint64_t bufferSizeMaximum)
 {
-    if (m_audioHardwareListenerProxy)
-        Ref { *m_audioHardwareListenerProxy }->audioOutputDeviceChanged(bufferSizeMinimum, bufferSizeMaximum);
+    if (RefPtr listener = m_audioHardwareListenerProxy.get())
+        listener->audioOutputDeviceChanged(bufferSizeMinimum, bufferSizeMaximum);
 }
 
 Ref<RemoteMediaSessionManagerAudioHardwareListener> RemoteMediaSessionManagerProxy::ensureAudioHardwareListenerProxy(WebCore::AudioHardwareListener::Client& client)
 {
-    if (!m_audioHardwareListenerProxy)
-        m_audioHardwareListenerProxy = RemoteMediaSessionManagerAudioHardwareListener::create(client);
-    return *m_audioHardwareListenerProxy;
+    if (&client == static_cast<WebCore::AudioHardwareListener::Client*>(this)) {
+        if (RefPtr existing = m_audioHardwareListenerProxy.get())
+            return existing.releaseNonNull();
+        auto listener = RemoteMediaSessionManagerAudioHardwareListener::create(client);
+        m_audioHardwareListenerProxy = listener.get();
+        return listener;
+    }
+
+    return RemoteMediaSessionManagerAudioHardwareListener::create(client);
 }
 #endif
 

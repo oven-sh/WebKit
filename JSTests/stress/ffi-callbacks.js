@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // JSFFICallback: native -> JS calls through every ffi_call_cb_* fixture.
 // Covers argument marshaling into JS (register and stack ladders, sub-8-byte

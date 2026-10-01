@@ -663,10 +663,10 @@ bool RenderView::isScrollableOrRubberbandableBox() const
     return frameView().isScrollable(defineScrollable);
 }
 
-void RenderView::boundingRects(Vector<LayoutRect>& rects, const LayoutPoint& accumulatedOffset) const
+Vector<FloatRect> RenderView::localBorderBoxRects() const
 {
     // FIXME: It's weird that this gets is size from the layer.
-    rects.append(LayoutRect { accumulatedOffset, layer()->size() });
+    return { FloatRect { { }, layer()->size() } };
 }
 
 void RenderView::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) const
@@ -1160,6 +1160,16 @@ void RenderView::registerContainerQueryBox(const RenderBox& box)
 void RenderView::unregisterContainerQueryBox(const RenderBox& box)
 {
     m_containerQueryBoxes.remove(box);
+}
+
+void RenderView::registerScrollStateQueryBox(const RenderBox& box)
+{
+    m_scrollStateQueryBoxes.add(box);
+}
+
+void RenderView::unregisterScrollStateQueryBox(const RenderBox& box)
+{
+    m_scrollStateQueryBoxes.remove(box);
 }
 
 void RenderView::registerAnchor(const RenderBoxModelObject& renderer)

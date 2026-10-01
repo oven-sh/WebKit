@@ -41,6 +41,7 @@
 #include <WebCore/CrossOriginEmbedderPolicyValue.h>
 #include <WebCore/CrossSiteNavigationDataTransfer.h>
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/ImageBufferTransferIdentifier.h>
 #include <WebCore/NotificationEventType.h>
 #include <WebCore/RegistrableDomain.h>
 #include <memory>
@@ -86,6 +87,7 @@ class ResourceRequest;
 class SecurityOrigin;
 class SecurityOriginData;
 class Site;
+enum class RestoredFromBackForwardCache : bool;
 enum class ShouldSample : bool;
 enum class StorageAccessPromptWasShown : bool;
 enum class StorageAccessWasGranted : uint8_t;
@@ -159,6 +161,7 @@ public:
     void dataTaskWithRequest(WebPageProxy&, PAL::SessionID, WebCore::ResourceRequest&&, const std::optional<WebCore::SecurityOriginData>& topOrigin, bool shouldRunAtForegroundPriority, CompletionHandler<void(API::DataTask&)>&&);
 
     void addAllowedFirstPartyForCookies(WebProcessProxy&, const WebCore::RegistrableDomain& firstPartyForCookies, LoadedWebArchive, CompletionHandler<void()>&&);
+    void addAllowedWebPageProxyIdentifier(WebProcessProxy&, WebPageProxyIdentifier);
     void addAllowedFilePaths(WebProcessProxy&, const Vector<String>& paths);
 
     void fetchWebsiteData(PAL::SessionID, OptionSet<WebsiteDataType>, OptionSet<WebsiteDataFetchOption>, CompletionHandler<void(WebsiteData)>&&);
@@ -221,7 +224,8 @@ public:
     void isResourceLoadStatisticsEphemeral(PAL::SessionID, CompletionHandler<void(bool)>&&);
     void setShouldClassifyResourcesBeforeDataRecordsRemoval(PAL::SessionID, bool, CompletionHandler<void()>&&);
     void resetCacheMaxAgeCapForPrevalentResources(PAL::SessionID, CompletionHandler<void()>&&);
-    void didCommitCrossSiteLoadWithDataTransfer(PAL::SessionID, const NavigatedFromDomain&, const NavigatedToDomain&, OptionSet<WebCore::CrossSiteNavigationDataTransfer::Flag>, WebPageProxyIdentifier, WebCore::PageIdentifier, DidFilterKnownLinkDecoration);
+    void didCommitCrossSiteLoadWithDataTransfer(PAL::SessionID, const NavigatedFromDomain&, const NavigatedToDomain&, OptionSet<WebCore::CrossSiteNavigationDataTransfer::Flag>, WebPageProxyIdentifier, DidFilterKnownLinkDecoration);
+    void didCommitMainFrameNavigation(PAL::SessionID, WebPageProxyIdentifier, const RegistrableDomain& committedDomain, const RegistrableDomain& previouslyCommittedDomain, WebCore::RestoredFromBackForwardCache);
     void didCommitCrossSiteLoadWithDataTransferFromPrevalentResource(WebPageProxyIdentifier);
     void setCrossSiteLoadWithLinkDecorationForTesting(PAL::SessionID, const NavigatedFromDomain&, const NavigatedToDomain&, bool wasFiltered, CompletionHandler<void()>&&);
     void resetCrossSiteLoadsWithLinkDecorationForTesting(PAL::SessionID, CompletionHandler<void()>&&);
@@ -288,6 +292,9 @@ public:
 #endif
 
     void receivedQualifiedServerTrust(WebKit::WebPageProxyIdentifier, WebCore::CertificateInfo&&, WebCore::CertificateInfo&&);
+
+    // The network process brokers MessagePort delivery but has no GPU process connection.
+    void authorizeImageBufferTransfers(Vector<WebCore::ImageBufferTransferIdentifier>&&, WebCore::ProcessIdentifier destinationProcess, CompletionHandler<void()>&&);
 
     void resourceLoadDidSendRequest(WebPageProxyIdentifier, ResourceLoadInfo&&, WebCore::ResourceRequest&&, std::optional<IPC::FormDataReference>&&);
     void resourceLoadDidPerformHTTPRedirection(WebPageProxyIdentifier, ResourceLoadInfo&&, WebCore::ResourceResponse&&, WebCore::ResourceRequest&&);
@@ -361,7 +368,7 @@ public:
     void cookiesDidChange(PAL::SessionID);
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    void setEmulatedConditions(PAL::SessionID, std::optional<int64_t>&& bytesPerSecondLimit);
+    void setEmulatedConditions(PAL::SessionID, std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency);
 #endif
 
     void notifyMediaStreamingActivity(bool);
@@ -501,6 +508,7 @@ private:
 
     WeakHashSet<WebsiteDataStore> m_websiteDataStores;
     WeakHashMap<WebProcessProxy, std::pair<LoadedWebArchive, HashSet<WebCore::RegistrableDomain>>> m_allowedFirstPartiesForCookies;
+    WeakHashMap<WebProcessProxy, HashSet<WebPageProxyIdentifier>> m_allowedWebPageProxyIdentifiers;
     WeakHashMap<WebProcessProxy, HashSet<String>> m_allowedFilePathsByProcess;
     HashMap<DataTaskIdentifier, Ref<API::DataTask>> m_dataTasks;
 #if PLATFORM(MAC)

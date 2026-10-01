@@ -34,6 +34,7 @@
 #include "WebGPUMapMode.h"
 #include "WebGPUOrigin2D.h"
 #include "WebGPUOrigin3D.h"
+#include "WebGPUPredefinedColorSpace.h"
 #include "WebGPUShaderStage.h"
 #include "WebGPUTextureUsage.h"
 #include <WebGPU/WebGPU.h>
@@ -43,6 +44,37 @@
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore::WebGPU {
+
+// Owns the UTF-8 encoding of a String and converts implicitly to a WGPUStringView
+// borrowing it, so the bytes outlive the conversion. Bind it to a named local when the
+// view has to outlive the full expression, as it does for a descriptor field.
+class BackingStringView {
+public:
+    explicit BackingStringView(const String& string)
+        : m_utf8(string.utf8())
+    {
+    }
+
+    operator WGPUStringView() const LIFETIME_BOUND
+    {
+        auto bytes = byteCast<char>(m_utf8.span());
+        return { bytes.data(), bytes.size() };
+    }
+
+private:
+    UTF8CString m_utf8;
+};
+
+inline BackingStringView toBackingStringView(const String& string)
+{
+    return BackingStringView { string };
+}
+
+// Literals have static storage, so nothing needs to own them.
+inline WGPUStringView toBackingStringView(ASCIILiteral literal)
+{
+    return { literal.characters(), literal.length() };
+}
 
 class Adapter;
 enum class AddressMode : uint8_t;
@@ -123,6 +155,7 @@ public:
     WGPUIndexFormat convertToBacking(IndexFormat);
     WGPULoadOp convertToBacking(LoadOp);
     WGPUPowerPreference convertToBacking(PowerPreference);
+    WGPUColorSpace NODELETE convertToBacking(PredefinedColorSpace);
     WGPUPrimitiveTopology convertToBacking(PrimitiveTopology);
     WGPUQueryType convertToBacking(QueryType);
     WGPUSamplerBindingType convertToBacking(SamplerBindingType);
@@ -137,11 +170,11 @@ public:
     WGPUVertexFormat convertToBacking(VertexFormat);
     WGPUVertexStepMode convertToBacking(VertexStepMode);
 
-    WGPUBufferUsageFlags NODELETE convertBufferUsageFlagsToBacking(BufferUsageFlags);
-    WGPUColorWriteMaskFlags NODELETE convertColorWriteFlagsToBacking(ColorWriteFlags);
-    WGPUMapModeFlags NODELETE convertMapModeFlagsToBacking(MapModeFlags);
-    WGPUShaderStageFlags NODELETE convertShaderStageFlagsToBacking(ShaderStageFlags);
-    WGPUTextureUsageFlags NODELETE convertTextureUsageFlagsToBacking(TextureUsageFlags);
+    WGPUBufferUsage NODELETE convertBufferUsageFlagsToBacking(BufferUsageFlags);
+    WGPUColorWriteMask NODELETE convertColorWriteFlagsToBacking(ColorWriteFlags);
+    WGPUMapMode NODELETE convertMapModeFlagsToBacking(MapModeFlags);
+    WGPUShaderStage NODELETE convertShaderStageFlagsToBacking(ShaderStageFlags);
+    WGPUTextureUsage NODELETE convertTextureUsageFlagsToBacking(TextureUsageFlags);
 
     WGPUColor convertToBacking(const Color&);
     WGPUExtent3D convertToBacking(const Extent3D&);

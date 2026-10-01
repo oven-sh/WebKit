@@ -356,6 +356,9 @@ void LocalFrame::setDocument(RefPtr<Document>&& newDocument)
     ASSERT(!m_doc || m_doc->window());
     ASSERT(!m_doc || m_doc->window()->frame() == this);
 
+    if (newDocument && newDocument->firstPartyForCookies().isEmpty())
+        loader().updateFirstPartyForCookies();
+
     // Don't use m_doc because it can be overwritten and we want to guarantee
     // that the document is not destroyed during this function call.
     if (newDocument)
@@ -387,7 +390,7 @@ void LocalFrame::frameDetached()
 
 bool LocalFrame::preventsParentFromBeingComplete() const
 {
-    if (loader().isWaitingForAsyncBackForwardNavigation())
+    if (loader().isWaitingForDelegatedBackForwardLoad())
         return true;
     return !loader().isComplete() && (!ownerElement() || !protect(ownerElement())->isLazyLoadObserverActive());
 }
@@ -702,7 +705,6 @@ void LocalFrame::setPrinting(bool printing, FloatSize pageSize, FloatSize origin
     Frame::setPrinting(printing, pageSize, originalPageSize, maximumShrinkRatio, shouldAdjustViewSize, notifyUIProcess);
 
     RefPtr document = m_doc;
-    document->updateRenderTreeForOwnerElementBox();
     // In setting printing, we should not validate resources already cached for the document.
     // See https://bugs.webkit.org/show_bug.cgi?id=43704
     ResourceCacheValidationSuppressor validationSuppressor(document->cachedResourceLoader());
@@ -1132,10 +1134,14 @@ void LocalFrame::setPageAndTextZoomFactors(float pageZoomFactor, float textZoomF
     }
 }
 
-float LocalFrame::usedZoomForChild(const Frame& child) const
+float LocalFrame::frameScaleFactorForChild(const Frame& child) const
 {
+    // The frame scale factor for a child frame is the accumulated CSS zoom
+    // applied to the frame element. On the ComputedStyle, the used zoom also
+    // includes the page zoom factor, so we must divide it out to get back to
+    // the accumulated CSS zoom value.
     if (CheckedPtr ownerRenderer = child.ownerRenderer())
-        return ownerRenderer->style().usedZoom();
+        return ownerRenderer->style().usedZoom() / m_pageZoomFactor;
 
     return 1.0;
 }
@@ -1330,11 +1336,19 @@ void LocalFrame::documentURLOrOriginDidChange()
         page->setMainFrameURLAndOrigin(document->url(), protect(document->securityOrigin()));
 }
 
+bool LocalFrame::dispatchLoadEventToRemoteParent()
+{
+    if (!is<RemoteFrame>(tree().parent()))
+        return false;
+    loader().client().dispatchLoadEventToOwnerElementInAnotherProcess();
+    return true;
+}
+
 void LocalFrame::dispatchLoadEventToParent()
 {
-    if (is<RemoteFrame>(tree().parent()))
-        loader().client().dispatchLoadEventToOwnerElementInAnotherProcess();
-    else if (RefPtr owner = ownerElement())
+    if (dispatchLoadEventToRemoteParent())
+        return;
+    if (RefPtr owner = ownerElement())
         owner->dispatchEvent(Event::create(eventNames().loadEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
@@ -1566,7 +1580,7 @@ void LocalFrame::showResourceMonitoringError()
         page->diagnosticLoggingClient().logDiagnosticMessageWithValueDictionary(DiagnosticLoggingKeys::iframeResourceMonitoringKey(), "IFrame ResourceMonitoring Unloaded"_s, valueDictionaryForResult(true), ShouldSample::No);
     }
 
-    FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": unloading", url.isValid() ? url.string().utf8().data() : "invalid", mainFrameURL.isValid() ? mainFrameURL.string().utf8().data() : "invalid");
+    FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": unloading", url.isValid() ? url.string().utf8() : "invalid"_s, mainFrameURL.isValid() ? mainFrameURL.string().utf8() : "invalid"_s);
 
     document->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Error, makeString("Frame was unloaded because its network usage exceeded the limit: "_s, ResourceMonitorChecker::singleton().networkUsageThreshold(), " bytes, url="_s, url.string()));
 
@@ -1597,7 +1611,7 @@ void LocalFrame::reportResourceMonitoringWarning()
         page->diagnosticLoggingClient().logDiagnosticMessageWithValueDictionary(DiagnosticLoggingKeys::iframeResourceMonitoringKey(), "IFrame ResourceMonitoring Throttled"_s, valueDictionaryForResult(false), ShouldSample::No);
     }
 
-    FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": not unloading due to global limits", url.isValid() ? url.string().utf8().data() : "invalid", mainFrameURL.isValid() ? mainFrameURL.string().utf8().data() : "invalid");
+    FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": not unloading due to global limits", url.isValid() ? url.string().utf8() : "invalid"_s, mainFrameURL.isValid() ? mainFrameURL.string().utf8() : "invalid"_s);
 
     if (RefPtr document = this->document())
         document->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Warning, "Frame's network usage exceeded the limit."_s);

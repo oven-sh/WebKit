@@ -27,6 +27,7 @@
 
 #if ENABLE(WEBGL)
 
+#include "AlphaPremultiplication.h"
 #include "CanvasElementImage.h"
 #include "EventLoop.h"
 #include "GPUBasedCanvasRenderingContext.h"
@@ -78,6 +79,7 @@ class AbstractLocker;
 namespace WebCore {
 
 class ANGLEInstancedArrays;
+class BufferSource;
 class EXTBlendMinMax;
 class EXTClipControl;
 class EXTColorBufferFloat;
@@ -195,10 +197,9 @@ public:
     void blendFunc(GCGLenum sfactor, GCGLenum dfactor);
     void blendFuncSeparate(GCGLenum srcRGB, GCGLenum dstRGB, GCGLenum srcAlpha, GCGLenum dstAlpha);
 
-    using BufferDataSource = Variant<Ref<ArrayBuffer>, Ref<ArrayBufferView>>;
     void bufferData(GCGLenum target, long long size, GCGLenum usage);
-    void bufferData(GCGLenum target, std::optional<BufferDataSource>&&, GCGLenum usage);
-    void bufferSubData(GCGLenum target, long long offset, BufferDataSource&&);
+    void bufferData(GCGLenum target, std::optional<BufferSource>&&, GCGLenum usage);
+    void bufferSubData(GCGLenum target, long long offset, BufferSource&&);
 
     GCGLenum checkFramebufferStatus(GCGLenum target);
     void clear(GCGLbitfield mask);
@@ -466,7 +467,7 @@ public:
 
     // GraphicsContextGL::Client
     void forceContextLost() final;
-    void addDebugMessage(GCGLenum, GCGLenum, GCGLenum, const CString&) final;
+    void addDebugMessage(GCGLenum, GCGLenum, GCGLenum, std::span<const char8_t>) final;
     void didChangeMemoryCost() final;
 
     void recycleContext();
@@ -593,10 +594,10 @@ protected:
     // Adds a compressed texture format.
     void addCompressedTextureFormat(GCGLenum);
 
-    RefPtr<Image> drawImageIntoBuffer(Image&, int width, int height, int deviceScaleFactor, ASCIILiteral functionName);
+    RefPtr<NativeImage> drawImageIntoBuffer(Image&, int width, int height, int deviceScaleFactor, ASCIILiteral functionName);
 
 #if ENABLE(VIDEO)
-    RefPtr<Image> videoFrameToImage(HTMLVideoElement&, ASCIILiteral functionName);
+    RefPtr<NativeImage> videoFrameToNativeImage(HTMLVideoElement&, ASCIILiteral functionName);
 #endif
 
     void loseExtensions(LostContextMode);
@@ -677,10 +678,10 @@ protected:
         LRUImageBufferCache(int capacity);
         // Returns pointer to a cleared image buffer that is owned by the cache. The pointer is valid until next call.
         // Using fillOperator == CompositeOperator::Copy can be used to omit the clear of the buffer.
-        RefPtr<ImageBuffer> imageBuffer(const IntSize&, DestinationColorSpace, CompositeOperator fillOperator = CompositeOperator::SourceOver);
+        RefPtr<ImageBuffer> imageBuffer(const IntSize&, ColorSpace, CompositeOperator fillOperator = CompositeOperator::SourceOver);
     private:
         void bubbleToFront(size_t idx);
-        Vector<std::optional<std::pair<DestinationColorSpace, Ref<ImageBuffer>>>> m_buffers;
+        Vector<std::optional<std::pair<ColorSpace, Ref<ImageBuffer>>>> m_buffers;
     };
     LRUImageBufferCache m_generatedImageCache { 0 };
 
@@ -881,7 +882,7 @@ protected:
 
     ExceptionOr<void> texImageSourceHelper(TexImageFunctionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& sourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, TexImageSource&&);
     void texImageArrayBufferViewHelper(TexImageFunctionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, RefPtr<ArrayBufferView>&& pixels, NullDisposition, uint64_t srcOffset);
-    void texImageImpl(TexImageFunctionID, GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLenum format, GCGLenum type, Image&, GraphicsContextGL::DOMSource, bool flipY, bool premultiplyAlpha, bool ignoreNativeImageAlphaPremultiplication, const IntRect&, GCGLsizei depth, GCGLint unpackImageHeight);
+    void texImageImpl(TexImageFunctionID, GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLenum format, GCGLenum type, NativeImage&, std::optional<AlphaPremultiplication> sourceAlphaPremultiplication, bool flipY, bool premultiplyAlpha, const IntRect&, GCGLsizei depth, GCGLint unpackImageHeight);
     void texImage2DBase(GCGLenum target, GCGLint level, GCGLenum internalFormat, GCGLsizei width, GCGLsizei height, GCGLint border, GCGLenum format, GCGLenum type, std::span<const uint8_t> pixels);
     void texSubImage2DBase(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum internalFormat, GCGLenum format, GCGLenum type, std::span<const uint8_t> pixels);
     static ASCIILiteral texImageFunctionName(TexImageFunctionID);

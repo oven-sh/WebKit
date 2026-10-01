@@ -230,14 +230,18 @@ static NSString *toWebAPI(ResourceLoadInfo::Type type)
 
 static NSMutableDictionary *webRequestDetailsForResourceLoad(const ResourceLoadInfo& resourceLoad, WebExtensionTabIdentifier tabIdentifier)
 {
+    auto parentFrameIdentifier = WebExtensionFrameConstants::NoneIdentifier;
+    if (resourceLoad.parentFrameID)
+        parentFrameIdentifier = resourceLoad.parentFrameIsMainFrame ? WebExtensionFrameConstants::MainFrameIdentifier : toWebExtensionFrameIdentifier(resourceLoad.parentFrameID);
+
     NSMutableDictionary *result = [@{
         @"frameId": resourceLoad.parentFrameID ? @(toWebAPI(toWebExtensionFrameIdentifier(resourceLoad.frameID))) : @(toWebAPI(WebExtensionFrameConstants::MainFrameIdentifier)),
-        parentFrameIdKey: resourceLoad.parentFrameID ? @(toWebAPI(toWebExtensionFrameIdentifier(resourceLoad.parentFrameID))) : @(toWebAPI(WebExtensionFrameConstants::NoneIdentifier)),
+        parentFrameIdKey: @(toWebAPI(parentFrameIdentifier)),
         requestIdKey: adoptNS([[NSString alloc] initWithFormat:@"%llu", resourceLoad.resourceLoadID.toUInt64()]).get(),
         timeStampKey: @(floor(resourceLoad.eventTimestamp.approximate<WallTime>().secondsSinceEpoch().milliseconds())),
         @"url": resourceLoad.originalURL.string().createNSString().get(),
         @"tabId": @(toWebAPI(tabIdentifier)),
-        typeKey: toWebAPI(resourceLoad.type),
+        typeKey: resourceLoad.type == ResourceLoadInfo::Type::Document && resourceLoad.parentFrameID ? @"sub_frame" : toWebAPI(resourceLoad.type),
         methodKey: resourceLoad.originalHTTPMethod.createNSString().get(),
     } mutableCopy];
 
@@ -315,6 +319,17 @@ void WebExtensionContextProxy::resourceLoadDidSendRequest(WebExtensionTabIdentif
     enumerateNamespaceObjects([&](auto& namespaceObject) {
         handleListeners(namespaceObject.webRequest().onBeforeSendHeaders());
         handleListeners(namespaceObject.webRequest().onSendHeaders());
+    });
+}
+
+void WebExtensionContextProxy::resourceLoadDidBlockBeforeRequest(WebExtensionTabIdentifier tabID, WebExtensionWindowIdentifier windowID, const ResourceLoadInfo& resourceLoad)
+{
+    auto *details = webRequestDetailsForResourceLoad(resourceLoad, tabID);
+
+    enumerateNamespaceObjects([&](auto& namespaceObject) {
+        namespaceObject.webRequest().onBeforeRequest().enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto&) {
+            listener.call(toJSValueRef(listener.globalContext(), details));
+        });
     });
 }
 
@@ -410,7 +425,7 @@ void WebExtensionContextProxy::resourceLoadDidCompleteWithError(WebExtensionTabI
     if (!error.isNull()) {
         [details addEntriesFromDictionary:@{
             @"tabId": @(toWebAPI(tabID)),
-            errorKey: @"net::ERR_ABORTED"
+            errorKey: error.localizedDescription().createNSString().get()
         }];
 
         enumerateNamespaceObjects([&](auto& namespaceObject) {

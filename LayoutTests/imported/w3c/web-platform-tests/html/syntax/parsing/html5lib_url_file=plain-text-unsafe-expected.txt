@@ -38,14 +38,15 @@ PASS <math>\x00filler\x00text
 PASS <math><![CDATA[\x00filler\x00text\x00]]>
 PASS <math><annotation-xml>\x00x
 PASS <math><annotation-xml encoding="text/html">\x00x
-FAIL \x00filler\x00text (innerHTML in svg path) assert_equals: expected "#document\n| \"\ufffdfiller\ufffdtext\"" but got "#document\n| \"fillertext\""
+PASS \x00filler\x00text (innerHTML in svg path)
 PASS \x00filler\x00text (innerHTML in svg title)
 PASS \x00filler\x00text (innerHTML in math ms)
-FAIL \x00x (innerHTML in math annotation-xml) assert_equals: expected "#document\n| \"\ufffdx\"" but got "#document\n| \"x\""
-\x00filler\x00text (innerHTML in svg path)
-
-innerHTML Container
-
-svg path
-Input
+PASS \x00x (innerHTML in math annotation-xml)
+PASS \x00filler\x00text (innerHTML in textarea)
+PASS \x00filler\x00text (innerHTML in title)
+PASS \x00filler\x00text (innerHTML in style)
+PASS \x00filler\x00text (innerHTML in xmp)
+PASS \x00filler\x00text (innerHTML in script)
+PASS \x00filler\x00text (innerHTML in plaintext)
+PASS \x00filler\x00text (innerHTML in div)
 

@@ -294,8 +294,15 @@ ProcessAssertionType ProcessThrottler::assertionTypeForState(ProcessThrottleStat
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+#if !USE(RUNNINGBOARD)
+NO_RETURN_DUE_TO_ASSERT
+#endif
 void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
 {
+#if !USE(RUNNINGBOARD)
+    ASSERT_NOT_REACHED();
+#endif
+
     assertIfCalledFromBackgroundThread();
 
     bool didChange = m_state != newState;
@@ -330,15 +337,15 @@ void ProcessThrottler::acquireAssertion(ProcessAssertionType newType)
         if (m_shouldTakeUIBackgroundAssertion) {
             Ref assertion = ProcessAndUIAssertion::create(process, assertionName(newType), newType, ProcessAssertion::Mode::Async, [previousAssertion = WTF::move(previousAssertion)] { });
             assertion->setUIAssertionExpirationHandler([weakThis = WeakPtr { *this }] {
-                if (weakThis)
-                    weakThis->uiAssertionWillExpireImminently();
+                if (RefPtr protectedThis = weakThis)
+                    protectedThis->uiAssertionWillExpireImminently();
             });
             m_assertion = WTF::move(assertion);
         } else
             m_assertion = ProcessAssertion::create(process, assertionName(newType), newType, ProcessAssertion::Mode::Async, [previousAssertion = WTF::move(previousAssertion)] { });
     }
     RefPtr { m_assertion }->setInvalidationHandler([weakThis = WeakPtr { *this }] {
-        if (RefPtr protectedThis = weakThis.get())
+        if (RefPtr protectedThis = weakThis)
             protectedThis->assertionWasInvalidated();
     });
 

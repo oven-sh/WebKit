@@ -55,7 +55,6 @@
 #import <WebKit/WKIdentityDocumentPresentmentRawRequest.h>
 #import <WebKit/WKIdentityDocumentPresentmentRequest.h>
 #import <wtf/BlockPtr.h>
-#import <wtf/Expected.h>
 #import <wtf/JSONValues.h>
 #import <wtf/Ref.h>
 #import <wtf/RetainPtr.h>
@@ -66,6 +65,7 @@
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/text/Base64.h>
 #import <wtf/text/StringCommon.h>
+#import <wtf/text/TextStream.h>
 #import <wtf/text/WTFString.h>
 
 #import "WebKitSwiftSoftLink.h"
@@ -227,7 +227,7 @@ static RetainPtr<NSArray<NSArray<WKIdentityDocumentPresentmentRequestAuthenticat
     RetainPtr<WKIdentityDocumentPresentmentController> _presentmentController;
     WeakObjCPtr<id<WKDigitalCredentialsPickerDelegate>> _delegate;
     WeakObjCPtr<WKWebView> _webView;
-    CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> &&)> _completionHandler;
+    CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> &&)> _completionHandler;
 }
 
 - (instancetype)initWithView:(WKWebView *)view page:(WebKit::WebPageProxy *)page
@@ -314,11 +314,11 @@ static RetainPtr<NSArray<NSArray<WKIdentityDocumentPresentmentRequestAuthenticat
     });
 }
 
-- (void)presentWithRequestData:(const WebCore::DigitalCredentialsRequestData &)requestData completionHandler:(CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> &&)> &&)completionHandler
+- (void)presentWithRequestData:(const WebCore::DigitalCredentialsRequestData &)requestData completionHandler:(CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> &&)> &&)completionHandler
 {
     WTF::switchOn(requestData,
         [](const auto& requestData) {
-            LOG(DigitalCredentials, "WKDigitalCredentialsPicker: Digital Credentials - Presenting with request data: %s.", requestData.topOrigin.toString().utf8().data());
+            LOG_WITH_STREAM(DigitalCredentials, stream << "WKDigitalCredentialsPicker: Digital Credentials - Presenting with request data: "_s << requestData.topOrigin.toString() << "."_s);
     });
     _completionHandler = WTF::move(completionHandler);
 
@@ -415,7 +415,7 @@ static RetainPtr<NSArray<NSArray<WKIdentityDocumentPresentmentRequestAuthenticat
             return;
         }
 
-        LOG(DigitalCredentials, "The document provider returned response data: %s.", responseData.utf8().data());
+        LOG_WITH_STREAM(DigitalCredentials, stream << "The document provider returned response data: "_s << responseData << "."_s);
         RetainPtr<NSString> protocol = response.protocolString;
 
         if ([protocol isEqualToString:@"org.iso.mdoc"]) {
@@ -481,7 +481,7 @@ static RetainPtr<NSArray<NSArray<WKIdentityDocumentPresentmentRequestAuthenticat
         [self.delegate digitalCredentialsPickerDidDismiss:self];
 }
 
-- (void)completeWith:(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> &&)result
+- (void)completeWith:(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> &&)result
 {
     if (!_completionHandler) {
         LOG(DigitalCredentials, "Completion handler is null.");

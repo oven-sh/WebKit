@@ -44,6 +44,7 @@
 #import <wtf/URL.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/darwin/DispatchExtras.h>
 #import <wtf/threads/BinarySemaphore.h>
 
 static inline NSData *replacementDataFromDecisionInfo(NSDictionary *decisionInfo)
@@ -70,7 +71,7 @@ void NetworkExtensionContentFilter::initialize(const URL* url)
 {
     ASSERT(!m_queue);
     ASSERT(!m_neFilterSource);
-    m_queue = adoptOSObject(dispatch_queue_create("WebKit NetworkExtension Filtering", DISPATCH_QUEUE_SERIAL));
+    m_queue = adoptOSObject(dispatch_queue_create("WebKit NetworkExtension Filtering", serialQueueWithAutoreleasePoolAttrSingleton()));
     ASSERT_UNUSED(url, !url);
     m_neFilterSource = adoptNS([[NEFilterSource alloc] initWithDecisionQueue:m_queue.get()]);
     [m_neFilterSource setSourceAppIdentifier:applicationBundleIdentifier().createNSString().get()];
@@ -95,7 +96,7 @@ void NetworkExtensionContentFilter::willSendRequest(ResourceRequest& request, co
 
     BinarySemaphore semaphore;
     RetainPtr<NSString> modifiedRequestURLString;
-    [m_neFilterSource willSendRequest:protect(request.nsURLRequest(DoNotUpdateHTTPBody)).get() decisionHandler:[this, &modifiedRequestURLString, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
+    [m_neFilterSource willSendRequest:protect(request.nsURLRequest(DoNotUpdateHTTPBody)).get() decisionHandler:[this, protectedThis = Ref { *this }, &modifiedRequestURLString, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
         modifiedRequestURLString = decisionInfo[NEFilterSourceOptionsRedirectURL];
         ASSERT(!modifiedRequestURLString || [modifiedRequestURLString isKindOfClass:[NSString class]]);
         handleDecision(status, replacementDataFromDecisionInfo(decisionInfo));
@@ -177,7 +178,7 @@ void NetworkExtensionContentFilter::responseReceived(const ResourceResponse& res
     }
 
     BinarySemaphore semaphore;
-    [m_neFilterSource receivedResponse:protect(response.nsURLResponse()).get() decisionHandler:[this, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
+    [m_neFilterSource receivedResponse:protect(response.nsURLResponse()).get() decisionHandler:[this, protectedThis = Ref { *this }, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
         handleDecision(status, replacementDataFromDecisionInfo(decisionInfo));
         semaphore.signal();
     }];
@@ -193,7 +194,7 @@ void NetworkExtensionContentFilter::addData(const SharedBuffer& data)
     auto nsData = data.createNSData();
 
     BinarySemaphore semaphore;
-    [m_neFilterSource receivedData:nsData.get() decisionHandler:[this, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
+    [m_neFilterSource receivedData:nsData.get() decisionHandler:[this, protectedThis = Ref { *this }, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
         handleDecision(status, replacementDataFromDecisionInfo(decisionInfo));
         semaphore.signal();
     }];
@@ -207,7 +208,7 @@ void NetworkExtensionContentFilter::addData(const SharedBuffer& data)
 void NetworkExtensionContentFilter::finishedAddingData()
 {
     BinarySemaphore semaphore;
-    [m_neFilterSource finishedLoadingWithDecisionHandler:[this, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
+    [m_neFilterSource finishedLoadingWithDecisionHandler:[this, protectedThis = Ref { *this }, &semaphore](NEFilterSourceStatus status, NSDictionary *decisionInfo) {
         handleDecision(status, replacementDataFromDecisionInfo(decisionInfo));
         semaphore.signal();
     }];
@@ -262,7 +263,7 @@ void NetworkExtensionContentFilter::handleDecision(NEFilterSourceStatus status, 
         m_replacementData = replacementData;
 #if !LOG_DISABLED
     if (!needsMoreData())
-        LOG(ContentFiltering, "NetworkExtensionContentFilter stopped buffering with status %zd and replacement data length %zu.\n", status, replacementData.length);
+        LOG(ContentFiltering, "NetworkExtensionContentFilter stopped buffering with status %zd and replacement data length %zu.\n", static_cast<ssize_t>(status), static_cast<size_t>(replacementData.length));
 #endif
 }
 

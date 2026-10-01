@@ -28,7 +28,7 @@
 
 #if HAVE(IOSURFACE)
 
-#include "DestinationColorSpace.h"
+#include "ColorSpace.h"
 #include "GraphicsContextCG.h"
 #include <CoreGraphics/CoreGraphics.h>
 #include <wtf/NeverDestroyed.h>
@@ -78,7 +78,7 @@ Ref<IOSurfacePool> IOSurfacePool::create()
     return adoptRef(*new IOSurfacePool);
 }
 
-static bool surfaceMatchesParameters(IOSurface& surface, IntSize requestedSize, const DestinationColorSpace& colorSpace, IOSurface::Format format, UseLosslessCompression useLosslessCompression)
+static bool surfaceMatchesParameters(IOSurface& surface, IntSize requestedSize, const ColorSpace& colorSpace, IOSurface::Format format, UseLosslessCompression useLosslessCompression)
 {
     // FIXME: It might be OK to take a surface that doesn't use compression when requesting one that does, but not the other way around.
     if (!surface.hasFormat({ format, useLosslessCompression }))
@@ -121,36 +121,31 @@ void IOSurfacePool::didUseSurfaceOfSize(IntSize size)
     m_sizesInPruneOrder.append(size);
 }
 
-std::unique_ptr<IOSurface> IOSurfacePool::takeSurface(IntSize size, const DestinationColorSpace& colorSpace, IOSurface::Format format, UseLosslessCompression useLosslessCompression)
+std::unique_ptr<IOSurface> IOSurfacePool::takeSurface(IntSize size, const ColorSpace& colorSpace, IOSurface::Format format, UseLosslessCompression useLosslessCompression)
 {
     Locker locker { m_lock };
-    CachedSurfaceMap::iterator mapIter = m_cachedSurfaces.find(size);
+    if (auto mapIter = m_cachedSurfaces.find(size); mapIter != m_cachedSurfaces.end()) {
+        for (auto surfaceIter = mapIter->value.begin(); surfaceIter != mapIter->value.end(); ++surfaceIter) {
+            if (!surfaceMatchesParameters(*surfaceIter->get(), size, colorSpace, format, useLosslessCompression))
+                continue;
 
-    if (mapIter == m_cachedSurfaces.end()) {
-        DUMP_POOL_STATISTICS(stream << "IOSurfacePool::takeSurface [" << m_poolIdentifier << "] - failed to find surface matching size " << size << " color space " << colorSpace << " format " << format << "\n" << poolStatistics());
-        return nullptr;
-    }
+            auto surface = WTF::move(*surfaceIter);
+            mapIter->value.remove(surfaceIter);
 
-    for (auto surfaceIter = mapIter->value.begin(); surfaceIter != mapIter->value.end(); ++surfaceIter) {
-        if (!surfaceMatchesParameters(*surfaceIter->get(), size, colorSpace, format, useLosslessCompression))
-            continue;
+            didUseSurfaceOfSize(size);
 
-        auto surface = WTF::move(*surfaceIter);
-        mapIter->value.remove(surfaceIter);
+            if (mapIter->value.isEmpty()) {
+                m_cachedSurfaces.remove(mapIter);
+                m_sizesInPruneOrder.removeLast();
+            }
 
-        didUseSurfaceOfSize(size);
+            didRemoveSurface(*surface, false);
 
-        if (mapIter->value.isEmpty()) {
-            m_cachedSurfaces.remove(mapIter);
-            m_sizesInPruneOrder.removeLast();
+            surface->setVolatile(false);
+
+            DUMP_POOL_STATISTICS(stream << "IOSurfacePool::takeSurface [" << m_poolIdentifier << "] - taking surface " << surface.get() << " with size " << size << " color space " << colorSpace << " format " << format << "\n" << poolStatistics());
+            return surface;
         }
-
-        didRemoveSurface(*surface, false);
-
-        surface->setVolatile(false);
-
-        DUMP_POOL_STATISTICS(stream << "IOSurfacePool::takeSurface [" << m_poolIdentifier << "] - taking surface " << surface.get() << " with size " << size << " color space " << colorSpace << " format " << format << "\n" << poolStatistics());
-        return surface;
     }
 
     // Some of the in-use surfaces may no longer actually be in-use, but we haven't moved them over yet.
@@ -244,8 +239,14 @@ void IOSurfacePool::tryEvictOldestCachedSurface()
     if (m_sizesInPruneOrder.isEmpty())
         return;
 
-    CachedSurfaceMap::iterator surfaceQueueIter = m_cachedSurfaces.find(m_sizesInPruneOrder.first());
-    ASSERT(!surfaceQueueIter->value.isEmpty());
+    auto surfaceQueueIter = m_cachedSurfaces.find(m_sizesInPruneOrder.first());
+    if (surfaceQueueIter == m_cachedSurfaces.end() || surfaceQueueIter->value.isEmpty()) {
+        // Crashes indicate that m_sizesInPruneOrder can contain a value not in m_cachedSurfaces. (rdar://177969354).
+        ASSERT_NOT_REACHED();
+        m_sizesInPruneOrder.removeAt(0);
+        return;
+    }
+
     auto surface = surfaceQueueIter->value.takeLast();
     didRemoveSurface(*surface, false);
 

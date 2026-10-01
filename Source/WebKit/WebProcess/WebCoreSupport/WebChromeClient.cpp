@@ -59,6 +59,8 @@
 #include "WebColorChooser.h"
 #include "WebDataListSuggestionPicker.h"
 #include "WebDateTimeChooser.h"
+#include "WebExtensionContentRuleListBlockedLoadInfo.h"
+#include "WebExtensionControllerProxy.h"
 #include "WebFrame.h"
 #include "WebFullScreenManager.h"
 #include "WebGPUDowncastConvertToBackingContext.h"
@@ -84,6 +86,7 @@
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
 #include <WebCore/ContentChangeObserver.h>
 #endif
+#include <WebCore/ContentRuleListBlockedLoadInfo.h>
 #include <WebCore/ContentRuleListMatchedRule.h>
 #include <WebCore/ContentRuleListResults.h>
 #include <WebCore/DataListSuggestionPicker.h>
@@ -104,6 +107,7 @@
 #include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/FrameInlines.h>
 #include <WebCore/FrameLoader.h>
+#include <WebCore/HTMLFrameOwnerElement.h>
 #include <WebCore/HTMLInputElement.h>
 #include <WebCore/HTMLMediaElement.h>
 #include <WebCore/HTMLNames.h>
@@ -420,6 +424,7 @@ RefPtr<Page> WebChromeClient::createWindow(LocalFrame& frame, const String& open
         std::nullopt, /* sourceBackForwardItemIdentifier */
         WebCore::LockHistory::No,
         WebCore::LockBackForwardList::No,
+        WebCore::NavigationHistoryBehavior::Auto,
         { }, /* clientRedirectSourceForHistory */
         frame.effectiveSandboxFlags(),
         frame.document()->referrerPolicy(),
@@ -438,6 +443,7 @@ RefPtr<Page> WebChromeClient::createWindow(LocalFrame& frame, const String& open
         originalRequest, /* request */
         originalRequest.url().isValid() ? String() : originalRequest.url().string(), /* invalidURLString */
         navigationAction.requester(), /* requester */
+        { }, /* pendingNavigateEventID */
     };
 
     auto sendResult = protect(webProcess.parentProcessConnection())->sendSync(Messages::WebPageProxy::CreateNewPage(windowFeatures, navigationActionData), page->identifier(), IPC::Timeout::infinity(), { IPC::SendSyncOption::MaintainOrderingWithAsyncMessages });
@@ -463,7 +469,7 @@ bool WebChromeClient::testProcessIncomingSyncMessagesWhenWaitingForSyncReply()
 
     IPC::UnboundedSynchronousIPCScope unboundedSynchronousIPCScope;
 
-    auto sendResult = WebProcess::singleton().ensureNetworkProcessConnection().connection().sendSync(Messages::NetworkConnectionToWebProcess::TestProcessIncomingSyncMessagesWhenWaitingForSyncReply(m_page->webPageProxyIdentifier()), 0);
+    auto sendResult = protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendSync(Messages::NetworkConnectionToWebProcess::TestProcessIncomingSyncMessagesWhenWaitingForSyncReply(m_page->webPageProxyIdentifier()), 0);
     auto [handled] = sendResult.takeReplyOr(false);
     return handled;
 }
@@ -488,7 +494,7 @@ void WebChromeClient::runModal()
 
 void WebChromeClient::reportProcessCPUTime(Seconds cpuTime, ActivityStateForCPUSampling activityState)
 {
-    WebProcess::singleton().send(Messages::WebProcessPool::ReportWebContentCPUTime(cpuTime, static_cast<uint64_t>(activityState)), 0);
+    WebProcess::singleton().send(Messages::WebProcessPool::ReportWebContentCPUTime(cpuTime, activityState), 0);
 }
 
 bool WebChromeClient::isPopup() const
@@ -1085,7 +1091,7 @@ void WebChromeClient::showContactPicker(WebCore::ContactsRequestData&& requestDa
 }
 
 #if ENABLE(WEB_AUTHN)
-void WebChromeClient::showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData& requestData, WTF::CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& callback)
+void WebChromeClient::showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData& requestData, WTF::CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& callback)
 {
     if (RefPtr page = m_page.get())
         page->showDigitalCredentialsChooser(std::nullopt, requestData, WTF::move(callback));
@@ -1168,7 +1174,7 @@ WebCore::DisplayRefreshMonitorFactory* WebChromeClient::displayRefreshMonitorFac
 }
 
 #if ENABLE(GPU_PROCESS)
-RefPtr<ImageBuffer> WebChromeClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> WebChromeClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     if (WebProcess::singleton().shouldUseRemoteRenderingFor(purpose)) {
         RefPtr page = m_page.get();
@@ -1194,6 +1200,14 @@ RefPtr<ImageBuffer> WebChromeClient::sinkIntoImageBuffer(std::unique_ptr<Seriali
 
     auto remote = std::unique_ptr<RemoteSerializedImageBufferProxy>(static_cast<RemoteSerializedImageBufferProxy*>(imageBuffer.release()));
     return RemoteSerializedImageBufferProxy::sinkIntoImageBuffer(WTF::move(remote), protect(page->ensureRemoteRenderingBackendProxy()));
+}
+
+RefPtr<WebCore::ImageBuffer> WebChromeClient::createImageBufferFromTransferHandle(const WebCore::ImageBufferTransferHandle& handle)
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return nullptr;
+    return protect(page->ensureRemoteRenderingBackendProxy())->takeTransferredBuffer(handle);
 }
 #endif
 
@@ -1378,7 +1392,7 @@ unsigned WebChromeClient::remoteImagesCountForTesting() const
 
 void WebChromeClient::registerBlobPathForTesting(const String& path, CompletionHandler<void()>&& completionHandler)
 {
-    WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::RegisterBlobPathForTesting(path), WTF::move(completionHandler));
+    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::RegisterBlobPathForTesting(path), WTF::move(completionHandler));
 }
 
 
@@ -1387,6 +1401,71 @@ void WebChromeClient::contentRuleListNotification(const URL& url, const ContentR
 #if ENABLE(CONTENT_EXTENSIONS)
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::ContentRuleListNotification(url, results));
+#endif
+}
+
+#if ENABLE(WK_WEB_EXTENSIONS) && ENABLE(CONTENT_EXTENSIONS) && PLATFORM(COCOA)
+static ResourceLoadInfo::Type toResourceLoadInfoType(OptionSet<WebCore::ContentExtensions::ResourceType> type)
+{
+    using WebCore::ContentExtensions::ResourceType;
+    if (type.containsAny({ ResourceType::TopDocument, ResourceType::ChildDocument }))
+        return ResourceLoadInfo::Type::Document;
+    if (type.contains(ResourceType::Image))
+        return ResourceLoadInfo::Type::Image;
+    if (type.contains(ResourceType::StyleSheet))
+        return ResourceLoadInfo::Type::Stylesheet;
+    if (type.contains(ResourceType::Script))
+        return ResourceLoadInfo::Type::Script;
+    if (type.contains(ResourceType::Font))
+        return ResourceLoadInfo::Type::Font;
+    if (type.contains(ResourceType::Media))
+        return ResourceLoadInfo::Type::Media;
+    if (type.contains(ResourceType::Ping))
+        return ResourceLoadInfo::Type::Ping;
+    if (type.contains(ResourceType::Fetch))
+        return ResourceLoadInfo::Type::Fetch;
+    if (type.contains(ResourceType::CSPReport))
+        return ResourceLoadInfo::Type::CSPReport;
+    return ResourceLoadInfo::Type::Other;
+}
+
+static std::optional<WebCore::FrameIdentifier> parentFrameIDForBlockedLoad(WebCore::FrameIdentifier frameID)
+{
+    RefPtr webFrame = WebFrame::webFrame(frameID);
+    RefPtr coreFrame = webFrame ? webFrame->coreLocalFrame() : nullptr;
+    if (!coreFrame)
+        return std::nullopt;
+    RefPtr ownerElement = coreFrame->ownerElement();
+    if (!ownerElement)
+        return std::nullopt;
+    RefPtr parentFrame = ownerElement->document().frame();
+    if (!parentFrame)
+        return std::nullopt;
+    return parentFrame->loader().frameID();
+}
+#endif
+
+void WebChromeClient::contentRuleListDidBlockLoad(const ContentRuleListBlockedLoadInfo& info)
+{
+#if ENABLE(WK_WEB_EXTENSIONS) && ENABLE(CONTENT_EXTENSIONS) && PLATFORM(COCOA)
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    RefPtr extensionControllerProxy = page->webExtensionControllerProxy();
+    if (!extensionControllerProxy || !extensionControllerProxy->hasLoadedContexts())
+        return;
+
+    page->send(Messages::WebPageProxy::ContentRuleListDidBlockLoad(WebExtensionContentRuleListBlockedLoadInfo {
+        info.frameID,
+        parentFrameIDForBlockedLoad(info.frameID),
+        info.url,
+        info.httpMethod,
+        toResourceLoadInfoType(info.resourceType),
+        info.blockingContentRuleListIdentifiers
+    }));
+#else
+    UNUSED_PARAM(info);
 #endif
 }
 
@@ -1719,7 +1798,7 @@ std::optional<ScrollbarOverlayStyle> WebChromeClient::preferredScrollbarOverlayS
 
 Color WebChromeClient::underlayColor() const
 {
-    auto* page = m_page.get();
+    RefPtr page = m_page;
     return page ? page->underlayColor() : Color();
 }
 
@@ -1740,6 +1819,10 @@ void WebChromeClient::sampledPageTopColorChanged() const
     if (auto* page = m_page.get())
         page->sampledPageTopColorChanged();
 }
+
+#if __has_include(<WebKitAdditions/WebChromeClientAdditions.cpp>)
+#include <WebKitAdditions/WebChromeClientAdditions.cpp>
+#endif
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
 void WebChromeClient::allowImmersiveElement(CompletionHandler<void(bool)>&& completion) const
@@ -1972,7 +2055,7 @@ RefPtr<API::Object> userDataFromJSONData(JSON::Value& value)
         auto result = API::Dictionary::create();
         RefPtr jsonObject = value.asObject();
         for (auto [key, value] : *jsonObject)
-            result->add(key, userDataFromJSONData(value));
+            result->add(key, userDataFromJSONData(protect(value)));
         return result;
     }
     case JSON::Value::Type::Array: {
@@ -2070,18 +2153,13 @@ void WebChromeClient::removePlaybackTargetPickerClient(PlaybackTargetClientConte
         page->send(Messages::WebPageProxy::RemovePlaybackTargetPickerClient(contextId));
 }
 
-void WebChromeClient::showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier contextId, const IntPoint& position, bool isVideo)
+void WebChromeClient::showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier contextId, FrameIdentifier frameID, const IntPoint& position, bool isVideo)
 {
     RefPtr page = m_page.get();
     if (!page)
         return;
 
-    RefPtr frameView = page->localMainFrameView();
-    if (!frameView)
-        return;
-
-    FloatRect rect(frameView->contentsToRootView(frameView->windowToContents(position)), FloatSize());
-    page->send(Messages::WebPageProxy::ShowPlaybackTargetPicker(contextId, rect, isVideo));
+    page->send(Messages::WebPageProxy::ShowPlaybackTargetPicker(contextId, frameID, FloatRect(position, FloatSize()), isVideo));
 }
 
 void WebChromeClient::playbackTargetPickerClientStateDidChange(PlaybackTargetClientContextIdentifier contextId, MediaProducerMediaStateFlags state)
@@ -2106,6 +2184,15 @@ void WebChromeClient::mockMediaPlaybackTargetPickerDismissPopup()
 {
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::MockMediaPlaybackTargetPickerDismissPopup());
+}
+
+void WebChromeClient::mockMediaPlaybackTargetPickerRect(CompletionHandler<void(FloatRect)>&& completionHandler)
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return completionHandler({ });
+
+    page->sendWithAsyncReply(Messages::WebPageProxy::MockMediaPlaybackTargetPickerRect(), WTF::move(completionHandler));
 }
 #endif
 
@@ -2272,15 +2359,11 @@ void WebChromeClient::didAddOrRemoveViewportConstrainedObjects()
         page->didAddOrRemoveViewportConstrainedObjects();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 void WebChromeClient::textAutosizingUsesIdempotentModeChanged()
 {
     if (RefPtr page = m_page.get())
         page->textAutosizingUsesIdempotentModeChanged();
 }
-
-#endif
 
 bool WebChromeClient::needsScrollGeometryUpdates() const
 {
@@ -2433,7 +2516,7 @@ void WebChromeClient::addSourceTextAnimationForActiveWritingToolsSession(const W
         page->addSourceTextAnimationForActiveWritingToolsSession(sourceAnimationUUID, destinationAnimationUUID, finished, range, string, WTF::move(completionHandler));
 }
 
-void WebChromeClient::addDestinationTextAnimationForActiveWritingToolsSession(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, const std::optional<CharacterRange>& range, const String& string)
+void WebChromeClient::addDestinationTextAnimationForActiveWritingToolsSession(Markable<WTF::UUID> sourceAnimationUUID, Markable<WTF::UUID> destinationAnimationUUID, const std::optional<CharacterRange>& range, const String& string)
 {
     if (RefPtr page = m_page.get())
         page->addDestinationTextAnimationForActiveWritingToolsSession(sourceAnimationUUID, destinationAnimationUUID, range, string);
@@ -2483,12 +2566,6 @@ void WebChromeClient::setIsInRedo(bool isInRedo)
 {
     if (auto* page = m_page.get())
         page->setIsInRedo(isInRedo);
-}
-
-void WebChromeClient::hasActiveNowPlayingSessionChanged(bool hasActiveNowPlayingSession)
-{
-    if (RefPtr page = m_page.get())
-        page->hasActiveNowPlayingSessionChanged(hasActiveNowPlayingSession);
 }
 
 #if ENABLE(GPU_PROCESS)
@@ -2612,11 +2689,5 @@ void WebChromeClient::didFinishContentChangeObserving(WebCore::LocalFrame& frame
         page->didFinishContentChangeObserving(frame.frameID(), observedContentChange);
 }
 #endif
-
-void WebChromeClient::updateRemoteIntersectionObserversInOtherWebProcesses()
-{
-    if (RefPtr page = m_page.get())
-        page->send(Messages::WebPageProxy::UpdateRemoteIntersectionObserversInOtherWebProcesses());
-}
 
 } // namespace WebKit

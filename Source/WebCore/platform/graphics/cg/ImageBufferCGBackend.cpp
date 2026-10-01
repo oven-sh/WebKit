@@ -53,7 +53,7 @@ private:
     RetainPtr<CGContextRef> m_context;
 };
 
-ImageBufferCGBackend::ImageBufferCGBackend(const Parameters& parameters, std::unique_ptr<GraphicsContextCG>&& context)
+ImageBufferCGBackend::ImageBufferCGBackend(const ImageBufferParameters& parameters, std::unique_ptr<GraphicsContextCG>&& context)
     : ImageBufferBackend(parameters)
     , m_context(WTF::move(context))
 {
@@ -74,8 +74,8 @@ std::unique_ptr<ThreadSafeImageBufferFlusher> ImageBufferCGBackend::createFlushe
 
 void ImageBufferCGBackend::applyBaseTransform(GraphicsContextCG& context) const
 {
-    context.applyDeviceScaleFactor(m_parameters.resolutionScale);
-    context.setCTM(calculateBaseTransform(m_parameters));
+    context.applyDeviceScaleFactor(resolutionScale());
+    context.setCTM(baseTransform());
 }
 
 String ImageBufferCGBackend::debugDescription() const

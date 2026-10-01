@@ -913,12 +913,12 @@ RefPtr<VideoFrame> MediaPlayerPrivateWebM::videoFrameForCurrentTime()
     return m_lastVideoFrame;
 }
 
-DestinationColorSpace MediaPlayerPrivateWebM::colorSpace()
+ColorSpace MediaPlayerPrivateWebM::colorSpace()
 {
     assertIsMainThread();
     updateLastImage();
     RefPtr lastImage = m_lastImage;
-    return lastImage ? lastImage->colorSpace() : DestinationColorSpace::SRGB();
+    return lastImage ? lastImage->colorSpace() : ColorSpace::SRGB();
 }
 
 Ref<MediaPlayer::BitmapImagePromise> MediaPlayerPrivateWebM::bitmapImageForCurrentTime()
@@ -1022,7 +1022,7 @@ void MediaPlayerPrivateWebM::setDuration(MediaTime duration)
             if (RefPtr player = protectedThis->m_player.get())
                 player->timeChanged();
         });
-    })->track(m_stallRequest);
+    })->track(protect(m_stallRequest));
 
     m_duration = WTF::move(duration);
     ensureOnMainThread([weakThis = ThreadSafeWeakPtr { *this }, durationCopy = m_duration] {

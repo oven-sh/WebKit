@@ -34,6 +34,7 @@
 #include "RemoteGraphicsContextMessages.h"
 #include "RemoteImageBuffer.h"
 #include "RemoteSharedResourceCache.h"
+#include "SharedFont.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "SharedVideoFrame.h"
 #include <WebCore/BitmapImage.h>
@@ -413,7 +414,7 @@ void RemoteGraphicsContext::drawGlyphs(RenderingResourceIdentifier fontIdentifie
     MESSAGE_CHECK(font);
     Vector<GlyphBufferGlyph, 128> glyphs { glyphsAdvances.span<0>() };
     Vector<GlyphBufferAdvance, 128> advances { glyphsAdvances.span<1>() };
-    context().drawGlyphs(*font, glyphs.span(), advances.span(), localAnchor, fontSmoothingMode);
+    context().drawGlyphsImmediate(*font, glyphs.span(), advances.span(), localAnchor, fontSmoothingMode);
 }
 
 void RemoteGraphicsContext::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, ImagePaintingOptions options)
@@ -615,10 +616,10 @@ SharedVideoFrameReader& RemoteGraphicsContext::sharedVideoFrameReader()
     return *m_sharedVideoFrameReader;
 }
 
-void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
+void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
 {
     if (auto videoFrame = sharedVideoFrameReader().read(WTF::move(frame)))
-        context().drawVideoFrame(*videoFrame, destination, orientation, shouldDiscardAlpha);
+        context().drawVideoFrame(*videoFrame, destination, shouldDiscardAlpha, options);
 }
 
 void RemoteGraphicsContext::setSharedVideoFrameSemaphore(IPC::Semaphore&& semaphore)

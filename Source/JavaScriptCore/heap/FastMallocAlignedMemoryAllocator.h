@@ -53,5 +53,11 @@ private:
 #endif
 };
 
+// The supply of pre-warmed MarkedBlocks is a process-wide singleton with no other observer, so $vm
+// reaches its state through these rather than through any VM.
+bool warmUpMarkedBlocksAreEnabledForTesting();
+unsigned warmUpMarkedBlockCountForTesting();
+void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool);
+
 } // namespace JSC
 

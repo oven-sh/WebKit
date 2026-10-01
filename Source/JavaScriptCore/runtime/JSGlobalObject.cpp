@@ -512,7 +512,7 @@ JSC_DEFINE_HOST_FUNCTION(assertCall, (JSGlobalObject* globalObject, CallFrame* c
         return IterationStatus::Done;
     });
     RELEASE_ASSERT(!!codeBlock);
-    RELEASE_ASSERT_WITH_MESSAGE(false, "JS assertion failed at line %u in:\n%s\n", lineColumn.line, codeBlock->sourceCodeForTools().data());
+    RELEASE_ASSERT_WITH_MESSAGE(false, "JS assertion failed at line %u in:\n%s\n", lineColumn.line, codeBlock->sourceCodeForTools());
     return JSValue::encode(jsUndefined());
 }
 #endif // ASSERT_ENABLED
@@ -554,7 +554,7 @@ JSC_DEFINE_HOST_FUNCTION(dumpAndClearSamplingProfilerSamples, (JSGlobalObject* g
             return JSValue::encode(jsUndefined());
         }
 
-        CString utf8String = jsonData.utf8();
+        auto utf8String = jsonData.utf8();
 
         fileHandle.write(byteCast<uint8_t>(utf8String.span()));
         dataLogLn("Dumped sampling profiler samples to ", tempFilePath);
@@ -658,8 +658,8 @@ void JSGlobalObject::startSignpost(String&& message)
         return JSCJSGlobalObjectSignpostIdentifier::generate();
     }).iterator->value.toUInt64()));
     UNUSED_VARIABLE(identifier);
-    auto string = message.ascii();
-    WTFBeginSignpostAlways(identifier, JSCJSGlobalObject, "%" PUBLIC_LOG_STRING, string.data());
+    auto string = message.utf8();
+    WTFBeginSignpostAlways(identifier, JSCJSGlobalObject, "%" PUBLIC_LOG_STRING, string);
     ProfilerSupport::markStart(identifier, ProfilerSupport::Category::JSGlobalObjectSignpost, WTF::move(string));
 }
 
@@ -669,8 +669,8 @@ void JSGlobalObject::stopSignpost(String&& message)
     if (auto stored = m_signposts.takeOptional(message))
         identifier = std::bit_cast<void*>(static_cast<uintptr_t>(stored->toUInt64()));
     UNUSED_VARIABLE(identifier);
-    auto string = message.ascii();
-    WTFEndSignpostAlways(identifier, JSCJSGlobalObject, "%" PUBLIC_LOG_STRING, string.data());
+    auto string = message.utf8();
+    WTFEndSignpostAlways(identifier, JSCJSGlobalObject, "%" PUBLIC_LOG_STRING, string);
     ProfilerSupport::markEnd(identifier, ProfilerSupport::Category::JSGlobalObjectSignpost, WTF::move(string));
     --activeJSGlobalObjectSignpostIntervalCount;
 }
@@ -702,6 +702,7 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
         &shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         nullptr, // moduleLoaderImportModule
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch
@@ -959,6 +960,8 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_linkTimeConstants(numberOfLinkTimeConstants)
     , m_structureCache(vm)
     , m_symbolTableCache(vm)
+    , m_resumableCodeSymbolTableClones(vm)
+    , m_moduleProgramExecutables(vm)
     , m_masqueradesAsUndefinedWatchpointSet(WatchpointSet::create(IsWatched))
     , m_havingABadTimeWatchpointSet(WatchpointSet::create(IsWatched))
     , m_varInjectionWatchpointSet(WatchpointSet::create(IsWatched))
@@ -968,7 +971,6 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_arrayBufferDetachWatchpointSet(WatchpointSet::create(IsWatched))
     , m_weakRandom(Options::forceWeakRandomSeed() ? Options::forcedWeakRandomSeed() : cryptographicallyRandomNumber<uint32_t>())
     , m_runtimeFlags()
-    , m_stackTraceLimit(Options::defaultErrorStackTraceLimit())
     , m_customGetterFunctionSet(vm)
     , m_customSetterFunctionSet(vm)
     , m_importMap(ImportMap::create())
@@ -1080,6 +1082,8 @@ SUPPRESS_ASAN inline void JSGlobalObject::initStaticGlobals(VM& vm)
         GlobalPropertyInfo(vm.propertyNames->NaN, jsNaN(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(vm.propertyNames->Infinity, jsNumber(std::numeric_limits<double>::infinity()), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(vm.propertyNames->undefinedKeyword, jsUndefined(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        // import() loads through the @moduleLoader in scope: this one, unless a module environment or a loader's module scope declares a nearer one.
+        GlobalPropertyInfo(vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
 #if ASSERT_ENABLED
         GlobalPropertyInfo(vm.propertyNames->builtinNames().assertPrivateName(), JSFunction::create(vm, this, 1, String(), assertCall, ImplementationVisibility::Public), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
 #endif
@@ -1876,7 +1880,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_moduleLoader.initLater(
         [] (const Initializer<JSModuleLoader>& init) {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
-            init.set(JSModuleLoader::create(init.owner, init.vm));
+            init.set(JSModuleLoader::create(init.owner, init.vm, init.owner->globalLexicalEnvironment()));
             catchScope.releaseAssertNoException();
         });
     if (Options::exposeInternalModuleLoader())
@@ -1931,6 +1935,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         RELEASE_ASSERT(is<JSFunction>(hasOwnPropertyFunction));
         m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::hasOwnPropertyFunction)].set(vm, this, uncheckedDowncast<JSFunction>(hasOwnPropertyFunction));
     }
+
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::reflectConstructFunction)].initLater([](const Initializer<JSCell>& init) {
+        init.set(JSFunction::create(init.vm, init.owner, 2, init.vm.propertyNames->construct.string(), reflectObjectConstruct, ImplementationVisibility::Public));
+    });
 
 #define INIT_PRIVATE_GLOBAL(funcName, code) \
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::funcName)].initLater([] (const Initializer<JSCell>& init) { \
@@ -2327,6 +2335,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->valueOf), m_objectPrototypeValueOfWatchpointSet);
     installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_arrayPrototype.get(), vm.propertyNames->valueOf, objectPrototype()), m_arrayPrototypeValueOfWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->exec), m_regExpPrimordialPropertiesWatchpointSet);
+    installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->test), m_regExpPrototypeTestWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->flags), m_regExpPrimordialPropertiesWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->dotAll), m_regExpPrimordialPropertiesWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->global), m_regExpPrimordialPropertiesWatchpointSet);
@@ -3830,11 +3839,6 @@ void JSGlobalObject::queueMicrotaskSlow(VM& vm, QueuedTask&& task)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
-{
-    queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
-}
-
 FFI::FFIContext& JSGlobalObject::ffiContext()
 {
     if (!m_ffiContext) [[unlikely]] {
@@ -3907,6 +3911,23 @@ WatchpointSet& JSGlobalObject::ensureReferencedPropertyWatchpointSet(UniquedStri
     }).iterator->value.get();
 }
 #endif
+
+std::optional<unsigned> JSGlobalObject::stackTraceLimit() const
+{
+    JSObject* errorConstructor = m_errorStructure.constructorConcurrently();
+    if (!errorConstructor)
+        return Options::defaultErrorStackTraceLimit();
+
+    VM& vm = this->vm();
+    JSValue value = errorConstructor->getDirect(vm, vm.propertyNames->stackTraceLimit);
+    if (!value.isNumber())
+        return std::nullopt;
+
+    double limit = value.asNumber();
+    if (std::isnan(limit))
+        return std::nullopt;
+    return clampToUnsigned(limit);
+}
 
 JSGlobalObject* JSGlobalObject::create(VM& vm, Structure* structure)
 {
@@ -3988,12 +4009,13 @@ FunctionExecutable* JSGlobalObject::tryGetCachedFunctionExecutableForFunctionCon
     if (lexicallyScopedFeatures != unlinkedExecutable->lexicallyScopedFeatures())
         return nullptr;
 
+    // The synthesized program is "<prefix><name>(<params>\n) {\n<body>\n}", so a cached range must
+    // begin exactly at the '('. That offset also discriminates the construction mode, since the
+    // prefix length is what moves it: an "async function" candidate cannot answer a "function"
+    // request even when the text from '(' onward agrees.
     auto storedSource = executable->source();
-    if (OrdinalNumber { } != storedSource.firstLine())
-        return nullptr;
-
     int offset = functionConstructorPrefix(functionConstructionMode).length() + name.length();
-    if (offset != storedSource.startColumn().zeroBasedInt())
+    if (storedSource.startOffset() != offset)
         return nullptr;
 
     if (program.substring(offset) != storedSource.view())

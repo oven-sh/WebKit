@@ -43,6 +43,13 @@
 #include <unistd.h>
 #endif
 
+#if BOS(LINUX)
+#include <sys/syscall.h>
+#ifndef GRND_NONBLOCK
+#define GRND_NONBLOCK 0x0001
+#endif
+#endif
+
 #if BOS(DARWIN)
 #include <CommonCrypto/CommonCryptoError.h>
 #include <CommonCrypto/CommonRandom.h>
@@ -117,27 +124,38 @@ void ARC4RandomNumberGenerator::stir()
     // TODO Generate random bytes - this appears to be unused when running libpas
     BCRASH();
 #else
-    static std::once_flag onceFlag;
-    static int fd;
-    std::call_once(
-        onceFlag,
-        [] {
-            int ret = 0;
-            do {
-                ret = open("/dev/urandom", O_RDONLY, 0);
-            } while (ret == -1 && errno == EINTR);
-            RELEASE_BASSERT(ret >= 0);
-            fd = ret;
-        });
-    ssize_t amountRead = 0;
-    while (static_cast<size_t>(amountRead) < length) {
-        ssize_t currentRead = read(fd, randomness + amountRead, length - amountRead);
-        // We need to check for both EAGAIN and EINTR since on some systems /dev/urandom
-        // is blocking and on others it is non-blocking.
-        if (currentRead == -1)
-            RELEASE_BASSERT(errno == EAGAIN || errno == EINTR);
-        else
-            amountRead += currentRead;
+#if BOS(LINUX) && defined(SYS_getrandom)
+    // getrandom(2) reads the pool /dev/urandom reads, but needs neither the path nor a free descriptor.
+    // It fills a request of up to 256 bytes whole or fails. Any failure reads /dev/urandom instead:
+    // EAGAIN (pool not initialized, where /dev/urandom does not block), ENOSYS, EPERM.
+    static_assert(sizeof(randomness) <= 256);
+    bool needsURandom = syscall(SYS_getrandom, randomness, length, GRND_NONBLOCK) != static_cast<long>(length);
+#else
+    bool needsURandom = true;
+#endif
+    if (needsURandom) {
+        static std::once_flag onceFlag;
+        static int fd;
+        std::call_once(
+            onceFlag,
+            [] {
+                int ret = 0;
+                do {
+                    ret = open("/dev/urandom", O_RDONLY | O_CLOEXEC, 0);
+                } while (ret == -1 && errno == EINTR);
+                RELEASE_BASSERT(ret >= 0);
+                fd = ret;
+            });
+        ssize_t amountRead = 0;
+        while (static_cast<size_t>(amountRead) < length) {
+            ssize_t currentRead = read(fd, randomness + amountRead, length - amountRead);
+            // We need to check for both EAGAIN and EINTR since on some systems /dev/urandom
+            // is blocking and on others it is non-blocking.
+            if (currentRead == -1)
+                RELEASE_BASSERT(errno == EAGAIN || errno == EINTR);
+            else
+                amountRead += currentRead;
+        }
     }
 #endif
 

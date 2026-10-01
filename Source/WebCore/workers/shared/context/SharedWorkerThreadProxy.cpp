@@ -90,7 +90,8 @@ static WorkerParameters generateWorkerParameters(const WorkerFetchResult& worker
         *initializationData.clientIdentifier,
         document.advancedPrivacyProtections(),
         document.noiseInjectionHashSalt(),
-        makeString(Process::identifier().toUInt64(), "-sharedworker-"_s, initializationData.clientIdentifier->toString())
+        makeString(Process::identifier().toUInt64(), "-sharedworker-"_s, initializationData.clientIdentifier->toString()),
+        document.networkLoadPolicy()
     };
 }
 

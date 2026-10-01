@@ -149,6 +149,7 @@ $doNotMessWithVMPath = false
 $cloop = false
 $jitTests = true
 $memoryLimited = false
+$asan = false # Bun
 $outputDir = Pathname.new("results")
 $verbosity = 0
 $bundle = nil
@@ -190,6 +191,8 @@ def usage
     puts "--platform                  Indicate the target platform we are running on."
     puts "--memory-limited            Indicate that we are targeting the test for a memory limited device."
     puts "                            Skip tests tagged with //@skip if $memoryLimited"
+    puts "--asan                      Bun: the JavaScriptCore under test is built with AddressSanitizer."
+    puts "                            Skip tests tagged with //@skip if $asan"
     puts "--no-jit                    Do not run JIT specific tests."
     puts "--force-collectContinuously Enable the collectContinuously mode even if disabled on this"
     puts "                            platform."
@@ -240,6 +243,7 @@ GetoptLong.new(['--help', '-h', GetoptLong::NO_ARGUMENT],
                ['--cloop', GetoptLong::NO_ARGUMENT],
                ['--platform', GetoptLong::REQUIRED_ARGUMENT],
                ['--memory-limited', GetoptLong::NO_ARGUMENT],
+               ['--asan', GetoptLong::NO_ARGUMENT],
                ['--no-jit', GetoptLong::NO_ARGUMENT],
                ['--force-collectContinuously', GetoptLong::NO_ARGUMENT],
                ['--output-dir', '-o', GetoptLong::REQUIRED_ARGUMENT],
@@ -290,6 +294,8 @@ GetoptLong.new(['--help', '-h', GetoptLong::NO_ARGUMENT],
         $platform = arg
     when '--memory-limited'
         $memoryLimited = true
+    when '--asan'
+        $asan = true
     when '--no-jit'
         $jitTests = false
     when '--force-collectContinuously'

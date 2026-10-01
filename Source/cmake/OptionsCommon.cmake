@@ -195,6 +195,48 @@ if (CLANG_TIME_TRACE AND COMPILER_IS_CLANG)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftime-trace")
 endif ()
 
+option(SWIFT_NINJA_TRACE "Collect ninja and swift driver execution data and produce a Perfetto-style trace" OFF)
+if (SWIFT_NINJA_TRACE)
+    if (WIN32)
+        # Would need to adapt clang-cl argument parsing logic and provide a
+        # Windows finalizer script.
+        message(FATAL_ERROR "SWIFT_NINJA_TRACE is not supported on Windows")
+    endif ()
+    # Tracing uses a swiftc harness that captures job info from stdio.
+    # --swift-wrapper= is recognized by swiftc-wrapper.py, so we end up
+    # with nested, independent harnesses.
+    set(SWIFT_JOBS_LOG "${CMAKE_BINARY_DIR}/swift-jobs.jsonl")
+    set(SWIFT_STATS_DIR "${CMAKE_BINARY_DIR}/swift-stats")
+    set(SWIFT_NINJA_TRACE_FINALIZE "${CMAKE_BINARY_DIR}/swift-trace-finalize.sh")
+    add_compile_options($<$<COMPILE_LANGUAGE:Swift>:--swift-wrapper=${CMAKE_SOURCE_DIR}/Tools/Scripts/swift/swiftc_job_recorder.py>)
+    add_compile_options($<$<COMPILE_LANGUAGE:Swift>:--jobs-log=${SWIFT_JOBS_LOG}>)
+    add_compile_options("$<$<COMPILE_LANGUAGE:Swift>:SHELL:-stats-output-dir ${SWIFT_STATS_DIR}>")
+
+    file(MAKE_DIRECTORY ${SWIFT_STATS_DIR})
+    file(GENERATE
+        OUTPUT ${SWIFT_NINJA_TRACE_FINALIZE}
+        CONTENT "#!/bin/sh -ex
+${CMAKE_SOURCE_DIR}/Tools/Scripts/swift/ninja_build_trace.py \
+--ninja-log ${CMAKE_BINARY_DIR}/.ninja_log \
+--jobs-log ${SWIFT_JOBS_LOG} \
+--stats-dir ${SWIFT_STATS_DIR} \"$@\""
+        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+            GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+    )
+    # Defer to print this instructional message at the end of configuration.
+cmake_language(DEFER CALL message NOTICE "\
+============================
+Swift+Ninja tracing enabled!
+============================
+Perform a clean build (cmake --build ... --clean-first). Then finalize the
+trace by running:
+
+    ${SWIFT_NINJA_TRACE_FINALIZE} -o trace.json
+
+and load the result into <https://ui.perfetto.dev>.
+")
+endif ()
+
 set(GCC_OFFLINEASM_SOURCE_MAP_DEFAULT OFF)
 if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     set(GCC_OFFLINEASM_SOURCE_MAP_DEFAULT ON)

@@ -122,7 +122,7 @@ public:
     virtual HashMap<FrameIdentifier, AttributedString> collectAttributedStringsForRemoteFrames(FrameIdentifier rootFrameIdentifier, const Vector<FrameIdentifier>&) = 0;
 #endif
     virtual void requestCandidatesForSelection(const VisibleSelection&) { }
-    virtual void handleAcceptedCandidateWithSoftSpaces(TextCheckingResult) { }
+    virtual void handleAcceptedCandidateWithSoftSpaces(const TextCheckingResult&) { }
 
     virtual DOMPasteAccessResponse requestDOMPasteAccess(DOMPasteAccessCategory, FrameIdentifier, const String& originIdentifier) = 0;
 

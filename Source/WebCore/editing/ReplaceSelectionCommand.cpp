@@ -279,7 +279,7 @@ void ReplacementFragment::removeContentsWithSideEffects()
         removeNode(WTF::move(element));
 
     for (auto& item : attributesToRemove)
-        item.first->removeAttribute(item.second);
+        protect(item.first)->removeAttribute(item.second);
 }
 
 bool ReplacementFragment::isEmpty() const
@@ -882,7 +882,8 @@ void ReplaceSelectionCommand::makeInsertedContentRoundTrippableWithHTMLTreeBuild
 
 static inline bool hasRenderedText(const Text& text)
 {
-    return text.renderer() && text.renderer()->hasRenderedText();
+    CheckedPtr renderer = text.renderer();
+    return renderer && renderer->hasRenderedText();
 }
 
 void ReplaceSelectionCommand::moveNodeOutOfAncestor(Node& node, Node& ancestor, InsertedNodes& insertedNodes)
@@ -910,7 +911,7 @@ void ReplaceSelectionCommand::moveNodeOutOfAncestor(Node& node, Node& ancestor, 
             insertNodeBefore(WTF::move(protectedNode), *nodeToSplitTo);
     }
 
-    document().updateLayoutIgnorePendingStylesheets();
+    protect(document())->updateLayoutIgnorePendingStylesheets();
 
     bool safeToRemoveAncestor = true;
     for (RefPtr child = ancestor.firstChild(); child; child = child->nextSibling()) {
@@ -933,7 +934,7 @@ void ReplaceSelectionCommand::moveNodeOutOfAncestor(Node& node, Node& ancestor, 
 
 void ReplaceSelectionCommand::removeUnrenderedTextNodesAtEnds(InsertedNodes& insertedNodes)
 {
-    document().updateLayoutIgnorePendingStylesheets();
+    protect(document())->updateLayoutIgnorePendingStylesheets();
 
     RefPtr lastLeafInserted { insertedNodes.lastLeafInserted() };
     if (RefPtr text = dynamicDowncast<Text>(lastLeafInserted); text && !hasRenderedText(*text)
@@ -943,7 +944,7 @@ void ReplaceSelectionCommand::removeUnrenderedTextNodesAtEnds(InsertedNodes& ins
         removeNode(*lastLeafInserted);
     }
 
-    document().updateLayoutIgnorePendingStylesheets();
+    protect(document())->updateLayoutIgnorePendingStylesheets();
 
     // We don't have to make sure that firstNodeInserted isn't inside a select or script element
     // because it is a top level node in the fragment and the user can't insert into those elements.
@@ -1450,7 +1451,7 @@ void ReplaceSelectionCommand::doApply()
         RefPtr parent { endBR->parentNode() };
         insertedNodes.willRemoveNode(endBR.get());
         removeNode(*endBR);
-        document().updateLayoutIgnorePendingStylesheets();
+        protect(document())->updateLayoutIgnorePendingStylesheets();
         if (RefPtr nodeToRemove = highestNodeToRemoveInPruning(parent.get())) {
             insertedNodes.willRemovePossibleAncestorNode(nodeToRemove.get());
             removeNode(*nodeToRemove);
@@ -2049,7 +2050,7 @@ using ElementToStyleProperties = HashMap<Ref<StyledElement>, Vector<CSSPropertyI
         Vector<CSSPropertyID, 3> propertiesToRemove;
         if (auto inlineBackgroundColor = style->propertyAsColor(CSSPropertyBackgroundColor)) {
             bool inlineColorIsValid = inlineBackgroundColor->isValid();
-            auto backgroundColor = inlineColorIsValid ? *inlineBackgroundColor : renderer->style().visitedDependentBackgroundColor();
+            auto backgroundColor = inlineColorIsValid ? *inlineBackgroundColor : protect(renderer->style())->visitedDependentBackgroundColor();
             auto compositeOperator = document->compositeOperatorForBackgroundColor(backgroundColor, *renderer);
             if (compositeOperator != CompositeOperator::DestinationIn && compositeOperator != CompositeOperator::DestinationOut) {
                 bool inlineColorIsSemantic = inlineColorIsValid && inlineBackgroundColor->isSemantic();

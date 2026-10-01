@@ -40,13 +40,13 @@
 #include <WebCore/CookieJar.h>
 #include <WebCore/DocumentStorageAccess.h>
 #include <WebCore/KeyedCoding.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/OrganizationStorageAccessPromptQuirk.h>
 #include <WebCore/PermissionState.h>
 #include <WebCore/ResourceLoadStatistics.h>
 #include <WebCore/SQLiteDatabase.h>
 #include <WebCore/SQLiteStatement.h>
 #include <WebCore/SQLiteStatementAutoResetScope.h>
+#include <WebCore/StorageAccessQuirks.h>
 #include <WebCore/UserGestureIndicator.h>
 #include <ranges>
 #include <wtf/CallbackAggregator.h>
@@ -410,7 +410,7 @@ void ResourceLoadStatisticsStore::removeDataRecords(CompletionHandler<void()>&& 
     }
 
     if (m_debugLoggingEnabled) [[unlikely]] {
-        ITP_DEBUG_MODE_RELEASE_LOG("About to remove data records for %" PUBLIC_LOG_STRING ".", domainsToString(domainsToDeleteOrRestrictWebsiteDataFor).utf8().data());
+        ITP_DEBUG_MODE_RELEASE_LOG("About to remove data records for %" PUBLIC_LOG_STRING ".", domainsToString(domainsToDeleteOrRestrictWebsiteDataFor).utf8());
         debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] About to remove data records for: ["_s, domainsToString(domainsToDeleteOrRestrictWebsiteDataFor), "]."_s));
     }
 
@@ -419,23 +419,24 @@ void ResourceLoadStatisticsStore::removeDataRecords(CompletionHandler<void()>&& 
     RunLoop::mainSingleton().dispatch([store = Ref { m_store.get() }, domainsToDeleteOrRestrictWebsiteDataFor = crossThreadCopy(WTF::move(domainsToDeleteOrRestrictWebsiteDataFor)), completionHandler = WTF::move(completionHandler), weakThis = WeakPtr { *this }, workQueue = m_workQueue] () mutable {
         store->deleteAndRestrictWebsiteDataForRegistrableDomains(WebResourceLoadStatisticsStore::monitoredDataTypes(), WTF::move(domainsToDeleteOrRestrictWebsiteDataFor), [completionHandler = WTF::move(completionHandler), weakThis = WTF::move(weakThis), workQueue](HashSet<RegistrableDomain>&& domainsWithDeletedWebsiteData) mutable {
             workQueue->dispatch([domainsWithDeletedWebsiteData = crossThreadCopy(WTF::move(domainsWithDeletedWebsiteData)), completionHandler = WTF::move(completionHandler), weakThis = WTF::move(weakThis)] () mutable {
-                if (!weakThis) {
+                RefPtr protectedThis = weakThis;
+                if (!protectedThis) {
                     completionHandler();
                     return;
                 }
 
-                weakThis->incrementRecordsDeletedCountForDomains(WTF::move(domainsWithDeletedWebsiteData));
-                weakThis->setDataRecordsBeingRemoved(false);
+                protectedThis->incrementRecordsDeletedCountForDomains(WTF::move(domainsWithDeletedWebsiteData));
+                protectedThis->setDataRecordsBeingRemoved(false);
 
-                auto dataRecordRemovalCompletionHandlers = WTF::move(weakThis->m_dataRecordRemovalCompletionHandlers);
+                auto dataRecordRemovalCompletionHandlers = WTF::move(protectedThis->m_dataRecordRemovalCompletionHandlers);
                 completionHandler();
 
                 for (auto& dataRecordRemovalCompletionHandler : dataRecordRemovalCompletionHandlers)
                     dataRecordRemovalCompletionHandler();
 
-                if (weakThis->m_debugLoggingEnabled) [[unlikely]] {
+                if (protectedThis->m_debugLoggingEnabled) [[unlikely]] {
                     ITP_DEBUG_MODE_RELEASE_LOG("Done removing data records.");
-                    weakThis->debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, "[ITP] Done removing data records"_s);
+                    protectedThis->debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, "[ITP] Done removing data records"_s);
                 }
             });
         });
@@ -451,7 +452,7 @@ void ResourceLoadStatisticsStore::processStatisticsAndDataRecords(CompletionHand
     
     removeDataRecords([weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] () mutable {
         ASSERT(!RunLoop::isMain());
-        RefPtr protectedThis = weakThis.get();
+        RefPtr protectedThis = weakThis;
         if (!protectedThis) {
             completionHandler();
             return;
@@ -486,15 +487,16 @@ void ResourceLoadStatisticsStore::grandfatherExistingWebsiteData(CompletionHandl
     RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }, callback = WTF::move(callback), workQueue = m_workQueue, store = Ref { m_store.get() }] () mutable {
         store->registrableDomainsWithWebsiteData(WebResourceLoadStatisticsStore::monitoredDataTypes(), [weakThis = WTF::move(weakThis), callback = WTF::move(callback), workQueue] (HashSet<RegistrableDomain>&& domainsWithWebsiteData) mutable {
             workQueue->dispatch([weakThis = WTF::move(weakThis), domainsWithWebsiteData = crossThreadCopy(WTF::move(domainsWithWebsiteData)), callback = WTF::move(callback)] () mutable {
-                if (!weakThis) {
+                RefPtr protectedThis = weakThis;
+                if (!protectedThis) {
                     callback();
                     return;
                 }
 
-                weakThis->grandfatherDataForDomains(domainsWithWebsiteData);
-                weakThis->m_endOfGrandfatheringTimestamp = nowTime(weakThis->m_timeAdvanceForTesting) + weakThis->m_parameters.grandfatheringTime;
+                protectedThis->grandfatherDataForDomains(domainsWithWebsiteData);
+                protectedThis->m_endOfGrandfatheringTimestamp = nowTime(protectedThis->m_timeAdvanceForTesting) + protectedThis->m_parameters.grandfatheringTime;
                 callback();
-                weakThis->logTestingEvent("Grandfathered"_s);
+                protectedThis->logTestingEvent("Grandfathered"_s);
             });
         });
     });
@@ -549,7 +551,7 @@ void ResourceLoadStatisticsStore::scheduleStatisticsProcessingRequestIfNecessary
 
     m_pendingStatisticsProcessingRequestIdentifier = ++m_lastStatisticsProcessingRequestIdentifier;
     m_workQueue->dispatchAfter(minimumStatisticsProcessingInterval, [weakThis = WeakPtr { *this }, statisticsProcessingRequestIdentifier = *m_pendingStatisticsProcessingRequestIdentifier] {
-        RefPtr protectedThis = weakThis.get();
+        RefPtr protectedThis = weakThis;
         if (!protectedThis)
             return;
 
@@ -694,6 +696,7 @@ void ResourceLoadStatisticsStore::resetParametersToDefaultValues()
     m_operatingDatesSize = 0;
     m_shortWindowOperatingDate = std::nullopt;
     m_longWindowOperatingDate = std::nullopt;
+    m_lastTimeDataRecordsWereRemoved = { };
 }
 
 void ResourceLoadStatisticsStore::logTestingEvent(String&& event)
@@ -755,7 +758,7 @@ void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, 
     static const auto maxNumberOfDomainsInOneLogStatement = 50;
 
     if (domains.size() <= maxNumberOfDomainsInOneLogStatement) {
-        ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to: %" PUBLIC_LOG_STRING ".", action.characters(), domainsToString(domains).utf8().data());
+        ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to: %" PUBLIC_LOG_STRING ".", action.characters(), domainsToString(domains).utf8());
         return;
     }
 
@@ -768,7 +771,7 @@ void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, 
 
     for (auto& domain : domains) {
         if (batch.size() == maxNumberOfDomainsInOneLogStatement) {
-            ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to (%d of %u): %" PUBLIC_LOG_STRING ".", action.characters(), batchNumber, numberOfBatches, domainsToString(batch).utf8().data());
+            ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to (%d of %u): %" PUBLIC_LOG_STRING ".", action.characters(), batchNumber, numberOfBatches, domainsToString(batch).utf8());
             batch.shrink(0);
 #if !RELEASE_LOG_DISABLED
             ++batchNumber;
@@ -777,7 +780,7 @@ void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, 
         batch.append(domain);
     }
     if (!batch.isEmpty())
-        ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to (%d of %u): %" PUBLIC_LOG_STRING ".", action.characters(), batchNumber, numberOfBatches, domainsToString(batch).utf8().data());
+        ITP_DEBUG_MODE_RELEASE_LOG("%" PUBLIC_LOG_STRING " to (%d of %u): %" PUBLIC_LOG_STRING ".", action.characters(), batchNumber, numberOfBatches, domainsToString(batch).utf8());
 }
 
 bool ResourceLoadStatisticsStore::shouldExemptFromWebsiteDataDeletion(const RegistrableDomain& domain) const
@@ -1675,7 +1678,7 @@ bool ResourceLoadStatisticsStore::hasStorageAccess(const TopFrameDomain& topFram
     return relationshipExists(scopedStatement, domainID(subFrameDomain), topFrameDomain);
 }
 
-void ResourceLoadStatisticsStore::hasStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, std::optional<FrameIdentifier> frameID, PageIdentifier pageID, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(bool)>&& completionHandler)
+void ResourceLoadStatisticsStore::hasStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(bool)>&& completionHandler)
 {
     ASSERT(!RunLoop::isMain());
 
@@ -1703,8 +1706,8 @@ void ResourceLoadStatisticsStore::hasStorageAccess(SubFrameDomain&& subFrameDoma
         break;
     };
 
-    RunLoop::mainSingleton().dispatch([store = Ref { store() }, subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, pageID, completionHandler = WTF::move(completionHandler)]() mutable {
-        store->callHasStorageAccessForFrameHandler(subFrameDomain, topFrameDomain, frameID.value(), pageID, [store, completionHandler = WTF::move(completionHandler)](bool result) mutable {
+    RunLoop::mainSingleton().dispatch([store = Ref { store() }, subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, webPageProxyID, completionHandler = WTF::move(completionHandler)]() mutable {
+        store->callHasStorageAccessForFrameHandler(subFrameDomain, topFrameDomain, frameID.value(), webPageProxyID, [store, completionHandler = WTF::move(completionHandler)](bool result) mutable {
             store->statisticsQueue().dispatch([completionHandler = WTF::move(completionHandler), result] () mutable {
                 completionHandler(result);
             });
@@ -1712,7 +1715,7 @@ void ResourceLoadStatisticsStore::hasStorageAccess(SubFrameDomain&& subFrameDoma
     });
 }
 
-void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, FrameIdentifier frameID, PageIdentifier pageID, StorageAccessScope scope, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessStatus)>&& completionHandler)
+void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessScope scope, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessStatus)>&& completionHandler)
 {
     ASSERT(!RunLoop::isMain());
 
@@ -1723,14 +1726,14 @@ void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrame
     switch (cookieAccess(subFrameDomain, topFrameDomain, canRequestStorageAccessWithoutUserInteraction)) {
     case CookieAccess::CannotRequest:
         if (debugLoggingEnabled()) [[unlikely]] {
-            ITP_DEBUG_MODE_RELEASE_LOG("Cannot grant storage access to %" PRIVATE_LOG_STRING " since its cookies are blocked in third-party contexts and it has not received user interaction as first-party.", subFrameDomain.string().utf8().data());
+            ITP_DEBUG_MODE_RELEASE_LOG("Cannot grant storage access to %" PRIVATE_LOG_STRING " since its cookies are blocked in third-party contexts and it has not received user interaction as first-party.", subFrameDomain.string().utf8());
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Error, makeString("[ITP] Cannot grant storage access to '"_s, subFrameDomain.string(), "' since its cookies are blocked in third-party contexts and it has not received user interaction as first-party."_s));
         }
         completionHandler(StorageAccessStatus::CannotRequestAccess);
         return;
     case CookieAccess::BasedOnCookiePolicy:
         if (debugLoggingEnabled()) [[unlikely]] {
-            ITP_DEBUG_MODE_RELEASE_LOG("No need to grant storage access to %" PRIVATE_LOG_STRING " since its cookies are not blocked in third-party contexts. Note that the underlying cookie policy may still block this third-party from setting cookies.", subFrameDomain.string().utf8().data());
+            ITP_DEBUG_MODE_RELEASE_LOG("No need to grant storage access to %" PRIVATE_LOG_STRING " since its cookies are not blocked in third-party contexts. Note that the underlying cookie policy may still block this third-party from setting cookies.", subFrameDomain.string().utf8());
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] No need to grant storage access to '"_s, subFrameDomain.string(), "' since its cookies are not blocked in third-party contexts. Note that the underlying cookie policy may still block this third-party from setting cookies."_s));
         }
         completionHandler(StorageAccessStatus::HasAccess);
@@ -1743,7 +1746,7 @@ void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrame
     auto userWasPromptedEarlier = hasUserGrantedStorageAccessThroughPrompt(*subFrameStatus.second, topFrameDomain);
     if (userWasPromptedEarlier == StorageAccessPromptWasShown::No) {
         if (debugLoggingEnabled()) [[unlikely]] {
-            ITP_DEBUG_MODE_RELEASE_LOG("About to ask the user whether they want to grant storage access to %" PRIVATE_LOG_STRING " under %" PRIVATE_LOG_STRING " or not.", subFrameDomain.string().utf8().data(), topFrameDomain.string().utf8().data());
+            ITP_DEBUG_MODE_RELEASE_LOG("About to ask the user whether they want to grant storage access to %" PRIVATE_LOG_STRING " under %" PRIVATE_LOG_STRING " or not.", subFrameDomain.string().utf8(), topFrameDomain.string().utf8());
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] About to ask the user whether they want to grant storage access to '"_s, subFrameDomain.string(), "' under '"_s, topFrameDomain.string(), "' or not."_s));
         }
         completionHandler(StorageAccessStatus::RequiresUserPrompt);
@@ -1752,7 +1755,7 @@ void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrame
 
     if (userWasPromptedEarlier == StorageAccessPromptWasShown::Yes) {
         if (debugLoggingEnabled()) [[unlikely]] {
-            ITP_DEBUG_MODE_RELEASE_LOG("Storage access was granted to %" PRIVATE_LOG_STRING " under %" PRIVATE_LOG_STRING ".", subFrameDomain.string().utf8().data(), topFrameDomain.string().utf8().data());
+            ITP_DEBUG_MODE_RELEASE_LOG("Storage access was granted to %" PRIVATE_LOG_STRING " under %" PRIVATE_LOG_STRING ".", subFrameDomain.string().utf8(), topFrameDomain.string().utf8());
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] Storage access was granted to '"_s, subFrameDomain.string(), "' under '"_s, topFrameDomain.string(), "'."_s));
         }
     }
@@ -1767,7 +1770,7 @@ void ResourceLoadStatisticsStore::requestStorageAccess(SubFrameDomain&& subFrame
         return completionHandler(StorageAccessStatus::CannotRequestAccess);
     }
 
-    grantStorageAccessInternal(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, pageID, userWasPromptedEarlier, scope, canRequestStorageAccessWithoutUserInteraction, [completionHandler = WTF::move(completionHandler)] (StorageAccessWasGranted wasGranted) mutable {
+    grantStorageAccessInternal(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageProxyID, userWasPromptedEarlier, scope, canRequestStorageAccessWithoutUserInteraction, [completionHandler = WTF::move(completionHandler)] (StorageAccessWasGranted wasGranted) mutable {
         completionHandler(wasGranted == StorageAccessWasGranted::Yes ? StorageAccessStatus::HasAccess : StorageAccessStatus::CannotRequestAccess);
     });
 }
@@ -1786,7 +1789,7 @@ void ResourceLoadStatisticsStore::queryStorageAccessPermission(const SubFrameDom
     completionHandler(PermissionState::Granted);
 }
 
-void ResourceLoadStatisticsStore::requestStorageAccessUnderOpener(DomainInNeedOfStorageAccess&& domainInNeedOfStorageAccess, PageIdentifier openerPageID, OpenerDomain&& openerDomain, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction)
+void ResourceLoadStatisticsStore::requestStorageAccessUnderOpener(DomainInNeedOfStorageAccess&& domainInNeedOfStorageAccess, WebPageProxyIdentifier openerWebPageProxyID, OpenerDomain&& openerDomain, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction)
 {
     ASSERT(domainInNeedOfStorageAccess != openerDomain);
     ASSERT(!RunLoop::isMain());
@@ -1795,11 +1798,11 @@ void ResourceLoadStatisticsStore::requestStorageAccessUnderOpener(DomainInNeedOf
         return;
 
     if (debugLoggingEnabled()) [[unlikely]] {
-        ITP_DEBUG_MODE_RELEASE_LOG("[Temporary combatibility fix] Storage access was granted for %" PRIVATE_LOG_STRING " under opener page from %" PRIVATE_LOG_STRING ", with user interaction in the opened window.", domainInNeedOfStorageAccess.string().utf8().data(), openerDomain.string().utf8().data());
+        ITP_DEBUG_MODE_RELEASE_LOG("[Temporary combatibility fix] Storage access was granted for %" PRIVATE_LOG_STRING " under opener page from %" PRIVATE_LOG_STRING ", with user interaction in the opened window.", domainInNeedOfStorageAccess.string().utf8(), openerDomain.string().utf8());
         debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] Storage access was granted for '"_s, domainInNeedOfStorageAccess.string(), "' under opener page from '"_s, openerDomain.string(), "', with user interaction in the opened window."_s));
     }
 
-    grantStorageAccessInternal(WTF::move(domainInNeedOfStorageAccess), WTF::move(openerDomain), std::nullopt, openerPageID, StorageAccessPromptWasShown::No, StorageAccessScope::PerPage, canRequestStorageAccessWithoutUserInteraction, [](StorageAccessWasGranted) { });
+    grantStorageAccessInternal(WTF::move(domainInNeedOfStorageAccess), WTF::move(openerDomain), std::nullopt, openerWebPageProxyID, StorageAccessPromptWasShown::No, StorageAccessScope::PerPage, canRequestStorageAccessWithoutUserInteraction, [](StorageAccessWasGranted) { });
 }
 
 auto ResourceLoadStatisticsStore::grantStorageAccessPermission(const RegistrableDomain& topFrameDomain, const RegistrableDomain& subFrameDomain) -> std::pair<AddedRecord, std::optional<unsigned>>
@@ -1830,14 +1833,14 @@ void ResourceLoadStatisticsStore::revokeStorageAccessPermission(const Registrabl
     }
 }
 
-void ResourceLoadStatisticsStore::grantStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, FrameIdentifier frameID, PageIdentifier pageID, StorageAccessPromptWasShown promptWasShown, StorageAccessScope scope, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
+void ResourceLoadStatisticsStore::grantStorageAccess(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessPromptWasShown promptWasShown, StorageAccessScope scope, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
 {
     ASSERT(!RunLoop::isMain());
 
     auto transactionScope = beginTransactionIfNecessary();
 
-    auto addGrant = [weakThis = WeakPtr { *this }, frameID, pageID, promptWasShown, scope] (SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler) mutable {
-        RefPtr protectedThis = weakThis.get();
+    auto addGrant = [weakThis = WeakPtr { *this }, frameID, webPageProxyID, promptWasShown, scope] (SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler) mutable {
+        RefPtr protectedThis = weakThis;
 
         if (!protectedThis)
             return completionHandler(StorageAccessWasGranted::No);
@@ -1854,7 +1857,7 @@ void ResourceLoadStatisticsStore::grantStorageAccess(SubFrameDomain&& subFrameDo
 #endif
         }
 
-        protectedThis->grantStorageAccessInternal(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, pageID, promptWasShown, scope, canRequestStorageAccessWithoutUserInteraction, WTF::move(completionHandler));
+        protectedThis->grantStorageAccessInternal(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frameID, webPageProxyID, promptWasShown, scope, canRequestStorageAccessWithoutUserInteraction, WTF::move(completionHandler));
     };
 
     RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }, subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), workQueue = m_workQueue, store = Ref { store() }, addGrant = WTF::move(addGrant), completionHandler = WTF::move(completionHandler)]() mutable {
@@ -1863,9 +1866,9 @@ void ResourceLoadStatisticsStore::grantStorageAccess(SubFrameDomain&& subFrameDo
         CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction { CanRequestStorageAccessWithoutUserInteraction::No };
 
         if (CheckedPtr networkSession = store->networkSession()) {
-            if (CheckedPtr storageSession = networkSession->networkStorageSession()) {
-                additionalDomainGrants = storageSession->storageAccessQuirkForDomainPair(subFrameDomain, topFrameDomain);
-                canRequestStorageAccessWithoutUserInteraction = storageSession->canRequestStorageAccessForLoginOrCompatibilityPurposesWithoutPriorUserInteraction(subFrameDomain, topFrameDomain) ? CanRequestStorageAccessWithoutUserInteraction::Yes : CanRequestStorageAccessWithoutUserInteraction::No;
+            if (networkSession->networkStorageSession()) {
+                additionalDomainGrants = WebCore::storageAccessQuirkForDomainPair(subFrameDomain, topFrameDomain);
+                canRequestStorageAccessWithoutUserInteraction = WebCore::canRequestStorageAccessForLoginOrCompatibilityPurposesWithoutPriorUserInteraction(subFrameDomain, topFrameDomain) ? CanRequestStorageAccessWithoutUserInteraction::Yes : CanRequestStorageAccessWithoutUserInteraction::No;
             }
         }
         workQueue->dispatch([weakThis = WTF::move(weakThis), additionalDomainGrants = crossThreadCopy(WTF::move(additionalDomainGrants)), subFrameDomain = crossThreadCopy(WTF::move(subFrameDomain)), topFrameDomain = crossThreadCopy(WTF::move(topFrameDomain)), addGrant = WTF::move(addGrant), canRequestStorageAccessWithoutUserInteraction, completionHandler = WTF::move(completionHandler)] () mutable {
@@ -1887,7 +1890,7 @@ void ResourceLoadStatisticsStore::grantStorageAccess(SubFrameDomain&& subFrameDo
     });
 }
 
-void ResourceLoadStatisticsStore::grantStorageAccessInternal(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, std::optional<FrameIdentifier> frameID, PageIdentifier pageID, StorageAccessPromptWasShown promptWasShownNowOrEarlier, StorageAccessScope scope, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
+void ResourceLoadStatisticsStore::grantStorageAccessInternal(SubFrameDomain&& subFrameDomain, TopFrameDomain&& topFrameDomain, std::optional<FrameIdentifier> frameID, WebPageProxyIdentifier webPageProxyID, StorageAccessPromptWasShown promptWasShownNowOrEarlier, StorageAccessScope scope, CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction, CompletionHandler<void(StorageAccessWasGranted)>&& completionHandler)
 {
     ASSERT(!RunLoop::isMain());
 
@@ -1913,8 +1916,8 @@ void ResourceLoadStatisticsStore::grantStorageAccessInternal(SubFrameDomain&& su
         setUserInteraction(subFrameDomain, true, nowTime(m_timeAdvanceForTesting));
     }
 
-    RunLoop::mainSingleton().dispatch([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, pageID, store = Ref { store() }, scope, completionHandler = WTF::move(completionHandler)]() mutable {
-        store->callGrantStorageAccessHandler(subFrameDomain, topFrameDomain, frameID, pageID, scope, [completionHandler = WTF::move(completionHandler), store](StorageAccessWasGranted wasGranted) mutable {
+    RunLoop::mainSingleton().dispatch([subFrameDomain = WTF::move(subFrameDomain).isolatedCopy(), topFrameDomain = WTF::move(topFrameDomain).isolatedCopy(), frameID, webPageProxyID, store = Ref { store() }, scope, completionHandler = WTF::move(completionHandler)]() mutable {
+        store->callGrantStorageAccessHandler(subFrameDomain, topFrameDomain, frameID, webPageProxyID, scope, [completionHandler = WTF::move(completionHandler), store](StorageAccessWasGranted wasGranted) mutable {
             store->statisticsQueue().dispatch([wasGranted, completionHandler = WTF::move(completionHandler)] () mutable {
                 completionHandler(wasGranted);
             });
@@ -1966,7 +1969,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensurePrevalentResourcesF
         primaryDomainsToBlock.append(debugManualPrevalentResource());
 
         if (debugLoggingEnabled()) {
-            ITP_DEBUG_MODE_RELEASE_LOG("Did set %" PRIVATE_LOG_STRING " as prevalent resource for the purposes of ITP Debug Mode.", debugManualPrevalentResource().string().utf8().data());
+            ITP_DEBUG_MODE_RELEASE_LOG("Did set %" PRIVATE_LOG_STRING " as prevalent resource for the purposes of ITP Debug Mode.", debugManualPrevalentResource().string().utf8());
             debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("[ITP] Did set '"_s, debugManualPrevalentResource().string(), "' as prevalent resource for the purposes of ITP Debug Mode."_s));
         }
     }
@@ -2008,7 +2011,7 @@ void ResourceLoadStatisticsStore::logFrameNavigation(const RegistrableDomain& ta
                     insertDomainRelationshipList(topFrameUniqueRedirectsToSinceSameSiteStrictEnforcementQuery, HashSet<RegistrableDomain>({ targetDomain }), *redirectingDomainResult.second);
 
                     if (debugLoggingEnabled()) [[unlikely]] {
-                        ITP_DEBUG_MODE_RELEASE_LOG("Did set %" PUBLIC_LOG_STRING " as making a top frame redirect to %" PUBLIC_LOG_STRING ".", sourceDomain.string().utf8().data(), targetDomain.string().utf8().data());
+                        ITP_DEBUG_MODE_RELEASE_LOG("Did set %" PUBLIC_LOG_STRING " as making a top frame redirect to %" PUBLIC_LOG_STRING ".", sourceDomain.string().utf8(), targetDomain.string().utf8());
                         debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("Did set '"_s, sourceDomain.string(), "' as making a top frame redirect to '"_s, targetDomain.string(), "'."_s));
                     }
                 }
@@ -2216,7 +2219,7 @@ void ResourceLoadStatisticsStore::dumpResourceLoadStatistics(CompletionHandler<v
     ASSERT(!RunLoop::isMain());
     if (m_dataRecordsBeingRemoved) {
         m_dataRecordRemovalCompletionHandlers.append([weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)]() mutable {
-            RefPtr protectedThis = weakThis.get();
+            RefPtr protectedThis = weakThis;
             if (protectedThis)
                 protectedThis->dumpResourceLoadStatistics(WTF::move(completionHandler));
             else
@@ -2748,12 +2751,13 @@ void ResourceLoadStatisticsStore::updateCookieBlocking(CompletionHandler<void()>
             store->statisticsQueue().dispatch([weakThis = WTF::move(weakThis), completionHandler = WTF::move(completionHandler)]() mutable {
                 completionHandler();
 
-                if (!weakThis)
+                RefPtr protectedThis = weakThis;
+                if (!protectedThis)
                     return;
 
-                if (weakThis->debugLoggingEnabled()) [[unlikely]] {
+                if (protectedThis->debugLoggingEnabled()) [[unlikely]] {
                     ITP_DEBUG_MODE_RELEASE_LOG("Done applying cross-site tracking restrictions.");
-                    weakThis->debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, "[ITP] Done applying cross-site tracking restrictions."_s);
+                    protectedThis->debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, "[ITP] Done applying cross-site tracking restrictions."_s);
                 }
             });
         });
@@ -2911,7 +2915,7 @@ RegistrableDomainsToDeleteOrRestrictWebsiteDataFor ResourceLoadStatisticsStore::
                 toDeleteOrRestrictFor.domainsToEnforceSameSiteStrictFor.append(statistic.registrableDomain);
 
                 if (debugLoggingEnabled()) [[unlikely]] {
-                    ITP_DEBUG_MODE_RELEASE_LOG("Scheduled %" PUBLIC_LOG_STRING " to have its cookies set to SameSite=strict.", statistic.registrableDomain.string().utf8().data());
+                    ITP_DEBUG_MODE_RELEASE_LOG("Scheduled %" PUBLIC_LOG_STRING " to have its cookies set to SameSite=strict.", statistic.registrableDomain.string().utf8());
                     debugBroadcastConsoleMessage(MessageSource::ITPDebug, MessageLevel::Info, makeString("Scheduled '"_s, statistic.registrableDomain.string(), "' to have its cookies set to SameSite=strict'."_s));
                 }
             }

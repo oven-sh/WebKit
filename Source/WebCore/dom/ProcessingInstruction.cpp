@@ -34,7 +34,6 @@
 #include "FrameLoader.h"
 #include "LocalFrame.h"
 #include "MediaQueryParser.h"
-#include "MediaQueryParserContext.h"
 #include "NodeDocument.h"
 #include "NodeInlines.h"
 #include "SerializedNode.h"
@@ -202,20 +201,18 @@ bool ProcessingInstruction::sheetLoaded()
     return false;
 }
 
-void ProcessingInstruction::setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet* sheet)
+void ProcessingInstruction::setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet& sheet)
 {
     if (!isConnected()) {
         ASSERT(!m_sheet);
         return;
     }
 
-    ASSERT(sheet);
-
     Ref document = this->document();
     ASSERT(m_isCSS);
     CSSParserContext parserContext(document, baseURL, charset);
 
-    Ref cssSheet = CSSStyleSheet::create(StyleSheetContents::create(href, parserContext), *this, sheet->isCORSSameOrigin());
+    Ref cssSheet = CSSStyleSheet::create(StyleSheetContents::create(href, parserContext), *this, sheet.isCORSSameOrigin());
     cssSheet->setDisabled(m_alternate);
     cssSheet->setTitle(m_title);
     cssSheet->setMediaQueries(MQ::MediaQueryParser::parse(m_media, document->cssParserContext()));
@@ -225,7 +222,7 @@ void ProcessingInstruction::setCSSStyleSheet(const String& href, const URL& base
     // We don't need the cross-origin security check here because we are
     // getting the sheet text in "strict" mode. This enforces a valid CSS MIME
     // type.
-    parseStyleSheet(sheet->sheetText());
+    parseStyleSheet(sheet.sheetText().value_or(nullString()));
 }
 
 #if ENABLE(XSLT)

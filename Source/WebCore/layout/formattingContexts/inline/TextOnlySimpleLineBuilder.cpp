@@ -28,6 +28,7 @@
 
 #include "InlineContentCache.h"
 #include "InlineFormattingContext.h"
+#include "LayoutIntegrationUtils.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 
@@ -545,7 +546,8 @@ bool TextOnlySimpleLineBuilder::isEligibleForSimplifiedDisplayBuild(const Elemen
         return false;
 
     auto& rootStyle = rootBlockContainer.style();
-    if (rootStyle.textOverflow() != Style::ComputedStyle::initialTextOverflow())
+    CheckedRef styleForTruncation = rootBlockContainer.isAnonymous() ? IntegrationUtils::firstNonAnonymousAncestorStyle(rootBlockContainer) : rootStyle;
+    if (styleForTruncation->textOverflow() != Style::ComputedStyle::initialTextOverflow())
         return false;
     if (!rootStyle.writingMode().isHorizontal())
         return false;

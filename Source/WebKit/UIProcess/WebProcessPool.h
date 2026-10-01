@@ -64,6 +64,7 @@ OBJC_CLASS WKProcessPoolWeakObserver;
 
 #if PLATFORM(MAC)
 #include <WebCore/PowerObserverMac.h>
+#include <WebCore/ScreenProperties.h>
 #include <pal/system/SystemSleepListener.h>
 #endif
 
@@ -101,11 +102,13 @@ class PageConfiguration;
 namespace WebCore {
 class RegistrableDomain;
 class Site;
+enum class ActivityStateForCPUSampling : uint8_t;
 enum class EventMakesGamepadsVisible : bool;
 enum class GamepadHapticEffectType : uint8_t;
 enum class ProcessSwapDisposition : uint8_t;
 struct GamepadEffectParameters;
 struct MockMediaDevice;
+struct ScreenProperties;
 #if PLATFORM(COCOA)
 class PowerSourceNotifier;
 #endif
@@ -259,6 +262,7 @@ public:
 #endif
 
 #if PLATFORM(MAC)
+    const WebCore::ScreenProperties& cachedScreenProperties();
     void displayPropertiesChanged(WebCore::PlatformDisplayID, CGDisplayChangeSummaryFlags);
 #endif
 
@@ -327,7 +331,7 @@ public:
     void setShouldMakeNextWebProcessLaunchFailForTesting(bool value) { m_shouldMakeNextWebProcessLaunchFailForTesting = value; }
     bool shouldMakeNextWebProcessLaunchFailForTesting() const { return m_shouldMakeNextWebProcessLaunchFailForTesting; }
 
-    void reportWebContentCPUTime(Seconds cpuTime, uint64_t activityState);
+    void reportWebContentCPUTime(Seconds cpuTime, WebCore::ActivityStateForCPUSampling);
 
     Ref<WebProcessProxy> processForSite(WebsiteDataStore&, WebProcessProxy::IsolatedProcessType, const std::optional<WebCore::Site>&, const std::optional<WebCore::Site>& mainFrameSite, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&, WebCore::ProcessSwapDisposition); // Will return an existing one if limit is met or due to caching.
 
@@ -501,8 +505,8 @@ public:
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     void setSandboxEnabled(bool);
-    void addSandboxPath(const CString& path, SandboxPermission permission) { m_extraSandboxPaths.add(path, permission); };
-    const HashMap<CString, SandboxPermission>& sandboxPaths() const LIFETIME_BOUND { return m_extraSandboxPaths; };
+    void addSandboxPath(const UTF8CString& path, SandboxPermission permission) { m_extraSandboxPaths.add(path, permission); };
+    const HashMap<UTF8CString, SandboxPermission>& sandboxPaths() const LIFETIME_BOUND { return m_extraSandboxPaths; };
     bool sandboxEnabled() const { return m_sandboxEnabled; };
 
     void setUserMessageHandler(Function<void(UserMessage&&, CompletionHandler<void(UserMessage&&)>&&)>&& handler) { m_userMessageHandler = WTF::move(handler); }
@@ -638,8 +642,8 @@ private:
     void platformInitializeWebProcess(const WebProcessProxy&, WebProcessCreationParameters&);
     void platformInvalidateContext();
 
-    std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> processForNavigationInternal(WebPageProxy&, WebFrameProxy&, const API::Navigation&, const URL& sourceURL, WebProcessProxy::IsolatedProcessType, const WebCore::Site& mainFrameSite, ProcessSwapRequestedByClient, WebProcessProxy::LockdownMode, EnhancedSecurity, const FrameInfoData&, Ref<WebsiteDataStore>&&);
-    void prepareProcessForNavigation(Ref<WebProcessProxy>&&, WebPageProxy&, SuspendedPageProxy*, ASCIILiteral reason, WebProcessProxy::IsolatedProcessType, const WebCore::Site&, const WebCore::Site& mainFrameSite, const API::Navigation&, WebProcessProxy::LockdownMode, EnhancedSecurity, LoadedWebArchive, Ref<WebsiteDataStore>&&, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&&, unsigned previousAttemptsCount = 0);
+    std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> processForNavigationInternal(WebPageProxy&, WebFrameProxy&, const API::Navigation&, const URL& sourceURL, BrowsingContextGroup&, WebProcessProxy::IsolatedProcessType, const WebCore::Site& mainFrameSite, ProcessSwapRequestedByClient, WebProcessProxy::LockdownMode, EnhancedSecurity, const FrameInfoData&, Ref<WebsiteDataStore>&&);
+    void prepareProcessForNavigation(Ref<WebProcessProxy>&&, WebPageProxy&, SuspendedPageProxy*, ASCIILiteral reason, WebProcessProxy::IsolatedProcessType, const WebCore::Site&, const WebCore::Site& mainFrameSite, const API::Navigation&, WebProcessProxy::LockdownMode, EnhancedSecurity, LoadedWebArchive, Ref<WebsiteDataStore>&&, BrowsingContextGroup&, WebProcessProxy& sourceProcess, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&&, unsigned previousAttemptsCount = 0);
 
     RefPtr<WebProcessProxy> tryTakePrewarmedProcess(WebsiteDataStore&, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&);
 
@@ -743,7 +747,15 @@ private:
     void clearAudibleActivity();
 
 #if PLATFORM(COCOA)
+    enum class ScreenPropertiesState : uint8_t {
+        Idle,
+        Collecting,
+        CollectingWithUpdatePending,
+    };
+
     void screenPropertiesUpdateTimerFired();
+    void didCollectScreenProperties(WebCore::ScreenProperties&&);
+    void applyEDRSuppressionIfNeeded(WebCore::ScreenProperties&);
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -936,7 +948,7 @@ private:
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     bool m_sandboxEnabled { false };
-    HashMap<CString, SandboxPermission> m_extraSandboxPaths;
+    HashMap<UTF8CString, SandboxPermission> m_extraSandboxPaths;
 
     Function<void(UserMessage&&, CompletionHandler<void(UserMessage&&)>&&)> m_userMessageHandler;
 
@@ -1027,6 +1039,11 @@ private:
 
     ApproximateTime m_lastScreenPropertiesUpdateTime;
     RunLoop::Timer m_screenPropertiesUpdateTimer;
+    ScreenPropertiesState m_screenPropertiesState { ScreenPropertiesState::Idle };
+#endif
+
+#if PLATFORM(MAC)
+    std::optional<WebCore::ScreenProperties> m_cachedScreenProperties;
 #endif
 
 #if ENABLE(IPC_TESTING_API)

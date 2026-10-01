@@ -145,7 +145,7 @@ static_assert(!std::is_base_of<ActiveDOMObject, TestAsyncKeyValueIterable>::valu
 
 JSTestAsyncKeyValueIterable* JSTestAsyncKeyValueIterable::create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<TestAsyncKeyValueIterable>&& impl)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = globalObject->vm();
+    auto& vm = globalObject->vm();
     JSTestAsyncKeyValueIterable* ptr = new (NotNull, JSC::allocateCell<JSTestAsyncKeyValueIterable>(vm)) JSTestAsyncKeyValueIterable(structure, *globalObject, WTF::move(impl));
     ptr->finishCreation(vm);
     return ptr;
@@ -181,7 +181,7 @@ void JSTestAsyncKeyValueIterable::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestAsyncKeyValueIterableConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = dynamicDowncast<JSTestAsyncKeyValueIterablePrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
@@ -247,7 +247,7 @@ const JSC::ClassInfo TestAsyncKeyValueIterableIteratorPrototype::s_info = { "Tes
 
 static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_entriesCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTestAsyncKeyValueIterable* thisObject)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -261,7 +261,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTestAsyncKeyValueIterablePrototypeFunction_entries, (
 
 static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_keysCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTestAsyncKeyValueIterable* thisObject)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -275,7 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTestAsyncKeyValueIterablePrototypeFunction_keys, (JSC
 
 static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_valuesCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTestAsyncKeyValueIterable* thisObject)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -349,7 +349,7 @@ static inline void verifyVTable(TestAsyncKeyValueIterable* ptr)
         // TestAsyncKeyValueIterable has subclasses. If TestAsyncKeyValueIterable has subclasses that get passed
         // to toJS() we currently require TestAsyncKeyValueIterable you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif

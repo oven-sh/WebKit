@@ -61,7 +61,7 @@ public:
 
     ~ScriptMessageClient() { }
 
-    void didPostMessage(WebPageProxy& page, FrameInfoData&&, API::ContentWorld&, JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(Expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler) override
+    void didPostMessage(WebPageProxy& page, FrameInfoData&&, API::ContentWorld&, JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(std::expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler) override
     {
         auto valueAsString = jsMessage.toString();
         auto tokens = StringView { valueAsString }.split(':');
@@ -133,7 +133,7 @@ void RemoteInspectorProtocolHandler::inspect(const String& hostAndPort, Connecti
 {
     auto debuggableType = parseDebuggableTypeFromString(type);
     if (!debuggableType) {
-        LOG_ERROR("Unknown debuggable type: \"%s\"", type.utf8().data());
+        LOG_ERROR("Unknown debuggable type: \"%s\"", type.utf8());
         return;
     }
 
@@ -159,7 +159,7 @@ void RemoteInspectorProtocolHandler::runScript(const String& script)
         RemoveTransientActivation::Yes
     }, wantsResult, [] (auto&& result) {
         if (!result && result.error())
-            LOG_ERROR("Exception running script \"%s\"", result.error()->message.utf8().data());
+            LOG_ERROR("Exception running script \"%s\"", result.error()->message.utf8());
     });
 }
 

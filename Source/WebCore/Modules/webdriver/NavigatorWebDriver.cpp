@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,21 +32,17 @@
 #include "NavigatorWebDriverActivePolicy.h"
 #include "Page.h"
 #include "Settings.h"
-#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
-using namespace JSC;
-
-WTF_MAKE_TZONE_ALLOCATED_IMPL(NavigatorWebDriver);
-
-NavigatorWebDriver::NavigatorWebDriver() = default;
-
-NavigatorWebDriver::~NavigatorWebDriver() = default;
 
 bool NavigatorWebDriver::isControlledByAutomation(const Navigator& navigator)
 {
-    auto* frame = navigator.frame();
-    if (!frame || !frame->page())
+    RefPtr frame = navigator.frame();
+    if (!frame)
+        return false;
+
+    RefPtr page = frame->page();
+    if (!page)
         return false;
 
     switch (frame->settings().navigatorWebDriverActivePolicy()) {
@@ -57,18 +53,7 @@ bool NavigatorWebDriver::isControlledByAutomation(const Navigator& navigator)
     case NavigatorWebDriverActivePolicy::Auto:
         break;
     }
-    return frame->page()->isControlledByAutomation();
-}
-
-NavigatorWebDriver* NavigatorWebDriver::from(Navigator* navigator)
-{
-    auto* supplement = downcast<NavigatorWebDriver>(Supplement<Navigator>::from(navigator, supplementName()));
-    if (!supplement) {
-        auto newSupplement = makeUnique<NavigatorWebDriver>();
-        supplement = newSupplement.get();
-        provideTo(navigator, supplementName(), WTF::move(newSupplement));
-    }
-    return supplement;
+    return page->isControlledByAutomation();
 }
 
 bool NavigatorWebDriver::webdriver(const Navigator& navigator)

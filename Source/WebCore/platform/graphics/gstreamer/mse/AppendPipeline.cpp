@@ -119,7 +119,7 @@ void AppendPipeline::setupDemuxing()
     }, this, nullptr);
 
     const String& type = m_sourceBufferPrivate.type().containerType();
-    GST_DEBUG_OBJECT(pipeline(), "SourceBuffer containerType: %s", type.utf8().data());
+    GST_DEBUG_OBJECT(pipeline(), "SourceBuffer containerType: %s", type.utf8().legacyCStringPointer());
 
     if (type.endsWith("mp4"_s) || type.endsWith("aac"_s)) {
         m_demux = makeGStreamerElement("qtdemux"_s);
@@ -171,7 +171,7 @@ void AppendPipeline::setupDemuxing()
             assertedElementSetState(appendPipeline->m_demux.get(), GST_STATE_PLAYING);
         }), this);
     } else {
-        GST_ELEMENT_ERROR(pipeline(), STREAM, WRONG_TYPE, ("Unsupported container mimetype: %s", type.utf8().data()), (nullptr));
+        GST_ELEMENT_ERROR(pipeline(), STREAM, WRONG_TYPE, ("Unsupported container mimetype: %s", type.utf8().legacyCStringPointer()), (nullptr));
         return;
     }
 
@@ -206,7 +206,7 @@ void AppendPipeline::configureOptionalDemuxerFromAnyThread()
     m_demuxerDataEnteringPadProbeInformation.probeId = gst_pad_add_probe(demuxerSinkPad.get(), GST_PAD_PROBE_TYPE_BUFFER, reinterpret_cast<GstPadProbeCallback>(appendPipelinePadProbeDebugInformation), &m_demuxerDataEnteringPadProbeInformation, nullptr);
 #endif
 
-    String elementClass = unsafeSpan(gst_element_get_metadata(m_demux.get(), GST_ELEMENT_METADATA_KLASS));
+    String elementClass = String::fromLatin1(unsafeSpan(gst_element_get_metadata(m_demux.get(), GST_ELEMENT_METADATA_KLASS)));
     // We try to detect special cases of demuxers that have a single static src pad, such as id3demux.
     GRefPtr<GstPad> demuxerSrcPad = adoptGRef(gst_element_get_static_pad(m_demux.get(), "src"));
     if (!demuxerSrcPad && elementClass.split('/').contains("Demuxer"_s)) {
@@ -270,7 +270,7 @@ AppendPipeline::AppendPipeline(SourceBufferPrivateGStreamer& sourceBufferPrivate
     static size_t appendPipelineCount = 0;
     String pipelineName = makeString("append-pipeline-"_s,
         makeStringByReplacingAll(m_sourceBufferPrivate.type().containerType(), '/', '-'), '-', appendPipelineCount++);
-    m_pipeline = gst_pipeline_new(pipelineName.utf8().data());
+    m_pipeline = gst_pipeline_new(pipelineName.utf8().legacyCStringPointer());
     registerActivePipeline(m_pipeline);
     connectSimpleBusMessageCallback(m_pipeline.get());
 
@@ -546,7 +546,7 @@ void AppendPipeline::appsinkNewSample(const Track& track, GRefPtr<GstSample>&& s
         MediaTime pts = bufferTimeToStreamTime(segment, GST_BUFFER_PTS(buffer));
         MediaTime dts = bufferTimeToStreamTime(segment, GST_BUFFER_DTS_IS_VALID(buffer) ? GST_BUFFER_DTS(buffer) : GST_BUFFER_DTS_OR_PTS(buffer));
         GST_TRACE_OBJECT(track.appsinkPad.get(), "Mapped buffer to segment, PTS %" GST_TIME_FORMAT " -> %s DTS %" GST_TIME_FORMAT " -> %s",
-            GST_TIME_ARGS(GST_BUFFER_PTS(buffer)), pts.toString().utf8().data(), GST_TIME_ARGS(GST_BUFFER_DTS(buffer)), dts.toString().utf8().data());
+            GST_TIME_ARGS(GST_BUFFER_PTS(buffer)), pts.toString().utf8().legacyCStringPointer(), GST_TIME_ARGS(GST_BUFFER_DTS(buffer)), dts.toString().utf8().legacyCStringPointer());
         mediaSample->setTimestamps(pts, dts);
     } else if (!GST_BUFFER_DTS(buffer) && GST_BUFFER_PTS(buffer) > 0
         && GST_BUFFER_PTS(buffer) <= toGstClockTime(PlatformTimeRanges::timeFudgeFactor())
@@ -570,9 +570,9 @@ void AppendPipeline::appsinkNewSample(const Track& track, GRefPtr<GstSample>&& s
 
     GST_TRACE_OBJECT(pipeline(), "append: trackId=%" PRIu64 " PTS=%s DTS=%s DUR=%s presentationSize=%.0fx%.0f",
         mediaSample->trackID(),
-        mediaSample->presentationTime().toString().utf8().data(),
-        mediaSample->decodeTime().toString().utf8().data(),
-        mediaSample->duration().toString().utf8().data(),
+        mediaSample->presentationTime().toString().utf8().legacyCStringPointer(),
+        mediaSample->decodeTime().toString().utf8().legacyCStringPointer(),
+        mediaSample->duration().toString().utf8().legacyCStringPointer(),
         mediaSample->presentationSize().width(), mediaSample->presentationSize().height());
 
     if (track.streamType == StreamType::Text) {
@@ -818,7 +818,7 @@ void AppendPipeline::resetParserState()
         static unsigned i = 0;
         // This is here for debugging purposes. It does not make sense to have it as class member.
         String dotFileName = makeString("reset-pipeline-"_s, ++i);
-        gst_debug_bin_to_dot_file(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, dotFileName.utf8().data());
+        gst_debug_bin_to_dot_file(GST_BIN(m_pipeline.get()), GST_DEBUG_GRAPH_SHOW_ALL, dotFileName.utf8().legacyCStringPointer());
     }
 #endif
 }
@@ -843,7 +843,7 @@ void AppendPipeline::startChangingType()
     m_pendingInitializationSegmentForChangeType = true;
 
     auto type = sourceBufferPrivate().m_type;
-    GST_INFO_OBJECT(pipeline(), "Pending type change -> %s", type.raw().utf8().data());
+    GST_INFO_OBJECT(pipeline(), "Pending type change -> %s", type.raw().utf8().legacyCStringPointer());
 }
 
 void AppendPipeline::resetElementsForChangeType()
@@ -851,7 +851,7 @@ void AppendPipeline::resetElementsForChangeType()
     ASSERT(isMainThread());
 
     auto type = sourceBufferPrivate().m_type;
-    GST_INFO_OBJECT(pipeline(), "Replacing appsrc, typefind and demuxer for type change -> %s", type.raw().utf8().data());
+    GST_INFO_OBJECT(pipeline(), "Replacing appsrc, typefind and demuxer for type change -> %s", type.raw().utf8().legacyCStringPointer());
 
     gst_element_unlink_many(m_appsrc.get(), m_typefind.get(), m_demux.get(), nullptr);
     for (const auto& track : m_tracks) {

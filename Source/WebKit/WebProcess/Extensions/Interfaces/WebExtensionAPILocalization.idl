@@ -34,7 +34,7 @@ dictionary WebExtensionLanguageDetectionResult {
 ] interface WebExtensionAPILocalization {
 
     // Get the localized string for the given message in the current locale, optionally providing up 9 substitutions.
-    DOMString getMessage([CannotBeEmpty] DOMString name, [Optional, NSObject] any substitutions);
+    DOMString getMessage([CannotBeEmpty] DOMString name, [Optional, ValuesAllowed] any substitutions);
 
     // Get the UI language of the browser.
     DOMString getUILanguage();

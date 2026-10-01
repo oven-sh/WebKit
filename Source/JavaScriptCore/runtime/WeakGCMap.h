@@ -26,19 +26,20 @@
 #pragma once
 
 #include "DeferGC.h"
-#include "Weak.h"
 #include "WeakGCHashTable.h"
 #include <wtf/HashMap.h>
 
 namespace JSC {
 
-// A UncheckedKeyHashMap with Weak<JSCell> values, which automatically removes values once they're garbage collected.
+// A UncheckedKeyHashMap holding JSCell values weakly. A value is dropped once a collection proves it
+// unreachable: eden collections null the entry out, leaving it behind for find() and ensureValue()
+// to treat as absent, and full collections remove it outright.
 
 template<typename KeyArg, typename ValueArg, typename HashArg = DefaultHash<KeyArg>, typename KeyTraitsArg = HashTraits<KeyArg>>
 class WeakGCMap final : public WeakGCHashTable {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WeakGCMap);
     WTF_MAKE_NONCOPYABLE(WeakGCMap);
-    typedef Weak<ValueArg> ValueType;
+    typedef ValueArg* ValueType;
     typedef UncheckedKeyHashMap<KeyArg, ValueType, HashArg, KeyTraitsArg> HashMapType;
 
 public:
@@ -57,7 +58,9 @@ public:
 
     AddResult set(const KeyType& key, ValueType value)
     {
-        return m_map.set(key, WTF::move(value));
+        AddResult result = m_map.set(key, value);
+        markDirty(m_vm);
+        return result;
     }
 
     template<typename Functor>
@@ -67,11 +70,14 @@ public:
         // The functor must not invoke GC.
         AssertNoGC assertNoGC;
         AddResult result = m_map.ensure(key, functor);
-        ValueArg* value = result.iterator->value.get();
-        if (!result.isNewEntry && !value) {
+        ValueArg* value = result.iterator->value;
+        if (!result.isNewEntry) {
+            if (value)
+                return value;
             value = functor();
-            result.iterator->value = WTF::move(value);
+            result.iterator->value = value;
         }
+        markDirty(m_vm);
         return value;
     }
 
@@ -85,24 +91,13 @@ public:
         m_map.clear();
     }
 
-    bool isEmpty() const
-    {
-        const_iterator it = m_map.begin();
-        const_iterator end = m_map.end();
-        while (it != end) {
-            if (it->value)
-                return true;
-        }
-        return false;
-    }
-
     inline iterator find(const KeyType& key);
 
     inline const_iterator find(const KeyType& key) const;
 
     inline bool contains(const KeyType& key) const;
 
-    void pruneStaleEntries() final;
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) final;
 
     template<typename Func>
     void forEach(Func);

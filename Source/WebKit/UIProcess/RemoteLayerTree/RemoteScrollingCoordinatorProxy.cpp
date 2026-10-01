@@ -219,19 +219,18 @@ void RemoteScrollingCoordinatorProxy::stickyScrollingTreeNodeBeganSticking(Scrol
     protect(webPageProxy())->stickyScrollingTreeNodeBeganSticking();
 }
 
-void RemoteScrollingCoordinatorProxy::handleWheelEvent(const WebWheelEvent& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
+void RemoteScrollingCoordinatorProxy::handleWheelEvent(Ref<WebWheelEvent>&& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
 {
 #if !(PLATFORM(MAC) && ENABLE(UI_SIDE_COMPOSITING))
     auto platformWheelEvent = platform(wheelEvent);
 
     // Replicate the hack in EventDispatcher::internalWheelEvent(). We could pass rubberBandableEdges all the way through the
     // WebProcess and back via the ScrollingTree, but we only ever need to consult it here.
-    if (platformWheelEvent.phase() == PlatformWheelEventPhase::Began)
-        m_scrollingTree->setClientAllowedMainFrameRubberBandableEdges(rubberBandableEdges);
+    m_scrollingTree->setClientAllowedMainFrameRubberBandableEdges(rubberBandableEdges);
 
     auto processingSteps = m_scrollingTree->determineWheelEventProcessing(platformWheelEvent);
     if (!processingSteps.contains(WheelEventProcessingSteps::AsyncScrolling)) {
-        continueWheelEventHandling(wheelEvent, { processingSteps, false });
+        continueWheelEventHandling(WTF::move(wheelEvent), { processingSteps, false });
         return;
     }
 
@@ -241,17 +240,17 @@ void RemoteScrollingCoordinatorProxy::handleWheelEvent(const WebWheelEvent& whee
     auto result = m_scrollingTree->handleWheelEvent(filteredEvent, processingSteps);
     didReceiveWheelEvent(result.wasHandled);
 
-    continueWheelEventHandling(wheelEvent, result);
+    continueWheelEventHandling(WTF::move(wheelEvent), result);
 #else
     UNUSED_PARAM(wheelEvent);
     UNUSED_PARAM(rubberBandableEdges);
 #endif
 }
 
-void RemoteScrollingCoordinatorProxy::continueWheelEventHandling(const WebWheelEvent& wheelEvent, WheelEventHandlingResult result)
+void RemoteScrollingCoordinatorProxy::continueWheelEventHandling(Ref<WebWheelEvent>&& wheelEvent, WheelEventHandlingResult result)
 {
     bool willStartSwipe = m_scrollingTree->willWheelEventStartSwipeGesture(platform(wheelEvent));
-    protect(webPageProxy())->continueWheelEventHandling(wheelEvent, result, willStartSwipe);
+    protect(webPageProxy())->continueWheelEventHandling(WTF::move(wheelEvent), result, willStartSwipe);
 }
 
 TrackingType RemoteScrollingCoordinatorProxy::eventTrackingTypeForPoint(WebCore::EventTrackingRegions::EventType eventType, IntPoint p) const
@@ -575,6 +574,11 @@ bool RemoteScrollingCoordinatorProxy::scrollingPerformanceTestingEnabled() const
 void RemoteScrollingCoordinatorProxy::scrollingTreeNodeScrollbarVisibilityDidChange(WebCore::ScrollingNodeID nodeID, ScrollbarOrientation orientation, bool isVisible)
 {
     protect(webPageProxy())->sendToProcessContainingFrame(m_scrollingTree->frameIDForScrollingNodeID(nodeID), Messages::RemoteScrollingCoordinator::ScrollingTreeNodeScrollbarVisibilityDidChange(nodeID, orientation, isVisible));
+}
+
+void RemoteScrollingCoordinatorProxy::requestFullScrollingTreeCommitForFrame(WebCore::FrameIdentifier frameID)
+{
+    protect(webPageProxy())->sendToProcessContainingFrame(frameID, Messages::RemoteScrollingCoordinator::RequestFullScrollingTreeCommit(frameID));
 }
 
 void RemoteScrollingCoordinatorProxy::scrollingTreeNodeScrollbarMinimumThumbLengthDidChange(WebCore::ScrollingNodeID nodeID, ScrollbarOrientation orientation, int minimumThumbLength)

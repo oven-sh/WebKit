@@ -183,7 +183,7 @@
 #include "LargestContentfulPaint.h"
 #include "LargestContentfulPaintData.h"
 #include "LayoutDisallowedScope.h"
-#include "LazyLoadImageObserver.h"
+#include "LazyLoadElementObserver.h"
 #include "LegacySchemeRegistry.h"
 #include "LinkLoader.h"
 #include "LoadableSpeculationRules.h"
@@ -213,6 +213,7 @@
 #include "Navigator.h"
 #include "NavigatorMediaSession.h"
 #include "NestingLevelIncrementer.h"
+#include "NetworkLoadPolicy.h"
 #include "NodeIterator.h"
 #include "NodeRareData.h"
 #include "NodeWithIndex.h"
@@ -440,10 +441,6 @@
 #include "MediaStreamTrack.h"
 #endif
 
-#if ENABLE(MODEL_ELEMENT)
-#include "LazyLoadModelObserver.h"
-#endif
-
 #if ENABLE(PICTURE_IN_PICTURE_API)
 #include "HTMLVideoElementPictureInPicture.h"
 #endif
@@ -459,7 +456,6 @@
 #if ENABLE(VIDEO)
 #include "CaptionUserPreferences.h"
 #include "CueMatch.h"
-#include "LazyLoadVideoObserver.h"
 #endif
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -481,6 +477,10 @@
 
 #if ENABLE(THREADED_ANIMATIONS)
 #include "AcceleratedEffectStackUpdater.h"
+#endif
+
+#if __has_include(<WebKitAdditions/AXCustomColorModeController.h>)
+#include <WebKitAdditions/AXCustomColorModeController.h>
 #endif
 
 #define DOCUMENT_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [pageID=%" PRIu64 ", frameID=%" PRIu64 ", isMainFrame=%d] Document::" fmt, this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, this->isTopDocument(), ##__VA_ARGS__)
@@ -535,12 +535,12 @@ static void CallbackForContainIntrinsicSize(const Vector<Ref<ResizeObserverEntry
 
             auto contentBoxSize = entry->contentBoxSize().at(0);
             if (box->style().logicalContainIntrinsicWidth().hasAuto()) {
-                auto adjustedWidth = LayoutUnit { Style::applyZoom(contentBoxSize->inlineSize(), box->style()) };
+                auto adjustedWidth = LayoutUnit { Style::applyingZoom<float>(contentBoxSize->inlineSize(), box->style()) };
                 target->setLastRememberedLogicalWidth(adjustedWidth);
             }
 
             if (box->style().logicalContainIntrinsicHeight().hasAuto()) {
-                auto adjustedHeight = LayoutUnit { Style::applyZoom(contentBoxSize->blockSize(), box->style()) };
+                auto adjustedHeight = LayoutUnit { Style::applyingZoom<float>(contentBoxSize->blockSize(), box->style()) };
                 target->setLastRememberedLogicalHeight(adjustedHeight);
             }
         }
@@ -834,6 +834,9 @@ Document::~Document()
         ASSERT(m_intersectionObserverData->registrations.isEmpty());
     }
 
+    ASSERT(m_localIntersectionObservers.isEmpty());
+    ASSERT(m_remoteIntersectionObservers.isEmpty());
+
     removeFromDocumentsMap();
 
     // We need to remove from the contexts map very early in the destructor so that calling postTask() on this Document from another thread is safe.
@@ -1018,6 +1021,12 @@ void Document::commonTeardown()
             localIntersectionObserver->disconnect();
     }
 
+    auto remoteIntersectionObservers = m_remoteIntersectionObservers;
+    for (auto& weakRemoteIntersectionObserver : remoteIntersectionObservers) {
+        if (RefPtr remoteIntersectionObserver = weakRemoteIntersectionObserver.get())
+            remoteIntersectionObserver->disconnect();
+    }
+
     auto resizeObservers = m_resizeObservers;
     for (auto& weakResizeObserver : resizeObservers) {
         if (RefPtr resizeObserver = weakResizeObserver.get())
@@ -1056,9 +1065,7 @@ void Document::commonTeardown()
         rtcNetworkManager->close();
 #endif
 
-#if ENABLE(VIDEO)
-    m_lazyLoadVideoObserver = nullptr;
-#endif
+    m_lazyLoadElementObserver = nullptr;
 }
 
 Quirks& Document::ensureQuirks()
@@ -1244,6 +1251,8 @@ ExceptionOr<Ref<Document>> Document::parseHTMLUnsafe(Document& context, Variant<
         return stringValueHolder.releaseException();
 
     Ref document = HTMLDocument::create(nullptr, context.settings(), URL { });
+    document->setContextDocument(protect(context.contextDocument()));
+    document->setSecurityOriginPolicy(context.securityOriginPolicy());
     document->setMarkupUnsafe(stringValueHolder.releaseReturnValue(), { ParserContentPolicy::AllowDeclarativeShadowRoots });
     return { document };
 }
@@ -2054,7 +2063,7 @@ void Document::setReadyState(ReadyState readyState)
                 eventTiming->domLoading = now;
             // We do this here instead of in the Document constructor because monotonicTimestamp() is 0 when the Document constructor is running.
             if (!url().isEmpty())
-                WTFBeginSignpostWithTimeDelta(this, NavigationAndPaintTiming, -Seconds(monotonicTimestamp()), "Loading %" PRIVATE_LOG_STRING " | isMainFrame: %d", url().string().utf8().data(), frame() && frame()->isMainFrame());
+                WTFBeginSignpostWithTimeDelta(this, NavigationAndPaintTiming, -Seconds(monotonicTimestamp()), "Loading %" PRIVATE_LOG_STRING " | isMainFrame: %d", url().string().utf8(), frame() && frame()->isMainFrame());
             WTFEmitSignpost(this, NavigationAndPaintTiming, "domLoading");
         }
         break;
@@ -2978,6 +2987,9 @@ bool Document::needsStyleRecalc() const
     if (backForwardCacheState() != NotInBackForwardCache)
         return false;
 
+    if (renderTreeState() != RenderTreeState::Built)
+        return false;
+
     if (m_needsFullStyleRebuild)
         return true;
 
@@ -3017,10 +3029,14 @@ bool Document::updateStyleIfNeeded()
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
     ContentChangeObserver::StyleRecalcScope observingScope(*this);
 #endif
+
+    if (!renderView()) {
+        // needsStyleRecalc() is what keeps this true, and resolveStyle() resolves nothing without it.
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+
     resolveStyle();
-
-    updateRenderTreesForDescendantFrames();
-
     return true;
 }
 
@@ -3326,7 +3342,7 @@ bool Document::updateLayoutIfDimensionsOutOfDate(Element& element, OptionSet<Dim
             }
 
             // Require the entire container chain to be boxes or SVG or inline box in block-inline-inline case.
-            if (is<RenderInline>(*currentRenderer) && currentBox && currentBox->isBlockLevelBox())
+            if (currentRenderer->isInlineBox() && currentBox && currentBox->isBlockLevelBox())
                 continue;
 
             if (!currentRenderer->isSVGRenderer()) {
@@ -3459,74 +3475,12 @@ bool Document::isInStyleInterleavedLayoutForSelfOrAncestor() const
     return false;
 }
 
-bool Document::ownerElementGeneratesBox() const
-{
-    CheckedPtr ownerElement = this->ownerElement();
-    if (!ownerElement) {
-        ASSERT_NOT_REACHED();
-        return false;
-    }
-
-    if (ownerElement->renderer())
-        return true;
-
-    if (ownerElement->needsStyleRecalc())
-        return true;
-
-    Ref ownerElementDocument = ownerElement->document();
-
-    if (ownerElementDocument->renderTreeState() != RenderTreeState::Built)
-        return !ownerElementDocument->ownerElement() || ownerElementDocument->ownerElementGeneratesBox();
-
-    return false;
-}
-
-void Document::updateRenderTreeForOwnerElementBox()
-{
-    if (!ownerElement())
-        return;
-
-    auto needsRenderTree = ownerElementGeneratesBox() || printing() || isPluginDocument();
-    if (needsRenderTree && renderTreeState() == RenderTreeState::NotBuilt) {
-        createRenderTree();
-        return;
-    }
-
-    if (!needsRenderTree && renderTreeState() == RenderTreeState::Built)
-        destroyRenderTree(DocumentIsGoingAway::No);
-}
-
-void Document::updateRenderTreesForDescendantFrames()
-{
-    RefPtr frame = m_frame.get();
-    if (!frame) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    Vector<Ref<Document>> contentDocuments;
-    for (RefPtr descendant = frame->tree().firstChild(); descendant; descendant = descendant->tree().traverseNext(frame.get())) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(descendant.get());
-        if (RefPtr contentDocument = localFrame ? localFrame->document() : nullptr)
-            contentDocuments.append(contentDocument.releaseNonNull());
-    }
-
-    for (auto& contentDocument : contentDocuments) {
-        if (contentDocument->frame() && contentDocument->frame()->document() == contentDocument.ptr())
-            contentDocument->updateRenderTreeForOwnerElementBox();
-    }
-}
-
 void Document::createRenderTree()
 {
     ASSERT(!renderView());
     ASSERT(m_backForwardCacheState != InBackForwardCache);
 
     if (m_isNonRenderedPlaceholder)
-        return;
-
-    auto needsRenderTree = !ownerElement() || ownerElementGeneratesBox() || printing() || isPluginDocument();
-    if (!needsRenderTree)
         return;
 
     // FIXME: It would be better if we could pass the resolved document style directly here.
@@ -3636,29 +3590,20 @@ void Document::detachFromCachedFrame(CachedFrameBase& cachedFrame)
 
 void Document::destroyRenderTree()
 {
+    ASSERT(renderTreeState() == RenderTreeState::Built);
     ASSERT(frame());
     ASSERT(frame()->document() == this);
     ASSERT(page());
-
-    destroyRenderTree(DocumentIsGoingAway::Yes);
-}
-
-void Document::destroyRenderTree(DocumentIsGoingAway documentIsGoingAway)
-{
-    ASSERT(renderTreeState() == RenderTreeState::Built);
 
     // Prevent Widget tree changes from committing until the RenderView is dead and gone.
     WidgetHierarchyUpdatesSuspensionScope suspendWidgetHierarchyUpdates;
 
     auto scope = SetForScope { m_renderTreeState, RenderTreeState::BeingDestroyed, RenderTreeState::NotBuilt };
 
-    if (documentIsGoingAway == DocumentIsGoingAway::Yes) {
-        if (isTopDocument())
-            clearAXObjectCache();
+    if (isTopDocument())
+        clearAXObjectCache();
 
-        documentWillBecomeInactive();
-    } else
-        m_renderView->setIsInWindow(false);
+    documentWillBecomeInactive();
 
     if (RefPtr view = this->view())
         view->willDestroyRenderTree();
@@ -3666,12 +3611,8 @@ void Document::destroyRenderTree(DocumentIsGoingAway documentIsGoingAway)
     m_pendingRenderTreeUpdate = { };
     m_initialContainingBlockStyle = { };
 
-    if (RefPtr documentElement = m_documentElement) {
-        if (documentIsGoingAway == DocumentIsGoingAway::Yes)
-            RenderTreeUpdater::tearDownRenderers(*documentElement);
-        else
-            RenderTreeUpdater::tearDownRenderersForDisplayNoneFrame(*documentElement);
-    }
+    if (RefPtr documentElement = m_documentElement)
+        RenderTreeUpdater::tearDownRenderers(*documentElement);
 
     clearChildNeedsStyleRecalc();
 
@@ -3695,9 +3636,7 @@ void Document::destroyRenderTree(DocumentIsGoingAway documentIsGoingAway)
 
     Node::setRenderer(nullptr);
 
-#if ENABLE(TEXT_AUTOSIZING)
     m_textAutoSizing = nullptr;
-#endif
 
     if (RefPtr view = this->view())
         view->didDestroyRenderTree();
@@ -4049,7 +3988,7 @@ void Document::collectHighlightRangesFromRegister(Vector<WeakPtr<HighlightRange>
             if (highlightRange->startPosition().isNotNull() && highlightRange->endPosition().isNotNull() && !highlightRange->range().isLiveRange())
                 continue;
 
-            if (auto* liveRange = dynamicDowncast<Range>(highlightRange->range()); liveRange && !liveRange->didChangeForHighlight())
+            if (auto* liveRange = dynamicDowncast<Range>(highlightRange->range()); liveRange && !liveRange->didChangeForHighlight() && !highlightRange->needsPositionUpdate())
                 continue;
 
             auto simpleRange = makeSimpleRange(highlightRange->range());
@@ -4099,6 +4038,7 @@ void Document::updateHighlightPositions()
                 highlightRange->setStartPosition(WTF::move(startPosition));
             if (!endPosition.isNull())
                 highlightRange->setEndPosition(WTF::move(endPosition));
+            highlightRange->didUpdatePositions();
 
             Highlight::repaintRange(highlightRange->range());
         }
@@ -4218,6 +4158,7 @@ ExceptionOr<void> Document::open(Document* entryDocument)
 }
 
 // https://html.spec.whatwg.org/#fully-active
+// FIXME (webkit.org/b/323253): cache the result and invalidate when frame tree changes.
 bool Document::isFullyActive() const
 {
     RefPtr frame = this->frame();
@@ -4472,7 +4413,9 @@ void Document::implicitClose()
     // We used to force a synchronous display and flush here. This really isn't
     // necessary and can in fact be actively harmful if pages are loading at a rate of > 60fps
     // (if your platform is syncing flushes and limiting them to 60fps).
-    if (!ownerElement() || (ownerElement()->renderer() && !ownerElement()->renderer()->needsLayout())) {
+    RefPtr owner = ownerElement();
+    CheckedPtr ownerRenderer = owner ? owner->renderer() : nullptr;
+    if (!owner || (ownerRenderer && !ownerRenderer->needsLayout())) {
         updateStyleIfNeeded();
 
         // Always do a layout after loading if needed.
@@ -4559,9 +4502,6 @@ void Document::enqueuePaintTimingEntryIfNeeded()
         return;
 
     if (!window() || !view())
-        return;
-
-    if (renderTreeState() != RenderTreeState::Built)
         return;
 
     // To make sure we don't report paint while the layer tree is still frozen.
@@ -5866,7 +5806,7 @@ ClonedDocumentType Document::clonedDocumentType() const
 
 Ref<Node> Document::cloneNodeInternal(Document&, CloningOperation type, CustomElementRegistry* registry) const
 {
-    Ref clone = createCloned(clonedDocumentType(), settings(), url(), baseURL(), baseURLOverride(), m_documentURI, m_compatibilityMode, protect(contextDocument()), securityOriginPolicy(), contentType(), protect(decoder()).get());
+    Ref clone = createCloned(clonedDocumentType(), settings(), url(), baseURL(), baseURLOverride(), m_documentURI, m_compatibilityMode, m_parserContentPolicy, protect(contextDocument()), securityOriginPolicy(), contentType(), protect(decoder()).get());
     switch (type) {
     case CloningOperation::SelfOnly:
     case CloningOperation::SelfWithTemplateContent:
@@ -5901,7 +5841,7 @@ SerializedNode Document::serializeNode(CloningOperation type) const
     };
 }
 
-Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, const Settings& settings, const URL& url, const URL& baseURL, const URL& baseURLOverride, const Variant<String, URL>& documentURI, DocumentCompatibilityMode compatibilityMode, Document& contextDocument, SecurityOriginPolicy* securityOriginPolicy, const String& contentType, TextResourceDecoder* decoder)
+Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, const Settings& settings, const URL& url, const URL& baseURL, const URL& baseURLOverride, const Variant<String, URL>& documentURI, DocumentCompatibilityMode compatibilityMode, OptionSet<ParserContentPolicy> parserContentPolicy, Document& contextDocument, SecurityOriginPolicy* securityOriginPolicy, const String& contentType, TextResourceDecoder* decoder)
 {
     Ref clone = [&] -> Ref<Document> {
         switch (clonedDocumentType) {
@@ -5924,6 +5864,7 @@ Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, cons
     clone->m_baseURLOverride = baseURLOverride;
     clone->m_documentURI = documentURI;
     clone->setCompatibilityMode(compatibilityMode);
+    clone->setParserContentPolicy(parserContentPolicy);
     clone->setContextDocument(contextDocument);
     clone->setSecurityOriginPolicy(securityOriginPolicy);
     clone->overrideMIMEType(contentType);
@@ -6579,6 +6520,19 @@ void Document::elementInActiveChainDidDetach(Element& element)
     while (m_activeElement && !m_activeElement->renderer())
         m_activeElement = m_activeElement->parentElement();
 }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+
+void Document::updateAXCustomColorModeTextBackdrops()
+{
+    if (!isAXCustomColorModeActive())
+        return;
+
+    if (CheckedPtr view = renderView())
+        axCustomColorModeController().updateTextBackdrops(view->frameView());
+}
+
+#endif // ENABLE(AX_CUSTOM_COLOR_MODE)
 
 void Document::updateEventRegions()
 {
@@ -7973,7 +7927,7 @@ ExceptionOr<bool> Document::execCommand(const String& commandName, bool userInte
 
     auto stringValueHolder = WTF::switchOn(value,
         [&commandName, this](const String& str) -> ExceptionOr<String> {
-            if (commandName != "insertHTML"_s)
+            if (!equalIgnoringASCIICase(commandName, "insertHTML"_s))
                 return String(str);
             return trustedTypeCompliantString(TrustedType::TrustedHTML, protect(contextDocument()), str, "Document execCommand"_s);
         },
@@ -8654,7 +8608,7 @@ void Document::enforceSandboxFlags(SandboxFlags flags, SandboxFlagsSource source
     bool wasSandboxedOrigin = isSandboxed(SandboxFlag::Origin);
     SecurityContext::enforceSandboxFlags(flags, source);
 
-    if (RefPtr page = this->page(); page && page->hasRemoteFrames()) {
+    if (RefPtr page = this->page(); page && page->mainFrame().tree().containsRemoteFrame()) {
         bool sandboxedStateDidChange = wasSandboxedOrigin != isSandboxed(SandboxFlag::Origin);
         if (!sandboxedStateDidChange)
             return;
@@ -8830,14 +8784,12 @@ String Document::nameForCSSCanvasElement(const HTMLCanvasElement& canvasElement)
     return String();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
 TextAutoSizing& Document::textAutoSizing()
 {
     if (!m_textAutoSizing)
         m_textAutoSizing = makeUnique<TextAutoSizing>();
     return *m_textAutoSizing;
 }
-#endif // ENABLE(TEXT_AUTOSIZING)
 
 void Document::getParserLocation(String& completedURL, unsigned& line, unsigned& column) const
 {
@@ -9336,6 +9288,12 @@ void Document::checkCompleted()
 {
     if (RefPtr frame = this->frame())
         frame->loader().checkCompleted();
+}
+
+void Document::checkLoadComplete()
+{
+    if (RefPtr frame = this->frame())
+        frame->loader().checkLoadComplete();
 }
 
 double Document::monotonicTimestamp() const
@@ -10202,6 +10160,18 @@ void Document::adjustStyleColorOptionsIfNeeded(OptionSet<StyleColorOptions>&) co
 }
 #endif
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+
+bool Document::isAXCustomColorModeActive() const
+{
+    if (RefPtr page = this->page())
+        return page->isAXCustomColorModeActive();
+
+    return false;
+}
+
+#endif // ENABLE(AX_CUSTOM_COLOR_MODE)
+
 OptionSet<StyleColorOptions> Document::styleColorOptions(const Style::ComputedStyle* style) const
 {
     OptionSet<StyleColorOptions> options;
@@ -10228,6 +10198,12 @@ CompositeOperator Document::compositeOperatorForBackgroundColor(const Color& col
     // Mail on macOS uses a transparent view, and on iOS it is an opaque view. We need to
     // use different composite modes to get the right results in this case.
     return frameView->isTransparent() ? CompositeOperator::DestinationOut : CompositeOperator::DestinationIn;
+}
+
+bool Document::backgroundColorIsPunchedOut(const Color& color, const RenderElement& renderer) const
+{
+    auto compositeOperator = compositeOperatorForBackgroundColor(color, renderer);
+    return compositeOperator == CompositeOperator::DestinationIn || compositeOperator == CompositeOperator::DestinationOut;
 }
 
 void Document::didAssociateFormControl(Element& element)
@@ -10374,9 +10350,12 @@ void Document::showPlaybackTargetPicker(MediaPlaybackTargetClient& client, bool 
     if (it == m_clientToIDMap.end())
         return;
 
-    // FIXME: This is probably wrong for subframes.
-    auto position = flooredIntPoint(frame()->eventHandler().lastKnownMousePosition());
-    page->showPlaybackTargetPicker(it->value, position, isVideo, routeSharingPolicy, routingContextUID);
+    RefPtr localRootView = frame()->rootFrame().view();
+    if (!localRootView)
+        return;
+
+    auto position = localRootView->contentsToRootView(localRootView->windowToContents(flooredIntPoint(frame()->eventHandler().lastKnownMousePosition())));
+    page->showPlaybackTargetPicker(it->value, frame()->rootFrame().frameID(), position, isVideo, routeSharingPolicy, routingContextUID);
 }
 
 void Document::playbackTargetPickerClientStateDidChange(MediaPlaybackTargetClient& client, MediaProducerMediaStateFlags state)
@@ -10612,6 +10591,8 @@ void Document::updateRemoteIntersectionObservers()
     if (!page)
         return;
 
+    ASSERT(page->mainFrame().tree().containsRemoteFrame());
+
     RefPtr mainFrame = this->page()->mainFrame();
     if (!mainFrame)
         return;
@@ -10654,9 +10635,6 @@ void Document::updateIntersectionObservers()
 
     updateAndNotifyIntersectionObservers(m_localIntersectionObservers, *frame);
     updateRemoteIntersectionObservers();
-
-    if (page->hasRemoteFrames())
-        page->chrome().client().updateRemoteIntersectionObserversInOtherWebProcesses();
 }
 
 void Document::scheduleInitialIntersectionObservationUpdate()
@@ -11737,16 +11715,16 @@ const Style::ComputedStyle& Document::initialStyle() const
         m_cachedInitialStyle->setZoom(zoom);
 
         auto initialFontFamily = FontFamily { standardFamily, FontFamilyKind::Generic };
-        auto initialSpecifiedFontSize = Style::fontSizeForKeyword(CSSValueMedium, false, settingsValues(), inQuirksMode());
-        auto initialComputedFontSize = Style::computedFontSizeFromSpecifiedSize(initialSpecifiedFontSize, false, zoomForFontDescription, Style::MinimumFontSizeRule::AbsoluteAndRelative, settingsValues());
+        auto initialComputedFontSize = Style::fontSizeForKeyword(CSSValueMedium, false, settingsValues(), inQuirksMode());
+        auto initialUsedFontSize = Style::usedFontSizeFromComputedSize(initialComputedFontSize, false, zoomForFontDescription, Style::MinimumFontSizeRule::AbsoluteAndRelative, settingsValues());
         auto allowUserInstalledFonts = settings().shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No;
 
         FontCascadeDescription fontDescription;
-        fontDescription.setSpecifiedLocale(contentLanguage());
+        fontDescription.setComputedLocale(contentLanguage());
         fontDescription.setOneFamily(WTF::move(initialFontFamily));
         fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
-        fontDescription.setSpecifiedSize(initialSpecifiedFontSize);
-        fontDescription.setComputedSize(initialComputedFontSize, zoomForFontDescription);
+        fontDescription.setComputedSize(initialComputedFontSize);
+        fontDescription.setUsedSize(initialUsedFontSize, zoomForFontDescription);
         fontDescription.setShouldAllowUserInstalledFonts(allowUserInstalledFonts);
 
         m_cachedInitialStyle->setFontDescription(WTF::move(fontDescription));
@@ -11807,7 +11785,7 @@ bool Document::hitTest(const HitTestRequest& request, const HitTestLocation& loc
 {
     Ref protectedThis { *this };
 
-    if (renderTreeState() != RenderTreeState::Built)
+    if (!renderView())
         return false;
 
     Ref frameView = renderView()->frameView();
@@ -11818,9 +11796,6 @@ bool Document::hitTest(const HitTestRequest& request, const HitTestLocation& loc
         frameView->updateLayoutAndStyleIfNeededRecursive();
     else
         updateLayout();
-
-    if (renderTreeState() != RenderTreeState::Built)
-        return false;
 
 #if ASSERT_ENABLED
     SetForScope hitTestRestorer { m_inHitTesting, true };
@@ -11963,30 +11938,12 @@ TextManipulationController& Document::textManipulationController()
     return *m_textManipulationController;
 }
 
-LazyLoadImageObserver& Document::lazyLoadImageObserver()
+LazyLoadElementObserver& Document::lazyLoadElementObserver()
 {
-    if (!m_lazyLoadImageObserver)
-        m_lazyLoadImageObserver = makeUnique<LazyLoadImageObserver>();
-    return *m_lazyLoadImageObserver;
+    if (!m_lazyLoadElementObserver)
+        m_lazyLoadElementObserver = makeUnique<LazyLoadElementObserver>();
+    return *m_lazyLoadElementObserver;
 }
-
-#if ENABLE(MODEL_ELEMENT)
-LazyLoadModelObserver& Document::lazyLoadModelObserver()
-{
-    if (!m_lazyLoadModelObserver)
-        m_lazyLoadModelObserver = makeUnique<LazyLoadModelObserver>();
-    return *m_lazyLoadModelObserver;
-}
-#endif
-
-#if ENABLE(VIDEO)
-LazyLoadVideoObserver& Document::lazyLoadVideoObserver()
-{
-    if (!m_lazyLoadVideoObserver)
-        m_lazyLoadVideoObserver = makeUnique<LazyLoadVideoObserver>();
-    return *m_lazyLoadVideoObserver;
-}
-#endif
 
 CrossOriginOpenerPolicy Document::crossOriginOpenerPolicy() const
 {
@@ -12044,6 +12001,29 @@ void Document::removeCanvasNeedingPreparationForDisplayOrFlush(CanvasRenderingCo
 {
     m_canvasContextsToPrepare.remove(context);
     context.setIsInPreparationForDisplayOrFlush(false);
+}
+
+void Document::serviceCanvasPaintEvents()
+{
+    auto canvases = std::exchange(m_canvasesNeedingPaintEvent, { });
+    for (RefPtr canvas : canvases) {
+        if (!canvas->isConnected())
+            continue;
+        canvas->dispatchPaintEvent();
+    }
+}
+
+void Document::requestCanvasPaintEvent(HTMLCanvasElement& canvas)
+{
+    bool shouldSchedule = m_canvasesNeedingPaintEvent.isEmptyIgnoringNullReferences();
+    m_canvasesNeedingPaintEvent.add(canvas);
+    if (shouldSchedule)
+        scheduleRenderingUpdate(RenderingUpdateStep::CanvasPaintEvent);
+}
+
+void Document::cancelCanvasPaintEvent(HTMLCanvasElement& canvas)
+{
+    m_canvasesNeedingPaintEvent.remove(canvas);
 }
 
 void Document::updateSleepDisablerIfNeeded()
@@ -12129,6 +12109,14 @@ std::optional<PAL::SessionID> Document::sessionID() const
         return page->sessionID();
 
     return std::nullopt;
+}
+
+const NetworkLoadPolicy& Document::networkLoadPolicy() const
+{
+    if (RefPtr page = this->page())
+        return page->networkLoadPolicy();
+
+    return NetworkLoadPolicy::unrestricted();
 }
 
 void Document::addElementWithPendingUserAgentShadowTreeUpdate(Element& element)

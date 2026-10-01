@@ -1,7 +1,8 @@
-// Cyclic string conversions must follow the spec: they recurse until the stack is exhausted and
-// then throw a RangeError. They must never silently substitute the empty string, and a conversion
-// that happens to reuse a receiver already on the stack without actually being cyclic must produce
-// its normal result.
+// Bun keeps a cycle guard on Array#join, Array#toString and Array#toLocaleString: an array that is
+// already being joined further up the stack converts to the empty string, the same as V8 and
+// SpiderMonkey. Error#toString and RegExp#toString have no guard, so a cycle through them recurses
+// until the stack is exhausted and throws a RangeError. A conversion that reuses a receiver that is
+// already on the stack without being cyclic must produce its normal result.
 
 function shouldBe(actual, expected) {
     if (actual !== expected)
@@ -21,55 +22,66 @@ function shouldThrowRangeError(func) {
         throw new Error(`expected RangeError but got ${error}`);
 }
 
-// Array.prototype.join, Array.prototype.toString and Array.prototype.toLocaleString have no cycle
-// detection in the specification, so a self-referential array overflows the stack.
-shouldThrowRangeError(() => {
+// A direct self reference renders as the empty string.
+{
     let array = [];
     array[0] = array;
-    return array.join();
-});
+    shouldBe(array.join(), "");
+    shouldBe(array.toString(), "");
+    shouldBe(`${array}`, "");
+    shouldBe(array.toLocaleString(), "");
+    shouldBe(String(array), "");
+    shouldBe(0 ^ array, 0);
+    shouldBe(array == "", true);
+}
 
-shouldThrowRangeError(() => {
-    let array = [];
-    array[0] = array;
-    return array.toString();
-});
+{
+    let array = [1];
+    array.push(array, 2);
+    shouldBe(array.join(), "1,,2");
+    shouldBe(array.join("-"), "1--2");
+    shouldBe(array.toString(), "1,,2");
+    shouldBe(array.toLocaleString(), "1,,2");
+}
 
-shouldThrowRangeError(() => {
-    let array = [];
-    array[0] = array;
-    return `${array}`;
-});
-
-shouldThrowRangeError(() => {
-    let array = [];
-    array[0] = array;
-    return array.toLocaleString();
-});
-
-// Indirect cycles overflow too.
-shouldThrowRangeError(() => {
+// Indirect cycles render as the empty string at the point where the cycle closes.
+{
     let array = [1, "webkit"];
     array[2] = [3, 4, [5, 6, [array]]];
-    return array.toString();
-});
+    shouldBe(array.toString(), "1,webkit,3,4,5,6,");
+}
 
-shouldThrowRangeError(() => {
+{
+    let a = [0];
+    let b = [a];
+    a.push(b);
+    shouldBe(`${a}`, "0,");
+    shouldBe(`${b}`, "0,");
+}
+
+{
     let array = ["a"];
     array.push({ toString() { return array.join("~"); } });
-    return array.join("-");
-});
+    shouldBe(array.join("-"), "a-");
+}
 
-// A cycle whose fan-out is larger than one must still terminate: the depth-first descent hits the
-// stack limit and the RangeError propagates out instead of the join fanning out exponentially.
-shouldThrowRangeError(() => {
+// A cycle whose fan-out is larger than one must still terminate.
+{
     let array = [];
     array[0] = array;
     array[1] = array;
-    return array.toString();
-});
+    shouldBe(array.toString(), ",");
+}
 
-// Error.prototype.toString has no cycle detection either.
+// The guard applies to array-like receivers of the generic join too.
+{
+    let object = { length: 2, 0: "x", toString() { return Array.prototype.join.call(object, "-"); } };
+    object[1] = object;
+    shouldBe(Array.prototype.join.call(object, "-"), "x-");
+    shouldBe(Array.prototype.toLocaleString.call(object), "x,");
+}
+
+// Error.prototype.toString has no cycle detection.
 shouldThrowRangeError(() => {
     let error = new Error;
     error.name = error;
@@ -122,8 +134,6 @@ shouldThrowRangeError(() => {
     shouldBe(array.join("-"), "a-b");
 }
 
-// The receiver of an inner conversion being an ancestor's receiver is fine as long as the value
-// graph is acyclic.
 {
     let error = new Error;
     error.name = "E";
@@ -131,8 +141,8 @@ shouldThrowRangeError(() => {
     shouldBe(`${error}`, "E: inner: m");
 }
 
-// A deep but acyclic nesting still converts, and a shared subtree is visited every time it occurs
-// rather than being replaced by the empty string on the second visit.
+// A deep but acyclic nesting still converts, and a shared subtree is visited every time it occurs.
+// The guard only covers arrays that are still being joined, not arrays that were joined before.
 {
     let shared = [1, 2];
     shouldBe([shared, shared].toString(), "1,2,1,2");
@@ -140,47 +150,81 @@ shouldThrowRangeError(() => {
     shouldBe([shared, shared].join("|"), "1,2|1,2");
 }
 
-// Recovering after a stack overflow must leave no state behind that suppresses later conversions.
+// A guarded conversion leaves no state behind that suppresses later conversions.
 {
     let array = [];
     array[0] = array;
     for (let i = 0; i < 2; ++i)
-        shouldThrowRangeError(() => array.toString());
+        shouldBe(array.toString(), "");
     shouldBe([1, 2].toString(), "1,2");
+    shouldBe(array.join("-"), "");
+    shouldBe([1, 2].join("-"), "1-2");
+}
 
+// An exception thrown inside a guarded join must unwind the guard too.
+{
+    let array = [1];
+    array.push({ toString() { throw new Error("boom"); } });
+    for (let i = 0; i < 2; ++i) {
+        let threw = false;
+        try {
+            array.join();
+        } catch (e) {
+            threw = e.message === "boom";
+        }
+        shouldBe(threw, true);
+    }
+    array.pop();
+    shouldBe(array.join(), "1");
+}
+
+// Recovering after a stack overflow must leave no state behind either.
+{
     let error = new Error;
     error.name = error;
     shouldThrowRangeError(() => `${error}`);
     shouldBe(`${new Error("m")}`, "Error: m");
+    shouldBe([1, 2].toString(), "1,2");
 }
 
 // The optimizing tiers reach the array conversions through their own paths, so warm them up on an
-// acyclic array and then check that a cyclic one still overflows there and that the overflow leaves
-// the warmed-up conversions intact.
+// acyclic array and then check that a cyclic one renders as the empty string there too.
 {
     const convert = a => `${a}`;
     const join = a => a.join("-");
+    const joinDefault = a => a.join();
     const toLocale = a => a.toLocaleString();
     noInline(convert);
     noInline(join);
+    noInline(joinDefault);
     noInline(toLocale);
 
     let acyclic = [1, 2, 3];
     let cyclic = [];
     cyclic[0] = cyclic;
+    let nested = [1];
+    nested.push(nested, 2);
 
     for (let i = 0; i < 20000; ++i) {
         shouldBe(convert(acyclic), "1,2,3");
         shouldBe(join(acyclic), "1-2-3");
+        shouldBe(joinDefault(acyclic), "1,2,3");
         shouldBe(toLocale(acyclic), "1,2,3");
     }
 
-    for (const f of [convert, join, toLocale]) {
-        shouldThrowRangeError(() => f(cyclic));
-        shouldThrowRangeError(() => f(cyclic));
+    for (let i = 0; i < 2; ++i) {
+        shouldBe(convert(cyclic), "");
+        shouldBe(join(cyclic), "");
+        shouldBe(joinDefault(cyclic), "");
+        shouldBe(toLocale(cyclic), "");
+        shouldBe(convert(nested), "1,,2");
+        shouldBe(join(nested), "1--2");
+        shouldBe(joinDefault(nested), "1,,2");
+        shouldBe(toLocale(nested), "1,,2");
     }
 
     shouldBe(convert(acyclic), "1,2,3");
     shouldBe(join(acyclic), "1-2-3");
+    shouldBe(joinDefault(acyclic), "1,2,3");
     shouldBe(toLocale(acyclic), "1,2,3");
 }

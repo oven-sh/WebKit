@@ -86,15 +86,16 @@ void MockHidConnection::send(Vector<uint8_t>&& data, DataSentCallback&& callback
     auto task = makeBlockPtr([weakThis = WeakPtr { *this }, data = WTF::move(data), callback = WTF::move(callback)]() mutable {
         ASSERT(!RunLoop::isMain());
         RunLoop::mainSingleton().dispatch([weakThis, data = WTF::move(data), callback = WTF::move(callback)]() mutable {
-            if (!weakThis) {
+            RefPtr protectedThis = weakThis;
+            if (!protectedThis) {
                 callback(DataSent::No);
                 return;
             }
 
-            weakThis->assembleRequest(WTF::move(data));
+            protectedThis->assembleRequest(WTF::move(data));
 
             auto sent = DataSent::Yes;
-            if (weakThis->stagesMatch() && weakThis->m_configuration.hid->error == Mock::HidError::DataNotSent)
+            if (protectedThis->stagesMatch() && protectedThis->m_configuration.hid->error == Mock::HidError::DataNotSent)
                 sent = DataSent::No;
             callback(sent);
         });
@@ -302,9 +303,8 @@ void MockHidConnection::feedReports()
             report = FidoHidContinuationPacket(m_currentChannel - 1, 0, { }).getSerializedData();
         // Packets are feed asynchronously to mimic actual data transmission.
         RunLoop::mainSingleton().dispatch([report = WTF::move(report), weakThis = WeakPtr { *this }]() mutable {
-            if (!weakThis)
-                return;
-            weakThis->receiveReport(WTF::move(report));
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->receiveReport(WTF::move(report));
         });
         isFirst = false;
     }
@@ -328,9 +328,8 @@ void MockHidConnection::continueFeedReports()
 {
     // Send actual response for the next run.
     RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }]() mutable {
-        if (!weakThis)
-            return;
-        weakThis->feedReports();
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->feedReports();
     });
 }
 
@@ -347,7 +346,7 @@ void MockHidConnection::initializeExpectedCommands()
         if (decodedMessage)
             m_expectedCommands.append(WTF::move(*decodedMessage));
         else
-            RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: Failed to decode expected command: %s", expectedCommandBase64.utf8().data());
+            RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: Failed to decode expected command: %s", expectedCommandBase64.utf8());
     }
 
     RELEASE_LOG(WebAuthn, "MockHidConnection: Initialized %zu expected commands for validation", m_expectedCommands.size());
@@ -356,13 +355,13 @@ void MockHidConnection::initializeExpectedCommands()
 void MockHidConnection::validateExpectedCommand(const Vector<uint8_t>& actualCommand)
 {
     if (m_currentExpectedCommandIndex >= m_expectedCommands.size()) {
-        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: VALIDATION FAILED - Received unexpected command beyond expected count. Expected %zu commands, but received command %zu. Content: %s", m_expectedCommands.size(), m_currentExpectedCommandIndex + 1, base64EncodeToString(actualCommand).utf8().data());
+        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: VALIDATION FAILED - Received unexpected command beyond expected count. Expected %zu commands, but received command %zu. Content: %s", m_expectedCommands.size(), m_currentExpectedCommandIndex + 1, base64EncodeToString(actualCommand).utf8());
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("MockHidConnection: Unexpected command.");
     }
 
     const auto& expectedCommand = m_expectedCommands[m_currentExpectedCommandIndex];
     if (actualCommand != expectedCommand) {
-        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: VALIDATION FAILED - Command mismatch at index %zu. Expected %s Actual %s", m_currentExpectedCommandIndex, base64EncodeToString(expectedCommand).utf8().data(), base64EncodeToString(actualCommand).utf8().data());
+        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: VALIDATION FAILED - Command mismatch at index %zu. Expected %s Actual %s", m_currentExpectedCommandIndex, base64EncodeToString(expectedCommand).utf8(), base64EncodeToString(actualCommand).utf8());
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("MockHidConnection: Command did not match expected value.");
     }
 
@@ -377,7 +376,7 @@ void MockHidConnection::validateExpectedCommandsCompleted()
         return;
 
     for (size_t i = m_currentExpectedCommandIndex; i < m_expectedCommands.size(); ++i)
-        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: Missing expected command %zu: %s", i, base64EncodeToString(m_expectedCommands[i]).utf8().data());
+        RELEASE_LOG_ERROR(WebAuthn, "MockHidConnection: Missing expected command %zu: %s", i, base64EncodeToString(m_expectedCommands[i]).utf8());
     RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("MockHidConnection: validateAllExpectedCommandsConsumed called - %zu of %zu commands consumed", m_currentExpectedCommandIndex, m_expectedCommands.size());
 }
 

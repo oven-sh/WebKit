@@ -43,5 +43,5 @@ messages -> WebProcessPool {
     [EnabledBy=ModelElementEnabled && ModelProcessEnabled] StoppedPlayingModels()
 #endif
 
-    ReportWebContentCPUTime(Seconds cpuTime, uint64_t activityState)
+    ReportWebContentCPUTime(Seconds cpuTime, enum:uint8_t WebCore::ActivityStateForCPUSampling activityState)
 }

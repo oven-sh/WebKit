@@ -6,6 +6,9 @@
 
 // IndexBufferOffsetTest.cpp: Test glDrawElements with an offset and an index buffer
 
+#include <array>
+
+#include "common/span.h"
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -437,15 +440,9 @@ TEST_P(IndexBufferOffsetTest, DrawAtDifferentOffsetAlignments)
 // Uses un-aligned index buffer to draw, the draw call should be ignored
 TEST_P(IndexBufferOffsetTest, DrawAtUnAlignedIndexBuffer)
 {
-    constexpr GLushort indices[6] = {0, 1, 2, 2, 3, 0};
-    GLubyte indicesUnaligned[1 + sizeof(indices)];
-
-    /* unalign indices */
-    indicesUnaligned[0] = 0;
-    for (unsigned long i = 0; i < sizeof(indices); ++i)
-    {
-        ANGLE_UNSAFE_TODO(indicesUnaligned[i + 1] = ((GLubyte *)indices)[i]);
-    }
+    constexpr std::array<GLushort, 6> indices = {0, 1, 2, 2, 3, 0};
+    std::array<GLubyte, 1 + indices.size() * sizeof(GLushort)> indicesUnaligned = {0};
+    Span(indicesUnaligned).subspan(1).copy_from(as_byte_span(indices));
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -459,7 +456,7 @@ TEST_P(IndexBufferOffsetTest, DrawAtUnAlignedIndexBuffer)
 
     GLBuffer buffer;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indicesUnaligned), indicesUnaligned,
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indicesUnaligned), indicesUnaligned.data(),
                  GL_DYNAMIC_DRAW);
 
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, reinterpret_cast<void *>(1));
@@ -575,6 +572,37 @@ TEST_P(IndexBufferOffsetTest, DrawArraysLineLoopFollowedByDrawElementsTriangle)
     // Check the down right triangle
     EXPECT_PIXEL_COLOR_EQ(getWindowWidth() - 1, getWindowHeight() - 1, GLColor::red);
 
+    EXPECT_GL_NO_ERROR();
+}
+
+// Draw with an index buffer offset while sourcing vertex data from client memory.
+TEST_P(IndexBufferOffsetTest, DrawAtOffsetWithClientSideVertexData)
+{
+    constexpr size_t kIndexCount = 6;
+    constexpr size_t kBufferSize = 1024;
+    constexpr size_t kOffset     = kBufferSize - kIndexCount * sizeof(GLushort);
+
+    const GLushort indexData[kIndexCount] = {0, 1, 2, 1, 2, 3};
+    std::vector<GLubyte> bufferData(kBufferSize, 0);
+    ANGLE_UNSAFE_TODO(memcpy(&bufferData[kOffset], indexData, sizeof(indexData)));
+
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, kBufferSize, bufferData.data(), GL_STATIC_DRAW);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(mProgram);
+    glUniform4f(mColorUniformLocation, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    // Source vertex data from client memory so the backend must compute the index range.
+    const GLfloat vertices[] = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f};
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glVertexAttribPointer(mPositionAttributeLocation, 2, GL_FLOAT, GL_FALSE, 0, vertices);
+    glEnableVertexAttribArray(mPositionAttributeLocation);
+
+    glDrawElements(GL_TRIANGLES, kIndexCount, GL_UNSIGNED_SHORT, reinterpret_cast<void *>(kOffset));
+
+    EXPECT_PIXEL_COLOR_EQ(64, 64, GLColor::red);
     EXPECT_GL_NO_ERROR();
 }
 

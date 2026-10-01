@@ -32,6 +32,7 @@
 #include "CSSColor.h"
 #include "CSSColorConversion+Normalize.h"
 #include "CSSColorDescriptors.h"
+#include "CSSColorInterpolationMethod.h"
 #include "CSSColorLayers.h"
 #include "CSSColorMix.h"
 #include "CSSContrastColor.h"
@@ -576,7 +577,7 @@ static std::optional<CSS::Color> consumeColorMixFunction(CSSParserTokenRange& ra
 
     auto args = consumeFunction(range);
 
-    std::optional<ColorInterpolationMethod> colorInterpolationMethod = CSS::defaultInterpolationMethodForColorMix;
+    std::optional<CSS::ColorInterpolationMethod> colorInterpolationMethod = CSS::defaultInterpolationMethodForColorMix;
     if (args.peek().id() == CSSValueIn) {
         colorInterpolationMethod = consumeColorInterpolationMethod(args, state.propertyParserState);
         if (!colorInterpolationMethod)
@@ -860,6 +861,14 @@ std::optional<CSS::Color> consumeColor(CSSParserTokenRange& range, ColorParserSt
     ColorParserStateNester nester { state };
 
     auto keyword = range.peek().id();
+
+    if (keyword == CSSValueInternalCurrentBackgroundColor) {
+        if (state.propertyParserState.context.mode != UASheetMode)
+            return { };
+        consumeIdentRaw(range);
+        return CSS::Color { CSS::KeywordColor { keyword } };
+    }
+
     if (CSS::isColorKeyword(keyword, state.allowedColorTypes)) {
         if (!isColorKeywordAllowed(keyword, state.propertyParserState.context))
             return { };
@@ -918,7 +927,7 @@ Color consumeColorRaw(CSSParserTokenRange& range, CSS::PropertyParserState& prop
 
 // MARK: - Raw parsing entry points
 
-Color parseColorRawGeneral(const String& string, const CSSParserContext& context, ScriptExecutionContext& scriptExecutionContext, const CSSColorParsingOptions& options, CSS::PlatformColorResolutionState& eagerResolutionState)
+Color parseColorRawGeneral(StringView string, const CSSParserContext& context, ScriptExecutionContext& scriptExecutionContext, const CSSColorParsingOptions& options, CSS::PlatformColorResolutionState& eagerResolutionState)
 {
     CSSTokenizer tokenizer(string);
     CSSParserTokenRange range(tokenizer.tokenRange());
@@ -938,7 +947,7 @@ Color parseColorRawGeneral(const String& string, const CSSParserContext& context
     return createColor(*result, eagerResolutionState);
 }
 
-Color deprecatedParseColorRawWithoutContext(const String& string, const CSSColorParsingOptions& options)
+Color deprecatedParseColorRawWithoutContext(StringView string, const CSSColorParsingOptions& options)
 {
     auto& context = strictCSSParserContext();
     if (auto color = CSSParserFastPaths::parseSimpleColor(string, context))

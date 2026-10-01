@@ -28,6 +28,7 @@
 
 #import "APIConversions.h"
 #import "Adapter.h"
+#import "CommandBuffer.h"
 #import "HardwareCapabilities.h"
 #import "PresentationContext.h"
 #import <cstring>
@@ -73,6 +74,22 @@ Instance::Instance()
 }
 
 Instance::~Instance() = default;
+
+void Instance::waitForCommandBufferCompletions()
+{
+    auto retainedCommandBuffers { std::exchange(m_retainedCommandBufferInstances, { }) };
+    auto retainedDevices { std::exchange(retainedDeviceInstances, { }) };
+    for (const auto& [_, weakCommandBuffer] : retainedCommandBuffers) {
+        if (id<MTLCommandBuffer> commandBuffer = weakCommandBuffer.get().get(); commandBuffer.status >= MTLCommandBufferStatusCommitted)
+            [commandBuffer waitUntilCompleted];
+    }
+    for (const auto& container : retainedDevices.values()) {
+        for (const auto& weakCommandBuffer : container) {
+            if (id<MTLCommandBuffer> commandBuffer = weakCommandBuffer.get().get(); commandBuffer.status >= MTLCommandBufferStatusCommitted)
+                [commandBuffer waitUntilCompleted];
+        }
+    }
+}
 
 Ref<PresentationContext> Instance::createSurface(const WGPUSurfaceDescriptor& descriptor)
 {
@@ -194,7 +211,6 @@ void Instance::requestAdapter(const WGPURequestAdapterOptions& options, Completi
 
 void Instance::retainDevice(Device& device, id<MTLCommandBuffer> commandBuffer)
 {
-    Locker locker(m_lock);
     auto& container = retainedDeviceInstances.ensure(device, [] {
         return CommandBufferContainer { };
     }).iterator->value;
@@ -211,6 +227,14 @@ void Instance::retainDevice(Device& device, id<MTLCommandBuffer> commandBuffer)
     });
 }
 
+void Instance::retainCommandBuffer(CommandBuffer& commandBuffer, id<MTLCommandBuffer> mtlCommandBuffer)
+{
+    m_retainedCommandBufferInstances.removeAllMatching([](auto& pair) {
+        return !pair.second;
+    });
+    m_retainedCommandBufferInstances.append({ commandBuffer, mtlCommandBuffer });
+}
+
 id<MTLDevice> Instance::device() const
 {
     return getDevices().firstObject;
@@ -220,13 +244,14 @@ id<MTLDevice> Instance::device() const
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuInstanceReference(WGPUInstance instance)
+void NODELETE wgpuInstanceAddRef(WGPUInstance instance)
 {
     WebGPU::fromAPI(instance).ref();
 }
 
 void wgpuInstanceRelease(WGPUInstance instance)
 {
+    protect(WebGPU::fromAPI(instance))->waitForCommandBufferCompletions();
     WebGPU::fromAPI(instance).deref();
 }
 
@@ -254,11 +279,11 @@ void wgpuInstanceRequestAdapter(WGPUInstance instance, const WGPURequestAdapterO
 {
     protect(WebGPU::fromAPI(instance))->requestAdapter(*options, [callback, userdata](WGPURequestAdapterStatus status, Ref<WebGPU::Adapter>&& adapter, String&& message) {
         if (status != WGPURequestAdapterStatus_Success) {
-            callback(status, nullptr, message.utf8().data(), userdata);
+            callback(status, nullptr, message.utf8().legacyCStringPointer(), userdata);
             return;
         }
 
-        callback(status, WebGPU::releaseToAPI(WTF::move(adapter)), message.utf8().data(), userdata);
+        callback(status, WebGPU::releaseToAPI(WTF::move(adapter)), message.utf8().legacyCStringPointer(), userdata);
     });
 }
 
@@ -266,11 +291,11 @@ void wgpuInstanceRequestAdapterWithBlock(WGPUInstance instance, WGPURequestAdapt
 {
     protect(WebGPU::fromAPI(instance))->requestAdapter(*options, [callback = WebGPU::fromAPI(WTF::move(callback))](WGPURequestAdapterStatus status, Ref<WebGPU::Adapter>&& adapter, String&& message) {
         if (status != WGPURequestAdapterStatus_Success) {
-            callback(status, nullptr, message.utf8().data());
+            callback(status, nullptr, message.utf8().legacyCStringPointer());
             return;
         }
 
-        callback(status, WebGPU::releaseToAPI(WTF::move(adapter)), message.utf8().data());
+        callback(status, WebGPU::releaseToAPI(WTF::move(adapter)), message.utf8().legacyCStringPointer());
     });
 }
 

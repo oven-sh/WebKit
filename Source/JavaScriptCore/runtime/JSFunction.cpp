@@ -212,10 +212,10 @@ String JSFunction::nameWithoutGC(VM& vm)
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
         return executable->name();
     }
-    const Identifier identifier = jsExecutable()->name();
-    if (identifier == vm.propertyNames->starDefaultPrivateName)
+    String name = jsExecutable()->nameWithoutGC();
+    if (name.impl() == vm.propertyNames->starDefaultPrivateName.impl())
         return emptyString();
-    return identifier.string();
+    return name;
 }
 
 String JSFunction::displayName(VM& vm)
@@ -248,13 +248,13 @@ JSString* JSFunction::toString(JSGlobalObject* globalObject)
     if (inherits<JSBoundFunction>()) {
         JSBoundFunction* function = uncheckedDowncast<JSBoundFunction>(this);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue string = jsMakeNontrivialString(globalObject, "function "_s, function->nameString(vm), "() {\n    [native code]\n}"_s);
+        JSValue string = jsMakeNontrivialString(globalObject, "function "_s, function->nameString(vm), "() { [native code] }"_s);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return asString(string);
     } else if (inherits<JSRemoteFunction>()) {
         JSRemoteFunction* function = uncheckedDowncast<JSRemoteFunction>(this);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue string = jsMakeNontrivialString(globalObject, "function "_s, function->nameString(), "() {\n    [native code]\n}"_s);
+        JSValue string = jsMakeNontrivialString(globalObject, "function "_s, function->nameString(), "() { [native code] }"_s);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return asString(string);
     }
@@ -478,7 +478,7 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction())
             return actualName;
 
-        return function->jsExecutable()->ecmaName().string();
+        return function->jsExecutable()->ecmaNameWithoutGC();
     }
     if (auto* function = dynamicDowncast<InternalFunction>(object))
         return function->name();

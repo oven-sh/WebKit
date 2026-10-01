@@ -645,9 +645,6 @@ http/tests/resourceLoadStatistics/exemptDomains/ [ Skip ]
 http/tests/resourceLoadStatistics/set-all-cookies-to-same-site-strict.html [ Skip ]
 http/tests/resourceLoadStatistics/enforce-samesite-strict-based-on-top-frame-unique-redirects-to.html [ Skip ]
 
-# This test is flaky. <rdar://problem/69748720>
-http/tests/resourceLoadStatistics/operating-dates-all-but-cookies-removed-with-user-interaction-7-days-ago.html [ Pass Failure ]
-
 http/tests/websocket/connection-refusal-in-frame-resource-load-statistics.html [ Pass ]
 # These are only supported behind a compile time flag in macOS High Sierra + iOS 11, and above.
 http/tests/resourceLoadStatistics/cookie-deletion.html [ Pass Timeout ]
@@ -730,8 +727,6 @@ webkit.org/b/172662 [ Debug ] http/tests/cache/disk-cache/redirect-chain-limits.
 
 webkit.org/b/183139 fast/events/blur-focus-window-should-blur-focus-element.html
 webkit.org/b/183140 fast/selectors/querySelector-window-inactive.html
-
-webkit.org/b/186406 compositing/iframes/display-none-subframe.html [ Pass Failure ]
 
 # Newly imported test that is flaky on WK2 because the order of cookies is not consistent.
 imported/w3c/web-platform-tests/cookies/attributes/attributes-ctl.sub.html [ Pass Failure ]

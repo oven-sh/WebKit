@@ -248,6 +248,17 @@ bool IntersectionObserver::isObserving(const Element& element) const
     return m_observationTargets.contains(element);
 }
 
+void IntersectionObserver::resetPreviousThresholdIndexForTarget(const Element& target)
+{
+    auto* data = target.intersectionObserverDataIfExists();
+    if (!data)
+        return;
+    for (auto& registration : data->registrations) {
+        if (registration.observer.get() == this)
+            registration.previousThresholdIndex = std::nullopt;
+    }
+}
+
 void IntersectionObserver::observe(Element& target)
 {
     if (!trackingDocument() || isObserving(target))
@@ -566,7 +577,7 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
         if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(*targetRenderer))
             return renderBox->borderBoundingBox();
 
-        if (is<RenderInline>(targetRenderer)) {
+        if (targetRenderer->isInlineBox()) {
             Vector<LayoutRect> rects;
             targetRenderer->boundingRects(rects, { });
             return unionRect(rects);
@@ -691,13 +702,23 @@ auto IntersectionObserver::updateObservations(const Frame& hostFrame) -> NeedNot
 
     auto needNotify = NeedNotify::No;
 
-    // Iterate on a copy of m_observationTargets, in case something in the loop mutates it.
-    auto observationTargets = m_observationTargets;
-    for (Ref target : observationTargets) {
+    // Cache Document::isFullyActive() because it's expensive, and it's likely that observation
+    // targets all belong to a handful of documents.
+    auto isDocumentFullyActive = [cache = WeakHashMap<Document, bool, WeakPtrImplWithEventTargetData> { }] (const Document &document) mutable {
+        auto isFullyActive = cache.ensure(document, [&] () {
+            return document.isFullyActive();
+        }).iterator->value;
+
+        // Invariant: the fully active status of a document can't change when updating observations.
+        ASSERT(isFullyActive == document.isFullyActive());
+        return isFullyActive;
+    };
+
+    for (const auto& target : copyToVectorOf<Ref<Element>>(m_observationTargets)) {
         // Per HTML spec, "update the rendering" step (which includes "run the update intersection
-        // observations") should only occur for fully active documents. Hence skip updating the
-        // target if its document is not fully active.
-        if (!root() && !target->document().isFullyActive())
+        // observations") only occurs for fully active documents. Hence skip updating the target if
+        // its document is not fully active.
+        if (!root() && !isDocumentFullyActive(target->document()))
             continue;
 
         auto& targetRegistrations = target->intersectionObserverDataIfExists()->registrations;
@@ -777,7 +798,7 @@ std::optional<ReducedResolutionSeconds> IntersectionObserver::nowTimestamp() con
 {
     RefPtr<LocalDOMWindow> window;
     {
-        auto* context = m_callback->scriptExecutionContext();
+        RefPtr context = m_callback->scriptExecutionContext();
         if (!context)
             return std::nullopt;
         Ref document = downcast<Document>(*context);
@@ -838,7 +859,8 @@ void IntersectionObserver::notify()
 
 bool IntersectionObserver::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor) const
 {
-    for (auto& target : m_observationTargets) {
+    // Cannot ref on the GC thread.
+    for (SUPPRESS_UNCOUNTED_LOCAL auto& target : m_observationTargets) {
         if (containsWebCoreOpaqueRoot(visitor, target))
             return true;
     }

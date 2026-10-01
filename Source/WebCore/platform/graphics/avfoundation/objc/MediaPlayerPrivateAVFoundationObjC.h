@@ -276,7 +276,7 @@ private:
     void paintWithVideoOutput(GraphicsContext&, const FloatRect&);
     RefPtr<VideoFrame> videoFrameForCurrentTime() final;
     RefPtr<NativeImage> nativeImageForCurrentTime() final;
-    DestinationColorSpace colorSpace() final;
+    ColorSpace colorSpace() final;
 
     enum class UpdateResult { Succeeded, Failed, TimedOut, ObjectDestroyed };
     UpdateResult waitForVideoOutputMediaDataWillChange();
@@ -402,10 +402,6 @@ private:
     RefPtr<WebCoreAVFResourceLoader> getResourceLoader(AVAssetResourceLoadingRequest *) const;
     RefPtr<WebCoreAVFResourceLoader> takeResourceLoader(AVAssetResourceLoadingRequest *);
 
-#if HAVE(AVPLAYER_PARTICIPATESINAUDIOSESSION)
-    void setParticipatesInAudioSession(bool);
-#endif
-
     void updateLayerAttachment();
     bool shouldAttachLayerToPlayer();
 
@@ -443,7 +439,7 @@ private:
 
     friend class WebCoreAVFResourceLoader;
     mutable Lock m_resourceLoaderMapLock;
-    HashMap<RetainPtr<AVAssetResourceLoadingRequest>, Ref<WebCoreAVFResourceLoader>> m_resourceLoaderMap;
+    HashMap<RetainPtr<AVAssetResourceLoadingRequest>, Ref<WebCoreAVFResourceLoader>> m_resourceLoaderMap WTF_GUARDED_BY_LOCK(m_resourceLoaderMapLock);
     const RetainPtr<WebCoreAVFLoaderDelegate> m_loaderDelegate;
     MemoryCompactRobinHoodHashMap<String, RetainPtr<AVAssetResourceLoadingRequest>> m_keyURIToRequestMap;
 

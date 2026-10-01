@@ -49,6 +49,7 @@
 		14895D911A3A319C0006235D /* Environment.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 14895D8F1A3A319C0006235D /* Environment.cpp */; };
 		14895D921A3A319C0006235D /* Environment.h in Headers */ = {isa = PBXBuildFile; fileRef = 14895D901A3A319C0006235D /* Environment.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		148EFAE81D6B953B008E721E /* ScopeExit.h in Headers */ = {isa = PBXBuildFile; fileRef = 148EFAE61D6B953B008E721E /* ScopeExit.h */; };
+		1C2D4B9492754104B4052BDD /* SpinBackoff.h in Headers */ = {isa = PBXBuildFile; fileRef = 05075FEE15D7410B97D990F4 /* SpinBackoff.h */; };
 		14C8992B1CC485E70027A057 /* Map.h in Headers */ = {isa = PBXBuildFile; fileRef = 14C8992A1CC485E70027A057 /* Map.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		14C919C918FCC59F0028DB43 /* BPlatform.h in Headers */ = {isa = PBXBuildFile; fileRef = 14C919C818FCC59F0028DB43 /* BPlatform.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		14CC394C18EA8858004AFE34 /* libbmalloc.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 14F271BE18EA3963008C152F /* libbmalloc.a */; };
@@ -91,6 +92,8 @@
 		AD14AD2A202529C700890E3B /* ProcessCheck.mm in Sources */ = {isa = PBXBuildFile; fileRef = AD14AD28202529B000890E3B /* ProcessCheck.mm */; };
 		AF7B6AD7B2954EA99121E719 /* pas_process.c in Sources */ = {isa = PBXBuildFile; fileRef = 2843EB80047B4B46A4A00AE8 /* pas_process.c */; };
 		BB00000003000000000000BB /* bmalloc_heap_utils.c in Sources */ = {isa = PBXBuildFile; fileRef = BB00000004000000000000BB /* bmalloc_heap_utils.c */; };
+		7D78FA9592EC48859E8B9155 /* bmalloc_prefault_supply.c in Sources */ = {isa = PBXBuildFile; fileRef = 6BEA9595554C41DC91A6C33B /* bmalloc_prefault_supply.c */; };
+		467853C5B3B0403E9A923FEB /* bmalloc_prefault_supply.h in Headers */ = {isa = PBXBuildFile; fileRef = 87ED133FE5104AEF94FCA029 /* bmalloc_prefault_supply.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		BB00000007000000000000BB /* bmalloc_heap_utils.h in Headers */ = {isa = PBXBuildFile; fileRef = BB00000008000000000000BB /* bmalloc_heap_utils.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		C5E4C2B62E0E12F1001E806C /* VMAllocate.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C5E4C2B52E0E12F1001E806C /* VMAllocate.cpp */; };
 		DD4BEC2629CBA49700398E35 /* pas_large_heap_physical_page_sharing_cache.c in Sources */ = {isa = PBXBuildFile; fileRef = 0FC40A832451498B00876DA0 /* pas_large_heap_physical_page_sharing_cache.c */; };
@@ -1164,6 +1167,7 @@
 		14895D8F1A3A319C0006235D /* Environment.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = Environment.cpp; path = bmalloc/Environment.cpp; sourceTree = "<group>"; };
 		14895D901A3A319C0006235D /* Environment.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Environment.h; path = bmalloc/Environment.h; sourceTree = "<group>"; };
 		148EFAE61D6B953B008E721E /* ScopeExit.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ScopeExit.h; path = bmalloc/ScopeExit.h; sourceTree = "<group>"; };
+		05075FEE15D7410B97D990F4 /* SpinBackoff.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = SpinBackoff.h; path = bmalloc/SpinBackoff.h; sourceTree = "<group>"; };
 		14B650C518F39F4800751968 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		14B650C618F39F4800751968 /* bmalloc.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = bmalloc.xcconfig; sourceTree = "<group>"; };
 		14B650C718F39F4800751968 /* DebugRelease.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = DebugRelease.xcconfig; sourceTree = "<group>"; };
@@ -1230,6 +1234,8 @@
 		AD14AD27202529A600890E3B /* ProcessCheck.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ProcessCheck.h; path = bmalloc/ProcessCheck.h; sourceTree = "<group>"; };
 		AD14AD28202529B000890E3B /* ProcessCheck.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = ProcessCheck.mm; path = bmalloc/ProcessCheck.mm; sourceTree = "<group>"; };
 		BB00000004000000000000BB /* bmalloc_heap_utils.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = bmalloc_heap_utils.c; path = libpas/src/libpas/bmalloc_heap_utils.c; sourceTree = "<group>"; };
+		6BEA9595554C41DC91A6C33B /* bmalloc_prefault_supply.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = bmalloc_prefault_supply.c; path = libpas/src/libpas/bmalloc_prefault_supply.c; sourceTree = "<group>"; };
+		87ED133FE5104AEF94FCA029 /* bmalloc_prefault_supply.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = bmalloc_prefault_supply.h; path = libpas/src/libpas/bmalloc_prefault_supply.h; sourceTree = "<group>"; };
 		BB00000008000000000000BB /* bmalloc_heap_utils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = bmalloc_heap_utils.h; path = libpas/src/libpas/bmalloc_heap_utils.h; sourceTree = "<group>"; };
 		C5E4C2B52E0E12F1001E806C /* VMAllocate.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = VMAllocate.cpp; path = bmalloc/VMAllocate.cpp; sourceTree = "<group>"; };
 		DE8B13B221CC5D9F00A63FCD /* BVMTags.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = BVMTags.h; path = bmalloc/BVMTags.h; sourceTree = "<group>"; };
@@ -1324,6 +1330,8 @@
 				0F8A812325F83E2400790B4A /* bmalloc_heap_ref.h */,
 				BB00000004000000000000BB /* bmalloc_heap_utils.c */,
 				BB00000008000000000000BB /* bmalloc_heap_utils.h */,
+				6BEA9595554C41DC91A6C33B /* bmalloc_prefault_supply.c */,
+				87ED133FE5104AEF94FCA029 /* bmalloc_prefault_supply.h */,
 				2C11E8932728DE27002162D0 /* bmalloc_type.c */,
 				2C11E8922728DE27002162D0 /* bmalloc_type.h */,
 				0F8A812025F83E2400790B4A /* hotbit_heap.c */,
@@ -1946,6 +1954,7 @@
 				143CB81A19022BC900B16A45 /* Mutex.cpp */,
 				143CB81B19022BC900B16A45 /* Mutex.h */,
 				148EFAE61D6B953B008E721E /* ScopeExit.h */,
+				05075FEE15D7410B97D990F4 /* SpinBackoff.h */,
 				E31E747F2238CA5B005D084A /* StaticPerProcess.h */,
 				1417F64F18B7280C0076FA99 /* valgrind.h */,
 				1479E21217A1A255006D4E9D /* Vector.h */,
@@ -1991,6 +2000,7 @@
 				AA00000017000000000000AA /* bmalloc_heap_iso_internal.h in Headers */,
 				DD4BED7329CBA49700398E35 /* bmalloc_heap_ref.h in Headers */,
 				BB00000007000000000000BB /* bmalloc_heap_utils.h in Headers */,
+				467853C5B3B0403E9A923FEB /* bmalloc_prefault_supply.h in Headers */,
 				DD4BEC8C29CBA49700398E35 /* bmalloc_type.h in Headers */,
 				0F7EB84D1F9541C700F1ABCB /* BMalloced.h in Headers */,
 				14C919C918FCC59F0028DB43 /* BPlatform.h in Headers */,
@@ -2372,6 +2382,7 @@
 				AD14AD29202529C400890E3B /* ProcessCheck.h in Headers */,
 				148EFAE81D6B953B008E721E /* ScopeExit.h in Headers */,
 				14DD789018F48CEB00950702 /* Sizes.h in Headers */,
+				1C2D4B9492754104B4052BDD /* SpinBackoff.h in Headers */,
 				E31E74802238CA5C005D084A /* StaticPerProcess.h in Headers */,
 				142B44371E2839E7001DA6E9 /* SystemHeap.h in Headers */,
 				ED4BEC4929CBA49700398E35 /* tagged_bmalloc_heap.h in Headers */,
@@ -2586,6 +2597,7 @@
 				AA00000011000000000000AA /* bmalloc_heap_flex.c in Sources */,
 				AA00000015000000000000AA /* bmalloc_heap_iso.c in Sources */,
 				BB00000003000000000000BB /* bmalloc_heap_utils.c in Sources */,
+				7D78FA9592EC48859E8B9155 /* bmalloc_prefault_supply.c in Sources */,
 				DD4BEC5429CBA49700398E35 /* bmalloc_type.c in Sources */,
 				0F74B93F1F89713E00B935D3 /* CryptoRandom.cpp in Sources */,
 				14895D911A3A319C0006235D /* Environment.cpp in Sources */,

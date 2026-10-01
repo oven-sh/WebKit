@@ -66,38 +66,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ColorInputType);
 
 using namespace HTMLNames;
 
-// https://html.spec.whatwg.org/multipage/infrastructure.html#valid-simple-colour
-static bool NODELETE isValidSimpleColor(StringView string)
-{
-    if (string.length() != 7)
-        return false;
-    if (string[0] != '#')
-        return false;
-    for (unsigned i = 1; i < 7; ++i) {
-        if (!isASCIIHexDigit(string[i]))
-            return false;
-    }
-    return true;
-}
-
-// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-simple-colour-values
-static std::optional<SRGBA<uint8_t>> NODELETE parseSimpleColorValue(StringView string)
-{
-    if (!isValidSimpleColor(string))
-        return std::nullopt;
-    return { { toASCIIHexValue(string[1], string[2]), toASCIIHexValue(string[3], string[4]), toASCIIHexValue(string[5], string[6]) } };
-}
-
 static std::optional<Color> parseColorValue(StringView string, HTMLInputElement& context)
 {
-    if (context.colorSpace().isNull())
-        return parseSimpleColorValue(string);
     using namespace CSSPropertyParserHelpers;
     Ref document = context.document();
     auto parserContext = document->cssParserContext();
     parserContext.mode = HTMLStandardMode;
-    auto colorString = string.toString();
-    auto color = parseColorRawSimple(colorString, parserContext);
+    auto color = parseColorRawSimple(string, parserContext);
     if (color.isValid())
         return color;
 
@@ -105,7 +80,7 @@ static std::optional<Color> parseColorValue(StringView string, HTMLInputElement&
     CSS::PlatformColorResolutionState state {
         .resolvedCurrentColor = Color::black
     };
-    color = parseColorRawGeneral(colorString, parserContext, document, options, state);
+    color = parseColorRawGeneral(string, parserContext, document, options, state);
     if (color.isValid())
         return color;
 
@@ -120,7 +95,7 @@ static String serializeColorValue(Color input, HTMLInputElement& context)
     if (!alpha)
         input = input.opaqueColor();
 
-    if (colorSpace.isNull() || colorSpace == "limited-srgb"_s) {
+    if (colorSpace == "limited-srgb"_s) {
         auto inputAsRGBA = input.toColorTypeLossy<SRGBA<uint8_t>>();
         // When the alpha attribute is set the specification requires the modern color() serialization.
         if (alpha)
@@ -341,14 +316,10 @@ HTMLElement* ColorInputType::shadowColorSwatch() const
     return wrapper ? downcast<HTMLElement>(wrapper->firstChild()) : nullptr;
 }
 
-IntRect ColorInputType::elementRectRelativeToRootView() const
+IntRect ColorInputType::elementRectRelativeToMainFrameView() const
 {
     ASSERT(element());
-    Ref element = *this->element();
-    CheckedPtr renderer = element->renderer();
-    if (!renderer)
-        return IntRect();
-    return protect(element->document().view())->contentsToRootView(renderer->absoluteBoundingBoxRect());
+    return protect(element())->boundingBoxInMainFrameViewCoordinates();
 }
 
 std::optional<FrameIdentifier> ColorInputType::rootFrameID() const

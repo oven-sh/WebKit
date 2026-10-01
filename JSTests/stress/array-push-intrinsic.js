@@ -24,12 +24,12 @@ function shouldThrow(func, errorMessage)
 
 shouldThrow(
     () => arrayPush(x, y),
-    "ReferenceError: Can't find variable: x",
+    "ReferenceError: x is not defined",
 );
 
 shouldThrow(
     () => arrayPush({ get length() { throw new Error("'length' should be unreachable."); } }, y),
-    "ReferenceError: Can't find variable: y",
+    "ReferenceError: y is not defined",
 );
 
 for (let i = 0; i < 5; ++i) {

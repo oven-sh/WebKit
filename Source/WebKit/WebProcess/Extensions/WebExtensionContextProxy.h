@@ -86,7 +86,7 @@ public:
 
     bool isURLForThisExtension(const URL&) const;
 
-    RefPtr<JSON::Object> manifest() const { return m_manifest ? m_manifest.get()->asObject() : nullptr; }
+    RefPtr<JSON::Object> manifest() const { return m_manifest ? protect(m_manifest)->asObject() : nullptr; }
 
     double manifestVersion() const { return m_manifestVersion; }
     bool supportsManifestVersion(double version) const { return manifestVersion() >= version; }
@@ -156,6 +156,9 @@ private:
 
     static RefPtr<WebExtensionLocalization> parseLocalization(RefPtr<API::Data>, const URL& baseURL);
 
+    bool isBackgroundServiceWorkerStillActivating();
+    void dispatchRuntimeMessageEventOnceBackgroundServiceWorkerIsActive(WebExtensionContentWorldType, String messageJSON, std::optional<WebExtensionMessageTargetParameters>, WebExtensionMessageSenderParameters, bool userGesture, CompletionHandler<void(String&& replyJSON)>&&, unsigned remainingActivationPollAttempts);
+
     // Action
     void dispatchActionClickedEvent(const std::optional<WebExtensionTabParameters>&);
 
@@ -212,6 +215,7 @@ private:
     void dispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
     void dispatchRuntimeInstalledEvent(WebExtensionContext::InstallReason, String previousVersion);
     void dispatchRuntimeStartupEvent();
+    bool matchesTarget(WebFrame&, const std::optional<WebExtensionMessageTargetParameters>&);
 
     // Storage
     void setStorageAccessLevel(WebExtensionDataType, WebExtensionStorageAccessLevel);
@@ -238,6 +242,7 @@ private:
 
     // Web Request
     void resourceLoadDidSendRequest(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::ResourceRequest&, const ResourceLoadInfo&, const std::optional<IPC::FormDataReference>&);
+    void resourceLoadDidBlockBeforeRequest(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const ResourceLoadInfo&);
     void resourceLoadDidPerformHTTPRedirection(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::ResourceResponse&, const ResourceLoadInfo&, const WebCore::ResourceRequest& newRequest);
     void resourceLoadDidReceiveChallenge(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::AuthenticationChallenge&, const ResourceLoadInfo&);
     void resourceLoadDidReceiveResponse(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const WebCore::ResourceResponse&, const ResourceLoadInfo&);

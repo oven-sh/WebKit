@@ -7,6 +7,8 @@
 //   Tests for indexed draws.
 //
 
+#include <array>
+
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -298,8 +300,8 @@ TEST_P(DrawElementsTest, LineLoopTriangles)
     GLint posLocation = glGetAttribLocation(programDrawRed, essl3_shaders::PositionAttrib());
     ASSERT_NE(-1, posLocation);
 
-    GLVertexArray vertexArray[2];
-    GLBuffer vertexBuffer[2];
+    std::array<GLVertexArray, 2> vertexArray;
+    std::array<GLBuffer, 2> vertexBuffer;
 
     glBindVertexArray(vertexArray[0]);
 
@@ -310,8 +312,8 @@ TEST_P(DrawElementsTest, LineLoopTriangles)
 
     for (int i = 0; i < 2; i++)
     {
-        glBindVertexArray(ANGLE_UNSAFE_TODO(vertexArray[i]));
-        glBindBuffer(GL_ARRAY_BUFFER, ANGLE_UNSAFE_TODO(vertexBuffer[i]));
+        glBindVertexArray(vertexArray[i]);
+        glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer[i]);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices[0]) * vertices.size(), vertices.data(),
                      GL_STATIC_DRAW);
         glVertexAttribPointer(posLocation, 3, GL_FLOAT, GL_FALSE, 0, 0);
@@ -359,8 +361,8 @@ TEST_P(DrawElementsTest, LineLoopTriangles2)
     GLint posLocation = glGetAttribLocation(programDrawRed, essl3_shaders::PositionAttrib());
     ASSERT_NE(-1, posLocation);
 
-    GLVertexArray vertexArray[2];
-    GLBuffer vertexBuffer[2];
+    std::array<GLVertexArray, 2> vertexArray;
+    std::array<GLBuffer, 2> vertexBuffer;
 
     GLBuffer indexBuffer;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
@@ -369,8 +371,8 @@ TEST_P(DrawElementsTest, LineLoopTriangles2)
 
     for (int i = 0; i < 2; i++)
     {
-        glBindVertexArray(ANGLE_UNSAFE_TODO(vertexArray[i]));
-        glBindBuffer(GL_ARRAY_BUFFER, ANGLE_UNSAFE_TODO(vertexBuffer[i]));
+        glBindVertexArray(vertexArray[i]);
+        glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer[i]);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices[0]) * vertices.size(), vertices.data(),
                      GL_STATIC_DRAW);
         glVertexAttribPointer(posLocation, 3, GL_FLOAT, GL_FALSE, 0, 0);
@@ -964,6 +966,103 @@ void main()
 
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
     EXPECT_PIXEL_RECT_EQ(1, 1, getWindowWidth() - 1, getWindowHeight() - 1, GLColor::red);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test a large flat-shaded GL_TRIANGLES draw with primitive restart markers at the
+// beginning of the index buffer. Previously, the Metal backend would size the
+// rewritten index buffer for the primitive-aligned count while writing at absolute
+// per-range offsets, so the last write for the shifted range landed past the allocation.
+// Uses distinct vertices for every quad so the final quad specifically validates that the
+// rewritten provoking vertex indices at the end of the buffer are rendered correctly.
+TEST_P(DrawElementsTest, FlatTrianglesLargePrimitiveRestartAtBegin)
+{
+    constexpr char kFlatVS[] = R"(#version 300 es
+in vec4 a_position;
+in float a_mark;
+flat out float v_mark;
+void main()
+{
+    v_mark = a_mark;
+    gl_Position = a_position;
+})";
+    constexpr char kFlatFS[] = R"(#version 300 es
+precision highp float;
+flat in float v_mark;
+out vec4 fragColor;
+void main()
+{
+    fragColor = v_mark >= 0.5 ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);
+})";
+    ANGLE_GL_PROGRAM(program, kFlatVS, kFlatFS);
+    glUseProgram(program);
+
+    constexpr GLsizei kQuads = 5000;
+    std::vector<Vector3> vertices(kQuads * 4, Vector3(0.0f, 0.0f, 0.0f));
+    std::vector<GLfloat> marks(kQuads * 4, 0.0f);
+
+    // Quad kQuads - 1 covers the full screen and has provoking marks set to 1.0 (green).
+    size_t lastQuadBase        = (kQuads - 1) * 4;
+    vertices[lastQuadBase + 0] = Vector3(-1.0f, -1.0f, 0.0f);
+    vertices[lastQuadBase + 1] = Vector3(1.0f, -1.0f, 0.0f);
+    vertices[lastQuadBase + 2] = Vector3(-1.0f, 1.0f, 0.0f);
+    vertices[lastQuadBase + 3] = Vector3(1.0f, 1.0f, 0.0f);
+
+    // Last vertex convention, triangles {0,1,2, 2,1,3}: 2 and 3 are provoking.
+    marks[lastQuadBase + 2] = 1.0f;
+    marks[lastQuadBase + 3] = 1.0f;
+
+    GLBuffer vertexBuffer;
+    glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices[0]) * vertices.size(), vertices.data(),
+                 GL_STATIC_DRAW);
+    GLint posLocation = glGetAttribLocation(program, "a_position");
+    ASSERT_NE(-1, posLocation);
+    glEnableVertexAttribArray(posLocation);
+    glVertexAttribPointer(posLocation, 3, GL_FLOAT, GL_FALSE, 0, 0);
+
+    GLBuffer markBuffer;
+    glBindBuffer(GL_ARRAY_BUFFER, markBuffer);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(marks[0]) * marks.size(), marks.data(), GL_STATIC_DRAW);
+    GLint markLocation = glGetAttribLocation(program, "a_mark");
+    ASSERT_NE(-1, markLocation);
+    glEnableVertexAttribArray(markLocation);
+    glVertexAttribPointer(markLocation, 1, GL_FLOAT, GL_FALSE, 0, 0);
+
+    // Two restart markers followed by quads with distinct vertex indices. The index count is
+    // large enough to exceed backend staging buffer limits and count % 3 == 2 so primitive
+    // alignment differs from the raw count.
+    constexpr GLuint kRestart   = 0xFFFFFFFFu;
+    std::vector<GLuint> indices = {kRestart, kRestart};
+    indices.reserve(2 + static_cast<size_t>(kQuads) * 6);
+    for (GLuint q = 0; q < static_cast<GLuint>(kQuads); ++q)
+    {
+        GLuint base = q * 4;
+        indices.push_back(base + 0);
+        indices.push_back(base + 1);
+        indices.push_back(base + 2);
+        indices.push_back(base + 2);
+        indices.push_back(base + 1);
+        indices.push_back(base + 3);
+    }
+    ASSERT_EQ(2u, indices.size() % 3);
+
+    GLBuffer elementBuffer;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementBuffer);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices[0]) * indices.size(), indices.data(),
+                 GL_STATIC_DRAW);
+    ASSERT_GL_NO_ERROR();
+
+    glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
+    glClearColor(1.f, 0.f, 0.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+    ASSERT_GL_NO_ERROR();
+
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+    EXPECT_PIXEL_COLOR_EQ(getWindowWidth() - 1, 0, GLColor::green);
+    EXPECT_PIXEL_COLOR_EQ(0, getWindowHeight() - 1, GLColor::green);
+    EXPECT_PIXEL_COLOR_EQ(getWindowWidth() - 1, getWindowHeight() - 1, GLColor::green);
     ASSERT_GL_NO_ERROR();
 }
 

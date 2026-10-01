@@ -26,8 +26,6 @@
 
 #pragma once
 
-#include "ClipStack.h"
-#include "FilterOperation.h"
 #include "IntPoint.h"
 #include "IntRect.h"
 #include "IntSize.h"
@@ -35,6 +33,12 @@
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/ThreadSafeRefCounted.h>
+
+#if USE(TEXTURE_MAPPER)
+#include "ClipStack.h"
+#include "FilterOperation.h"
+#endif
 
 #if USE(GBM)
 #include "MemoryMappedGPUBuffer.h"
@@ -62,15 +66,14 @@ class BitmapTexture final : public ThreadSafeRefCounted<BitmapTexture> {
 public:
     enum class Flags : uint8_t {
         SupportsAlpha = 1 << 0,
-        DepthBuffer = 1 << 1,
 #if USE(GBM)
-        BackedByDMABuf = 1 << 2,
-        ForceLinearBuffer = 1 << 3,
-        ForceVivanteSuperTiledBuffer = 1 << 4,
+        BackedByDMABuf = 1 << 1,
+        ForceLinearBuffer = 1 << 2,
+        ForceVivanteSuperTiledBuffer = 1 << 3,
 #endif
-        UseBGRALayout = 1 << 5,
-        NearestFiltering = 1 << 6,
-        ExternalOESRenderTarget = 1 << 7,
+        UseBGRALayout = 1 << 4,
+        NearestFiltering = 1 << 5,
+        ExternalOESRenderTarget = 1 << 6,
     };
 
     static Ref<BitmapTexture> create(const IntSize& size, OptionSet<Flags> flags = { })
@@ -92,26 +95,30 @@ public:
     OptionSet<Flags> flags() const { return m_flags; }
     bool isOpaque() const { return !m_flags.contains(Flags::SupportsAlpha); }
 
-    void bindAsSurface();
-    void initializeStencil();
-    void initializeDepthBuffer();
     uint32_t id() const { return m_id; }
 
-    void updateContents(NativeImage*, const IntRect&, const IntPoint& offset);
-    void updateContents(GraphicsLayer*, const IntRect& target, const IntPoint& offset, float scale = 1);
     void updateContents(const void* srcData, const IntRect& targetRect, const IntPoint& sourceOffset, int bytesPerLine, PixelFormat);
 
-    void swapTexture(BitmapTexture&);
     void reset(const IntSize&, OptionSet<Flags> = { });
+
+#if USE(TEXTURE_MAPPER)
+    void updateContents(NativeImage*, const IntRect&, const IntPoint& offset);
+    void updateContents(GraphicsLayer*, const IntRect& target, const IntPoint& offset, float scale = 1);
+
+    void bindAsSurface();
+    void initializeStencil();
+
+    void swapTexture(BitmapTexture&);
 
     RefPtr<const FilterOperation> filterOperation() const { return m_filterOperation; }
     void setFilterOperation(RefPtr<const FilterOperation>&& filterOperation) { m_filterOperation = WTF::move(filterOperation); }
 
     ClipStack& clipStack() LIFETIME_BOUND { return m_clipStack; }
 
-    void copyFromExternalTexture(unsigned sourceTextureID, const IntRect& targetRect, const IntSize& sourceOffset);
-
     OptionSet<TextureMapperFlags> colorConvertFlags() const;
+#endif
+
+    void copyFromExternalTexture(unsigned sourceTextureID, const IntRect& targetRect, const IntSize& sourceOffset);
 
 #if USE(SKIA)
     GrBackendTexture createSkiaBackendTexture() const;
@@ -131,8 +138,10 @@ private:
     BitmapTexture(EGLImage, const IntSize&, OptionSet<Flags>);
 #endif
 
+#if USE(TEXTURE_MAPPER)
     void clearIfNeeded();
     void createFboIfNeeded();
+#endif
 
     void determineRenderTargetAndBinding();
 
@@ -148,17 +157,19 @@ private:
     unsigned m_id { 0 };
     unsigned m_renderTarget { 0 };
     unsigned m_binding { 0 };
+    PixelFormat m_pixelFormat { PixelFormat::RGBA8 };
+
+#if USE(GBM)
+    std::unique_ptr<MemoryMappedGPUBuffer> m_memoryMappedGPUBuffer;
+#endif
+
+#if USE(TEXTURE_MAPPER)
     unsigned m_fbo { 0 };
-    unsigned m_depthBufferObject { 0 };
     unsigned m_stencilBufferObject { 0 };
     bool m_stencilBound { false };
     bool m_shouldClear { true };
     ClipStack m_clipStack;
     RefPtr<const FilterOperation> m_filterOperation;
-    PixelFormat m_pixelFormat { PixelFormat::RGBA8 };
-
-#if USE(GBM)
-    std::unique_ptr<MemoryMappedGPUBuffer> m_memoryMappedGPUBuffer;
 #endif
 };
 

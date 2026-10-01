@@ -65,6 +65,7 @@ public:
     void setMatch(CSSSelector::Match value) { m_selector.setMatch(value); }
     void setRelation(CSSSelector::Relation value) { m_selector.setRelation(value); }
     void setForPage() { m_selector.setForPage(); }
+    void setIsEquivalentToClassSelector() { m_selector.setIsEquivalentToClassSelector(); }
 
     CSSSelector::Match match() const { return m_selector.match(); }
     CSSSelector::PseudoElement pseudoElement() const { return m_selector.pseudoElement(); }

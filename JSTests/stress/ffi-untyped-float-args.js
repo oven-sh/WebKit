@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // An f32/f64 parameter whose call site does NOT speculate a number (FFIDFG falls back to
 // UntypedUse) has no single SSA operand: the value is converted into the canonical slot by
 // operationFFIWriteSlot. The FTL direct call must reload that slot AS A FLOAT so the value goes

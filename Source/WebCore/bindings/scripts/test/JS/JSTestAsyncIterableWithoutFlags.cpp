@@ -140,7 +140,7 @@ static_assert(!std::is_base_of<ActiveDOMObject, TestAsyncIterableWithoutFlags>::
 
 JSTestAsyncIterableWithoutFlags* JSTestAsyncIterableWithoutFlags::create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<TestAsyncIterableWithoutFlags>&& impl)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = globalObject->vm();
+    auto& vm = globalObject->vm();
     JSTestAsyncIterableWithoutFlags* ptr = new (NotNull, JSC::allocateCell<JSTestAsyncIterableWithoutFlags>(vm)) JSTestAsyncIterableWithoutFlags(structure, *globalObject, WTF::move(impl));
     ptr->finishCreation(vm);
     return ptr;
@@ -176,7 +176,7 @@ void JSTestAsyncIterableWithoutFlags::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestAsyncIterableWithoutFlagsConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = dynamicDowncast<JSTestAsyncIterableWithoutFlagsPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
@@ -242,7 +242,7 @@ const JSC::ClassInfo TestAsyncIterableWithoutFlagsIteratorPrototype::s_info = { 
 
 static inline EncodedJSValue jsTestAsyncIterableWithoutFlagsPrototypeFunction_valuesCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTestAsyncIterableWithoutFlags* thisObject)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
@@ -316,7 +316,7 @@ static inline void verifyVTable(TestAsyncIterableWithoutFlags* ptr)
         // TestAsyncIterableWithoutFlags has subclasses. If TestAsyncIterableWithoutFlags has subclasses that get passed
         // to toJS() we currently require TestAsyncIterableWithoutFlags you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif

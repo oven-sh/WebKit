@@ -27,6 +27,7 @@
 #include "GraphicsContext.h"
 
 #include "BidiResolver.h"
+#include "BitmapImage.h"
 #include "DisplayList.h"
 #include "Filter.h"
 #include "FilterImage.h"
@@ -175,13 +176,13 @@ FloatSize GraphicsContext::drawText(const FontCascade& font, const TextRun& run,
 
 void GraphicsContext::drawGlyphs(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
 {
-    FontCascade::drawGlyphs(*this, font, glyphs, advances, point, fontSmoothingMode);
+    drawGlyphsImmediate(font, glyphs, advances, point, fontSmoothingMode);
 }
 
-void GraphicsContext::drawGlyphsImmediate(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
+void GraphicsContext::drawGlyphsImmediate(const FontBase& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
 {
     // Called by implementations that transform drawGlyphs into drawGlyphsImmediate, drawImageBuffer, etc calls.
-    drawGlyphs(font, glyphs, advances, point, fontSmoothingMode);
+    FontCascade::drawGlyphs(*this, font, glyphs, advances, point, fontSmoothingMode);
 }
 
 void GraphicsContext::drawEmphasisMarks(const FontCascade& font, const TextRun& run, const AtomString& mark, const FloatPoint& point, unsigned from, std::optional<unsigned> to)
@@ -260,17 +261,17 @@ RenderingMode GraphicsContext::renderingModeForCompatibleBuffer() const
     return RenderingMode::Unaccelerated;
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createImageBuffer(const FloatSize& size, float resolutionScale, const DestinationColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod>, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> GraphicsContext::createImageBuffer(const FloatSize& size, float resolutionScale, const ColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod>, ImageBufferFormat pixelFormat) const
 {
     return ImageBuffer::create(size, renderingMode.value_or(this->renderingModeForCompatibleBuffer()), RenderingPurpose::Unspecified, resolutionScale, colorSpace, pixelFormat);
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createImageBuffer(const FloatSize& size, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat) const
+RefPtr<ImageBuffer> GraphicsContext::createImageBuffer(const FloatSize& size, const ColorSpace& colorSpace, PixelFormat pixelFormat) const
 {
     return createImageBuffer(size, 1, colorSpace, std::nullopt, std::nullopt, { pixelFormat });
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatSize& size, const FloatSize& scale, const DestinationColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod> renderingMethod) const
+RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatSize& size, const FloatSize& scale, const ColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod> renderingMethod) const
 {
     auto expandedScaledSize = scaledImageBufferSize(size, scale);
     if (expandedScaledSize.isEmpty())
@@ -290,7 +291,7 @@ RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatSize& si
     return imageBuffer;
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatRect& rect, const FloatSize& scale, const DestinationColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod> renderingMethod) const
+RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatRect& rect, const FloatSize& scale, const ColorSpace& colorSpace, std::optional<RenderingMode> renderingMode, std::optional<RenderingMethod> renderingMethod) const
 {
     auto expandedScaledRect = scaledImageBufferRect(rect, scale);
     if (expandedScaledRect.isEmpty())
@@ -313,12 +314,12 @@ RefPtr<ImageBuffer> GraphicsContext::createScaledImageBuffer(const FloatRect& re
     return imageBuffer;
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatSize& size, const DestinationColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const
+RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatSize& size, const ColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const
 {
     return createScaledImageBuffer(size, scaleFactor(), colorSpace, renderingModeForCompatibleBuffer(), renderingMethod);
 }
 
-RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatRect& rect, const DestinationColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const
+RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatRect& rect, const ColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const
 {
     return createScaledImageBuffer(rect, scaleFactor(), colorSpace, renderingModeForCompatibleBuffer(), renderingMethod);
 }
@@ -341,13 +342,27 @@ ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destin
 
 ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
 {
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
     return image.draw(*this, destination, source, options);
+}
+
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatPoint& destination, ImagePaintingOptions imagePaintingOptions)
+{
+    return drawBitmapImage(image, FloatRect(destination, image.size()), FloatRect(FloatPoint(), image.size()), imagePaintingOptions);
+}
+
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatRect& destination, ImagePaintingOptions imagePaintingOptions)
+{
+    FloatRect source(FloatPoint(), image.size(imagePaintingOptions.orientation()));
+    return drawBitmapImage(image, destination, source, imagePaintingOptions);
+}
+
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions imagePaintingOptions)
+{
+    return image.draw(*this, destination, source, imagePaintingOptions);
 }
 
 ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatPoint& source, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options)
 {
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
     return image.drawTiled(*this, destination, source, tileSize, spacing, options);
 }
 
@@ -359,8 +374,7 @@ ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& d
         return drawImage(image, destination, source, options);
     }
 
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
-    return image.drawTiled(*this, destination, source, tileScaleFactor, hRule, vRule, { options.compositeOperator() });
+    return image.drawTiled(*this, destination, source, tileScaleFactor, hRule, vRule, { options.compositeOperator(), options.interpolationQuality() });
 }
 
 RefPtr<NativeImage> GraphicsContext::nativeImageForDrawing(ImageBuffer& imageBuffer)
@@ -382,7 +396,6 @@ void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& desti
 
 void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
 {
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
     FloatRect sourceScaled = source;
     sourceScaled.scale(image.resolutionScale());
     if (auto nativeImage = nativeImageForDrawing(image))
@@ -410,7 +423,6 @@ void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const 
     if (!image)
         return;
     ASSERT(this != &image->context());
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
     FloatRect scaledSource = source;
     scaledSource.scale(image->resolutionScale());
     if (auto nativeImage = ImageBuffer::sinkIntoNativeImage(WTF::move(image)))
@@ -437,7 +449,7 @@ void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect,
     FloatRect scaledSource = source;
     scaledSource.scale(image.resolutionScale());
     if (auto nativeImage = nativeImageForDrawing(image))
-        drawPattern(*nativeImage, destRect, source, patternTransform, phase, spacing, options);
+        drawPattern(*nativeImage, destRect, scaledSource, patternTransform, phase, spacing, options);
 }
 
 void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle& style)
@@ -446,16 +458,19 @@ void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect&
 }
 
 #if ENABLE(VIDEO)
-void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
+void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
 {
     RefPtr image = frame.copyNativeImage();
     if (!image)
         return;
     IntSize size = image->size();
-    if (orientation.usesWidthAsHeight())
+    if (options.orientation().usesWidthAsHeight())
         size = size.transposedSize();
-    auto compositeOperator = !shouldDiscardAlpha && image->hasAlpha() ? CompositeOperator::SourceOver : CompositeOperator::Copy;
-    drawNativeImage(*image, destination, { { }, size }, { compositeOperator, orientation });
+    // Copy is equivalent to SourceOver when the frame's alpha is not used, and cheaper.
+    // FIXME: This overrides whatever composite operator the caller asked for, so drawing a video
+    // frame into a canvas ignores its globalCompositeOperation.
+    auto compositeOperator = ((shouldDiscardAlpha == ShouldDiscardAlpha::No) && image->hasAlpha()) ? CompositeOperator::SourceOver : CompositeOperator::Copy;
+    drawNativeImage(*image, destination, { { }, size }, { options, compositeOperator });
 }
 #endif
 

@@ -28,13 +28,13 @@
 
 #if ENABLE(WEB_CODECS)
 
-#include <span>
 #include <wtf/CompletionHandler.h>
 #include <wtf/NativePromise.h>
 
 namespace WebCore {
 
 class PlatformRawAudioData;
+class SharedBuffer;
 
 class AudioDecoder : public ThreadSafeRefCounted<AudioDecoder> {
 public:
@@ -50,17 +50,19 @@ public:
     };
 
     struct EncodedData {
-        std::span<const uint8_t> data;
+        Ref<SharedBuffer> data;
         bool isKeyFrame { false };
         int64_t timestamp { 0 };
         std::optional<uint64_t> duration;
+
+        WEBCORE_EXPORT ~EncodedData();
     };
     struct DecodedData {
         Ref<PlatformRawAudioData> data;
     };
 
-    using OutputCallback = Function<void(Expected<DecodedData, String>&&)>;
-    using CreateResult = Expected<Ref<AudioDecoder>, String>;
+    using OutputCallback = Function<void(std::expected<DecodedData, String>&&)>;
+    using CreateResult = std::expected<Ref<AudioDecoder>, String>;
     using CreatePromise = NativePromise<Ref<AudioDecoder>, String>;
     using CreateCallback = Function<void(CreateResult&&)>;
 

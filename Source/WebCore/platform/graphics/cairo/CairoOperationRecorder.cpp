@@ -633,7 +633,7 @@ void OperationRecorder::drawNativeImage(const NativeImage& nativeImage, const Fl
     };
 
     auto& state = this->state();
-    append(createCommand<DrawNativeImage>(nativeImage.platformImage(), destRect, srcRect, ImagePaintingOptions(options, state.imageInterpolationQuality()), state.alpha(), Cairo::ShadowState(state)));
+    append(createCommand<DrawNativeImage>(nativeImage.platformImage(), destRect, srcRect, ImagePaintingOptions(options, imageInterpolationQualityForOptions(options)), state.alpha(), Cairo::ShadowState(state)));
 }
 
 void OperationRecorder::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
@@ -1181,10 +1181,10 @@ void OperationRecorder::append(std::unique_ptr<PaintingOperation>&& command)
 }
 
 #if ENABLE(VIDEO)
-void OperationRecorder::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
+void OperationRecorder::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
 {
     // FIXME: Not implemented.
-    GraphicsContext::drawVideoFrame(frame, destination, orientation, shouldDiscardAlpha);
+    GraphicsContext::drawVideoFrame(frame, destination, shouldDiscardAlpha, options);
 }
 #endif
 

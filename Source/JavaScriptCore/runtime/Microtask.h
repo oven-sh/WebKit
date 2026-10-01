@@ -97,6 +97,11 @@ enum class InternalMicrotask : uint8_t {
 #if USE(BUN_JSC_ADDITIONS)
 constexpr unsigned maxMicrotaskArguments = 4;
 
+// OR'ed into the payload (a JSPromise::Status) of a PromiseReactionJob whose
+// fourth argument is the async context captured by performPromiseThen (see
+// AsyncContextSwapScope) rather than an embedder handler context.
+constexpr uint8_t promiseReactionJobAsyncContextFlag = 0x80;
+
 // True for the contiguous block of module-loader pipeline tasks plus
 // PromiseFulfillWithoutHandlerJob (used only by JSPromise::pipeFrom, which
 // itself is called only by the loader). These are the reactions that

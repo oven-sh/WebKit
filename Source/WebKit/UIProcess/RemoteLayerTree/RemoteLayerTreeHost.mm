@@ -39,7 +39,7 @@
 #import "WebProcessProxy.h"
 #import "WindowKind.h"
 #import <QuartzCore/QuartzCore.h>
-#import <WebCore/DestinationColorSpace.h>
+#import <WebCore/ColorSpace.h>
 #import <WebCore/GraphicsContextCG.h>
 #import <WebCore/IOSurface.h>
 #import <WebCore/PlatformLayer.h>
@@ -548,6 +548,13 @@ void RemoteLayerTreeHost::remotePageProcessDidTerminate(WebCore::ProcessIdentifi
 {
     for (auto layerID : m_hostedLayersInProcess.take(processIdentifier))
         layerWillBeRemoved(processIdentifier, layerID);
+
+#if ENABLE(THREADED_ANIMATIONS)
+    for (auto& [layerID, node] : m_nodes) {
+        if (layerID.processIdentifier() == processIdentifier)
+            animationsWereRemovedFromNode(node);
+    }
+#endif
 }
 
 } // namespace WebKit

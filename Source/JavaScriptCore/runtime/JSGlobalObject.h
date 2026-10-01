@@ -110,6 +110,7 @@ class MapIteratorPrototype;
 class MapPrototype;
 class Microtask;
 class MicrotaskQueue;
+class ModuleProgramExecutable;
 class NullGetterFunction;
 class NullSetterFunction;
 class ObjectAdaptiveStructureWatchpoint;
@@ -513,11 +514,18 @@ public:
 
     StructureCache m_structureCache;
     WeakGCMap<SymbolTable*, SymbolTable> m_symbolTableCache;
+    // CodeBlock::setConstantRegisters: the clone that the body of a generator, an async function or a module got for one of
+    // its SymbolTable constants, by who owns the code (the UnlinkedFunctionExecutable, or the ModuleProgramExecutable) and
+    // the constant's index, so that it gets the same clone when its code is generated or decoded again while an activation
+    // is suspended. The owner is not kept alive and its address can come back as another owner's: what is found is checked.
+    using ResumableCodeSymbolTableKey = std::pair<JSCell*, unsigned>;
+    WeakGCMap<ResumableCodeSymbolTableKey, SymbolTable> m_resumableCodeSymbolTableClones;
+    using ModuleProgramExecutableKey = std::pair<UniquedStringImpl*, SymbolTable*>; // module key, module scope: JSModuleRecord::getOrMakeExecutable
+    WeakGCMap<ModuleProgramExecutableKey, ModuleProgramExecutable> m_moduleProgramExecutables;
 
     String m_name;
 
 #if USE(BUN_JSC_ADDITIONS)
-    bool m_isAsyncContextTrackingEnabled { false };
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
@@ -556,6 +564,7 @@ public:
     InlineWatchpointSet m_stringSymbolToPrimitiveWatchpointSet { IsWatched };
     InlineWatchpointSet m_arraySymbolToPrimitiveWatchpointSet { IsWatched };
     InlineWatchpointSet m_regExpPrimordialPropertiesWatchpointSet { IsWatched };
+    InlineWatchpointSet m_regExpPrototypeTestWatchpointSet { IsWatched };
     InlineWatchpointSet m_mapSetWatchpointSet { IsWatched };
     InlineWatchpointSet m_setAddWatchpointSet { IsWatched };
     InlineWatchpointSet m_promiseThenWatchpointSet { IsWatched };
@@ -640,6 +649,7 @@ public:
     InlineWatchpointSet& objectPrototypeValueOfWatchpointSet() LIFETIME_BOUND { return m_objectPrototypeValueOfWatchpointSet; }
     InlineWatchpointSet& arrayPrototypeValueOfWatchpointSet() LIFETIME_BOUND { return m_arrayPrototypeValueOfWatchpointSet; }
     InlineWatchpointSet& regExpPrimordialPropertiesWatchpointSet() LIFETIME_BOUND { return m_regExpPrimordialPropertiesWatchpointSet; }
+    InlineWatchpointSet& regExpPrototypeTestWatchpointSet() LIFETIME_BOUND { return m_regExpPrototypeTestWatchpointSet; }
     InlineWatchpointSet& mapSetWatchpointSet() LIFETIME_BOUND { return m_mapSetWatchpointSet; }
     InlineWatchpointSet& setAddWatchpointSet() LIFETIME_BOUND { return m_setAddWatchpointSet; }
     InlineWatchpointSet& setPrimordialPropertiesWatchpointSet() LIFETIME_BOUND { return m_setPrimordialPropertiesWatchpointSet; }
@@ -694,7 +704,6 @@ public:
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
     WeakPtr<ConsoleClient> m_consoleClient;
-    std::optional<unsigned> m_stackTraceLimit;
     Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
     
     // Added for "bun test". NaN (the default) means no override is active.
@@ -719,8 +728,8 @@ public:
 
     template<typename T>
     struct WeakCustomGetterOrSetterHash {
-        static unsigned hash(const Weak<T>&);
-        static bool equal(const Weak<T>&, const Weak<T>&);
+        static unsigned hash(T*);
+        static bool equal(T*, T*);
         // Templated on U=T so T::CustomFunctionPointer is a dependent name and lookup is
         // deferred to call time; otherwise instantiating this struct (as a HashSet trait)
         // requires JSCustomGetterFunction/JSCustomSetterFunction to be complete in every
@@ -728,6 +737,8 @@ public:
         template<typename U = T>
         static unsigned hash(const PropertyName&, typename U::CustomFunctionPointer, const ClassInfo*);
 
+        // HashTable gates WeakCustomGetterOrSetterHashTranslator::equal() on this flag too, and that
+        // one dereferences the bucket it is handed.
         static constexpr bool safeToCompareToEmptyOrDeleted = false;
     };
 
@@ -771,8 +782,12 @@ public:
     DECLARE_EXPORT_INFO;
 
 #if USE(BUN_JSC_ADDITIONS)
-    bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTrackingEnabled; }
-    void setAsyncContextTrackingEnabled(bool isEnabled) { m_isAsyncContextTrackingEnabled = isEnabled; }
+    bool isAsyncContextTrackingEnabled() const { return vm().isAsyncContextTrackingEnabled(); }
+    void setAsyncContextTrackingEnabled(bool isEnabled)
+    {
+        if (isEnabled)
+            vm().setAsyncContextTrackingEnabled();
+    }
     static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
 #endif
 
@@ -785,8 +800,7 @@ public:
     WatchpointSet& ensureReferencedPropertyWatchpointSet(UniquedStringImpl*);
 #endif
 
-    std::optional<unsigned> stackTraceLimit() const { return m_stackTraceLimit; }
-    void setStackTraceLimit(std::optional<unsigned> value) { m_stackTraceLimit = value; }
+    std::optional<unsigned> stackTraceLimit() const;
 
     JS_EXPORT_PRIVATE void startSignpost(String&&);
     JS_EXPORT_PRIVATE void stopSignpost(String&&);
@@ -1138,6 +1152,7 @@ public:
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
     static constexpr ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpointSet); }
+    static constexpr ptrdiff_t offsetOfArrayIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_arrayIteratorProtocolWatchpointSet); }
     static constexpr ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpointSet); }
     static constexpr ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
     static constexpr ptrdiff_t offsetOfPerformProxyObjectHasFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_performProxyObjectHasFunction); }
@@ -1172,6 +1187,8 @@ public:
 
     StructureCache& structureCache() LIFETIME_BOUND { return m_structureCache; }
     WeakGCMap<SymbolTable*, SymbolTable>& symbolTableCache() { return m_symbolTableCache; }
+    WeakGCMap<ResumableCodeSymbolTableKey, SymbolTable>& resumableCodeSymbolTableClones() { return m_resumableCodeSymbolTableClones; }
+    WeakGCMap<ModuleProgramExecutableKey, ModuleProgramExecutable>& moduleProgramExecutables() { return m_moduleProgramExecutables; }
 
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }

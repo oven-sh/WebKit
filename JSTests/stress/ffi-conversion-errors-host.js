@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1", "--useFFIICStub=0", "--useFFICallInDFG=0")
+//@ requireOptions("--useDollarVM=1", "--useFFIICStub=0", "--useFFICallInDFG=0", "--useExecutableAllocationFuzz=false")
 
 // Same battery as ffi-conversion-errors.js, but with the IC stub and the
 // DFG/FTL CallFFI conversion disabled so every call takes the C++ host path

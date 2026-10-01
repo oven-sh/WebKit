@@ -133,38 +133,30 @@ void CachedPage::restore(Page& page)
     m_cachedMainFrame->open();
 
     // Restore the focus appearance for the focused element.
-    RefPtr focusedOrMainFrame = page.focusController().focusedOrMainFrame();
-    if (!focusedOrMainFrame) {
-        // The cached page's data has already been transferred to the live page by open();
-        // release the cached frame state even though the focus restoration block is skipped
-        // (e.g. iframe-process restoration where the page's main frame is a RemoteFrame
-        // and focusController has no focused or main local frame to operate on).
-        clear();
-        return;
-    }
-
-    RefPtr focusedDocument = focusedOrMainFrame->document();
-    if (RefPtr element = focusedDocument->focusedElement()) {
+    if (RefPtr focusedOrMainFrame = page.focusController().focusedOrMainFrame()) {
+        RefPtr focusedDocument = focusedOrMainFrame->document();
+        if (RefPtr element = focusedDocument->focusedElement()) {
 #if PLATFORM(IOS_FAMILY)
-        // We don't want focused nodes changing scroll position when restoring from the cache
-        // as it can cause ugly jumps before we manage to restore the cached position.
-        if (localMainFrame)
-            localMainFrame->selection().suppressScrolling();
+            // We don't want focused nodes changing scroll position when restoring from the cache
+            // as it can cause ugly jumps before we manage to restore the cached position.
+            if (localMainFrame)
+                localMainFrame->selection().suppressScrolling();
 
-        bool hadProhibitsScrolling = false;
-        RefPtr frameView = localMainFrame->virtualView();
-        if (frameView) {
-            hadProhibitsScrolling = frameView->prohibitsScrolling();
-            frameView->setProhibitsScrolling(true);
+            bool hadProhibitsScrolling = false;
+            RefPtr frameView = localMainFrame ? localMainFrame->virtualView() : nullptr;
+            if (frameView) {
+                hadProhibitsScrolling = frameView->prohibitsScrolling();
+                frameView->setProhibitsScrolling(true);
+            }
+#endif
+            element->updateFocusAppearance(SelectionRestorationMode::RestoreOrSelectAll);
+#if PLATFORM(IOS_FAMILY)
+            if (frameView)
+                frameView->setProhibitsScrolling(hadProhibitsScrolling);
+            if (localMainFrame)
+                protect(localMainFrame->selection())->restoreScrolling();
+#endif
         }
-#endif
-        element->updateFocusAppearance(SelectionRestorationMode::RestoreOrSelectAll);
-#if PLATFORM(IOS_FAMILY)
-        if (frameView)
-            frameView->setProhibitsScrolling(hadProhibitsScrolling);
-        if (localMainFrame)
-            protect(localMainFrame->selection())->restoreScrolling();
-#endif
     }
 
     if (m_needsDeviceOrPageScaleChanged && localMainFrame)
@@ -177,7 +169,7 @@ void CachedPage::restore(Page& page)
         page.captionPreferencesChanged();
 #endif
 
-    if (m_needsUpdateContentsSize) {
+    if (m_needsUpdateContentsSize && localMainFrame) {
         if (RefPtr frameView = localMainFrame->virtualView())
             frameView->updateContentsSize();
     }

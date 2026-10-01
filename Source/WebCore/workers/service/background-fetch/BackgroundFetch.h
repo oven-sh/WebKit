@@ -64,7 +64,7 @@ public:
         return adoptRef(*new BackgroundFetch(swServerRegistration, WTF::move(identifier), WTF::move(options), WTF::move(store), WTF::move(notificationCallback), pausedFlag));
     }
 
-    ~BackgroundFetch();
+    WEBCORE_EXPORT ~BackgroundFetch();
 
     static RefPtr<BackgroundFetch> createFromStore(std::span<const uint8_t>, SWServer&, Ref<BackgroundFetchStore>&&, NotificationCallback&&);
 
@@ -73,8 +73,8 @@ public:
     const ServiceWorkerRegistrationKey& registrationKey() const LIFETIME_BOUND { return m_registrationKey; }
     const BackgroundFetchOptions& options() const LIFETIME_BOUND { return m_options; }
 
-    using RetrieveRecordResponseCallback = CompletionHandler<void(Expected<ResourceResponse, ExceptionData>&&)>;
-    using RetrieveRecordResponseBodyCallback = Function<void(Expected<RefPtr<SharedBuffer>, ResourceError>&&)>;
+    using RetrieveRecordResponseCallback = CompletionHandler<void(std::expected<ResourceResponse, ExceptionData>&&)>;
+    using RetrieveRecordResponseBodyCallback = Function<void(std::expected<RefPtr<SharedBuffer>, ResourceError>&&)>;
     using CreateLoaderCallback = Function<RefPtr<BackgroundFetchRecordLoader>(BackgroundFetchRecordLoaderClient&, const BackgroundFetchRequest&, size_t responseDataSize, const ClientOrigin&)>;
 
     bool pausedFlagIsSet() const { return m_pausedFlag; }
@@ -88,7 +88,7 @@ public:
         void deref() const final { RefCounted::deref(); }
 
         static Ref<Record> create(BackgroundFetch& fetch, BackgroundFetchRequest&& request, size_t size) { return adoptRef(*new Record(fetch, WTF::move(request), size)); }
-        ~Record();
+        WEBCORE_EXPORT ~Record();
 
         void complete(const CreateLoaderCallback&);
         void pause();

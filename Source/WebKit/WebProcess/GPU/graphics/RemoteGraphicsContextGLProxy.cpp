@@ -233,7 +233,7 @@ RefPtr<WebCore::VideoFrame> RemoteGraphicsContextGLProxy::surfaceBufferToVideoFr
     auto [result] = sendResult.takeReply();
     if (!result)
         return nullptr;
-    return RemoteVideoFrameProxy::create(WebProcess::singleton().ensureGPUProcessConnection().connection(), protect(protect(WebProcess::singleton().ensureGPUProcessConnection())->videoFrameObjectHeapProxy()), WTF::move(*result));
+    return RemoteVideoFrameProxy::create(protect(WebProcess::singleton().ensureGPUProcessConnection().connection()), protect(protect(WebProcess::singleton().ensureGPUProcessConnection())->videoFrameObjectHeapProxy()), WTF::move(*result));
 }
 #endif
 
@@ -269,7 +269,7 @@ bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame
 #endif
 }
 
-RefPtr<Image> RemoteGraphicsContextGLProxy::videoFrameToImage(WebCore::VideoFrame& frame)
+RefPtr<NativeImage> RemoteGraphicsContextGLProxy::videoFrameToNativeImage(WebCore::VideoFrame& frame)
 {
     if (isContextLost())
         return { };
@@ -279,9 +279,9 @@ RefPtr<Image> RemoteGraphicsContextGLProxy::videoFrameToImage(WebCore::VideoFram
     callOnMainRunLoopAndWait([&] {
         nativeImage = protect(m_videoFrameObjectHeapProxy)->getNativeImage(frame);
     });
-    return BitmapImage::create(WTF::move(nativeImage));
+    return nativeImage;
 #else
-    return GraphicsContextGL::videoFrameToImage(frame);
+    return GraphicsContextGL::videoFrameToNativeImage(frame);
 #endif
 }
 #endif
@@ -552,7 +552,7 @@ void RemoteGraphicsContextGLProxy::framebufferDiscard(GCGLenum target, std::span
 }
 #endif
 
-void RemoteGraphicsContextGLProxy::setDrawingBufferColorSpace(const WebCore::DestinationColorSpace& colorSpace)
+void RemoteGraphicsContextGLProxy::setDrawingBufferColorSpace(const WebCore::ColorSpace& colorSpace)
 {
     if (isContextLost())
         return;
@@ -584,12 +584,12 @@ void RemoteGraphicsContextGLProxy::wasLost()
     markContextLost();
 }
 
-void RemoteGraphicsContextGLProxy::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, CString&& message)
+void RemoteGraphicsContextGLProxy::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, std::span<const char8_t> message)
 {
     if (isContextLost())
         return;
     if (m_client)
-        m_client->addDebugMessage(type, id, severity, WTF::move(message));
+        m_client->addDebugMessage(type, id, severity, message);
 }
 
 void RemoteGraphicsContextGLProxy::memoryCostChanged(std::optional<uint64_t> memoryCost)

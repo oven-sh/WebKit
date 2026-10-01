@@ -29,7 +29,7 @@
 #include "WKSharedAPICast.h"
 #include "WKString.h"
 #include "WebImage.h"
-#include <WebCore/ColorSpace.h>
+#include <WebCore/ColorSpaceName.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/ImageUtilities.h>
 #include <WebCore/NativeImage.h>
@@ -46,8 +46,7 @@ CGImageRef WKImageCreateCGImage(WKImageRef imageRef)
         return nullptr;
 
     auto platformImage = nativeImage->platformImage();
-    // FIXME(rdar://162218496): SaferCPP should notice that our API is a create.
-    SUPPRESS_RETAINPTR_CTOR_ADOPT return platformImage.leakRef();
+    return platformImage.leakRef();
 }
 
 WKImageRef WKImageCreateFromCGImage(CGImageRef imageRef, WKImageOptions options)
@@ -57,7 +56,7 @@ WKImageRef WKImageCreateFromCGImage(CGImageRef imageRef, WKImageOptions options)
     
     RefPtr nativeImage = WebCore::NativeImage::create(imageRef);
     WebCore::IntSize imageSize = nativeImage->size();
-    Ref webImage = WebKit::WebImage::create(imageSize, WebKit::toImageOptions(options), WebCore::DestinationColorSpace::SRGB());
+    Ref webImage = WebKit::WebImage::create(imageSize, WebKit::toImageOptions(options), WebCore::ColorSpace::SRGB());
     if (!webImage->context())
         return nullptr;
     auto& graphicsContext = *webImage->context();
@@ -73,5 +72,5 @@ WKStringRef WKImageCreateDataURLFromImage(CGImageRef imageRef)
 {
     String mimeType { "image/png"_s };
     auto value = WebCore::encodeDataURL(imageRef, mimeType, { });
-    return WKStringCreateWithUTF8CString(value.utf8().data());
+    return WKStringCreateWithUTF8CString(value.utf8().legacyCStringPointer());
 }

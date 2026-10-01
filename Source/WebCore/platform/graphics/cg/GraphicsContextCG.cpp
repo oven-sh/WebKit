@@ -58,7 +58,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GraphicsContextCG);
 
-static void setCGFillColor(CGContextRef context, const Color& color, const DestinationColorSpace& colorSpace)
+static void setCGFillColor(CGContextRef context, const Color& color, const ColorSpace& colorSpace)
 {
     CGContextSetFillColorWithColor(context, cachedCGColorInDestinationStandardRange(color, colorSpace).get());
 }
@@ -242,7 +242,7 @@ CGContextRef GraphicsContextCG::contextForState() const
     return m_cgContext.get();
 }
 
-const DestinationColorSpace& GraphicsContextCG::colorSpace() const
+const ColorSpace& GraphicsContextCG::colorSpace() const
 {
     if (m_colorSpace)
         return *m_colorSpace;
@@ -260,7 +260,7 @@ const DestinationColorSpace& GraphicsContextCG::colorSpace() const
         colorSpace = CGContextGetColorSpace(context);
 
     // FIXME: Need to ASSERT(colorSpace). For now fall back to sRGB if colorSpace is nil.
-    m_colorSpace = colorSpace ? DestinationColorSpace(colorSpace) : DestinationColorSpace::SRGB();
+    m_colorSpace = colorSpace ? ColorSpace(colorSpace) : ColorSpace::SRGB();
     return *m_colorSpace;
 }
 
@@ -298,8 +298,8 @@ void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const Fl
     MonotonicTime startTime = MonotonicTime::now();
 #endif
 
-    auto shouldUseSubimage = [](CGInterpolationQuality interpolationQuality, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& transform) -> bool {
-        if (interpolationQuality == kCGInterpolationNone)
+    auto shouldUseSubimage = [](InterpolationQuality interpolationQuality, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& transform) -> bool {
+        if (interpolationQuality == InterpolationQuality::DoNotInterpolate)
             return false;
         if (transform.isRotateOrShear())
             return true;
@@ -349,12 +349,14 @@ void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const Fl
     CGContextStateSaver stateSaver(context, false);
     auto transform = CGContextGetCTM(context);
 
+    auto oldInterpolationQuality = imageInterpolationQuality();
+    auto interpolationQuality = imageInterpolationQualityForOptions(options);
+
     auto subImage = image;
 
     auto adjustedDestRect = normalizedDestRect;
 
     if (normalizedSrcRect != imageRect) {
-        CGInterpolationQuality interpolationQuality = CGContextGetInterpolationQuality(context);
         auto scale = normalizedDestRect.size() / normalizedSrcRect.size();
 
         if (shouldUseSubimage(interpolationQuality, normalizedDestRect, normalizedSrcRect, transform)) {
@@ -392,6 +394,9 @@ void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const Fl
     auto oldCompositeOperator = compositeOperation();
     auto oldBlendMode = blendMode();
     setCGBlendMode(context, options.compositeOperator(), options.blendMode());
+
+    if (interpolationQuality != oldInterpolationQuality)
+        CGContextSetInterpolationQuality(context, toCGInterpolationQuality(interpolationQuality));
 
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)
     auto oldHeadroom = CGContextGetEDRTargetHeadroom(context);
@@ -438,6 +443,8 @@ void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const Fl
         CGContextSetShouldAntialias(context, wasAntialiased);
 #endif
         setCGBlendMode(context, oldCompositeOperator, oldBlendMode);
+        if (interpolationQuality != oldInterpolationQuality)
+            CGContextSetInterpolationQuality(context, toCGInterpolationQuality(oldInterpolationQuality));
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)
         CGContextSetContentToneMappingInfo(context, oldToneMappingInfo);
         CGContextSetEDRTargetHeadroom(context, oldHeadroom);
@@ -472,6 +479,10 @@ void GraphicsContextCG::drawPattern(const NativeImage& nativeImage, const FloatR
     CGContextClipToRect(context, destRect);
 
     setCGBlendMode(context, options.compositeOperator(), options.blendMode());
+
+    auto interpolationQuality = imageInterpolationQualityForOptions(options);
+    if (interpolationQuality != imageInterpolationQuality())
+        CGContextSetInterpolationQuality(context, toCGInterpolationQuality(interpolationQuality));
 
     CGContextTranslateCTM(context, destRect.x(), destRect.y() + destRect.height());
     CGContextScaleCTM(context, 1, -1);

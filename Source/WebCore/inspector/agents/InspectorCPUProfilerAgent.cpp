@@ -43,7 +43,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorCPUProfilerAgent);
 InspectorCPUProfilerAgent::InspectorCPUProfilerAgent(PageAgentContext& context)
     : InspectorAgentBase("CPUProfiler"_s, context)
     , m_frontendDispatcher(makeUniqueRef<Inspector::CPUProfilerFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(Inspector::CPUProfilerBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(Inspector::CPUProfilerBackendDispatcher::create(protect(context.backendDispatcher), this))
 {
 }
 
@@ -66,13 +66,14 @@ Inspector::Protocol::ErrorStringOr<void> InspectorCPUProfilerAgent::startTrackin
     if (m_tracking)
         return { };
 
-    ResourceUsageThread::addObserver(this, CPU, [this] (const ResourceUsageData& data) {
-        collectSample(data);
+    ResourceUsageThread::addObserver(this, CPU, [weakThis = WeakPtr { *this }] (const ResourceUsageData& data) {
+        if (CheckedPtr agent = weakThis.get())
+            agent->collectSample(data);
     });
 
     m_tracking = true;
 
-    m_frontendDispatcher->trackingStart(protect(environment())->executionStopwatch().elapsedTime().seconds());
+    m_frontendDispatcher->trackingStart(protect(protect(environment())->executionStopwatch())->elapsedTime().seconds());
 
     return { };
 }
@@ -86,7 +87,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorCPUProfilerAgent::stopTracking
 
     m_tracking = false;
 
-    m_frontendDispatcher->trackingComplete(protect(environment())->executionStopwatch().elapsedTime().seconds());
+    m_frontendDispatcher->trackingComplete(protect(protect(environment())->executionStopwatch())->elapsedTime().seconds());
 
     return { };
 }

@@ -323,7 +323,6 @@
 #include <JavaScriptCore/DFGDoesGCCheck.h>
 #include <JavaScriptCore/DOMAnnotation.h>
 #include <JavaScriptCore/DOMAttributeGetterSetter.h>
-#include <JavaScriptCore/DateInstanceCache.h>
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/DefinePropertyAttributes.h>
 #include <JavaScriptCore/DeleteAllCodeEffort.h>
@@ -492,7 +491,6 @@
 #include <wtf/FastTLS.h>
 #include <wtf/FlatteningVariantAdaptor.h>
 #include <wtf/GenericHashKey.h>
-#include <wtf/GregorianDateTime.h>
 #include <wtf/Indenter.h>
 #include <wtf/InlineMap.h>
 #include <wtf/LazyRef.h>
@@ -504,6 +502,7 @@
 #include <wtf/PackedRefPtr.h>
 #include <wtf/PageAllocation.h>
 #include <wtf/ParallelHelperPool.h>
+#include <wtf/PlainGregorianDateTime.h>
 #include <wtf/PointerComparison.h>
 #include <wtf/ProcessID.h>
 #include <wtf/RawValueTraits.h>
@@ -610,6 +609,7 @@
 #include "CharacterData.h"
 #include "ClipboardAccessPolicy.h"
 #include "ColorInterpolationMethod.h"
+#include "ColorSpace.h"
 #include "CommonAtomStrings.h"
 #include "CompositeOperation.h"
 #include "ComputedStyleDependencies.h"
@@ -628,7 +628,6 @@
 #include "DataDetectorType.h"
 #endif
 #include "DecodingOptions.h"
-#include "DestinationColorSpace.h"
 #include "Document.h"
 #include "DocumentClasses.h"
 #include "DocumentEnums.h"

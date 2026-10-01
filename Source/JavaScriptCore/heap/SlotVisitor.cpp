@@ -42,6 +42,7 @@
 #include "VM.h"
 #include <wtf/ListDump.h>
 #include <wtf/Lock.h>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -81,8 +82,8 @@ static void validate(JSCell* cell)
 }
 #endif
 
-SlotVisitor::SlotVisitor(JSC::Heap& heap, CString codeName)
-    : Base(heap, codeName, heap.m_opaqueRoots)
+SlotVisitor::SlotVisitor(JSC::Heap& heap, ASCIICString codeName)
+    : Base(heap, WTF::move(codeName), heap.m_opaqueRoots)
     , m_markingVersion(MarkedSpace::initialVersion)
 #if ASSERT_ENABLED
     , m_isCheckingForDefaultMarkViolation(false)
@@ -630,7 +631,11 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             if (isActive)
                 m_heap.m_numberOfActiveParallelMarkers--;
             m_heap.m_numberOfWaitingParallelMarkers++;
-            
+            auto stopWaiting = makeScopeExit([&] {
+                locker.assertIsHolding(m_heap.m_markingMutex);
+                m_heap.m_numberOfWaitingParallelMarkers--;
+            });
+
             if (sharedDrainMode == MainDrain) {
                 while (true) {
                     if (hasElapsed(timeout))
@@ -671,6 +676,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 }
 
                 auto isReady = [&] () -> bool {
+                    locker.assertIsHolding(m_heap.m_markingMutex);
                     return hasWork(locker)
                         || m_heap.m_bonusVisitorTask
                         || m_heap.m_parallelMarkersShouldExit;
@@ -688,6 +694,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             if (!bonusTask && isEmpty()) {
                 forEachMarkStack(
                     [&] (MarkStackArray& stack) -> IterationStatus {
+                        locker.assertIsHolding(m_heap.m_markingMutex);
                         stack.stealSomeCellsFrom(
                             correspondingGlobalStack(stack),
                             m_heap.m_numberOfWaitingParallelMarkers);
@@ -696,7 +703,6 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             }
 
             m_heap.m_numberOfActiveParallelMarkers++;
-            m_heap.m_numberOfWaitingParallelMarkers--;
         }
 
         if (bonusTask) {
@@ -798,7 +804,7 @@ void SlotVisitor::donateAndDrain(MonotonicTime timeout)
 
 void SlotVisitor::didRace(const VisitRaceKey& race)
 {
-    dataLogLnIf(Options::verboseVisitRace(), toCString("GC visit race: ", race));
+    dataLogLnIf(Options::verboseVisitRace(), toUTF8CString("GC visit race: ", race));
     
     Locker locker { heap()->m_raceMarkStackLock };
     JSCell* cell = race.cell();

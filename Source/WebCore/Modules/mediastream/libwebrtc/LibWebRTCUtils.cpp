@@ -193,9 +193,9 @@ static inline webrtc::RtpCodec fromRTCRtpCodec(const RTCRtpCodec& codec, webrtc:
     for (auto parameter : StringView(codec.sdpFmtpLine).split(';')) {
         auto position = parameter.find('=');
         if (position != notFound)
-            rtcCodec.parameters.emplace(parameter.left(position).utf8().data(), parameter.substring(position + 1).utf8().data());
+            rtcCodec.parameters.emplace(parameter.left(position).utf8().legacyCStringPointer(), parameter.substring(position + 1).utf8().legacyCStringPointer());
         else
-            rtcCodec.parameters.emplace("", parameter.utf8().data());
+            rtcCodec.parameters.emplace("", parameter.utf8().legacyCStringPointer());
     }
 
     return rtcCodec;
@@ -215,7 +215,7 @@ static inline webrtc::RtpEncodingParameters fromRTCEncodingParameters(const RTCR
         rtcParameters.max_bitrate_bps = parameters.maxBitrate;
     if (parameters.maxFramerate)
         rtcParameters.max_framerate = parameters.maxFramerate;
-    rtcParameters.rid = parameters.rid.utf8().data();
+    rtcParameters.rid = parameters.rid.utf8().legacyCStringPointer();
     if (parameters.scaleResolutionDownBy)
         rtcParameters.scale_resolution_down_by = parameters.scaleResolutionDownBy;
 
@@ -240,7 +240,7 @@ static inline webrtc::RtpExtension fromRTCHeaderExtensionParameters(const RTCRtp
 {
     webrtc::RtpExtension rtcParameters;
 
-    rtcParameters.uri = parameters.uri.utf8().data();
+    rtcParameters.uri = parameters.uri.utf8().legacyCStringPointer();
     rtcParameters.id = webrtc::RtpHeaderExtensionId { parameters.id };
     rtcParameters.encrypt = parameters.encrypted;
 
@@ -298,7 +298,7 @@ RTCRtpSendParameters toRTCRtpSendParameters(const webrtc::RtpParameters& rtcPara
 
 void updateRTCRtpSendParameters(const RTCRtpSendParameters& parameters, webrtc::RtpParameters& rtcParameters, webrtc::MediaType mediaType)
 {
-    rtcParameters.transaction_id = parameters.transactionId.utf8().data();
+    rtcParameters.transaction_id = parameters.transactionId.utf8().legacyCStringPointer();
 
     if (parameters.encodings.size() != rtcParameters.encodings.size()) {
         // If encodings size is different, setting parameters will fail. Let's make it so.
@@ -354,7 +354,7 @@ void updateRTCRtpSendParameters(const RTCRtpSendParameters& parameters, webrtc::
     if (parameters.rtcp.reducedSize)
         rtcParameters.rtcp.reduced_size = *parameters.rtcp.reducedSize;
     if (!parameters.rtcp.cname.isNull())
-        rtcParameters.rtcp.cname = parameters.rtcp.cname.utf8().data();
+        rtcParameters.rtcp.cname = parameters.rtcp.cname.utf8().legacyCStringPointer();
 }
 
 RTCRtpTransceiverDirection toRTCRtpTransceiverDirection(webrtc::RtpTransceiverDirection rtcDirection)
@@ -398,7 +398,7 @@ webrtc::RtpTransceiverInit fromRtpTransceiverInit(const RTCRtpTransceiverInit& i
     webrtc::RtpTransceiverInit rtcInit;
     rtcInit.direction = fromRTCRtpTransceiverDirection(init.direction);
     for (auto& stream : init.streams)
-        rtcInit.stream_ids.push_back(stream->id().utf8().data());
+        rtcInit.stream_ids.push_back(stream->id().utf8().legacyCStringPointer());
 
     if (type == webrtc::MediaType::AUDIO) {
         if (!init.sendEncodings.isEmpty())

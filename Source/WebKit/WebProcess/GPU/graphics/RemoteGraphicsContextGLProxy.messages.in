@@ -29,7 +29,7 @@
 messages -> RemoteGraphicsContextGLProxy {
     void WasCreated(struct std::optional<WebKit::RemoteGraphicsContextGLInitializationState> initializationState) CanDispatchOutOfOrder
     void WasLost()
-    void addDebugMessage(unsigned type, unsigned id, unsigned severity, CString message) CanDispatchOutOfOrder
+    void addDebugMessage(unsigned type, unsigned id, unsigned severity, std::span<const char8_t> message) CanDispatchOutOfOrder
     void MemoryCostChanged(std::optional<uint64_t> memoryCost)
 }
 

@@ -34,9 +34,11 @@
 #include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/NavigationHistoryBehavior.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/NavigationRequester.h>
 #include <WebCore/OwnerPermissionsPolicyData.h>
+#include <WebCore/PendingNavigateEventIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ResourceRequest.h>
@@ -73,6 +75,7 @@ struct NavigationActionData {
     std::optional<WebCore::BackForwardItemIdentifier> sourceBackForwardItemIdentifier;
     WebCore::LockHistory lockHistory { WebCore::LockHistory::No };
     WebCore::LockBackForwardList lockBackForwardList { WebCore::LockBackForwardList::No };
+    WebCore::NavigationHistoryBehavior navigationHistoryBehavior { WebCore::NavigationHistoryBehavior::Auto };
     WTF::String clientRedirectSourceForHistory;
     WebCore::SandboxFlags effectiveSandboxFlags;
     WebCore::ReferrerPolicy effectiveReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
@@ -93,6 +96,7 @@ struct NavigationActionData {
     WebCore::ResourceRequest request;
     String invalidURLString;
     std::optional<WebCore::NavigationRequester> requester;
+    Markable<WebCore::PendingNavigateEventIdentifier> pendingNavigateEventID;
 
     // `originalRequest` is sent as nullopt when it equals `request`; resolve it here.
     const WebCore::ResourceRequest& originalRequestOrFallback() const { return originalRequest ? *originalRequest : request; }

@@ -885,7 +885,7 @@ void HTMLInputElement::attributeChanged(const QualifiedName& name, const AtomStr
         break;
     case AttributeNames::alphaAttr:
     case AttributeNames::colorspaceAttr:
-        if (isColorControl() && document().settings().inputTypeColorEnhancementsEnabled()) {
+        if (isColorControl()) {
             updateValueIfNeeded();
             updateValidity();
         }
@@ -1231,8 +1231,8 @@ double HTMLInputElement::valueAsNumber() const
 
 ExceptionOr<void> HTMLInputElement::setValueAsNumber(double newValue, TextFieldEventBehavior eventBehavior)
 {
-    if (!std::isfinite(newValue))
-        return Exception { ExceptionCode::NotSupportedError };
+    if (std::isinf(newValue))
+        return Exception { ExceptionCode::TypeError, "The value provided is infinite."_s };
     return m_inputType->setValueAsDouble(newValue, eventBehavior);
 }
 
@@ -1611,24 +1611,15 @@ void HTMLInputElement::didCompleteAutofill()
 
 bool HTMLInputElement::alpha()
 {
-    return document().settings().inputTypeColorEnhancementsEnabled() && hasAttributeWithoutSynchronization(alphaAttr);
+    return hasAttributeWithoutSynchronization(alphaAttr);
 }
 
 String HTMLInputElement::colorSpace()
 {
-    if (!document().settings().inputTypeColorEnhancementsEnabled())
-        return nullString();
-
     if (equalLettersIgnoringASCIICase(attributeWithoutSynchronization(colorspaceAttr), "display-p3"_s))
         return "display-p3"_s;
 
     return "limited-srgb"_s;
-}
-
-void HTMLInputElement::setColorSpace(const AtomString& value)
-{
-    ASSERT(document().settings().inputTypeColorEnhancementsEnabled());
-    setAttributeWithoutSynchronization(colorspaceAttr, value);
 }
 
 FileList* HTMLInputElement::files()
@@ -2269,7 +2260,7 @@ bool HTMLInputElement::shouldTruncateText(const Style::ComputedStyle& style) con
 {
     if (!isTextField())
         return false;
-    return document().focusedElement() != this && style.textOverflow() == TextOverflow::Ellipsis;
+    return document().focusedElement() != this && !style.textOverflow().isClip();
 }
 
 void HTMLInputElement::invalidateStyleOnFocusChangeIfNeeded()
@@ -2277,7 +2268,7 @@ void HTMLInputElement::invalidateStyleOnFocusChangeIfNeeded()
     if (!isTextField())
         return;
     // Focus change may affect the result of shouldTruncateText().
-    if (CheckedPtr style = renderStyle(); style && style->textOverflow() == TextOverflow::Ellipsis)
+    if (CheckedPtr style = renderStyle(); style && !style->textOverflow().isClip())
         invalidateStyleForSubtree();
 }
 
@@ -2368,7 +2359,10 @@ Style::ComputedStyle HTMLInputElement::createInnerTextStyle(const Style::Compute
     textBlockStyle.setOverflowWrap(OverflowWrap::Normal);
     textBlockStyle.setOverflowX(Overflow::Hidden);
     textBlockStyle.setOverflowY(Overflow::Hidden);
-    textBlockStyle.setTextOverflow(shouldTruncateText(style) ? TextOverflow::Ellipsis : TextOverflow::Clip);
+    if (shouldTruncateText(style))
+        textBlockStyle.setTextOverflow(Style::TextOverflow { style.textOverflow() });
+    else
+        textBlockStyle.setTextOverflow(CSS::Keyword::Clip { });
 
     textBlockStyle.setDisplay(Style::DisplayType::BlockFlow);
 
@@ -2376,7 +2370,7 @@ Style::ComputedStyle HTMLInputElement::createInnerTextStyle(const Style::Compute
         textBlockStyle.setDisplay(Style::DisplayType::InlineFlowRoot);
         textBlockStyle.setLogicalMaxWidth(100_css_percentage);
         textBlockStyle.setColor(Color::black.colorWithAlphaByte(153));
-        textBlockStyle.setTextOverflow(TextOverflow::Clip);
+        textBlockStyle.setTextOverflow(CSS::Keyword::Clip { });
         textBlockStyle.setMaskLayers(Style::MaskLayer { autoFillStrongPasswordMaskImage() });
         // A stacking context is needed for the mask.
         if (textBlockStyle.usedZIndex().isAuto())
@@ -2385,12 +2379,14 @@ Style::ComputedStyle HTMLInputElement::createInnerTextStyle(const Style::Compute
 
     auto shouldUseInitialLineHeight = [&] {
         // Do not allow line-height to be smaller than our default.
-        if (textBlockStyle.metricsOfPrimaryFont().intLineSpacing() > style.computedLineHeight())
+        if (textBlockStyle.metricsOfPrimaryFont().intLineSpacing() > style.usedLineHeight())
             return true;
         return isText() && !style.logicalHeight().isAuto() && !hasAutofillStrongPasswordButton();
     };
-    if (shouldUseInitialLineHeight())
+    if (shouldUseInitialLineHeight()) {
         textBlockStyle.setLineHeight(Style::ComputedStyle::initialLineHeight());
+        textBlockStyle.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
+    }
 
     return textBlockStyle;
 }

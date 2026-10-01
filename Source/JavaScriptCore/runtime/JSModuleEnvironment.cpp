@@ -32,6 +32,8 @@
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
+#include "JSModuleRecord.h"
+#include "SymbolTableInlines.h"
 
 namespace JSC {
 
@@ -50,14 +52,36 @@ JSModuleEnvironment* JSModuleEnvironment::create(
     //     [ JSLexicalEnvironment ][ variable slots ]
     //
     // JSModuleEnvironment:
-    //     [ JSLexicalEnvironment ][ variable slots ][ additional slots for JSModuleEnvironment ]
+    //     [ JSLexicalEnvironment ][ variable slots ][ module record ][ import slot count ][ import slots ]
+    auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(moduleRecord);
+    unsigned importSlotCount = sourceTextModule ? sourceTextModule->importSlotCount() : 0;
     JSModuleEnvironment* result =
         new (
             NotNull,
-            allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable)))
-        JSModuleEnvironment(vm, structure, currentScope, symbolTable, initialValue, moduleRecord);
+            allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable, importSlotCount)))
+        JSModuleEnvironment(vm, structure, currentScope, symbolTable, initialValue, moduleRecord, importSlotCount);
     result->finishCreation(vm);
     return result;
+}
+
+inline JSModuleEnvironment::JSModuleEnvironment(VM& vm, Structure* structure, JSScope* currentScope, SymbolTable* symbolTable, JSValue initialValue, AbstractModuleRecord* moduleRecord, unsigned importSlotCount)
+    : Base(vm, structure, currentScope, symbolTable, initialValue)
+{
+    moduleRecordSlot().setWithoutWriteBarrier(moduleRecord);
+    importSlotCountSlot() = importSlotCount;
+    for (unsigned i = 0; i < importSlotCount; ++i)
+        importSlot(i).clear();
+}
+
+JSModuleEnvironment* JSModuleEnvironment::fillImportSlot(JSGlobalObject* globalObject, JSScope* scope, unsigned depth, ScopeOffset slot)
+{
+    for (unsigned i = 0; i < depth; ++i)
+        scope = scope->next();
+    auto* importer = uncheckedDowncast<JSModuleEnvironment>(scope);
+    unsigned index = slot.offset() - importSlotScopeOffset(importer->symbolTable(), 0).offset();
+    if (JSModuleEnvironment* environment = importer->importSlot(index).get())
+        return environment;
+    return uncheckedDowncast<JSModuleRecord>(importer->moduleRecord())->fillImportSlot(globalObject, index);
 }
 
 template<typename Visitor>
@@ -68,9 +92,36 @@ void JSModuleEnvironment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.appendValues(thisObject->variables(), thisObject->symbolTable()->scopeSize());
     visitor.append(thisObject->moduleRecordSlot());
+    for (unsigned i = 0; i < thisObject->importSlotCount(); ++i)
+        visitor.append(thisObject->importSlot(i));
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleEnvironment);
+
+bool JSModuleEnvironment::isFunctionDeclarationSlot(ScopeOffset offset)
+{
+    auto* record = dynamicDowncast<JSModuleRecord>(moduleRecord());
+    return record && record->isFunctionDeclarationSlot(offset);
+}
+
+JSValue JSModuleEnvironment::readVariable(VM& vm, ScopeOffset offset)
+{
+    JSValue value = variableAt(offset).get();
+    if (value) [[likely]]
+        return value;
+    if (auto* record = dynamicDowncast<JSModuleRecord>(moduleRecord()))
+        return record->readFunctionDeclarationSlot(vm, this, offset);
+    return { };
+}
+
+JSValue JSModuleEnvironment::readLazyClosureVar(VM& vm, JSObject* scope, ScopeOffset offset)
+{
+    auto* environment = uncheckedDowncast<JSLexicalEnvironment>(scope);
+    RELEASE_ASSERT(environment->isValidScopeOffset(offset));
+    if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(environment))
+        return moduleEnvironment->readVariable(vm, offset);
+    return environment->variableAt(offset).get();
+}
 
 bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
@@ -91,7 +142,16 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
         slot.setValue(thisObject, redirectSlot.attributes(), value);
         return true;
     }
-    return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
+    if (!Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot))
+        return false;
+    if (slot.isValue() && slot.slotBase() == thisObject && !slot.getValue(globalObject, propertyName)) [[unlikely]] {
+        SymbolTableEntry::Fast entry = thisObject->symbolTable()->get(propertyName.uid());
+        if (!entry.isNull() && thisObject->isValidScopeOffset(entry.scopeOffset())) {
+            if (JSValue value = thisObject->readVariable(vm, entry.scopeOffset()))
+                slot.setValue(thisObject, slot.attributes(), value);
+        }
+    }
+    return true;
 }
 
 void JSModuleEnvironment::getOwnSpecialPropertyNames(JSObject* cell, JSGlobalObject*, PropertyNameArrayBuilder& propertyNamesArray, DontEnumPropertiesMode)

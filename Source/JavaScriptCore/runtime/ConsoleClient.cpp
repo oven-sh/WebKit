@@ -203,7 +203,7 @@ void ConsoleClient::printConsoleMessage(MessageSource source, MessageType type, 
     appendMessagePrefix(builder, source, type, level);
     builder.append(' ', message);
 
-    WTFLogAlways("%s", builder.toString().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", builder.toString().utf8());
 }
 
 void ConsoleClient::printConsoleMessageWithArguments(MessageSource source, MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
@@ -232,7 +232,7 @@ void ConsoleClient::printConsoleMessageWithArguments(MessageSource source, Messa
     if (builder.hasOverflowed())
         WTFLogAlways("Console message exceeded maximum length.");
     else
-        WTFLogAlways("%s", builder.toString().utf8().data());
+        SAFE_WTFLOGALWAYS("%s", builder.toString().utf8());
 
     if (isTraceMessage) {
         for (size_t i = 0; i < callStack->size(); ++i) {
@@ -246,7 +246,7 @@ void ConsoleClient::printConsoleMessageWithArguments(MessageSource source, Messa
             appendURLAndPosition(callFrameBuilder, callFrame.sourceURL(), callFrame.lineNumber(), callFrame.columnNumber());
             callFrameBuilder.append(')');
 
-            WTFLogAlways("%s", callFrameBuilder.toString().utf8().data());
+            SAFE_WTFLOGALWAYS("%s", callFrameBuilder.toString().utf8());
         }
     }
 }

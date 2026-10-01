@@ -152,8 +152,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWithDateConstructor, (JSGlobalObject* globalOb
 JSC_DEFINE_HOST_FUNCTION(callDate, (JSGlobalObject* globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
-    GregorianDateTime ts;
-    vm.dateCache.msToGregorianDateTime(globalObject->jsDateNow(), TimeType::LocalTime, ts);
+    auto ts = vm.dateCache.msToGregorianDateTime(globalObject->jsDateNow(), TimeType::LocalTime, DateCache::UseSharedCache::No);
     return JSValue::encode(jsNontrivialString(vm, formatDateTime(ts, DateTimeFormat::DateAndTime, false, vm.dateCache)));
 }
 

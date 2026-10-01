@@ -90,7 +90,7 @@ private:
         const ImageDataLayout&,
         const Extent3D& size) final;
 
-    void NODELETE copyExternalImageToTexture(
+    void copyExternalImageToTexture(
         const ImageCopyExternalImage& source,
         const ImageCopyTextureTagged& destination,
         const Extent3D& copySize) final;

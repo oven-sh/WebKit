@@ -12,6 +12,18 @@ mod ffi {
     // TODO(http://anglebug.com/349994211): equivalent enums to the options in ShaderLang.h, eventually all options need to be
     // passed to IR: add them as the translator is converted to IR.
 
+    // Matching ShShaderSpec
+    #[derive(Copy, Clone)]
+    #[repr(u32)]
+    enum ShaderSpec {
+        GLES2,
+        WEBGL,
+        GLES3,
+        WEBGL2,
+        GLES3_1,
+        GLES3_2,
+    }
+
     // Matching ShShaderOutput
     #[derive(Copy, Clone)]
     #[repr(u32)]
@@ -150,6 +162,8 @@ mod ffi {
     struct CompileOptions {
         // Input shader and device properties:
 
+        // The API version in which the shader is being compiled
+        shader_spec: ShaderSpec,
         // The version of the input version
         shader_version: i32,
         // Extensions that were enabled, mostly useful for the GLSL/ESSL output to replicate them.
@@ -166,10 +180,6 @@ mod ffi {
         // independent (for example outputting ESSL 300 even if the input is ESSL 100), then the
         // _output_ version should be used by the generator.
         is_es1: bool,
-
-        // One char to add after '_' to prefix user-defined symbols.
-        user_variable_name_prefix: u8,
-        user_block_name_prefix: u8,
 
         // Whether uninitialized local and global variables should be zero-initialized.
         initialize_uninitialized_variables: bool,
@@ -323,6 +333,9 @@ mod ffi {
         block_layout: BlockLayout,
         binding: i32,
 
+        // UBOs and SSBOs, used for linking only:
+        is_row_major: bool,
+
         // SSBOs:
         readonly: bool,
 
@@ -344,7 +357,7 @@ mod ffi {
         storage_blocks: Vec<InterfaceBlock>,
     }
 
-    extern "C++" {
+    unsafe extern "C++" {
         include!("compiler/translator/ir/src/output/legacy.h");
 
         #[namespace = "sh"]
@@ -363,11 +376,13 @@ mod ffi {
         type IR = crate::ir::IR;
 
         include!("compiler/translator/ir/src/pool_alloc.h");
-        unsafe fn initialize_global_pool_index();
-        unsafe fn free_global_pool_index();
+        fn initialize_global_pool_index();
+        fn free_global_pool_index();
+        // SAFETY: Pointer must be obtained from C++ and passed back unmodified.
         unsafe fn set_global_pool_allocator(allocator: *mut PoolAllocator);
     }
     extern "Rust" {
+        // SAFETY: Pointers must be obtained from C++ and passed back unmodified.
         unsafe fn generate_ast(
             mut ir: Box<IR>,
             compiler: *mut TCompiler,
@@ -389,6 +404,7 @@ pub use ffi::OutputLanguage;
 pub use ffi::PixelLocalStorageImpl;
 pub use ffi::PixelLocalStorageOptions;
 pub use ffi::PixelLocalStorageSync;
+pub use ffi::ShaderSpec;
 pub use ffi::ShaderVariable;
 
 unsafe fn generate_ast(
@@ -397,6 +413,7 @@ unsafe fn generate_ast(
     allocator: *mut ffi::PoolAllocator,
     options: &Options,
 ) -> ffi::Output {
+    // SAFETY: Pointer is obtained from C++ and passed back to it.
     unsafe { ffi::set_global_pool_allocator(allocator) };
 
     // Apply transforms shared by multiple generators:
@@ -552,6 +569,9 @@ fn common_pre_variable_collection_transforms(ir: &mut IR, options: &Options) {
         && options.extensions.EXT_draw_buffers
         && options.limits.max_draw_buffers > 1
     {
+        // In WebGL2, gl_FragData has only one element.  But in WebGL2, EXT_draw_buffers is not a
+        // supported extension.
+        debug_assert!(options.shader_spec != ShaderSpec::WEBGL2);
         let transform_options = transform::broadcast_fragcolor::Options {
             max_draw_buffers: options.limits.max_draw_buffers,
             max_dual_source_draw_buffers: options.limits.max_dual_source_draw_buffers,
@@ -578,8 +598,6 @@ fn collect_reflection_info(ir: &mut IR, options: &Options) {
         let reflection_options = reflection::Options {
             is_es1: options.shader_version == 100,
             transform_float_uniform_to_fp16: options.transform_float_uniform_to_fp16,
-            user_variable_name_prefix: options.user_variable_name_prefix as char,
-            user_block_name_prefix: options.user_block_name_prefix as char,
         };
         ir.collect_reflection_info(&reflection_options, &active_interface_variables);
     }
@@ -658,8 +676,8 @@ fn common_post_variable_collection_transforms(ir: &mut IR, options: &Options) {
 }
 
 fn initialize_global_pool_index_workaround() {
-    unsafe { ffi::initialize_global_pool_index() };
+    ffi::initialize_global_pool_index();
 }
 fn free_global_pool_index_workaround() {
-    unsafe { ffi::free_global_pool_index() };
+    ffi::free_global_pool_index();
 }

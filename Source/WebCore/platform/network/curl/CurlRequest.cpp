@@ -521,7 +521,7 @@ int CurlRequest::didReceiveDebugInfo(curl_infotype type, std::span<const char> d
         return 0;
 
     if (type == CURLINFO_HEADER_OUT) {
-        String requestHeader(data);
+        String requestHeader = String::fromLatin1(data);
         auto headerFields = requestHeader.split("\r\n"_s);
         // Remove the request line
         if (headerFields.size())
@@ -675,7 +675,7 @@ size_t CurlRequest::willSendDataCallback(char* ptr, size_t blockSize, size_t num
 
 size_t CurlRequest::didReceiveHeaderCallback(char* ptr, size_t blockSize, size_t numberOfBlocks, void* userData)
 {
-    return static_cast<CurlRequest*>(userData)->didReceiveHeader(String({ ptr, blockSize * numberOfBlocks }));
+    return static_cast<CurlRequest*>(userData)->didReceiveHeader(String::fromLatin1(unsafeMakeSpan(ptr, blockSize * numberOfBlocks)));
 }
 
 size_t CurlRequest::didReceiveDataCallback(char* ptr, size_t blockSize, size_t numberOfBlocks, void* userData)

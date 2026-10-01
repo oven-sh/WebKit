@@ -25,8 +25,16 @@
 
 #include "config.h"
 
+#include <array>
+#include <concepts>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringCommon.h>
+#include <wtf/text/StringConcatenate.h>
+#include <wtf/text/WTFString.h>
 
 TEST(WTF, CStringNullStringConstructor)
 {
@@ -104,16 +112,16 @@ TEST(WTF, CStringOneByte)
     ASSERT_STREQ(referenceString, stringWithLength.data());
 }
 
-TEST(WTF, CStringUninitializedConstructor)
+TEST(WTF, ASCIICStringUninitializedConstructor)
 {
     std::span<char> buffer;
-    CString emptyString = CString::newUninitialized(0, buffer);
+    ASCIICString emptyString = ASCIICString::newUninitialized(0, buffer);
     ASSERT_FALSE(emptyString.isNull());
     ASSERT_EQ(buffer.data(), emptyString.data());
     ASSERT_TRUE(buffer.empty());
 
     const size_t length = 25;
-    CString uninitializedString = CString::newUninitialized(length, buffer);
+    ASCIICString uninitializedString = ASCIICString::newUninitialized(length, buffer);
     ASSERT_FALSE(uninitializedString.isNull());
     ASSERT_EQ(buffer.data(), uninitializedString.data());
     ASSERT_EQ(uninitializedString.data()[length], 0);
@@ -126,16 +134,25 @@ TEST(WTF, CStringZeroTerminated)
     ASSERT_EQ(stringWithLength.data()[3], 0);
 }
 
+TEST(WTF, CStringLegacyCStringPointer)
+{
+    CString nullString;
+    EXPECT_EQ(nullString.legacyCStringPointer(), static_cast<const char*>(nullptr));
+
+    CString string("WebKit");
+    EXPECT_EQ(string.legacyCStringPointer(), string.data());
+    EXPECT_STREQ(string.legacyCStringPointer(), "WebKit");
+}
+
 TEST(WTF, CStringCopyOnWrite)
 {
-    const char* initialString = "Webkit";
-    CString string(initialString);
-    CString copy = string;
+    ASCIICString string { "Webkit"_s };
+    ASCIICString copy = string;
 
     string.mutableSpan()[3] = 'K';
     ASSERT_TRUE(string != copy);
     ASSERT_STREQ(string.data(), "WebKit");
-    ASSERT_STREQ(copy.data(), initialString);
+    ASSERT_STREQ(copy.data(), "Webkit");
 }
 
 TEST(WTF, CStringComparison)
@@ -227,13 +244,13 @@ TEST(WTF, CStringComparison)
 
 TEST(WTF, CStringStdStringInterop)
 {
-    // Null CString round-trip is lossy: null CStrings convert to empty std::strings that convert to empty CStrings.
+    // Null round-trip is lossy: null strings convert to empty std::strings that convert to empty strings.
     {
-        CString a;
+        ASCIICString a;
         EXPECT_TRUE(a.isNull());
         std::string stda;
         EXPECT_EQ(a.toStdString(), stda);
-        CString b = stda;
+        ASCIICString b { stda };
         EXPECT_NE(a, b);
         EXPECT_EQ(b.length(), 0u);
         EXPECT_FALSE(b.isNull());
@@ -249,19 +266,19 @@ TEST(WTF, CStringStdStringInterop)
         SCOPED_TRACE(::testing::Message() << "input: " << (input.characters() ? input.characters() : "nullptr"));
         // As const char*.
         {
-            CString a { input.characters() };
+            ASCIICString a { input.characters() };
             std::string stda { input.characters() };
             EXPECT_EQ(a.toStdString(), stda);
-            CString b = stda;
+            ASCIICString b { stda };
             EXPECT_EQ(a, b);
         }
         // As ASCIILiteral / span.
         {
-            CString a { input };
+            ASCIICString a { input };
             auto inputSpan = input.span();
             std::string stda { inputSpan.begin(), inputSpan.end() };
             EXPECT_EQ(a.toStdString(), stda);
-            CString b = stda;
+            ASCIICString b { stda };
             EXPECT_EQ(a, b);
         }
     }
@@ -269,7 +286,7 @@ TEST(WTF, CStringStdStringInterop)
     // Explict length strings, i.e. strings with nul chars inside, are exact.
     {
         auto inputSpan = unsafeMakeSpan("some\0thing", 10);
-        CString a { inputSpan };
+        ASCIICString a { inputSpan };
         EXPECT_EQ(a.length(), 10u);
         std::string stda { inputSpan.begin(), inputSpan.end() };
         EXPECT_EQ(stda.length(), 10u);
@@ -279,12 +296,271 @@ TEST(WTF, CStringStdStringInterop)
 
 TEST(WTF, CStringViewASCIICaseConversions)
 {
-    EXPECT_EQ(WTF::convertToASCIILowercase(u8"Test"_span), CString("test"));
-    EXPECT_EQ(WTF::convertToASCIIUppercase(u8"Test"_span), CString("TEST"));
-    EXPECT_EQ(WTF::convertToASCIILowercase(u8"Water🍉Melon"_span), CString("water🍉melon"));
-    EXPECT_EQ(WTF::convertToASCIIUppercase(u8"Water🍉Melon"_span), CString("WATER🍉MELON"));
-    EXPECT_EQ(WTF::convertToASCIILowercase(std::span<const char8_t>()), CString(""_s));
-    EXPECT_EQ(WTF::convertToASCIIUppercase(std::span<const char8_t>()), CString(""_s));
-    EXPECT_EQ(WTF::convertToASCIILowercase(u8""_span), CString(""_s));
-    EXPECT_EQ(WTF::convertToASCIIUppercase(u8""_span), CString(""_s));
+    EXPECT_EQ(WTF::convertToASCIILowercase(u8"Test"_span), UTF8CString { u8"test"_span });
+    EXPECT_EQ(WTF::convertToASCIIUppercase(u8"Test"_span), UTF8CString { u8"TEST"_span });
+    EXPECT_EQ(WTF::convertToASCIILowercase(u8"Water🍉Melon"_span), UTF8CString { u8"water🍉melon"_span });
+    EXPECT_EQ(WTF::convertToASCIIUppercase(u8"Water🍉Melon"_span), UTF8CString { u8"WATER🍉MELON"_span });
+    EXPECT_EQ(WTF::convertToASCIILowercase(std::span<const char8_t>()), UTF8CString { u8""_span });
+    EXPECT_EQ(WTF::convertToASCIIUppercase(std::span<const char8_t>()), UTF8CString { u8""_span });
+    EXPECT_EQ(WTF::convertToASCIILowercase(u8""_span), UTF8CString { u8""_span });
+    EXPECT_EQ(WTF::convertToASCIIUppercase(u8""_span), UTF8CString { u8""_span });
+}
+
+// The encoding survives into the span's element type, which is what makes the rest of WTF do the right thing.
+static_assert(std::same_as<decltype(std::declval<const UTF8CString&>().span())::element_type, const char8_t>);
+static_assert(std::same_as<decltype(std::declval<const Latin1CString&>().span())::element_type, const Latin1Character>);
+static_assert(std::same_as<decltype(std::declval<UTF8CString&>().mutableSpan())::element_type, char8_t>);
+static_assert(std::same_as<decltype(std::declval<const UTF8CString&>().data()), const char8_t*>);
+static_assert(std::same_as<decltype(std::declval<const Latin1CString&>().data()), const Latin1Character*>);
+static_assert(std::same_as<decltype(std::declval<const UTF8CString&>().legacyCStringPointer()), const char*>);
+// ASCII is spelled with char, as in ASCIILiteral, so its accessors match the untyped ones.
+static_assert(std::same_as<decltype(std::declval<const ASCIICString&>().data()), const char*>);
+static_assert(std::same_as<decltype(std::declval<const ASCIICString&>().span())::element_type, const char>);
+// Erasing the encoding gives back the untyped CString span.
+static_assert(std::same_as<decltype(std::declval<const CString&>().span())::element_type, const char>);
+static_assert(std::same_as<decltype(std::declval<const CString&>().legacyCStringPointer()), const char*>);
+// Only UTF-8 needs the escape hatch, so the constrained override has to keep hiding
+// CString::legacyCStringPointer() for the other encodings: Latin-1 bytes are not a C string, and
+// ASCIICString::data() is already a const char*.
+template<typename StringType> concept HasLegacyCStringPointer = requires(const StringType& string)
+{
+    string.legacyCStringPointer();
+};
+static_assert(HasLegacyCStringPointer<CString>);
+static_assert(HasLegacyCStringPointer<UTF8CString>);
+static_assert(!HasLegacyCStringPointer<ASCIICString>);
+static_assert(!HasLegacyCStringPointer<Latin1CString>);
+// printf-style formatting reads the bytes back as UTF-8 or ASCII, so Latin-1 is kept away from it for
+// the same reason. The encoding-erased CString stays accepted while its producers are migrated.
+template<typename StringType> concept HasSafePrintfType = requires(const StringType& string)
+{
+    safePrintfType(string);
+};
+static_assert(HasSafePrintfType<CString>);
+static_assert(HasSafePrintfType<UTF8CString>);
+static_assert(HasSafePrintfType<ASCIICString>);
+static_assert(!HasSafePrintfType<Latin1CString>);
+// Slicing to CString is allowed, but nothing implicitly converts the other way or between encodings.
+static_assert(std::is_convertible_v<UTF8CString, CString>);
+static_assert(!std::is_convertible_v<CString, UTF8CString>);
+static_assert(!std::is_convertible_v<Latin1CString, UTF8CString>);
+// Bytes get into a CString only through CStringWithEncoding: the encoding-erased base cannot be
+// built from a literal, a std::string or a buffer, and cannot hand out one to write into.
+// ASCIILiteral converts to const char*, but that is a worse match than CString(ASCIILiteral), so
+// a literal is rejected outright rather than quietly losing its length, and any embedded null, to
+// a strlen. A std::string has no constructor left but still converts to a span, so for it only the
+// implicit conversion goes away.
+static_assert(!std::constructible_from<CString, ASCIILiteral>);
+static_assert(std::constructible_from<UTF8CString, ASCIILiteral>);
+static_assert(!std::is_convertible_v<std::string, CString>);
+static_assert(std::constructible_from<UTF8CString, std::string>);
+template<typename StringType> concept HasMutableSpan = requires(StringType& string)
+{
+    string.mutableSpan();
+    string.mutableSpanIncludingNullTerminator();
+    string.grow(1);
+};
+static_assert(!HasMutableSpan<CString>);
+static_assert(HasMutableSpan<UTF8CString>);
+// Ordering across encodings must not compile. This has to go through a concept: with concrete
+// types, selecting a deleted overload is a hard error rather than an unsatisfied requirement.
+template<typename A, typename B> concept IsEqualityComparable = requires(const A& a, const B& b)
+{
+    a == b;
+};
+template<typename A, typename B> concept IsLessThanComparable = requires(const A& a, const B& b)
+{
+    a < b;
+};
+static_assert(IsEqualityComparable<UTF8CString, UTF8CString>);
+static_assert(IsEqualityComparable<Latin1CString, Latin1CString>);
+// Latin-1 and UTF-8 are compared by code point rather than by byte.
+static_assert(IsEqualityComparable<UTF8CString, Latin1CString>);
+static_assert(IsEqualityComparable<Latin1CString, UTF8CString>);
+static_assert(!IsLessThanComparable<UTF8CString, Latin1CString>);
+// ASCII is Latin-1 restricted to 0..127: byte comparison against Latin-1, code point comparison against UTF-8.
+static_assert(IsEqualityComparable<ASCIICString, UTF8CString>);
+static_assert(IsEqualityComparable<ASCIICString, Latin1CString>);
+static_assert(!IsLessThanComparable<ASCIICString, UTF8CString>);
+static_assert(IsLessThanComparable<ASCIICString, Latin1CString>);
+// The conversions that have been migrated report their encoding in the type.
+static_assert(std::same_as<decltype(std::declval<const String&>().ascii()), ASCIICString>);
+static_assert(std::same_as<decltype(std::declval<const String&>().latin1()), Latin1CString>);
+static_assert(std::same_as<decltype(std::declval<const String&>().tryGetUTF8()), std::expected<UTF8CString, UTF8ConversionError>>);
+static_assert(std::same_as<decltype(std::declval<const StringView&>().tryGetUTF8()), std::expected<UTF8CString, UTF8ConversionError>>);
+static_assert(std::same_as<decltype(WTF::convertToASCIILowercase(u8""_span)), UTF8CString>);
+// Comparing against a plain CString stays available: it means "unknown encoding", so it is the deliberate escape hatch.
+static_assert(IsEqualityComparable<UTF8CString, CString>);
+// An ASCII literal is valid in every encoding, so this stays available too.
+static_assert(IsEqualityComparable<UTF8CString, ASCIILiteral>);
+
+TEST(WTF, CStringWithEncodingConstruction)
+{
+    UTF8CString nullString;
+    EXPECT_TRUE(nullString.isNull());
+    EXPECT_TRUE(nullString.isEmpty());
+    EXPECT_EQ(nullString.data(), static_cast<const char8_t*>(nullptr));
+    EXPECT_EQ(nullString.legacyCStringPointer(), static_cast<const char*>(nullptr));
+    EXPECT_EQ(nullString.length(), 0UZ);
+
+    UTF8CString fromSpan { u8"Water🍉Melon"_span };
+    EXPECT_FALSE(fromSpan.isNull());
+    EXPECT_EQ(fromSpan.length(), 14UZ);
+    EXPECT_TRUE(equalSpans(fromSpan.span(), u8"Water🍉Melon"_span));
+    EXPECT_STREQ(fromSpan.legacyCStringPointer(), "Water🍉Melon");
+
+    UTF8CString fromLiteral { "test"_s };
+    EXPECT_EQ(fromLiteral, UTF8CString { u8"test"_span });
+    EXPECT_EQ(fromLiteral, "test"_s);
+
+    constexpr auto latin1Cafe = WTF::toArray<Latin1Character>({ 'c', 'a', 'f', 0xE9 });
+    Latin1CString latin1String { std::span<const Latin1Character> { latin1Cafe } };
+    EXPECT_EQ(latin1String.length(), 4UZ);
+    EXPECT_TRUE(equalSpans(latin1String.span(), std::span<const Latin1Character> { latin1Cafe }));
+}
+
+TEST(WTF, CStringWithEncodingNewUninitialized)
+{
+    std::span<char8_t> characters;
+    auto string = UTF8CString::newUninitialized(4, characters);
+    EXPECT_EQ(characters.size(), 4UZ);
+    memcpySpan(characters, u8"test"_span);
+    EXPECT_EQ(string, UTF8CString { u8"test"_span });
+    EXPECT_EQ(string.spanIncludingNullTerminator()[4], u8'\0');
+}
+
+TEST(WTF, CStringWithEncodingComparison)
+{
+    UTF8CString a { u8"abc"_span };
+    UTF8CString b { u8"abd"_span };
+    UTF8CString nullString;
+
+    EXPECT_EQ(a, UTF8CString { u8"abc"_span });
+    EXPECT_NE(a, b);
+    EXPECT_NE(a, nullString);
+    EXPECT_EQ(nullString, UTF8CString { });
+    EXPECT_TRUE(a < b);
+    EXPECT_FALSE(b < a);
+    EXPECT_TRUE(nullString < a);
+}
+
+TEST(WTF, CStringWithEncodingCrossEncodingComparison)
+{
+    constexpr auto latin1Cafe = WTF::toArray<Latin1Character>({ 'c', 'a', 'f', 0xE9 });
+    Latin1CString latin1 { std::span<const Latin1Character> { latin1Cafe } };
+    UTF8CString utf8 { u8"café"_span };
+
+    // Same text, different bytes: 4 Latin-1 bytes against 5 UTF-8 bytes.
+    EXPECT_EQ(latin1.length(), 4UZ);
+    EXPECT_EQ(utf8.length(), 5UZ);
+    EXPECT_EQ(latin1, utf8);
+    EXPECT_EQ(utf8, latin1);
+
+    EXPECT_NE(latin1, UTF8CString { u8"cafe"_span });
+    EXPECT_NE(utf8, Latin1CString { "cafe"_s });
+
+    // Null and empty stay distinct, as they do within a single encoding.
+    EXPECT_NE(Latin1CString { }, UTF8CString { u8""_span });
+    EXPECT_EQ(Latin1CString { }, UTF8CString { });
+
+    // ASCII is a subset of both, so it matches its own bytes in either.
+    ASCIICString ascii { String("cafe"_s).ascii() };
+    EXPECT_EQ(ascii, Latin1CString { "cafe"_s });
+    EXPECT_EQ(ascii, UTF8CString { u8"cafe"_span });
+    EXPECT_NE(ascii, latin1);
+    EXPECT_NE(ascii, utf8);
+}
+
+TEST(WTF, CStringWithEncodingHashing)
+{
+    HashSet<UTF8CString> set;
+    EXPECT_TRUE(set.add(UTF8CString { u8"Water🍉Melon"_span }).isNewEntry);
+    EXPECT_FALSE(set.add(UTF8CString { u8"Water🍉Melon"_span }).isNewEntry);
+    EXPECT_TRUE(set.add(UTF8CString { u8"other"_span }).isNewEntry);
+    EXPECT_EQ(set.size(), 2U);
+    EXPECT_TRUE(set.contains(UTF8CString { u8"other"_span }));
+    EXPECT_FALSE(set.contains(UTF8CString { u8"missing"_span }));
+
+    HashMap<UTF8CString, int> map;
+    map.add(UTF8CString { u8"key"_span }, 1);
+    EXPECT_EQ(map.get(UTF8CString { u8"key"_span }), 1);
+
+    // Hashing is over the raw bytes, so an equal untyped CString agrees.
+    EXPECT_EQ(UTF8CString { u8"key"_span }.hash(), CString("key").hash());
+}
+
+template<typename StringType> concept AdaptableToString = std::constructible_from<WTF::StringTypeAdapter<StringType>, const StringType&>;
+
+TEST(WTF, CStringWithEncodingMakeString)
+{
+    // makeString picks its adapter off the span's element type, so a UTF8CString is decoded as UTF-8.
+    // An untyped CString has no encoding to decode from, so it has no adapter at all and erasing the
+    // encoding does not compile, rather than silently reinterpreting the bytes as Latin-1.
+    static_assert(AdaptableToString<UTF8CString>);
+    static_assert(AdaptableToString<Latin1CString>);
+    static_assert(AdaptableToString<ASCIICString>);
+    static_assert(!AdaptableToString<CString>);
+
+    UTF8CString utf8String { u8"Water🍉Melon"_span };
+    EXPECT_EQ(makeString(utf8String), String::fromUTF8(u8"Water🍉Melon"_span));
+    EXPECT_EQ(makeString(utf8String).length(), 12U);
+
+    constexpr auto latin1Cafe = WTF::toArray<Latin1Character>({ 'c', 'a', 'f', 0xE9 });
+    Latin1CString latin1String { std::span<const Latin1Character> { latin1Cafe } };
+    EXPECT_EQ(makeString(latin1String), String::fromUTF8(u8"café"_span));
+    EXPECT_EQ(makeString(latin1String).length(), 4U);
+}
+
+template<typename StringType> concept PrintableToStream = requires(StringPrintStream& out, const StringType& string) {
+    WTF::printInternal(out, string);
+};
+
+TEST(WTF, CStringWithEncodingPrintStream)
+{
+    // A PrintStream holds UTF-8, so printing transcodes whatever it is given. An untyped CString
+    // has no encoding to transcode from, so printing one does not compile.
+    static_assert(PrintableToStream<UTF8CString>);
+    static_assert(PrintableToStream<Latin1CString>);
+    static_assert(PrintableToStream<ASCIICString>);
+    static_assert(!PrintableToStream<CString>);
+
+    auto print = [](const auto& string) {
+        StringPrintStream out;
+        out.print(string);
+        return out.toString();
+    };
+
+    UTF8CString utf8String { u8"Water🍉Melon"_span };
+    EXPECT_EQ(print(utf8String), String::fromUTF8(u8"Water🍉Melon"_span));
+
+    constexpr auto latin1Cafe = WTF::toArray<Latin1Character>({ 'c', 'a', 'f', 0xE9 });
+    Latin1CString latin1String { std::span<const Latin1Character> { latin1Cafe } };
+    EXPECT_EQ(print(latin1String), String::fromUTF8(u8"café"_span));
+
+    ASCIICString asciiString { "cafe"_s };
+    EXPECT_EQ(print(asciiString), "cafe"_s);
+}
+
+TEST(WTF, CStringWithEncodingFromPrintStream)
+{
+    // A PrintStream can be read back as either encoding. toUTF8CString() reports the bytes it holds,
+    // while toASCIICString() is for streams that only ever print ASCII, where const char* is wanted.
+    EXPECT_EQ(toUTF8CString("P", 1), UTF8CString { u8"P1"_span });
+    EXPECT_EQ(toASCIICString("P", 1), ASCIICString { "P1"_s });
+
+    // ASCII is a subset of UTF-8, so the two agree byte for byte and compare equal across encodings.
+    EXPECT_EQ(toASCIICString("cafe"), toUTF8CString("cafe"));
+
+    // ASCIICString::data() is already a const char*, which is the point of the encoding: no escape
+    // hatch is needed to hand it to a C string interface, unlike UTF8CString::legacyCStringPointer().
+    ASCIICString asciiString = toASCIICString("a", 1, "b", 2);
+    static_assert(std::same_as<decltype(asciiString.data()), const char*>);
+    EXPECT_EQ(asciiString, ASCIICString { "a1b2"_s });
+    EXPECT_EQ(asciiString.length(), 4U);
+
+    // An empty stream reads back as empty rather than null, matching toUTF8CString().
+    StringPrintStream empty;
+    EXPECT_TRUE(empty.toASCIICString().isEmpty());
+    EXPECT_FALSE(empty.toASCIICString().isNull());
+    EXPECT_EQ(empty.toASCIICString(), ASCIICString { ""_s });
 }

@@ -184,7 +184,7 @@ void CachedImage::removeAllClientsWaitingForAsyncDecoding()
     RefPtr bitmapImage = dynamicDowncast<BitmapImage>(image());
     if (!bitmapImage)
         return;
-    bitmapImage->stopDecoderWorkQueue();
+    bitmapImage->stopDecodingWorkQueue();
 
     for (Ref client : m_clientsWaitingForAsyncDecoding)
         client->imageChanged(this);
@@ -213,7 +213,7 @@ void CachedImage::switchClientsToRevalidatedResource()
         CachedResource::switchClientsToRevalidatedResource();
         RefPtr revalidatedCachedImage = downcast<CachedImage>(*resourceToRevalidate());
         for (auto& request : switchContainerContextRequests)
-            revalidatedCachedImage->setContainerContextForClient(request.key, request.value.containerSize, request.value.containerZoom, request.value.imageURL);
+            revalidatedCachedImage->setContainerContextForClient(protect(request.key), request.value.containerSize, request.value.containerZoom, request.value.imageURL, request.value.linkParameters);
         return;
     }
 
@@ -228,19 +228,19 @@ void CachedImage::allClientsRemoved()
         image->resetAnimation();
 }
 
-std::pair<WeakPtr<Image>, float> CachedImage::brokenImage(float deviceScaleFactor) const
+std::pair<WeakPtr<BitmapImage>, float> CachedImage::brokenImage(float deviceScaleFactor) const
 {
     if (deviceScaleFactor >= 3) {
-        static NeverDestroyed<Image*> brokenImageVeryHiRes(&ImageAdapter::loadPlatformResource("missingImage@3x").leakRef());
+        static NeverDestroyed<BitmapImage*> brokenImageVeryHiRes(&ImageAdapter::loadPlatformResource("missingImage@3x").leakRef());
         return std::make_pair(WeakPtr { *brokenImageVeryHiRes }, 3);
     }
 
     if (deviceScaleFactor >= 2) {
-        static NeverDestroyed<Image*> brokenImageHiRes(&ImageAdapter::loadPlatformResource("missingImage@2x").leakRef());
+        static NeverDestroyed<BitmapImage*> brokenImageHiRes(&ImageAdapter::loadPlatformResource("missingImage@2x").leakRef());
         return std::make_pair(WeakPtr { *brokenImageHiRes }, 2);
     }
 
-    static NeverDestroyed<Image*> brokenImageLoRes(&ImageAdapter::loadPlatformResource("missingImage").leakRef());
+    static NeverDestroyed<BitmapImage*> brokenImageLoRes(&ImageAdapter::loadPlatformResource("missingImage").leakRef());
     return std::make_pair(WeakPtr { *brokenImageLoRes }, 1);
 }
 
@@ -283,14 +283,14 @@ Image* CachedImage::imageForRenderer(const RenderObject* renderer)
     return m_image.get();
 }
 
-void CachedImage::setContainerContextForClient(const CachedImageClient& client, const LayoutSize& containerSize, float containerZoom, const URL& imageURL)
+void CachedImage::setContainerContextForClient(const CachedImageClient& client, const LayoutSize& containerSize, float containerZoom, const URL& imageURL, const Style::LinkParameters& linkParameters)
 {
     if (containerSize.isEmpty())
         return;
     ASSERT(containerZoom);
     RefPtr image = m_image;
     if (!image) {
-        m_pendingContainerContextRequests.set(client, ContainerContext { containerSize, containerZoom, imageURL });
+        m_pendingContainerContextRequests.set(client, ContainerContext { containerSize, containerZoom, imageURL, linkParameters });
         return;
     }
 
@@ -299,7 +299,7 @@ void CachedImage::setContainerContextForClient(const CachedImageClient& client, 
         return;
     }
 
-    m_svgImageCache->setContainerContextForClient(client, containerSize, containerZoom, imageURL);
+    m_svgImageCache->setContainerContextForClient(client, containerSize, containerZoom, imageURL, linkParameters);
 }
 
 FloatSize CachedImage::internalImageSizeForRenderer(const RenderElement* renderer, float multiplier, SizeType sizeType, float density) const
@@ -369,7 +369,7 @@ void CachedImage::computeIntrinsicDimensions(float& intrinsicWidth, float& intri
 
 bool CachedImage::hasHDRContent() const
 {
-    return m_image && m_image->hasHDRContent();
+    return m_image && protect(m_image)->hasHDRContent();
 }
 
 void CachedImage::notifyObservers(const IntRect* changeRect)
@@ -413,7 +413,7 @@ inline void CachedImage::createImage()
         // Send queued container size requests.
         if (image->usesContainerSize()) {
             for (auto& request : m_pendingContainerContextRequests)
-                setContainerContextForClient(request.key, request.value.containerSize, request.value.containerZoom, request.value.imageURL);
+                setContainerContextForClient(protect(request.key), request.value.containerSize, request.value.containerZoom, request.value.imageURL, request.value.linkParameters);
         }
         m_pendingContainerContextRequests.clear();
         m_clientsWaitingForAsyncDecoding.clear();
@@ -510,28 +510,7 @@ inline void CachedImage::clearImage()
     m_lastUpdateImageDataTime = { };
     m_updateImageDataCount = 0;
     m_allowsOrientationOverride = true;
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-    m_axCustomColorModeShouldAdjust = std::nullopt;
-    m_axCustomColorModeAdjustedTile = nullptr;
-    m_axCustomColorModeAdjustedTileSize = { };
-#endif
 }
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-NativeImage* CachedImage::axCustomColorModeAdjustedTile(const FloatSize& forSize) const
-{
-    if (!m_axCustomColorModeAdjustedTile || m_axCustomColorModeAdjustedTileSize != forSize)
-        return nullptr;
-    return m_axCustomColorModeAdjustedTile.get();
-}
-
-void CachedImage::setAXCustomColorModeAdjustedTile(RefPtr<NativeImage>&& tile, const FloatSize& size)
-{
-    m_axCustomColorModeAdjustedTile = WTF::move(tile);
-    m_axCustomColorModeAdjustedTileSize = size;
-}
-#endif
 
 void CachedImage::updateBufferInternal(const FragmentedSharedBuffer& data)
 {

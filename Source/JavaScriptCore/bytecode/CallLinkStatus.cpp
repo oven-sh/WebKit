@@ -68,6 +68,10 @@ CallLinkStatus CallLinkStatus::computeFor(
     UNUSED_PARAM(exitSiteData);
 #if ENABLE(DFG_JIT)
     CallLinkInfo* callLinkInfo = map.get(CodeOrigin(bytecodeIndex)).callLinkInfo;
+    // A call site of LLInt / Baseline code gets its CallLinkInfo when it runs for the second time, which can be after the map
+    // was made: whoever surveyed the block's call sites since (DFG::InliningPlan) has seen it.
+    if (!callLinkInfo)
+        callLinkInfo = profiledBlock->callLinkInfoIfExistsAt(bytecodeIndex);
     if (!callLinkInfo)
         return CallLinkStatus();
     // m_jitData is nullptr when it is tied to LLInt (not Baseline).

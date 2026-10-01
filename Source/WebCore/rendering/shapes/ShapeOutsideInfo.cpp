@@ -247,6 +247,7 @@ Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox& renderer)
     auto shapeImageThreshold = style.shapeImageThreshold();
     auto& shapeOutside = style.shapeOutside();
     auto zoom = style.usedZoomForLength();
+    auto deviceScaleFactor = style.deviceScaleFactor();
 
     auto boxSize = computeLogicalBoxSize(renderer, isHorizontalWritingMode);
     auto borderBoxLogicalWidth = isHorizontalWritingMode ? renderer.borderBoxWidth() : renderer.borderBoxHeight();
@@ -259,11 +260,11 @@ Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox& renderer)
     return WTF::switchOn(shapeOutside,
         [&](const Style::ShapeOutside::Shape& shape) {
             auto offset = LayoutPoint { logicalLeftOffset(renderer), logicalTopOffset(renderer) };
-            return LayoutShape::createShape(shape, offset, boxSize, borderBoxLogicalWidth, writingMode, logicalMargin, zoom);
+            return LayoutShape::createShape(shape, offset, boxSize, borderBoxLogicalWidth, writingMode, logicalMargin, zoom, deviceScaleFactor);
         },
         [&](const Style::ShapeOutside::ShapeAndShapeBox& shapeAndShapeBox) {
             auto offset = LayoutPoint { logicalLeftOffset(renderer), logicalTopOffset(renderer) };
-            return LayoutShape::createShape(shapeAndShapeBox.shape, offset, boxSize, borderBoxLogicalWidth, writingMode, logicalMargin, zoom);
+            return LayoutShape::createShape(shapeAndShapeBox.shape, offset, boxSize, borderBoxLogicalWidth, writingMode, logicalMargin, zoom, deviceScaleFactor);
         },
         [&](const Style::ShapeOutside::Image& shapeImage) {
             ASSERT(shapeImage.isValid());
@@ -283,30 +284,52 @@ Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox& renderer)
             return LayoutShape::createRasterShape(image.get(), shapeImageThreshold.value, logicalImageRect, logicalMarginRect, writingMode, logicalMargin);
         },
         [&](const Style::ShapeOutside::ShapeBox&) {
-            auto shapeRect = computeRoundedRectForBoxShape(shapeOutside.effectiveCSSBox(), renderer);
+            auto geometry = computeGeometryForBoxShape(shapeOutside.effectiveCSSBox(), renderer);
+            auto shapeRect = geometry.roundedRect();
+            auto contour = geometry.contour();
+
+            auto mapContour = [&](auto&& transformPoint) {
+                for (auto& point : contour)
+                    point = transformPoint(point);
+            };
+            auto mirrorHorizontally = [&](FloatPoint point) {
+                auto bounds = FloatRect { shapeRect.rect() };
+                return FloatPoint { bounds.x() + bounds.maxX() - point.x(), point.y() };
+            };
+            auto mirrorVertically = [&](FloatPoint point) {
+                auto bounds = FloatRect { shapeRect.rect() };
+                return FloatPoint { point.x(), bounds.y() + bounds.maxY() - point.y() };
+            };
+
             auto flipForWritingAndInlineDirection = [&] {
                 // FIXME: We should consider this moving to LayoutRoundedRect::transposedRect.
                 if (!isHorizontalWritingMode) {
                     shapeRect = shapeRect.transposedRect();
+                    mapContour([](FloatPoint point) { return point.transposedPoint(); });
+
                     auto radiiForBlockDirection = shapeRect.radii();
-                    if (writingMode.isLineOverLeft()) // sideways-lr
+                    if (writingMode.isLineOverLeft()) { // sideways-lr
                         shapeRect.setRadii({ radiiForBlockDirection.bottomLeft(), radiiForBlockDirection.topLeft(), radiiForBlockDirection.bottomRight(), radiiForBlockDirection.topRight() });
-                    else if (writingMode.isBlockLeftToRight()) // vertical-lr
+                        mapContour(mirrorHorizontally);
+                    } else if (writingMode.isBlockLeftToRight()) // vertical-lr
                         shapeRect.setRadii({ radiiForBlockDirection.topLeft(), radiiForBlockDirection.bottomLeft(), radiiForBlockDirection.topRight(), radiiForBlockDirection.bottomRight() });
-                    else // vertical-rl, sideways-rl
+                    else { // vertical-rl, sideways-rl
                         shapeRect.setRadii({ radiiForBlockDirection.topRight(), radiiForBlockDirection.bottomRight(), radiiForBlockDirection.topLeft(), radiiForBlockDirection.bottomLeft() });
+                        mapContour(mirrorVertically);
+                    }
                 }
                 if (writingMode.isBidiRTL()) {
                     auto radii = shapeRect.radii();
                     shapeRect.setRadii({ radii.topRight(), radii.topLeft(), radii.bottomRight(), radii.bottomLeft() });
+                    mapContour(mirrorHorizontally);
                 }
             };
             flipForWritingAndInlineDirection();
-            return LayoutShape::createBoxShape(shapeRect, writingMode, logicalMargin);
+            return LayoutShape::createBoxShape(shapeRect, WTF::move(contour), writingMode, logicalMargin);
         },
         [&](const CSS::Keyword::None&) {
             ASSERT_NOT_REACHED();
-            return LayoutShape::createBoxShape(LayoutRoundedRect { { } }, writingMode, 0);
+            return LayoutShape::createBoxShape(LayoutRoundedRect { { } }, { }, writingMode, 0);
         }
     );
 }

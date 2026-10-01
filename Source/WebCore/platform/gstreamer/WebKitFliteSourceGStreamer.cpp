@@ -157,7 +157,7 @@ static GstFlowReturn webkitFliteSrcCreate(GstBaseSrc* baseSource, guint64 offset
     if (!members->didLoadUtterance) {
         members->didLoadUtterance = true;
 
-        GUniquePtr<cst_wave> wave(flite_text_to_wave(priv->text.utf8().data(), priv->currentVoice));
+        GUniquePtr<cst_wave> wave(flite_text_to_wave(priv->text.utf8().legacyCStringPointer(), priv->currentVoice));
         cst_wave_resample(wave.get(), priv->info.rate);
 
         gsize bufferSize = priv->info.channels * sizeof(gint16) * wave->num_samples;

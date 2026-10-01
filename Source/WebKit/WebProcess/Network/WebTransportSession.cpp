@@ -34,6 +34,7 @@
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/Document.h>
 #include <WebCore/Exception.h>
+#include <WebCore/NetworkLoadPolicy.h>
 #include <WebCore/ScriptExecutionContext.h>
 #include <WebCore/WebTransportConnectionInfo.h>
 #include <WebCore/WebTransportConnectionStats.h>
@@ -140,6 +141,8 @@ Ref<WebCore::WebTransportSessionInitializationPromise> WebTransportSession::init
         sourcePosition = document->currentParserSourcePosition();
     if (CheckedPtr csp = context.contentSecurityPolicy(); !csp || !csp->allowConnectToSource(url, WTF::move(sourcePosition)))
         return WebCore::WebTransportSessionInitializationPromise::createAndReject();
+    if (!context.networkLoadPolicy().allowsLoadFromURL(url, WebCore::MainFrameMainResource::No))
+        return WebCore::WebTransportSessionInitializationPromise::createAndReject();
     return sendWithPromisedReply(Messages::NetworkConnectionToWebProcess::InitializeWebTransportSession(m_identifier, url, options, additionalHeaders, m_pageID, origin))->whenSettled(RunLoop::mainSingleton(), [] (auto&& result) {
         if (result && *result)
             return WebCore::WebTransportSessionInitializationPromise::createAndResolve(WTF::move(**result));
@@ -236,7 +239,7 @@ Ref<WebCore::WebTransportSendPromise> WebTransportSession::streamSendBytes(WebCo
     });
 }
 
-void WebTransportSession::terminate(WebCore::WebTransportSessionErrorCode code, CString&& reason)
+void WebTransportSession::terminate(WebCore::WebTransportSessionErrorCode code, UTF8CString&& reason)
 {
     send(Messages::NetworkTransportSession::Terminate(code, WTF::move(reason)));
 }

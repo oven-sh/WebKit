@@ -381,7 +381,7 @@ String ViewGestureController::SnapshotRemovalTracker::eventsDescription(Events e
 
 void ViewGestureController::SnapshotRemovalTracker::log(StringView log) const
 {
-    RELEASE_LOG(ViewGestures, "Swipe Snapshot Removal (%0.2f ms) - %s", (MonotonicTime::now() - m_startTime).milliseconds(), log.utf8().data());
+    RELEASE_LOG(ViewGestures, "Swipe Snapshot Removal (%0.2f ms) - %s", (MonotonicTime::now() - m_startTime).milliseconds(), log.utf8());
 }
 
 void ViewGestureController::SnapshotRemovalTracker::resume()
@@ -738,7 +738,7 @@ void ViewGestureController::willEndSwipeGesture(WebBackForwardListItem& targetIt
     // FIXME: Like on iOS, we should ensure that even if one of the timeouts fires,
     // we never show the old page content, instead showing the snapshot background color.
 
-    if (auto* snapshot = targetItem.snapshot())
+    if (RefPtr snapshot = targetItem.snapshot())
         m_backgroundColorForCurrentSnapshot = snapshot->backgroundColor();
 }
 
@@ -826,7 +826,7 @@ void ViewGestureController::prepareMagnificationGesture(FloatPoint origin)
     if (!page)
         return;
 
-    m_magnification = page->pageScaleFactor();
+    m_magnification = magnification();
     protect(page->legacyMainFrameProcess())->send(Messages::ViewGestureGeometryCollector::CollectGeometryForMagnificationGesture(), page->webPageIDInMainFrameProcess());
 
     m_initialMagnification = m_magnification;
@@ -882,8 +882,16 @@ double ViewGestureController::magnification() const
     if (m_activeGestureType == ViewGestureType::Magnification)
         return m_magnification;
 
-    auto* page = m_webPageProxy.get();
-    return page ? page->pageScaleFactor() : 1;
+    RefPtr page = m_webPageProxy.get();
+    if (!page)
+        return 1;
+
+    if (RefPtr drawingArea = page->drawingArea()) {
+        if (auto committedTransientZoomScale = drawingArea->committedTransientZoomScale())
+            return *committedTransientZoomScale;
+    }
+
+    return page->pageScaleFactor();
 }
 
 #endif // !PLATFORM(IOS_FAMILY)

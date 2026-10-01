@@ -872,10 +872,27 @@ void ANGLETestBase::ANGLETestSetUp()
     if (mFixture->eglWindow->getClientMajorVersion() != mCurrentParams->majorVersion ||
         mFixture->eglWindow->getClientMinorVersion() != mCurrentParams->minorVersion)
     {
-        WARN() << "Requested Context version does not match the version created. Requested: "
-               << mCurrentParams->majorVersion << "." << mCurrentParams->minorVersion
-               << ", Actual: " << mFixture->eglWindow->getClientMajorVersion() << "."
-               << mFixture->eglWindow->getClientMinorVersion();
+        std::stringstream versionComparison;
+        versionComparison << "(Requested: " << mCurrentParams->majorVersion << "."
+                          << mCurrentParams->minorVersion
+                          << ", Actual: " << mFixture->eglWindow->getClientMajorVersion() << "."
+                          << mFixture->eglWindow->getClientMinorVersion() << ")";
+
+        if (mCurrentParams->isDisableRequested(Feature::EnableCreateContextBackwardsCompatible))
+        {
+            INFO() << "Extension EGL_ANGLE_create_context_backwards_compatible is disabled. "
+                   << versionComparison.str();
+        }
+        else if (!IsEGLClientExtensionEnabled("EGL_ANGLE_create_context_backwards_compatible"))
+        {
+            INFO() << "Extension EGL_ANGLE_create_context_backwards_compatible is not supported. "
+                   << versionComparison.str();
+        }
+        else
+        {
+            WARN() << "Requested context version does not match the version created. "
+                   << versionComparison.str();
+        }
     }
 
     if (needSwap)
@@ -1546,9 +1563,8 @@ void ANGLETestBase::checkD3D11SDKLayersMessages()
                                             EGL_D3D11_DEVICE_ANGLE, &device));
     ID3D11Device *d3d11Device = reinterpret_cast<ID3D11Device *>(device);
 
-    ID3D11InfoQueue *infoQueue = nullptr;
-    HRESULT hr =
-        d3d11Device->QueryInterface(__uuidof(infoQueue), reinterpret_cast<void **>(&infoQueue));
+    angle::ComPtr<ID3D11InfoQueue> infoQueue;
+    HRESULT hr = d3d11Device->QueryInterface(IID_PPV_ARGS(&infoQueue));
     if (SUCCEEDED(hr))
     {
         UINT64 numStoredD3DDebugMessages =
@@ -1579,8 +1595,6 @@ void ANGLETestBase::checkD3D11SDKLayersMessages()
                    << " D3D11 SDK Layers message(s) detected! Test Failed.\n";
         }
     }
-
-    SafeRelease(infoQueue);
 #endif  // defined(ANGLE_ENABLE_D3D11)
 }
 
@@ -1741,6 +1755,13 @@ bool ANGLETestBase::shouldShowWindow() const
 int ANGLETestBase::getClientMinorVersion() const
 {
     return getGLWindow()->getClientMinorVersion();
+}
+
+bool ANGLETestBase::isAtLeastClientVersion(int major, int minor) const
+{
+    return getGLWindow()->getClientMajorVersion() > major ||
+           (getGLWindow()->getClientMajorVersion() == major &&
+            getGLWindow()->getClientMinorVersion() >= minor);
 }
 
 EGLWindow *ANGLETestBase::getEGLWindow() const

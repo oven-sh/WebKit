@@ -287,8 +287,8 @@ void RemoteImageBufferSetProxy::willPrepareForDisplay()
     if (m_remoteNeedsConfigurationUpdate) {
         send(Messages::RemoteImageBufferSet::UpdateConfiguration(m_configuration));
         ImageBufferParameters parameters { m_configuration.logicalSize, m_configuration.resolutionScale, m_configuration.colorSpace, m_configuration.bufferFormat, m_configuration.renderingPurpose };
-        auto transform = ImageBufferBackend::calculateBaseTransform(ImageBuffer::backendParameters(parameters));
-        m_context.emplace(m_configuration.colorSpace, m_configuration.contentsFormat, m_configuration.renderingMode, FloatRect { { }, m_configuration.logicalSize }, transform, m_contextIdentifier, *renderingBackend);
+        auto transform = ImageBufferBackend::calculateBaseTransform(parameters);
+        m_context.emplace(FloatRect { { }, m_configuration.logicalSize }, transform, m_configuration.colorSpace, m_configuration.contentsFormat, m_configuration.renderingMode, m_contextIdentifier, *renderingBackend);
     }
     m_remoteNeedsConfigurationUpdate = false;
 

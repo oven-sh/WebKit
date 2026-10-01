@@ -38,9 +38,7 @@ Test case 7
 expando:0=string
 expando:8=lastelement
 expando:length=9
-expando:shift=function shift() {
-    [native code]
-}
+expando:shift=function shift() { [native code] }
 
 Test case 8
 hello world

@@ -52,7 +52,6 @@ BackgroundFetchLoad::BackgroundFetchLoad(NetworkProcess& networkProcess, PAL::Se
     , m_request(request.internalRequest)
     , m_networkLoadChecker(NetworkLoadChecker::create(networkProcess, nullptr, nullptr, FetchOptions { request.options }, m_sessionID, std::nullopt, HTTPHeaderMap { request.httpHeaders }, URL { m_request.url() }, URL { }, clientOrigin.clientOrigin.securityOrigin(), clientOrigin.topOrigin.securityOrigin(), RefPtr<SecurityOrigin> { }, PreflightPolicy::Consider, String { request.referrer }, true, OptionSet<AdvancedPrivacyProtections> { }))
 {
-    relaxAdoptionRequirement();
     if (!m_request.url().protocolIsInHTTPFamily()) {
         didFinish(ResourceError { String { }, 0, m_request.url(), "URL is not HTTP(S)"_s, ResourceError::Type::Cancellation });
         return;
@@ -164,7 +163,7 @@ void BackgroundFetchLoad::didReceiveResponse(ResourceResponse&& response, Negoti
 
     auto error = m_networkLoadChecker->validateResponse(m_request, response);
     if (!error.isNull()) {
-        BGLOAD_RELEASE_LOG("didReceiveResponse: NetworkLoadChecker::validateResponse returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8().data(), error.errorCode());
+        BGLOAD_RELEASE_LOG("didReceiveResponse: NetworkLoadChecker::validateResponse returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8(), error.errorCode());
 
         WeakPtr weakThis { *this };
         completionHandler(PolicyAction::Ignore);

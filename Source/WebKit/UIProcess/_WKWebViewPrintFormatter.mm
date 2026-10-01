@@ -26,7 +26,7 @@
 #import "config.h"
 #import "_WKWebViewPrintFormatterInternal.h"
 
-#if PLATFORM(IOS_FAMILY)
+#if HAVE(UIKIT_PRINTING)
 
 #import "UIKitSPI.h"
 #import "WKWebViewInternal.h"
@@ -151,7 +151,7 @@
 {
     [self _invalidatePrintRenderingState];
     NSUInteger pageCount = [self._webView._printProvider _wk_pageCountForPrintFormatter:self];
-    RELEASE_LOG(Printing, "Recalculated page count. Page count = %zu", pageCount);
+    RELEASE_LOG(Printing, "Recalculated page count. Page count = %zu", static_cast<size_t>(pageCount));
     return std::min<NSUInteger>(pageCount, NSIntegerMax);
 }
 
@@ -244,4 +244,4 @@
 
 @end
 
-#endif // PLATFORM(IOS_FAMILY)
+#endif // HAVE(UIKIT_PRINTING)

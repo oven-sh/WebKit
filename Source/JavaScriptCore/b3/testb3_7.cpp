@@ -221,7 +221,7 @@ void testX86LeaAddShlLeftScale1()
                 return strstr(disassembly, "lea (%rdi,%rsi,1), %rax")
                     || strstr(disassembly, "lea (%rsi,%rdi,1), %rax");
             },
-            "Expected to find something like lea (%rdi,%rsi,1), %rax but didn't!");
+            "Expected to find something like lea (%rdi,%rsi,1), %rax but didn't!"_s);
     }
 }
 
@@ -1911,6 +1911,106 @@ void testWasmAddress()
     invoke<void>(*code, loopCount, numToStore, values.span().data());
     for (unsigned value : values)
         CHECK_EQ(numToStore, value);
+}
+
+void testWasmAddressZeroExtendScaledIndex()
+{
+    if (Options::defaultB3OptLevel() < 2)
+        return;
+
+    Procedure proc;
+    GPRReg pinnedGPR = GPRInfo::argumentGPR2;
+    proc.pinRegister(pinnedGPR);
+
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t, int32_t, unsigned*>(proc, root);
+    Value* index32 = arguments[0];
+    Value* pointer = root->appendNew<Value>(
+        proc, Shl, Origin(),
+        root->appendNew<Value>(proc, ZExt32, Origin(), index32),
+        root->appendNew<Const32Value>(proc, Origin(), 2));
+    root->appendNew<Value>(
+        proc, Return, Origin(),
+        root->appendNew<MemoryValue>(
+            proc, Load, Int32, Origin(),
+            root->appendNew<WasmAddressValue>(proc, Origin(), pointer, pinnedGPR), 0));
+
+    auto code = compileProc(proc);
+    if (isARM64())
+        checkUsesInstruction(*code, ".*ldr.*uxtw #0x2.*", true);
+
+    int32_t values[] = { 11, 22, 33, 44, 55 };
+    for (int32_t i = 0; i < 5; ++i)
+        CHECK_EQ(invoke<int32_t>(*code, i, 0, values), values[i]);
+
+    int32_t num = 99;
+    uint32_t wideIndex = 0x40000000;
+    intptr_t addr = std::bit_cast<intptr_t>(&num);
+    intptr_t base = addr - (static_cast<intptr_t>(wideIndex) << 2);
+    CHECK_EQ(invoke<int32_t>(*code, static_cast<int32_t>(wideIndex), 0, std::bit_cast<unsigned*>(base)), num);
+}
+
+void testWasmAddressZeroExtend32BitShiftWraps()
+{
+    Procedure proc;
+    GPRReg pinnedGPR = GPRInfo::argumentGPR2;
+    proc.pinRegister(pinnedGPR);
+
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t, int32_t, unsigned*>(proc, root);
+    Value* index32 = arguments[0];
+    Value* pointer = root->appendNew<Value>(
+        proc, ZExt32, Origin(),
+        root->appendNew<Value>(
+            proc, Shl, Origin(), index32,
+            root->appendNew<Const32Value>(proc, Origin(), 2)));
+    root->appendNew<Value>(
+        proc, Return, Origin(),
+        root->appendNew<MemoryValue>(
+            proc, Load, Int32, Origin(),
+            root->appendNew<WasmAddressValue>(proc, Origin(), pointer, pinnedGPR), 0));
+
+    auto code = compileProc(proc);
+    int32_t values[] = { 11, 22, 33, 44, 55 };
+    CHECK_EQ(invoke<int32_t>(*code, 0, 0, values), 11);
+    CHECK_EQ(invoke<int32_t>(*code, 1, 0, values), 22);
+    CHECK_EQ(invoke<int32_t>(*code, static_cast<int32_t>(0x40000000), 0, values), 11);
+}
+
+void testWasmAddressScaledIndexWithLockedShlChild()
+{
+    Procedure proc;
+    GPRReg pinnedGPR = GPRInfo::argumentGPR2;
+    proc.pinRegister(pinnedGPR);
+
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* loadBlock = proc.addBlock();
+    BasicBlock* bailBlock = proc.addBlock();
+
+    auto arguments = cCallArgumentValues<uint64_t, uint64_t, int32_t*>(proc, root);
+    Value* masked = root->appendNew<Value>(
+        proc, BitAnd, Origin(), arguments[0],
+        root->appendNew<Const64Value>(proc, Origin(), 7));
+    Value* pointer = root->appendNew<Value>(
+        proc, Shl, Origin(), masked,
+        root->appendNew<Const32Value>(proc, Origin(), 2));
+    root->appendNewControlValue(proc, Branch, Origin(), arguments[1], FrequentedBlock(loadBlock), FrequentedBlock(bailBlock));
+
+    loadBlock->appendNewControlValue(
+        proc, Return, Origin(),
+        loadBlock->appendNew<MemoryValue>(
+            proc, Load, Int32, Origin(),
+            loadBlock->appendNew<WasmAddressValue>(proc, Origin(), pointer, pinnedGPR), 0));
+
+    bailBlock->appendNewControlValue(
+        proc, Return, Origin(),
+        bailBlock->appendNew<Const32Value>(proc, Origin(), -1));
+
+    auto code = compileProc(proc);
+    int32_t values[] = { 11, 22, 33, 44, 55, 66, 77, 88 };
+    for (uint64_t i = 0; i < 8; ++i)
+        CHECK_EQ(invoke<int32_t>(*code, 0x100 + i, 1, values), values[i]);
+    CHECK_EQ(invoke<int32_t>(*code, 0x100, 0, values), -1);
 }
 
 void testWasmAddressWithOffset()

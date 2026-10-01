@@ -29,7 +29,6 @@
 #include "AudioSession.h"
 #include "Document.h"
 #include "Logging.h"
-#include "MediaSessionManagerClient.h"
 #include "NowPlayingInfo.h"
 #include "Page.h"
 #include "PlatformMediaSession.h"
@@ -49,42 +48,13 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaSessionManagerInterface);
 
-class PageMediaSessionManagerClient final : public MediaSessionManagerClient {
-    WTF_MAKE_TZONE_ALLOCATED(PageMediaSessionManagerClient);
-public:
-    explicit PageMediaSessionManagerClient(std::optional<PageIdentifier> pageIdentifier)
-        : m_pageIdentifier(pageIdentifier) { }
-
-private:
-    void hasActiveNowPlayingSessionChanged(PlatformMediaSessionInterface*) final
-    {
-        if (RefPtr page = m_pageIdentifier ? Page::fromPageIdentifier(*m_pageIdentifier) : nullptr)
-            page->hasActiveNowPlayingSessionChanged();
-    }
-
-    Markable<PageIdentifier> m_pageIdentifier;
-};
-
-WTF_MAKE_TZONE_ALLOCATED_IMPL(PageMediaSessionManagerClient);
-
 MediaSessionManagerInterface::MediaSessionManagerInterface(std::optional<PageIdentifier> pageIdentifier)
     : m_pageIdentifier(pageIdentifier)
-    , m_client(makeUnique<PageMediaSessionManagerClient>(pageIdentifier))
 #if !RELEASE_LOG_DISABLED
     , m_stateLogTimer(makeUniqueRef<Timer>(*this, &MediaSessionManagerInterface::dumpSessionStates))
     , m_logger(AggregateLogger::create(this))
 #endif
 {
-}
-
-MediaSessionManagerClient& MediaSessionManagerInterface::client() const
-{
-    return *m_client;
-}
-
-void MediaSessionManagerInterface::setClient(std::unique_ptr<MediaSessionManagerClient>&& client)
-{
-    m_client = WTF::move(client);
 }
 
 MediaSessionManagerInterface::~MediaSessionManagerInterface()
@@ -288,21 +258,6 @@ void MediaSessionManagerInterface::nowPlayingMetadataChanged(const NowPlayingMet
     m_nowPlayingMetadataObservers.forEach([&] (auto& observer) {
         observer(metadata);
     });
-}
-
-bool MediaSessionManagerInterface::hasActiveNowPlayingSessionInGroup(std::optional<MediaSessionGroupIdentifier> mediaSessionGroupIdentifier)
-{
-    bool hasActiveNowPlayingSession = false;
-
-#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    forEachSessionInGroup(mediaSessionGroupIdentifier, [&](auto& session) {
-        hasActiveNowPlayingSession |= session.isActiveNowPlayingSession();
-    });
-#else
-    UNUSED_PARAM(mediaSessionGroupIdentifier);
-#endif
-
-    return hasActiveNowPlayingSession;
 }
 
 void MediaSessionManagerInterface::enqueueTaskOnMainThread(Function<void()>&& task)
@@ -813,28 +768,40 @@ int MediaSessionManagerInterface::countActiveAudioCaptureSources()
     return count;
 }
 
-void MediaSessionManagerInterface::processDidReceiveRemoteControlCommand(PlatformMediaSession::RemoteControlCommandType command, const PlatformMediaSession::RemoteCommandArgument& argument)
+bool MediaSessionManagerInterface::processDidReceiveRemoteControlCommand(PlatformMediaSession::RemoteControlCommandType command, const PlatformMediaSession::RemoteCommandArgument& argument, std::optional<MediaSessionIdentifier> targetSession)
 {
-#if ENABLE(VIDEO) || ENABLE(audio)
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
     RefPtr<PlatformMediaSessionInterface> activeSession;
-    for (auto& weakSession : copySessionsToVector()) {
-        RefPtr session = weakSession.get();
-        if (!session || !session->canReceiveRemoteControlCommands())
-            continue;
+    if (targetSession) {
+        // A NowPlaying owner elected across processes; deliver only to that session (this manager may not own it).
+        activeSession = firstSessionMatching([&](auto& session) {
+            return session.mediaSessionIdentifier() == *targetSession && session.canReceiveRemoteControlCommands();
+        }).get();
+    } else {
+        for (auto& weakSession : copySessionsToVector()) {
+            RefPtr session = weakSession.get();
+            if (!session || !session->canReceiveRemoteControlCommands())
+                continue;
 
-        if (session->isNowPlayingEligible()) {
-            activeSession = WTF::move(session);
-            break;
+            if (session->isNowPlayingEligible()) {
+                activeSession = WTF::move(session);
+                break;
+            }
+            if (!activeSession)
+                activeSession = WTF::move(session);
         }
-        if (!activeSession)
-            activeSession = WTF::move(session);
     }
 
-    if (activeSession)
-        activeSession->didReceiveRemoteControlCommand(command, argument);
+    if (!activeSession)
+        return false;
+
+    activeSession->didReceiveRemoteControlCommand(command, argument);
+    return true;
 #else
     UNUSED_PARAM(command);
     UNUSED_PARAM(argument);
+    UNUSED_PARAM(targetSession);
+    return false;
 #endif
 }
 

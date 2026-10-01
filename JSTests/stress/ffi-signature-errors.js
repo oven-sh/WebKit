@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Signature validation (SPEC sections 2, 3, 11.2): every invalid descriptor
 // is a TypeError; valid ones intern to canonical strings.

@@ -32,13 +32,13 @@
 #include "Download.h"
 #include "NetworkProcess.h"
 #include "NetworkSessionCurl.h"
+#include "NetworkStorageSession.h"
 #include "PrivateRelayed.h"
 #include "WebErrors.h"
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/CookieJar.h>
 #include <WebCore/CurlRequest.h>
 #include <WebCore/NetworkLoadMetrics.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/OriginAccessPatterns.h>
 #include <WebCore/ResourceError.h>
@@ -56,7 +56,6 @@ using namespace WebCore;
 NetworkDataTaskCurl::NetworkDataTaskCurl(NetworkSession& session, NetworkDataTaskClient& client, const NetworkLoadParameters& parameters)
     : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByDedicatedWorker)
     , m_frameID(parameters.webFrameID)
-    , m_pageID(parameters.webPageID)
     , m_webPageProxyID(parameters.webPageProxyID)
     , m_sourceOrigin(parameters.sourceOrigin)
 {
@@ -578,7 +577,7 @@ bool NetworkDataTaskCurl::shouldBlockCookies(const WebCore::ResourceRequest& req
     bool shouldBlockCookies = m_storedCredentialsPolicy == WebCore::StoredCredentialsPolicy::EphemeralStateless;
 
     if (!shouldBlockCookies && m_session->networkStorageSession())
-        shouldBlockCookies = protect(m_session->networkStorageSession())->shouldBlockCookies(request, m_frameID, m_pageID, m_session->networkProcess().shouldRelaxThirdPartyCookieBlockingForPage(m_webPageProxyID), WebCore::IsKnownCrossSiteTracker::No);
+        shouldBlockCookies = protect(m_session->networkStorageSession())->shouldBlockCookies(request, m_frameID, m_webPageProxyID, m_session->networkProcess().shouldRelaxThirdPartyCookieBlockingForPage(m_webPageProxyID), WebCore::IsKnownCrossSiteTracker::No);
 
     if (shouldBlockCookies)
         return true;

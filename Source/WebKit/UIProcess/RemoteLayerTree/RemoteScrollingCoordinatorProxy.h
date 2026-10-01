@@ -40,6 +40,10 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
+#if ENABLE(THREADED_ANIMATIONS)
+#include "RemoteMonotonicTimeline.h"
+#endif
+
 OBJC_CLASS UIScrollView;
 
 namespace WebCore {
@@ -106,8 +110,8 @@ public:
     void currentSnapPointIndicesDidChange(WebCore::ScrollingNodeID, std::optional<unsigned> horizontal, std::optional<unsigned> vertical);
 
     virtual void cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent&) { }
-    virtual void handleWheelEvent(const WebWheelEvent&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges);
-    void continueWheelEventHandling(const WebWheelEvent&, WebCore::WheelEventHandlingResult);
+    virtual void handleWheelEvent(Ref<WebWheelEvent>&&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges);
+    void continueWheelEventHandling(Ref<WebWheelEvent>&&, WebCore::WheelEventHandlingResult);
     virtual void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool /* wasHandled */) { }
 
     virtual WebCore::PlatformWheelEvent filteredWheelEvent(const WebCore::PlatformWheelEvent& wheelEvent) { return wheelEvent; }
@@ -159,10 +163,12 @@ public:
     virtual void animationsWereAddedToNode(RemoteLayerTreeNode&) { }
     virtual void animationsWereRemovedFromNode(RemoteLayerTreeNode&) { }
     virtual void updateTimelinesRegistration(WebCore::ProcessIdentifier, const WebCore::AcceleratedTimelinesUpdate&, MonotonicTime) { }
+    virtual void removeTimelines(WebCore::ProcessIdentifier) { };
     virtual RefPtr<const RemoteAnimationTimeline> timeline(const TimelineID&) const { return nullptr; }
     virtual void progressBasedTimelinesWereUpdatedForNode(const WebCore::ScrollingTreeScrollingNode&) { }
     virtual RefPtr<const RemoteAnimationStack> animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier) const { return nullptr; }
     virtual HashSet<Ref<RemoteProgressBasedTimeline>> timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID) const { return { }; }
+    virtual HashSet<Ref<RemoteMonotonicTimeline>> monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier) const { return { }; }
     virtual bool hasHighImpactMonotonicAnimations() const { return false; }
 #endif
 
@@ -209,6 +215,7 @@ public:
     
     void scrollingTreeNodeScrollbarVisibilityDidChange(WebCore::ScrollingNodeID, WebCore::ScrollbarOrientation, bool);
     void scrollingTreeNodeScrollbarMinimumThumbLengthDidChange(WebCore::ScrollingNodeID, WebCore::ScrollbarOrientation, int);
+    void requestFullScrollingTreeCommitForFrame(WebCore::FrameIdentifier);
     void receivedLastScrollingTreeNodeUpdateReply();
     bool NODELETE isMonitoringWheelEvents();
 

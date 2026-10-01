@@ -43,8 +43,6 @@ extern "C" int __asan_address_is_poisoned(void const volatile *addr);
 
 namespace WTF {
 
-inline void adopted(const void*) { }
-
 template<typename T> struct DefaultRefDerefTraits {
     static constexpr bool isDefaultImplementation = true;
 
@@ -353,7 +351,6 @@ struct IsSmartPtr<Ref<T, _PtrTraits, RefDerefTraits>> {
 template<typename T, typename _PtrTraits, typename RefDerefTraits>
 inline Ref<T, _PtrTraits, RefDerefTraits> adoptRef(T& reference)
 {
-    adopted(&reference);
     return Ref<T, _PtrTraits, RefDerefTraits>(reference, Ref<T, _PtrTraits, RefDerefTraits>::Adopt);
 }
 
@@ -402,7 +399,7 @@ inline Ref<match_constness_t<Source, Target>> downcast(Ref<Source, PtrTraits, Re
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
-    RELEASE_ASSERT(is<Target>(source));
+    RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(is<Target>(source));
     return unsafeRefDowncast<match_constness_t<Source, Target>>(WTF::move(source));
 }
 

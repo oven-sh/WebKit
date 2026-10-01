@@ -99,7 +99,7 @@ static WKMessageTestDriverFunc messageTestDriver(String&& driverName)
         driverName = String::fromUTF8(getenv("WEBKIT_MESSAGE_TEST_DEFAULT_DRIVER"));
     if (driverName.isEmpty() || driverName == "default"_s)
         return defaultTestDriver;
-    auto testDriver = reinterpret_cast<WKMessageTestDriverFunc>(dlsym(RTLD_DEFAULT, driverName.utf8().data()));
+    auto testDriver = reinterpret_cast<WKMessageTestDriverFunc>(dlsym(RTLD_DEFAULT, driverName.utf8().legacyCStringPointer()));
     RELEASE_ASSERT(testDriver);
     return testDriver;
 }
@@ -194,6 +194,23 @@ void IPCTester::sendAsyncMessageToReceiverRequestingReply(IPC::Connection& conne
     connection.sendWithAsyncReply(Messages::IPCTesterReceiver::AsyncMessage(arg0 + 1), [completionHandler = WTF::move(completionHandler)](uint32_t newArg0) mutable {
         completionHandler(newArg0, usingSwift);
     }, 0);
+}
+
+void IPCTester::sendDeferredReplyMessageToReceiver(IPC::Connection& connection, uint32_t arg0, CompletionHandler<void(uint64_t, bool)>&& completionHandler)
+{
+#if ENABLE(IPC_TESTING_SWIFT)
+    constexpr bool usingSwift = true;
+#else
+    constexpr bool usingSwift = false;
+#endif
+    connection.sendWithAsyncReply(Messages::IPCTesterReceiver::DeferredReplyMessage(arg0 + 1), [completionHandler = WTF::move(completionHandler)](uint64_t newArg0) mutable {
+        completionHandler(newArg0, usingSwift);
+    }, 0);
+}
+
+void IPCTester::completeDeferredReplyOnReceiver(IPC::Connection& connection, uint32_t arg0)
+{
+    connection.send(Messages::IPCTesterReceiver::CompleteDeferredReply(arg0), 0);
 }
 
 void IPCTester::createConnectionTester(IPC::Connection& connection, IPCConnectionTesterIdentifier identifier, IPC::Connection::Handle&& testedConnectionIdentifier)

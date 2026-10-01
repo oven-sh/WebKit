@@ -38,9 +38,9 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadSafeImageBufferFlusher);
 
-IntSize ImageBufferBackend::calculateSafeBackendSize(const Parameters& parameters)
+IntSize ImageBufferBackend::calculateSafeBackendSize(const ImageBufferParameters& parameters)
 {
-    IntSize backendSize = parameters.backendSize;
+    IntSize backendSize = parameters.backendSize();
     if (backendSize.isEmpty())
         return backendSize;
 
@@ -61,8 +61,12 @@ size_t ImageBufferBackend::calculateMemoryCost(const IntSize& backendSize, unsig
     return CheckedUint32(backendSize.height()) * bytesPerRow;
 }
 
-ImageBufferBackend::ImageBufferBackend(const Parameters& parameters)
-    : m_parameters(parameters)
+ImageBufferBackend::ImageBufferBackend(const ImageBufferParameters& parameters)
+    : m_backendSize(parameters.backendSize())
+    , m_resolutionScale(parameters.resolutionScale)
+    , m_colorSpace(parameters.colorSpace)
+    , m_bufferFormat(parameters.bufferFormat)
+    , m_purpose(parameters.purpose)
 {
 }
 
@@ -192,17 +196,29 @@ RefPtr<SharedBuffer> ImageBufferBackend::sinkIntoPDFDocument()
     return nullptr;
 }
 
-AffineTransform ImageBufferBackend::calculateBaseTransform(const Parameters& parameters)
+static AffineTransform baseTransformForBackingStore(const IntSize& backendSize, float resolutionScale)
 {
     AffineTransform baseTransform;
 #if USE(CG)
     // CoreGraphics origin is at bottom left corner. GraphicsContext origin is at top left corner. Flip the drawing with GraphicsContext base
     // transform.
     baseTransform.scale(1, -1);
-    baseTransform.translate(0, -parameters.backendSize.height());
+    baseTransform.translate(0, -backendSize.height());
+#else
+    UNUSED_PARAM(backendSize);
 #endif
-    baseTransform.scale(parameters.resolutionScale);
+    baseTransform.scale(resolutionScale);
     return baseTransform;
+}
+
+AffineTransform ImageBufferBackend::calculateBaseTransform(const ImageBufferParameters& parameters)
+{
+    return baseTransformForBackingStore(parameters.backendSize(), parameters.resolutionScale);
+}
+
+AffineTransform ImageBufferBackend::baseTransform() const
+{
+    return baseTransformForBackingStore(m_backendSize, m_resolutionScale);
 }
 
 TextStream& operator<<(TextStream& ts, VolatilityState state)

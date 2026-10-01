@@ -67,6 +67,7 @@
 #include "RenderTextFragment.h"
 #include "RenderTreeBuilderBlock.h"
 #include "RenderTreeBuilderBlockFlow.h"
+#include "RenderTreeBuilderCanvas.h"
 #include "RenderTreeBuilderFirstLetter.h"
 #include "RenderTreeBuilderFormControls.h"
 #include "RenderTreeBuilderInline.h"
@@ -182,6 +183,7 @@ RenderTreeBuilder::RenderTreeBuilder(RenderView& view)
     , m_blockFlowBuilder(makeUniqueRef<BlockFlow>(*this))
     , m_inlineBuilder(makeUniqueRef<Inline>(*this))
     , m_svgBuilder(makeUniqueRef<SVG>(*this))
+    , m_canvasBuilder(makeUniqueRef<Canvas>(*this))
 #if ENABLE(MATHML)
     , m_mathMLBuilder(makeUniqueRef<MathML>(*this))
 #endif
@@ -193,7 +195,27 @@ RenderTreeBuilder::RenderTreeBuilder(RenderView& view)
 
 RenderTreeBuilder::~RenderTreeBuilder()
 {
+    // Normally a no-op: RenderTreeUpdater::commit() has already done this. It is here for the tree changes that run
+    // with no render tree update in flight, tearing renderers down for a subtree that is leaving the composed tree
+    // (ContainerNode::destroyRenderTreeIfNeeded()), since those build a RenderTreeBuilder of their own.
+    // FIXME: Remove once those sites are driven by the render tree update, see RenderTreeBuilder::current().
+    updateListMarkerContents();
     s_current = m_previous;
+}
+
+void RenderTreeBuilder::addListItemNeedingMarkerUpdate(RenderListItem& listItem)
+{
+    m_listItemsNeedingMarkerUpdate.add(listItem);
+}
+
+void RenderTreeBuilder::updateListMarkerContents()
+{
+    // A marker's text is made of its list item's list-item counter value, which is only settled once the tree is done
+    // changing: inserting or removing a list item renumbers every item after it.
+    while (!m_listItemsNeedingMarkerUpdate.isEmptyIgnoringNullReferences()) {
+        for (auto& listItem : std::exchange(m_listItemsNeedingMarkerUpdate, { }))
+            listItem.updateMarkerContent();
+    }
 }
 
 bool RenderTreeBuilder::isRebuildRootForChildren(const RenderElement& renderer)
@@ -377,6 +399,11 @@ void RenderTreeBuilder::attachInternal(RenderElement& parent, RenderPtr<RenderOb
         return;
     }
 
+    if (auto* canvasRoot = dynamicDowncast<RenderHTMLCanvas>(parent)) {
+        canvasBuilder().attach(*canvasRoot, WTF::move(child), beforeChild);
+        return;
+    }
+
 #if ENABLE(MATHML)
     if (auto* mathMLFenced = dynamicDowncast<RenderMathMLFenced>(parent)) {
         mathMLBuilder().attach(*mathMLFenced, WTF::move(child), beforeChild);
@@ -427,6 +454,9 @@ RenderPtr<RenderObject> RenderTreeBuilder::detach(RenderElement& parent, RenderO
 
     if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(parent))
         return svgBuilder().detach(*svgRoot, child, willBeDestroyed);
+
+    if (auto* canvasRoot = dynamicDowncast<RenderHTMLCanvas>(parent))
+        return canvasBuilder().detach(*canvasRoot, child, willBeDestroyed);
 
     if (auto* block = dynamicDowncast<RenderBlock>(parent))
         return blockBuilder().detach(*block, child, willBeDestroyed, canCollapseAnonymousBlock);
@@ -485,8 +515,10 @@ void RenderTreeBuilder::attachToRenderElementInternal(RenderElement& parent, Ren
         newChild->initializeFragmentedFlowStateOnInsertion();
         if (CheckedPtr fragmentedFlow = dynamicDowncast<RenderMultiColumnFlow>(newChild->enclosingFragmentedFlow()))
             multiColumnBuilder().multiColumnDescendantInserted(*fragmentedFlow, *newChild);
-        if (CheckedPtr listItemRenderer = dynamicDowncast<RenderListItem>(*newChild))
-            listItemRenderer->updateListMarkerNumbers();
+        if (CheckedPtr listItemRenderer = dynamicDowncast<RenderListItem>(*newChild)) {
+            for (auto& listItem : listItemRenderer->updateListMarkerNumbers())
+                addListItemNeedingMarkerUpdate(listItem);
+        }
     }
 
     newChild->setNeedsLayoutAndInvalidateContentLogicalWidths();
@@ -540,7 +572,7 @@ void RenderTreeBuilder::move(RenderBoxModelObject& from, RenderBoxModelObject& t
     ASSERT(!beforeChild || &to == beforeChild->parent());
     if (normalizeAfterInsertion == NormalizeAfterInsertion::Yes && is<RenderBlock>(from) && child.isRenderBox())
         RenderBlock::removePercentHeightDescendant(downcast<RenderBox>(child));
-    if (normalizeAfterInsertion == NormalizeAfterInsertion::Yes && (to.isRenderBlock() || to.isRenderInline())) {
+    if (normalizeAfterInsertion == NormalizeAfterInsertion::Yes && (to.isRenderBlock() || to.isInlineBox())) {
         // Takes care of adding the new child correctly if toBlock and fromBlock
         // have different kind of children (block vs inline).
         auto childToMove = detachFromRenderElement(from, child, WillBeDestroyed::No);
@@ -562,7 +594,7 @@ void RenderTreeBuilder::move(RenderBoxModelObject& from, RenderBoxModelObject& t
     };
     // When moving a subtree out of a BFC we need to make sure that the line boxes generated for the inline tree are not accessible anymore from the renderers.
     // Let's find the BFC root and nuke the inline tree (At some point we are going to destroy the subtree instead of moving these renderers around.)
-    if (is<RenderInline>(child))
+    if (child.isInlineBox())
         findBFCRootAndDestroyInlineTree();
 }
 
@@ -1004,7 +1036,7 @@ RenderPtr<RenderObject> RenderTreeBuilder::detachFromRenderGrid(RenderGrid& pare
     return takenChild;
 }
 
-static void resetRendererStateOnDetach(RenderElement& parent, RenderObject& child, RenderTreeBuilder::WillBeDestroyed willBeDestroyed, RenderTreeBuilder::IsInternalMove isInternalMove)
+static void resetRendererStateOnDetach(RenderElement& parent, RenderObject& child, RenderTreeBuilder::WillBeDestroyed willBeDestroyed)
 {
     if (child.isFloatingOrOutOfFlowPositioned())
         downcast<RenderBox>(child).removeFloatingOrOutOfFlowChildFromBlockLists();
@@ -1020,8 +1052,6 @@ static void resetRendererStateOnDetach(RenderElement& parent, RenderObject& chil
     if (CheckedPtr textRenderer = dynamicDowncast<RenderSVGInlineText>(child))
         textRenderer->removeAndDestroyLegacyTextBoxes();
 
-    if (CheckedPtr listItemRenderer = dynamicDowncast<RenderListItem>(child); listItemRenderer && isInternalMove == RenderTreeBuilder::IsInternalMove::No)
-        listItemRenderer->updateListMarkerNumbers();
 }
 
 RenderPtr<RenderObject> RenderTreeBuilder::detachFromRenderElement(RenderElement& parent, RenderObject& child, WillBeDestroyed willBeDestroyed)
@@ -1039,9 +1069,14 @@ RenderPtr<RenderObject> RenderTreeBuilder::detachFromRenderElement(RenderElement
     }
 
     if (child.everHadLayout())
-        resetRendererStateOnDetach(parent, child, willBeDestroyed, m_internalMovesType);
+        resetRendererStateOnDetach(parent, child, willBeDestroyed);
 
-    if (m_tearDownType == RenderTreeBuilder::TearDownType::Root || is<RenderInline>(m_subtreeDestroyRoot)) {
+    if (CheckedPtr listItemRenderer = dynamicDowncast<RenderListItem>(child); listItemRenderer && child.everHadLayout() && m_internalMovesType == IsInternalMove::No) {
+        for (auto& listItem : listItemRenderer->updateListMarkerNumbers())
+            addListItemNeedingMarkerUpdate(listItem);
+    }
+
+    if (m_tearDownType == RenderTreeBuilder::TearDownType::Root || (m_subtreeDestroyRoot && m_subtreeDestroyRoot->isInlineBox())) {
         // In case of partial damage on the inline content (the block root is not going away), we need to initiate inline layout invalidation on leaf renderers too.
         invalidateLineLayout(child, IsRemoval::Yes);
     }

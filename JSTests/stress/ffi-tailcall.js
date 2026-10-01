@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 "use strict";
 // An FFI call in TAIL position (arrow expression body / `return sym(...)` in strict code) is a
 // bytecode TailCall. The parser emits it as a plain Call so it can become CallFFI; that must not

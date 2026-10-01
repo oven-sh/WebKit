@@ -76,6 +76,7 @@ public:
     std::optional<bool> overrideShouldReportZeroMaxTouchPoints;
 #endif
     std::optional<bool> overrideShouldReportViewportSizeAsScreenSize;
+    std::optional<bool> overrideShouldReportDesktopClassPointingDevice;
     std::optional<bool> globalPrivacyControlEnabled;
     WebsiteAutoplayPolicy autoplayPolicy { WebsiteAutoplayPolicy::Default };
     WebsitePopUpPolicy popUpPolicy { WebsitePopUpPolicy::Default };
@@ -95,7 +96,7 @@ public:
     bool idempotentModeAutosizingOnlyHonorsPercentages { false };
     bool allowPrivacyProxy { true };
     bool allowSiteSpecificQuirksToOverrideContentMode { false };
-    bool allowSharedProcess { true };
+    bool prefersIsolatedProcess { false };
     bool allowsJSHandleCreationInPageWorld { false };
     WebsitePushAndNotificationsEnabledPolicy pushAndNotificationsEnabledPolicy { WebsitePushAndNotificationsEnabledPolicy::UseGlobalPolicy };
     WebsiteInlineMediaPlaybackPolicy inlineMediaPlaybackPolicy { WebsiteInlineMediaPlaybackPolicy::Default };

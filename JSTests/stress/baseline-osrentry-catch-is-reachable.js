@@ -1,3 +1,4 @@
+//@ defaultRun; run("eager-catch-liveness", "--useLazyCatchLiveness=false")
 // Regression test for bug 185281. This should terminate without throwing.
 
 // These values are added to increase bytecode count.

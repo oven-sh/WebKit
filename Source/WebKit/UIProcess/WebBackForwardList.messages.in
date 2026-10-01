@@ -33,7 +33,7 @@ messages -> WebBackForwardList {
     BackForwardUpdateItem(Ref<WebKit::FrameState> frameState)
     BackForwardGoToItem(WebCore::BackForwardItemIdentifier itemID)
     BackForwardAllItems(WebCore::FrameIdentifier frameID) -> (Vector<Ref<WebKit::FrameState>> frameStates) Synchronous
-    BackForwardItemAtIndexForWebContent(int32_t itemIndex, WebCore::FrameIdentifier frameID) -> (RefPtr<WebKit::FrameState> frameState) Synchronous
+    BackForwardItemAtIndexForWebContent(int32_t delta, WebCore::FrameIdentifier frameID) -> (RefPtr<WebKit::FrameState> frameState) Synchronous
     BackForwardListContainsItem(WebCore::BackForwardItemIdentifier itemID) -> (bool contains) Synchronous
     BackForwardListCounts() -> (struct WebKit::WebBackForwardListCounts counts) Synchronous
 }

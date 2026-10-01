@@ -97,6 +97,14 @@ public:
             m_fp.append(tmp, std::forward<PassedValue>(value));
     }
 
+    void forEachValue(NOESCAPE const Invocable<void(Value&)> auto& func)
+    {
+        for (size_t i = 0; i < m_gp.size(); ++i)
+            func(m_gp[i]);
+        for (size_t i = 0; i < m_fp.size(); ++i)
+            func(m_fp[i]);
+    }
+
 private:
     IndexMap<Tmp::AbsolutelyIndexed<GP>, Value> m_gp;
     IndexMap<Tmp::AbsolutelyIndexed<FP>, Value> m_fp;

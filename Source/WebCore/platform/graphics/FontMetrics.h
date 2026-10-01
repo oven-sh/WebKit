@@ -17,8 +17,7 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#ifndef FontMetrics_h
-#define FontMetrics_h
+#pragma once
 
 #include <WebCore/FontBaseline.h>
 #include <wtf/Markable.h>
@@ -176,5 +175,3 @@ static inline float scaleEmToUnits(float x, unsigned unitsPerEm)
 }
 
 } // namespace WebCore
-
-#endif // FontMetrics_h

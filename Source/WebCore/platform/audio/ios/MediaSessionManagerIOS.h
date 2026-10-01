@@ -73,6 +73,8 @@ protected:
     void sessionDidCompleteAdmission(PlatformMediaSessionInterface&) override;
 
 private:
+    void applyActiveVideoRouteToSession(PlatformMediaSessionInterface&);
+    void activeNowPlayingSessionChanged(PlatformMediaSessionInterface*) final;
     void configureWirelessTargetMonitoring() final;
 #if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
     void ensureMediaDeviceRouteControllerMonitoring() final;

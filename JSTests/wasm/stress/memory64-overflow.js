@@ -1,4 +1,6 @@
 //@ skip if $addressBits <= 32
+// Bun: over the 300 second hard timeout under ASan in the wasm-collect-continuously mode.
+//@ slow!
 
 let assert;
 import('../assert.js').then((m) => { assert = m; }, $vm.crash);

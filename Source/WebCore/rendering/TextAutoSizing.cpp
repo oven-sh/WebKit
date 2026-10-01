@@ -27,15 +27,13 @@
 #include "config.h"
 #include "TextAutoSizing.h"
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 #include "CSSFontSelector.h"
 #include "Document.h"
 #include "FontCascade.h"
 #include "Logging.h"
 #include "RenderBlock.h"
 #include "RenderElementInlines.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderText.h"
 #include "RenderTextFragment.h"
@@ -109,7 +107,7 @@ static unsigned computeFontHash(const FontCascade& font)
     // FIXME: Would be better to hash the family name rather than hashing a hash of the family name. Also, should this use FontCascadeDescription::familyNameHash?
     return computeHash(
         ASCIICaseInsensitiveHash::hash(font.fontDescription().firstFamily().name),
-        font.fontDescription().specifiedSize()
+        font.fontDescription().computedSize()
     );
 }
 
@@ -122,7 +120,7 @@ unsigned TextAutoSizingHashTranslator::hash(const Style::ComputedStyle& style)
     hash ^= std::to_underlying(style.nbspMode());
     hash ^= std::to_underlying(style.lineBreak());
     hash ^= std::to_underlying(style.textSecurity());
-    hash ^= style.specifiedLineHeight().valueForHash();
+    hash ^= style.lineHeight().valueForHash();
     hash ^= computeFontHash(style.fontCascade());
     hash ^= WTF::FloatHash<float>::hash(style.borderHorizontalSpacing().unresolvedValue());
     hash ^= WTF::FloatHash<float>::hash(style.borderVerticalSpacing().unresolvedValue());
@@ -130,7 +128,11 @@ unsigned TextAutoSizingHashTranslator::hash(const Style::ComputedStyle& style)
     hash ^= std::to_underlying(style.rtlOrdering());
     hash ^= std::to_underlying(style.position());
     hash ^= std::to_underlying(style.floating());
-    hash ^= std::to_underlying(style.textOverflow());
+    hash ^= style.textOverflow().switchOn(
+        [](const CSS::Keyword::Clip&) -> unsigned { return computeHash(0); },
+        [](const CSS::Keyword::Ellipsis&) -> unsigned { return computeHash(1); },
+        [](const Style::String& string) -> unsigned { return computeHash(2, string.value); }
+    );
     return hash;
 }
 
@@ -148,7 +150,7 @@ bool TextAutoSizingHashTranslator::equal(const Style::ComputedStyle& styleA, con
         && styleA.nbspMode() == styleB.nbspMode()
         && styleA.lineBreak() == styleB.lineBreak()
         && styleA.textSecurity() == styleB.textSecurity()
-        && styleA.specifiedLineHeight() == styleB.specifiedLineHeight()
+        && styleA.lineHeight() == styleB.lineHeight()
         && styleA.fontCascade().equalForTextAutoSizing(styleB.fontCascade())
         && styleA.borderHorizontalSpacing() == styleB.borderHorizontalSpacing()
         && styleA.borderVerticalSpacing() == styleB.borderVerticalSpacing()
@@ -216,16 +218,16 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
     bool firstPass = true;
     for (auto& node : m_autoSizedNodes) {
         auto& renderer = *node->renderer();
-        if (renderer.style().fontDescription().computedSize() == averageSize)
+        if (renderer.style().fontDescription().usedSize() == averageSize)
             continue;
 
-        float specifiedSize = renderer.style().fontDescription().specifiedSize();
+        float computedSize = renderer.style().fontDescription().computedSize();
         float maxScaleIncrease = renderer.settings().maxTextAutosizingScaleIncrease();
-        float scaleChange = averageSize / specifiedSize;
+        float scaleChange = averageSize / computedSize;
         if (scaleChange > maxScaleIncrease && firstPass) {
             firstPass = false;
-            averageSize = std::round(specifiedSize * maxScaleIncrease);
-            scaleChange = averageSize / specifiedSize;
+            averageSize = std::round(computedSize * maxScaleIncrease);
+            scaleChange = averageSize / computedSize;
         }
 
         LOG(TextAutosizing, "  adjust node size %p firstPass=%d averageSize=%f scaleChange=%f", node.ptr(), firstPass, averageSize, scaleChange);
@@ -234,7 +236,7 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
 
         auto style = cloneRenderStyleWithState(renderer.style());
         auto fontDescription = style.fontDescription();
-        fontDescription.setComputedSize(averageSize);
+        fontDescription.setUsedSize(averageSize);
         style.setFontDescription(FontCascadeDescription { fontDescription });
         parentRenderer->setStyle(WTF::move(style));
 
@@ -242,7 +244,7 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
             parentRenderer = parentRenderer->parent();
 
         // If we have a list we should resize ListMarkers separately.
-        if (auto* listMarkerRenderer = dynamicDowncast<RenderListMarker>(*parentRenderer->firstChild())) {
+        if (auto* listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(*parentRenderer->firstChild())) {
             auto style = cloneRenderStyleWithState(listMarkerRenderer->style());
             style.setFontDescription(FontCascadeDescription { fontDescription });
             listMarkerRenderer->setStyle(WTF::move(style));
@@ -250,9 +252,9 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
 
         // Resize the line height of the parent.
         auto& parentStyle = parentRenderer->style();
-        auto& lineHeightLength = parentStyle.specifiedLineHeight();
+        auto& parentLineHeight = parentStyle.lineHeight();
 
-        int specifiedLineHeight = WTF::switchOn(lineHeightLength,
+        int parentEvaluatedLineHeight = WTF::switchOn(parentLineHeight,
             [&](const CSS::Keyword::Normal&) {
                 return 0;
             },
@@ -260,18 +262,21 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
                 return Style::evaluate<LayoutUnit>(length, Style::ZoomFactor::none()).toInt();
             },
             [&](const Style::LineHeight::Number& number) {
-                return LayoutUnit { number.value * LayoutUnit { fontDescription.specifiedSize() } }.toInt();
+                return LayoutUnit { number.value * LayoutUnit { fontDescription.computedSize() } }.toInt();
             }
         );
+        parentEvaluatedLineHeight *= scaleChange;
 
-        // This calculation matches the line-height computed size calculation in StyleBuilderCustom::applyValueLineHeight().
-        int lineHeight = specifiedLineHeight * scaleChange;
-        if (auto fixedLineHeight = lineHeightLength.tryLength(); fixedLineHeight && fixedLineHeight->resolveZoom(Style::ZoomFactor::none()) == lineHeight)
+        // This calculation matches the line-height computed size calculation in Style::BuilderCustom::applyValueLineHeight().
+        if (auto fixedLineHeight = parentLineHeight.tryLength(); fixedLineHeight && fixedLineHeight->resolveZoom(Style::ZoomFactor::none()) == parentEvaluatedLineHeight)
             continue;
 
         auto newParentStyle = cloneRenderStyleWithState(parentStyle);
-        newParentStyle.setLineHeight(lineHeightLength.isNormal() ? Style::LineHeight { lineHeightLength } : Style::LineHeight { Style::LineHeight::Length { static_cast<float>(lineHeight) } });
-        newParentStyle.setSpecifiedLineHeight(Style::LineHeight { lineHeightLength });
+        newParentStyle.setTextAutosizingAdjustedLineHeight(parentLineHeight.isNormal()
+            ? Style::LineHeight { parentLineHeight }
+            : Style::LineHeight { Style::LineHeight::Length { static_cast<float>(parentEvaluatedLineHeight) } }
+        );
+        newParentStyle.setLineHeight(Style::LineHeight { parentLineHeight });
         newParentStyle.setFontDescription(WTF::move(fontDescription));
         parentRenderer->setStyle(WTF::move(newParentStyle));
 
@@ -293,7 +298,7 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
             if (!firstLetterStyle)
                 continue;
             auto fontDescription = firstLetterStyle->fontDescription();
-            fontDescription.setComputedSize(averageSize * fontDescription.specifiedSize() / parentStyle.fontDescription().specifiedSize());
+            fontDescription.setUsedSize(averageSize * fontDescription.computedSize() / parentStyle.fontDescription().computedSize());
             firstLetterStyle->setFontDescription(FontCascadeDescription { fontDescription });
         }
 
@@ -321,9 +326,9 @@ void TextAutoSizingValue::reset()
 
         // Reset the font size back to the original specified size
         auto fontDescription = renderer->style().fontDescription();
-        float originalSize = fontDescription.specifiedSize();
-        if (fontDescription.computedSize() != originalSize) {
-            fontDescription.setComputedSize(originalSize);
+        float originalSize = fontDescription.computedSize();
+        if (fontDescription.usedSize() != originalSize) {
+            fontDescription.setUsedSize(originalSize);
             auto style = cloneRenderStyleWithState(renderer->style());
             style.setFontDescription(FontCascadeDescription { fontDescription });
             parentRenderer->setStyle(WTF::move(style));
@@ -334,12 +339,12 @@ void TextAutoSizingValue::reset()
             parentRenderer = parentRenderer->parent();
 
         auto& parentStyle = parentRenderer->style();
-        auto& originalLineHeight = parentStyle.specifiedLineHeight();
-        if (originalLineHeight == parentStyle.lineHeight())
+        auto& originalLineHeight = parentStyle.lineHeight();
+        if (originalLineHeight == parentStyle.textAutosizingAdjustedLineHeight())
             continue;
 
         auto newParentStyle = cloneRenderStyleWithState(parentStyle);
-        newParentStyle.setLineHeight(Style::LineHeight { originalLineHeight });
+        newParentStyle.setTextAutosizingAdjustedLineHeight(Style::LineHeight { originalLineHeight });
         newParentStyle.setFontDescription(WTF::move(fontDescription));
         parentRenderer->setStyle(WTF::move(newParentStyle));
     }
@@ -372,5 +377,3 @@ void TextAutoSizing::reset()
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(TEXT_AUTOSIZING)

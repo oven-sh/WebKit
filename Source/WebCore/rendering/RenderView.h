@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <WebCore/DocumentEnums.h>
 #include <WebCore/Region.h>
 #include <WebCore/RenderBlockFlow.h>
 #include <WebCore/RenderSelection.h>
@@ -33,6 +34,7 @@ namespace WebCore {
 
 class LocalFrameView;
 class ImageQualityController;
+class RenderImage;
 class RenderLayerCompositor;
 class RenderLayoutState;
 class RenderCounter;
@@ -86,7 +88,6 @@ public:
     bool needsEventRegionUpdateForNonCompositedFrame() const { return m_needsEventRegionUpdateForNonCompositedFrame; }
     void setNeedsEventRegionUpdateForNonCompositedFrame(bool value = true) { m_needsEventRegionUpdateForNonCompositedFrame = value; }
 
-#if ENABLE(TEXT_AUTOSIZING)
     enum class TextAutosizingState : uint8_t {
         Normal,
         ResetScheduled,
@@ -94,7 +95,6 @@ public:
     };
     TextAutosizingState textAutosizingState() const { return m_textAutosizingState; }
     void setTextAutosizingState(TextAutosizingState state) { m_textAutosizingState = state; }
-#endif
 
     std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState) const override;
     void repaintRootContents();
@@ -102,9 +102,16 @@ public:
     void repaintViewAndCompositedLayers();
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-    // Some color-filter decisions depend on how boxes actually end up positioned relative to the content
-    // behind them, which is only known once layout has run.
     void adjustAXCustomColorModeAfterLayout();
+#endif
+
+#if ENABLE(SMART_IMAGE_RESIZER)
+    DidInvalidateStyle updateForSmartImageResizer();
+    void setSmartImageResizerNeedsUpdate();
+
+    void registerImageForSmartImageResizer(RenderImage&);
+    void unregisterImageForSmartImageResizer(RenderImage&);
+    void rebuildImagesForSmartImageResizer();
 #endif
 
     void paint(PaintInfo&, const LayoutPoint&) override;
@@ -116,7 +123,7 @@ public:
 
     bool printing() const;
 
-    void boundingRects(Vector<LayoutRect>&, const LayoutPoint& accumulatedOffset) const override;
+    Vector<FloatRect> localBorderBoxRects() const final;
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const override;
 
     LayoutRect viewRect() const;
@@ -173,19 +180,22 @@ public:
     FloatSize sizeForCSSDefaultViewportUnits() const;
 
     bool hasQuotesNeedingUpdate() const { return m_hasQuotesNeedingUpdate; }
-    void setHasQuotesNeedingUpdate(bool b) { m_hasQuotesNeedingUpdate = b; }
+    void setHasQuotesNeedingUpdate(bool hasQuotesNeedingUpdate) { m_hasQuotesNeedingUpdate = hasQuotesNeedingUpdate; }
 
     void addCounterNeedingUpdate(RenderCounter&);
     SingleThreadWeakHashSet<RenderCounter> takeCountersNeedingUpdate();
 
+    bool hasCounterTreeNeedingUpdate() const { return m_hasCounterTreeNeedingUpdate; }
+    void setHasCounterTreeNeedingUpdate(bool hasCounterTreeNeedingUpdate) { m_hasCounterTreeNeedingUpdate = hasCounterTreeNeedingUpdate; }
+
     void incrementRendersWithOutline() { ++m_renderersWithOutlineCount; }
     void decrementRendersWithOutline() { ASSERT(m_renderersWithOutlineCount > 0); --m_renderersWithOutlineCount; }
     bool hasRenderersWithOutline() const { return m_renderersWithOutlineCount; }
+    void incrementRenderersWithPixelMovingFilter() { ++m_renderersWithPixelMovingFilterCount; }
+    void decrementRenderersWithPixelMovingFilter() { ASSERT(m_renderersWithPixelMovingFilterCount > 0); --m_renderersWithPixelMovingFilterCount; }
+    bool hasRenderersWithPixelMovingFilter() const { return m_renderersWithPixelMovingFilterCount; }
 
     ImageQualityController& imageQualityController() LIFETIME_BOUND;
-
-    void setHasSoftwareFilters(bool hasSoftwareFilters) { m_hasSoftwareFilters = hasSoftwareFilters; }
-    bool hasSoftwareFilters() const { return m_hasSoftwareFilters; }
 
     uint64_t rendererCount() const { return m_rendererCount; }
     void didCreateRenderer() { ++m_rendererCount; }
@@ -221,6 +231,10 @@ public:
     void registerContainerQueryBox(const RenderBox&);
     void unregisterContainerQueryBox(const RenderBox&);
     const SingleThreadWeakHashSet<const RenderBox>& containerQueryBoxes() const LIFETIME_BOUND { return m_containerQueryBoxes; }
+
+    void registerScrollStateQueryBox(const RenderBox&);
+    void unregisterScrollStateQueryBox(const RenderBox&);
+    const SingleThreadWeakHashSet<const RenderBox>& scrollStateQueryBoxes() const LIFETIME_BOUND { return m_scrollStateQueryBoxes; }
 
     void registerAnchor(const RenderBoxModelObject&);
     void unregisterAnchor(const RenderBoxModelObject&);
@@ -297,14 +311,13 @@ private:
     bool m_hasQuotesNeedingUpdate { false };
 
     SingleThreadWeakHashSet<RenderCounter> m_countersNeedingUpdate;
+    bool m_hasCounterTreeNeedingUpdate { false };
     unsigned m_renderersWithOutlineCount { 0 };
-
-    bool m_hasSoftwareFilters { false };
+    unsigned m_renderersWithPixelMovingFilterCount { 0 };
     bool m_needsRepaintHackAfterCompositingLayerUpdateForDebugOverlaysOnly { false };
     bool m_needsEventRegionUpdateForNonCompositedFrame { false };
-#if ENABLE(TEXT_AUTOSIZING)
+
     TextAutosizingState m_textAutosizingState { TextAutosizingState::Normal };
-#endif
 
     SingleThreadWeakHashMap<RenderElement, Vector<WeakPtr<CachedImage>>> m_renderersWithPausedImageAnimation;
     WeakHashSet<SVGSVGElement, WeakPtrImplWithEventTargetData> m_SVGSVGElementsWithPausedImageAnimation;
@@ -312,6 +325,7 @@ private:
 
     SingleThreadWeakHashSet<const RenderBox> m_boxesWithScrollSnapPositions;
     SingleThreadWeakHashSet<const RenderBox> m_containerQueryBoxes;
+    SingleThreadWeakHashSet<const RenderBox> m_scrollStateQueryBoxes;
     SingleThreadWeakHashSet<const RenderBoxModelObject> m_anchors;
     SingleThreadWeakHashSet<const RenderBox> m_positionTryBoxes;
 

@@ -49,8 +49,6 @@ void handleExitCounts(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
         return;
     }
 
-    jit.add32(AssemblyHelpers::TrustedImm32(1), AssemblyHelpers::AbsoluteAddress(&exit.m_count));
-    
     jit.move(AssemblyHelpers::TrustedImmPtr(jit.codeBlock()), GPRInfo::regT3);
     
     CCallHelpers::Jump tooFewFails;
@@ -108,7 +106,7 @@ void handleExitCounts(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
     
     reoptimizeNow.link(&jit);
     
-    jit.setupArguments<decltype(operationTriggerReoptimizationNow)>(GPRInfo::regT0, GPRInfo::regT3, AssemblyHelpers::TrustedImmPtr(&exit));
+    jit.setupArguments<decltype(operationTriggerReoptimizationNow)>(GPRInfo::regT0, GPRInfo::regT3, AssemblyHelpers::TrustedImmPtr(exit.m_codeOrigin.inlineCallFrame()));
     jit.prepareCallOperation(vm);
     jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationTriggerReoptimizationNow)), GPRInfo::nonArgGPR0);
     jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
@@ -262,9 +260,8 @@ static CodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCall
         case InlineCallFrame::ProxyObjectLoadCall:
         case InlineCallFrame::ProxyObjectStoreCall:
         case InlineCallFrame::ProxyObjectInCall: {
-            PropertyInlineCache* propertyCache = baselineCodeBlockForCaller->findPropertyCache(CodeOrigin(callBytecodeIndex));
-            RELEASE_ASSERT(propertyCache, callInstruction.opcodeID());
-            jumpTarget = propertyCache->doneLocation.retagged<JSEntryPtrTag>();
+            jumpTarget = static_cast<const BaselineJITCode*>(baselineCodeBlockForCaller->jitCode().get())->getPropertyInlineCacheDoneLocationForBytecodeIndex(callBytecodeIndex).retagged<JSEntryPtrTag>();
+            RELEASE_ASSERT(jumpTarget, callInstruction.opcodeID());
             break;
         }
 
@@ -404,7 +401,7 @@ void reifyInlinedCallFrames(CCallHelpers& jit, const OSRExitBase& exit)
         uint32_t locationBits = CallSiteIndex(exitIndex).bits();
         jit.store32(AssemblyHelpers::TrustedImm32(locationBits), AssemblyHelpers::highWordFor(VirtualRegister(inlineCallFrame->stackOffset + CallFrameSlot::argumentCountIncludingThis)));
         if (!inlineCallFrame->isClosureCall)
-            jit.storeCell(AssemblyHelpers::TrustedImmPtr(inlineCallFrame->calleeConstant()), AssemblyHelpers::addressFor(VirtualRegister(inlineCallFrame->stackOffset + CallFrameSlot::callee)));
+            jit.storeTrustedValue(JSValue(inlineCallFrame->calleeConstant()), AssemblyHelpers::addressFor(VirtualRegister(inlineCallFrame->stackOffset + CallFrameSlot::callee)));
     }
 
     // Don't need to set the toplevel code origin if we only did inline tail calls

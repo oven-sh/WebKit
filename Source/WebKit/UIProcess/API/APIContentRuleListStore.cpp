@@ -26,6 +26,8 @@
 #include "config.h"
 #include "APIContentRuleListStore.h"
 
+#include <wtf/text/TextStream.h>
+
 #if ENABLE(CONTENT_EXTENSIONS)
 
 #include "APIContentRuleList.h"
@@ -273,7 +275,7 @@ static bool validateContentRuleListActionsMatchingEverything(const WTF::String& 
     auto universalActions = copyToVector(interpreter.actionsMatchingEverything());
     for (uint64_t universalActionLocation : universalActions) {
         if (universalActionLocation >= metaData.actionsSize) {
-            LOG(ContentRuleLists, "Universal action has location outside range of serialized actions. The compiled extension may be corrupted: %s", path.utf8().data());
+            LOG_WITH_STREAM(ContentRuleLists, stream << "Universal action has location outside range of serialized actions. The compiled extension may be corrupted: "_s << path);
             return false;
         }
     }
@@ -308,7 +310,7 @@ static bool writeDataToFile(const WebKit::NetworkCache::Data& fileData, FileHand
     return success;
 }
 
-static Expected<MappedData, std::error_code> compiledToFile(WTF::String&& json, Vector<WebCore::ContentExtensions::ContentExtensionRule>&& parsedRules, const WTF::String& finalFilePath)
+static std::expected<MappedData, std::error_code> compiledToFile(WTF::String&& json, Vector<WebCore::ContentExtensions::ContentExtensionRule>&& parsedRules, const WTF::String& finalFilePath)
 {
     using namespace WebCore::ContentExtensions;
 
@@ -628,7 +630,7 @@ void ContentRuleListStore::compileContentRuleListFile(WTF::String&& filePath, WT
     WebCore::initializeCommonAtomStrings();
     WebCore::QualifiedName::init();
 
-    Expected<Vector<WebCore::ContentExtensions::ContentExtensionRule>, std::error_code> parsedRules;
+    std::expected<Vector<WebCore::ContentExtensions::ContentExtensionRule>, std::error_code> parsedRules;
     if (cssSelectorsAllowed == WebCore::ContentExtensions::CSSSelectorsAllowed::Yes) {
         parsedRules = WebCore::ContentExtensions::parseRuleList(json, cssSelectorsAllowed);
         if (!parsedRules.has_value())

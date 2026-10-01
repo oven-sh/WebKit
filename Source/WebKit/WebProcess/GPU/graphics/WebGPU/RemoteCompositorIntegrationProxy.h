@@ -84,16 +84,16 @@ private:
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
-        return protect(root().streamClientConnection())->send(WTF::move(message), backing());
+        return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
     template<typename T>
     [[nodiscard]] IPC::Connection::SendSyncResult<T> sendSync(T&& message)
     {
-        return protect(root().streamClientConnection())->sendSync(WTF::move(message), backing());
+        return protect(root().streamClientConnection())->sendSync(std::forward<T>(message), backing());
     }
 
 #if PLATFORM(COCOA)
-    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, unsigned bufferCount, WebCore::WebGPU::Device&) override;
+    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::ColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, unsigned bufferCount, WebCore::WebGPU::Device&) override;
 #endif
 
     void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&&) override;

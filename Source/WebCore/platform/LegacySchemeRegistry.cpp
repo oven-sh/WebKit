@@ -141,9 +141,6 @@ static std::span<const ASCIILiteral> builtinSecureSchemes()
         "about"_s,
         "data"_s,
         "wss"_s,
-#if ENABLE(SWIFT_DEMO_URI_SCHEME)
-        "x-swift-demo"_s,
-#endif
 #if PLATFORM(GTK) || PLATFORM(WPE)
         "resource"_s,
 #endif
@@ -266,6 +263,13 @@ bool LegacySchemeRegistry::schemeIsHandledBySchemeHandler(StringView scheme)
 {
     Locker locker { schemeRegistryLock };
     return schemesHandledBySchemeHandler().contains<StringViewHashTranslator>(scheme);
+}
+
+bool LegacySchemeRegistry::isBuiltInWebKitHandledScheme(StringView scheme)
+{
+    // These schemes are exempt from the generic cross-origin no-cors block applied to
+    // WKURLSchemeHandler supported schemes.
+    return scheme == "webkit-extension"_s;
 }
 
 static URLSchemesMap& NODELETE schemesAllowingDatabaseAccessInPrivateBrowsing()
@@ -475,15 +479,16 @@ bool LegacySchemeRegistry::allowsDatabaseAccessInPrivateBrowsing(const String& s
     return !scheme.isNull() && schemesAllowingDatabaseAccessInPrivateBrowsing().contains(scheme);
 }
 
-void LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(const String& scheme)
+LegacySchemeRegistry::SchemeRegisteredForTheFirstTime LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(const String& scheme)
 {
     if (scheme == "about"_s)
-        return;
+        return SchemeRegisteredForTheFirstTime::No;
 
     ASSERT(!isInNetworkProcess());
     if (scheme.isNull())
-        return;
-    CORSEnabledSchemes().add(scheme);
+        return SchemeRegisteredForTheFirstTime::No;
+
+    return CORSEnabledSchemes().add(scheme).isNewEntry ? SchemeRegisteredForTheFirstTime::Yes : SchemeRegisteredForTheFirstTime::No;
 }
 
 bool LegacySchemeRegistry::shouldTreatURLSchemeAsCORSEnabled(StringView scheme)

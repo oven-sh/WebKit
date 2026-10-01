@@ -27,7 +27,6 @@
 
 #include "HeapInlines.h"
 #include "WeakGCSet.h"
-#include "WeakInlines.h"
 
 namespace JSC {
 
@@ -45,10 +44,12 @@ inline WeakGCSet<ValueArg, HashArg, TraitsArg>::~WeakGCSet()
 }
 
 template<typename ValueArg, typename HashArg, typename TraitsArg>
-NEVER_INLINE void WeakGCSet<ValueArg, HashArg, TraitsArg>::pruneStaleEntries()
+NEVER_INLINE void WeakGCSet<ValueArg, HashArg, TraitsArg>::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
-    m_set.removeIf([](auto& entry) {
-        return !entry;
+    // A set entry is its own key, so unlike WeakGCMap there is no value to null out and leave for
+    // the next full collection: both scopes remove.
+    m_set.removeIf([&](ValueArg* value) {
+        return !vm.heap.isMarked(value);
     });
 }
 

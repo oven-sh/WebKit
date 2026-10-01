@@ -11,6 +11,7 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_VK_CACHE_UTILS_H_
 #define LIBANGLE_RENDERER_VULKAN_VK_CACHE_UTILS_H_
 
+#include <array>
 #include <deque>
 #include "common/unsafe_buffers.h"
 
@@ -208,6 +209,7 @@ class alignas(4) RenderPassDesc final
     // Indicate that a color attachment should take its data from the resolve attachment initially.
     void packColorUnresolveAttachment(size_t colorIndexGL);
     void removeColorUnresolveAttachment(size_t colorIndexGL);
+    void resetColorUnresolveAttachments();
     // Indicate that a depth/stencil attachment should have a corresponding resolve attachment.
     void packDepthResolveAttachment();
     void packStencilResolveAttachment();
@@ -292,6 +294,12 @@ class alignas(4) RenderPassDesc final
     void updateRenderToTexture(bool isRenderToTexture) { mIsRenderToTexture = isRenderToTexture; }
     bool isRenderToTexture() const { return mIsRenderToTexture; }
 
+    void setDynamicMSRTTUnresolve(bool isDynamicMSRTTUnresolve)
+    {
+        mIsDynamicMSRTTUnresolve = isDynamicMSRTTUnresolve;
+    }
+    bool isDynamicMSRTTUnresolve() const { return mIsDynamicMSRTTUnresolve; }
+
     void setFragmentShadingAttachment(bool value) { mHasFragmentShadingAttachment = value; }
     bool hasFragmentShadingAttachment() const { return mHasFragmentShadingAttachment; }
 
@@ -355,6 +363,7 @@ class alignas(4) RenderPassDesc final
     uint8_t mIsRenderToTexture : 1;
     uint8_t mUnresolveDepth : 1;
     uint8_t mUnresolveStencil : 1;
+    uint8_t mIsDynamicMSRTTUnresolve : 1;
 
     // Dithering state when using VK_EXT_legacy_dithering
     uint8_t mLegacyDitherEnabled : 1;
@@ -366,7 +375,7 @@ class alignas(4) RenderPassDesc final
     uint8_t mHasFragmentShadingAttachment : 1;
 
     // Available space for expansion.
-    uint8_t mPadding2 : 5;
+    uint8_t mPadding2 : 4;
 
     // Whether each color attachment has a corresponding resolve attachment.  Color resolve
     // attachments can be used to optimize resolve through glBlitFramebuffer() as well as support
@@ -510,7 +519,7 @@ static_assert(kPackedAttribDescSize == 4, "Size mismatch");
 
 struct PackedVertexInputAttributes final
 {
-    PackedAttribDesc attribs[gl::MAX_VERTEX_ATTRIBS];
+    std::array<PackedAttribDesc, gl::MAX_VERTEX_ATTRIBS> attribs;
 
     // Component type of the corresponding input in the program.  Used to adjust the format if
     // necessary.  Takes values from gl::ComponentType.
@@ -520,7 +529,7 @@ struct PackedVertexInputAttributes final
     // greater than MAX_USHORT should not be that helpful. Note that stride limits are
     // introduced in ES 3.1.
     // Dynamic in VK_EXT_extended_dynamic_state
-    uint16_t strides[gl::MAX_VERTEX_ATTRIBS];
+    std::array<uint16_t, gl::MAX_VERTEX_ATTRIBS> strides;
 };
 
 constexpr size_t kPackedVertexInputAttributesSize = sizeof(PackedVertexInputAttributes);
@@ -663,7 +672,7 @@ static_assert(kPackedColorBlendAttachmentStateSize == 4, "Size check failed");
 
 struct PackedColorBlendState final
 {
-    uint8_t colorWriteMaskBits[gl::IMPLEMENTATION_MAX_DRAW_BUFFERS / 2];
+    std::array<uint8_t, gl::IMPLEMENTATION_MAX_DRAW_BUFFERS / 2> colorWriteMaskBits;
     PackedColorBlendAttachmentState attachments[gl::IMPLEMENTATION_MAX_DRAW_BUFFERS];
 };
 

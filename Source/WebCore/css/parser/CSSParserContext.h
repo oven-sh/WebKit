@@ -63,8 +63,10 @@ struct CSSParserContext {
 #endif
     bool gridLanesEnabled : 1 { false };
     bool cssAppearanceBaseEnabled : 1 { false };
+    bool cssClassPrefixSelectorEnabled : 1 { false };
     bool cssPaintingAPIEnabled : 1 { false };
     bool cssTextDecorationLineErrorValues : 1 { false };
+    bool cssFlexWrapBalanceEnabled : 1 { false };
     bool cssWordBreakAutoPhraseEnabled : 1 { false };
     bool popoverAttributeEnabled : 1 { false };
     bool cssTextWrapPrettyEnabled : 1 { true };
@@ -79,8 +81,10 @@ struct CSSParserContext {
     bool cssRandomItemFunctionEnabled : 1 { false };
     bool cssRubyDisplayTypesEnabled : 1 { false };
     bool cssTreeCountingFunctionsEnabled : 1 { false };
+    bool cssCalcSizeFunctionEnabled : 1 { false };
     bool cssURLModifiersEnabled : 1 { false };
     bool cssURLIntegrityModifierEnabled : 1 { false };
+    bool cssLinkParametersEnabled : 1 { false };
     bool cssAxisRelativePositionKeywordsEnabled : 1 { false };
     bool cssDynamicRangeLimitMixEnabled : 1 { false };
     bool cssConstrainedDynamicRangeLimitEnabled : 1 { false };
@@ -96,6 +100,8 @@ struct CSSParserContext {
     bool cssIdentFunctionEnabled : 1 { false };
     bool cssIfFunctionEnabled : 1 { false };
     bool cssInheritFunctionEnabled : 1 { false };
+    bool cssFontPaletteMixFunctionEnabled : 1 { false };
+    bool cssSymbolsFunctionEnabled : 1 { false };
 
     // Enabled only for the legacy <font face> attribute: allows a numeric token within a family
     // name (e.g. "Bodoni 72"). Regular CSS font-family parsing stays strict.

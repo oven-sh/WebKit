@@ -174,6 +174,8 @@ private:
 
     HTMLStackItem& NODELETE adjustedCurrentStackItem() LIFETIME_BOUND;
 
+    ALWAYS_INLINE void updateTokenizerForAdjustedCurrentNode();
+
     void callTheAdoptionAgency(AtomHTMLToken&);
 
     void closeTheCell();
@@ -198,6 +200,7 @@ private:
         DocumentFragment* fragment() const;
         Element& NODELETE contextElement();
         HTMLStackItem& NODELETE contextElementStackItem() LIFETIME_BOUND;
+        bool contextElementIsTemplate() const;
 
     private:
         WeakPtr<DocumentFragment, WeakPtrImplWithEventTargetData> m_fragment;

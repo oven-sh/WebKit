@@ -34,6 +34,10 @@
 #if USE(BUN_JSC_ADDITIONS)
 #include "SyntheticModuleRecord.h"
 #endif
+#if ENABLE(WEBASSEMBLY)
+#include "JSWebAssemblyGlobal.h"
+#include "WebAssemblyModuleRecord.h"
+#endif
 
 namespace JSC {
 
@@ -191,6 +195,8 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
         JSModuleEnvironment* environment = exportEntry.moduleRecord->moduleEnvironment();
         ScopeOffset scopeOffset;
         JSValue value = getValue(environment, exportEntry.localName, scopeOffset);
+        if (!value) [[unlikely]]
+            value = environment->readVariable(vm, scopeOffset);
 #if USE(BUN_JSC_ADDITIONS)
         if (!value) [[unlikely]] {
             // Same idea as the *namespace* case above: a lazy export of a SyntheticModuleRecord is materialized on
@@ -206,6 +212,17 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             throwVMError(globalObject, scope, createTDZError(globalObject, *uid));
             return false;
         }
+
+#if ENABLE(WEBASSEMBLY)
+        if (is<WebAssemblyModuleRecord>(exportEntry.moduleRecord.get())) {
+            if (auto* wasmGlobal = dynamicDowncast<JSWebAssemblyGlobal>(value); wasmGlobal && wasmGlobal->global()->mutability() == Wasm::Mutability::Mutable) {
+                value = wasmGlobal->global()->get(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+                slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+                return true;
+            }
+        }
+#endif
 
         slot.setValueModuleNamespace(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value, environment, scopeOffset);
         return true;

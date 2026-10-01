@@ -33,11 +33,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-CString reduceWhitespace(const CString& input)
+UTF8CString reduceWhitespace(const UTF8CString& input)
 {
     StringPrintStream out;
     
-    const char* data = input.data();
+    const char* data = input.legacyCStringPointer();
     
     for (unsigned i = 0; i < input.length();) {
         if (isUnicodeCompatibleASCIIWhitespace(data[i])) {
@@ -50,7 +50,7 @@ CString reduceWhitespace(const CString& input)
         ++i;
     }
     
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 } // namespace JSC

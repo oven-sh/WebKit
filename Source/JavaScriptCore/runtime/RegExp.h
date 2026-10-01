@@ -40,6 +40,10 @@
 
 namespace JSC {
 
+namespace Yarr {
+struct YarrPattern;
+}
+
 struct RegExpRepresentation;
 class VM;
 
@@ -72,8 +76,11 @@ public:
     void dumpSimpleName(PrintStream&) const;
 
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(RegExp, m_flags); }
+    static constexpr ptrdiff_t offsetOfMinimumSize() { return OBJECT_OFFSETOF(RegExp, m_minimumSize); }
+    static constexpr uint16_t globalOrStickyFlagsMask = OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::Sticky }.toRaw();
 
     OptionSet<Yarr::Flags> flags() const { return m_flags; }
+    unsigned minimumSize() const { return m_minimumSize; }
 #define JSC_DEFINE_REGEXP_FLAG_ACCESSOR(key, name, lowerCaseName, index) bool lowerCaseName() const { return m_flags.contains(Yarr::Flags::name); }
     JSC_REGEXP_FLAGS(JSC_DEFINE_REGEXP_FLAG_ACCESSOR)
 #undef JSC_DEFINE_REGEXP_FLAG_ACCESSOR
@@ -88,6 +95,7 @@ public:
     void reset()
     {
         m_state = NotCompiled;
+        m_minimumSize = 0;
         m_constructionErrorCode = Yarr::ErrorCode::NoError;
     }
 
@@ -158,6 +166,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+    // Whether this has matched since the last full collection began.
+    bool wasUsedInCurrentFullCollectionCycle(VM&) const;
+
     bool hasCode()
     {
         return m_state == JITCode || m_state == ByteCode;
@@ -192,6 +203,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         return m_regExpJITCode.get();
     }
+
+    Yarr::YarrCodeBlock* getRegExpJITCodeBlockConcurrently()
+    {
+        return m_regExpJITCode.get();
+    }
 #endif
 
     bool hasValidAtom() const { return !m_atom.isNull(); }
@@ -214,6 +230,8 @@ private:
     RegExp(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreation(VM&);
 
+    void updateMetadataFromPattern(Yarr::YarrPattern&);
+
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
 
@@ -232,17 +250,15 @@ private:
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
+    static uint8_t currentUseEpoch(VM&);
+    template<Yarr::MatchFrom> void noteUse(VM&);
+
 #if ENABLE(YARR_JIT_DEBUG)
     void matchCompareWithInterpreter(StringView, int startOffset, int* offsetVector, int jitResult);
 #endif
 
 #if ENABLE(YARR_JIT)
-    Yarr::YarrCodeBlock& ensureRegExpJITCode()
-    {
-        if (!m_regExpJITCode)
-            m_regExpJITCode = makeUnique<Yarr::YarrCodeBlock>(this);
-        return *m_regExpJITCode.get();
-    }
+    Yarr::YarrCodeBlock& ensureRegExpJITCode();
 #endif
 
     struct RareData {
@@ -263,7 +279,9 @@ private:
     Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
+    uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
     unsigned m_numSubpatterns { 0 };
+    unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;
 #if ENABLE(YARR_JIT)
     std::unique_ptr<Yarr::YarrCodeBlock> m_regExpJITCode;

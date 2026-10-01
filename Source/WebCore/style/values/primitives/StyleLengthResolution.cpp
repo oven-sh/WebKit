@@ -66,7 +66,7 @@ static double unzoomFontMetric(double metric, const FontDescription& fontDescrip
 static double resolveEm(const FontCascade& fontCascadeForUnit)
 {
     auto& fontDescription = fontCascadeForUnit.fontDescription();
-    return fontDescription.specifiedSize();
+    return fontDescription.computedSize();
 }
 
 // Resolve the "ex" and "rex" units.
@@ -79,7 +79,7 @@ static double resolveEx(const FontCascade& fontCascadeForUnit)
     if (fontMetrics.xHeight())
         return unzoomFontMetric(fontMetrics.xHeight().value(), fontDescription);
 
-    return fontDescription.specifiedSize() / 2.0;
+    return fontDescription.computedSize() / 2.0;
 }
 
 // Resolve the "cap" and "rcap" units.
@@ -110,7 +110,7 @@ static double resolveIc(const FontCascade& fontCascadeForUnit)
     auto& fontDescription = fontCascadeForUnit.fontDescription();
     auto ideogramWidth = fontCascadeForUnit.metricsOfPrimaryFont().ideogramWidth();
     if (!ideogramWidth)
-        return fontDescription.unzoomedComputedSize();
+        return fontDescription.unzoomedUsedSize();
     return unzoomFontMetric(ideogramWidth.value(), fontDescription);
 }
 
@@ -124,9 +124,9 @@ static double resolveLh(const ComputedStyle* style, const FontCascade& fallbackF
         auto& fontDescription = fontCascade.fontDescription();
 
         return evaluate<float>(
-            style->specifiedLineHeight(),
+            style->lineHeight(),
             LineHeightEvaluationContext {
-                fontDescription.specifiedSize(),
+                fontDescription.computedSize(),
                 static_cast<float>(unzoomFontMetric(fontCascade.metricsOfPrimaryFont().lineSpacing(), fontDescription)),
             },
             ZoomFactor::none()
@@ -705,9 +705,9 @@ bool equalForLengthResolution(const ComputedStyle& styleA, const ComputedStyle& 
 {
     // These properties affect results of `resolveLength` above.
 
-    if (styleA.fontDescription().computedSize() != styleB.fontDescription().computedSize())
+    if (styleA.fontDescription().usedSize() != styleB.fontDescription().usedSize())
         return false;
-    if (styleA.fontDescription().specifiedSize() != styleB.fontDescription().specifiedSize())
+    if (styleA.fontDescription().computedSize() != styleB.fontDescription().computedSize())
         return false;
     if (styleA.metricsOfPrimaryFont().xHeight() != styleB.metricsOfPrimaryFont().xHeight())
         return false;
@@ -715,7 +715,7 @@ bool equalForLengthResolution(const ComputedStyle& styleA, const ComputedStyle& 
         return false;
     if (styleA.metricsOfPrimaryFont().lineSpacing() != styleB.metricsOfPrimaryFont().lineSpacing())
         return false;
-    if (styleA.specifiedLineHeight() != styleB.specifiedLineHeight())
+    if (styleA.lineHeight() != styleB.lineHeight())
         return false;
     if (styleA.zoom() != styleB.zoom())
         return false;
@@ -727,12 +727,12 @@ bool equalForLengthResolution(const ComputedStyle& styleA, const ComputedStyle& 
 
 double emToPxDouble(double value, const ComputedStyle& style)
 {
-    return value * style.fontCascade().fontDescription().specifiedSize();
+    return value * style.fontCascade().fontDescription().computedSize();
 }
 
 double emToPxDoubleZoomed(double value, const ComputedStyle& style)
 {
-    return value * style.fontCascade().fontDescription().computedSize();
+    return value * style.fontCascade().fontDescription().usedSize();
 }
 
 } // namespace Style

@@ -55,6 +55,7 @@
 #include "JSGeneratorFunction.h"
 #include "JSGlobalObjectFunctions.h"
 #include "JSLexicalEnvironmentInlines.h"
+#include "JSModuleEnvironment.h"
 #include "JSMicrotask.h"
 #include "JSSentinel.h"
 #include "JSString.h"
@@ -68,7 +69,7 @@
 #include "ObjectConstructor.h"
 #include "ObjectPropertyConditionSet.h"
 #include "ProtoCallFrameInlines.h"
-#include "RegExpObject.h"
+#include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
 #include "SuperSampler.h"
@@ -114,17 +115,19 @@ static inline JSValue NODELETE getOperand(CallFrame* callFrame, VirtualRegister 
 
 #define LLINT_END_IMPL() LLINT_RETURN_TWO(pc, nullptr)
 
-#define LLINT_THROW(exceptionToThrow) do {                        \
-        throwException(globalObject, throwScope, exceptionToThrow);       \
-        pc = returnToThrow(vm);                                 \
-        LLINT_END_IMPL();                                         \
+#define LLINT_THROW_IMPL() LLINT_RETURN_TWO(pc, exceptionSignal())
+
+#define LLINT_THROW(exceptionToThrow) do {                          \
+        throwException(globalObject, throwScope, exceptionToThrow); \
+        pc = returnToThrow(vm);                                     \
+        LLINT_THROW_IMPL();                                         \
     } while (false)
 
 #define LLINT_CHECK_EXCEPTION() do {                    \
         doExceptionFuzzingIfEnabled(globalObject, throwScope, "LLIntSlowPaths", pc);    \
         if (throwScope.exception()) [[unlikely]] {      \
             pc = returnToThrow(vm);                     \
-            LLINT_END_IMPL();                           \
+            LLINT_THROW_IMPL();                         \
         }                                               \
     } while (false)
 
@@ -274,7 +277,7 @@ extern "C" UGPRPair SYSV_ABI llint_trace_value(CallFrame* callFrame, const JSIns
         operand.offset(),
         u.bits.tag,
         u.bits.payload,
-        toCString(value).data());
+        toUTF8CString(value).legacyCStringPointer());
     LLINT_END_IMPL();
 }
 
@@ -360,7 +363,7 @@ static FunctionAllowlist& ensureGlobalJITAllowlist()
     static LazyNeverDestroyed<FunctionAllowlist> baselineAllowlist;
     static std::once_flag initializeAllowlistFlag;
     std::call_once(initializeAllowlistFlag, [] {
-        const char* functionAllowlistFile = Options::jitAllowlist();
+        const char8_t* functionAllowlistFile = Options::jitAllowlist();
         baselineAllowlist.construct(functionAllowlistFile);
     });
     return baselineAllowlist;
@@ -615,11 +618,109 @@ extern "C" UGPRPair SYSV_ABI llint_default_call(CallFrame* calleeFrame, CallLink
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
     void* callTarget = linkFor(vm, owner, calleeFrame, callLinkInfo);
     ensureStillAliveHere(owner);
+    if (scope.exception()) [[unlikely]]
+        return encodeResult(callTarget, std::bit_cast<void*>(&vm));
+    return encodeResult(callTarget, nullptr);
+}
+
+// The first call of a call site does not touch a CallLinkInfo when the callee is a JS function. Returns null when that is not
+// the case, or when the call throws.
+static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame, CodeSpecializationKind kind)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* function = dynamicDowncast<JSFunction>(calleeFrame->guaranteedJSValueCallee());
+    if (!function) [[unlikely]]
+        return nullptr;
+    ExecutableBase* executable = function->executable();
+    if (executable->isHostFunction()) [[unlikely]]
+        return nullptr;
+    auto* functionExecutable = uncheckedDowncast<FunctionExecutable>(executable);
+    if (!isCall(kind) && functionExecutable->constructAbility() == ConstructAbility::CannotConstruct) [[unlikely]]
+        return nullptr;
+
+    DeferTraps deferTraps(vm); // We can't jettison if we're going to call this CodeBlock.
+    CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
+    functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *codeBlockSlot);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    ArityCheckMode arity = calleeFrame->argumentCountIncludingThis() < static_cast<size_t>((*codeBlockSlot)->numParameters()) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
+    return functionExecutable->entrypointFor(kind, arity).taggedPtr();
+}
+
+// Where the CallLinkInfos shared by the call sites that have not run twice yet send their calls: llint_unlinked_call() without
+// the JIT, operationUnlinkedCall() with it, from the LLInt and from Baseline code. The first call of a site does not need a
+// CallLinkInfo of its own; the second one gets it and links it, as the default call slow path would have.
+//
+// All the callee gets is the shared CallLinkInfo, so the site is what the caller left in its frame. That holds under this
+// contract, all of which is checked: the caller runs in the LLInt or in Baseline code, which store the call site before every
+// call; it still has its frame (a tail call has not: tail call sites get their own CallLinkInfo before they run, see
+// prepareCallSiteForTailCall in the LLInt and JIT::compileOpCall); and the site does point at a shared CallLinkInfo.
+void* handleUnlinkedCall(VM& vm, CallFrame* calleeFrame)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CallFrame* callerFrame = calleeFrame->callerFrame();
+    CodeBlock* owner = callerFrame->codeBlock();
+    RELEASE_ASSERT(JITCode::couldBeInterpreted(owner->jitType()));
+    // Both of those tiers store the bytecode offset there (CallSiteIndex::bytecodeIndex()). No checkpoint, like the CodeOrigins
+    // CodeBlock::finishCreation() makes.
+    BytecodeIndex bytecodeIndex { callerFrame->callSiteAsRawBits() };
+    const JSInstruction* instruction = owner->instructionAt(bytecodeIndex);
+    LazyCallLinkInfo* site;
+    CallLinkInfo::CallType callType;
+    switch (instruction->opcodeID()) {
+#define CASE(__op) \
+    case __op::opcodeID: \
+        site = &instruction->as<__op>().metadata(owner).m_callLinkInfo; \
+        callType = CallLinkInfo::callTypeFor(__op::opcodeID); \
+        break;
+
+    FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
+
+#undef CASE
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    LazyCallLinkInfo& lazyCallLinkInfo = *site;
+    RELEASE_ASSERT(callType != CallLinkInfo::TailCall);
+    RELEASE_ASSERT(!lazyCallLinkInfo.get());
+    calleeFrame->setCodeBlock(nullptr);
+    void* callTarget;
+    if (lazyCallLinkInfo.hasNeverExecuted(vm)) {
+        lazyCallLinkInfo.setExecutedOnce(vm);
+        callTarget = firstCallToJSFunction(vm, calleeFrame, CallLinkInfo::specializationKindFor(callType));
+        if (!callTarget && !scope.exception()) {
+            DataOnlyCallLinkInfo callLinkInfo;
+            callLinkInfo.initialize(vm, owner, callType, CodeOrigin { bytecodeIndex });
+            JSCell* calleeAsFunctionCellIgnored;
+            calleeFrame->setCodeBlock(nullptr);
+            callTarget = virtualForWithFunction(vm, owner, calleeFrame, &callLinkInfo, calleeAsFunctionCellIgnored);
+        }
+    } else {
+        auto& callLinkInfo = lazyCallLinkInfo.ensure(vm, owner, callType, CodeOrigin { bytecodeIndex });
+        // Both tiers have noted the structure of |this| in the ArrayProfile of the CallSiteData the site had until now, which
+        // nobody reads (compiler threads only ever look at a site's own: LazyCallLinkInfo::arrayProfile()).
+        if (JSValue thisValue = calleeFrame->thisValue(); thisValue.isCell())
+            lazyCallLinkInfo.arrayProfile()->observeStructureID(thisValue.asCell()->structureID());
+        callTarget = linkFor(vm, owner, calleeFrame, &callLinkInfo);
+    }
+    ensureStillAliveHere(owner);
+    scope.release(); // The caller checks.
+    return callTarget;
+}
+
+extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame* calleeFrame, CallLinkInfo*)
+{
+    VM& vm = calleeFrame->callerFrame()->codeBlock()->vm();
+    NativeCallFrameTracer tracer(vm, calleeFrame);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    void* callTarget = handleUnlinkedCall(vm, calleeFrame);
     if (scope.exception()) [[unlikely]]
         return encodeResult(callTarget, std::bit_cast<void*>(&vm));
     return encodeResult(callTarget, nullptr);
@@ -630,7 +731,8 @@ extern "C" UGPRPair SYSV_ABI llint_virtual_call(CallFrame* calleeFrame, CallLink
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* calleeAsFunctionCellIgnored;
     calleeFrame->setCodeBlock(nullptr);
@@ -646,7 +748,8 @@ extern "C" UGPRPair SYSV_ABI llint_polymorphic_call(CallFrame* calleeFrame, Call
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* calleeAsFunctionCell;
     calleeFrame->setCodeBlock(nullptr);
@@ -693,6 +796,14 @@ LLINT_SLOW_PATH_DECL(slow_path_new_reg_exp)
     RegExp* regExp = uncheckedDowncast<RegExp>(getOperand(callFrame, bytecode.m_regexp));
     static constexpr bool areLegacyFeaturesEnabled = true;
     LLINT_RETURN(RegExpObject::create(vm, globalObject->regExpStructure(), regExp, areLegacyFeaturesEnabled));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_new_reg_exp_shared)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpNewRegExpShared>();
+    RegExp* regExp = uncheckedDowncast<RegExp>(getOperand(callFrame, bytecode.m_regexp));
+    LLINT_RETURN(RegExpObject::literalAsReceiver(globalObject, codeBlock, regExp, bytecode.m_forTest, bytecode.metadata(codeBlock).m_cachedObject));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_create_lexical_environment)
@@ -1079,7 +1190,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
 
     Structure* oldStructure = baseValue.isCell() ? baseValue.asCell()->structure() : nullptr;
     if (bytecode.m_flags.isDirect())
-        CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(baseValue), ident, getOperand(callFrame, bytecode.m_value), slot);
+        CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(baseValue), ident, getOperand(callFrame, bytecode.m_value), slot, &oldStructure);
     else
         baseValue.putInline(globalObject, ident, getOperand(callFrame, bytecode.m_value), slot);
     LLINT_CHECK_EXCEPTION();
@@ -1115,7 +1226,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
         
         if (newStructure->propertyAccessesAreCacheable() && baseCell == slot.base()) {
             if (slot.type() == PutPropertySlot::NewProperty) {
-                GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
+                DeferGC deferGC(vm);
                 if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && newStructure->previousID() == oldStructure) {
                     ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
@@ -1123,14 +1234,18 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                     auto result = normalizePrototypeChain(globalObject, baseCell, sawPolyProto);
                     if (result != InvalidPrototypeChain && !sawPolyProto) {
                         ASSERT(oldStructure->isObject());
+                        StructureChain* chain = nullptr;
+                        if (!(bytecode.m_flags.isDirect())) {
+                            chain = newStructure->prototypeChain(vm, globalObject, asObject(baseCell));
+                            ASSERT(chain);
+                        }
+
+                        ConcurrentJSLocker locker(codeBlock->m_lock);
                         metadata.m_oldStructureID = oldStructure->id();
                         metadata.m_offset = slot.cachedOffset();
                         metadata.m_newStructureID = newStructure->id();
-                        if (!(bytecode.m_flags.isDirect())) {
-                            StructureChain* chain = newStructure->prototypeChain(vm, globalObject, asObject(baseCell));
-                            ASSERT(chain);
+                        if (chain)
                             metadata.m_structureChain.set(vm, codeBlock, chain);
-                        }
                         vm.writeBarrier(codeBlock);
                     }
                 }
@@ -1423,7 +1538,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
         
         if (newStructure->propertyAccessesAreCacheable() && baseCell == slot.base()) {
             if (slot.type() == PutPropertySlot::NewProperty) {
-                GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
+                DeferGC deferGC(vm);
                 if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && oldStructure == newStructure->previousID()) {
                     ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
@@ -1431,6 +1546,8 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
                     auto result = normalizePrototypeChain(globalObject, baseCell, sawPolyProto);
                     if (result != InvalidPrototypeChain && !sawPolyProto) {
                         ASSERT(oldStructure->isObject());
+
+                        ConcurrentJSLocker locker(codeBlock->m_lock);
                         metadata.m_oldStructureID = oldStructure->id();
                         metadata.m_offset = slot.cachedOffset();
                         metadata.m_newStructureID = newStructure->id();
@@ -2143,6 +2260,14 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
     LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
 }
 
+LLINT_SLOW_PATH_DECL(slow_path_ensure_call_link_info)
+{
+    LLINT_BEGIN_NO_SET_PC();
+    UNUSED_VARIABLE(globalObject);
+    UNUSED_VARIABLE(throwScope);
+    LLINT_RETURN_TWO(pc, &codeBlock->ensureCallLinkInfoAt(pc));
+}
+
 LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)
 {
     LLINT_BEGIN();
@@ -2338,6 +2463,10 @@ LLINT_SLOW_PATH_DECL(slow_path_handle_exception)
     VM& vm = callFrame->deprecatedVM();
     SlowPathFrameTracer tracer(vm, callFrame);
     genericUnwind(vm, callFrame);
+    // We use LLINT_END_IMPL here instead of LLINT_THROW_IMPL because the throw
+    // trampoline (which is what LLINT_THROW_IMPL eventually triggers) comes
+    // here via callSlowPath(). If we used LLINT_THROW_IMPL, then the throw
+    // trampoline would keep calling itself forever.
     LLINT_END_IMPL();
 }
 
@@ -2351,6 +2480,9 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
 
     // ModuleVar is always converted to ClosureVar for get_from_scope.
     ASSERT(metadata.m_getPutInfo.resolveType() != ModuleVar);
+
+    if (metadata.m_getPutInfo.resolveType() == LazyClosureVar)
+        LLINT_RETURN_PROFILED(JSModuleEnvironment::readLazyClosureVar(vm, scope, ScopeOffset(metadata.m_operand)));
 
     LLINT_RETURN(scope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
@@ -2469,11 +2601,10 @@ LLINT_SLOW_PATH_DECL(slow_path_profile_catch)
 {
     LLINT_BEGIN();
 
-    codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(callFrame->bytecodeIndex());
-
-    auto bytecode = pc->as<OpCatch>();
-    auto& metadata = bytecode.metadata(codeBlock);
-    metadata.m_buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
+    auto* buffer = codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(callFrame->bytecodeIndex());
+    if (!buffer)
+        LLINT_END();
+    buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
         profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
     });
 

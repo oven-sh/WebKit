@@ -246,16 +246,17 @@ void Builder::applyCustomProperty(const AtomString& name)
     applyCustomPropertyImpl(name, iterator->value);
 }
 
-// A custom property absent from a function's cascade is either a parameter (locally registered: it
-// shadows inheritance and resolves to its registered value) or one inherited from the calling context
-// (resolved lazily). https://drafts.csswg.org/css-mixins/#evaluating-custom-functions
+// A custom property absent from a function's cascade is either declared by this function (a parameter or
+// local: it shadows inheritance and resolves to its registered value) or one inherited from the calling
+// context (resolved lazily). An enclosing function's parameter is registered here but not declared here,
+// so it inherits. https://drafts.csswg.org/css-mixins/#evaluating-custom-functions
 void Builder::applyCustomPropertyFromCallingContext(const AtomString& name)
 {
     auto* callingContextBuilder = m_state->callingContextBuilder();
     ASSERT(callingContextBuilder);
 
     auto* localRegistry = m_state->localPropertyRegistry();
-    if (localRegistry && localRegistry->get(name))
+    if (localRegistry && localRegistry->declares(name))
         applyCustomProperty(name, CSSWideKeyword::Initial);
     else {
         callingContextBuilder->applyCustomProperty(name);
@@ -468,7 +469,7 @@ void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::
         }
     }
 
-    if (id == CSSPropertySize && valueType == ApplyValueType::Value) [[unlikely]] {
+    if (id == CSSPropertyPageSize && valueType == ApplyValueType::Value) [[unlikely]] {
         applyPageSizeDescriptor(valueToApply.get());
         return;
     }
@@ -775,7 +776,14 @@ std::optional<Builder::CustomPropertyOrKeyword> Builder::resolveCustomPropertyVa
     if (!registered)
         return { { CustomProperty::createForVariableData(name, *resolvedData) } };
 
-    auto dependencies = CSSPropertyParser::collectParsedCustomPropertyValueDependencies(registered->syntax, resolvedData->tokens(), resolvedData->context());
+    return computeCustomPropertyValueForSyntax(name, registered->syntax, *resolvedData);
+}
+
+// Parses an already-substituted value against a syntax and computes it on this builder's element.
+// Shared by registered custom properties and by custom function parameters.
+std::optional<Builder::CustomPropertyOrKeyword> Builder::computeCustomPropertyValueForSyntax(const AtomString& name, const CSSCustomPropertySyntax& syntax, const CSSVariableData& resolvedData)
+{
+    auto dependencies = CSSPropertyParser::collectParsedCustomPropertyValueDependencies(syntax, resolvedData.tokens(), resolvedData.context());
 
     // https://drafts.css-houdini.org/css-properties-values-api/#dependency-cycles
     bool hasCycles = false;
@@ -803,18 +811,18 @@ std::optional<Builder::CustomPropertyOrKeyword> Builder::resolveCustomPropertyVa
     if (isFontDependent)
         m_state->updateFont();
 
-    auto isAttrTainted = resolvedData->isAttrTainted();
+    auto isAttrTainted = resolvedData.isAttrTainted();
 
     // https://drafts.csswg.org/css-values-5/#attr-security
     // A registered custom property with <url> or <image> syntax resolved from attr()-tainted data is IACVT.
     if (isAttrTainted == IsAttrTainted::Yes) {
-        for (auto& component : registered->syntax.definition) {
+        for (auto& component : syntax.definition) {
             if (component.type == CSSCustomPropertySyntax::Type::URL || component.type == CSSCustomPropertySyntax::Type::Image)
                 return { };
         }
     }
 
-    return CSSPropertyParser::parseTypedCustomPropertyValue(name, registered->syntax, resolvedData->tokens(), m_state, resolvedData->context(), isAttrTainted);
+    return CSSPropertyParser::parseTypedCustomPropertyValue(name, syntax, resolvedData.tokens(), m_state, resolvedData.context(), isAttrTainted);
 }
 
 void Builder::applyPageSizeDescriptor(CSSValue& value)

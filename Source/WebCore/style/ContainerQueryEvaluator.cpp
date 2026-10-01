@@ -36,6 +36,7 @@
 #include "NodeDocument.h"
 #include "NodeRenderStyle.h"
 #include "RenderView.h"
+#include "StyleBuilderState.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleRule.h"
 #include "StyleScope.h"
@@ -50,6 +51,8 @@ ContainerQueryEvaluator::ContainerQueryEvaluator(const Element& element, Selecti
     , m_evaluationState(evaluationState)
 {
 }
+
+ContainerQueryEvaluator::~ContainerQueryEvaluator() = default;
 
 bool ContainerQueryEvaluator::evaluate(const CQ::ContainerQuery& containerQuery) const
 {
@@ -73,8 +76,15 @@ static const Style::ComputedStyle* styleForContainer(const Element& container, C
     // Queries that don't need a size container (style and scroll-state queries) resolve
     // against the container's style, which may not be committed to the render tree yet.
     // Look it up from the currently computed style update instead.
-    if (!requirements.needsSizeContainer() && evaluationState && evaluationState->styleUpdate)
-        return evaluationState->styleUpdate->elementStyle(container);
+    if (!requirements.needsSizeContainer() && evaluationState) {
+        if (evaluationState->hostElementStyle && evaluationState->hostElementStyle->element.ptr() == &container)
+            return evaluationState->hostElementStyle->style.ptr();
+
+        if (evaluationState->styleUpdate)
+            return evaluationState->styleUpdate->elementStyle(container);
+
+        return nullptr;
+    }
 
     return container.existingComputedStyle();
 }
@@ -113,15 +123,18 @@ auto ContainerQueryEvaluator::featureEvaluationContextForCondition(const CQ::Con
         return styleForContainer(*rootElement, condition.requirements, m_evaluationState);
     }();
 
+    // Give the condition an element context, which is what the functions that resolve against the
+    // query container need.
+    m_builderState = BuilderState::create(const_cast<ComputedStyle&>(*containerStyle), BuilderContext {
+        .document = document.get(),
+        .parentStyle = containerParentStyle.get(),
+        .rootElementStyle = rootStyle.get(),
+        .element = container.get(),
+    }).moveToUniquePtr();
+
     return MQ::FeatureEvaluationContext {
         .document = document.get(),
-        .conversionData = CSSToLengthConversionData {
-            *containerStyle,
-            rootStyle.get(),
-            containerParentStyle.get(),
-            document->renderView(),
-            container.get()
-        },
+        .conversionData = m_builderState->cssToLengthConversionData(),
         .renderer = container->renderer(),
     };
 }

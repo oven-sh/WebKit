@@ -761,8 +761,8 @@ TEST(ProcessSwap, PSONRedirectionToExternal)
 {
     TestWebKitAPI::HTTPServer server(std::initializer_list<std::pair<String, TestWebKitAPI::HTTPResponse>> { }, TestWebKitAPI::HTTPServer::Protocol::Https);
 
-    HashMap<String, String> redirectHeaders;
-    redirectHeaders.add("location"_s, "other://test"_s);
+    Vector<WTF::KeyValuePair<String, String>> redirectHeaders;
+    redirectHeaders.append({ "location"_s, "other://test"_s });
     TestWebKitAPI::HTTPResponse redirectResponse(301, WTF::move(redirectHeaders));
 
     server.addResponse("/popup.html"_s, WTF::move(redirectResponse));
@@ -2295,7 +2295,10 @@ TEST(ProcessSwap, CrossSiteClientSideRedirectFromFileURL)
     auto pid2 = [webView _webProcessIdentifier];
     EXPECT_NE(pid1, pid2);
 
-    EXPECT_EQ(1U, [processPool _webProcessCountIgnoringPrewarmedAndCached]);
+    // The previous page's process is kept alive until the page has run its unload handlers.
+    EXPECT_TRUE(TestWebKitAPI::Util::waitFor([&] {
+        return [processPool _webProcessCountIgnoringPrewarmedAndCached] == 1U;
+    }));
     EXPECT_TRUE(willPerformClientRedirect);
     EXPECT_TRUE(didPerformClientRedirect);
 }
@@ -3025,7 +3028,7 @@ void testReuseSuspendedProcessForRegularNavigation(RetainPageInBundle retainPage
 {
     auto processPoolConfiguration = psonProcessPoolConfiguration();
     if (retainPageInBundle == RetainPageInBundle::Yes)
-        [processPoolConfiguration setInjectedBundleURL:[[NSBundle mainBundle] URLForResource:@"TestWebKitAPI" withExtension:@"wkbundle"]];
+        [processPoolConfiguration setInjectedBundleURL:TestWebKitAPI::Util::testPlugInBundleURL()];
     RetainPtr processPool = adoptNS([[WKProcessPool alloc] _initWithConfiguration:processPoolConfiguration.get()]);
     if (retainPageInBundle == RetainPageInBundle::Yes)
         [processPool _setObject:@"BundleRetainPagePlugIn" forBundleParameter:TestWebKitAPI::Util::TestPlugInClassNameParameter];
@@ -4482,6 +4485,62 @@ TEST(ProcessSwap, LoadUnload)
         EXPECT_WK_STREQ(@"pson://www.apple.com/main.html - load", receivedMessages.get()[5]);
         EXPECT_WK_STREQ(@"pson://www.webkit.org/main.html - unload", receivedMessages.get()[6]);
     }
+}
+
+static constexpr auto unloadOnClientRedirectBytes = R"PSONRESOURCE(
+<script>
+for (const type of ['pagehide', 'visibilitychange', 'unload']) {
+    window.addEventListener(type, function(event) {
+        window.webkit.messageHandlers.pson.postMessage(window.location.href + " - " + type);
+    });
+}
+window.addEventListener('load', function(event) {
+    setTimeout(() => window.location.replace("pson://www.apple.com/main.html"), 0);
+});
+</script>
+)PSONRESOURCE"_s;
+
+// A client-side redirect never suspends the previous page, so its process is shut down as soon as
+// the new one commits. The unload events of the previous page still need to be delivered.
+TEST(ProcessSwap, UnloadEventsOnCrossSiteClientRedirect)
+{
+    auto processPoolConfiguration = psonProcessPoolConfiguration();
+    // A cached process outlives the swap, which would hide an early shutdown.
+    processPoolConfiguration.get().usesWebProcessCache = NO;
+    RetainPtr processPool = adoptNS([[WKProcessPool alloc] _initWithConfiguration:processPoolConfiguration.get()]);
+
+    RetainPtr webViewConfiguration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [webViewConfiguration setProcessPool:processPool.get()];
+    RetainPtr handler = adoptNS([[PSONScheme alloc] init]);
+    [handler addMappingFromURLString:@"pson://www.webkit.org/main.html" toData:unloadOnClientRedirectBytes];
+    [handler addMappingFromURLString:@"pson://www.apple.com/main.html" toData:"<body>apple</body>"_s];
+    [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];
+
+    RetainPtr messageHandler = adoptNS([[PSONMessageHandler alloc] init]);
+    [[webViewConfiguration userContentController] addScriptMessageHandler:messageHandler.get() name:@"pson"];
+
+    RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+    RetainPtr delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
+    [webView setNavigationDelegate:delegate.get()];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"pson://www.webkit.org/main.html"]]];
+    TestWebKitAPI::Util::run(&done);
+    done = false;
+    auto webkitPID = [webView _webProcessIdentifier];
+
+    while (![[[webView URL] absoluteString] isEqualToString:@"pson://www.apple.com/main.html"])
+        TestWebKitAPI::Util::runFor(0.05_s);
+    TestWebKitAPI::Util::run(&done);
+    done = false;
+    EXPECT_NE(webkitPID, [webView _webProcessIdentifier]);
+
+    EXPECT_TRUE(TestWebKitAPI::Util::waitFor([] {
+        return [receivedMessages count] >= 3;
+    }));
+    EXPECT_EQ(3u, [receivedMessages count]);
+    EXPECT_TRUE([receivedMessages containsObject:@"pson://www.webkit.org/main.html - pagehide"]);
+    EXPECT_TRUE([receivedMessages containsObject:@"pson://www.webkit.org/main.html - visibilitychange"]);
+    EXPECT_TRUE([receivedMessages containsObject:@"pson://www.webkit.org/main.html - unload"]);
 }
 
 TEST(ProcessSwap, WebInspector)
@@ -7528,7 +7587,7 @@ static bool hasOverlay(CALayer *layer)
 TEST(ProcessSwap, PageOverlayLayerPersistence)
 {
     auto processPoolConfiguration = psonProcessPoolConfiguration();
-    [processPoolConfiguration setInjectedBundleURL:[[NSBundle mainBundle] URLForResource:@"TestWebKitAPI" withExtension:@"wkbundle"]];
+    [processPoolConfiguration setInjectedBundleURL:TestWebKitAPI::Util::testPlugInBundleURL()];
     RetainPtr processPool = adoptNS([[WKProcessPool alloc] _initWithConfiguration:processPoolConfiguration.get()]);
     [processPool _setObject:@"PageOverlayPlugIn" forBundleParameter:TestWebKitAPI::Util::TestPlugInClassNameParameter];
 
@@ -8423,19 +8482,19 @@ static void runCOOPProcessSwapTest(ASCIILiteral sourceCOOP, ASCIILiteral sourceC
 {
     using namespace TestWebKitAPI;
 
-    HashMap<String, String> sourceHeaders;
-    sourceHeaders.add("Content-Type"_s, "text/html"_s);
+    Vector<WTF::KeyValuePair<String, String>> sourceHeaders;
+    sourceHeaders.append({ "Content-Type"_s, "text/html"_s });
     if (sourceCOOP)
-        sourceHeaders.add("Cross-Origin-Opener-Policy"_s, sourceCOOP);
+        sourceHeaders.append({ "Cross-Origin-Opener-Policy"_s, sourceCOOP });
     if (sourceCOEP)
-        sourceHeaders.add("Cross-Origin-Embedder-Policy"_s, sourceCOEP);
+        sourceHeaders.append({ "Cross-Origin-Embedder-Policy"_s, sourceCOEP });
 
-    HashMap<String, String> destinationHeaders;
-    destinationHeaders.add("Content-Type"_s, "text/html"_s);
+    Vector<WTF::KeyValuePair<String, String>> destinationHeaders;
+    destinationHeaders.append({ "Content-Type"_s, "text/html"_s });
     if (destinationCOOP)
-        destinationHeaders.add("Cross-Origin-Opener-Policy"_s, destinationCOOP);
+        destinationHeaders.append({ "Cross-Origin-Opener-Policy"_s, destinationCOOP });
     if (destinationCOEP)
-        destinationHeaders.add("Cross-Origin-Embedder-Policy"_s, destinationCOEP);
+        destinationHeaders.append({ "Cross-Origin-Embedder-Policy"_s, destinationCOEP });
     HTTPResponse destinationResponse(WTF::move(destinationHeaders), "popup"_s);
 
     HTTPServer server(std::initializer_list<std::pair<String, HTTPResponse>> { }, HTTPServer::Protocol::Https);
@@ -8445,9 +8504,9 @@ static void runCOOPProcessSwapTest(ASCIILiteral sourceCOOP, ASCIILiteral sourceC
     server.addResponse("/main.html"_s, HTTPResponse { WTF::move(sourceHeaders), WTF::move(popupSource) });
 
     if (doServerSideRedirect == DoServerSideRedirect::Yes) {
-        HashMap<String, String> redirectHeaders;
+        Vector<WTF::KeyValuePair<String, String>> redirectHeaders;
         String redirectionURL = isSameOrigin == IsSameOrigin::Yes ? makeString("https://127.0.0.1:"_s, server.port(), "/popup-after-redirection.html"_s) : makeString("https://localhost:"_s, server.port(), "/popup-after-redirection.html"_s);
-        redirectHeaders.add("location"_s, WTF::move(redirectionURL));
+        redirectHeaders.append({ "location"_s, WTF::move(redirectionURL) });
         HTTPResponse redirectResponse(301, WTF::move(redirectHeaders));
 
         server.addResponse("/popup.html"_s, WTF::move(redirectResponse));

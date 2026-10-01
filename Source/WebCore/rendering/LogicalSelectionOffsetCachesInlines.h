@@ -73,7 +73,7 @@ LogicalSelectionOffsetCaches::LogicalSelectionOffsetCaches(RenderBlock& block, c
     if (block.canContainFixedPositionObjects())
         m_containingBlockForFixedPosition.setBlock(&block, &cache, cache.m_containingBlockForFixedPosition.hasFloatsOrFragmentedFlows());
 
-    if (block.canContainAbsolutelyPositionedObjects() && !block.isRenderInline() && !block.isAnonymousBlock())
+    if (block.canContainAbsolutelyPositionedObjects() && !block.isInlineBox() && !block.isAnonymousBlock())
         m_containingBlockForAbsolutePosition.setBlock(&block, &cache, cache.m_containingBlockForAbsolutePosition.hasFloatsOrFragmentedFlows());
 
     m_containingBlockForInflowPosition.setBlock(&block, &cache, cache.m_containingBlockForInflowPosition.hasFloatsOrFragmentedFlows());

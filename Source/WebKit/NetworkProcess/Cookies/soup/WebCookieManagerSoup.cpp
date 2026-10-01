@@ -28,9 +28,9 @@
 
 #include "NetworkProcess.h"
 #include "NetworkSessionSoup.h"
+#include "NetworkStorageSession.h"
 #include "SoupCookiePersistentStorageType.h"
 #include <WebCore/HTTPCookieAcceptPolicy.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/SoupNetworkSession.h>
 #include <libsoup/soup.h>
 

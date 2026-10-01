@@ -359,6 +359,7 @@ public:
     bool isValidExecutableMemory(const AbstractLocker&, void* address);
 
     static size_t committedByteCount();
+    static size_t allocatedByteCount();
 
     Lock& getLock() const;
 

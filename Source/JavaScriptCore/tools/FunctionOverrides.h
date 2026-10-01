@@ -36,10 +36,6 @@ class ScriptExecutable;
 
 struct FunctionOverrideInfo {
     SourceCode sourceCode;
-    unsigned firstLine;
-    unsigned lineCount;
-    unsigned startColumn;
-    unsigned endColumn;
     unsigned parametersStartOffset;
     unsigned functionStart;
     unsigned functionEnd;
@@ -50,14 +46,14 @@ public:
     using OverrideInfo = FunctionOverrideInfo;
 
     static FunctionOverrides& overrides();
-    FunctionOverrides(const char* functionOverridesFileName);
+    FunctionOverrides(const char8_t* functionOverridesFileName);
 
     static bool initializeOverrideFor(const SourceCode& origCode, OverrideInfo& result);
 
     JS_EXPORT_PRIVATE static void reinstallOverrides();
 
 private:
-    void parseOverridesInFile(const char* fileName) WTF_REQUIRES_LOCK(m_lock);
+    void parseOverridesInFile(const char8_t* fileName) WTF_REQUIRES_LOCK(m_lock);
     void clear() WTF_REQUIRES_LOCK(m_lock) { m_entries.clear(); }
 
     UncheckedKeyHashMap<String, String> m_entries WTF_GUARDED_BY_LOCK(m_lock);

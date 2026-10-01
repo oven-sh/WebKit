@@ -95,8 +95,8 @@ static void webkit_user_content_manager_class_init(WebKitUserContentManagerClass
      * @value: the value received from the JavaScript world.
      *
      * This signal is emitted when JavaScript in a web view calls
-     * <code>window.webkit.messageHandlers.<name>.postMessage()</code>, after registering
-     * <code><name></code> using
+     * `window.webkit.messageHandlers.<name>.postMessage()`, after registering
+     * `<name>` using
      * webkit_user_content_manager_register_script_message_handler()
      *
      * Since: 2.8
@@ -126,8 +126,8 @@ static void webkit_user_content_manager_class_init(WebKitUserContentManagerClass
      * @reply: the #WebKitScriptMessageReply to send the reply to the script message.
      *
      * This signal is emitted when JavaScript in a web view calls
-     * <code>window.webkit.messageHandlers.<name>.postMessage()</code>, after registering
-     * <code><name></code> using
+     * `window.webkit.messageHandlers.<name>.postMessage()`, after registering
+     * `<name>` using
      * webkit_user_content_manager_register_script_message_handler_with_reply()
      *
      * The given @reply can be used to send a return value with
@@ -278,12 +278,12 @@ void webkit_user_content_manager_remove_all_scripts(WebKitUserContentManager* ma
  *
  * A reply for a script message received.
  * If no reply has been sent by the user, an automatically generated reply with
- * undefined value with be sent.
+ * undefined value will be sent.
  *
  * Since: 2.40
  */
 struct _WebKitScriptMessageReply {
-    _WebKitScriptMessageReply(WTF::Function<void(Expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler)
+    _WebKitScriptMessageReply(WTF::Function<void(std::expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler)
         : completionHandler(WTF::move(completionHandler))
         , referenceCount(1)
     {
@@ -309,7 +309,7 @@ struct _WebKitScriptMessageReply {
         }
     }
 
-    WTF::CompletionHandler<void(Expected<JavaScriptEvaluationResult, String>&&)> completionHandler;
+    WTF::CompletionHandler<void(std::expected<JavaScriptEvaluationResult, String>&&)> completionHandler;
     int referenceCount;
 };
 
@@ -354,7 +354,7 @@ void webkit_script_message_reply_unref(WebKitScriptMessageReply* scriptMessageRe
     }
 }
 
-WebKitScriptMessageReply* webKitScriptMessageReplyCreate(WTF::Function<void(Expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler)
+WebKitScriptMessageReply* webKitScriptMessageReplyCreate(WTF::Function<void(std::expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler)
 {
     WebKitScriptMessageReply* scriptMessageReply = static_cast<WebKitScriptMessageReply*>(fastMalloc(sizeof(WebKitScriptMessageReply)));
     new (scriptMessageReply) WebKitScriptMessageReply(WTF::move(completionHandler));
@@ -368,7 +368,8 @@ WebKitScriptMessageReply* webKitScriptMessageReplyCreate(WTF::Function<void(Expe
  *
  * Reply to a script message with a value.
  *
- * This function can be called twice for passing the reply value in.
+ * This function can only be called once. Further calls to it or to
+ * webkit_script_message_reply_return_error_message() emit a critical warning and are ignored.
  *
  * Since: 2.40
  */
@@ -409,7 +410,7 @@ public:
     {
     }
 
-    void didPostMessage(WebPageProxy&, FrameInfoData&&, API::ContentWorld&, JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(Expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler) override
+    void didPostMessage(WebPageProxy&, FrameInfoData&&, API::ContentWorld&, JavaScriptEvaluationResult&& jsMessage, CompletionHandler<void(std::expected<JavaScriptEvaluationResult, String>&&)>&& completionHandler) override
     {
         if (!m_manager) {
             g_critical("Script message %s received after the WebKitUserContentManager has been destroyed. You must unregister the message handler!", g_quark_to_string(m_handlerName));
@@ -568,7 +569,7 @@ void webkit_user_content_manager_add_filter(WebKitUserContentManager* manager, W
  *
  * Removes a filter from the given #WebKitUserContentManager.
  *
- * Since 2.24
+ * Since: 2.24
  */
 void webkit_user_content_manager_remove_filter(WebKitUserContentManager* manager, WebKitUserContentFilter* filter)
 {

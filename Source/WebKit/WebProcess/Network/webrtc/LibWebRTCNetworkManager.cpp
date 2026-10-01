@@ -170,7 +170,7 @@ void LibWebRTCNetworkManager::networksChanged(const Vector<RTCNetwork>& networks
                     .isRelayDisabled = !document->settings().webRTCRelayBypassDisabled(),
                     .enableServiceClass = false
                 };
-                WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkRTCProvider::GetInterfaceName { document->url(), webPage->webPageProxyIdentifier(), flags, WTF::move(domain) }, [weakThis = WeakPtr { *this }] (auto&& interfaceName) {
+                protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkRTCProvider::GetInterfaceName { document->url(), webPage->webPageProxyIdentifier(), flags, WTF::move(domain) }, [weakThis = WeakPtr { *this }] (auto&& interfaceName) {
                     RefPtr protectedThis = weakThis.get();
                     if (protectedThis && !interfaceName.isNull())
                         protectedThis->signalUsedInterface(WTF::move(interfaceName));
@@ -239,7 +239,7 @@ void LibWebRTCNetworkManager::CreateNameForAddress(const webrtc::IPAddress& addr
             WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([address, callback = WTF::move(callback), name = WTF::move(name).isolatedCopy(), error] {
                 RELEASE_LOG_ERROR_IF(error, WebRTC, "MDNS registration of a host candidate failed with error %hhu", std::to_underlying(*error));
                 // In case of error, we provide the name to let gathering complete.
-                callback(address, name.utf8().data());
+                callback(address, name.utf8().legacyCStringPointer());
             });
         });
     });

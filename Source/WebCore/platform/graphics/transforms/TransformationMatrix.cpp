@@ -33,8 +33,11 @@
 #include "FloatRect.h"
 #include "IntRect.h"
 #include "LayoutRect.h"
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <float.h>
+#include <limits>
 #include <wtf/Assertions.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
@@ -719,8 +722,8 @@ TransformationMatrix TransformationMatrix::fromProjection(double fovUp, double f
 
 TransformationMatrix TransformationMatrix::fromProjection(double fovy, double aspect, double depthNear, double depthFar)
 {
-    double f = 1.0f / tanf(fovy / 2);
-    double invDepth = 1.0f / (depthNear - depthFar);
+    double f = 1.0 / tan(fovy / 2);
+    double invDepth = 1.0 / (depthNear - depthFar);
 
     return TransformationMatrix(f / aspect, 0.0f, 0.0f, 0.0f,
         0.0f, f, 0.0f, 0.0f,
@@ -822,40 +825,77 @@ FloatQuad TransformationMatrix::projectQuad(const FloatQuad& q, bool* clamped) c
     return projectedQuad;
 }
 
-static float clampEdgeValue(float f)
+static float clampEdgeValue(double value)
 {
-    ASSERT(!std::isnan(f));
-    return std::min<float>(std::max<float>(f, -LayoutUnit::max() / 2), LayoutUnit::max() / 2);
+    ASSERT(!std::isnan(value));
+    const double maxEdgeValue = (LayoutUnit::max() / 2).toDouble();
+    return std::clamp(value, -maxEdgeValue, maxEdgeValue);
 }
 
 LayoutRect TransformationMatrix::clampedBoundsOfProjectedQuad(const FloatQuad& q) const
 {
-    FloatRect mappedQuadBounds = projectQuad(q).boundingBox();
+    if (!m33())
+        return { };
 
-    float left = clampEdgeValue(floorf(mappedQuadBounds.x()));
-    float top = clampEdgeValue(floorf(mappedQuadBounds.y()));
+    struct HomogeneousPoint {
+        double x { 0.0 };
+        double y { 0.0 };
+        double w { 0.0 };
+    };
 
-    float right;
-    if (std::isinf(mappedQuadBounds.x()) && std::isinf(mappedQuadBounds.width()))
-        right = LayoutUnit::max() / 2;
-    else
-        right = clampEdgeValue(ceilf(mappedQuadBounds.maxX()));
+    auto project = [&](const FloatPoint& p) -> HomogeneousPoint {
+        double x = p.x();
+        double y = p.y();
+        double z = -(m13() * x + m23() * y + m43()) / m33();
+        return {
+            x * m11() + y * m21() + z * m31() + m41(),
+            x * m12() + y * m22() + z * m32() + m42(),
+            x * m14() + y * m24() + z * m34() + m44()
+        };
+    };
 
-    float bottom;
-    if (std::isinf(mappedQuadBounds.y()) && std::isinf(mappedQuadBounds.height()))
-        bottom = LayoutUnit::max() / 2;
-    else
-        bottom = clampEdgeValue(ceilf(mappedQuadBounds.maxY()));
+    const std::array<HomogeneousPoint, 4> vertices { project(q.p1()), project(q.p2()), project(q.p3()), project(q.p4()) };
+    const double minW = std::numeric_limits<float>::epsilon();
 
-    return LayoutRect(LayoutUnit::clamp(left), LayoutUnit::clamp(top),  LayoutUnit::clamp(right - left), LayoutUnit::clamp(bottom - top));
+    double minX = std::numeric_limits<double>::infinity();
+    double minY = std::numeric_limits<double>::infinity();
+    double maxX = -std::numeric_limits<double>::infinity();
+    double maxY = -std::numeric_limits<double>::infinity();
+    auto include = [&](const HomogeneousPoint& p) {
+        minX = std::min(minX, p.x / p.w);
+        minY = std::min(minY, p.y / p.w);
+        maxX = std::max(maxX, p.x / p.w);
+        maxY = std::max(maxY, p.y / p.w);
+    };
+
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        const auto& p = vertices[i];
+        const auto& next = vertices[(i + 1) % vertices.size()];
+        if (p.w >= minW)
+            include(p);
+        if ((p.w >= minW) != (next.w >= minW)) {
+            const double t = (minW - p.w) / (next.w - p.w);
+            include({ p.x + t * (next.x - p.x), p.y + t * (next.y - p.y), minW });
+        }
+    }
+
+    // A quad entirely behind the eye is not visible.
+    if (minX > maxX)
+        return { };
+
+    float left = clampEdgeValue(std::floor(minX));
+    float top = clampEdgeValue(std::floor(minY));
+    float right = clampEdgeValue(std::ceil(maxX));
+    float bottom = clampEdgeValue(std::ceil(maxY));
+    return LayoutRect(LayoutUnit::clamp(left), LayoutUnit::clamp(top), LayoutUnit::clamp(right - left), LayoutUnit::clamp(bottom - top));
 }
 
 void TransformationMatrix::map4ComponentPoint(double& x, double& y, double& z, double& w) const
 {
     if (isIdentityOrTranslation()) {
-        x += m_matrix[3][0];
-        y += m_matrix[3][1];
-        z += m_matrix[3][2];
+        x += w * m_matrix[3][0];
+        y += w * m_matrix[3][1];
+        z += w * m_matrix[3][2];
         return;
     }
 
@@ -1794,6 +1834,57 @@ AffineTransform TransformationMatrix::toAffineTransform() const
 {
     return AffineTransform(m_matrix[0][0], m_matrix[0][1], m_matrix[1][0],
                            m_matrix[1][1], m_matrix[3][0], m_matrix[3][1]);
+}
+
+auto TransformationMatrix::ipcData() const -> IPCData
+{
+    if (isIdentity())
+        return std::monostate { };
+
+    if (isIdentityOrTranslation()) {
+        if (!m43())
+            return Translation2DIPCData { m41(), m42() };
+        return Translation3DIPCData { m41(), m42(), m43() };
+    }
+
+    if (isAffine())
+        return toAffineTransform();
+
+    return FullIPCData { { {
+        m11(), m12(), m13(), m14(),
+        m21(), m22(), m23(), m24(),
+        m31(), m32(), m33(), m34(),
+        m41(), m42(), m43(), m44(),
+    } } };
+}
+
+TransformationMatrix TransformationMatrix::fromIPCData(IPCData&& data)
+{
+    return WTF::switchOn(WTF::move(data),
+        [] (std::monostate) {
+            return TransformationMatrix { };
+        }, [] (const Translation2DIPCData& translation) {
+            TransformationMatrix matrix;
+            matrix.setM41(translation.m41);
+            matrix.setM42(translation.m42);
+            return matrix;
+        }, [] (const Translation3DIPCData& translation) {
+            TransformationMatrix matrix;
+            matrix.setM41(translation.m41);
+            matrix.setM42(translation.m42);
+            matrix.setM43(translation.m43);
+            return matrix;
+        }, [] (const AffineTransform& affineTransform) {
+            return TransformationMatrix { affineTransform };
+        }, [] (const FullIPCData& full) {
+            auto& values = full.values;
+            return TransformationMatrix {
+                values[0], values[1], values[2], values[3],
+                values[4], values[5], values[6], values[7],
+                values[8], values[9], values[10], values[11],
+                values[12], values[13], values[14], values[15]
+            };
+        });
 }
 
 static inline void NODELETE blendFloat(double& from, double to, double progress, CompositeOperation compositeOperation)

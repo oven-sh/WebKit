@@ -347,7 +347,7 @@ void RuleFeatureSet::recursivelyCollectFeaturesFromSelector(SelectorFeatures& se
                 idsMatchingAncestorsInRules.add(selector->value());
             else if (matchElement.hasRelation || matchElement.relation != MatchElement::Relation::Subject)
                 selectorFeatures.ids.append({ selector, matchElement, context.isNegation, scopeSourcesForFeature() });
-        } else if (selector->match() == CSSSelector::Match::Class)
+        } else if (selector->match() == CSSSelector::Match::Class || selector->isEquivalentToClassSelector())
             selectorFeatures.classes.append({ selector, matchElement, context.isNegation, scopeSourcesForFeature() });
         else if (selector->isAttributeSelector()) {
             attributeLowercaseLocalNamesInRules.add(selector->attribute().localNameLowercase());
@@ -386,7 +386,7 @@ void RuleFeatureSet::recursivelyCollectFeaturesFromSelector(SelectorFeatures& se
                         subContext.outerCompoundSelectors.append(selector);
                 }
 
-                if (selector->match() == CSSSelector::Match::PseudoClass && selector->pseudoClass() == CSSSelector::PseudoClass::Has) {
+                if (selector->isHasPseudoClass()) {
                     subContext.hasPseudoClass = selector;
                     // If :has() is inside a :is()/:not() argument and the walk has crossed a
                     // combinator before reaching :has(), :has() sits in an ancestor compound
@@ -441,13 +441,13 @@ static PseudoClassInvalidationKey makePseudoClassInvalidationKey(CSSSelector::Ps
         if (simpleSelector->match() == CSSSelector::Match::Id)
             return makePseudoClassInvalidationKey(pseudoClass, InvalidationKeyType::Id, simpleSelector->value());
 
-        if (simpleSelector->match() == CSSSelector::Match::Class && className.isNull())
+        if ((simpleSelector->match() == CSSSelector::Match::Class || simpleSelector->isEquivalentToClassSelector()) && className.isNull())
             className = simpleSelector->value();
 
         if (simpleSelector->match() == CSSSelector::Match::Tag)
             tagName = simpleSelector->tagLowercaseLocalName();
 
-        if (simpleSelector->isAttributeSelector() && !unlikelyToHaveSelectorForAttribute(simpleSelector->attribute().localNameLowercase()))
+        if (simpleSelector->isAttributeSelector() && !simpleSelector->isEquivalentToClassSelector() && !unlikelyToHaveSelectorForAttribute(simpleSelector->attribute().localNameLowercase()))
             attributeName = simpleSelector->attribute().localNameLowercase();
     }
     if (!attributeName.isEmpty())
@@ -622,12 +622,6 @@ void RuleFeatureSet::add(const RuleFeatureSet& other)
     idsMatchingAncestorsInRules.addAll(other.idsMatchingAncestorsInRules);
     attributeLowercaseLocalNamesInRules.addAll(other.attributeLowercaseLocalNamesInRules);
     attributeLocalNamesInRules.addAll(other.attributeLocalNamesInRules);
-    for (auto& [name, affectsShadowTree] : other.substitutionAttributeNamesInRules) {
-        if (affectsShadowTree == AffectsShadowTree::Yes)
-            substitutionAttributeNamesInRules.set(name, AffectsShadowTree::Yes);
-        else
-            substitutionAttributeNamesInRules.add(name, AffectsShadowTree::No);
-    }
 
     auto addMap = [&](auto& map, auto& otherMap) {
         for (auto& keyValuePair : otherMap) {
@@ -660,17 +654,6 @@ void RuleFeatureSet::add(const RuleFeatureSet& other)
     usesHasPseudoClass = usesHasPseudoClass || other.usesHasPseudoClass;
 }
 
-void RuleFeatureSet::registerSubstitutionAttribute(const AtomString& attributeName, AffectsShadowTree affectsShadowTree)
-{
-    auto lowercaseName = attributeName.convertToASCIILowercase();
-    if (affectsShadowTree == AffectsShadowTree::Yes)
-        substitutionAttributeNamesInRules.set(lowercaseName, AffectsShadowTree::Yes);
-    else
-        substitutionAttributeNamesInRules.add(lowercaseName, AffectsShadowTree::No);
-    attributeLowercaseLocalNamesInRules.add(attributeName);
-    attributeLocalNamesInRules.add(attributeName);
-}
-
 void RuleFeatureSet::clear()
 {
     RELEASE_ASSERT(isMainThread());
@@ -679,7 +662,6 @@ void RuleFeatureSet::clear()
     idsMatchingAncestorsInRules.clear();
     attributeLowercaseLocalNamesInRules.clear();
     attributeLocalNamesInRules.clear();
-    substitutionAttributeNamesInRules.clear();
     idRules.clear();
     classRules.clear();
     hasPseudoClassRules.clear();

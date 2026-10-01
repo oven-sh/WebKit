@@ -49,7 +49,7 @@ WebExtensionSQLiteStatement::WebExtensionSQLiteStatement(Ref<WebExtensionSQLiteD
 
     db->assertQueue();
 
-    int result = sqlite3_prepare_v2(db->sqlite3Handle(), query.utf8().data(), -1, &m_handle, 0);
+    int result = sqlite3_prepare_v2(db->sqlite3Handle(), query.utf8().legacyCStringPointer(), -1, &m_handle, 0);
     if (result != SQLITE_OK) {
         db->reportErrorWithCode(result, query, outError);
         return;

@@ -60,7 +60,7 @@ CSSSupportsParser::SupportsResult CSSSupportsParser::supportsCondition(CSSParser
     return supportsParser.consumeSupportsFeatureOrGeneralEnclosed(range);
 }
 
-CSSSupportsParser::SupportsResult CSSSupportsParser::supportsCondition(const String& condition, const CSSParserContext& context, ParsingMode mode)
+CSSSupportsParser::SupportsResult CSSSupportsParser::supportsCondition(StringView condition, const CSSParserContext& context, ParsingMode mode)
 {
     CSSParser parser(context, condition);
     if (!parser.tokenizer())
@@ -252,6 +252,13 @@ CSSSupportsParser::SupportsResult CSSSupportsParser::consumeSupportsAtRuleFuncti
 
     case CSSAtRuleFunction:
         return m_parser.context().propertySettings.cssFunctionAtRuleEnabled ? Supported : Unsupported;
+
+    case CSSAtRuleEnvironmentMap:
+#if ENABLE(SPATIAL_PORTAL)
+        return m_parser.context().propertySettings.spatialPortalEnabled ? Supported : Unsupported;
+#else
+        return Unsupported;
+#endif
 
     case CSSAtRuleInvalid:
     // Per spec, @charset is not an at-rule.

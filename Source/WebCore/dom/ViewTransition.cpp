@@ -444,7 +444,7 @@ LayoutRect ViewTransition::captureOverflowRect(RenderLayerModelObject& renderer)
 static LayoutPoint layerToLayoutOffset(const RenderLayerModelObject& renderer)
 {
     if (const auto* renderInline = dynamicDowncast<RenderInline>(renderer)) {
-        auto boundingBox = renderInline->linesBoundingBox();
+        auto boundingBox = renderInline->borderBoxRectInContainer();
         return LayoutPoint { boundingBox.x(), boundingBox.y() };
     }
     return { };
@@ -476,7 +476,7 @@ static RefPtr<ImageBuffer> snapshotElementVisualOverflowClippedToViewport(LocalF
     auto hostWindow = frameView->root() ? protect(frameView->root())->hostWindow() : nullptr;
     auto colorSpace = screenColorSpace(frameView);
 #if PLATFORM(IOS_FAMILY)
-    colorSpace = DestinationColorSpace::SRGB(); // FIXME: We should use the screen colorspace on iOS too, but that has blending issues: webkit.org/b/318764.
+    colorSpace = ColorSpace::SRGB(); // FIXME: We should use the screen colorspace on iOS too, but that has blending issues: webkit.org/b/318764.
 #endif
 
     auto buffer = ImageBuffer::create(paintRect.size(), RenderingMode::Accelerated, RenderingPurpose::Snapshot, scaleFactor, colorSpace, PixelFormat::BGRA8, hostWindow);
@@ -992,7 +992,7 @@ void ViewTransition::copyElementBaseProperties(RenderLayerModelObject& renderer,
     // Factor out the zoom from the nearest common ancestor of the captured element and the view transition
     // pseudo tree (the document element), so that it doesn't get applied a second time when rendering the
     // snapshots.
-    LayoutSize cssSize = Style::adjustLayoutSizeForAbsoluteZoom(output.size, documentElementRenderer->style());
+    auto cssSize = Style::unapplyingZoom<LayoutSize>(output.size, documentElementRenderer->style());
     protect(output.properties)->setProperty(CSSPropertyWidth, CSSPrimitiveValue::create(cssSize.width(), CSSUnitType::Px));
     protect(output.properties)->setProperty(CSSPropertyHeight, CSSPrimitiveValue::create(cssSize.height(), CSSUnitType::Px));
 }

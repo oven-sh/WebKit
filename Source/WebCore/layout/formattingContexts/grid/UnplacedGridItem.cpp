@@ -27,7 +27,6 @@
 #include "UnplacedGridItem.h"
 
 #include "LayoutElementBox.h"
-#include "StyleComputedStyle+InitialInlines.h"
 
 namespace WebCore {
 namespace Layout {
@@ -75,11 +74,7 @@ UnplacedGridItem::GridPosition UnplacedGridItem::GridPosition::create(const Styl
     int endLine = rawEndLine + static_cast<int>(leadingImplicitTracksCount);
 
     ASSERT(startLine >= 0 && endLine >= 0);
-    // The range is always forward. The span/auto branches derive endLine from startLine, and the
-    // explicit/explicit branch only reaches GFC for single-track placements: grid coverage requires
-    // the end line to be exactly one past the start (a distance of 1), so an inverted placement like
-    // grid-column: 3 / 1 stays on the legacy path and can never underflow span() here.
-    ASSERT(startLine <= endLine);
+    ASSERT(startLine < endLine);
     return DefinitePosition { static_cast<size_t>(startLine), static_cast<size_t>(endLine) };
 }
 
@@ -95,6 +90,16 @@ std::optional<std::pair<int, int>> UnplacedGridItem::resolveDefinitePosition(con
     if (start.isExplicit() && end.isExplicit()) {
         startLine = explicitLineToIndex(start, explicitTrackCount);
         endLine = explicitLineToIndex(end, explicitTrackCount);
+
+        // https://drafts.csswg.org/css-grid-1/#grid-placement-errors
+        // "If the placement for a grid item contains two lines, and the start line is further
+        // end-ward than the end line, swap the two lines."
+        if (startLine > endLine)
+            std::swap(startLine, endLine);
+        // "If the start line is equal to the end line, remove the end line." An item with only a
+        // start line occupies the one track after it.
+        else if (startLine == endLine)
+            endLine = startLine + 1;
     } else if (start.isExplicit() && end.isSpan()) {
         startLine = explicitLineToIndex(start, explicitTrackCount);
         endLine = startLine + end.spanPosition();
@@ -129,13 +134,6 @@ UnplacedGridItem::UnplacedGridItem(const ElementBox& layoutBox, Style::GridPosit
 {
 }
 
-UnplacedGridItem::UnplacedGridItem(WTF::HashTableEmptyValueType)
-    : m_layoutBox(WTF::HashTableEmptyValue)
-    , m_columnPosition(GridPosition::create(Style::ComputedStyle::initialGridItemColumnStart(), Style::ComputedStyle::initialGridItemColumnEnd(), 0, 0))
-    , m_rowPosition(GridPosition::create(Style::ComputedStyle::initialGridItemRowStart(), Style::ComputedStyle::initialGridItemRowEnd(), 0, 0))
-{
-}
-
 bool UnplacedGridItem::hasDefiniteRowPosition() const
 {
     return m_rowPosition.isDefinite();
@@ -166,45 +164,16 @@ size_t UnplacedGridItem::rowSpanSize() const
     return m_rowPosition.span();
 }
 
-std::pair<size_t, size_t> UnplacedGridItem::definiteRowStartEnd() const
+WTF::Range<size_t> UnplacedGridItem::definiteRowRange() const
 {
     auto& definitePosition = m_rowPosition.definitePosition();
     return { definitePosition.startLine, definitePosition.endLine };
 }
 
-std::pair<size_t, size_t> UnplacedGridItem::definiteColumnStartEnd() const
+WTF::Range<size_t> UnplacedGridItem::definiteColumnRange() const
 {
     auto& definitePosition = m_columnPosition.definitePosition();
     return { definitePosition.startLine, definitePosition.endLine };
-}
-
-bool UnplacedGridItem::operator==(const UnplacedGridItem& other) const
-{
-    // Since the hash table empty value uses CheckedRef's empty value,
-    // we need to check if either |this| or |other| are the empty value
-    // so we do not compare the uninitialized ref.
-    bool isEmpty = isHashTableEmptyValue();
-    if (isEmpty)
-        return other.isHashTableEmptyValue();
-    if (other.isHashTableEmptyValue())
-        return isEmpty;
-
-    return m_layoutBox.ptr() == other.m_layoutBox.ptr() && m_columnPosition == other.m_columnPosition && m_rowPosition == other.m_rowPosition;
-}
-
-void add(Hasher& hasher, const WebCore::Layout::UnplacedGridItem& unplacedGridItem)
-{
-    addArgs(hasher, unplacedGridItem.m_layoutBox.ptr());
-
-    auto addPosition = [&](const auto& position) {
-        if (position.isDefinite()) {
-            auto& definitePosition = position.definitePosition();
-            addArgs(hasher, static_cast<size_t>(0), definitePosition.startLine, definitePosition.endLine);
-        } else
-            addArgs(hasher, static_cast<size_t>(1), position.span());
-    };
-    addPosition(unplacedGridItem.m_columnPosition);
-    addPosition(unplacedGridItem.m_rowPosition);
 }
 
 } // namespace Layout

@@ -150,6 +150,7 @@ public:
     WEBCORE_EXPORT void setContentsRect(const FloatRect&) override;
     WEBCORE_EXPORT void setContentsClippingRect(const FloatRoundedRect&) override;
     WEBCORE_EXPORT void setContentsClipShapePath(const Path&) override;
+    WEBCORE_EXPORT void setBackdropFiltersShapePath(const Path&) override;
     WEBCORE_EXPORT void setContentsRectClipsDescendants(bool) override;
 
     WEBCORE_EXPORT void setVideoGravity(MediaPlayerVideoGravity) override;
@@ -161,9 +162,6 @@ public:
 #if ENABLE(SCROLLING_THREAD)
     WEBCORE_EXPORT void setScrollingNodeID(std::optional<ScrollingNodeID>) override;
 #endif
-
-    WEBCORE_EXPORT void suspendAnimations(MonotonicTime) override;
-    WEBCORE_EXPORT void resumeAnimations() override;
 
     WEBCORE_EXPORT bool addAnimation(const GraphicsLayerKeyframeValueList&, const GraphicsLayerAnimation*, const String& animationName, double timeOffset) override;
     WEBCORE_EXPORT void pauseAnimation(const String& animationName, double timeOffset) override;
@@ -388,7 +386,7 @@ private:
     void setupContentsLayer(PlatformCALayer*, CompositingCoordinatesOrientation = defaultContentsOrientation);
     PlatformCALayer* contentsLayer() const { return m_contentsLayer.get(); }
 
-    void updateClippingStrategy(PlatformCALayer&, RefPtr<PlatformCALayer>& shapeMaskLayer, const FloatRoundedRect&);
+    void updateClippingStrategy(PlatformCALayer&, RefPtr<PlatformCALayer>& shapeMaskLayer, const FloatRoundedRect&, const Path& shapePath);
 
     WEBCORE_EXPORT void setReplicatedByLayer(RefPtr<GraphicsLayer>&&) override;
 

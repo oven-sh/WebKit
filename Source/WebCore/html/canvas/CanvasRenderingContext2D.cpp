@@ -235,8 +235,8 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     else {
         static NeverDestroyed<AtomString> family = DefaultFontFamily;
         fontDescription.setOneFamily(family.get());
-        fontDescription.setSpecifiedSize(DefaultFontSize);
         fontDescription.setComputedSize(DefaultFontSize);
+        fontDescription.setUsedSize(DefaultFontSize);
     }
 
     if (newFont == state().unparsedFont && state().font.realized() && fontDescription == state().fontResolutionBase)

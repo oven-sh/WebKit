@@ -32,9 +32,13 @@
 #include "CallMode.h"
 #include "CodeSpecializationKind.h"
 #include "JSCPtrTag.h"
+#include "OperationResult.h"
 
 namespace JSC {
 
+class CCallHelpers;
+
+class CallFrame;
 class CallLinkInfo;
 enum class CallMode;
 template<PtrTag> class MacroAssemblerCodeRef;
@@ -50,6 +54,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwOutOfMemoryErrorGenerator(VM&);
 
 MacroAssemblerCodeRef<JITThunkPtrTag> checkExceptionGenerator(VM&);
 MacroAssemblerCodeRef<JITThunkPtrTag> returnFromBaselineGenerator();
+
+// The slow paths for calls: operationDefaultCall(), operationUnlinkedCall(), operationVirtualCall(), operationPolymorphicCall().
+using CallSlowPathOperation = OperationReturnType<UCPURegister>(JIT_OPERATION_ATTRIBUTES *)(CallFrame*, CallLinkInfo*);
+void emitCallSlowPath(CCallHelpers&, CallSlowPathOperation);
 
 MacroAssemblerCodeRef<JITThunkPtrTag> polymorphicThunk();
 MacroAssemblerCodeRef<JITThunkPtrTag> polymorphicThunkForClosure();

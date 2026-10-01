@@ -40,9 +40,18 @@ inline void ScriptExecutable::jettisonCodeBlockEdgeIfDead(VM& vm, WriteBarrier<C
         if (vm.heap.isMarked(codeBlock))
             return;
 
-        if (codeBlock->shouldJettisonDueToWeakReference(vm))
-            codeBlock->jettison(Profiler::JettisonDueToWeakReference);
+#if USE(BUN_JSC_ADDITIONS)
+        // An optimizing block the old-age check let go this cycle died of old age, not of a dead weak reference: say so,
+        // so jettison() takes its old-age path (no exit-site tally, baseline code cache released) rather than the dead-weak-reference one.
+        if (codeBlock->agedOut())
+            codeBlock->jettison(Profiler::JettisonDueToOldAge);
         else
+#endif
+        if (codeBlock->shouldJettisonDueToWeakReference(vm)) {
+            // The executable is alive and will tier up again; without the back-off every such recompile is as eager as the first.
+            bool countsTowardBackoff = codeBlock->baselineAlternative()->reoptimizationRetryCounter() < Options::weakReferenceJettisonReoptimizationLimit();
+            codeBlock->jettison(Profiler::JettisonDueToWeakReference, countsTowardBackoff ? CountReoptimization : DontCountReoptimization);
+        } else
             codeBlock->jettison(Profiler::JettisonDueToOldAge);
 
         if (codeBlock == codeBlockEdge.get()) {

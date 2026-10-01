@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012-2026 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Shopify Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -59,9 +60,10 @@ class SharedBufferReference;
 namespace WebCore {
 class BlobDataFileReference;
 class ContentFilter;
+class ContentSecurityPolicy;
 class FormData;
+enum class IPAddressSpace : uint8_t;
 class LinkHeader;
-class NetworkStorageSession;
 class PendingStreamState;
 class Report;
 class ResourceRequest;
@@ -69,10 +71,10 @@ class ResourceRequest;
 
 namespace WebKit {
 
-class EarlyHintsResourceLoader;
 class NetworkConnectionToWebProcess;
 class NetworkLoad;
 class NetworkLoadChecker;
+class NetworkStorageSession;
 class ServiceWorkerFetchTask;
 class WebSWServerConnection;
 
@@ -183,7 +185,7 @@ public:
 
 #if !RELEASE_LOG_DISABLED
     static bool shouldLogCookieInformation(NetworkConnectionToWebProcess&, PAL::SessionID);
-    static void logCookieInformation(NetworkConnectionToWebProcess&, ASCIILiteral label, const void* loggedObject, const WebCore::NetworkStorageSession&, const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, const String& referrer, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, std::optional<WebCore::ResourceLoaderIdentifier>);
+    static void logCookieInformation(NetworkConnectionToWebProcess&, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession&, const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, const String& referrer, std::optional<WebCore::FrameIdentifier>, std::optional<WebPageProxyIdentifier>, std::optional<WebCore::ResourceLoaderIdentifier>);
 #endif
 
     void disableExtraNetworkLoadMetricsCapture() { m_shouldCaptureExtraNetworkLoadMetrics = false; }
@@ -203,6 +205,9 @@ public:
     void NODELETE setWorkerFinalRouterSource(WebCore::RouterSourceEnum);
 
     std::optional<WebCore::ResourceError> doCrossOriginOpenerHandlingOfResponse(const WebCore::ResourceResponse&);
+    void checkLocalNetworkAccess(const WebCore::ResourceRequest&, const URL& currentURL, WebCore::IPAddressSpace connectionAddressSpace, CompletionHandler<void(std::optional<WebCore::ResourceError>)>&&);
+    void continueDidReceiveResponseAfterLocalNetworkAccessCheck(PrivateRelayed, ResourceLoadInfo&&, ResponseCompletionHandler&&);
+    void continueDidRetrieveCacheEntryAfterLocalNetworkAccessCheck(std::unique_ptr<NetworkCache::Entry>);
     void sendDidReceiveResponseWithPotentialProcessSwap(const WebCore::ResourceResponse&, PrivateRelayed, bool needsContinueDidReceiveResponseMessage);
 
     bool NODELETE isAppInitiated();
@@ -239,6 +244,8 @@ private:
 #endif
 
     void processClearSiteDataHeader(const WebCore::ResourceResponse&, CompletionHandler<void()>&&);
+    void processUseAsDictionaryHeader(const WebCore::ResourceResponse&);
+    void storeCompressionDictionaryIfNeeded(const WebCore::ResourceResponse&, RefPtr<WebCore::FragmentedSharedBuffer>&&);
 
     bool canUseCache(const WebCore::ResourceRequest&) const;
     bool canUseCachedRedirect(const WebCore::ResourceRequest&) const;
@@ -258,6 +265,8 @@ private:
 
     enum class FirstLoad : bool { No, Yes };
     void startNetworkLoad(WebCore::ResourceRequest&&, FirstLoad);
+    bool shouldFetchWithCompressionDictionary(const WebCore::ResourceRequest&) const;
+    void continueStartNetworkLoad(WebCore::ResourceRequest&&, NetworkLoadParameters&&);
     void restartNetworkLoad(WebCore::ResourceRequest&&, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
     void continueDidReceiveResponse();
     void didReceiveMainResourceResponse(const WebCore::ResourceResponse&);
@@ -293,6 +302,11 @@ private:
     void addConsoleMessage(MessageSource, MessageLevel, const String&, unsigned long requestIdentifier = 0) final;
     void enqueueSecurityPolicyViolationEvent(WebCore::SecurityPolicyViolationEventInit&&) final;
 
+    // HTTP 103 Early Hints.
+    void handleEarlyHintsResponse(WebCore::ResourceResponse&&);
+    WebCore::ResourceRequest constructPreconnectRequest(const WebCore::ResourceRequest&, const URL&);
+    void startPreconnectTask(const URL& baseURL, const WebCore::LinkHeader&, const WebCore::ContentSecurityPolicy&);
+
     void logSlowCacheRetrieveIfNeeded(const NetworkCache::Cache::RetrieveInfo&);
 
     std::optional<Seconds> validateCacheEntryForMaxAgeCapValidation(const WebCore::ResourceRequest&, const WebCore::ResourceRequest& redirectRequest, const WebCore::ResourceResponse&);
@@ -314,6 +328,7 @@ private:
     enum class IsFromServiceWorker : bool { No, Yes };
     void willSendRedirectedRequestInternal(WebCore::ResourceRequest&&, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&&, IsFromServiceWorker, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
     void continueWillSendRedirectedRequestAfterContentFiltering(WebCore::ResourceRequest&&, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&&, IsFromServiceWorker, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
+    void continueWillSendRedirectedRequestAfterLocalNetworkAccessCheck(WebCore::ResourceRequest&&, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&&, IsFromServiceWorker, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
     std::optional<WebCore::NetworkLoadMetrics> computeResponseMetrics(const WebCore::ResourceResponse&) const;
 
     void startRequest(const WebCore::ResourceRequest&);
@@ -361,6 +376,7 @@ private:
     WebCore::Timer m_bufferingTimer;
     RefPtr<NetworkCache::Cache> m_cache;
     WebCore::SharedBufferBuilder m_bufferedDataForCache;
+    std::optional<NetworkCache::CompressionDictionaryEntry::Info> m_compressionDictionaryInfoForCache;
     std::unique_ptr<NetworkCache::Entry> m_cacheEntryForValidation;
     std::unique_ptr<NetworkCache::Entry> m_cacheEntryForMaxAgeCapValidation;
     bool m_isWaitingContinueWillSendRequestForCachedRedirect { false };
@@ -398,7 +414,8 @@ private:
 
     bool m_shouldCaptureExtraNetworkLoadMetrics { false };
     bool m_isKeptAlive { false };
-    std::unique_ptr<EarlyHintsResourceLoader> m_earlyHintsResourceLoader;
+    bool m_hasReceivedEarlyHints { false };
+    bool m_canUseCompressionDictionary { false };
 
     std::optional<NetworkActivityTracker> m_networkActivityTracker;
     RefPtr<ServiceWorkerFetchTask> m_serviceWorkerFetchTask;

@@ -45,6 +45,7 @@
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -248,7 +249,7 @@ ExceptionOr<void> IDBCursor::continueFunction(JSGlobalObject& execState, JSValue
 
 ExceptionOr<void> IDBCursor::continueFunction(const IDBKeyData& key)
 {
-    LOG(IndexedDB, "IDBCursor::continueFunction (to key %s)", key.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBCursor::continueFunction (to key "_s << key.loggingString() << ")"_s);
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 
     if (!m_request)
@@ -333,7 +334,7 @@ ExceptionOr<Ref<WebCore::IDBRequest>> IDBCursor::deleteFunction()
 
 bool IDBCursor::setGetResult(IDBRequest& request, const IDBGetResult& getResult, uint64_t operationID)
 {
-    LOG(IndexedDB, "IDBCursor::setGetResult - current key %s", getResult.keyData().loggingString().left(100).utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBCursor::setGetResult - current key "_s << getResult.keyData().loggingString().left(100));
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 
     RefPtr context = request.scriptExecutionContext();

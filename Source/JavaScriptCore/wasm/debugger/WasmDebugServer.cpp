@@ -207,12 +207,12 @@ void DebugServer::closeSocket(SocketType& socket)
 void DebugServer::reset()
 {
     // Reset to the init state without stopping the debug server.
-    m_isDebuggerReady.store(false, std::memory_order_release);
+    m_hasSentLibraryList.store(false, std::memory_order_release);
     m_hasContinued.store(false, std::memory_order_release);
     m_noAckMode = false;
     m_packetParser.reset();
-    // m_isDebuggerReady=false before reset() gates new traps; socket closed after so
-    // hasDebugger() stays true for wasmDebuggerOnResumeCallback() during resumeImpl().
+    // m_hasSentLibraryList=false before reset() gates new traps; socket closed after so
+    // isConnected() stays true for wasmDebuggerOnResumeCallback() during resumeImpl().
     m_executionHandler->reset();
     closeSocket(m_clientSocket);
 }
@@ -420,10 +420,11 @@ void DebugServer::handleThreadManagement(StringView packet)
             // -1 = all threads, 0 = any thread, 1 = thread 1
             // All are valid for our single-threaded WebAssembly context
             sendReplyOK();
-        } else {
-            execution().switchTarget(parseHex(threadSpec));
+        } else if (auto threadId = parseHexStrict(threadSpec)) {
+            execution().switchTarget(*threadId);
             sendReplyOK();
-        }
+        } else
+            sendErrorReply(ProtocolError::InvalidPacket);
         break;
     }
     case 'g': {
@@ -443,7 +444,7 @@ void DebugServer::trackInstance(JSWebAssemblyInstance* instance)
     if (!m_moduleManager)
         return;
     dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Tracking WebAssembly instance: ", RawPointer(instance));
-    // Notify the debugger here (trackInstance) rather than in trackModule for two reasons:
+    // Instantiation, not compilation, is what the debugger tracks, for two reasons:
     // 1. Module::create covers both the synchronous and streaming-async compilation paths.
     //    In the async path the JS thread is not at a JS safepoint when the module is created,
     //    so a stop-the-world request would only fire at the next safepoint — too late for the
@@ -452,28 +453,14 @@ void DebugServer::trackInstance(JSWebAssemblyInstance* instance)
     // 2. A Module can be compiled speculatively without ever being instantiated (e.g. via
     //    WebAssembly.compile). Only when a JSWebAssemblyInstance is created do we know the
     //    module will actually be used, making this the right moment to notify LLDB.
+    // Every instance is a library of its own, so a second instance of a known module is a load
+    // LLDB has to hear about too.
     m_moduleManager->registerInstance(instance);
-    if (isDebuggerReady() && m_moduleManager->needsNewModuleNotification(instance))
-        m_executionHandler->notifyDebuggerOfNewModule(instance->vm());
+    if (hasSentLibraryList())
+        m_executionHandler->notifyDebuggerOfNewInstance(instance->vm());
 }
 
-void DebugServer::trackModule(Module& module)
-{
-    if (!m_moduleManager)
-        return;
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Tracking WebAssembly module: ", RawPointer(&module));
-    m_moduleManager->registerModule(module);
-}
-
-void DebugServer::untrackModule(Module& module)
-{
-    if (!m_moduleManager)
-        return;
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Untracking WebAssembly module: ", RawPointer(&module));
-    m_moduleManager->unregisterModule(module);
-}
-
-bool DebugServer::hasDebugger() const
+bool DebugServer::isConnected() const
 {
     if (!isInService())
         return false;

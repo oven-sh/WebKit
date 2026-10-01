@@ -87,16 +87,16 @@ Style::ComputedStyle resolveForDocument(const Document& document)
         auto& settings = renderView->frame().settings();
 
         FontCascadeDescription fontDescription;
-        fontDescription.setSpecifiedLocale(document.contentLanguage());
+        fontDescription.setComputedLocale(document.contentLanguage());
         fontDescription.setOneFamily(WebCore::FontFamily { standardFamily, FontFamilyKind::Generic });
         fontDescription.setShouldAllowUserInstalledFonts(settings.shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No);
 
         fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
         int size = fontSizeForKeyword(CSSValueMedium, false, document);
-        fontDescription.setSpecifiedSize(size);
+        fontDescription.setComputedSize(size);
         bool useSVGZoomRules = document.isSVGDocument();
-        auto computedFontSize = computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules, documentStyle, document);
-        fontDescription.setComputedSize(computedFontSize.size, computedFontSize.usedZoomFactor);
+        auto usedFontSize = usedFontSizeFromComputedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules, documentStyle, document);
+        fontDescription.setUsedSize(usedFontSize.size, usedFontSize.zoomFactor);
 
         auto [fontOrientation, glyphOrientation] = documentStyle.fontAndGlyphOrientation();
         fontDescription.setOrientation(fontOrientation);

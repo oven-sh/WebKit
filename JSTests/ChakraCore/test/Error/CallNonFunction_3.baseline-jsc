@@ -22,7 +22,7 @@ TypeError (undefined): null is not a constructor (evaluating 'new n()')
 --- Test case: implicit global, do delete: false ---
 
 safeCall(function(){g0();});
-ReferenceError (undefined): Can't find variable: g0
+ReferenceError (undefined): g0 is not defined
 
 safeCall(function(){g1=undefined;g1();});
 TypeError (undefined): g1 is not a function. (In 'g1()', 'g1' is undefined)
@@ -40,58 +40,58 @@ TypeError (undefined): g4 is not a function. (In 'g4()', 'g4' is an instance of 
 --- Test case: implicit global, do delete: true ---
 
 safeCall(function(){g6=undefined;delete g6;g6();});
-ReferenceError (undefined): Can't find variable: g6
+ReferenceError (undefined): g6 is not defined
 
 safeCall(function(){g7=null;delete g7;g7();});
-ReferenceError (undefined): Can't find variable: g7
+ReferenceError (undefined): g7 is not defined
 
 safeCall(function(){g8=1;delete g8;g8();});
-ReferenceError (undefined): Can't find variable: g8
+ReferenceError (undefined): g8 is not defined
 
 safeCall(function(){g9={};delete g9;g9();});
-ReferenceError (undefined): Can't find variable: g9
+ReferenceError (undefined): g9 is not defined
 
 
 --- Test case: global using window, do delete: false ---
 
 Only valid in IE:
 safeCall(function(){window.g10();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 Only valid in IE:
 safeCall(function(){window.g11=undefined;window.g11();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 Only valid in IE:
 safeCall(function(){window.g12=null;window.g12();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 Only valid in IE:
 safeCall(function(){window.g13=1;window.g13();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 Only valid in IE:
 safeCall(function(){window.g14={};window.g14();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 
 --- Test case: global using window, do delete: true ---
 
 Only valid in IE:
 safeCall(function(){window.g16=undefined;delete window.g16;window.g16();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 Only valid in IE:
 safeCall(function(){window.g17=null;delete window.g17;window.g17();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 Only valid in IE:
 safeCall(function(){window.g18=1;delete window.g18;window.g18();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 Only valid in IE:
 safeCall(function(){window.g19={};delete window.g19;window.g19();});
-ReferenceError (undefined): Can't find variable: window
+ReferenceError (undefined): window is not defined
 
 
 --- Test case: global using this, do delete: false ---

@@ -89,7 +89,7 @@ public:
     using ValidationHandler = CompletionHandler<void(RequestOrRedirectionTripletOrError&&)>;
     void check(WebCore::ResourceRequest&&, WebCore::ContentSecurityPolicyClient*, ValidationHandler&&);
 
-    using RedirectionRequestOrError = Expected<RedirectionTriplet, WebCore::ResourceError>;
+    using RedirectionRequestOrError = std::expected<RedirectionTriplet, WebCore::ResourceError>;
     using RedirectionValidationHandler = CompletionHandler<void(RedirectionRequestOrError&&)>;
     void checkRedirection(WebCore::ResourceRequest&& request, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&& redirectResponse, WebCore::ContentSecurityPolicyClient*, RedirectionValidationHandler&&);
 
@@ -124,6 +124,7 @@ public:
 
     bool timingAllowFailedFlag() const { return m_timingAllowFailedFlag; }
     bool navigationTAOCheckPassed() const { return m_navigationTAOCheckPassed; }
+    bool isSameOriginRequest() const { return m_isSameOriginRequest; }
 
 private:
     NetworkLoadChecker(NetworkProcess&, NetworkResourceLoader*, NetworkSchemeRegistry*, WebCore::FetchOptions&&, PAL::SessionID, std::optional<WebPageProxyIdentifier>, WebCore::HTTPHeaderMap&&, URL&&, DocumentURL&&,  RefPtr<WebCore::SecurityOrigin>&&, RefPtr<WebCore::SecurityOrigin>&& topOrigin, RefPtr<WebCore::SecurityOrigin>&& parentOrigin, WebCore::PreflightPolicy, String&& referrer, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, bool shouldCaptureExtraNetworkLoadMetrics, LoadType requestLoadType);
@@ -154,7 +155,7 @@ private:
         WebCore::ResourceRequest request;
         const WebCore::ContentRuleListResults& results;
     };
-    using ContentExtensionResultOrError = Expected<ContentExtensionResult, WebCore::ResourceError>;
+    using ContentExtensionResultOrError = std::expected<ContentExtensionResult, WebCore::ResourceError>;
     using ContentExtensionCallback = CompletionHandler<void(ContentExtensionResultOrError&&)>;
     void processContentRuleListsForLoad(WebCore::ResourceRequest&&, ContentExtensionCallback&&);
 #endif

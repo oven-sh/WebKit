@@ -665,10 +665,8 @@ void LocalAuthenticator::continueMakeCredentialAfterUserVerification(SecAccessCo
     if (creationOptions.attestation == AttestationConveyancePreference::Enterprise) {
         auto callback = [credentialId = WTF::move(credentialId), weakThis = WeakPtr { *this }] (Vector<uint8_t>&& attestationObject, std::optional<ExceptionData> exception) mutable {
             ASSERT(RunLoop::isMain());
-            if (!weakThis)
-                return;
-
-            weakThis->finishMakeCredential(WTF::move(credentialId), WTF::move(attestationObject), std::nullopt);
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->finishMakeCredential(WTF::move(credentialId), WTF::move(attestationObject), std::nullopt);
         };
 
         performEnterpriseAttestation(creationOptions, WTF::move(authData), requestData().hash, WTF::move(callback));
@@ -879,7 +877,7 @@ void LocalAuthenticator::continueGetAssertionAfterUserVerification(Ref<WebCore::
 
 void LocalAuthenticator::receiveException(ExceptionData&& exception, WebAuthenticationStatus status) const
 {
-    LOG_ERROR("%s", exception.message.utf8().data());
+    LOG_ERROR("%s", exception.message.utf8());
 
     // Roll back the just created credential.
     if (m_provisionalCredentialId) {

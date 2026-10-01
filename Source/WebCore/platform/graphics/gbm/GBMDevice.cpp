@@ -36,17 +36,17 @@
 
 namespace WebCore {
 
-RefPtr<GBMDevice> GBMDevice::create(const CString& filename)
+RefPtr<GBMDevice> GBMDevice::create(const UTF8CString& filename)
 {
     RELEASE_ASSERT(isMainThread());
-    auto fd = UnixFileDescriptor { open(filename.data(), O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
+    auto fd = UnixFileDescriptor { open(filename.legacyCStringPointer(), O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
     if (!fd) {
-        WTFLogAlways("Failed to open DRM node %s: %s", filename.data(), safeStrerror(errno).data());
+        SAFE_WTFLOGALWAYS("Failed to open DRM node %s: %s", filename, safeStrerror(errno));
         return nullptr;
     }
     auto* device = gbm_create_device(fd.value());
     if (!device) {
-        WTFLogAlways("Failed to create GBM device for DRM node: %s: %s", filename.data(), safeStrerror(errno).data());
+        SAFE_WTFLOGALWAYS("Failed to create GBM device for DRM node: %s: %s", filename, safeStrerror(errno));
         return nullptr;
     }
     return adoptRef(*new GBMDevice(WTF::move(fd), device));

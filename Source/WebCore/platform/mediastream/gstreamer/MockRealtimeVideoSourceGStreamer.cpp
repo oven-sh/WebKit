@@ -118,12 +118,12 @@ void MockRealtimeVideoSourceGStreamer::updateSampleBuffer()
     if (!imageBuffer)
         return;
 
-    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::BGRA8, DestinationColorSpace::SRGB() }, { { }, imageBuffer->truncatedLogicalSize() });
+    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::BGRA8, ColorSpace::SRGB() }, { { }, imageBuffer->truncatedLogicalSize() });
     if (!pixelBuffer)
         return;
 
     int frameRateNumerator, frameRateDenominator;
-    gst_util_double_to_fraction(settings().frameRate(), &frameRateNumerator, &frameRateDenominator);
+    gst_util_double_to_fraction(frameRate(), &frameRateNumerator, &frameRateDenominator);
 
     VideoFrameTimeMetadata metadata;
     metadata.captureTime = MonotonicTime::now().secondsSinceEpoch();

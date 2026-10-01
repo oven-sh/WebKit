@@ -28,6 +28,7 @@
 #include "GenericMediaQueryEvaluator.h"
 #include "StyleScopeOrdinal.h"
 #include "StyleUpdate.h"
+#include <memory>
 #include <wtf/Ref.h>
 
 namespace WebCore {
@@ -36,15 +37,32 @@ class Element;
 
 namespace Style {
 
+class BuilderState;
+
+struct HostElementStyle {
+    CheckedRef<const Element> element;
+    CheckedRef<const ComputedStyle> style;
+};
+
 struct ContainerQueryEvaluationState {
     Vector<Ref<const Element>> sizeQueryContainers;
+
+    // Style::Update of the current style resolution has the latest style,
+    // unlike render style which only gets updated after render tree update.
     CheckedPtr<Style::Update> styleUpdate;
+
+    // In the context when a pseudo-element's style is being resolved (which could
+    // include container queries being evaluated), this is the style of its host.
+    // It's populated right after the host style is resolved, but before its
+    // pseudo-elements' styles are.
+    std::optional<HostElementStyle> hostElementStyle;
 };
 
 class ContainerQueryEvaluator : public MQ::GenericMediaQueryEvaluator<ContainerQueryEvaluator> {
 public:
     enum class SelectionMode : uint8_t { Element, PseudoElement, PartPseudoElement };
     ContainerQueryEvaluator(const Element&, SelectionMode, ScopeOrdinal, ContainerQueryEvaluationState*);
+    ~ContainerQueryEvaluator();
 
     bool evaluate(const CQ::ContainerQuery&) const;
 
@@ -57,6 +75,11 @@ private:
     const SelectionMode m_selectionMode;
     const ScopeOrdinal m_scopeOrdinal;
     ContainerQueryEvaluationState* m_evaluationState { nullptr };
+
+    // No style is being built while a condition is evaluated, but the functions that resolve against
+    // the query container need a BuilderState to reach it. The conversion data only points at it, so
+    // it is owned here.
+    mutable std::unique_ptr<BuilderState> m_builderState;
 };
 
 }

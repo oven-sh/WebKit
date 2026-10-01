@@ -324,6 +324,9 @@ JSC_DECLARE_JIT_OPERATION(operationCallDirectEvalStrictTaintedByWithScope, Encod
 JSC_DECLARE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame*, CallLinkInfo*));
 JSC_DECLARE_JIT_OPERATION(operationVirtualCall, UCPURegister, (CallFrame*, CallLinkInfo*));
 JSC_DECLARE_JIT_OPERATION(operationDefaultCall, UCPURegister, (CallFrame*, CallLinkInfo*));
+JSC_DECLARE_JIT_OPERATION(operationUnlinkedCall, UCPURegister, (CallFrame*, CallLinkInfo*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationEnsureCallLinkInfo, void, (CodeBlock*, uint32_t bytecodeIndexBits));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationEnsureCallLinkInfoForTailCall, CallLinkInfo*, (CallFrame*));
 
 JSC_DECLARE_JIT_OPERATION(operationCompareLess, size_t, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationCompareLessEq, size_t, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
@@ -362,6 +365,7 @@ JSC_DECLARE_JIT_OPERATION(operationNewGenerator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewAsyncFunctionGenerator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewAsyncGenerator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewRegExp, JSCell*, (JSGlobalObject*, JSCell*));
+JSC_DECLARE_JIT_OPERATION(operationNewRegExpShared, JSCell*, (JSGlobalObject*, JSCell*, WriteBarrier<JSCell>*, int32_t forTest));
 JSC_DECLARE_JIT_OPERATION(operationHandleTraps, UnusedPtr, (JSGlobalObject*));
 JSC_DECLARE_JIT_OPERATION(operationThrow, void, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationDebug, void, (VM*, int32_t debugHookType, EncodedJSValue encodedData));
@@ -405,6 +409,7 @@ JSC_DECLARE_JIT_OPERATION(operationInstanceOfCustom, size_t, (JSGlobalObject*, E
 
 #if CPU(ARM64) || CPU(X86_64)
 JSC_DECLARE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject*, JSObject*, JSCell*, void*));
+JSC_DECLARE_JIT_OPERATION(operationIteratorNextWithIndexInFrame, UGPRPair, (JSGlobalObject*, EncodedJSValue iterable, EncodedJSValue* indexInFrame, void*));
 #endif
 
 JSC_DECLARE_JIT_OPERATION(operationValueAdd, EncodedJSValue, (JSGlobalObject*, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2));

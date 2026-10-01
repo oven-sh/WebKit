@@ -29,6 +29,43 @@ if (ENABLE_FUZZILLI)
   list(APPEND jsc_SOURCES ../fuzzilli/Fuzzilli.cpp)
 endif ()
 
+# The ICU data the release lanes bundle is repacked with a zstd frame per item (icu/compress-data.ts), and the ICU they
+# build calls the weak hook bun_icu_maybe_decompress on each item it loads (icu/udata-decompress-hook.patch). Bun
+# defines the hook. So does the shell (jsc.cpp), so that it reads the data Bun reads, when it is given zstd's lib/
+# directory to build the decoder from.
+if (BUN_ICU_ZSTD_SOURCE_DIR)
+    file(GLOB jsc_ZSTD_DECODER_SOURCES
+        ${BUN_ICU_ZSTD_SOURCE_DIR}/common/*.c
+        ${BUN_ICU_ZSTD_SOURCE_DIR}/decompress/*.c
+    )
+    if (NOT jsc_ZSTD_DECODER_SOURCES)
+        message(FATAL_ERROR "BUN_ICU_ZSTD_SOURCE_DIR=${BUN_ICU_ZSTD_SOURCE_DIR} has no common/*.c and decompress/*.c")
+    endif ()
+    # ZSTD_DISABLE_ASM: no huf_decompress_amd64.S, the C one everywhere.
+    set_source_files_properties(${jsc_ZSTD_DECODER_SOURCES} PROPERTIES COMPILE_DEFINITIONS "ZSTD_DISABLE_ASM=1;ZSTD_LEGACY_SUPPORT=0;DEBUGLEVEL=0")
+    set_source_files_properties(../jsc.cpp PROPERTIES COMPILE_DEFINITIONS "BUN_ICU_ZSTD=1")
+    list(APPEND jsc_C_SOURCES ${jsc_ZSTD_DECODER_SOURCES})
+    list(APPEND jsc_PRIVATE_INCLUDE_DIRECTORIES ${BUN_ICU_ZSTD_SOURCE_DIR})
+endif ()
+
+# mya analyzes process corpses through Mach task APIs, so it only builds on
+# Apple platforms. Its sources do not compile elsewhere.
+if (APPLE)
+    set(mya_SOURCES ../mya/mya.cpp)
+    set(mya_FRAMEWORKS
+        JavaScriptCore
+        WTF
+        bmalloc
+    )
+
+    set(mya_PRIVATE_INCLUDE_DIRECTORIES
+        $<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>
+    )
+
+    # The corpse support mya uses lives in the tools static library.
+    set(mya_LIBRARIES JavaScriptCoreTools edit)
+endif ()
+
 WEBKIT_EXECUTABLE_DECLARE(jsc)
 
 if (USE_BUN_JSC_ADDITIONS)
@@ -61,6 +98,10 @@ if (USE_BUN_JSC_ADDITIONS)
     endif ()
 
     WEBKIT_EXECUTABLE_DECLARE(testFFI)
+endif ()
+
+if (APPLE)
+    WEBKIT_EXECUTABLE_DECLARE(mya)
 endif ()
 
 if (DEVELOPER_MODE)
@@ -123,6 +164,29 @@ if (DEVELOPER_MODE)
     set(testdfg_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testdfg_FRAMEWORKS ${jsc_FRAMEWORKS})
 
+    # The tools library and its tests are only relevant for Apple platforms.
+    if (APPLE)
+        set(testLibJSCTools_SOURCES
+            ../corpse/tests/CorpseAddressTest.cpp
+            ../corpse/tests/CorpseByteParserTest.cpp
+            ../corpse/tests/CorpseExportsTrieTest.cpp
+            ../corpse/tests/CorpseProcessTest.cpp
+            ../corpse/tests/CorpseRegionTest.cpp
+            ../corpse/tests/CorpseSnapshotTest.cpp
+            ../corpse/tests/CorpseSymbolTest.cpp
+            ../corpse/tests/CorpseThreadTest.cpp
+            ../corpse/tests/LibJSCToolsTestUtilities.cpp
+            ../corpse/tests/testLibJSCTools.cpp
+        )
+        set(testLibJSCTools_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
+        set(testLibJSCTools_PRIVATE_INCLUDE_DIRECTORIES
+            ${jsc_PRIVATE_INCLUDE_DIRECTORIES}
+            ${JAVASCRIPTCORE_DIR}/corpse
+        )
+        set(testLibJSCTools_FRAMEWORKS ${jsc_FRAMEWORKS})
+        set(testLibJSCTools_LIBRARIES JavaScriptCoreTools)
+    endif ()
+
     set(testwasmdebugger_SOURCES
         ../wasm/debugger/testwasmdebugger.cpp
 
@@ -155,6 +219,10 @@ if (DEVELOPER_MODE)
     WEBKIT_EXECUTABLE_DECLARE(testdfg)
     WEBKIT_EXECUTABLE_DECLARE(testwasmdebugger)
 
+    if (APPLE)
+        WEBKIT_EXECUTABLE_DECLARE(testLibJSCTools)
+    endif ()
+
     if (COMPILER_IS_GCC_OR_CLANG)
         WEBKIT_ADD_TARGET_CXX_FLAGS(testb3 -Wno-array-bounds)
         WEBKIT_ADD_TARGET_CXX_FLAGS(testair -Wno-array-bounds)
@@ -175,6 +243,14 @@ if (SHOULD_INSTALL_JS_SHELL)
     install(TARGETS jsc DESTINATION "${LIBEXEC_INSTALL_DIR}")
 endif ()
 
+if (APPLE)
+    WEBKIT_EXECUTABLE(mya)
+
+    if (SHOULD_INSTALL_JS_SHELL)
+        install(TARGETS mya DESTINATION "${LIBEXEC_INSTALL_DIR}")
+    endif ()
+endif ()
+
 if (DEVELOPER_MODE)
     WEBKIT_EXECUTABLE(testapi)
     WEBKIT_EXECUTABLE(testRegExp)
@@ -183,6 +259,10 @@ if (DEVELOPER_MODE)
     WEBKIT_EXECUTABLE(testair)
     WEBKIT_EXECUTABLE(testdfg)
     WEBKIT_EXECUTABLE(testwasmdebugger)
+
+    if (APPLE)
+        WEBKIT_EXECUTABLE(testLibJSCTools)
+    endif ()
 
     WEBKIT_ADD_PREFIX_HEADER(testapi ../JavaScriptCorePrefix.h PREFIX_NO_CODEGEN PREFIX_LANGUAGES CXX)
     WEBKIT_REUSE_PREFIX_HEADER(testb3 testapi ../JavaScriptCorePrefix.h PREFIX_LANGUAGES CXX)

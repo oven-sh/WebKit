@@ -169,7 +169,7 @@ void PageClientImpl::didRelaunchProcess()
 
 void PageClientImpl::toolTipChanged(const String&, const String& newToolTip)
 {
-    webkitWebViewBaseSetTooltipText(WEBKIT_WEB_VIEW_BASE(m_viewWidget), newToolTip.utf8().data());
+    webkitWebViewBaseSetTooltipText(WEBKIT_WEB_VIEW_BASE(m_viewWidget), newToolTip.utf8().legacyCStringPointer());
 }
 
 void PageClientImpl::setCursor(const WebCore::Cursor& cursor)
@@ -291,11 +291,11 @@ Ref<WebContextMenuProxy> PageClientImpl::createContextMenuProxy(WebPageProxy& pa
 }
 #endif // ENABLE(CONTEXT_MENUS)
 
-RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy& page, const WebCore::Color& color, const WebCore::IntRect& rect, ColorControlSupportsAlpha, Vector<WebCore::Color>&&, std::optional<WebCore::FrameIdentifier> frameID)
+RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy& page, const WebCore::Color& color, ColorControlSupportsAlpha supportsAlpha, Vector<WebCore::Color>&&, std::optional<WebCore::FrameIdentifier> frameID)
 {
     if (WEBKIT_IS_WEB_VIEW(m_viewWidget))
-        return WebKitColorChooser::create(page, color, rect, frameID);
-    return WebColorPickerGtk::create(page, color, rect, frameID);
+        return WebKitColorChooser::create(page, color, supportsAlpha, frameID);
+    return WebColorPickerGtk::create(page, color, supportsAlpha, frameID);
 }
 
 RefPtr<WebDateTimePicker> PageClientImpl::createDateTimePicker(WebPageProxy& page)

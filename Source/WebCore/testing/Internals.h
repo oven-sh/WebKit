@@ -91,7 +91,6 @@ class FetchRequest;
 class FetchResponse;
 class FileSystemHandle;
 class File;
-class GCObservation;
 class HTMLAnchorElement;
 class HTMLAttachmentElement;
 class HTMLCanvasElement;
@@ -156,6 +155,7 @@ class XMLHttpRequest;
 struct VideoConfiguration;
 
 enum class DocumentMarkerType : uint32_t;
+enum class IPAddressSpace : uint8_t;
 
 #if ENABLE(ENCRYPTED_MEDIA)
 class MediaKeys;
@@ -268,6 +268,7 @@ public:
 
     unsigned imageFrameIndex(HTMLImageElement&);
     unsigned imageFrameCount(HTMLImageElement&);
+    bool forceDecodeImageFrameAtIndex(HTMLImageElement&, unsigned index);
     float imageFrameDurationAtIndex(HTMLImageElement&, unsigned index);
     void setImageFrameDecodingDuration(HTMLImageElement&, float duration);
     void resetImageAnimation(HTMLImageElement&);
@@ -305,6 +306,8 @@ public:
     Ref<CSSComputedStyleDeclaration> computedStyleIncludingVisitedInfo(Element&) const;
 
     float usedOutlineOffset(Element&);
+
+    String computedAppleColorFilter(Element&);
 
     Node& ensureUserAgentShadowRoot(Element& host);
     Node* shadowRoot(Element& host);
@@ -411,6 +414,8 @@ public:
 
     ExceptionOr<Ref<DOMRect>> layoutViewportRect();
     ExceptionOr<Ref<DOMRect>> visualViewportRect();
+    ExceptionOr<Ref<DOMRect>> windowClipRect();
+    ExceptionOr<Ref<DOMRect>> exposedContentRect();
 
     ExceptionOr<void> setViewIsTransparent(bool);
 
@@ -471,6 +476,7 @@ public:
     String textFragmentDirectiveForRange(const Range&);
 
     ExceptionOr<void> setDelegatesScrolling(bool enabled);
+    ExceptionOr<bool> delegatesScrollingToNativeView();
 
     ExceptionOr<uint64_t> lastSpellCheckRequestSequence();
     ExceptionOr<uint64_t> lastSpellCheckProcessedSequence();
@@ -725,7 +731,7 @@ public:
         RGBA16F,
 #endif
     };
-    void NODELETE setScreenContentsFormatsForTesting(const Vector<Internals::ContentsFormat>&);
+    void setScreenContentsFormatsForTesting(const Vector<Internals::ContentsFormat>&);
 
 #if ENABLE(VIDEO)
     bool NODELETE isChangingPresentationMode(HTMLVideoElement&) const;
@@ -868,6 +874,7 @@ public:
     void NODELETE simulateAudioInterruption(HTMLMediaElement&);
     ExceptionOr<bool> mediaElementHasCharacteristic(HTMLMediaElement&, const String&);
     void enterViewerMode(HTMLVideoElement&);
+    void setVideoInExternalPlayback(HTMLVideoElement&, bool);
     ExceptionOr<bool> mediaPlayerRenderingCanBeAccelerated(HTMLMediaElement&);
 
     bool NODELETE elementShouldBufferData(HTMLMediaElement&);
@@ -946,9 +953,11 @@ public:
     ExceptionOr<String> mediaSessionRestrictions(const String& mediaType) const;
     void setMediaElementRestrictions(HTMLMediaElement&, StringView restrictionsString);
     ExceptionOr<void> postRemoteControlCommand(const String&, float argument);
+    ExceptionOr<void> postSystemRemoteControlCommand(const String&, float argument);
     void activeAudioRouteDidChange(bool shouldPause);
     bool NODELETE elementIsBlockingDisplaySleep(const HTMLMediaElement&) const;
     bool NODELETE isPlayerVisibleInViewport(const HTMLMediaElement&) const;
+    bool isMediaElementIntersectingViewport(const HTMLMediaElement&) const;
     bool isPlayerMuted(const HTMLMediaElement&) const;
     bool isPlayerPaused(const HTMLMediaElement&) const;
     double effectiveRate(const HTMLMediaElement&) const;
@@ -965,6 +974,7 @@ public:
     void setMockMediaPlaybackTargetPickerEnabled(bool);
     ExceptionOr<void> setMockMediaPlaybackTargetPickerState(const String& deviceName, const String& deviceState);
     void mockMediaPlaybackTargetPickerDismissPopup();
+    void mockMediaPlaybackTargetPickerRect(DOMPromiseDeferred<IDLInterface<DOMRect>>&&);
 #endif
 
     bool isMonitoringWirelessRoutes() const;
@@ -995,6 +1005,8 @@ public:
     RefPtr<File> createFile(const String&);
     void asyncCreateFile(const String&, DOMPromiseDeferred<IDLInterface<File>>&&);
     String createTemporaryFile(const String& name, const String& contents);
+
+    String documentIPAddressSpace() const;
 
     void queueMicroTask(int);
     bool testPreloaderSettingViewport();
@@ -1050,8 +1062,6 @@ public:
     bool NODELETE hasHistoryActionActivation();
 
     bool consumeHistoryActionUserActivation();
-
-    RefPtr<GCObservation> observeGC(JSC::JSValue);
 
     enum class UserInterfaceLayoutDirection : uint8_t { LTR, RTL };
     void setUserInterfaceLayoutDirection(UserInterfaceLayoutDirection);
@@ -1351,6 +1361,7 @@ public:
 
     bool elementIsActiveNowPlayingSession(HTMLMediaElement&) const;
     void elementIsActiveNowPlayingSessionInGPUProcess(HTMLMediaElement&, DOMPromiseDeferred<IDLBoolean>&&);
+    void elementIsRemoteCommandTargetInGPUProcess(HTMLMediaElement&, DOMPromiseDeferred<IDLBoolean>&&);
 
 #endif // ENABLE(VIDEO)
 
@@ -1366,7 +1377,7 @@ public:
 
     void notifyResourceLoadObserver();
 
-    unsigned NODELETE primaryScreenDisplayID();
+    unsigned primaryScreenDisplayID();
 
     bool capsLockIsOn();
         
@@ -1668,6 +1679,7 @@ public:
     void setPDFDisplayModeForTesting(Element&, const String&) const;
     void unlockPDFDocumentForTesting(Element&, const String&) const;
     bool sendEditingCommandToPDFForTesting(Element&, const String& commandName, const String& argument) const;
+    Vector<String> pdfContextMenuItemTitlesForTesting(Element&, int x, int y) const;
     void registerPDFTest(Ref<VoidCallback>&&, Element&);
 
     String NODELETE defaultSpatialTrackingLabel() const;
@@ -1708,7 +1720,9 @@ public:
 #if ENABLE(SPATIAL_PORTAL)
     unsigned NODELETE numberOfHostedModelsInSpatialPortal(Element&);
     bool NODELETE establishesSpatialPortal(Element&);
+    RefPtr<Element> NODELETE spatialPortalAnchorForModel(HTMLModelElement&);
     std::optional<Vector<double>> NODELETE spatialPortalResolvedTransform(Element&);
+    String NODELETE effectiveEnvironmentMap(Element&);
 #endif
 
     ExceptionOr<void> copyImageAtLocation(int x, int y);

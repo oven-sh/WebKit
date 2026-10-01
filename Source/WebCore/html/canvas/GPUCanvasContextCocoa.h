@@ -54,7 +54,7 @@ public:
 
     ~GPUCanvasContextCocoa();
 
-    DestinationColorSpace colorSpace() const override;
+    ColorSpace colorSpace() const override;
     bool compositingResultsNeedUpdating() const override { return m_compositingResultsNeedsUpdating; }
     RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() override;
     bool needsPreparationForDisplay() const override { return true; }
@@ -94,6 +94,7 @@ private:
 
     CanvasType htmlOrOffscreenCanvas() const;
     ExceptionOr<void> configure(GPUCanvasConfiguration&&, bool);
+    void expireCurrentTexture();
     void present(uint32_t frameIndex);
     void updateFramePacing();
     Page* page() const;

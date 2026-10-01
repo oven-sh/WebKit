@@ -212,7 +212,6 @@ enum class AXProperty : uint16_t {
     IsColumnHeader,
     IsExpanded,
     IsExposableTable,
-    IsFieldset,
     IsIndeterminate,
     IsInsideNativeTextControl,
     IsInUserAgentShadowTree,
@@ -247,7 +246,6 @@ enum class AXProperty : uint16_t {
     KeyShortcuts,
     Language,
     LinethroughColor,
-    ListMarkerLineID,
     ListMarkerText,
     LiveRegionAtomic,
     LocalizedActionVerb,
@@ -343,7 +341,6 @@ using AXPropertyValueVariant = Variant<std::nullptr_t, Markable<AXID>, String, b
     , RetainPtr<CTFontRef>
     , FontOrientation
     , std::unique_ptr<AXTextRuns>
-    , AXTextRunLineID
     , FrameIdentifier
 >;
 using AXPropertyVector = Vector<std::pair<AXProperty, AXPropertyValueVariant>>;

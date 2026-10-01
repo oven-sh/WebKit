@@ -26,6 +26,7 @@
 #pragma once
 
 #include "MessageReceiver.h"
+#include "Untrusted.h"
 #include "WebPageInspectorAgentBase.h"
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
 #include <JavaScriptCore/InspectorFrontendDispatchers.h>
@@ -53,6 +54,8 @@ class ProxyingPageAgent final : public RefCounted<ProxyingPageAgent>, public Web
     WTF_MAKE_TZONE_ALLOCATED(ProxyingPageAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ProxyingPageAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     ProxyingPageAgent(WebKit::WebPageAgentContext&);
     ~ProxyingPageAgent();
 
@@ -107,7 +110,7 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
     // IPC message handlers from WebProcess PageAgentProxy
-    void frameNavigated(WebCore::FrameIdentifier, const URL&, const String& mimeType, WebCore::SecurityOriginData&&, std::optional<WebCore::FrameIdentifier> parentFrameID, const String& name, const String& loaderId);
+    void frameNavigated(WebCore::FrameIdentifier, const URL&, const String& mimeType, IPC::Untrusted<WebCore::SecurityOriginData>&&, std::optional<WebCore::FrameIdentifier> parentFrameID, const String& name, const String& loaderId);
     void domContentEventFired(double timestamp);
     void loadEventFired(double timestamp);
     void frameDetached(WebCore::FrameIdentifier);

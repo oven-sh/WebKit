@@ -108,7 +108,7 @@ void PrivateClickMeasurementManager::storeUnattributed(PrivateClickMeasurement&&
 #if PLATFORM(COCOA)
             else {
                 if (auto errorMessage = measurement.calculateAndUpdateSourceUnlinkableToken(publicKeyBase64URL)) {
-                    RELEASE_LOG_INFO(PrivateClickMeasurement, "Got the following error in calculateAndUpdateSourceUnlinkableToken(): '%" PUBLIC_LOG_STRING "'", errorMessage->utf8().data());
+                    RELEASE_LOG_INFO(PrivateClickMeasurement, "Got the following error in calculateAndUpdateSourceUnlinkableToken(): '%" PUBLIC_LOG_STRING "'", errorMessage->utf8());
                     protectedThis->m_client->broadcastConsoleMessage(MessageLevel::Error, makeString("[Private Click Measurement] "_s, *errorMessage));
                     return;
                 }
@@ -154,7 +154,7 @@ void PrivateClickMeasurementManager::getTokenPublicKey(PrivateClickMeasurement&&
     m_client->broadcastConsoleMessage(MessageLevel::Log, "[Private Click Measurement] About to fire a token public key request."_s);
 
     PCM::NetworkLoader::start(WTF::move(tokenPublicKeyURL), nullptr, pcmDataCarried, m_applicationBundleIdentifier, [weakThis = WeakPtr { *this }, attribution = WTF::move(attribution), callback = WTF::move(callback)] (auto& errorDescription, auto& jsonObject) mutable {
-        WeakPtr protectedThis = weakThis.get();
+        RefPtr protectedThis = weakThis;
         if (!protectedThis)
             return;
 
@@ -273,7 +273,7 @@ void PrivateClickMeasurementManager::getSignedUnlinkableTokenForSource(PrivateCl
     m_client->broadcastConsoleMessage(MessageLevel::Log, "[Private Click Measurement] About to fire a unlinkable token signing request for the click source."_s);
 
     PCM::NetworkLoader::start(WTF::move(tokenSignatureURL), measurement.tokenSignatureJSON(), pcmDataCarried, m_applicationBundleIdentifier, [weakThis = WeakPtr { *this }, measurement = WTF::move(measurement)] (auto& errorDescription, auto& jsonObject) mutable {
-        WeakPtr protectedThis = weakThis.get();
+        RefPtr protectedThis = weakThis;
         if (!protectedThis)
             return;
 
@@ -290,7 +290,7 @@ void PrivateClickMeasurementManager::getSignedUnlinkableTokenForSource(PrivateCl
 #if PLATFORM(COCOA)
         } else {
             if (auto errorMessage = measurement.calculateAndUpdateSourceSecretToken(*signatureBase64URL)) {
-                RELEASE_LOG_INFO(PrivateClickMeasurement, "Got the following error in calculateAndUpdateSourceSecretToken(): '%" PUBLIC_LOG_STRING "'", errorMessage->utf8().data());
+                RELEASE_LOG_INFO(PrivateClickMeasurement, "Got the following error in calculateAndUpdateSourceSecretToken(): '%" PUBLIC_LOG_STRING "'", errorMessage->utf8());
                 protectedThis->m_client->broadcastConsoleMessage(MessageLevel::Error, makeString("[Private Click Measurement] "_s, *errorMessage));
                 return;
             }
@@ -338,7 +338,7 @@ void PrivateClickMeasurementManager::getSignedUnlinkableTokenForDestination(Sour
             auto result = PrivateClickMeasurement::calculateAndUpdateDestinationSecretToken(*signatureBase64URL, *attributionTriggerData.destinationUnlinkableToken);
             if (!result) {
                 auto errorMessage = result.error().isEmpty() ? "Unknown"_s : result.error();
-                RELEASE_LOG_INFO(PrivateClickMeasurement, "Got the following error in calculateAndUpdateSourceSecretToken(): '%" PUBLIC_LOG_STRING "'", errorMessage.utf8().data());
+                RELEASE_LOG_INFO(PrivateClickMeasurement, "Got the following error in calculateAndUpdateSourceSecretToken(): '%" PUBLIC_LOG_STRING "'", errorMessage.utf8());
                 protectedThis->m_client->broadcastConsoleMessage(MessageLevel::Error, makeString("[Private Click Measurement] "_s, errorMessage));
                 return;
             }
@@ -401,7 +401,7 @@ void PrivateClickMeasurementManager::handleAttribution(AttributionTriggerData&& 
         auto attributionTriggerDataCopy = attributionTriggerData;
         // This is guaranteed to be close in time to the triggering event which makes it likely to be personally identifiable.
         getTokenPublicKey(WTF::move(attributionTriggerDataCopy), WebCore::PCM::AttributionReportEndpoint::Destination, PrivateClickMeasurement::PcmDataCarried::PersonallyIdentifiable, [weakThis = WeakPtr { *this }, sourceSite = SourceSite { WTF::move(sourceDomain) }, destinationSite = AttributionDestinationSite { firstPartyURL }, applicationBundleIdentifier = applicationBundleIdentifier.isolatedCopy()] (AttributionTriggerData&& attributionTriggerData, const String& publicKeyBase64URL) mutable {
-            WeakPtr protectedThis = weakThis.get();
+            RefPtr protectedThis = weakThis;
             if (!protectedThis)
                 return;
 
@@ -423,7 +423,7 @@ void PrivateClickMeasurementManager::handleAttribution(AttributionTriggerData&& 
                 }
 
                 auto errorMessage = result.error().isEmpty() ? "Unknown"_s : result.error();
-                RELEASE_LOG_INFO(PrivateClickMeasurement, "Got the following error in calculateAndUpdateDestinationUnlinkableToken(): '%" PUBLIC_LOG_STRING "'", errorMessage.utf8().data());
+                RELEASE_LOG_INFO(PrivateClickMeasurement, "Got the following error in calculateAndUpdateDestinationUnlinkableToken(): '%" PUBLIC_LOG_STRING "'", errorMessage.utf8());
                 protectedThis->m_client->broadcastConsoleMessage(MessageLevel::Error, makeString("[Private Click Measurement] "_s, errorMessage));
                 return;
             }
@@ -464,7 +464,7 @@ void PrivateClickMeasurementManager::attribute(SourceSite&& sourceSite, Attribut
         return;
 
     protect(store())->attributePrivateClickMeasurement(WTF::move(sourceSite), WTF::move(destinationSite), applicationBundleIdentifier, WTF::move(attributionTriggerData), m_isRunningTest ? WebCore::PrivateClickMeasurement::IsRunningLayoutTest::Yes : WebCore::PrivateClickMeasurement::IsRunningLayoutTest::No, [weakThis = WeakPtr { *this }] (auto attributionSecondsUntilSendData, auto debugInfo) {
-        WeakPtr protectedThis = weakThis.get();
+        RefPtr protectedThis = weakThis;
         if (!protectedThis)
             return;
         

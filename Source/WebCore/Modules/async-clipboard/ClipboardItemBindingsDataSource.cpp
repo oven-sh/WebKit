@@ -147,14 +147,14 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard& destinati
     m_writingDestination = destination;
     m_numberOfPendingClipboardTypes = m_itemPromises.size();
     m_itemTypeLoaders = m_itemPromises.map([&](auto& typeAndItem) {
-        auto type = typeAndItem.key;
+        auto& type = typeAndItem.key;
         auto itemTypeLoader = ClipboardItemTypeLoader::create(destination, type, [this, protectedItem = Ref { m_item.get() }] {
             ASSERT(m_numberOfPendingClipboardTypes);
             if (!--m_numberOfPendingClipboardTypes)
                 invokeCompletionHandler();
         });
 
-        auto promise = typeAndItem.value;
+        auto& promise = typeAndItem.value;
         /* hack: gcc 8.4 will segfault if the WeakPtr is instantiated within the lambda captures */
         auto wl = WeakPtr { itemTypeLoader };
         promise->whenSettledWithResult([this, protectedItem = Ref { m_item.get() }, destination = m_writingDestination, type, weakItemTypeLoader = WTF::move(wl)] (auto* globalObject, bool, JSC::JSValue result) mutable {
@@ -226,12 +226,18 @@ void ClipboardItemBindingsDataSource::invokeCompletionHandler()
     PasteboardCustomData customData;
     for (auto& itemTypeLoader : itemTypeLoaders) {
         auto type = itemTypeLoader->type();
-        auto& data = itemTypeLoader->data();
-        if (std::holds_alternative<String>(data) && !!std::get<String>(data))
-            customData.writeString(type, std::get<String>(data));
-        else if (std::holds_alternative<Ref<SharedBuffer>>(data))
-            customData.writeData(type, std::get<Ref<SharedBuffer>>(data).copyRef());
-        else {
+        bool didWrite = WTF::switchOn(itemTypeLoader->data(),
+            [&](const String& string) {
+                if (!string)
+                    return false;
+                customData.writeString(type, string);
+                return true;
+            },
+            [&](const Ref<SharedBuffer>& buffer) {
+                customData.writeData(type, buffer.copyRef());
+                return true;
+            });
+        if (!didWrite) {
             completionHandler(std::nullopt);
             return;
         }
@@ -280,15 +286,13 @@ void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::didFail(Exception
 
 String ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::dataAsString() const
 {
-    if (std::holds_alternative<Ref<SharedBuffer>>(m_data)) {
-        auto& buffer = std::get<Ref<SharedBuffer>>(m_data);
-        return String::fromUTF8(buffer->span());
-    }
-
-    if (std::holds_alternative<String>(m_data))
-        return std::get<String>(m_data);
-
-    return { };
+    return WTF::switchOn(m_data,
+        [](const String& string) {
+            return string;
+        },
+        [](const Ref<SharedBuffer>& buffer) {
+            return String::fromUTF8(buffer->span());
+        });
 }
 
 void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::sanitizeDataIfNeeded()
@@ -328,24 +332,26 @@ void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::sanitizeDataIfNee
     }
 
     if (m_type == "image/png"_s) {
-        RefPtr<SharedBuffer> bufferToSanitize;
-        if (std::holds_alternative<Ref<SharedBuffer>>(m_data))
-            bufferToSanitize = std::get<Ref<SharedBuffer>>(m_data).ptr();
-        else if (std::holds_alternative<String>(m_data))
-            bufferToSanitize = utf8Buffer(std::get<String>(m_data));
+        RefPtr<SharedBuffer> bufferToSanitize = WTF::switchOn(m_data,
+            [](const String& string) -> RefPtr<SharedBuffer> {
+                return utf8Buffer(string);
+            },
+            [](const Ref<SharedBuffer>& buffer) -> RefPtr<SharedBuffer> {
+                return buffer.ptr();
+            });
 
         if (!bufferToSanitize || bufferToSanitize->isEmpty())
             return;
 
         auto bitmapImage = BitmapImage::create();
         bitmapImage->setData(WTF::move(bufferToSanitize), true);
-        auto imageBuffer = ImageBuffer::create(bitmapImage->size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+        auto imageBuffer = ImageBuffer::create(bitmapImage->size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
         if (!imageBuffer) {
             m_data = { nullString() };
             return;
         }
 
-        imageBuffer->context().drawImage(bitmapImage.get(), FloatPoint::zero());
+        imageBuffer->context().drawBitmapImage(bitmapImage.get(), FloatPoint::zero());
         m_data = { SharedBuffer::create(encodeData(WTF::move(imageBuffer), "image/png"_s)) };
     }
 }

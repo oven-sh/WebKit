@@ -132,7 +132,7 @@ AudioDecoderCocoa::~AudioDecoderCocoa()
     });
 }
 
-Expected<std::pair<FourCharCode, std::optional<AudioStreamDescription::PCMFormat>>, String> AudioDecoderCocoa::isCodecSupported(const StringView& codecName)
+std::expected<std::pair<FourCharCode, std::optional<AudioStreamDescription::PCMFormat>>, String> AudioDecoderCocoa::isCodecSupported(const StringView& codecName)
 {
     auto codec = [](auto& codecName) -> FourCharCode {
         if (codecName.startsWith("mp4a.40.5"_s))
@@ -191,7 +191,7 @@ Expected<std::pair<FourCharCode, std::optional<AudioStreamDescription::PCMFormat
 
 Ref<AudioDecoder::DecodePromise> AudioDecoderCocoa::decode(EncodedData&& data)
 {
-    return invokeAsync(queueSingleton(), [data = SharedBuffer::create(data.data), isKeyFrame = data.isKeyFrame, timestamp = data.timestamp, duration = data.duration, decoder = m_internalDecoder]() mutable {
+    return invokeAsync(queueSingleton(), [data = WTF::move(data.data), isKeyFrame = data.isKeyFrame, timestamp = data.timestamp, duration = data.duration, decoder = m_internalDecoder]() mutable {
         return decoder->decode(WTF::move(data), isKeyFrame, timestamp, duration);
     });
 }

@@ -61,7 +61,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorDOMStorageAgent);
 InspectorDOMStorageAgent::InspectorDOMStorageAgent(PageAgentContext& context)
     : InspectorAgentBase("DOMStorage"_s, context)
     , m_frontendDispatcher(makeUniqueRef<Inspector::DOMStorageFrontendDispatcher>(context.frontendRouter))
-    , m_backendDispatcher(Inspector::DOMStorageBackendDispatcher::create(context.backendDispatcher, this))
+    , m_backendDispatcher(Inspector::DOMStorageBackendDispatcher::create(protect(context.backendDispatcher), this))
     , m_inspectedPage(context.inspectedPage)
 {
 }
@@ -213,7 +213,7 @@ RefPtr<StorageArea> InspectorDOMStorageAgent::findStorageArea(Inspector::Protoco
         return nullptr;
     }
 
-    targetFrame = ResourceUtilities::findFrameWithSecurityOrigin(m_inspectedPage, securityOrigin);
+    targetFrame = ResourceUtilities::findFrameWithSecurityOrigin(protect(m_inspectedPage), securityOrigin);
     if (!targetFrame) {
         errorString = "Missing frame for given securityOrigin"_s;
         return nullptr;

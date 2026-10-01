@@ -92,24 +92,24 @@ ConvolverNode::~ConvolverNode()
 void ConvolverNode::process(size_t framesToProcess)
 {
     CheckedPtr firstOutput = output(0);
-    AudioBus& outputBus = firstOutput->bus();
+    Ref outputBus = firstOutput->bus();
 
     // Synchronize with possible dynamic changes to the impulse response.
     if (!m_processLock.tryLock()) {
         // Too bad - tryLock() failed. We must be in the middle of setting a new impulse response.
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
     Locker locker { AdoptLock, m_processLock };
 
     if (!isInitialized() || !m_reverb.get())
-        outputBus.zero();
+        outputBus->zero();
     else {
         // Process using the convolution engine.
         // Note that we can handle the case where nothing is connected to the input, in which case we'll just feed silence into the convolver.
         // FIXME: If we wanted to get fancy we could try to factor in the 'tail time' and stop processing once the tail dies down if
         // we keep getting fed silence.
-        m_reverb->process(input(0)->bus(), outputBus, framesToProcess);
+        m_reverb->process(protect(input(0)->bus()), outputBus, framesToProcess);
     }
 }
 
@@ -124,7 +124,7 @@ ExceptionOr<void> ConvolverNode::setBufferForBindings(RefPtr<AudioBuffer>&& buff
         return { };
     }
 
-    if (buffer->sampleRate() != context().sampleRate())
+    if (buffer->sampleRate() != protect(context())->sampleRate())
         return Exception { ExceptionCode::NotSupportedError, "Buffer sample rate does not match the context's sample rate"_s };
 
     unsigned numberOfChannels = buffer->numberOfChannels();
@@ -146,7 +146,7 @@ ExceptionOr<void> ConvolverNode::setBufferForBindings(RefPtr<AudioBuffer>&& buff
     bufferBus->setSampleRate(buffer->sampleRate());
 
     // Create the reverb with the given impulse response.
-    bool useBackgroundThreads = !context().isOfflineContext();
+    bool useBackgroundThreads = !protect(context())->isOfflineContext();
     auto reverb = makeUnique<Reverb>(bufferBus, AudioUtilities::renderQuantumSize, MaxFFTSize, useBackgroundThreads, m_normalize);
 
     {

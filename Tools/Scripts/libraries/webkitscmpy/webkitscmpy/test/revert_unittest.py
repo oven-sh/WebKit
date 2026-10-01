@@ -113,7 +113,7 @@ class TestRevert(testing.PathTestCase):
             captured.stdout.getvalue(),
             "This issue will track the revert and should not be the issue of the commit(s) to be reverted.\n"
             "Enter issue URL or title of new issue (reason for the revert): \n"
-            "Created the local development branch 'eng/Example-feature-1'\n"
+            "Created the local development branch 'eng/revert-5-main-Example-feature-1'\n"
             "Created 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
             "https://github.example.com/WebKit/WebKit/pull/1\n",
         )
@@ -121,18 +121,18 @@ class TestRevert(testing.PathTestCase):
         log = captured.root.log.getvalue().splitlines()
         self.assertEqual(
             [line for line in log if 'Mock process' not in line], [
-                "Creating the local development branch 'eng/Example-feature-1'...",
+                "Creating the local development branch 'eng/revert-5-main-Example-feature-1'...",
                 'Reverted 5@main',
                 'Automatically relating issues...',
-                "Rebasing 'eng/Example-feature-1' on 'main'...",
-                "Rebased 'eng/Example-feature-1' on 'main!'",
+                "Rebasing 'eng/revert-5-main-Example-feature-1' on 'main'...",
+                "Rebased 'eng/revert-5-main-Example-feature-1' on 'main!'",
                 'Running pre-PR checks...',
                 'No pre-PR checks to run',
                 'Checking if PR already exists...',
                 'PR not found.',
                 "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
-                "Pushing 'eng/Example-feature-1' to 'fork'...",
-                "Creating pull-request for 'eng/Example-feature-1'...",
+                "Pushing 'eng/revert-5-main-Example-feature-1' to 'fork'...",
+                "Creating pull-request for 'eng/revert-5-main-Example-feature-1'...",
             ],
         )
 
@@ -165,7 +165,7 @@ class TestRevert(testing.PathTestCase):
             captured.stdout.getvalue(),
             "This issue will track the revert and should not be the issue of the commit(s) to be reverted.\n"
             "Enter issue URL or title of new issue (reason for the revert): \n"
-            "Created the local development branch 'eng/Example-feature-1'\n"
+            "Created the local development branch 'eng/revert-5-main-Example-feature-1'\n"
             "Created 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
             "https://github.example.com/WebKit/WebKit/pull/1\n",
         )
@@ -173,19 +173,19 @@ class TestRevert(testing.PathTestCase):
         log = captured.root.log.getvalue().splitlines()
         self.assertEqual(
             [line for line in log if 'Mock process' not in line], [
-                "Creating the local development branch 'eng/Example-feature-1'...",
+                "Creating the local development branch 'eng/revert-5-main-Example-feature-1'...",
                 'Reverted 5@main',
                 'Automatically relating issues...',
                 'Using committed changes...',
-                "Rebasing 'eng/Example-feature-1' on 'main'...",
-                "Rebased 'eng/Example-feature-1' on 'main!'",
+                "Rebasing 'eng/revert-5-main-Example-feature-1' on 'main'...",
+                "Rebased 'eng/revert-5-main-Example-feature-1' on 'main!'",
                 'Running pre-PR checks...',
                 'No pre-PR checks to run',
                 'Checking if PR already exists...',
                 'PR not found.',
                 "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
-                "Pushing 'eng/Example-feature-1' to 'fork'...",
-                "Creating pull-request for 'eng/Example-feature-1'...",
+                "Pushing 'eng/revert-5-main-Example-feature-1' to 'fork'...",
+                "Creating pull-request for 'eng/revert-5-main-Example-feature-1'...",
             ],
         )
 
@@ -216,7 +216,7 @@ class TestRevert(testing.PathTestCase):
 
         self.assertEqual(
             captured.stdout.getvalue(),
-            "Created the local development branch 'eng/Example-feature-1'\n"
+            "Created the local development branch 'eng/revert-5-main-Example-feature-1'\n"
             "Created 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
             "https://github.example.com/WebKit/WebKit/pull/1\n",
         )
@@ -224,19 +224,19 @@ class TestRevert(testing.PathTestCase):
         log = captured.root.log.getvalue().splitlines()
         self.assertEqual(
             [line for line in log if 'Mock process' not in line], [
-                "Creating the local development branch 'eng/Example-feature-1'...",
+                "Creating the local development branch 'eng/revert-5-main-Example-feature-1'...",
                 'Reverted 5@main',
                 'Automatically relating issues...',
                 'Using committed changes...',
-                "Rebasing 'eng/Example-feature-1' on 'main'...",
-                "Rebased 'eng/Example-feature-1' on 'main!'",
+                "Rebasing 'eng/revert-5-main-Example-feature-1' on 'main'...",
+                "Rebased 'eng/revert-5-main-Example-feature-1' on 'main!'",
                 'Running pre-PR checks...',
                 'No pre-PR checks to run',
                 'Checking if PR already exists...',
                 'PR not found.',
                 "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
-                "Pushing 'eng/Example-feature-1' to 'fork'...",
-                "Creating pull-request for 'eng/Example-feature-1'...",
+                "Pushing 'eng/revert-5-main-Example-feature-1' to 'fork'...",
+                "Creating pull-request for 'eng/revert-5-main-Example-feature-1'...",
             ],
         )
 
@@ -264,7 +264,7 @@ class TestRevert(testing.PathTestCase):
         self.assertEqual(
             captured.stdout.getvalue(),
             'Enter a reason for the revert: \n'
-            "Created the local development branch 'eng/reason-for-revert'\n",
+            "Created the local development branch 'eng/revert-5-main-reason-for-revert'\n",
         )
         self.assertEqual(captured.stderr.getvalue(), '')
 
@@ -292,6 +292,20 @@ index 05e8751..0bf3c85 100644
             self.assertEqual(1, result)
 
         self.assertEqual(captured.stderr.getvalue(), 'Please commit your changes or stash them before you revert commit: d8bce26fa65c6fc8f39c17927abb77f69fab82fc')
+
+    def test_unresolvable_commit(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub() as remote, \
+                mocks.local.Git(self.path, remote='https://{}'.format(remote.remote)) as repo, mocks.local.Svn(), \
+                patch('webkitbugspy.Tracker._trackers', []):
+
+            result = program.main(
+                args=('revert', '319904@main.', '-v', '--no-pr'),
+                path=self.path,
+            )
+            self.assertEqual(1, result)
+
+        self.assertTrue(captured.stderr.getvalue().startswith('Could not find "319904@main."'))
+        self.assertNotIn('Traceback', captured.stderr.getvalue())
 
     def test_update(self):
         with MockTerminal.input('{}/show_bug.cgi?id=2'.format(self.BUGZILLA)), OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub() as remote, mocks.local.Git(
@@ -321,7 +335,7 @@ index 05e8751..0bf3c85 100644
             captured.stdout.getvalue(),
             "This issue will track the revert and should not be the issue of the commit(s) to be reverted.\n"
             "Enter issue URL or title of new issue (reason for the revert): \n"
-            "Created the local development branch 'eng/Example-feature-1'\n"
+            "Created the local development branch 'eng/revert-5-main-Example-feature-1'\n"
             "Created 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
             "https://github.example.com/WebKit/WebKit/pull/1\n"
             "Updated 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
@@ -331,30 +345,30 @@ index 05e8751..0bf3c85 100644
         log = captured.root.log.getvalue().splitlines()
         self.assertEqual(
             [line for line in log if 'Mock process' not in line], [
-                "Creating the local development branch 'eng/Example-feature-1'...",
+                "Creating the local development branch 'eng/revert-5-main-Example-feature-1'...",
                 'Reverted 5@main',
                 'Automatically relating issues...',
-                "Rebasing 'eng/Example-feature-1' on 'main'...",
-                "Rebased 'eng/Example-feature-1' on 'main!'",
+                "Rebasing 'eng/revert-5-main-Example-feature-1' on 'main'...",
+                "Rebased 'eng/revert-5-main-Example-feature-1' on 'main!'",
                 'Running pre-PR checks...',
                 'No pre-PR checks to run',
                 'Checking if PR already exists...',
                 'PR not found.',
                 "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
-                "Pushing 'eng/Example-feature-1' to 'fork'...",
-                "Creating 'eng/Example-feature-1-1' as a reference branch",
-                "Creating pull-request for 'eng/Example-feature-1'...",
+                "Pushing 'eng/revert-5-main-Example-feature-1' to 'fork'...",
+                "Creating 'eng/revert-5-main-Example-feature-1-1' as a reference branch",
+                "Creating pull-request for 'eng/revert-5-main-Example-feature-1'...",
                 'Using committed changes...',
-                "Rebasing 'eng/Example-feature-1' on 'main'...",
-                "Rebased 'eng/Example-feature-1' on 'main!'",
+                "Rebasing 'eng/revert-5-main-Example-feature-1' on 'main'...",
+                "Rebased 'eng/revert-5-main-Example-feature-1' on 'main!'",
                 'Running pre-PR checks...',
                 'No pre-PR checks to run',
                 'Checking if PR already exists...',
                 'PR #1 found.',
                 'Checking PR labels for active labels...',
                 "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
-                "Pushing 'eng/Example-feature-1' to 'fork'...",
-                "Updating pull-request for 'eng/Example-feature-1'..."
+                "Pushing 'eng/revert-5-main-Example-feature-1' to 'fork'...",
+                "Updating pull-request for 'eng/revert-5-main-Example-feature-1'..."
             ],
         )
 
@@ -380,7 +394,7 @@ index 05e8751..0bf3c85 100644
             self.assertEqual(True, 'Unreviewed, reverting 5@main (d8bce26fa65c)' in repo.head.message)
             self.assertEqual(
                 captured.stdout.getvalue(),
-                "Created the local development branch 'eng/Example-feature-1'\n"
+                "Created the local development branch 'eng/revert-5-main-Example-feature-1'\n"
                 "Created 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
                 "https://github.example.com/WebKit/WebKit/pull/1\n"
             )
@@ -413,21 +427,21 @@ index 05e8751..0bf3c85 100644
         log = captured.root.log.getvalue().splitlines()
         self.assertEqual(
             [line for line in log if 'Mock process' not in line], [
-                "Creating the local development branch 'eng/Example-issue-1'...",
+                "Creating the local development branch 'eng/revert-5-main-Example-issue-1'...",
                 'Reverted 5@main',
                 'Automatically relating issues...',
                 'Using committed changes...',
                 'Detected merging automation, using that instead of local git tooling',
-                "Rebasing 'eng/Example-issue-1' on 'main'...",
-                "Rebased 'eng/Example-issue-1' on 'main!'",
+                "Rebasing 'eng/revert-5-main-Example-issue-1' on 'main'...",
+                "Rebased 'eng/revert-5-main-Example-issue-1' on 'main!'",
                 'Running pre-PR checks...',
                 'No pre-PR checks to run',
                 'Checking if PR already exists...',
                 'PR not found.',
                 "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
-                "Pushing 'eng/Example-issue-1' to 'fork'...",
-                "Creating 'eng/Example-issue-1-1' as a reference branch",
-                "Creating pull-request for 'eng/Example-issue-1'...",
+                "Pushing 'eng/revert-5-main-Example-issue-1' to 'fork'...",
+                "Creating 'eng/revert-5-main-Example-issue-1-1' as a reference branch",
+                "Creating pull-request for 'eng/revert-5-main-Example-issue-1'...",
                 "Adding 'merge-queue' to 'PR 2 | Unreviewed, reverting 5@main (d8bce26fa65c)'",
             ],
         )
@@ -460,21 +474,135 @@ index 05e8751..0bf3c85 100644
         log = captured.root.log.getvalue().splitlines()
         self.assertEqual(
             [line for line in log if 'Mock process' not in line], [
-                "Creating the local development branch 'eng/Example-issue-1'...",
+                "Creating the local development branch 'eng/revert-5-main-Example-issue-1'...",
                 'Reverted 5@main',
                 'Automatically relating issues...',
                 'Using committed changes...',
                 'Detected merging automation, using that instead of local git tooling',
-                "Rebasing 'eng/Example-issue-1' on 'main'...",
-                "Rebased 'eng/Example-issue-1' on 'main!'",
+                "Rebasing 'eng/revert-5-main-Example-issue-1' on 'main'...",
+                "Rebased 'eng/revert-5-main-Example-issue-1' on 'main!'",
                 'Running pre-PR checks...',
                 'No pre-PR checks to run',
                 'Checking if PR already exists...',
                 'PR not found.',
                 "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
-                "Pushing 'eng/Example-issue-1' to 'fork'...",
-                "Creating 'eng/Example-issue-1-1' as a reference branch",
-                "Creating pull-request for 'eng/Example-issue-1'...",
+                "Pushing 'eng/revert-5-main-Example-issue-1' to 'fork'...",
+                "Creating 'eng/revert-5-main-Example-issue-1-1' as a reference branch",
+                "Creating pull-request for 'eng/revert-5-main-Example-issue-1'...",
                 "Adding 'unsafe-merge-queue' to 'PR 2 | Unreviewed, reverting 5@main (d8bce26fa65c)'",
             ],
         )
+
+    def test_branch_name_prefix_single_commit(self):
+        self.assertEqual('revert-5-main', program.Revert.branch_name_prefix([
+            Commit(hash='d8bce26fa65c6fc8f39c17927abb77f69fab82fc', identifier=5, branch='main'),
+        ]))
+
+    def test_branch_name_prefix_multiple_commits(self):
+        self.assertEqual('revert-5-main-4-main', program.Revert.branch_name_prefix([
+            Commit(hash='d8bce26fa65c6fc8f39c17927abb77f69fab82fc', identifier=5, branch='main'),
+            Commit(hash='bae5d1e90999d4f916a8a15810ccfa43f37a2fd6', identifier=4, branch='main'),
+        ]))
+
+    def test_branch_name_prefix_collapses_long_lists(self):
+        self.assertEqual('revert-5-main-4-main-3-main-and-2-more', program.Revert.branch_name_prefix([
+            Commit(hash='d8bce26fa65c6fc8f39c17927abb77f69fab82fc', identifier=identifier, branch='main')
+            for identifier in (5, 4, 3, 2, 1)
+        ]))
+
+    def test_branch_name_prefix_hash_only(self):
+        self.assertEqual('revert-d8bce26fa65c', program.Revert.branch_name_prefix([
+            Commit(hash='d8bce26fa65c6fc8f39c17927abb77f69fab82fc'),
+        ]))
+
+    def test_branch_name(self):
+        # An issue with no spaces is a branch name the user picked, it should not be prefixed
+        with MockTerminal.input('reason for revert'), OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            result = program.main(
+                args=('revert', 'd8bce26fa65c6fc8f39c17927abb77f69fab82fc', '-i', 'pr-branch', '--no-issue', '-v', '--no-pr'),
+                path=self.path,
+            )
+            self.assertEqual(0, result)
+            self.assertEqual(local.Git(self.path).branch, 'eng/pr-branch')
+
+        self.assertEqual(captured.stderr.getvalue(), '')
+
+    def test_two_reverts_of_different_commits(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, bmocks.Bugzilla(
+            self.BUGZILLA.split('://')[-1],
+            issues=bmocks.ISSUES,
+            environment=Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            ),
+        ), mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)]):
+            self.assertEqual(0, program.main(
+                args=('revert', '5@main', '--issue', '{}/show_bug.cgi?id=2'.format(self.BUGZILLA), '-v', '--no-history', '--pr'),
+                path=self.path,
+            ))
+            self.assertEqual(local.Git(self.path).branch, 'eng/revert-5-main-Example-feature-1')
+
+            self.assertEqual(0, program.main(args=('checkout', 'main'), path=self.path))
+
+            # Reverting a different commit for the same reason must not re-use the first revert's pull-request
+            self.assertEqual(0, program.main(
+                args=('revert', '4@main', '--issue', '{}/show_bug.cgi?id=2'.format(self.BUGZILLA), '-v', '--no-history', '--pr'),
+                path=self.path,
+            ))
+            self.assertEqual(local.Git(self.path).branch, 'eng/revert-4-main-Example-feature-1')
+
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(1).head, 'eng/revert-5-main-Example-feature-1')
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(2).head, 'eng/revert-4-main-Example-feature-1')
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Created the local development branch 'eng/revert-5-main-Example-feature-1'\n"
+            "Created 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
+            "https://github.example.com/WebKit/WebKit/pull/1\n"
+            "Created the local development branch 'eng/revert-4-main-Example-feature-1'\n"
+            "Created 'PR 2 | Unreviewed, reverting 4@main (bae5d1e90999)'!\n"
+            "https://github.example.com/WebKit/WebKit/pull/2\n",
+        )
+
+    def test_repeated_revert(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, bmocks.Bugzilla(
+            self.BUGZILLA.split('://')[-1],
+            issues=bmocks.ISSUES,
+            environment=Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            ),
+        ), mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)]):
+            self.assertEqual(0, program.main(
+                args=('revert', '5@main', '--issue', '{}/show_bug.cgi?id=2'.format(self.BUGZILLA), '-v', '--no-history', '--pr'),
+                path=self.path,
+            ))
+            self.assertEqual(0, program.main(args=('checkout', 'main'), path=self.path))
+
+            # Requesting the same revert twice rebases the existing branch, it must still be the branch we push
+            self.assertEqual(0, program.main(
+                args=('revert', '5@main', '--issue', '{}/show_bug.cgi?id=2'.format(self.BUGZILLA), '-v', '--no-history', '--pr'),
+                path=self.path,
+            ))
+            self.assertEqual(local.Git(self.path).branch, 'eng/revert-5-main-Example-feature-1')
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(1).head, 'eng/revert-5-main-Example-feature-1')
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Created the local development branch 'eng/revert-5-main-Example-feature-1'\n"
+            "Created 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
+            "https://github.example.com/WebKit/WebKit/pull/1\n"
+            "Rebased the local development branch 'eng/revert-5-main-Example-feature-1'\n"
+            "Updated 'PR 1 | Unreviewed, reverting 5@main (d8bce26fa65c)'!\n"
+            "https://github.example.com/WebKit/WebKit/pull/1\n",
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')

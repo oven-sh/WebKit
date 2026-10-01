@@ -29,6 +29,7 @@
 #include "CacheValidation.h"
 #include "Cookie.h"
 #include "CookieRequestHeaderFieldProxy.h"
+#include "CookieStorageSession.h"
 #include "CookieStoreGetOptions.h"
 #include "DocumentLoader.h"
 #include "DocumentPage.h"
@@ -37,9 +38,7 @@
 #include "HTTPCookieAcceptPolicy.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
-#include "NetworkStorageSession.h"
 #include "NetworkingContext.h"
-#include "Page.h"
 #include "PlatformStrategies.h"
 #include "StorageSessionProvider.h"
 #include <optional>
@@ -51,13 +50,6 @@
 #endif
 
 namespace WebCore {
-
-static ShouldRelaxThirdPartyCookieBlocking NODELETE shouldRelaxThirdPartyCookieBlocking(const Document& document)
-{
-    if (auto* page = document.page())
-        return page->shouldRelaxThirdPartyCookieBlocking();
-    return ShouldRelaxThirdPartyCookieBlocking::No;
-}
 
 Ref<CookieJar> CookieJar::create(Ref<StorageSessionProvider>&& storageSessionProvider)
 {
@@ -93,29 +85,6 @@ CookieJar::CookieJar(Ref<StorageSessionProvider>&& storageSessionProvider)
 
 CookieJar::~CookieJar() = default;
 
-String CookieJar::cookies(Document& document, const URL& url) const
-{
-    TraceScope scope(FetchCookiesStart, FetchCookiesEnd);
-
-    auto includeSecureCookies = shouldIncludeSecureCookies(url);
-
-    auto pageID = document.pageID();
-    std::optional<FrameIdentifier> frameID;
-    if (auto* frame = document.frame())
-        frameID = frame->frameID();
-
-    std::pair<String, bool> result;
-    if (CheckedPtr session = m_storageSessionProvider->storageSession())
-        result = session->cookiesForDOM(document.firstPartyForCookies(), sameSiteInfo(document, IsForDOMCookieAccess::Yes), url, frameID, pageID, includeSecureCookies, ApplyTrackingPrevention::Yes, shouldRelaxThirdPartyCookieBlocking(document), IsKnownCrossSiteTracker::No);
-    else
-        ASSERT_NOT_REACHED();
-
-    if (result.second)
-        document.setSecureCookiesAccessed();
-
-    return result.first;
-}
-
 CookieRequestHeaderFieldProxy CookieJar::cookieRequestHeaderFieldProxy(const Document& document, const URL& url)
 {
     TraceScope scope(FetchCookiesStart, FetchCookiesEnd);
@@ -128,32 +97,14 @@ CookieRequestHeaderFieldProxy CookieJar::cookieRequestHeaderFieldProxy(const Doc
     return { document.firstPartyForCookies(), sameSiteInfo(document), url, frameID, pageID, shouldIncludeSecureCookies(url) };
 }
 
-void CookieJar::setCookies(Document& document, const URL& url, const String& cookieString)
-{
-    auto pageID = document.pageID();
-    std::optional<FrameIdentifier> frameID;
-    if (auto* frame = document.frame())
-        frameID = frame->frameID();
-
-    if (CheckedPtr session = m_storageSessionProvider->storageSession())
-        session->setCookiesFromDOM(document.firstPartyForCookies(), sameSiteInfo(document, IsForDOMCookieAccess::Yes), url, frameID, pageID, ApplyTrackingPrevention::Yes, RequiresScriptTrackingPrivacy::No, cookieString, shouldRelaxThirdPartyCookieBlocking(document), IsKnownCrossSiteTracker::No);
-    else
-        ASSERT_NOT_REACHED();
-}
-
 bool CookieJar::cookiesEnabled(Document& document)
 {
     auto cookieURL = document.cookieURL();
     if (cookieURL.isEmpty())
         return false;
 
-    auto pageID = document.pageID();
-    std::optional<FrameIdentifier> frameID;
-    if (auto* frame = document.frame())
-        frameID = frame->frameID();
-
-    if (CheckedPtr session = m_storageSessionProvider->storageSession())
-        return session->cookiesEnabled(document.firstPartyForCookies(), cookieURL, frameID, pageID, shouldRelaxThirdPartyCookieBlocking(document), IsKnownCrossSiteTracker::No);
+    if (m_storageSessionProvider->storageSession())
+        return true;
 
     ASSERT_NOT_REACHED();
     return false;
@@ -164,10 +115,47 @@ void CookieJar::remoteCookiesEnabled(const Document&, CompletionHandler<void(boo
     completionHandler(false);
 }
 
-std::pair<String, SecureCookiesAccessed> CookieJar::cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, IncludeSecureCookies includeSecureCookies) const
+String CookieJar::cookieRequestHeaderFieldValue(Document& document, const URL& url) const
+{
+    auto result = cookieRequestHeaderFieldValue(document.firstPartyForCookies(), sameSiteInfo(document), url, shouldIncludeSecureCookies(url));
+    if (result.second == SecureCookiesAccessed::Yes)
+        document.setSecureCookiesAccessed();
+    return result.first;
+}
+
+#if PLATFORM(COCOA)
+
+String CookieJar::cookies(Document& document, const URL& url) const
+{
+    TraceScope scope(FetchCookiesStart, FetchCookiesEnd);
+
+    auto includeSecureCookies = shouldIncludeSecureCookies(url);
+
+    CheckedPtr session = m_storageSessionProvider->storageSession();
+    if (!session) {
+        ASSERT_NOT_REACHED();
+        return { };
+    }
+
+    auto result = session->cookiesForDOM(document.firstPartyForCookies(), sameSiteInfo(document, IsForDOMCookieAccess::Yes), url, includeSecureCookies, ThirdPartyCookieBlockingDecision::None, { });
+    if (result.second)
+        document.setSecureCookiesAccessed();
+
+    return result.first;
+}
+
+void CookieJar::setCookies(Document& document, const URL& url, const String& cookieString)
+{
+    if (CheckedPtr session = m_storageSessionProvider->storageSession())
+        session->setCookiesFromDOM(document.firstPartyForCookies(), sameSiteInfo(document, IsForDOMCookieAccess::Yes), url, cookieString, ThirdPartyCookieBlockingDecision::None, std::nullopt, { });
+    else
+        ASSERT_NOT_REACHED();
+}
+
+std::pair<String, SecureCookiesAccessed> CookieJar::cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, IncludeSecureCookies includeSecureCookies) const
 {
     if (CheckedPtr session = m_storageSessionProvider->storageSession()) {
-        std::pair<String, bool> result = session->cookieRequestHeaderFieldValue(firstParty, sameSiteInfo, url, frameID, pageID, includeSecureCookies, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No);
+        std::pair<String, bool> result = session->cookieRequestHeaderFieldValue(firstParty, sameSiteInfo, url, includeSecureCookies, ThirdPartyCookieBlockingDecision::None, { });
         return { result.first, result.second ? SecureCookiesAccessed::Yes : SecureCookiesAccessed::No };
     }
 
@@ -178,34 +166,16 @@ std::pair<String, SecureCookiesAccessed> CookieJar::cookieRequestHeaderFieldValu
 std::optional<SHA1::Digest> CookieJar::cookieRequestHeaderFieldValueDigest(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, IncludeSecureCookies includeSecureCookies) const
 {
     if (CheckedPtr session = m_storageSessionProvider->storageSession())
-        return computeCookieHeaderDigestForVary(session->cookieRequestHeaderFieldValue(firstParty, sameSiteInfo, url, std::nullopt, std::nullopt, includeSecureCookies, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No).first);
+        return computeCookieHeaderDigestForVary(session->cookieRequestHeaderFieldValue(firstParty, sameSiteInfo, url, includeSecureCookies, ThirdPartyCookieBlockingDecision::None, { }).first);
 
     ASSERT_NOT_REACHED();
     return std::nullopt;
 }
 
-String CookieJar::cookieRequestHeaderFieldValue(Document& document, const URL& url) const
-{
-    auto pageID = document.pageID();
-    std::optional<FrameIdentifier> frameID;
-    if (auto* frame = document.frame())
-        frameID = frame->frameID();
-
-    auto result = cookieRequestHeaderFieldValue(document.firstPartyForCookies(), sameSiteInfo(document), url, frameID, pageID, shouldIncludeSecureCookies(url));
-    if (result.second == SecureCookiesAccessed::Yes)
-        document.setSecureCookiesAccessed();
-    return result.first;
-}
-
 bool CookieJar::getRawCookies(Document& document, const URL& url, Vector<Cookie>& cookies) const
 {
-    auto pageID = document.pageID();
-    std::optional<FrameIdentifier> frameID;
-    if (auto* frame = document.frame())
-        frameID = frame->frameID();
-
     if (CheckedPtr session = m_storageSessionProvider->storageSession())
-        return session->getRawCookies(document.firstPartyForCookies(), sameSiteInfo(document), url, frameID, pageID, ApplyTrackingPrevention::Yes, shouldRelaxThirdPartyCookieBlocking(document), cookies);
+        return session->getRawCookies(document.firstPartyForCookies(), sameSiteInfo(document), url, ThirdPartyCookieBlockingDecision::None, { }, cookies);
 
     ASSERT_NOT_REACHED();
     return false;
@@ -222,12 +192,56 @@ void CookieJar::setRawCookie(const Document&, const Cookie& cookie, ShouldPartit
 void CookieJar::deleteCookie(const Document& document, const URL& url, const String& cookieName, CompletionHandler<void()>&& completionHandler)
 {
     if (CheckedPtr session = m_storageSessionProvider->storageSession())
-        session->deleteCookie(document.firstPartyForCookies(), url, cookieName, WTF::move(completionHandler));
+        session->deleteCookie(document.firstPartyForCookies(), url, cookieName, { }, WTF::move(completionHandler));
     else {
         ASSERT_NOT_REACHED();
         completionHandler();
     }
 }
+
+#else // PLATFORM(COCOA)
+
+String CookieJar::cookies(Document&, const URL&) const
+{
+    ASSERT_NOT_REACHED();
+    return { };
+}
+
+void CookieJar::setCookies(Document&, const URL&, const String&)
+{
+    ASSERT_NOT_REACHED();
+}
+
+std::pair<String, SecureCookiesAccessed> CookieJar::cookieRequestHeaderFieldValue(const URL&, const SameSiteInfo&, const URL&, IncludeSecureCookies) const
+{
+    ASSERT_NOT_REACHED();
+    return { };
+}
+
+std::optional<SHA1::Digest> CookieJar::cookieRequestHeaderFieldValueDigest(const URL&, const SameSiteInfo&, const URL&, IncludeSecureCookies) const
+{
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
+}
+
+bool CookieJar::getRawCookies(Document&, const URL&, Vector<Cookie>&) const
+{
+    ASSERT_NOT_REACHED();
+    return false;
+}
+
+void CookieJar::setRawCookie(const Document&, const Cookie&, ShouldPartitionCookie)
+{
+    ASSERT_NOT_REACHED();
+}
+
+void CookieJar::deleteCookie(const Document&, const URL&, const String&, CompletionHandler<void()>&& completionHandler)
+{
+    ASSERT_NOT_REACHED();
+    completionHandler();
+}
+
+#endif // PLATFORM(COCOA)
 
 void CookieJar::getCookiesAsync(Document&, const URL&, const CookieStoreGetOptions&, CompletionHandler<void(std::optional<Vector<Cookie>>&&)>&& completionHandler) const
 {

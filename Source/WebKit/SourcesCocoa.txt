@@ -30,6 +30,7 @@ NetworkProcess/cocoa/NetworkActivityTrackerCocoa.mm @nonARC
 NetworkProcess/cocoa/NetworkDataTaskCocoa.mm @nonARC
 NetworkProcess/cocoa/NetworkProcessCocoa.mm @nonARC
 NetworkProcess/cocoa/NetworkSessionCocoa.mm @nonARC
+NetworkProcess/cocoa/NetworkStorageSessionCocoa.mm @nonARC
 NetworkProcess/cocoa/NetworkTaskCocoa.mm @nonARC
 NetworkProcess/cocoa/WKURLSessionTaskDelegate.mm @nonARC
 
@@ -38,6 +39,8 @@ NetworkProcess/webtransport/cocoa/NetworkTransportStreamCocoa.mm @nonARC
 
 NetworkProcess/Classifier/WebResourceLoadStatisticsStore.cpp
 
+NetworkProcess/Cookies/cocoa/CookieStorageCocoa.mm @nonARC
+NetworkProcess/Cookies/cocoa/CookieStorageObserver.mm @nonARC
 NetworkProcess/Cookies/mac/WebCookieManagerMac.mm @nonARC
 
 NetworkProcess/CustomProtocols/Cocoa/LegacyCustomProtocolManagerCocoa.mm @nonARC
@@ -259,6 +262,7 @@ WebProcess/GPU/webrtc/SharedVideoFrame.cpp
 
 UIProcess/_WKWebViewPrintFormatter.mm @nonARC
 UIProcess/ApplicationStateTracker.mm @nonARC
+UIProcess/MemoryFootprintMonitor.cpp
 UIProcess/PerActivityStateCPUUsageSampler.cpp
 UIProcess/ViewGestureController.cpp
 UIProcess/ViewSnapshotStore.cpp
@@ -341,6 +345,7 @@ UIProcess/API/Cocoa/_WKWebPushDaemonConnection.mm @nonARC
 UIProcess/API/Cocoa/_WKWebPushMessage.mm @nonARC
 UIProcess/API/Cocoa/_WKWebPushSubscriptionData.mm @nonARC
 UIProcess/API/Cocoa/_WKWebExtension.mm @nonARC
+UIProcess/API/Cocoa/_WKWebExtensionNotification.mm
 UIProcess/API/Cocoa/_WKWebExtensionSidebar.mm
 UIProcess/API/Cocoa/_WKWebPushAction.mm @nonARC
 UIProcess/API/Cocoa/_WKWebsiteDataSize.mm @nonARC
@@ -513,6 +518,7 @@ UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIDevToolsPanels.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIEventCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIExtensionCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIMenusCocoa.mm
+UIProcess/Extensions/Cocoa/API/WebExtensionContextAPINotificationsCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIOffscreenCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIPermissionsCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIPortCocoa.mm

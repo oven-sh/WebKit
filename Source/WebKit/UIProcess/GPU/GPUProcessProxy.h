@@ -73,6 +73,7 @@ enum class ProcessTerminationReason : uint8_t;
 
 class SandboxExtensionHandle;
 class WebPageProxy;
+class WebProcessPool;
 class WebProcessProxy;
 class WebsiteDataStore;
 
@@ -141,7 +142,11 @@ public:
 #endif
 
     void updatePreferences(WebProcessProxy&);
-    void updateScreenPropertiesIfNeeded();
+    void updateScreenPropertiesIfNeeded(WebProcessPool&);
+
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    void withdrawNowPlayingCandidatesForPage(WebPageProxy&);
+#endif
 
     void childConnectionDidBecomeUnresponsive();
 
@@ -225,6 +230,10 @@ private:
 
     void setMediaCodecCapabilities(GPUProcessMediaCodecCapabilities&& mediaCodecCapabilities) { s_gpuProcessMediaCodecCapabilities = WTF::move(mediaCodecCapabilities); }
 
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    void nowPlayingOwnerDidChange(std::optional<WebCore::QualifiedPageIdentifier>);
+#endif
+
 #if ENABLE(MEDIA_STREAM)
     void voiceActivityDetected();
     void microphoneMuteStatusChanged(bool isMuting);
@@ -266,6 +275,10 @@ private:
 #endif
 
     HashSet<PAL::SessionID> m_sessionIDs;
+
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    std::optional<WebCore::QualifiedPageIdentifier> m_nowPlayingOwnerPage;
+#endif
 };
 
 } // namespace WebKit

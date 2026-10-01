@@ -17,7 +17,8 @@ for (let i = 0; i < 200; ++i) {
     // Reading in the middle of a surrogate pair (sticky lastIndex on the trail surrogate).
     let sticky = /[a-z\u{1F600}]/uy;
     sticky.lastIndex = 1;
-    shouldBeMatch(sticky.exec("\u{1F600}x"), null);
+    // Bun: with /u a lastIndex inside a surrogate pair is the pair's code point (RegExpBuiltinExec's inputIndex), as in V8.
+    shouldBeMatch(sticky.exec("\u{1F600}x"), ["\u{1F600}"]);
     sticky = /\w/uy;
     sticky.lastIndex = 1;
     shouldBeMatch(sticky.exec("\u{1F600}x"), null);
@@ -40,5 +41,6 @@ for (let i = 0; i < 200; ++i) {
 
     // A BMP pattern character next to a non-BMP class term keeps decoding for the class.
     shouldBeMatch(/a[\u{1F600}-\u{1F64F}]b/u.exec("xa\u{1F60D}b"), ["a\u{1F60D}b"]);
-    shouldBeMatch(/a?\B|q/u.exec("X\u{1F600}Z"), [""]);
+    // Bun: with /u a match starts at a code point, not between the halves of a surrogate pair, and \B holds nowhere else here.
+    shouldBeMatch(/a?\B|q/u.exec("X\u{1F600}Z"), null);
 }

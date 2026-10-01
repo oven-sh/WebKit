@@ -40,6 +40,7 @@
 #include "EventLoop.h"
 #include "ExceptionData.h"
 #include "ExceptionOr.h"
+#include "FrameDestructionObserverInlines.h"
 #include "JSDOMConvertAny.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertJSON.h"
@@ -194,13 +195,13 @@ void CredentialRequestCoordinator::initiateTheCredentialRequest(const Document& 
         requestingFrameID,
         WTF::move(rawRequests),
         requestData,
-        [weakThis = WeakPtr { *this }, signal](Expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException) {
+        [weakThis = WeakPtr { *this }, signal](std::expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException) {
             if (RefPtr protectedThis = weakThis.get())
                 protectedThis->processCredentialChooserResponse(WTF::move(responseOrException), signal);
         });
 }
 
-void CredentialRequestCoordinator::processCredentialChooserResponse(Expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException, RefPtr<AbortSignal> signal)
+void CredentialRequestCoordinator::processCredentialChooserResponse(std::expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException, RefPtr<AbortSignal> signal)
 {
     if (signal && signal->aborted()) {
         LOG(DigitalCredentials, "Credential chooser response received after AbortSignal aborted");

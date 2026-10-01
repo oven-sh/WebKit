@@ -530,7 +530,7 @@ TEST(ScreenTime, URLIsPlayingVideo)
         { "/"_s, { contentHTML.get() } },
         { "/favicon.ico"_s, { "Actual response is immaterial."_s } },
         { "/video-with-audio.mp4"_s, [NSData dataWithContentsOfURL:[NSBundle.test_resourcesBundle URLForResource:@"video-with-audio" withExtension:@"mp4"]] },
-    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+    });
 
     auto swizzle = swizzleEnforcesChildRestrictions(childRestrictionsDone);
     [webView synchronouslyLoadRequest:server.requestWithLocalhost()];
@@ -600,7 +600,7 @@ TEST(ScreenTime, URLIsPictureInPicture)
         { "/"_s, { contentHTML.get() } },
         { "/favicon.ico"_s, { "Actual response is immaterial."_s } },
         { "/test.mp4"_s, [NSData dataWithContentsOfURL:[NSBundle.test_resourcesBundle URLForResource:@"test" withExtension:@"mp4"]] },
-    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+    });
 
     receivedLoadMessage = false;
 
@@ -1091,9 +1091,15 @@ TEST(ScreenTime, ScreenTimeControllerInstalledAfterRestoreFromSessionState)
 
     RetainPtr webView1 = webViewForScreenTimeTests();
 
-    RetainPtr request = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://webkit.org"]];
+    // Restoring the session state below navigates for real, so the page has to come from a local
+    // server. A simulated response cannot be replayed, and a remote URL would hang here forever on
+    // a machine with no network access.
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { "hello"_s } },
+    });
+
     auto swizzle = swizzleEnforcesChildRestrictions(childRestrictionsDone);
-    [webView1 synchronouslyLoadSimulatedRequest:request.get() responseHTMLString:@""];
+    [webView1 synchronouslyLoadRequest:server.requestWithLocalhost()];
     TestWebKitAPI::Util::run(&childRestrictionsDone);
 
     RetainPtr sessionState = [webView1 _sessionState];
@@ -1109,7 +1115,12 @@ TEST(ScreenTime, ScreenTimeControllerInstalledAfterRestoreFromSessionState)
 
     [webView2 waitForNextPresentationUpdate];
 
-    EXPECT_TRUE(!![webView2 _screenTimeWebpageController]);
+    // webView2 has its own STScreenTimeConfigurationObserver, which fetches its configuration
+    // asynchronously. The controller cannot be installed until that arrives, which is unrelated to
+    // when the navigation finishes.
+    EXPECT_TRUE(TestWebKitAPI::Util::waitFor([&] {
+        return !![webView2 _screenTimeWebpageController];
+    }));
 }
 
 TEST(ScreenTime, ScreenTimeControllerViewOnlyInstalledForHTTPFamily)

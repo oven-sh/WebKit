@@ -27,6 +27,7 @@
 
 #include "TransferString.h"
 #include <wtf/HashMap.h>
+#include <wtf/SwiftBridging.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
 
@@ -47,5 +48,18 @@ struct RunJavaScriptParameters {
     WebCore::ForceUserGesture forceUserGesture;
     WebCore::RemoveTransientActivation removeTransientActivation;
 };
+
+}
+
+namespace WebKit::CxxInteropSupport {
+
+using RunJavaScriptParametersArguments = Vector<std::pair<String, JavaScriptEvaluationResult>>;
+using OptionalRunJavaScriptParametersArguments = std::optional<RunJavaScriptParametersArguments>;
+
+// FIXME: Remove this once rdar://186106924 is fixed.
+inline OptionalRunJavaScriptParametersArguments makeOptionalArguments(RunJavaScriptParametersArguments&& arguments)
+{
+    return { WTF::move(arguments) };
+}
 
 }

@@ -29,6 +29,7 @@
 
 #include "CodeOrigin.h"
 #include "DFGExitProfile.h"
+#include "MacroAssembler.h"
 
 namespace JSC { namespace DFG {
 
@@ -37,6 +38,10 @@ struct Node;
 
 // Provides for the OSR exit profiling functionality that is common between the DFG
 // and the FTL.
+
+static_assert(isARM64() || isX86_64());
+static constexpr size_t osrExitEntranceSize = isARM64() ? 4 : 5;
+static_assert(osrExitEntranceSize >= static_cast<size_t>(MacroAssembler::AssemblerType_T::maxJumpReplacementSize()));
 
 struct OSRExitBase {
     OSRExitBase(ExitKind kind, CodeOrigin origin, CodeOrigin originForProfile, bool wasHoisted, uint32_t dfgNodeIndex)
@@ -50,7 +55,6 @@ struct OSRExitBase {
         ASSERT(m_codeOriginForExitProfile.isSet());
     }
 
-    uint32_t m_count { 0 };
     ExitKind m_kind;
     bool m_wasHoisted;
     
@@ -85,14 +89,7 @@ struct OSRExitBase {
     }
 
 protected:
-    void considerAddingAsFrequentExitSite(CodeBlock* profiledCodeBlock, ExitingJITType jitType)
-    {
-        if (m_count)
-            considerAddingAsFrequentExitSiteSlow(profiledCodeBlock, jitType);
-    }
-
-private:
-    void considerAddingAsFrequentExitSiteSlow(CodeBlock* profiledCodeBlock, ExitingJITType);
+    void considerAddingAsFrequentExitSite(CodeBlock* profiledCodeBlock, ExitingJITType);
 };
 
 } } // namespace JSC::DFG

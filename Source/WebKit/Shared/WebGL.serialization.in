@@ -106,7 +106,7 @@ using WebCore::GraphicsContextGL::ExternalSyncSource = std::tuple<MachSendRight,
 #if OS(ANDROID)
     RefPtr<AHardwareBuffer> hardwareBuffer;
 #else
-    Vector<WTF::UnixFileDescriptor> fds;
+    Vector<UnixFileDescriptor> fds;
     Vector<uint32_t> strides;
     Vector<uint32_t> offsets;
     uint32_t fourcc;
@@ -164,7 +164,7 @@ enum class WebCore::GraphicsContextGLSimulatedEventForTesting : uint8_t {
 
 header: <WebCore/GraphicsContextGLActiveInfo.h>
 [AdditionalEncoder=StreamConnectionEncoder, CustomHeader] class WebCore::GCGLUniformActiveInfo {
-    CString name;
+    UTF8CString name;
     GCGLenum type;
     int size;
     int blockIndex;
@@ -176,13 +176,13 @@ header: <WebCore/GraphicsContextGLActiveInfo.h>
 };
 header: <WebCore/GraphicsContextGLActiveInfo.h>
 [AdditionalEncoder=StreamConnectionEncoder, CustomHeader] class WebCore::GCGLAttribActiveInfo {
-    CString name;
+    UTF8CString name;
     GCGLenum type;
     int location;
 };
 header: <WebCore/GraphicsContextGLActiveInfo.h>
 [AdditionalEncoder=StreamConnectionEncoder, CustomHeader] class WebCore::GCGLTransformFeedbackActiveInfo {
-    CString name;
+    UTF8CString name;
     GCGLenum type;
     int size;
 };

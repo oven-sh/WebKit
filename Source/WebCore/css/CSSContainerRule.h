@@ -40,6 +40,12 @@ public:
     String containerName() const;
     String containerQuery() const;
 
+    struct Condition {
+        String name;
+        String query;
+    };
+    Vector<Condition> conditions() const;
+
 private:
     const StyleRuleContainer& NODELETE styleRuleContainer() const;
 

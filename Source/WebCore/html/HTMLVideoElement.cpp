@@ -43,7 +43,7 @@
 #include "ImageBuffer.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSVideoFrameRequestCallback.h"
-#include "LazyLoadVideoObserver.h"
+#include "LazyLoadElementObserver.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "Logging.h"
@@ -106,7 +106,7 @@ inline HTMLVideoElement::HTMLVideoElement(const QualifiedName& tagName, Document
 
 HTMLVideoElement::~HTMLVideoElement()
 {
-    LazyLoadVideoObserver::unobserve(*this, protect(document()));
+    LazyLoadElementObserver::unobserve(*this, protect(document()));
 }
 
 Ref<HTMLVideoElement> HTMLVideoElement::create(const QualifiedName& tagName, Document& document, bool createdByParser)
@@ -117,7 +117,7 @@ Ref<HTMLVideoElement> HTMLVideoElement::create(const QualifiedName& tagName, Doc
     HTMLVideoElementPictureInPicture::providePictureInPictureTo(videoElement);
 #endif
 
-    LazyLoadVideoObserver::observe(videoElement);
+    LazyLoadElementObserver::observe(videoElement);
 
     videoElement->suspendIfNeeded();
     return videoElement;
@@ -158,7 +158,8 @@ void HTMLVideoElement::acceleratedRenderingStateChanged()
 
 bool HTMLVideoElement::supportsAcceleratedRendering() const
 {
-    return RefPtr { player() } && protect(player())->supportsAcceleratedRendering();
+    RefPtr player = this->player();
+    return player && player->supportsAcceleratedRendering();
 }
 
 void HTMLVideoElement::mediaPlayerRenderingModeChanged()
@@ -251,21 +252,22 @@ void HTMLVideoElement::attributeChanged(const QualifiedName& name, const AtomStr
 
 bool HTMLVideoElement::supportsFullscreen(HTMLMediaElementEnums::VideoFullscreenMode videoFullscreenMode) const
 {
-    if (!player())
+    RefPtr player = this->player();
+    if (!player)
         return false;
-    
+
     if (videoFullscreenMode == HTMLMediaElementEnums::VideoFullscreenModePictureInPicture) {
         if (!mediaSession().allowsPictureInPicture())
             return false;
-        if (!protect(player())->supportsPictureInPicture())
+        if (!player->supportsPictureInPicture())
             return false;
     }
 
     RefPtr page = document().page();
-    if (!page) 
+    if (!page)
         return false;
 
-    if (!protect(player())->supportsFullscreen())
+    if (!player->supportsFullscreen())
         return false;
 
 #if HAVE(AVEXPERIENCECONTROLLER)
@@ -289,7 +291,7 @@ bool HTMLVideoElement::supportsFullscreen(HTMLMediaElementEnums::VideoFullscreen
         return true;
 #endif
 
-    if (!protect(player())->hasVideo())
+    if (!player->hasVideo())
         return false;
 
     return page->chrome().client().supportsVideoFullscreen(videoFullscreenMode);
@@ -306,16 +308,18 @@ void HTMLVideoElement::requestFullscreen(FullscreenOptions&&, RefPtr<DeferredPro
 
 unsigned HTMLVideoElement::videoWidth() const
 {
-    if (!player())
+    RefPtr player = this->player();
+    if (!player)
         return 0;
-    return clampToUnsigned(protect(player())->naturalSize().width());
+    return clampToUnsigned(player->naturalSize().width());
 }
 
 unsigned HTMLVideoElement::videoHeight() const
 {
-    if (!player())
+    RefPtr player = this->player();
+    if (!player)
         return 0;
-    return clampToUnsigned(protect(player())->naturalSize().height());
+    return clampToUnsigned(player->naturalSize().height());
 }
 
 void HTMLVideoElement::scheduleResizeEvent(const FloatSize& naturalSize)
@@ -377,7 +381,7 @@ void HTMLVideoElement::mediaPlayerFirstVideoFrameAvailable()
     }
 }
 
-std::optional<DestinationColorSpace> HTMLVideoElement::colorSpace() const
+std::optional<ColorSpace> HTMLVideoElement::colorSpace() const
 {
     RefPtr player = this->player();
     if (!player)
@@ -386,7 +390,7 @@ std::optional<DestinationColorSpace> HTMLVideoElement::colorSpace() const
     return player->colorSpace();
 }
 
-RefPtr<ImageBuffer> HTMLVideoElement::createBufferForPainting(const FloatSize& size, RenderingMode renderingMode, const DestinationColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> HTMLVideoElement::createBufferForPainting(const FloatSize& size, RenderingMode renderingMode, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     CheckedPtr view = document().view();
     CheckedPtr root = view ? view->root() : nullptr;
@@ -510,24 +514,30 @@ void HTMLVideoElement::didMoveToNewDocument(Document& oldDocument, Document& new
 {
     if (m_imageLoader)
         m_imageLoader->elementDidMoveToNewDocument(oldDocument);
+
+    LazyLoadElementObserver::unobserve(*this, oldDocument);
+    LazyLoadElementObserver::observe(*this);
+
     HTMLMediaElement::didMoveToNewDocument(oldDocument, newDocument);
 }
 
 #if ENABLE(MEDIA_STATISTICS)
 unsigned HTMLVideoElement::webkitDecodedFrameCount() const
 {
-    if (!player())
+    RefPtr player = this->player();
+    if (!player)
         return 0;
 
-    return player()->decodedFrameCount();
+    return player->decodedFrameCount();
 }
 
 unsigned HTMLVideoElement::webkitDroppedFrameCount() const
 {
-    if (!player())
+    RefPtr player = this->player();
+    if (!player)
         return 0;
 
-    return player()->droppedFrameCount();
+    return player->droppedFrameCount();
 }
 #endif
 
@@ -710,12 +720,27 @@ void HTMLVideoElement::didExitFullscreenOrPictureInPicture()
 }
 
 #if ENABLE(LINEAR_MEDIA_PLAYER)
+// External playback does not go through setFullscreenMode(), so it fires no
+// 'webkitpresentationmodechanged' and leaves webkitPresentationMode reading "inline". Sites whose
+// in-page captions we mirror need to know about it to decide when to mirror, so notify them here.
+// Quirked so the event is never dispatched anywhere else; see webkitIsInExternalPlayback in
+// HTMLVideoElement.idl.
+void HTMLVideoElement::scheduleExternalPlaybackChangedEventIfNeeded()
+{
+    if (!protect(document())->quirks().needsCaptionMirroringQuirk())
+        return;
+
+    scheduleEvent(eventNames().webkitexternalplaybackchangedEvent);
+}
+
 void HTMLVideoElement::didEnterExternalPlayback()
 {
     m_isInExternalPlayback = true;
 
     if (RefPtr player = this->player())
         player->setInFullscreenOrPictureInPicture(true);
+
+    scheduleExternalPlaybackChangedEventIfNeeded();
 }
 
 void HTMLVideoElement::didExitExternalPlayback()
@@ -724,6 +749,8 @@ void HTMLVideoElement::didExitExternalPlayback()
 
     if (RefPtr player = this->player())
         player->setInFullscreenOrPictureInPicture(false);
+
+    scheduleExternalPlaybackChangedEventIfNeeded();
 }
 #endif
 
@@ -821,7 +848,7 @@ void HTMLVideoElement::stop()
     HTMLMediaElement::stop();
 }
 
-void HTMLVideoElement::viewportIntersectionChanged(bool isIntersecting)
+void HTMLVideoElement::lazyLoadIntersectionCallbackInvoked(bool isIntersecting)
 {
     if (m_isIntersectingViewport == isIntersecting)
         return;

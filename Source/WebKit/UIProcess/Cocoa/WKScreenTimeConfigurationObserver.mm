@@ -41,7 +41,7 @@ static void *screenTimeConfigurationObserverKVOContext = &screenTimeConfiguratio
 
 static dispatch_queue_t screenTimeUpdateQueueSingleton()
 {
-    static NeverDestroyed<OSObjectPtr<dispatch_queue_t>> queue = adoptOSObject(dispatch_queue_create("com.apple.WebKit.ScreenTimeUpdateQueue", DISPATCH_QUEUE_SERIAL));
+    static NeverDestroyed<OSObjectPtr<dispatch_queue_t>> queue = adoptOSObject(dispatch_queue_create("com.apple.WebKit.ScreenTimeUpdateQueue", serialQueueWithAutoreleasePoolAttrSingleton()));
     return queue.get().get();
 }
 
@@ -64,7 +64,7 @@ static dispatch_queue_t screenTimeUpdateQueueSingleton()
 {
     if (context == &screenTimeConfigurationObserverKVOContext) {
         ensureOnMainRunLoop([webView = _webView] {
-            [webView _updateScreenTimeBasedOnWindowVisibility];
+            [webView.get() _updateScreenTimeBasedOnWindowVisibility];
         });
         return;
     }

@@ -23,16 +23,19 @@
 #include "BitmapTexture.h"
 
 #include "GLContext.h"
-#include "GraphicsContext.h"
-#include "GraphicsLayer.h"
-#include "ImageBuffer.h"
-#include "NativeImage.h"
 #include "PlatformDisplay.h"
-#include "TextureMapperFlags.h"
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/StdLibExtras.h>
+
+#if USE(TEXTURE_MAPPER)
+#include "GraphicsContext.h"
+#include "GraphicsLayer.h"
+#include "ImageBuffer.h"
+#include "NativeImage.h"
+#include "TextureMapperFlags.h"
+#endif
 
 #if USE(CAIRO)
 #include "CairoUtilities.h"
@@ -107,15 +110,6 @@ void BitmapTexture::determineRenderTargetAndBinding()
 unsigned BitmapTexture::textureFormat() const
 {
     return m_flags.contains(Flags::UseBGRALayout) ? GL_BGRA : GL_RGBA;
-}
-
-static GLenum depthBufferFormat()
-{
-    auto* glContext = GLContext::current();
-    if (glContext->version() >= 300 || glContext->glExtensions().OES_packed_depth_stencil)
-        return GL_DEPTH24_STENCIL8;
-
-    return GL_DEPTH_COMPONENT16;
 }
 
 BitmapTexture::BitmapTexture(const IntSize& size, OptionSet<Flags> flags)
@@ -238,25 +232,17 @@ BitmapTexture::BitmapTexture(EGLImage image, const IntSize& size, OptionSet<Flag
 }
 #endif
 
-void BitmapTexture::swapTexture(BitmapTexture& other)
+BitmapTexture::~BitmapTexture()
 {
-    RELEASE_ASSERT(m_size == other.m_size);
-    RELEASE_ASSERT(!m_flags.contains(Flags::DepthBuffer));
-    RELEASE_ASSERT(!other.m_flags.contains(Flags::DepthBuffer));
+    glDeleteTextures(1, &m_id);
 
-#if USE(GBM)
-    std::swap(m_memoryMappedGPUBuffer, other.m_memoryMappedGPUBuffer);
+#if USE(TEXTURE_MAPPER)
+    if (m_fbo)
+        glDeleteFramebuffers(1, &m_fbo);
+
+    if (m_stencilBufferObject)
+        glDeleteRenderbuffers(1, &m_stencilBufferObject);
 #endif
-    std::swap(m_flags, other.m_flags);
-    std::swap(m_id, other.m_id);
-
-    determineRenderTargetAndBinding();
-    other.determineRenderTargetAndBinding();
-
-    // Take the pixel format from the source texture. The source texture
-    // (going back to the pool) is reset to the default pixel format.
-    m_pixelFormat = other.m_pixelFormat;
-    other.m_pixelFormat = PixelFormat::RGBA8;
 }
 
 void BitmapTexture::reset(const IntSize& size, OptionSet<Flags> flags)
@@ -267,29 +253,25 @@ void BitmapTexture::reset(const IntSize& size, OptionSet<Flags> flags)
 #endif
 
     m_flags = flags;
-    m_shouldClear = true;
     m_pixelFormat = flags.contains(Flags::UseBGRALayout) ? PixelFormat::BGRA8 : PixelFormat::RGBA8;
+
+#if USE(TEXTURE_MAPPER)
+    m_shouldClear = true;
     m_filterOperation = nullptr;
 
-    if (!flags.contains(Flags::DepthBuffer)) {
-        if (m_fbo) {
-            glDeleteFramebuffers(1, &m_fbo);
-            m_fbo = 0;
-        }
-
-        if (m_depthBufferObject) {
-            glDeleteRenderbuffers(1, &m_depthBufferObject);
-            m_depthBufferObject = 0;
-        }
-
-        if (m_stencilBufferObject) {
-            glDeleteRenderbuffers(1, &m_stencilBufferObject);
-            m_stencilBufferObject = 0;
-        }
-
-        m_stencilBound = false;
-        m_clipStack = { };
+    if (m_fbo) {
+        glDeleteFramebuffers(1, &m_fbo);
+        m_fbo = 0;
     }
+
+    if (m_stencilBufferObject) {
+        glDeleteRenderbuffers(1, &m_stencilBufferObject);
+        m_stencilBufferObject = 0;
+    }
+
+    m_stencilBound = false;
+    m_clipStack = { };
+#endif
 
     if (m_size == size)
         return;
@@ -396,6 +378,7 @@ void BitmapTexture::updateContents(const void* srcData, const IntRect& targetRec
     glBindTexture(m_renderTarget, boundTexture);
 }
 
+#if USE(TEXTURE_MAPPER)
 void BitmapTexture::updateContents(NativeImage* frameImage, const IntRect& targetRect, const IntPoint& offset)
 {
     if (!frameImage)
@@ -422,7 +405,7 @@ void BitmapTexture::updateContents(GraphicsLayer* sourceLayer, const IntRect& ta
 {
     // Making an unconditionally unaccelerated buffer here is OK because this code
     // isn't used by any platforms that respect the accelerated bit.
-    auto imageBuffer = ImageBuffer::create(targetRect.size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto imageBuffer = ImageBuffer::create(targetRect.size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!imageBuffer)
         return;
 
@@ -443,99 +426,7 @@ void BitmapTexture::updateContents(GraphicsLayer* sourceLayer, const IntRect& ta
 
     updateContents(image.get(), targetRect, IntPoint());
 }
-
-void BitmapTexture::initializeStencil()
-{
-    if (m_flags.contains(Flags::DepthBuffer)) {
-        // We have a depth buffer and we're asked to have a stencil buffer as well. This is only
-        // possible if packed depth stencil is available. If that's the case, just bind the depth
-        // buffer as the stencil one if haven't done so. If packed depth stencil is not available
-        // don't do anything, which will cause stencil clips on this surface to fail.
-        if (depthBufferFormat() == GL_DEPTH24_STENCIL8 && !m_stencilBound) {
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_depthBufferObject);
-            m_stencilBound = true;
-        }
-        return;
-    }
-
-    // We don't have a depth buffer. Use a stencil only buffer.
-    if (m_stencilBufferObject)
-        return;
-
-    glGenRenderbuffers(1, &m_stencilBufferObject);
-    glBindRenderbuffer(GL_RENDERBUFFER, m_stencilBufferObject);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, m_size.width(), m_size.height());
-    glBindRenderbuffer(GL_RENDERBUFFER, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_stencilBufferObject);
-    glClearStencil(0);
-    glClear(GL_STENCIL_BUFFER_BIT);
-}
-
-void BitmapTexture::initializeDepthBuffer()
-{
-    if (m_depthBufferObject)
-        return;
-
-    glGenRenderbuffers(1, &m_depthBufferObject);
-    glBindRenderbuffer(GL_RENDERBUFFER, m_depthBufferObject);
-    glRenderbufferStorage(GL_RENDERBUFFER, depthBufferFormat(), m_size.width(), m_size.height());
-    glBindRenderbuffer(GL_RENDERBUFFER, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depthBufferObject);
-}
-
-void BitmapTexture::clearIfNeeded()
-{
-    if (!m_shouldClear)
-        return;
-
-    m_clipStack.reset(IntRect(IntPoint::zero(), m_size), ClipStack::YAxisMode::Default);
-    m_clipStack.applyIfNeeded();
-    glClearColor(0, 0, 0, 0);
-    glClearStencil(0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    m_shouldClear = false;
-}
-
-void BitmapTexture::createFboIfNeeded()
-{
-    if (m_fbo)
-        return;
-
-    glGenFramebuffers(1, &m_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_renderTarget, id(), 0);
-    if (m_flags.contains(Flags::DepthBuffer))
-        initializeDepthBuffer();
-    m_shouldClear = true;
-}
-
-void BitmapTexture::bindAsSurface()
-{
-    glBindTexture(m_renderTarget, 0);
-    createFboIfNeeded();
-    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glViewport(0, 0, m_size.width(), m_size.height());
-    if (m_flags.contains(Flags::DepthBuffer))
-        glEnable(GL_DEPTH_TEST);
-    else
-        glDisable(GL_DEPTH_TEST);
-    clearIfNeeded();
-    m_clipStack.apply();
-}
-
-BitmapTexture::~BitmapTexture()
-{
-    glDeleteTextures(1, &m_id);
-
-    if (m_fbo)
-        glDeleteFramebuffers(1, &m_fbo);
-
-    if (m_depthBufferObject)
-        glDeleteRenderbuffers(1, &m_depthBufferObject);
-
-    if (m_stencilBufferObject)
-        glDeleteRenderbuffers(1, &m_stencilBufferObject);
-}
+#endif
 
 void BitmapTexture::copyFromExternalTexture(GLuint sourceTextureID, const IntRect& targetRect, const IntSize& sourceOffset)
 {
@@ -585,6 +476,74 @@ void BitmapTexture::copyFromExternalTexture(GLuint sourceTextureID, const IntRec
     glDeleteFramebuffers(1, &copyFbo);
 }
 
+#if USE(TEXTURE_MAPPER)
+void BitmapTexture::swapTexture(BitmapTexture& other)
+{
+    RELEASE_ASSERT(m_size == other.m_size);
+
+#if USE(GBM)
+    std::swap(m_memoryMappedGPUBuffer, other.m_memoryMappedGPUBuffer);
+#endif
+    std::swap(m_flags, other.m_flags);
+    std::swap(m_id, other.m_id);
+
+    determineRenderTargetAndBinding();
+    other.determineRenderTargetAndBinding();
+
+    // Take the pixel format from the source texture. The source texture
+    // (going back to the pool) is reset to the default pixel format.
+    m_pixelFormat = other.m_pixelFormat;
+    other.m_pixelFormat = PixelFormat::RGBA8;
+}
+
+void BitmapTexture::initializeStencil()
+{
+    if (m_stencilBufferObject)
+        return;
+
+    glGenRenderbuffers(1, &m_stencilBufferObject);
+    glBindRenderbuffer(GL_RENDERBUFFER, m_stencilBufferObject);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, m_size.width(), m_size.height());
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_stencilBufferObject);
+    glClearStencil(0);
+    glClear(GL_STENCIL_BUFFER_BIT);
+}
+
+void BitmapTexture::clearIfNeeded()
+{
+    if (!m_shouldClear)
+        return;
+
+    m_clipStack.reset(IntRect(IntPoint::zero(), m_size), ClipStack::YAxisMode::Default);
+    m_clipStack.applyIfNeeded();
+    glClearColor(0, 0, 0, 0);
+    glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    m_shouldClear = false;
+}
+
+void BitmapTexture::createFboIfNeeded()
+{
+    if (m_fbo)
+        return;
+
+    glGenFramebuffers(1, &m_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_renderTarget, id(), 0);
+    m_shouldClear = true;
+}
+
+void BitmapTexture::bindAsSurface()
+{
+    glBindTexture(m_renderTarget, 0);
+    createFboIfNeeded();
+    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    glViewport(0, 0, m_size.width(), m_size.height());
+    clearIfNeeded();
+    m_clipStack.apply();
+}
+
 OptionSet<TextureMapperFlags> BitmapTexture::colorConvertFlags() const
 {
     if (m_pixelFormat == PixelFormat::RGBA8)
@@ -598,6 +557,7 @@ OptionSet<TextureMapperFlags> BitmapTexture::colorConvertFlags() const
     // the color conversion on-the-fly, when painting the texture.
     return TextureMapperFlags::ShouldConvertTextureBGRAToRGBA;
 }
+#endif
 
 #if USE(SKIA)
 GrBackendTexture BitmapTexture::createSkiaBackendTexture() const

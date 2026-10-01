@@ -335,14 +335,17 @@ TEST_P(SharedMemoryFromMemoryTest, CreateCOWFromMemory)
 
 #if PLATFORM(COCOA)
 #define ANY_MEMORY_SOURCE testing::Values(MemorySource::Malloc, MemorySource::SharedMemory, MemorySource::ExplicitMapping)
+#define ANY_MEMORY_SIZE testing::Values(1, 2, KB, 100 * KB, 500 * MB, 4 * GB + 1, 20 * GB)
 #else
 #define ANY_MEMORY_SOURCE testing::Values(MemorySource::Malloc, MemorySource::SharedMemory)
+// Overcommit makes allocating the regions over 4 GB succeed, so the physical copy has to commit all of them.
+#define ANY_MEMORY_SIZE testing::Values(1, 2, KB, 100 * KB, 500 * MB)
 #endif
 
 INSTANTIATE_TEST_SUITE_P(SharedMemoryTest,
     SharedMemoryFromMemoryTest,
     testing::Combine(
-        testing::Values(1, 2, KB, 100 * KB, 500 * MB, 4 * GB + 1, 20 * GB),
+        ANY_MEMORY_SIZE,
         testing::Values(0, 1, 444, 4097),
         ANY_MEMORY_SOURCE,
         testing::Values(SharedMemory::Protection::ReadOnly, SharedMemory::Protection::ReadWrite)),

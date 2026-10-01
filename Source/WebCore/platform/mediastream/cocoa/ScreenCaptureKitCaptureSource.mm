@@ -43,6 +43,7 @@
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/darwin/DispatchExtras.h>
 #import <wtf/text/StringToIntegerConversion.h>
 
 #import <pal/cf/CoreMediaSoftLink.h>
@@ -136,7 +137,7 @@ bool ScreenCaptureKitCaptureSource::isAvailable()
     return PAL::isScreenCaptureKitFrameworkAvailable();
 }
 
-Expected<uint32_t, CaptureSourceError> ScreenCaptureKitCaptureSource::computeDeviceID(const CaptureDevice& device)
+std::expected<uint32_t, CaptureSourceError> ScreenCaptureKitCaptureSource::computeDeviceID(const CaptureDevice& device)
 {
     ASSERT(device.type() == CaptureDevice::DeviceType::Screen || device.type() == CaptureDevice::DeviceType::Window);
 
@@ -639,7 +640,7 @@ void ScreenCaptureKitCaptureSource::streamDidOutputVideoSampleBuffer(RetainPtr<C
 dispatch_queue_t ScreenCaptureKitCaptureSource::captureQueue()
 {
     if (!m_captureQueue)
-        m_captureQueue = adoptOSObject(dispatch_queue_create("CGDisplayStreamCaptureSource Capture Queue", DISPATCH_QUEUE_SERIAL));
+        m_captureQueue = adoptOSObject(dispatch_queue_create("CGDisplayStreamCaptureSource Capture Queue", serialQueueWithAutoreleasePoolAttrSingleton()));
 
     return m_captureQueue.get();
 }

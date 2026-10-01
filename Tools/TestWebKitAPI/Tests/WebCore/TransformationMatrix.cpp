@@ -32,6 +32,7 @@
 #include <WebCore/FloatRect.h>
 #include <WebCore/IntPoint.h>
 #include <WebCore/IntRect.h>
+#include <WebCore/LayoutRect.h>
 #include <WebCore/TransformationMatrix.h>
 
 #if USE(CG)
@@ -1339,6 +1340,111 @@ TEST(TransformationMatrix, IdentityDecomposition)
     EXPECT_DOUBLE_EQ(0.0, decomp.quaternion.y);
     EXPECT_DOUBLE_EQ(0.0, decomp.quaternion.z);
     EXPECT_DOUBLE_EQ(1.0, decomp.quaternion.w);
+}
+
+enum class ExpectedIPCDataAlternative : size_t {
+    Identity = 0,
+    Translation2D = 1,
+    Translation3D = 2,
+    Affine = 3,
+    Full = 4
+};
+
+static void testIPCDataRoundTrip(const WebCore::TransformationMatrix& matrix, ExpectedIPCDataAlternative expectedAlternative)
+{
+    auto ipcData = matrix.ipcData();
+    EXPECT_EQ(static_cast<size_t>(expectedAlternative), ipcData.index());
+    EXPECT_TRUE(matrix == WebCore::TransformationMatrix::fromIPCData(WTF::move(ipcData)));
+}
+
+TEST(TransformationMatrix, IPCDataIdentity)
+{
+    testIPCDataRoundTrip(WebCore::TransformationMatrix { }, ExpectedIPCDataAlternative::Identity);
+}
+
+TEST(TransformationMatrix, IPCDataTranslation2D)
+{
+    testIPCDataRoundTrip(WebCore::TransformationMatrix { 10.5, -20.25 }, ExpectedIPCDataAlternative::Translation2D);
+
+    WebCore::TransformationMatrix translated;
+    translated.translate(1.0, 2.0);
+    testIPCDataRoundTrip(translated, ExpectedIPCDataAlternative::Translation2D);
+
+    WebCore::TransformationMatrix zeroZ;
+    zeroZ.translate3d(1.0, 2.0, 0.0);
+    testIPCDataRoundTrip(zeroZ, ExpectedIPCDataAlternative::Translation2D);
+}
+
+TEST(TransformationMatrix, IPCDataTranslation3D)
+{
+    WebCore::TransformationMatrix translated3D;
+    translated3D.translate3d(1.0, 2.0, 3.0);
+    testIPCDataRoundTrip(translated3D, ExpectedIPCDataAlternative::Translation3D);
+
+    WebCore::TransformationMatrix translatedNegativeZ;
+    translatedNegativeZ.translate3d(0.0, 0.0, -4.5);
+    testIPCDataRoundTrip(translatedNegativeZ, ExpectedIPCDataAlternative::Translation3D);
+}
+
+TEST(TransformationMatrix, IPCDataAffine)
+{
+    testIPCDataRoundTrip(WebCore::TransformationMatrix { 6.0, 5.0, 4.0, 3.0, 2.0, 1.0 }, ExpectedIPCDataAlternative::Affine);
+
+    WebCore::TransformationMatrix scaled;
+    scaled.scale(2.0);
+    testIPCDataRoundTrip(scaled, ExpectedIPCDataAlternative::Affine);
+
+    WebCore::TransformationMatrix rotated;
+    rotated.rotate(45.0);
+    testIPCDataRoundTrip(rotated, ExpectedIPCDataAlternative::Affine);
+}
+
+TEST(TransformationMatrix, IPCDataFull)
+{
+    testIPCDataRoundTrip(WebCore::TransformationMatrix {
+        16.0, 15.0, 14.0, 13.0,
+        12.0, 11.0, 10.0, 9.0,
+        8.0, 7.0, 6.0, 5.0,
+        4.0, 3.0, 2.0, 1.0
+    }, ExpectedIPCDataAlternative::Full);
+
+    WebCore::TransformationMatrix rotatedInX;
+    rotatedInX.rotate3d(45.0, 0.0, 0.0);
+    ASSERT_FALSE(rotatedInX.isAffine());
+    testIPCDataRoundTrip(rotatedInX, ExpectedIPCDataAlternative::Full);
+
+    WebCore::TransformationMatrix withPerspective {
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, -1.0 / 500.0,
+        0.0, 0.0, 0.0, 1.0
+    };
+    ASSERT_TRUE(withPerspective.hasPerspective());
+    ASSERT_FALSE(withPerspective.isAffine());
+    testIPCDataRoundTrip(withPerspective, ExpectedIPCDataAlternative::Full);
+}
+
+TEST(TransformationMatrix, ClampedBoundsOfProjectedQuadAcrossEyePlane)
+{
+    // A plane turned away under a perspective, seen through a viewport that reaches past the horizon of the plane
+    // at x = 600 / tan(50deg). The visible part of the plane starts at the left edge of the viewport and reaches
+    // infinitely far to the right.
+    WebCore::TransformationMatrix planeToViewport;
+    planeToViewport.applyPerspective(600);
+    planeToViewport.rotate3d(0, 50, 0);
+    auto viewportToPlane = planeToViewport.inverse();
+    ASSERT_TRUE(viewportToPlane);
+
+    auto bounds = viewportToPlane->clampedBoundsOfProjectedQuad(WebCore::FloatQuad(WebCore::FloatRect(-400, -300, 1200, 600)));
+    EXPECT_EQ(-347, bounds.x().toInt());
+    EXPECT_GT(bounds.maxX().toInt(), 100000);
+    EXPECT_LT(bounds.y().toInt(), -300);
+    EXPECT_GT(bounds.maxY().toInt(), 300);
+    EXPECT_TRUE(bounds.contains(WebCore::LayoutPoint()));
+
+    // A quad entirely behind the eye is not visible.
+    auto hidden = viewportToPlane->clampedBoundsOfProjectedQuad(WebCore::FloatQuad(WebCore::FloatRect(600, -10, 100, 20)));
+    EXPECT_TRUE(hidden.isEmpty());
 }
 
 }

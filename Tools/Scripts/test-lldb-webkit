@@ -79,6 +79,12 @@ class LldbTester(Tester):
         parser.add_argument('--configuration',
                             dest='configuration', action='store',
                             default=None, help='Set configuration (Debug/Release/ASan/ect.) to build and test the lldb test runner with.')
+        parser.add_argument('--cmake',
+                            dest='use_cmake', action='store_true',
+                            default=False, help='Use the CMake build tree (e.g. WebKitBuild/cmake-mac/<configuration>) instead of the default Xcode tree')
+        parser.add_argument('--xcode',
+                            dest='use_xcode', action='store_true',
+                            default=False, help='Use the Xcode build tree (e.g. WebKitBuild/<configuration>); overrides last-built auto-detection')
         parser.add_argument('names', nargs='*',
                             default=None, help='Name (or names) of test, or test suite, to be run. lldb_webkit_unittest.TestSummaryProviders and dump_class_layout_unittest.TestDumpClassLayout are two examples')
         return parser.parse_args()
@@ -95,16 +101,22 @@ class LldbTester(Tester):
             _log.error('No tests to run')
             return False
 
-        config = Config(host.executive, self.finder.filesystem)
+        config = Config(host.executive, self.finder.filesystem,
+                        use_cmake=self._options.use_cmake, use_xcode=self._options.use_xcode)
         configuration_to_use = self._options.configuration or config.default_configuration()
         self.upload_style = configuration_to_use.lower()
 
         if (not self._options.root and self._options.build is None) or self._options.build:
             self.printer.write_update('Building lldbWebKitTester ...')
             build_lldbwebkittester = self.finder.filesystem.join(webkit_root, 'Tools', 'Scripts', 'build-lldbwebkittester')
+            build_command = [build_lldbwebkittester, config.flag_for_configuration(configuration_to_use)]
+            if self._options.use_cmake:
+                build_command.append('--cmake')
+            if self._options.use_xcode:
+                build_command.append('--xcode')
             try:
                 host.executive.run_and_throw_if_fail(
-                    [build_lldbwebkittester, config.flag_for_configuration(configuration_to_use)],
+                    build_command,
                     quiet=(not bool(self._options.verbose)),
                 )
             except ScriptError as e:

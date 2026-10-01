@@ -87,7 +87,7 @@ private:
 
     NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
     void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
-    void movingSteps(bool isSubtreeRoot, ContainerNode&) final;
+    void movingSteps(IsSubtreeRoot, ContainerNode&) final;
 
     bool supportsFocus() const final;
     bool isFocusable() const final;
@@ -104,9 +104,6 @@ private:
     void childrenChanged(const ChildChange&) final;
 
     void willResetComputedStyle() final;
-
-    String collectOptionInnerText() const;
-    String collectOptionInnerTextCollapsingWhitespace() const;
 
     void invalidateShadowTree();
 

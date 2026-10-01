@@ -8,6 +8,8 @@
 //   EXT_shader_framebuffer_fetch_non_coherent extensions.
 //
 
+#include <array>
+
 #include "common/debug.h"
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
@@ -916,9 +918,9 @@ class FramebufferFetchES31 : public ANGLETest<>
         std::vector<GLColor> color1(kViewportWidth * kViewportHeight, GLColor::green);
         std::vector<GLColor> color2(kViewportWidth * kViewportHeight, GLColor::blue);
         std::vector<GLColor> color3(kViewportWidth * kViewportHeight, GLColor::black);
-        GLTexture colorBufferTex[kMaxColorBuffer];
-        GLenum colorAttachments[kMaxColorBuffer] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
-                                                    GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        std::array<GLTexture, kMaxColorBuffer> colorBufferTex;
+        constexpr std::array<GLenum, kMaxColorBuffer> colorAttachments = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
         glBindTexture(GL_TEXTURE_2D, colorBufferTex[0]);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kViewportWidth, kViewportHeight, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, color0.data());
@@ -934,10 +936,10 @@ class FramebufferFetchES31 : public ANGLETest<>
         glBindTexture(GL_TEXTURE_2D, 0);
         for (unsigned int i = 0; i < kMaxColorBuffer; i++)
         {
-            glFramebufferTexture2D(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(colorAttachments[i]),
-                                   GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex[i]), 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, colorAttachments[i], GL_TEXTURE_2D,
+                                   colorBufferTex[i], 0);
         }
-        glDrawBuffers(kMaxColorBuffer, &colorAttachments[0]);
+        glDrawBuffers(kMaxColorBuffer, colorAttachments.data());
 
         ASSERT_GL_NO_ERROR();
 
@@ -996,9 +998,9 @@ class FramebufferFetchES31 : public ANGLETest<>
         std::vector<GLColor> color1(kViewportWidth * kViewportHeight, GLColor::green);
         std::vector<GLColor> color2(kViewportWidth * kViewportHeight, GLColor::blue);
         std::vector<GLColor> color3(kViewportWidth * kViewportHeight, GLColor::cyan);
-        GLTexture colorBufferTex[kMaxColorBuffer];
-        GLenum colorAttachments[kMaxColorBuffer] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
-                                                    GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        std::array<GLTexture, kMaxColorBuffer> colorBufferTex;
+        constexpr std::array<GLenum, kMaxColorBuffer> colorAttachments = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
         glBindTexture(GL_TEXTURE_2D, colorBufferTex[0]);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kViewportWidth, kViewportHeight, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, color0.data());
@@ -1014,10 +1016,10 @@ class FramebufferFetchES31 : public ANGLETest<>
         glBindTexture(GL_TEXTURE_2D, 0);
         for (unsigned int i = 0; i < kMaxColorBuffer; i++)
         {
-            glFramebufferTexture2D(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(colorAttachments[i]),
-                                   GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex[i]), 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, colorAttachments[i], GL_TEXTURE_2D,
+                                   colorBufferTex[i], 0);
         }
-        glDrawBuffers(kMaxColorBuffer, &colorAttachments[0]);
+        glDrawBuffers(kMaxColorBuffer, colorAttachments.data());
 
         ASSERT_GL_NO_ERROR();
 
@@ -1346,9 +1348,9 @@ class FramebufferFetchES31 : public ANGLETest<>
         glBindFramebuffer(GL_FRAMEBUFFER, framebufferMRT1);
         std::vector<GLColor> color1(kViewportWidth * kViewportHeight, GLColor::green);
         std::vector<GLColor> color2(kViewportWidth * kViewportHeight, GLColor::blue);
-        GLTexture colorBufferTex1[kMaxColorBuffer];
-        GLenum colorAttachments[kMaxColorBuffer] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
-                                                    GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        std::array<GLTexture, kMaxColorBuffer> colorBufferTex1;
+        constexpr std::array<GLenum, kMaxColorBuffer> colorAttachments = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
         glBindTexture(GL_TEXTURE_2D, colorBufferTex1[0]);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kViewportWidth, kViewportHeight, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, color1.data());
@@ -1364,10 +1366,10 @@ class FramebufferFetchES31 : public ANGLETest<>
         glBindTexture(GL_TEXTURE_2D, 0);
         for (unsigned int i = 0; i < kMaxColorBuffer; i++)
         {
-            glFramebufferTexture2D(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(colorAttachments[i]),
-                                   GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex1[i]), 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, colorAttachments[i], GL_TEXTURE_2D,
+                                   colorBufferTex1[i], 0);
         }
-        glDrawBuffers(kMaxColorBuffer, &colorAttachments[0]);
+        glDrawBuffers(kMaxColorBuffer, colorAttachments.data());
         ASSERT_GL_NO_ERROR();
 
         GLint colorLocation = glGetUniformLocation(programFetch, "u_color");
@@ -1390,7 +1392,7 @@ class FramebufferFetchES31 : public ANGLETest<>
 
         GLFramebuffer framebufferMRT2;
         glBindFramebuffer(GL_FRAMEBUFFER, framebufferMRT2);
-        GLTexture colorBufferTex2[kMaxColorBuffer];
+        std::array<GLTexture, kMaxColorBuffer> colorBufferTex2;
         glBindTexture(GL_TEXTURE_2D, colorBufferTex2[0]);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kViewportWidth, kViewportHeight, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, color2.data());
@@ -1406,10 +1408,10 @@ class FramebufferFetchES31 : public ANGLETest<>
         glBindTexture(GL_TEXTURE_2D, 0);
         for (unsigned int i = 0; i < kMaxColorBuffer; i++)
         {
-            glFramebufferTexture2D(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(colorAttachments[i]),
-                                   GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex2[i]), 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, colorAttachments[i], GL_TEXTURE_2D,
+                                   colorBufferTex2[i], 0);
         }
-        glDrawBuffers(kMaxColorBuffer, &colorAttachments[0]);
+        glDrawBuffers(kMaxColorBuffer, colorAttachments.data());
         ASSERT_GL_NO_ERROR();
 
         glUniform4fv(colorLocation, 1, colorRed);
@@ -1464,19 +1466,19 @@ class FramebufferFetchES31 : public ANGLETest<>
         GLFramebuffer framebufferMRT1;
         glBindFramebuffer(GL_FRAMEBUFFER, framebufferMRT1);
         std::vector<GLColor> color1(kViewportWidth * kViewportHeight, GLColor::green);
-        GLTexture colorBufferTex1[kMaxColorBuffer];
-        GLenum colorAttachments[kMaxColorBuffer] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
-                                                    GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        std::array<GLTexture, kMaxColorBuffer> colorBufferTex1;
+        constexpr std::array<GLenum, kMaxColorBuffer> colorAttachments = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
         for (unsigned int i = 0; i < kMaxColorBuffer; i++)
         {
-            glBindTexture(GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex1[i]));
+            glBindTexture(GL_TEXTURE_2D, colorBufferTex1[i]);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kViewportWidth, kViewportHeight, 0, GL_RGBA,
                          GL_UNSIGNED_BYTE, color1.data());
-            glFramebufferTexture2D(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(colorAttachments[i]),
-                                   GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex1[i]), 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, colorAttachments[i], GL_TEXTURE_2D,
+                                   colorBufferTex1[i], 0);
         }
         glBindTexture(GL_TEXTURE_2D, 0);
-        glDrawBuffers(kMaxColorBuffer, &colorAttachments[0]);
+        glDrawBuffers(kMaxColorBuffer, colorAttachments.data());
         ASSERT_GL_NO_ERROR();
 
         GLint colorLocation = glGetUniformLocation(programFetch1, "u_color");
@@ -1530,19 +1532,19 @@ class FramebufferFetchES31 : public ANGLETest<>
         GLFramebuffer framebufferMRT1;
         glBindFramebuffer(GL_FRAMEBUFFER, framebufferMRT1);
         std::vector<GLColor> color1(kViewportWidth * kViewportHeight, GLColor::green);
-        GLTexture colorBufferTex1[kMaxColorBuffer];
-        GLenum colorAttachments[kMaxColorBuffer] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
-                                                    GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        std::array<GLTexture, kMaxColorBuffer> colorBufferTex1;
+        constexpr std::array<GLenum, kMaxColorBuffer> colorAttachments = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
         for (unsigned int i = 0; i < kMaxColorBuffer; i++)
         {
-            glBindTexture(GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex1[i]));
+            glBindTexture(GL_TEXTURE_2D, colorBufferTex1[i]);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kViewportWidth, kViewportHeight, 0, GL_RGBA,
                          GL_UNSIGNED_BYTE, color1.data());
-            glFramebufferTexture2D(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(colorAttachments[i]),
-                                   GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex1[i]), 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, colorAttachments[i], GL_TEXTURE_2D,
+                                   colorBufferTex1[i], 0);
         }
         glBindTexture(GL_TEXTURE_2D, 0);
-        glDrawBuffers(kMaxColorBuffer, &colorAttachments[0]);
+        glDrawBuffers(kMaxColorBuffer, colorAttachments.data());
         ASSERT_GL_NO_ERROR();
 
         glUseProgram(programFetch1);
@@ -1596,9 +1598,9 @@ class FramebufferFetchES31 : public ANGLETest<>
         glBindFramebuffer(GL_FRAMEBUFFER, framebufferMRT1);
         std::vector<GLColor> color1(kViewportWidth * kViewportHeight, GLColor::green);
         std::vector<GLColor> color2(kViewportWidth * kViewportHeight, GLColor::blue);
-        GLTexture colorBufferTex1[kMaxColorBuffer];
-        GLenum colorAttachments[kMaxColorBuffer] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
-                                                    GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        std::array<GLTexture, kMaxColorBuffer> colorBufferTex1;
+        constexpr std::array<GLenum, kMaxColorBuffer> colorAttachments = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
         glBindTexture(GL_TEXTURE_2D, colorBufferTex1[0]);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kViewportWidth, kViewportHeight, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, color1.data());
@@ -1614,10 +1616,10 @@ class FramebufferFetchES31 : public ANGLETest<>
         glBindTexture(GL_TEXTURE_2D, 0);
         for (unsigned int i = 0; i < kMaxColorBuffer; i++)
         {
-            glFramebufferTexture2D(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(colorAttachments[i]),
-                                   GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex1[i]), 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, colorAttachments[i], GL_TEXTURE_2D,
+                                   colorBufferTex1[i], 0);
         }
-        glDrawBuffers(kMaxColorBuffer, &colorAttachments[0]);
+        glDrawBuffers(kMaxColorBuffer, colorAttachments.data());
         ASSERT_GL_NO_ERROR();
 
         float colorRed[4]   = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -1962,7 +1964,8 @@ void main()
     color = vec4(float(gl_LastFragStencilARM)/255.0, gl_LastFragDepthARM, 0, 1);
 })";
 
-        GLRenderbuffer color[4], depthStencil;
+        std::array<GLRenderbuffer, kMaxColorBuffer> color;
+        GLRenderbuffer depthStencil;
         GLFramebuffer fbo;
 
         stateReset();
@@ -1983,7 +1986,7 @@ void main()
         glUseProgram(program);
         glStencilFunc(GL_LESS, 40, 0xFF);
         drawQuad(program, essl31_shaders::PositionAttrib(), 0.4f);
-        EXPECT_PIXEL_RECT_EQ(0, 0, 1, 1, GLColor(60, 204, 0, 255));
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor(60, 204, 0, 255));
 
         // CASE 1: Detach stencil, depth is still attached
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
@@ -1993,9 +1996,7 @@ void main()
         glStencilFunc(GL_LESS, 30, 0xFF);
         drawQuad(program, essl31_shaders::PositionAttrib(), 0.3f);
         ASSERT_GL_NO_ERROR();
-        GLColor actual0;
-        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &actual0.R);
-        EXPECT_EQ(178, actual0.G);
+        EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(40, 178, 0, 255), 1);
 
         // CASE 2: Detach depth and attach old stencil
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
@@ -2007,9 +2008,7 @@ void main()
         glStencilFunc(GL_LESS, 20, 0xFF);
         drawQuad(program, essl31_shaders::PositionAttrib(), 0.2f);
         ASSERT_GL_NO_ERROR();
-        GLColor actual1;
-        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &actual1.R);
-        EXPECT_EQ(40, actual1.R);
+        EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(40, 166, 0, 255), 1);
 
         // CASE 3: Attach old depth
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
@@ -2018,7 +2017,7 @@ void main()
         glStencilFunc(GL_LESS, 10, 0xFF);
         drawQuad(program, essl31_shaders::PositionAttrib(), 0.1f);
         ASSERT_GL_NO_ERROR();
-        EXPECT_PIXEL_RECT_EQ(0, 0, 1, 1, GLColor(20, 166, 0, 255));
+        EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(20, 166, 0, 255), 1);
     }
 
     const char *getFragShaderName(GLenum depthStencilFormat)
@@ -2111,17 +2110,17 @@ void main()
                                          int samples,
                                          GLenum depthStencilFormat,
                                          GLFramebuffer *fbo,
-                                         GLRenderbuffer *color,
+                                         const std::array<GLRenderbuffer, kMaxColorBuffer> &color,
                                          GLRenderbuffer *depthStencil)
     {
         glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
         ASSERT_GL_NO_ERROR();
         for (GLuint i = 0; i < kMaxColorBuffer; ++i)
         {
-            glBindRenderbuffer(GL_RENDERBUFFER, ANGLE_UNSAFE_TODO(color[i]));
+            glBindRenderbuffer(GL_RENDERBUFFER, color[i]);
             glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, width, height);
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_RENDERBUFFER,
-                                      ANGLE_UNSAFE_TODO(color[i]));
+                                      color[i]);
             ASSERT_GL_NO_ERROR();
         }
         glBindRenderbuffer(GL_RENDERBUFFER, *depthStencil);
@@ -2201,13 +2200,13 @@ void main()
     bool sampleCountSupported(GLenum target, GLenum format, int sampleCount)
     {
         GLint numSupportedSampleCounts = 0;
-        GLint supportedSampleCounts[8] = {0};
+        std::array<GLint, 8> supportedSampleCounts = {0};
         glGetInternalformativ(target, format, GL_NUM_SAMPLE_COUNTS, 1, &numSupportedSampleCounts);
         glGetInternalformativ(target, format, GL_SAMPLES, numSupportedSampleCounts,
-                              supportedSampleCounts);
+                              supportedSampleCounts.data());
         for (int i = 0; i < numSupportedSampleCounts; ++i)
         {
-            if (ANGLE_UNSAFE_TODO(supportedSampleCounts[i]) == sampleCount || sampleCount == 0)
+            if (supportedSampleCounts[i] == sampleCount || sampleCount == 0)
             {
                 return true;
             }
@@ -3087,15 +3086,14 @@ TEST_P(FramebufferFetchES31, ReopenRenderPass)
                        !IsGLExtensionEnabled("GL_EXT_shader_framebuffer_fetch_non_coherent"));
 
     // Create two framebuffers
-    GLRenderbuffer color[2];
-    GLFramebuffer fbo[2];
+    std::array<GLRenderbuffer, 2> color;
+    std::array<GLFramebuffer, 2> fbo;
     for (uint32_t i = 0; i < 2; ++i)
     {
-        glBindRenderbuffer(GL_RENDERBUFFER, ANGLE_UNSAFE_TODO(color[i]));
+        glBindRenderbuffer(GL_RENDERBUFFER, color[i]);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, kViewportWidth, kViewportHeight);
-        glBindFramebuffer(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(fbo[i]));
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
-                                  ANGLE_UNSAFE_TODO(color[i]));
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo[i]);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color[i]);
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbo[0]);
@@ -3396,9 +3394,9 @@ void main()
     std::vector<GLColor> color1(kViewportWidth * kViewportHeight, GLColor::green);
     std::vector<GLColor> color2(kViewportWidth * kViewportHeight, GLColor::blue);
     std::vector<GLColor> color3(kViewportWidth * kViewportHeight, GLColor::black);
-    GLTexture colorBufferTex[kMaxColorBuffer];
-    GLenum colorAttachments[kMaxColorBuffer] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
-                                                GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+    std::array<GLTexture, kMaxColorBuffer> colorBufferTex;
+    constexpr std::array<GLenum, kMaxColorBuffer> colorAttachments = {
+        GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
     glBindTexture(GL_TEXTURE_2D, colorBufferTex[0]);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kViewportWidth, kViewportHeight, 0, GL_RGBA,
                  GL_UNSIGNED_BYTE, color0.data());
@@ -3414,10 +3412,10 @@ void main()
     glBindTexture(GL_TEXTURE_2D, 0);
     for (unsigned int i = 0; i < kMaxColorBuffer; i++)
     {
-        glFramebufferTexture2D(GL_FRAMEBUFFER, ANGLE_UNSAFE_TODO(colorAttachments[i]),
-                               GL_TEXTURE_2D, ANGLE_UNSAFE_TODO(colorBufferTex[i]), 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, colorAttachments[i], GL_TEXTURE_2D,
+                               colorBufferTex[i], 0);
     }
-    glDrawBuffers(kMaxColorBuffer, &colorAttachments[0]);
+    glDrawBuffers(kMaxColorBuffer, colorAttachments.data());
 
     ASSERT_GL_NO_ERROR();
 
@@ -3449,7 +3447,7 @@ void main()
     // and sets all attachments to black.
     for (unsigned int i = 0; i < kMaxColorBuffer; i++)
     {
-        glReadBuffer(ANGLE_UNSAFE_TODO(colorAttachments[i]));
+        glReadBuffer(colorAttachments[i]);
         EXPECT_PIXEL_COLOR_EQ(kViewportWidth / 2, kViewportHeight / 2, GLColor::black);
     }
 
@@ -5527,6 +5525,7 @@ void main()
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_DRAW_FRAMEBUFFER);
     EXPECT_GL_NO_ERROR();
 
+    glDisable(GL_SCISSOR_TEST);
     glBlitFramebuffer(0, 0, kWidth, kHeight, 0, 0, kWidth, kHeight, GL_COLOR_BUFFER_BIT,
                       GL_NEAREST);
 
@@ -5569,7 +5568,8 @@ TEST_P(FramebufferFetchES31, DrawFetchPerFragmentAndWriteOut_ARM)
     for (auto depthStencilFormat : kDSFormat)
     {
         GLFramebuffer fbo, resolveFbo;
-        GLRenderbuffer color[kMaxColorBuffer], depthStencil, resolve;
+        std::array<GLRenderbuffer, kMaxColorBuffer> color;
+        GLRenderbuffer depthStencil, resolve;
 
         bindResolveFboAndVerify(&resolve, &resolveFbo, kViewportWidth, kViewportHeight, false,
                                 false, &fbo, depthStencilFormat);
@@ -5616,7 +5616,8 @@ void main()
 })";
 
     GLFramebuffer fbo, resolveFbo;
-    GLRenderbuffer color[kMaxColorBuffer], depthStencil, resolve;
+    std::array<GLRenderbuffer, kMaxColorBuffer> color;
+    GLRenderbuffer depthStencil, resolve;
 
     bindResolveFboAndVerify(&resolve, &resolveFbo, 2, 2, false, true, &fbo, GL_DEPTH_COMPONENT24);
 
@@ -5650,7 +5651,8 @@ TEST_P(FramebufferFetchES31, DrawFetchPerFragmentAndWriteOutWithMultisample_ARM)
             }
 
             GLFramebuffer fbo, resolveFbo;
-            GLRenderbuffer color[kMaxColorBuffer], depthStencil, resolve;
+            std::array<GLRenderbuffer, kMaxColorBuffer> color;
+            GLRenderbuffer depthStencil, resolve;
 
             bindResolveFboAndVerify(&resolve, &resolveFbo, kViewportWidth, kViewportHeight, false,
                                     false, &fbo, depthStencilFormat);
@@ -5690,7 +5692,8 @@ TEST_P(FramebufferFetchES31, DrawFetchPerSampleAndWriteOutWithMultisample_ARM)
             }
 
             GLFramebuffer fbo, resolveFbo;
-            GLRenderbuffer color[kMaxColorBuffer], depthStencil, resolve;
+            std::array<GLRenderbuffer, kMaxColorBuffer> color;
+            GLRenderbuffer depthStencil, resolve;
 
             bindResolveFboAndVerify(&resolve, &resolveFbo, kViewportWidth, kViewportHeight, false,
                                     false, &fbo, depthStencilFormat);
@@ -5745,7 +5748,8 @@ void main()
         }
 
         GLFramebuffer fbo, resolveFbo;
-        GLRenderbuffer color[kMaxColorBuffer], depthStencil, resolve;
+        std::array<GLRenderbuffer, kMaxColorBuffer> color;
+        GLRenderbuffer depthStencil, resolve;
 
         bindResolveFboAndVerify(&resolve, &resolveFbo, 2, 2, false, true, &fbo,
                                 GL_DEPTH_COMPONENT24);
@@ -5798,7 +5802,8 @@ void main()
         }
 
         GLFramebuffer fbo, resolveFbo;
-        GLRenderbuffer color[kMaxColorBuffer], depthStencil, resolve;
+        std::array<GLRenderbuffer, kMaxColorBuffer> color;
+        GLRenderbuffer depthStencil, resolve;
 
         bindResolveFboAndVerify(&resolve, &resolveFbo, 2, 2, false, true, &fbo,
                                 GL_DEPTH_COMPONENT24);
@@ -6000,6 +6005,7 @@ void main()
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_DRAW_FRAMEBUFFER);
     EXPECT_GL_NO_ERROR();
 
+    glDisable(GL_SCISSOR_TEST);
     glBlitFramebuffer(0, 0, kWidth, kHeight, 0, 0, kWidth, kHeight, GL_COLOR_BUFFER_BIT,
                       GL_NEAREST);
 

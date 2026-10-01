@@ -32,6 +32,7 @@
 #include "MessageSenderInlines.h"
 #include "PaymentSetupConfigurationWebKit.h"
 #include "WebPage.h"
+#include "WebPageProxyMessages.h"
 #include "WebPaymentCoordinatorMessages.h"
 #include "WebPaymentCoordinatorProxyMessages.h"
 #include "WebProcess.h"
@@ -43,6 +44,7 @@
 #include <WebCore/LocalFrame.h>
 #include <WebCore/Page.h>
 #include <WebCore/PaymentCoordinator.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 
@@ -86,17 +88,21 @@ std::optional<String> WebPaymentCoordinator::validatedPaymentNetwork(const Strin
 
 bool WebPaymentCoordinator::canMakePayments()
 {
+    // It is safe to cache this process-wide. The reply is derived solely from -[PKPaymentAuthorization(View)Controller canMakePayments], which reflects device-level payment capability.
+    static MonotonicTime timestampOfLastCanMakePaymentsRequest;
+    static std::optional<bool> lastCanMakePaymentsResult;
+
     auto now = MonotonicTime::now();
-    if (now - m_timestampOfLastCanMakePaymentsRequest > 1_min || !m_lastCanMakePaymentsResult) {
+    if (now - timestampOfLastCanMakePaymentsRequest > 1_min || !lastCanMakePaymentsResult) {
         auto sendResult = sendSync(Messages::WebPaymentCoordinatorProxy::CanMakePayments());
         if (!sendResult.succeeded())
             return false;
         auto [canMakePayments] = sendResult.takeReply();
 
-        m_timestampOfLastCanMakePaymentsRequest = now;
-        m_lastCanMakePaymentsResult = canMakePayments;
+        timestampOfLastCanMakePaymentsRequest = now;
+        lastCanMakePaymentsResult = canMakePayments;
     }
-    return *m_lastCanMakePaymentsResult;
+    return *lastCanMakePaymentsResult;
 }
 
 void WebPaymentCoordinator::canMakePaymentsWithActiveCard(const String& merchantIdentifier, const String& domainName, CompletionHandler<void(bool)>&& completionHandler)
@@ -151,7 +157,14 @@ void WebPaymentCoordinator::completeCouponCodeChange(std::optional<WebCore::Appl
 
 void WebPaymentCoordinator::completePaymentSession(WebCore::ApplePayPaymentAuthorizationResult&& result)
 {
+    bool didSucceed = result.isFinalState() && result.status == WebCore::ApplePayPaymentAuthorizationResult::Success;
+
     send(Messages::WebPaymentCoordinatorProxy::CompletePaymentSession(WTF::move(result)));
+
+    if (didSucceed) {
+        if (RefPtr webPage = m_webPage.get())
+            webPage->send(Messages::WebPageProxy::DidCompleteApplePayPayment());
+    }
 }
 
 void WebPaymentCoordinator::abortPaymentSession()

@@ -194,10 +194,12 @@ namespace JSC {
     macro(copyDataProperties) \
     macro(cloneObject) \
     macro(meta) \
+    macro(moduleLoader) \
     macro(instanceFieldInitializer) \
     macro(privateBrand) \
     macro(privateClassBrand) \
     macro(hasOwnPropertyFunction) \
+    macro(reflectConstructFunction) \
     macro(createPrivateSymbol) \
     macro(entries) \
     macro(emptyPropertyNameEnumerator) \

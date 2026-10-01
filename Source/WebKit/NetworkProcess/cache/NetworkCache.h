@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "NetworkCacheCompressionDictionaryEntry.h"
 #include "NetworkCacheEntry.h"
 #include "NetworkCacheStorage.h"
 #include "PolicyDecision.h"
@@ -50,6 +51,7 @@ namespace WebCore {
 class FragmentedSharedBuffer;
 class LowPowerModeNotifier;
 class ResourceRequest;
+class SharedBuffer;
 class ThermalMitigationNotifier;
 enum class AdvancedPrivacyProtections : uint16_t;
 }
@@ -155,6 +157,12 @@ enum class CacheOption : uint8_t {
     SpeculativeRevalidation = 1 << 2,
 };
 
+enum class RecordType : uint8_t {
+    Resource = 1 << 0,
+    CompressionDictionary = 1 << 1,
+};
+const AtomString& recordTypeName(RecordType);
+
 class Cache : public RefCountedAndCanMakeWeakPtr<Cache> {
 public:
     ~Cache();
@@ -202,14 +210,29 @@ public:
     void retrieve(const WebCore::ResourceRequest&, std::optional<GlobalFrameID>, std::optional<NavigatingToAppBoundDomain>, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, RetrieveCompletionHandler&&);
     std::unique_ptr<Entry> store(const WebCore::ResourceRequest&, const WebCore::ResourceResponse&, PrivateRelayed, RefPtr<WebCore::FragmentedSharedBuffer>&&, Function<void(MappedBody&&)>&& = nullptr);
     std::unique_ptr<Entry> storeRedirect(const WebCore::ResourceRequest&, const WebCore::ResourceResponse&, const WebCore::ResourceRequest& redirectRequest, std::optional<Seconds> maxAgeCap);
+    void storeCompressionDictionary(const WebCore::ResourceRequest&, const WebCore::ResourceResponse&, RefPtr<WebCore::FragmentedSharedBuffer>&&, CompressionDictionaryEntry::Info&&);
+
+    using CompressionDictionaryHash = std::array<uint8_t, CompressionDictionaryEntry::hashSize>;
+    struct CompressionDictionaryMatch {
+        Key key;
+        CompressionDictionaryHash hash;
+        String id;
+    };
+    void retrieveCompressionDictionaryBestMatch(WebCore::ResourceRequest&&, WebCore::FetchOptions::Destination, Function<void(WebCore::ResourceRequest&&, std::optional<CompressionDictionaryMatch>&&)>&&);
+    void retrieveCompressionDictionary(const Key&, const CompressionDictionaryHash&, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
+
     std::unique_ptr<Entry> update(const WebCore::ResourceRequest&, const Entry&, const WebCore::ResourceResponse& validatingResponse, PrivateRelayed);
 
     struct TraversalRecord {
         const Storage::Record& record;
         const Storage::RecordInfo& recordInfo;
+        std::optional<RecordType> type() const;
+        std::optional<URL> url() const;
     };
     void traverseRecords(Function<void(const TraversalRecord*)>&&);
     void traverseRecords(const String& partition, Function<void(const TraversalRecord*)>&&);
+    void traverseCompressionDictionaryRecords(const String& partition, Function<void(const TraversalRecord*)>&&);
+
     void remove(const Key&);
     void remove(const WebCore::ResourceRequest&);
     void remove(const Vector<Key>&, Function<void()>&&);
@@ -241,7 +264,9 @@ public:
 private:
     Cache(NetworkProcess&, const String& storageDirectory, Ref<Storage>&&, OptionSet<CacheOption>, PAL::SessionID);
 
-    Key makeCacheKey(const WebCore::ResourceRequest&);
+    Key makeCacheKey(RecordType, const WebCore::ResourceRequest&);
+
+    void traverseRecordsOfTypes(OptionSet<RecordType>, const std::optional<String>& partition, OptionSet<Storage::TraverseFlag>, Function<void(const TraversalRecord*)>&&);
 
     static void completeRetrieve(RetrieveCompletionHandler&&, std::unique_ptr<Entry>, RetrieveInfo&);
 

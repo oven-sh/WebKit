@@ -330,7 +330,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
                 addSlowPathGeneratorLambda([=, this, savePlans = WTF::move(savePlans), slowCases = WTF::move(slowCases)]() mutable {
                     slowCases.link(this);
                     silentSpill(savePlans);
-                    setupArguments<decltype(operationFFIWriteSlot)>(TrustedImmPtr(frozenGlobalObject), TrustedImmPtr(ffiContext), TrustedImm32(static_cast<int32_t>(typeTag)), JSValueRegs(valueGPR), slotAddressGPR);
+                    setupArguments<decltype(operationFFIWriteSlot)>(TrustedImmPtr(frozenGlobalObject), TrustedImmPtr(ffiContext), TrustedImm32(static_cast<int32_t>(typeTag)), valueGPR, slotAddressGPR);
                     appendCall(operationFFIWriteSlot);
                     if (exitArenaOnException)
                         emitArenaExitIfExceptionPending();
@@ -397,7 +397,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
         FPRReg valueFPR = fpValue.fpr();
         load64(returnSlot, valueGPR);
         Jump doesNotFitInt32 = branch32(LessThan, valueGPR, TrustedImm32(0));
-        boxInt32(valueGPR, JSValueRegs(resultGPR));
+        boxInt32(valueGPR, resultGPR);
         Jump done = jump();
         doesNotFitInt32.link(this);
         convertUInt32ToDouble(valueGPR, valueFPR);

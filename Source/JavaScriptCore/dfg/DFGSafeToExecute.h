@@ -349,7 +349,9 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case WeakMapGet:
     case AtomicsIsLockFree:
     case MatchStructure:
+    case DateGetStorage:
     case DateGetInt32OrNaN:
+    case DateGetMilliseconds:
     case DateGetTime:
     case DataViewGetInt:
     case DataViewGetFloat:
@@ -742,6 +744,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case NewAsyncGeneratorFunction:
     case NewAsyncFunction:
     case NewBoundFunction:
+    case GetLazyClosureVar:
     case Jump:
     case Branch:
     case Switch:

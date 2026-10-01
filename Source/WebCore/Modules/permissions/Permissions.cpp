@@ -55,7 +55,6 @@
 #include "WorkerThread.h"
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <optional>
-#include <wtf/Expected.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
@@ -125,6 +124,10 @@ static bool isAllowedByPermissionsPolicy(const Document& document, PermissionNam
         return PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::Microphone, document, PermissionsPolicy::ShouldReportViolation::No);
     case PermissionName::StorageAccess:
         return PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::StorageAccess, document, PermissionsPolicy::ShouldReportViolation::No);
+    case PermissionName::LocalNetwork:
+        return PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::LocalNetwork, document, PermissionsPolicy::ShouldReportViolation::No);
+    case PermissionName::LoopbackNetwork:
+        return PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::LoopbackNetwork, document, PermissionsPolicy::ShouldReportViolation::No);
     default:
         return true;
     }
@@ -150,6 +153,12 @@ std::optional<PermissionName> Permissions::toPermissionName(const String& name)
         return PermissionName::Camera;
     if (name == "geolocation"_s)
         return PermissionName::Geolocation;
+    // No "local-network-access" alias: Chromium's pre-split name spans both of these, whose states are
+    // tracked independently, so there is no one state to report.
+    if (name == "local-network"_s)
+        return PermissionName::LocalNetwork;
+    if (name == "loopback-network"_s)
+        return PermissionName::LoopbackNetwork;
     if (name == "microphone"_s)
         return PermissionName::Microphone;
     if (name == "notifications"_s)
@@ -161,7 +170,7 @@ std::optional<PermissionName> Permissions::toPermissionName(const String& name)
     return std::nullopt;
 }
 
-static Expected<PermissionState, Exception> processPermissionQueryResult(std::optional<PermissionState> permissionState, const PermissionDescriptor& permissionDescriptor, const Document& document)
+static std::expected<PermissionState, Exception> processPermissionQueryResult(std::optional<PermissionState> permissionState, const PermissionDescriptor& permissionDescriptor, const Document& document)
 {
     if (!permissionState)
         return makeUnexpected(Exception { ExceptionCode::NotSupportedError, "Permissions::query does not support this API"_s });
@@ -253,9 +262,9 @@ void Permissions::query(JSC::Strong<JSC::JSObject> permissionDescriptorValue, Re
             return;
         }
 
-        auto page = source == PermissionQuerySource::DedicatedWorker || source == PermissionQuerySource::Window ? WeakPtr { *document.page() } : nullptr;
+        RefPtr page = source == PermissionQuerySource::DedicatedWorker || source == PermissionQuerySource::Window ? document.page() : nullptr;
 
-        PermissionController::singleton().query(ClientOrigin { document.topOrigin().data(), WTF::move(originData) }, permissionDescriptor, page, source, [contextIdentifier, permissionDescriptor, weakThis = WTF::move(weakThis), promiseIdentifier, source, page, document = Ref { document }](auto permissionState) mutable {
+        PermissionController::singleton().query(ClientOrigin { document.topOrigin().data(), WTF::move(originData) }, permissionDescriptor, page, source, [contextIdentifier, permissionDescriptor, weakThis = WTF::move(weakThis), promiseIdentifier, source, weakPage = WeakPtr { page.get() }, document = Ref { document }](auto permissionState) mutable {
             ASSERT(isMainThread());
 
             auto result = processPermissionQueryResult(permissionState, permissionDescriptor, document);
@@ -270,12 +279,12 @@ void Permissions::query(JSC::Strong<JSC::JSObject> permissionDescriptorValue, Re
                 return;
             }
 
-            ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [weakThis = WTF::move(weakThis), promiseIdentifier, permissionState = *result, permissionDescriptor, source, page = WTF::move(page)](auto& context) mutable {
+            ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [weakThis = WTF::move(weakThis), promiseIdentifier, permissionState = *result, permissionDescriptor, source, weakPage = WTF::move(weakPage)](auto& context) mutable {
                 RefPtr protectedThis = weakThis;
                 if (!protectedThis)
                     return;
                 if (RefPtr promise = protectedThis->m_queryPromises.take(promiseIdentifier))
-                    promise->resolve<IDLInterface<PermissionStatus>>(PermissionStatus::create(context, permissionState, permissionDescriptor, source, WTF::move(page)));
+                    promise->resolve<IDLInterface<PermissionStatus>>(PermissionStatus::create(context, permissionState, permissionDescriptor, source, WTF::move(weakPage)));
             });
         });
     };

@@ -144,7 +144,26 @@ void WebSWClientConnection::postMessageToServiceWorker(ServiceWorkerIdentifier d
     for (auto& port : message.transferredPorts)
         WebMessagePortChannelProvider::singleton().messagePortSentToRemote(port.first);
 
-    send(Messages::WebSWServerConnection::PostMessageToServiceWorker { destinationIdentifier, WTF::move(message), sourceIdentifier });
+    Vector<URL> blobURLs;
+    if (auto& serializedScriptValue = message.message) {
+        blobURLs = serializedScriptValue->blobURLs().map([](auto& blobURL) {
+            return URL { blobURL };
+        });
+    }
+
+    send(Messages::WebSWServerConnection::PostMessageToServiceWorker { destinationIdentifier, WTF::move(message), sourceIdentifier, WTF::move(blobURLs) });
+}
+
+void WebSWClientConnection::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& source, const SecurityOriginData& sourceOrigin)
+{
+    dispatchMessageToServiceWorkerClient(destinationContextIdentifier, WTF::move(message), WTF::move(source), sourceOrigin, { });
+}
+
+void WebSWClientConnection::postMessageToServiceWorkerClientAndNotifyWhenDispatched(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& source, const SecurityOriginData& sourceOrigin, CompletionHandler<void()>&& completionHandler)
+{
+    dispatchMessageToServiceWorkerClient(destinationContextIdentifier, WTF::move(message), WTF::move(source), sourceOrigin, CompletionHandlerCallingScope { CompletionHandler<void()> { [completionHandler = WTF::move(completionHandler)]() mutable {
+        ensureOnMainThread(WTF::move(completionHandler));
+    }, CompletionHandlerCallThread::AnyThread } });
 }
 
 void WebSWClientConnection::registerServiceWorkerClient(const ClientOrigin& clientOrigin, WebCore::ServiceWorkerClientData&& data, const std::optional<WebCore::ServiceWorkerRegistrationIdentifier>& controllingServiceWorkerRegistrationIdentifier, String&& userAgent)
@@ -470,7 +489,7 @@ void WebSWClientConnection::focusServiceWorkerClient(ScriptExecutionContextIdent
                 return;
             }
 
-            document->eventLoop().queueTask(TaskSource::Networking, [document = RefPtr { document }, callback = WTF::move(callback)] () mutable {
+            protect(document->eventLoop())->queueTask(TaskSource::Networking, [document = RefPtr { document }, callback = WTF::move(callback)] () mutable {
                 RefPtr frame = document ? document->frame() : nullptr;
                 RefPtr page = frame ? frame->page() : nullptr;
 
@@ -480,7 +499,7 @@ void WebSWClientConnection::focusServiceWorkerClient(ScriptExecutionContextIdent
                 }
 
                 page->focusController().setFocusedFrame(frame.get());
-                // FIXME: This is a safer cpp false positive.
+                // FIXME: This is a safer cpp false positive (rdar://186727155).
                 SUPPRESS_UNCOUNTED_ARG callback(ServiceWorkerClientData::from(*document));
             });
         };
@@ -533,7 +552,7 @@ Ref<WebSWClientConnection::AddRoutePromise> WebSWClientConnection::addRoutes(Ser
             return makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::TypeError, "Internal error"_s });
         }
     };
-    return WebProcess::singleton().ensureNetworkProcessConnection().connection().sendWithPromisedReply<PromiseConverter>(Messages::WebSWServerConnection::AddRoutes { identifier, routes });
+    return protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithPromisedReply<PromiseConverter>(Messages::WebSWServerConnection::AddRoutes { identifier, routes });
 }
 
 } // namespace WebKit

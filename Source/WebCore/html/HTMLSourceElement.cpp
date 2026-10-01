@@ -36,7 +36,6 @@
 #include "HTMLSrcsetParser.h"
 #include "Logging.h"
 #include "MediaQueryParser.h"
-#include "MediaQueryParserContext.h"
 #include "NodeName.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -124,11 +123,11 @@ void HTMLSourceElement::removingSteps(RemovalType removalType, ContainerNode& ol
     }
 }
 
-void HTMLSourceElement::movingSteps(bool isSubtreeRoot, ContainerNode& oldParent)
+void HTMLSourceElement::movingSteps(IsSubtreeRoot isSubtreeRoot, ContainerNode& oldParent)
 {
     HTMLElement::movingSteps(isSubtreeRoot, oldParent);
 
-    if (!isSubtreeRoot)
+    if (isSubtreeRoot == IsSubtreeRoot::No)
         return;
 
     RefPtr oldParentPicture = dynamicDowncast<HTMLPictureElement>(oldParent);

@@ -53,12 +53,17 @@ private:
     TypedArrayPixelBuffer(const PixelBufferFormat&, const IntSize&, Ref<JSCTypedArray>&&);
 };
 
-using ByteArrayPixelBuffer = TypedArrayPixelBuffer<WebCore::PixelBuffer::Type::ByteArray, JSC::Uint8ClampedAdaptor, PixelFormat::RGBA8, PixelFormat::BGRA8>;
-extern template class TypedArrayPixelBuffer<WebCore::PixelBuffer::Type::ByteArray, JSC::Uint8ClampedAdaptor, PixelFormat::RGBA8, PixelFormat::BGRA8>;
+using ByteArrayPixelBuffer = TypedArrayPixelBuffer<WebCore::PixelBuffer::Type::ByteArray, JSC::Uint8ClampedAdaptor, PixelFormat::RGBX8, PixelFormat::RGBA8, PixelFormat::BGRX8, PixelFormat::BGRA8>;
+extern template class TypedArrayPixelBuffer<WebCore::PixelBuffer::Type::ByteArray, JSC::Uint8ClampedAdaptor, PixelFormat::RGBX8, PixelFormat::RGBA8, PixelFormat::BGRX8, PixelFormat::BGRA8>;
 
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
 using Float16ArrayPixelBuffer = TypedArrayPixelBuffer<PixelBuffer::Type::Float16Array, JSC::Float16Adaptor, PixelFormat::RGBA16F>;
 extern template class TypedArrayPixelBuffer<PixelBuffer::Type::Float16Array, JSC::Float16Adaptor, PixelFormat::RGBA16F>;
+#endif
+
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+using Uint16ArrayPixelBuffer = TypedArrayPixelBuffer<PixelBuffer::Type::Uint16Array, JSC::Uint16Adaptor, PixelFormat::RGBA16>;
+extern template class TypedArrayPixelBuffer<PixelBuffer::Type::Uint16Array, JSC::Uint16Adaptor, PixelFormat::RGBA16>;
 #endif
 
 } // namespace WebCore
@@ -70,5 +75,11 @@ SPECIALIZE_TYPE_TRAITS_END()
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::Float16ArrayPixelBuffer)
     static bool isType(const WebCore::PixelBuffer& pixelBuffer) { return pixelBuffer.type() == WebCore::PixelBuffer::Type::Float16Array; }
+SPECIALIZE_TYPE_TRAITS_END()
+#endif
+
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::Uint16ArrayPixelBuffer)
+    static bool isType(const WebCore::PixelBuffer& pixelBuffer) { return pixelBuffer.type() == WebCore::PixelBuffer::Type::Uint16Array; }
 SPECIALIZE_TYPE_TRAITS_END()
 #endif

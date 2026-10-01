@@ -117,7 +117,7 @@ private:
     void dispatchWillClose() final;
     void dispatchDidStartProvisionalLoad() final;
     void dispatchDidReceiveTitle(const WebCore::StringWithDirection&) final;
-    void dispatchDidCommitLoad(std::optional<WebCore::HasInsecureContent>, std::optional<WebCore::UsedLegacyTLS>, std::optional<WebCore::WasPrivateRelayed>) final;
+    void dispatchDidCommitLoad(const std::optional<WebCore::BackForwardCacheCommitData>&) final;
     void dispatchDidFailProvisionalLoad(const WebCore::ResourceError&, WebCore::WillContinueLoading, WebCore::WillInternallyHandleFailure) final;
     void dispatchDidFailLoad(const WebCore::ResourceError&) final;
     void dispatchDidFinishDocumentLoad() final;
@@ -239,7 +239,7 @@ private:
 #endif
 
     void prefetchDNS(const String&) final;
-    void sendH2Ping(const URL&, CompletionHandler<void(Expected<Seconds, WebCore::ResourceError>&&)>&&) final;
+    void sendH2Ping(const URL&, CompletionHandler<void(std::expected<Seconds, WebCore::ResourceError>&&)>&&) final;
 
     void getLoadDecisionForIcons(const Vector<std::pair<WebCore::LinkIcon&, uint64_t>>&) final;
     void finishedLoadingIcon(WebCore::FragmentedSharedBuffer*);

@@ -8,9 +8,6 @@ find_library(APPLICATIONSERVICES_LIBRARY ApplicationServices)
 find_library(QUARTZ_LIBRARY Quartz)
 find_library(SECURITYINTERFACE_LIBRARY SecurityInterface)
 
-list(APPEND WebKitLegacy_PRIVATE_LIBRARIES
-    PAL
-)
 if (WEBKIT_SDK_IS_IOS_FAMILY)
     list(APPEND WebKitLegacy_PRIVATE_LIBRARIES ${UIKIT_LIBRARY})
 endif ()
@@ -49,7 +46,7 @@ list(APPEND WebKitLegacy_UNIFIED_SOURCE_LIST_FILES
     SourcesCocoa.txt
 )
 # FIXME: Test building on iOS and then enable on iOS.
-if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
     list(APPEND WebKitLegacy_UNIFIED_SOURCE_LIST_FILES
         SourcesCMakeCocoa.txt
     )
@@ -83,12 +80,12 @@ set(WebKitLegacy_WEB_PREFERENCES_TEMPLATES
     ${WEBKITLEGACY_DIR}/mac/Scripts/PreferencesTemplates/WebPreferencesExperimentalFeatures.mm.erb
     ${WEBKITLEGACY_DIR}/mac/Scripts/PreferencesTemplates/WebPreferencesDefinitions.h.erb
 )
-set(WebKitLegacy_WEB_PREFERENCES ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml)
+set(WebKitLegacy_WEB_PREFERENCES ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml ${WEB_PREFERENCES_ADDITIONS})
 set_source_files_properties(${WebKitLegacy_WEB_PREFERENCES} PROPERTIES GENERATED TRUE)
 
 add_custom_command(
     OUTPUT ${WebKitLegacy_DERIVED_SOURCES_DIR}/WebViewPreferencesChangedGenerated.mm ${WebKitLegacy_DERIVED_SOURCES_DIR}/WebPreferencesInternalFeatures.mm ${WebKitLegacy_DERIVED_SOURCES_DIR}/WebPreferencesExperimentalFeatures.mm ${WebKitLegacy_DERIVED_SOURCES_DIR}/WebPreferencesDefinitions.h
-    DEPENDS ${WebKitLegacy_WEB_PREFERENCES_TEMPLATES} ${WebKitLegacy_WEB_PREFERENCES} WTF_CopyPreferences
+    DEPENDS ${WebKitLegacy_WEB_PREFERENCES_TEMPLATES} ${WebKitLegacy_WEB_PREFERENCES} WTF_CopyPreferences ${WEBKITADDITIONS_HEADERS_DEPENDENCIES}
     COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend WebKitLegacy --outputDir "${WebKitLegacy_DERIVED_SOURCES_DIR}" --template "$<JOIN:${WebKitLegacy_WEB_PREFERENCES_TEMPLATES},;--template;>" ${WebKitLegacy_WEB_PREFERENCES}
     COMMAND_EXPAND_LISTS
     VERBATIM
@@ -275,7 +272,6 @@ target_link_options(WebKitLegacy PRIVATE
 
 list(APPEND WebKitLegacy_PRIVATE_LIBRARIES
     "-F${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
-    "-framework SecurityInterface"
     "-framework WebCore"
 )
 add_dependencies(WebKitLegacy WebCore)
@@ -1260,6 +1256,12 @@ endif ()
 add_definitions(-iframework ${QUARTZ_LIBRARY}/Frameworks)
 add_definitions(-iframework ${APPLICATIONSERVICES_LIBRARY}/Versions/Current/Frameworks)
 
+if (WebKitLegacy_INSTALL_NAME_DIR)
+    set_target_properties(WebKitLegacy PROPERTIES
+        INSTALL_NAME_DIR "${WebKitLegacy_INSTALL_NAME_DIR}"
+    )
+endif ()
+
 
 # WebKit reexports WebKitLegacy, so the legacy ObjC API is part of WebKit's
 # API.
@@ -1519,19 +1521,26 @@ set(WebKitLegacy_FORWARDED_PRIVATE_HEADERS
 # Make the above also available from <WebKitLegacy/X.h> imports.
 set(WebKitLegacy_PRIVATE_FRAMEWORK_HEADERS
     ${WebKitLegacy_FORWARDED_PUBLIC_HEADERS}
-    ${WebKitLegacy_FORWARDED_PRIVATE_HEADERS})
+    ${WebKitLegacy_FORWARDED_PRIVATE_HEADERS}
+)
 
-list(APPEND WebKitLegacy_INTERFACE_DEPENDENCIES WebKitLegacy_ForwardHeaders WebKitLegacy_ForwardPrivateHeaders)
+list(APPEND WebKitLegacy_INTERFACE_DEPENDENCIES WebKitLegacy_ForwardHeaders WebKitLegacy_ForwardPrivateHeaders WebKitLegacy_CopyPrivateHeaders)
 
 WEBKIT_COPY_FILES(WebKitLegacy_ForwardHeaders
     DESTINATION ${WebKit_HEADERS_DIR}
     FILES ${WebKitLegacy_FORWARDED_PUBLIC_HEADERS}
-    COMMAND ${PERL_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/forward-headers-cmake.pl
+    COMMAND ${PERL_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/forward-headers-cmake.pl --webkit
     FLATTENED
 )
 WEBKIT_COPY_FILES(WebKitLegacy_ForwardPrivateHeaders
     DESTINATION ${WebKit_PRIVATE_HEADERS_DIR}
     FILES ${WebKitLegacy_FORWARDED_PRIVATE_HEADERS}
+    COMMAND ${PERL_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/forward-headers-cmake.pl --webkit
+    FLATTENED
+)
+WEBKIT_COPY_FILES(WebKitLegacy_CopyPrivateHeaders
+    DESTINATION ${WebKitLegacy_HEADERS_DIR}
+    FILES ${WebKitLegacy_PRIVATE_FRAMEWORK_HEADERS}
     COMMAND ${PERL_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/forward-headers-cmake.pl
     FLATTENED
 )

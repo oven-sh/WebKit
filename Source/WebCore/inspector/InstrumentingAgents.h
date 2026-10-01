@@ -32,6 +32,7 @@
 #pragma once
 
 #include <JavaScriptCore/InspectorEnvironment.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/TZoneMalloc.h>
@@ -126,6 +127,7 @@ class WebHeapAgent;
     DEFINE_INSPECTOR_AGENT(macro, WebConsoleAgent, ConsoleAgent, web, Web) \
     DEFINE_PERSISTENT_INSPECTOR_AGENT(macro, Animation) \
     DEFINE_PERSISTENT_INSPECTOR_AGENT(macro, CPUProfiler) \
+    DEFINE_PERSISTENT_INSPECTOR_AGENT(macro, CSS) \
     DEFINE_PERSISTENT_INSPECTOR_AGENT(macro, DOM) \
     DEFINE_PERSISTENT_INSPECTOR_AGENT(macro, DOM_Frame) \
     DEFINE_PERSISTENT_INSPECTOR_AGENT(macro, Heap_Web) \
@@ -164,11 +166,11 @@ class WEBCORE_EXPORT InstrumentingAgents : public WTF::RefCountedAndCanMakeWeakP
     WTF_MAKE_NONCOPYABLE(InstrumentingAgents);
     WTF_MAKE_TZONE_ALLOCATED(InstrumentingAgents);
 public:
-    static Ref<InstrumentingAgents> NODELETE create(Inspector::InspectorEnvironment&);
+    static Ref<InstrumentingAgents> create(Inspector::InspectorEnvironment&);
     static Ref<InstrumentingAgents> create(Inspector::InspectorEnvironment&, InstrumentingAgents& fallbackAgents);
 
-    ~InstrumentingAgents() = default;
-    void NODELETE reset();
+    ~InstrumentingAgents();
+    void reset();
 
     bool developerExtrasEnabled() const;
 
@@ -186,7 +188,7 @@ private:
     const WeakPtr<InstrumentingAgents> m_fallbackAgents;
 
 #define DECLARE_MEMBER_VARIABLE_FOR_INSPECTOR_AGENT(Class, Name, Getter, Setter) \
-    Class* m_##Getter##Name { nullptr }; \
+    CheckedPtr<Class> m_##Getter##Name; \
 
 FOR_EACH_INSPECTOR_AGENT(DECLARE_MEMBER_VARIABLE_FOR_INSPECTOR_AGENT)
 #undef DECLARE_MEMBER_VARIABLE_FOR_INSPECTOR_AGENT

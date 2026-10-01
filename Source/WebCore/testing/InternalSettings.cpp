@@ -180,16 +180,18 @@ Ref<InternalSettings> InternalSettings::create(Page* page)
 
 void InternalSettings::resetToConsistentState()
 {
-    m_page->setPageScaleFactor(1, { 0, 0 });
-    if (RefPtr localMainFrame = m_page->localMainFrame())
+    RefPtr page = m_page;
+    page->setPageScaleFactor(1, { 0, 0 });
+    if (RefPtr localMainFrame = page->localMainFrame())
         localMainFrame->setPageAndTextZoomFactors(1, 1);
-    m_page->setCanStartMedia(true);
-    m_page->setUseColorAppearance(false, false);
+    page->setCanStartMedia(true);
+    page->setUseColorAppearance(false, false);
 
-    m_backup.restoreTo(settings());
-    m_backup = Backup { settings() };
+    Ref settings = this->settings();
+    m_backup.restoreTo(settings);
+    m_backup = Backup { settings };
 
-    m_page->settings().resetToConsistentState();
+    settings->resetToConsistentState();
 
     InternalSettingsGenerated::resetToConsistentState();
 }
@@ -207,8 +209,9 @@ ExceptionOr<void> InternalSettings::setStandardFontFamily(const String& family, 
     UScriptCode code = scriptNameToCode(script);
     if (code == USCRIPT_INVALID_CODE)
         return { };
-    m_backup.m_standardFontFamilies.add(code, settings().standardFontFamily(code));
-    settings().setStandardFontFamily(family, code);
+    Ref settings = this->settings();
+    m_backup.m_standardFontFamilies.add(code, settings->standardFontFamily(code));
+    settings->setStandardFontFamily(family, code);
     return { };
 }
 
@@ -219,8 +222,9 @@ ExceptionOr<void> InternalSettings::setSerifFontFamily(const String& family, con
     UScriptCode code = scriptNameToCode(script);
     if (code == USCRIPT_INVALID_CODE)
         return { };
-    m_backup.m_serifFontFamilies.add(code, settings().serifFontFamily(code));
-    settings().setSerifFontFamily(family, code);
+    Ref settings = this->settings();
+    m_backup.m_serifFontFamilies.add(code, settings->serifFontFamily(code));
+    settings->setSerifFontFamily(family, code);
     return { };
 }
 
@@ -231,8 +235,9 @@ ExceptionOr<void> InternalSettings::setSansSerifFontFamily(const String& family,
     UScriptCode code = scriptNameToCode(script);
     if (code == USCRIPT_INVALID_CODE)
         return { };
-    m_backup.m_sansSerifFontFamilies.add(code, settings().sansSerifFontFamily(code));
-    settings().setSansSerifFontFamily(family, code);
+    Ref settings = this->settings();
+    m_backup.m_sansSerifFontFamilies.add(code, settings->sansSerifFontFamily(code));
+    settings->setSansSerifFontFamily(family, code);
     return { };
 }
 
@@ -243,8 +248,9 @@ ExceptionOr<void> InternalSettings::setFixedFontFamily(const String& family, con
     UScriptCode code = scriptNameToCode(script);
     if (code == USCRIPT_INVALID_CODE)
         return { };
-    m_backup.m_fixedFontFamilies.add(code, settings().fixedFontFamily(code));
-    settings().setFixedFontFamily(family, code);
+    Ref settings = this->settings();
+    m_backup.m_fixedFontFamilies.add(code, settings->fixedFontFamily(code));
+    settings->setFixedFontFamily(family, code);
     return { };
 }
 
@@ -255,8 +261,9 @@ ExceptionOr<void> InternalSettings::setCursiveFontFamily(const String& family, c
     UScriptCode code = scriptNameToCode(script);
     if (code == USCRIPT_INVALID_CODE)
         return { };
-    m_backup.m_cursiveFontFamilies.add(code, settings().cursiveFontFamily(code));
-    settings().setCursiveFontFamily(family, code);
+    Ref settings = this->settings();
+    m_backup.m_cursiveFontFamilies.add(code, settings->cursiveFontFamily(code));
+    settings->setCursiveFontFamily(family, code);
     return { };
 }
 
@@ -267,8 +274,9 @@ ExceptionOr<void> InternalSettings::setFantasyFontFamily(const String& family, c
     UScriptCode code = scriptNameToCode(script);
     if (code == USCRIPT_INVALID_CODE)
         return { };
-    m_backup.m_fantasyFontFamilies.add(code, settings().fantasyFontFamily(code));
-    settings().setFantasyFontFamily(family, code);
+    Ref settings = this->settings();
+    m_backup.m_fantasyFontFamilies.add(code, settings->fantasyFontFamily(code));
+    settings->setFantasyFontFamily(family, code);
     return { };
 }
 
@@ -279,8 +287,9 @@ ExceptionOr<void> InternalSettings::setPictographFontFamily(const String& family
     UScriptCode code = scriptNameToCode(script);
     if (code == USCRIPT_INVALID_CODE)
         return { };
-    m_backup.m_pictographFontFamilies.add(code, settings().pictographFontFamily(code));
-    settings().setPictographFontFamily(family, code);
+    Ref settings = this->settings();
+    m_backup.m_pictographFontFamilies.add(code, settings->pictographFontFamily(code));
+    settings->setPictographFontFamily(family, code);
     return { };
 }
 
@@ -288,13 +297,11 @@ ExceptionOr<void> InternalSettings::setTextAutosizingWindowSizeOverride(int widt
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-#if ENABLE(TEXT_AUTOSIZING)
-    settings().setTextAutosizingWindowSizeOverrideWidth(width);
-    settings().setTextAutosizingWindowSizeOverrideHeight(height);
-#else
-    UNUSED_PARAM(width);
-    UNUSED_PARAM(height);
-#endif
+
+    Ref settings = this->settings();
+    settings->setTextAutosizingWindowSizeOverrideWidth(width);
+    settings->setTextAutosizingWindowSizeOverrideHeight(height);
+
     return { };
 }
 
@@ -310,7 +317,7 @@ ExceptionOr<void> InternalSettings::setMinimumTimerInterval(double intervalInSec
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    settings().setMinimumDOMTimerInterval(Seconds { intervalInSeconds });
+    protect(settings())->setMinimumDOMTimerInterval(Seconds { intervalInSeconds });
     return { };
 }
 
@@ -401,7 +408,7 @@ InternalSettings::ForcedAccessibilityValue InternalSettings::forcedSupportsHighD
 
 void InternalSettings::setForcedSupportsHighDynamicRangeValue(InternalSettings::ForcedAccessibilityValue value)
 {
-    settings().setForcedSupportsHighDynamicRangeValue(value);
+    protect(settings())->setForcedSupportsHighDynamicRangeValue(value);
 }
 
 bool InternalSettings::vp9DecoderEnabled() const
@@ -437,7 +444,7 @@ ExceptionOr<void> InternalSettings::setShouldDisplayTrackKind(TrackKind kind, bo
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
 #if ENABLE(VIDEO)
-    Ref captionPreferences = protect(m_page->group())->ensureCaptionPreferences();
+    Ref captionPreferences = protect(protect(m_page)->group())->ensureCaptionPreferences();
     switch (kind) {
     case TrackKind::Subtitles:
         captionPreferences->setUserPrefersSubtitles(enabled);
@@ -461,7 +468,7 @@ ExceptionOr<bool> InternalSettings::shouldDisplayTrackKind(TrackKind kind)
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
 #if ENABLE(VIDEO)
-    Ref captionPreferences = protect(m_page->group())->ensureCaptionPreferences();
+    Ref captionPreferences = protect(protect(m_page)->group())->ensureCaptionPreferences();
     switch (kind) {
     case TrackKind::Subtitles:
         return captionPreferences->userPrefersSubtitles();
@@ -492,7 +499,7 @@ ExceptionOr<void> InternalSettings::setCanStartMedia(bool enabled)
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->setCanStartMedia(enabled);
+    protect(m_page)->setCanStartMedia(enabled);
     return { };
 }
 
@@ -500,7 +507,8 @@ ExceptionOr<void> InternalSettings::setUseDarkAppearance(bool useDarkAppearance)
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->setUseColorAppearance(useDarkAppearance, m_page->useElevatedUserInterfaceLevel());
+    RefPtr page = m_page;
+    page->setUseColorAppearance(useDarkAppearance, page->useElevatedUserInterfaceLevel());
     return { };
 }
 
@@ -508,7 +516,8 @@ ExceptionOr<void> InternalSettings::setUseElevatedUserInterfaceLevel(bool useEle
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->setUseColorAppearance(m_page->useDarkAppearance(), useElevatedUserInterfaceLevel);
+    RefPtr page = m_page;
+    page->setUseColorAppearance(page->useDarkAppearance(), useElevatedUserInterfaceLevel);
     return { };
 }
 

@@ -418,8 +418,8 @@ void GPUConnectionToWebProcess::didClose(IPC::Connection& connection)
 {
     assertIsMainThread();
 
-    if (m_isActiveNowPlayingProcess)
-        clearNowPlayingInfoForPage(std::nullopt);
+    if (m_isNowPlayingManagerClient)
+        nowPlayingClientDidClose();
 
 #if ENABLE(ROUTING_ARBITRATION) && HAVE(AVAUDIO_ROUTING_ARBITER)
     if (m_routingArbitrator)
@@ -440,6 +440,8 @@ void GPUConnectionToWebProcess::didClose(IPC::Connection& connection)
     protect(videoFrameObjectHeap())->close();
     protect(remoteMediaPlayerManagerProxy())->connectionToWebProcessClosed();
 #endif
+    // RemoteGPU objects maintains ref to RemoteRenderingBackend objects so drop them first.
+    m_remoteGPUMap.clear();
     // RemoteRenderingBackend objects ref their GPUConnectionToWebProcess so we need to make sure
     // to break the reference cycle by destroying them.
     m_remoteRenderingBackendMap.clear();
@@ -819,18 +821,11 @@ void GPUConnectionToWebProcess::releaseGPU(WebGPUIdentifier identifier)
 
 void GPUConnectionToWebProcess::clearNowPlayingInfoForPage(std::optional<WebCore::PageIdentifier> pageIdentifier)
 {
-    Ref gpuProcess = this->gpuProcess();
-    if (gpuProcess->isNowPlayingArbiterActive()) {
-        if (pageIdentifier)
-            m_nowPlayingCandidates.remove(*pageIdentifier);
-        else
-            m_nowPlayingCandidates.clear();
-        gpuProcess->recomputeNowPlayingOwner();
-        return;
-    }
-
-    m_isActiveNowPlayingProcess = false;
-    gpuProcess->nowPlayingManager().removeClient(*this);
+    if (pageIdentifier)
+        m_nowPlayingCandidates.remove(*pageIdentifier);
+    else
+        m_nowPlayingCandidates.clear();
+    gpuProcess().recomputeNowPlayingOwner();
 }
 
 void GPUConnectionToWebProcess::setNowPlayingCandidateState(NowPlayingCandidateState&& candidateState)
@@ -849,32 +844,24 @@ void GPUConnectionToWebProcess::setNowPlayingCandidateState(NowPlayingCandidateS
 
 void GPUConnectionToWebProcess::setNowPlayingInfoForPage(NowPlayingInfo&& nowPlayingInfo, std::optional<WebCore::PageIdentifier> pageIdentifier)
 {
-    Ref gpuProcess = this->gpuProcess();
-    if (gpuProcess->isNowPlayingArbiterActive()) {
-        if (!pageIdentifier)
-            return;
-
-        auto& candidate = m_nowPlayingCandidates.ensure(*pageIdentifier, [] {
-            return makeUniqueRef<NowPlayingCandidate>();
-        }).iterator->value.get();
-
-        // Content strips the artwork image from repeat pushes assuming the receiver cached it, so attach it here.
-        if (nowPlayingInfo.metadata.artwork && !nowPlayingInfo.metadata.artwork->image && candidate.info && candidate.info->metadata.artwork && candidate.info->metadata.artwork->src == nowPlayingInfo.metadata.artwork->src)
-            nowPlayingInfo.metadata.artwork->image = candidate.info->metadata.artwork->image;
-        candidate.info = WTF::move(nowPlayingInfo);
-
-        if (gpuProcess->isActiveNowPlayingPage(webProcessIdentifier(), *pageIdentifier)) {
-            gpuProcess->nowPlayingManager().addClient(*this);
-            gpuProcess->nowPlayingManager().setNowPlayingInfo(*candidate.info);
-            updateSupportedRemoteCommands();
-        }
+    if (!pageIdentifier)
         return;
-    }
 
-    m_isActiveNowPlayingProcess = true;
-    gpuProcess->nowPlayingManager().addClient(*this);
-    gpuProcess->nowPlayingManager().setNowPlayingInfo(WTF::move(nowPlayingInfo));
-    updateSupportedRemoteCommands();
+    auto& candidate = m_nowPlayingCandidates.ensure(*pageIdentifier, [] {
+        return makeUniqueRef<NowPlayingCandidate>();
+    }).iterator->value.get();
+
+    // Content strips the artwork image from repeat pushes assuming the receiver cached it, so attach it here.
+    if (nowPlayingInfo.metadata.artwork && !nowPlayingInfo.metadata.artwork->image && candidate.info && candidate.info->metadata.artwork && candidate.info->metadata.artwork->src == nowPlayingInfo.metadata.artwork->src)
+        nowPlayingInfo.metadata.artwork->image = candidate.info->metadata.artwork->image;
+    candidate.info = WTF::move(nowPlayingInfo);
+
+    Ref gpuProcess = this->gpuProcess();
+    if (gpuProcess->isActiveNowPlayingPage(webProcessIdentifier(), *pageIdentifier)) {
+        gpuProcess->nowPlayingManager().addClient(*this);
+        gpuProcess->nowPlayingManager().setNowPlayingInfo(*candidate.info);
+        updateSupportedRemoteCommands();
+    }
 }
 
 void GPUConnectionToWebProcess::becomeNowPlayingOwner(WebCore::PageIdentifier pageIdentifier)
@@ -883,7 +870,7 @@ void GPUConnectionToWebProcess::becomeNowPlayingOwner(WebCore::PageIdentifier pa
     if (it == m_nowPlayingCandidates.end())
         return;
 
-    m_isActiveNowPlayingProcess = true;
+    m_isNowPlayingManagerClient = true;
     Ref gpuProcess = this->gpuProcess();
     gpuProcess->nowPlayingManager().addClient(*this);
     if (it->value->info)
@@ -891,10 +878,32 @@ void GPUConnectionToWebProcess::becomeNowPlayingOwner(WebCore::PageIdentifier pa
     updateSupportedRemoteCommands();
 }
 
-void GPUConnectionToWebProcess::resignNowPlayingOwner()
+void GPUConnectionToWebProcess::becomeRemoteCommandFallbackTarget()
 {
-    m_isActiveNowPlayingProcess = false;
+    m_isNowPlayingManagerClient = true;
+    gpuProcess().nowPlayingManager().addClient(*this);
+    updateSupportedRemoteCommands();
+}
+
+void GPUConnectionToWebProcess::resignNowPlayingManagerClient()
+{
+    m_isNowPlayingManagerClient = false;
     gpuProcess().nowPlayingManager().removeClient(*this);
+}
+
+void GPUConnectionToWebProcess::nowPlayingClientDidClose()
+{
+    ASSERT(m_isNowPlayingManagerClient);
+
+    m_nowPlayingCandidates.clear();
+
+    // Resign here rather than leaving it to GPUProcess::recomputeNowPlayingOwner. This connection is still in the
+    // GPU process's connection map right now, but it is gone by the time the recompute from
+    // removeGPUConnectionToWebProcess runs, so a resign that looks the connection up by process identifier would
+    // silently do nothing and leave a dead NowPlayingManager client holding the system command listener.
+    resignNowPlayingManagerClient();
+
+    gpuProcess().nowPlayingClientDidClose(webProcessIdentifier());
 }
 
 void GPUConnectionToWebProcess::isActiveNowPlayingSessionForTesting(WebCore::MediaSessionIdentifier identifier, CompletionHandler<void(bool)>&& completion)
@@ -902,9 +911,19 @@ void GPUConnectionToWebProcess::isActiveNowPlayingSessionForTesting(WebCore::Med
     completion(gpuProcess().isActiveNowPlayingSession(webProcessIdentifier(), identifier));
 }
 
+void GPUConnectionToWebProcess::isRemoteCommandTargetSessionForTesting(WebCore::MediaSessionIdentifier identifier, CompletionHandler<void(bool)>&& completion)
+{
+    completion(gpuProcess().isRemoteCommandTargetSession(webProcessIdentifier(), identifier));
+}
+
+void GPUConnectionToWebProcess::postNowPlayingRemoteControlCommandForTesting(WebCore::PlatformMediaSessionRemoteControlCommandType type, const WebCore::PlatformMediaSessionRemoteCommandArgument& argument)
+{
+    gpuProcess().nowPlayingManager().didReceiveRemoteControlCommand(type, argument);
+}
+
 void GPUConnectionToWebProcess::updateSupportedRemoteCommands()
 {
-    if (!m_isActiveNowPlayingProcess || !m_remoteRemoteCommandListener)
+    if (!m_isNowPlayingManagerClient || !m_remoteRemoteCommandListener)
         return;
 
     Ref gpuProcess = this->gpuProcess();
@@ -914,7 +933,7 @@ void GPUConnectionToWebProcess::updateSupportedRemoteCommands()
 
 void GPUConnectionToWebProcess::didReceiveRemoteControlCommand(PlatformMediaSession::RemoteControlCommandType type, const PlatformMediaSession::RemoteCommandArgument& argument)
 {
-    m_connection->send(Messages::GPUProcessConnection::DidReceiveRemoteCommand(type, argument), 0);
+    m_connection->send(Messages::GPUProcessConnection::DidReceiveRemoteCommand(type, argument, gpuProcess().remoteCommandTargetSessionInProcess(webProcessIdentifier())), 0);
 }
 
 #if USE(AUDIO_SESSION)
@@ -960,7 +979,7 @@ RemoteMediaEngineConfigurationFactoryProxy& GPUConnectionToWebProcess::mediaEngi
 void GPUConnectionToWebProcess::createAudioHardwareListener(RemoteAudioHardwareListenerIdentifier identifier)
 {
     auto addResult = m_remoteAudioHardwareListenerMap.ensure(identifier, [&]() {
-        return makeUnique<RemoteAudioHardwareListenerProxy>(*this, WTF::move(identifier));
+        return RemoteAudioHardwareListenerProxy::create(*this, WTF::move(identifier));
     });
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
@@ -1385,9 +1404,10 @@ void GPUConnectionToWebProcess::setPresentingApplicationAuditToken(WebCore::Page
 #if ENABLE(IPC_TESTING_API)
 void GPUConnectionToWebProcess::takeInvalidMessageStringForTesting(CompletionHandler<void(String&&)>&& callback)
 {
-    ASCIILiteral error = connection().takeErrorString();
-    String errorString = !error.isNull() ? String::fromUTF8(error) : emptyString();
-    callback(WTF::move(errorString));
+    String error = connection().takeErrorString();
+    if (error.isNull())
+        error = emptyString();
+    callback(WTF::move(error));
 }
 #endif
 

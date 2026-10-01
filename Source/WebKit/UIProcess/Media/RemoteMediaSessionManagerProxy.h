@@ -39,6 +39,7 @@
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 
@@ -79,6 +80,10 @@ public:
     static Ref<RemoteMediaSessionManagerProxy> singleton();
     static RefPtr<RemoteMediaSessionManagerProxy> singletonIfCreated();
 
+#if ENABLE(GPU_PROCESS)
+    std::optional<WebCore::QualifiedMediaSessionIdentifier> computeNowPlayingFallbackSession() const;
+#endif
+
     virtual ~RemoteMediaSessionManagerProxy();
 
     void webProcessWillShutDown(WebCore::ProcessIdentifier);
@@ -111,6 +116,8 @@ private:
     void updateSessionState() final { }
 
     void setCurrentSession(WebCore::PlatformMediaSessionInterface&) final;
+
+    void updateNowPlayingFallbackSession();
 
     void addMediaSessionRestriction(WebCore::PlatformMediaSessionMediaType, WebCore::MediaSessionRestrictions);
     void removeMediaSessionRestriction(WebCore::PlatformMediaSessionMediaType, WebCore::MediaSessionRestrictions);
@@ -153,11 +160,14 @@ private:
     ASCIILiteral logClassName() const final;
 #endif
 
-    HashMap<WebCore::ProcessQualified<WebCore::MediaSessionIdentifier>, Ref<RemoteMediaSessionProxy>> m_sessionProxies;
+    HashMap<WebCore::QualifiedMediaSessionIdentifier, Ref<RemoteMediaSessionProxy>> m_sessionProxies;
     HashMap<WebCore::ProcessQualified<WebCore::PageIdentifier>, uint64_t> m_audioCaptureSourceCountsByPage;
+#if ENABLE(GPU_PROCESS)
+    std::optional<WebCore::QualifiedMediaSessionIdentifier> m_nowPlayingFallbackSession;
+#endif
 
 #if PLATFORM(COCOA)
-    RefPtr<RemoteMediaSessionManagerAudioHardwareListener> m_audioHardwareListenerProxy;
+    ThreadSafeWeakPtr<RemoteMediaSessionManagerAudioHardwareListener> m_audioHardwareListenerProxy;
 #endif
 
 #if USE(AUDIO_SESSION)

@@ -33,6 +33,9 @@ namespace WebCore {
 TextStream& operator<<(TextStream& ts, PixelFormat pixelFormat)
 {
     switch (pixelFormat) {
+    case PixelFormat::RGBX8:
+        ts << "RGBX8"_s;
+        break;
     case PixelFormat::RGBA8:
         ts << "RGBA8"_s;
         break;
@@ -55,6 +58,11 @@ TextStream& operator<<(TextStream& ts, PixelFormat pixelFormat)
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     case PixelFormat::RGBA16F:
         ts << "RGBA16F"_s;
+        break;
+#endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case PixelFormat::RGBA16:
+        ts << "RGBA16"_s;
         break;
 #endif
     }

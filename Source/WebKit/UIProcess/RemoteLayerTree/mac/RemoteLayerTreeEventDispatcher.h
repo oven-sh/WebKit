@@ -93,7 +93,7 @@ public:
     
     void cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent&);
 
-    void handleWheelEvent(const WebWheelEvent&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges);
+    void handleWheelEvent(Ref<WebWheelEvent>&&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges);
     void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool wasHandled);
 
     void setScrollingTree(RefPtr<RemoteScrollingTree>&&);
@@ -114,9 +114,11 @@ public:
     void animationsWereAddedToNode(RemoteLayerTreeNode&);
     void animationsWereRemovedFromNode(RemoteLayerTreeNode&);
     void updateTimelinesRegistration(WebCore::ProcessIdentifier, const WebCore::AcceleratedTimelinesUpdate&, MonotonicTime);
+    void removeTimelines(WebCore::ProcessIdentifier);
     RefPtr<const RemoteAnimationTimeline> timeline(const TimelineID&);
     RefPtr<const RemoteAnimationStack> animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
     HashSet<Ref<RemoteProgressBasedTimeline>> timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID);
+    HashSet<Ref<RemoteMonotonicTimeline>> monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier) const;
 #endif
 
 private:
@@ -129,7 +131,7 @@ private:
 
     void wheelEventHysteresisUpdated(PAL::HysteresisState);
 
-    void willHandleWheelEvent(const WebWheelEvent&);
+    void willHandleWheelEvent(Ref<WebWheelEvent>&&);
     void continueWheelEventHandling(WebCore::WheelEventHandlingResult);
     void wheelEventWasHandledByScrollingThread(WebCore::WheelEventHandlingResult);
 
@@ -181,7 +183,7 @@ private:
     Lock m_scrollingTreeLock;
     RefPtr<RemoteScrollingTree> m_scrollingTree WTF_GUARDED_BY_LOCK(m_scrollingTreeLock);
 
-    Deque<WebWheelEvent, 2> m_wheelEventsBeingProcessed; // FIXME: Remove
+    Deque<Ref<WebWheelEvent>, 2> m_wheelEventsBeingProcessed; // FIXME: Remove
 
     const WeakPtr<RemoteScrollingCoordinatorProxyMac> m_scrollingCoordinator;
     WebCore::PageIdentifier m_pageIdentifier;
@@ -206,7 +208,7 @@ private:
     SynchronizationState m_state WTF_GUARDED_BY_LOCK(m_scrollingTreeLock) { SynchronizationState::Idle };
     Condition m_stateCondition;
 
-    MonotonicTime m_lastDisplayDidRefreshTime;
+    MonotonicTime m_lastDisplayDidRefreshTime WTF_GUARDED_BY_LOCK(m_scrollingTreeLock);
 
     std::unique_ptr<RunLoop::Timer> m_delayedRenderingUpdateDetectionTimer;
 
@@ -219,8 +221,9 @@ private:
 #endif
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
-    std::unique_ptr<MomentumEventDispatcher> m_momentumEventDispatcher;
     bool m_momentumEventDispatcherNeedsDisplayLink { false };
+    Lock m_momentumEventDispatcherLock;
+    std::unique_ptr<MomentumEventDispatcher> m_momentumEventDispatcher WTF_GUARDED_BY_LOCK(m_momentumEventDispatcherLock);
 #endif
 };
 

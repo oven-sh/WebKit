@@ -59,6 +59,8 @@ class BaselineJITCode;
 class BaselineJITData;
 class BinaryArithProfile;
 class BytecodeLivenessAnalysis;
+class DataOnlyCallLinkInfo;
+class LazyCallLinkInfo;
 class CallLinkInfoBase;
 class CodeBlockSet;
 class JITCodeMap;
@@ -181,12 +183,12 @@ public:
 
     UnlinkedCodeBlock* unlinkedCodeBlock() const LIFETIME_BOUND { return m_unlinkedCode.get(); }
 
-    CString inferredName() const;
+    UTF8CString inferredName() const;
     String inferredNameWithHash() const;
     CodeBlockHash hash() const;
     bool NODELETE hasHash() const;
-    CString sourceCodeForTools() const;
-    CString sourceCodeOnOneLine() const; // As sourceCodeForTools(), but replaces all whitespace runs with a single space.
+    UTF8CString sourceCodeForTools() const;
+    UTF8CString sourceCodeOnOneLine() const; // As sourceCodeForTools(), but replaces all whitespace runs with a single space.
     void dumpAssumingJITType(PrintStream&, JITType) const;
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
@@ -284,6 +286,8 @@ public:
     void removeExceptionHandlerForCallSite(DisposableCallSiteIndex);
 
     LineColumn lineColumnForBytecodeIndex(BytecodeIndex) const;
+    // For a thread that runs beside the mutator. It keeps nothing, so it decodes the expression info on every call.
+    LineColumn lineColumnForBytecodeIndexConcurrently(BytecodeIndex) const;
     ExpressionInfo::Entry expressionInfoForBytecodeIndex(BytecodeIndex) const;
 
     std::optional<BytecodeIndex> bytecodeIndexFromCallSiteIndex(CallSiteIndex);
@@ -300,9 +304,6 @@ public:
     void setupWithUnlinkedBaselineCode(Ref<BaselineJITCode>);
 
     static constexpr ptrdiff_t offsetOfJITData() { return OBJECT_OFFSETOF(CodeBlock, m_jitData); }
-
-    // O(n) operation. Use getICStatusMap() unless you really only intend to get one stub info.
-    PropertyInlineCache* findPropertyCache(CodeOrigin);
 
     const JITCodeMap& jitCodeMap();
 
@@ -360,6 +361,8 @@ public:
 
     RefPtr<JSC::JITCode> jitCode() { return m_jitCode; }
     static constexpr ptrdiff_t jitCodeOffset() { return OBJECT_OFFSETOF(CodeBlock, m_jitCode); }
+    // The last marking visit found this block past its TTL with no observed execution.
+    bool agedOut() const { return m_visitChildrenSkippedDueToOldAge; }
     JITType jitType() const
     {
         auto* jitCode = m_jitCode.get();
@@ -413,7 +416,6 @@ public:
 
     const SourceCode& source() const LIFETIME_BOUND { return m_ownerExecutable->source(); }
     unsigned sourceOffset() const { return m_ownerExecutable->source().startOffset(); }
-    unsigned firstLineColumnOffset() const { return m_ownerExecutable->startColumn(); }
 
     String nameForRegister(VirtualRegister);
 
@@ -433,15 +435,25 @@ public:
 
     FixedVector<ArgumentValueProfile>& argumentValueProfiles() LIFETIME_BOUND { return m_argumentValueProfiles; }
 
-    ValueProfile& valueProfileForOffset(unsigned profileOffset) { return m_metadata->valueProfileForOffset(profileOffset); }
+    ValueProfileRef valueProfileForOffset(unsigned profileOffset) { return m_metadata->valueProfileForOffset(profileOffset); }
 
-    ValueProfile* NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
-    ValueProfile& NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
+    ValueProfileRef NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
+    ValueProfileRef NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
     SpeculatedType valueProfilePredictionForBytecodeIndex(BytecodeIndex, JSValue* specFailValue = nullptr);
 
     template<typename Functor> void forEachValueProfile(const Functor&);
     template<typename Functor> void forEachArrayAllocationProfile(const Functor&);
     template<typename Functor> void forEachObjectAllocationProfile(const Functor&);
+    // For the instructions of FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO; the first two crash for any other. The last one is
+    // safe to call from a compiler thread.
+    // What the call sites of the MetadataTable own, if this is the CodeBlock the table was linked for: optimized CodeBlocks share
+    // the table of the one they replace.
+    size_t sizeOfOwnCallSiteDatas() const { return JITCode::couldBeInterpreted(jitType()) ? m_metadata->sizeOfOwnCallSiteDatas() : 0; }
+
+    LazyCallLinkInfo& lazyCallLinkInfoAt(const JSInstruction*);
+    DataOnlyCallLinkInfo& ensureCallLinkInfoAt(const JSInstruction*);
+    DataOnlyCallLinkInfo* callLinkInfoIfExistsAt(BytecodeIndex);
+
     template<typename Functor> void forEachLLIntOrBaselineCallLinkInfo(const Functor&);
 
     BinaryArithProfile* NODELETE binaryArithProfileForBytecodeIndex(BytecodeIndex);
@@ -451,7 +463,7 @@ public:
 
     bool NODELETE couldTakeSpecialArithFastCase(BytecodeIndex bytecodeOffset);
 
-    ArrayProfile* NODELETE getArrayProfile(const ConcurrentJSLocker&, BytecodeIndex);
+    ArrayProfile* NODELETE getArrayProfile(BytecodeIndex);
 
     // Exception handling support
 
@@ -525,11 +537,27 @@ public:
     ALWAYS_INLINE SourceCodeRepresentation constantSourceCodeRepresentation(unsigned index) const { return m_unlinkedCode->constantSourceCodeRepresentation(index); }
     static constexpr ptrdiff_t offsetOfConstantsVectorBuffer() { return OBJECT_OFFSETOF(CodeBlock, m_constantRegisters) + decltype(m_constantRegisters)::dataMemoryOffset(); }
 
-    FunctionExecutable* functionDecl(int index) { return m_functionDecls[index].get(); }
-    int numberOfFunctionDecls() { return m_functionDecls.size(); }
-    std::span<const WriteBarrier<FunctionExecutable>> functionDecls() { return m_functionDecls.span(); }
-    FunctionExecutable* functionExpr(int index) { return m_functionExprs[index].get(); }
+    // Options::useLazyFunctionExecutables(): an entry is created the first time it is asked for (new_func* slow paths,
+    // mutator only); compiler threads use the *IfMaterialized form and only parse blocks
+    // ensureFunctionExecutablesMaterialized() completed. A module's heap-allocated declarations never get an entry
+    // (firstLazilyMaterializedFunctionDecl()).
+    FunctionExecutable* functionDecl(unsigned index)
+    {
+        if (FunctionExecutable* executable = m_functionDecls[index].get()) [[likely]]
+            return executable;
+        return materializeFunctionDeclSlow(index);
+    }
+    unsigned numberOfFunctionDecls() { return m_functionDecls.size(); }
+    std::span<const WriteBarrier<FunctionExecutable>> functionDecls() { ASSERT(!m_numberOfUnmaterializedFunctionExecutables); return m_functionDecls.span(); } // EvalCode links eagerly
+    FunctionExecutable* functionExpr(unsigned index)
+    {
+        if (FunctionExecutable* executable = m_functionExprs[index].get()) [[likely]]
+            return executable;
+        return materializeFunctionExprSlow(index);
+    }
     size_t numberOfFunctionExprs() const { return m_functionExprs.size(); }
+    FunctionExecutable* functionDeclIfMaterialized(unsigned index) { return m_functionDecls[index].get(); }
+    FunctionExecutable* functionExprIfMaterialized(unsigned index) { return m_functionExprs[index].get(); }
     
     const BitVector& bitVector(size_t i) LIFETIME_BOUND { return m_unlinkedCode->bitVector(i); }
 
@@ -606,7 +634,7 @@ public:
 
     bool checkIfJITThresholdReached()
     {
-        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this);
+        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, jitType() == JITType::BaselineJIT ? 1 : vm().startupJITDeferralScale());
     }
 
     void dontJITAnytimeSoon()
@@ -754,11 +782,17 @@ public:
 #endif
 
     bool shouldOptimizeNowFromBaseline();
-    void updateAllNonLazyValueProfilePredictions();
+    // What to do with the samples in the buckets of the metadata table's value profiles: fold them into the predictions, or, for
+    // code that keepsValueProfileSamplesInBuckets(), leave them alone (Keep), except for the ones that just died (KeepIfLive).
+    enum class ValueProfileSamples : uint8_t { Record, Keep, KeepIfLive };
+    bool keepsValueProfileSamplesInBuckets();
+    bool valueProfilePredictionsAreNeverRead();
+    void updateAllNonLazyValueProfilePredictions(ValueProfileSamples = ValueProfileSamples::Record);
     void updateAllLazyValueProfilePredictions();
     void updateAllArrayProfilePredictions();
     void updateAllArrayAllocationProfilePredictions();
-    void updateAllPredictions();
+    void updateAllPredictions(ValueProfileSamples = ValueProfileSamples::Record);
+    void updatePredictionsConcurrently(ValueProfileSamples = ValueProfileSamples::Record);
 
     unsigned frameRegisterCount();
     int stackPointerOffset();
@@ -776,6 +810,35 @@ public:
     }
 
     bool isJettisoned() const { return m_isJettisoned; }
+
+    // Lazily materialized state vs. concurrent compilers: link-time state that is now built on first use instead
+    // (child FunctionExecutables, thin child executables; each behind its own option) is completed here, on the mutator, before this block gets JIT
+    // code of any tier (JITPlan(), setupWithUnlinkedBaselineCode()) and before an optimizing CodeBlock copies it
+    // (newReplacement()); DFG::compile also prepares the blocks the parser is likely to inline, and the parser refuses one
+    // that is not (DFG::inlineFunctionForCapabilityLevel). That covers state *owned by this block* only: lazy state a
+    // compiler thread reaches through the heap instead (an outer function's SymbolTable via a scope object, the
+    // FunctionExecutable of a callee it does not inline) needs its own compiler-thread-safe "not materialized" answer.
+    // Idempotent; mutator only; defers GC while the ensure* functions run.
+    void prepareLazyStateForConcurrentCompilation()
+    {
+        if (m_isLazyStatePreparedForConcurrentCompilation) [[likely]]
+            return;
+        prepareLazyStateForConcurrentCompilationSlow();
+    }
+    JS_EXPORT_PRIVATE void prepareLazyStateForConcurrentCompilationSlow();
+    // Any thread. Acquire-ordered against everything prepare published.
+    bool isLazyStatePreparedForConcurrentCompilation() const
+    {
+        bool prepared = m_isLazyStatePreparedForConcurrentCompilation;
+        WTF::loadLoadFence();
+        return prepared;
+    }
+    // Lazy SymbolTable constants need no hook and do not gate the prepared bit: SymbolTable::materializeCachedEntries
+    // declines off the mutator and concurrent readers take a pending table as having no entries (SymbolTable.h).
+    void ensureFunctionExecutablesMaterialized(); // m_functionDecls / m_functionExprs
+    // The callees this block's call and accessor ICs (and, for an optimizing block, its recorded statuses) currently name,
+    // with the kind of call site that named them. Caller defers GC.
+    void collectProfiledCallees(Vector<std::pair<JSCell*, CodeSpecializationKind>, 16>&);
 
     enum SteppingMode {
         SteppingModeDisabled,
@@ -814,7 +877,7 @@ public:
     static constexpr ptrdiff_t offsetOfShouldAlwaysBeInlined() { return OBJECT_OFFSETOF(CodeBlock, m_shouldAlwaysBeInlined); }
 
 #if ENABLE(JIT)
-    unsigned m_capabilityLevelState : 2; // DFG::CapabilityLevel
+    uint8_t m_capabilityLevelState : 2; // DFG::CapabilityLevel. Byte-typed so MSVC packs it with the bools below.
 #endif
 
     bool m_didFailJITCompilation : 1;
@@ -851,7 +914,15 @@ public:
 
     DisposableCallSiteIndex newExceptionHandlingCallSiteIndex(CallSiteIndex originalCallSite);
 
-    void ensureCatchLivenessIsComputedForBytecodeIndex(BytecodeIndex);
+    // Null while Options::useLazyCatchLiveness() defers creating the buffer; op_catch does not profile until then.
+    ValueProfileAndVirtualRegisterBuffer* ensureCatchLivenessIsComputedForBytecodeIndex(BytecodeIndex);
+    // Mutator only, on the baseline block, before a DFG / FTL plan parses it: creates the buffers useLazyCatchLiveness deferred. True if it created one.
+    bool ensureCatchLivenessIsComputedForExecutedCatches()
+    {
+        if (m_hasCatchThatExecutedWithoutBuffer) [[unlikely]]
+            return ensureCatchLivenessIsComputedForExecutedCatchesSlow();
+        return false;
+    }
 
     bool hasTailCalls() const { return m_unlinkedCode->hasTailCalls(); }
 
@@ -911,7 +982,7 @@ private:
     
     void noticeIncomingCall(JSCell* caller);
 
-    void updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles);
+    void updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles, ValueProfileSamples = ValueProfileSamples::Record);
 
     Vector<unsigned> setConstantRegisters(const FixedVector<WriteBarrier<Unknown>>& constants, const FixedVector<SourceCodeRepresentation>& constantsSourceCodeRepresentation);
     void initializeTemplateObjects(ScriptExecutable* topLevelExecutable, const Vector<unsigned>& templateObjectIndices);
@@ -925,6 +996,15 @@ private:
     template<typename Visitor> bool shouldVisitStrongly(const ConcurrentJSLocker&, Visitor&);
     bool shouldJettisonDueToWeakReference(VM&);
     template<typename Visitor> bool shouldJettisonDueToOldAge(const ConcurrentJSLocker&, Visitor&);
+public:
+    static Seconds timeToLive(JITType);
+    // Start the execution-count aging lease from the counter's current value (call when a tier's code is installed).
+    void snapshotExecutionCounterForAging(float count) { m_previousCounter = count; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Optimizing code with no execution counter to read liveness off (FTL; DFG without tier-up checks): it ages once the mutator goes quiet instead.
+    bool agesByMutatorQuietness();
+#endif
+private:
     
     template<typename Visitor> void propagateTransitions(const ConcurrentJSLocker&, Visitor&);
     template<typename Visitor> void determineLiveness(const ConcurrentJSLocker&, Visitor&);
@@ -951,7 +1031,8 @@ private:
     }
 
     void insertBasicBlockBoundariesForControlFlowProfiler();
-    void ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch&, BytecodeIndex);
+    ValueProfileAndVirtualRegisterBuffer* ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch&, BytecodeIndex);
+    bool ensureCatchLivenessIsComputedForExecutedCatchesSlow();
 
     template<typename Func>
     void forEachPropertyInlineCache(Func);
@@ -1013,6 +1094,15 @@ private:
     Vector<WriteBarrier<Unknown>> m_constantRegisters;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDecls;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExprs;
+    unsigned m_numberOfUnmaterializedFunctionExecutables { 0 }; // null entries in the two vectors above that a new_func* may still ask for (useLazyFunctionExecutables); mutator only
+    // Mutator-written bits; kept out of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
+    uint8_t m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
+    uint8_t m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // Options::useLazyCatchLiveness()
+    unsigned firstLazilyMaterializedFunctionDecl() const;
+    FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
+    FunctionExecutable* materializeFunctionExprSlow(unsigned index);
+    FunctionExecutable* materializeFunctionExecutable(WriteBarrier<FunctionExecutable>&, UnlinkedFunctionExecutable*);
+    FunctionExecutable* linkFunctionExpr(unsigned index, UnlinkedFunctionExecutable*);
 
     WriteBarrier<CodeBlock> m_alternative;
 
@@ -1056,7 +1146,7 @@ void ScriptExecutable::prepareForExecution(VM& vm, JSFunction* function, JSScope
 #define CODEBLOCK_LOG_EVENT(codeBlock, summary, details) \
     do { \
         if (codeBlock) \
-            (codeBlock->vm().logEvent(codeBlock, summary, [&] () { return toCString details; })); \
+            (codeBlock->vm().logEvent(codeBlock, summary, [&] () { return toUTF8CString details; })); \
     } while (0)
 
 

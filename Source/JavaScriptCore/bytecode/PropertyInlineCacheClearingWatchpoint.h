@@ -74,6 +74,8 @@ public:
     {
     }
 
+    const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
+
     void fireInternal(VM&, const FireDetail&);
 
 private:

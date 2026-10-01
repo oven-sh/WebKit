@@ -38,18 +38,21 @@ class ImageBufferRemoteIOSurfaceBackend final : public WebCore::ImageBufferBacke
     WTF_MAKE_TZONE_ALLOCATED(ImageBufferRemoteIOSurfaceBackend);
     WTF_MAKE_NONCOPYABLE(ImageBufferRemoteIOSurfaceBackend);
 public:
-    static WebCore::IntSize calculateSafeBackendSize(const Parameters&);
-    static size_t calculateMemoryCost(const Parameters&);
+    static WebCore::IntSize calculateSafeBackendSize(const WebCore::ImageBufferParameters&);
 
-    static std::unique_ptr<ImageBufferRemoteIOSurfaceBackend> create(const Parameters&, ImageBufferBackendHandle);
+    // The GPU process owns the surface. The handle is fetched from it later, and
+    // only if something needs to share the surface onward.
+    static std::unique_ptr<ImageBufferRemoteIOSurfaceBackend> create(const WebCore::ImageBufferParameters&);
+    static std::unique_ptr<ImageBufferRemoteIOSurfaceBackend> create(const WebCore::ImageBufferParameters&, ImageBufferBackendHandle);
 
-    ImageBufferRemoteIOSurfaceBackend(const Parameters& parameters, MachSendRight&& handle)
+    ImageBufferRemoteIOSurfaceBackend(const WebCore::ImageBufferParameters& parameters, MachSendRight&& handle)
         : ImageBufferBackend(parameters)
         , m_handle(WTF::move(handle))
     {
     }
 
-    static constexpr WebCore::RenderingMode renderingMode = WebCore::RenderingMode::Accelerated;
+    WebCore::RenderingMode renderingMode() const final { return WebCore::RenderingMode::Accelerated; }
+    size_t memoryCost() const final { return WebCore::ImageBufferBackend::calculateMemoryCost(size(), bytesPerRow()); }
     bool canMapBackingStore() const final;
 
     WebCore::GraphicsContext& context() final;
@@ -70,6 +73,7 @@ private:
 
     // ImageBufferBackendSharing
     ImageBufferBackendSharing* toBackendSharing() final { return this; }
+    bool hasBackendHandle() const final { return !!m_handle; }
     void setBackendHandle(ImageBufferBackendHandle&&) final;
     void clearBackendHandle() final;
 

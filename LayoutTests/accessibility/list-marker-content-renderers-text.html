@@ -30,8 +30,15 @@
 <script>
 description("This tests that a marker keeping its text in content renderers does not report that text to callers asking for text without list markers.");
 
-function nameOf(buttonId) {
-    document.getElementById(buttonId).focus();
+async function focusAndWait(buttonId) {
+    // The isolated tree publishes the newly focused object as part of handling this notification,
+    // so reading focusedElement any earlier can still get the previously focused button.
+    await waitForNotification(null, "AXFocusChanged", () => {
+        document.getElementById(buttonId).focus();
+    });
+}
+
+function nameOfFocusedButton() {
     return platformValueForW3CName(accessibilityController.focusedElement);
 }
 
@@ -40,25 +47,33 @@ function itemValue(itemId) {
 }
 
 if (window.accessibilityController) {
-    // Each list below gives its marker content renderers to hold the text with: the string and the
-    // counter style symbol are right-to-left, and a right-to-left list makes even decimal need bidi
-    // resolution. aria-labelledby asks for the name without list markers, so none of that text
-    // belongs in these names, nor in the list item's own value.
-    shouldBeEqualToString("nameOf('string-button')", "Reply Item A");
-    shouldBeEqualToString("itemValue('string')", "AXValue: Item A");
+    window.jsTestIsAsync = true;
+    setTimeout(async function() {
+        // Each list below gives its marker content renderers to hold the text with: the string and
+        // the counter style symbol are right-to-left, and a right-to-left list makes even decimal
+        // need bidi resolution. aria-labelledby asks for the name without list markers, so none of
+        // that text belongs in these names, nor in the list item's own value.
+        await focusAndWait("string-button");
+        shouldBeEqualToString("nameOfFocusedButton()", "Reply Item A");
+        shouldBeEqualToString("itemValue('string')", "AXValue: Item A");
 
-    shouldBeEqualToString("nameOf('counter-button')", "Reply Item B");
-    shouldBeEqualToString("itemValue('counter')", "AXValue: Item B");
+        await focusAndWait("counter-button");
+        shouldBeEqualToString("nameOfFocusedButton()", "Reply Item B");
+        shouldBeEqualToString("itemValue('counter')", "AXValue: Item B");
 
-    shouldBeEqualToString("nameOf('decimal-button')", "Reply Item C");
-    shouldBeEqualToString("itemValue('decimal')", "AXValue: Item C");
+        await focusAndWait("decimal-button");
+        shouldBeEqualToString("nameOfFocusedButton()", "Reply Item C");
+        shouldBeEqualToString("itemValue('decimal')", "AXValue: Item C");
 
-    // A `content` marker is the exception: it computes no text of its own, so the renderers holding
-    // its content are the only source and they keep contributing. accname asks for that text in the
-    // name, see accname/name/comp_name_from_pseudo_content_marker.tentative.html.
-    shouldBeEqualToString("nameOf('generated-button')", "Reply radish Item D");
+        // A `content` marker is the exception: it computes no text of its own, so the renderers
+        // holding its content are the only source and they keep contributing. accname asks for that
+        // text in the name, see accname/name/comp_name_from_pseudo_content_marker.tentative.html.
+        await focusAndWait("generated-button");
+        shouldBeEqualToString("nameOfFocusedButton()", "Reply radish Item D");
 
-    document.getElementById("content").style.visibility = "hidden";
+        document.getElementById("content").style.visibility = "hidden";
+        finishJSTest();
+    }, 0);
 }
 </script>
 </body>

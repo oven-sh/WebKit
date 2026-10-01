@@ -39,6 +39,7 @@
 #import "NetworkProcess.h"
 #import "NetworkProcessProxyMessages.h"
 #import "NetworkSessionCreationParameters.h"
+#import "NetworkStorageSession.h"
 #import "PrivateRelayed.h"
 #import "WKURLSessionTaskDelegate.h"
 #import "WebErrors.h"
@@ -50,7 +51,6 @@
 #import <WebCore/FormDataStreamCocoa.h>
 #import <WebCore/FrameLoaderTypes.h>
 #import <WebCore/HTTPStatusCodes.h>
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/NotImplemented.h>
 #import <WebCore/ResourceError.h>
 #import <WebCore/ResourceRequest.h>
@@ -77,6 +77,7 @@
 #import <wtf/darwin/NetworkOSObject.h>
 #import <wtf/darwin/WeakLinking.h>
 #import <wtf/text/MakeString.h>
+#import <wtf/text/TextStream.h>
 #import <wtf/text/WTFString.h>
 
 #if USE(APPLE_INTERNAL_SDK)
@@ -412,7 +413,7 @@ static void updateIgnoreStrictTransportSecuritySetting(RetainPtr<NSURLRequest>& 
             CheckedPtr storageSession = sessionCocoa->networkProcess().storageSession(sessionCocoa->sessionID());
             RetainPtr firstPartyForCookies = networkDataTask->isTopLevelNavigation() ? request.URL : request.mainDocumentURL;
             shouldIgnoreHSTS = schemeWasUpgradedDueToDynamicHSTS(request)
-                && storageSession->shouldBlockCookies(firstPartyForCookies.get(), request.URL, networkDataTask->frameID(), networkDataTask->pageID(), networkDataTask->shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request));
+                && storageSession->thirdPartyCookieBlockingDecisionForRequest(firstPartyForCookies.get(), request.URL, networkDataTask->frameID(), networkDataTask->webPageProxyID(), networkDataTask->shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request)) != WebCore::ThirdPartyCookieBlockingDecision::None;
             if (shouldIgnoreHSTS) {
                 RetainPtr newRequest = downgradeRequest(request);
                 ASSERT([newRequest.get().URL.scheme isEqualToString:@"http"]);
@@ -427,21 +428,32 @@ static void updateIgnoreStrictTransportSecuritySetting(RetainPtr<NSURLRequest>& 
 
         WebCore::ResourceResponse resourceResponse(response);
 
-        networkDataTask->willPerformHTTPRedirection(WTF::move(resourceResponse), request, [completionHandler = makeBlockPtr(completionHandler), taskIdentifier, shouldIgnoreHSTS](auto&& request) {
+        networkDataTask->willPerformHTTPRedirection(WTF::move(resourceResponse), request, [completionHandler = makeBlockPtr(completionHandler), taskIdentifier, shouldIgnoreHSTS, weakTask = ThreadSafeWeakPtr { *networkDataTask }](auto&& request) {
 #if !LOG_DISABLED
-            LOG(NetworkSession, "%zu willPerformHTTPRedirection completionHandler (%s)", taskIdentifier, request.url().string().utf8().data());
+            LOG_WITH_STREAM(NetworkSession, stream << taskIdentifier << " willPerformHTTPRedirection completionHandler ("_s << request.url().string() << ")"_s);
 #else
             UNUSED_PARAM(taskIdentifier);
 #endif
             RetainPtr nsRequest = request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody);
             updateIgnoreStrictTransportSecuritySetting(nsRequest, shouldIgnoreHSTS);
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES) && defined(CFN_COOKIE_ACCEPTS_POLICY_PARTITION) && CFN_COOKIE_ACCEPTS_POLICY_PARTITION
+            if (RefPtr task = weakTask.get(); task && task->hasBeenSetToAllowOnlyPartitionedCookies()) {
+                RetainPtr<NSMutableURLRequest> mutableRequest = adoptNS([nsRequest.get() mutableCopy]);
+                if ([mutableRequest respondsToSelector:@selector(_setAllowOnlyPartitionedCookies:)]) {
+                    [mutableRequest _setAllowOnlyPartitionedCookies:YES];
+                    nsRequest = mutableRequest.get();
+                }
+            }
+#else
+            UNUSED_PARAM(weakTask);
+#endif
             completionHandler(nsRequest.get());
         });
     } else if (RefPtr webSocketTask = [self existingWebSocketTask:task]) {
         WebCore::ResourceResponse resourceResponse(response);
         webSocketTask->willPerformHTTPRedirection(WTF::move(resourceResponse), request, [completionHandler = makeBlockPtr(completionHandler), taskIdentifier](auto&& request) {
 #if !LOG_DISABLED
-            LOG(NetworkSession, "%zu willPerformHTTPRedirection completionHandler (%s)", taskIdentifier, request.url().string().utf8().data());
+            LOG_WITH_STREAM(NetworkSession, stream << taskIdentifier << " willPerformHTTPRedirection completionHandler ("_s << request.url().string() << ")"_s);
 #else
             UNUSED_PARAM(taskIdentifier);
 #endif
@@ -464,7 +476,7 @@ static void updateIgnoreStrictTransportSecuritySetting(RetainPtr<NSURLRequest>& 
         if (CheckedPtr sessionCocoa = networkDataTask->networkSession()) {
             CheckedPtr storageSession = sessionCocoa->networkProcess().storageSession(sessionCocoa->sessionID());
             shouldIgnoreHSTS = schemeWasUpgradedDueToDynamicHSTS(request)
-                && storageSession->shouldBlockCookies(request, networkDataTask->frameID(), networkDataTask->pageID(), networkDataTask->shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request));
+                && storageSession->thirdPartyCookieBlockingDecisionForRequest(request, networkDataTask->frameID(), networkDataTask->webPageProxyID(), networkDataTask->shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request)) != WebCore::ThirdPartyCookieBlockingDecision::None;
             if (shouldIgnoreHSTS) {
                 RetainPtr newRequest = downgradeRequest(request);
                 ASSERT([newRequest.get().URL.scheme isEqualToString:@"http"]);
@@ -482,7 +494,7 @@ static void updateIgnoreStrictTransportSecuritySetting(RetainPtr<NSURLRequest>& 
         synthesizedResponse.setHTTPHeaderField(WebCore::HTTPHeaderName::AccessControlAllowOrigin, origin.get());
         networkDataTask->willPerformHTTPRedirection(WTF::move(synthesizedResponse), request, [completionHandler = makeBlockPtr(completionHandler), taskIdentifier, shouldIgnoreHSTS](auto&& request) {
 #if !LOG_DISABLED
-            LOG(NetworkSession, "%zu _schemeUpgraded completionHandler (%s)", taskIdentifier, request.url().string().utf8().data());
+            LOG_WITH_STREAM(NetworkSession, stream << taskIdentifier << " _schemeUpgraded completionHandler ("_s << request.url().string() << ")"_s);
 #else
             UNUSED_PARAM(taskIdentifier);
 #endif
@@ -1671,8 +1683,7 @@ RefPtr<WebSocketTask> NetworkSessionCocoa::createWebSocketTask(WebPageProxyIdent
         [ensureMutableRequest() addValue:StringView(protocol).createNSString().get() forHTTPHeaderField:@"Sec-WebSocket-Protocol"];
 
     // rdar://problem/68057031: explicitly disable sniffing for WebSocket handshakes.
-    // FIXME: This is a static analysis false positive.
-    SUPPRESS_UNRETAINED_ARG [nsRequest _setProperty:@NO forKey:bridge_cast(_kCFURLConnectionPropertyShouldSniff)];
+    [nsRequest _setProperty:@NO forKey:bridge_cast(_kCFURLConnectionPropertyShouldSniff)];
 
 #if ENABLE(APP_PRIVACY_REPORT)
     if (!request.isAppInitiated())
@@ -1690,7 +1701,7 @@ RefPtr<WebSocketTask> NetworkSessionCocoa::createWebSocketTask(WebPageProxyIdent
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES) && defined(CFN_COOKIE_ACCEPTS_POLICY_PARTITION) && CFN_COOKIE_ACCEPTS_POLICY_PARTITION
     if ([ensureMutableRequest() respondsToSelector:@selector(_setAllowOnlyPartitionedCookies:)]) {
         if (CheckedPtr storageSession = networkStorageSession(); storageSession && storageSession->isOptInCookiePartitioningEnabled()) {
-            bool shouldAllowOnlyPartitioned = storageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID, pageID, networkProcess().shouldRelaxThirdPartyCookieBlockingForPage(webPageProxyID), isRequestToKnownCrossSiteTracker(request)) == WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned;
+            bool shouldAllowOnlyPartitioned = storageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID, webPageProxyID, networkProcess().shouldRelaxThirdPartyCookieBlockingForPage(webPageProxyID), isRequestToKnownCrossSiteTracker(request)) == WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned;
             [mutableRequest _setAllowOnlyPartitionedCookies:shouldAllowOnlyPartitioned];
         }
     }
@@ -1727,8 +1738,8 @@ void NetworkSessionCocoa::removeWebSocketTask(SessionSet& sessionSet, WebSocketT
 void NetworkSessionCocoa::addWebPageNetworkParameters(WebPageProxyIdentifier pageID, WebPageNetworkParameters&& parameters)
 {
     auto addResult1 = m_perParametersSessionSets.add(parameters, nullptr);
-    if (auto set = addResult1.iterator->value) {
-        m_perPageSessionSets.add(pageID, *set);
+    if (RefPtr set = addResult1.iterator->value) {
+        m_perPageSessionSets.add(pageID, set.releaseNonNull());
         return;
     }
 
@@ -1738,7 +1749,7 @@ void NetworkSessionCocoa::addWebPageNetworkParameters(WebPageProxyIdentifier pag
 #if USE(APPLE_INTERNAL_SDK)
     configuration.get()._attributedBundleIdentifier = parameters.attributedBundleIdentifier().createNSString().get();
 #endif
-    initializeNSURLSessionsInSet(addResult2.iterator->value.get(), configuration.get());
+    initializeNSURLSessionsInSet(protect(addResult2.iterator->value), configuration.get());
     addResult1.iterator->value = addResult2.iterator->value.get();
 
     m_attributedBundleIdentifierFromPageIdentifiers.add(pageID, parameters.attributedBundleIdentifier());
@@ -1814,14 +1825,14 @@ private:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkSessionCocoa::BlobDataTaskClient);
 
-void NetworkSessionCocoa::loadImageForDecoding(WebCore::ResourceRequest&& request, WebPageProxyIdentifier pageID, size_t maximumBytesFromNetwork, CompletionHandler<void(Expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&& completionHandler)
+void NetworkSessionCocoa::loadImageForDecoding(WebCore::ResourceRequest&& request, WebPageProxyIdentifier pageID, size_t maximumBytesFromNetwork, CompletionHandler<void(std::expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&& completionHandler)
 {
     class Client : public RefCounted<Client>, public NetworkDataTaskClient {
     public:
         void ref() const final { RefCounted::ref(); }
         void deref() const final { RefCounted::deref(); }
 
-        static void create(NetworkSession& networkSession, Ref<NetworkProcess>&& networkProcess, WebPageProxyIdentifier pageID, const NetworkLoadParameters& loadParameters, size_t maximumBytesFromNetwork, CompletionHandler<void(Expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&& completionHandler)
+        static void create(NetworkSession& networkSession, Ref<NetworkProcess>&& networkProcess, WebPageProxyIdentifier pageID, const NetworkLoadParameters& loadParameters, size_t maximumBytesFromNetwork, CompletionHandler<void(std::expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&& completionHandler)
         {
             Ref client = adoptRef(*new Client(networkSession, WTF::move(networkProcess), pageID, loadParameters, maximumBytesFromNetwork, WTF::move(completionHandler)));
 
@@ -1830,7 +1841,7 @@ void NetworkSessionCocoa::loadImageForDecoding(WebCore::ResourceRequest&& reques
         }
 
     private:
-        Client(NetworkSession& networkSession, Ref<NetworkProcess>&& networkProcess, WebPageProxyIdentifier pageID, const NetworkLoadParameters& loadParameters, size_t maximumBytesFromNetwork, CompletionHandler<void(Expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&& completionHandler)
+        Client(NetworkSession& networkSession, Ref<NetworkProcess>&& networkProcess, WebPageProxyIdentifier pageID, const NetworkLoadParameters& loadParameters, size_t maximumBytesFromNetwork, CompletionHandler<void(std::expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&& completionHandler)
             : m_networkProcess(WTF::move(networkProcess))
             , m_url(loadParameters.request.url())
             , m_sessionID(networkSession.sessionID())
@@ -1882,7 +1893,7 @@ void NetworkSessionCocoa::loadImageForDecoding(WebCore::ResourceRequest&& reques
         const WebPageProxyIdentifier m_pageID;
         const size_t m_maximumBytesFromNetwork;
         const Ref<NetworkDataTask> m_dataTask;
-        CompletionHandler<void(Expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)> m_completionHandler;
+        CompletionHandler<void(std::expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)> m_completionHandler;
         WebCore::SharedBufferBuilder m_buffer;
     };
 
@@ -2051,8 +2062,8 @@ void NetworkSessionCocoa::forEachSessionWrapper(NOESCAPE const Function<void(Ses
     for (auto& set : m_perPageSessionSets.values())
         sessionSetFunction(set);
 
-    for (auto& set : m_perParametersSessionSets.values()) {
-        if (set)
+    for (auto& weakSet : m_perParametersSessionSets.values()) {
+        if (RefPtr set = weakSet)
             sessionSetFunction(*set);
     }
 }
@@ -2198,7 +2209,7 @@ void NetworkSessionCocoa::removeNetworkWebsiteData(std::optional<WallTime> modif
     auto contextArray = adoptNS([[NSMutableArray alloc] init]);
     if (domains) {
         contextArray = createNSArray(*domains, [&] (auto domain) {
-            return [NSString stringWithUTF8String:domain.string().utf8().data()];
+            return domain.string().createNSString();
         });
     }
 
@@ -2215,11 +2226,20 @@ void NetworkSessionCocoa::removeNetworkWebsiteData(std::optional<WallTime> modif
         }
     };
 
-    bool result = [usageFeed performNetworkDomainsActionWithOptions:options reply:makeBlockPtr([completionHandler = WTF::move(completionHandler)](NSDictionary *reply, NSError *error) mutable {
+    auto callOnMainRunLoop = [completionHandler = WTF::move(completionHandler)]() mutable {
+        ensureOnMainRunLoop(WTF::move(completionHandler));
+    };
+    // -performNetworkDomainsActionWithOptions: does not always invoke the block passed to it, such as when it returns false.
+    // The finalizer keeps the completion handler we were given from being dropped in that case.
+    auto handler = CompletionHandlerWithFinalizer<void()>(WTF::move(callOnMainRunLoop), [](Function<void()>& completionHandler) {
+        completionHandler();
+    }, CompletionHandlerCallThread::AnyThread);
+
+    bool result = [usageFeed performNetworkDomainsActionWithOptions:options reply:makeBlockPtr([handler = WTF::move(handler)](NSDictionary *reply, NSError *error) mutable {
         if (error)
             RELEASE_LOG_DEBUG(NetworkSession, "Error deleting network domain data %" PUBLIC_LOG_STRING, error.localizedDescription.UTF8String);
 
-        completionHandler();
+        handler();
     }).get()];
 
     if (!result)

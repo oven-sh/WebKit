@@ -251,8 +251,9 @@ private:
 
 inline bool HTMLTreeBuilder::isParsingTemplateContents() const
 {
-    return m_tree.openElements().containsTemplateElement()
-        && m_tree.openElements().hasTemplateInHTMLScope();
+    if (m_tree.openElements().containsTemplateElement() && m_tree.openElements().hasTemplateInHTMLScope())
+        return true;
+    return m_fragmentContext.contextElementIsTemplate();
 }
 
 inline bool HTMLTreeBuilder::isParsingFragmentOrTemplateContents() const
@@ -292,6 +293,10 @@ HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser& parser, DocumentFragment& f
     auto* formElement = dynamicDowncast<HTMLFormElement>(contextElement);
     m_tree.setForm(protect(formElement ? formElement : HTMLFormElement::findClosestFormAncestor(contextElement)));
 
+    // Characters are tokenized before any token reaches the tree builder, so the tokenizer flags
+    // implied by the context element have to be set up front rather than after the first token.
+    updateTokenizerForAdjustedCurrentNode();
+
 #if ASSERT_ENABLED
     m_destructionProhibited = false;
 #endif
@@ -315,6 +320,11 @@ inline HTMLStackItem& HTMLTreeBuilder::FragmentParsingContext::contextElementSta
 {
     ASSERT(m_fragment);
     return m_contextElementStackItem;
+}
+
+inline bool HTMLTreeBuilder::FragmentParsingContext::contextElementIsTemplate() const
+{
+    return m_fragment && m_contextElementStackItem.elementName() == HTML::template_;
 }
 
 RefPtr<ScriptElement> HTMLTreeBuilder::takeScriptToProcess(TextPosition& scriptStartPosition)
@@ -345,6 +355,18 @@ void HTMLTreeBuilder::constructTree(AtomHTMLToken&& token)
     else
         processToken(WTF::move(token));
 
+    updateTokenizerForAdjustedCurrentNode();
+
+#if ASSERT_ENABLED
+    m_destructionProhibited = false;
+#endif
+
+    m_tree.executeQueuedTasks();
+    // The tree builder might have been destroyed as an indirect result of executing the queued tasks.
+}
+
+void HTMLTreeBuilder::updateTokenizerForAdjustedCurrentNode()
+{
     // Both flags are computed from the adjusted current node, matching the tree construction
     // dispatcher. When fragment-parsing with only one element on the stack, the adjusted current
     // node is the context element, not the DocumentFragment.
@@ -364,15 +386,8 @@ void HTMLTreeBuilder::constructTree(AtomHTMLToken&& token)
         && !HTMLElementStack::isHTMLIntegrationPoint(adjustedCurrentStackItem())
         && !HTMLElementStack::isMathMLTextIntegrationPoint(adjustedCurrentStackItem());
 
-    m_parser->tokenizer().setForceNullCharacterReplacement(m_insertionMode == InsertionMode::Text || inForeignContent);
+    m_parser->tokenizer().setForceNullCharacterReplacement(inForeignContent);
     m_parser->tokenizer().setShouldAllowCDATA(adjustedCurrentNodeIsForeign);
-
-#if ASSERT_ENABLED
-    m_destructionProhibited = false;
-#endif
-
-    m_tree.executeQueuedTasks();
-    // The tree builder might have been destroyed as an indirect result of executing the queued tasks.
 }
 
 void HTMLTreeBuilder::processToken(AtomHTMLToken&& token)
@@ -747,7 +762,7 @@ void HTMLTreeBuilder::processStartTagForInBody(AtomHTMLToken&& token)
             return;
         }
         processFakePEndTagIfPInButtonScope();
-        m_tree.insertHTMLFormElement(WTF::move(token));
+        m_tree.insertHTMLFormElement(WTF::move(token), isParsingTemplateContents());
         return;
     case TagName::li:
         processCloseWhenNestedTag<isLi>(WTF::move(token));
@@ -1156,7 +1171,7 @@ void HTMLTreeBuilder::processStartTagForInTable(AtomHTMLToken&& token)
         parseError(token);
         if (m_tree.form() && !isParsingTemplateContents())
             return;
-        m_tree.insertHTMLFormElement(WTF::move(token));
+        m_tree.insertHTMLFormElement(WTF::move(token), isParsingTemplateContents());
         m_tree.openElements().pop();
         return;
     case TagName::template_:

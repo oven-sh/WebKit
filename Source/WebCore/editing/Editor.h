@@ -30,6 +30,7 @@
 #include <WebCore/EditingBehavior.h>
 #include <WebCore/EditingStyle.h>
 #include <WebCore/EditorInsertAction.h>
+#include <WebCore/EditorInternalCommand.h>
 #include <WebCore/FindOptions.h>
 #include <WebCore/FrameSelection.h>
 #include <WebCore/LocalFrame.h>
@@ -71,7 +72,6 @@ class DocumentMarker;
 class EditCommand;
 class EditCommandComposition;
 class EditorClient;
-class EditorInternalCommand;
 class File;
 class HTMLElement;
 class HTMLImageElement;
@@ -668,8 +668,8 @@ public:
     WritingSuggestionData* writingSuggestionData() const LIFETIME_BOUND { return m_writingSuggestionData.get(); }
     bool isInsertingTextForWritingSuggestion() const { return m_isInsertingTextForWritingSuggestion; }
 
-    RenderInline* NODELETE writingSuggestionRenderer() const;
-    void NODELETE setWritingSuggestionRenderer(RenderInline&);
+    RenderBoxModelObject* NODELETE writingSuggestionRenderer() const;
+    void NODELETE setWritingSuggestionRenderer(RenderBoxModelObject&);
 
     WEBCORE_EXPORT void closeTyping();
 
@@ -767,7 +767,7 @@ private:
 #endif
 
     std::unique_ptr<WritingSuggestionData> m_writingSuggestionData;
-    SingleThreadWeakPtr<RenderInline> m_writingSuggestionRenderer;
+    SingleThreadWeakPtr<RenderBoxModelObject> m_writingSuggestionRenderer;
     bool m_isInsertingTextForWritingSuggestion { false };
 
     VisibleSelection m_mark;

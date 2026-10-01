@@ -27,6 +27,7 @@
 #include "LayerOverlapMap.h"
 #include "Logging.h"
 #include "RenderLayer.h"
+#include <ranges>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
@@ -35,19 +36,39 @@ namespace WebCore {
 struct RectList {
     Vector<LayoutRect> rects;
     LayoutRect boundingRect;
-    
+
+    static constexpr size_t recentRectsToTestForContainment = 4;
+
+    bool isAlreadyCovered(const LayoutRect& rect) const
+    {
+        size_t recentCount = std::min(recentRectsToTestForContainment, rects.size());
+        auto recentRects = rects | std::views::reverse | std::views::take(recentCount);
+        return std::ranges::any_of(recentRects, [&](auto& existingRect) { return existingRect.contains(rect); });
+    }
+
+    void removeRecentRectsCoveredBy(const LayoutRect& rect)
+    {
+        size_t recentCount = std::min(recentRectsToTestForContainment, rects.size());
+        rects.removeAllMatching([&](auto& existingRect) { return rect.contains(existingRect); }, rects.size() - recentCount);
+    }
+
     void append(const LayoutRect& rect)
     {
+        if (isAlreadyCovered(rect))
+            return;
+
+        removeRecentRectsCoveredBy(rect);
+
         rects.append(rect);
         boundingRect.unite(rect);
     }
 
     void append(const RectList& rectList)
     {
-        rects.appendVector(rectList.rects);
-        boundingRect.unite(rectList.boundingRect);
+        for (auto& rect : rectList.rects)
+            append(rect);
     }
-    
+
     bool intersects(const LayoutRect& rect) const
     {
         if (!rects.size() || !rect.intersects(boundingRect))
@@ -311,10 +332,14 @@ void LayerOverlapMap::add(const RenderLayer& layer, const LayoutRect& bounds, co
 
 bool LayerOverlapMap::overlapsLayers(const RenderLayer& layer, const LayoutRect& bounds, const LayerAndBoundsVector& enclosingClippingLayers) const
 {
-    if (m_speculativeOverlapStack.isEmpty())
-        return m_overlapStack.last()->overlapsLayers(layer, bounds, enclosingClippingLayers);
-    ASSERT(m_speculativeOverlapStack.last()->isEmpty());
-    return false;
+    // Negative z-order children are traversed with a speculative compositing container live, but they
+    // still have to be tested against layers that were already composited earlier in paint order,
+    // otherwise they never composite for overlap and paint behind those layers' GraphicsLayers. The
+    // top of m_overlapStack is untouched for the lifetime of the speculative container, so it is the
+    // overlap state as of the speculative push: it has the already-composited layers, but nothing the
+    // negative z-order children contribute, so they still don't force each other to composite.
+    ASSERT(m_speculativeOverlapStack.isEmpty() || m_speculativeOverlapStack.last()->isEmpty());
+    return m_overlapStack.last()->overlapsLayers(layer, bounds, enclosingClippingLayers);
 }
 
 void LayerOverlapMap::pushCompositingContainer(const RenderLayer& layer)

@@ -247,6 +247,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(GetByValWithThis, Common) \
     CLONE_STATUS(GetByValWithThisMegamorphic, Common) \
     CLONE_STATUS(GetClosureVar, Common) \
+    CLONE_STATUS(GetLazyClosureVar, Common) \
     CLONE_STATUS(GetExecutable, Common) \
     CLONE_STATUS(GetGlobalLexicalVariable, Common) \
     CLONE_STATUS(GetGlobalVar, Common) \

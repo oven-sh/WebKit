@@ -135,7 +135,7 @@ static_assert(!std::is_base_of<ActiveDOMObject, TestClassWithJSBuiltinConstructo
 
 JSTestClassWithJSBuiltinConstructor* JSTestClassWithJSBuiltinConstructor::create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<TestClassWithJSBuiltinConstructor>&& impl)
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = globalObject->vm();
+    auto& vm = globalObject->vm();
     JSTestClassWithJSBuiltinConstructor* ptr = new (NotNull, JSC::allocateCell<JSTestClassWithJSBuiltinConstructor>(vm)) JSTestClassWithJSBuiltinConstructor(structure, *globalObject, WTF::move(impl));
     ptr->finishCreation(vm);
     return ptr;
@@ -171,7 +171,7 @@ void JSTestClassWithJSBuiltinConstructor::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestClassWithJSBuiltinConstructorConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = dynamicDowncast<JSTestClassWithJSBuiltinConstructorPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
@@ -238,7 +238,7 @@ static inline void verifyVTable(TestClassWithJSBuiltinConstructor* ptr)
         // TestClassWithJSBuiltinConstructor has subclasses. If TestClassWithJSBuiltinConstructor has subclasses that get passed
         // to toJS() we currently require TestClassWithJSBuiltinConstructor you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif

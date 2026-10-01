@@ -340,7 +340,7 @@ void PageTimelineAgent::mainFrameStartedLoading()
     m_autoCapturePhase = AutoCapturePhase::BeforeLoad;
 
     // Pre-emptively disable breakpoints. The frontend must re-enable them.
-    if (auto* webDebuggerAgent = Ref { m_instrumentingAgents.get() }->enabledWebDebuggerAgent())
+    if (CheckedPtr webDebuggerAgent = Ref { m_instrumentingAgents.get() }->enabledWebDebuggerAgent())
         std::ignore = webDebuggerAgent->setBreakpointsActive(false);
 
     // Inform the frontend we started an auto capture. The frontend must stop capture.
@@ -400,7 +400,7 @@ void PageTimelineAgent::captureScreenshot()
     if (!localMainFrameView)
         return;
 
-    if (RefPtr snapshot = snapshotFrameRect(*localMainFrame, localMainFrameView->unobscuredContentRect(), { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() })) {
+    if (RefPtr snapshot = snapshotFrameRect(*localMainFrame, localMainFrameView->unobscuredContentRect(), { { }, PixelFormat::BGRA8, ColorSpace::SRGB() })) {
         Ref snapshotRecord = TimelineRecordFactory::createScreenshotData(encodeDataURL(WTF::move(snapshot), "image/png"_s));
         pushCurrentRecord(WTF::move(snapshotRecord), TimelineRecordType::Screenshot, false, snapshotStartTime);
         didCompleteCurrentRecord(TimelineRecordType::Screenshot);

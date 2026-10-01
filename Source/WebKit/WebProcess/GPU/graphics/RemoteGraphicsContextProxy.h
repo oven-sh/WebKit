@@ -50,8 +50,8 @@ class SharedVideoFrameWriter;
 class RemoteGraphicsContextProxy : public WebCore::DisplayList::Recorder {
     WTF_MAKE_TZONE_ALLOCATED(RemoteGraphicsContextProxy);
 public:
-    RemoteGraphicsContextProxy(const WebCore::DestinationColorSpace&, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, RemoteRenderingBackendProxy&);
-    RemoteGraphicsContextProxy(const WebCore::DestinationColorSpace&, WebCore::ContentsFormat, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
+    RemoteGraphicsContextProxy(const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, const WebCore::ColorSpace&, WebCore::RenderingMode, RemoteRenderingBackendProxy&);
+    RemoteGraphicsContextProxy(const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, const WebCore::ColorSpace&, WebCore::ContentsFormat, WebCore::RenderingMode, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
     ~RemoteGraphicsContextProxy();
     RemoteGraphicsContextIdentifier identifier() const { return m_identifier; }
 
@@ -83,7 +83,7 @@ public:
     }
 
 protected:
-    RemoteGraphicsContextProxy(const WebCore::DestinationColorSpace&, std::optional<WebCore::ContentsFormat>, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, DrawGlyphsMode, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
+    RemoteGraphicsContextProxy(const WebCore::GraphicsContextState&, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, const WebCore::ColorSpace&, DrawGlyphsMode, std::optional<WebCore::ContentsFormat>, WebCore::RenderingMode, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
 
     template<typename T> void send(T&& message);
 
@@ -141,7 +141,7 @@ private:
     void fillRectWithRoundedHole(const WebCore::FloatRect&, const WebCore::FloatRoundedRect&, const WebCore::Color&) final;
     void fillEllipse(const WebCore::FloatRect&) final;
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const WebCore::VideoFrame&, const WebCore::FloatRect& distination, WebCore::ImageOrientation, bool shouldDiscardAlpha) final;
+    void drawVideoFrame(const WebCore::VideoFrame&, const WebCore::FloatRect& distination, WebCore::ShouldDiscardAlpha, WebCore::ImagePaintingOptions) final;
 #endif
     void strokePath(const WebCore::Path&) final;
     void strokeRect(const WebCore::FloatRect&, float) final;
@@ -149,7 +149,7 @@ private:
     void clearRect(const WebCore::FloatRect&) final;
     void drawControlPart(WebCore::ControlPart&, const WebCore::FloatRoundedRect& borderRect, float deviceScaleFactor, const WebCore::ControlStyle&) final;
     void drawGlyphs(const WebCore::Font&, std::span<const WebCore::GlyphBufferGlyph>, std::span<const WebCore::GlyphBufferAdvance>, const WebCore::FloatPoint& localAnchor, WebCore::FontSmoothingMode) final;
-    void drawGlyphsImmediate(const WebCore::Font&, std::span<const WebCore::GlyphBufferGlyph>, std::span<const WebCore::GlyphBufferAdvance>, const WebCore::FloatPoint& localAnchor, WebCore::FontSmoothingMode) final;
+    void drawGlyphsImmediate(const WebCore::FontBase&, std::span<const WebCore::GlyphBufferGlyph>, std::span<const WebCore::GlyphBufferAdvance>, const WebCore::FloatPoint& localAnchor, WebCore::FontSmoothingMode) final;
 
 #if USE(CG)
     void applyStrokePattern() final;
@@ -165,7 +165,7 @@ private:
     [[nodiscard]] bool recordResourceUse(WebCore::ImageBuffer&);
     std::optional<RemotePathImplIdentifier> recordResourceUse(const WebCore::PathImpl&);
     bool recordResourceUse(const WebCore::SourceImage&);
-    bool recordResourceUse(WebCore::Font&);
+    bool recordResourceUse(WebCore::FontBase&);
     std::optional<RemoteGradientIdentifier> recordResourceUse(WebCore::Gradient&);
     bool recordResourceUse(WebCore::Filter&);
     std::optional<RemoteDisplayListIdentifier> recordResourceUse(const WebCore::DisplayList::DisplayList&);
@@ -192,9 +192,9 @@ private:
     static constexpr size_t maxPendingLineStrokes = 64;
     Vector<WebCore::PathDataLineColorThickness> m_pendingLineStrokes;
 
-    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, float resolutionScale, const WebCore::DestinationColorSpace&, std::optional<WebCore::RenderingMode>, std::optional<WebCore::RenderingMethod>, WebCore::ImageBufferFormat) const final;
-    RefPtr<WebCore::ImageBuffer> createAlignedImageBuffer(const WebCore::FloatSize&, const WebCore::DestinationColorSpace&, std::optional<WebCore::RenderingMethod>) const final;
-    RefPtr<WebCore::ImageBuffer> createAlignedImageBuffer(const WebCore::FloatRect&, const WebCore::DestinationColorSpace&, std::optional<WebCore::RenderingMethod>) const final;
+    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, float resolutionScale, const WebCore::ColorSpace&, std::optional<WebCore::RenderingMode>, std::optional<WebCore::RenderingMethod>, WebCore::ImageBufferFormat) const final;
+    RefPtr<WebCore::ImageBuffer> createAlignedImageBuffer(const WebCore::FloatSize&, const WebCore::ColorSpace&, std::optional<WebCore::RenderingMethod>) const final;
+    RefPtr<WebCore::ImageBuffer> createAlignedImageBuffer(const WebCore::FloatRect&, const WebCore::ColorSpace&, std::optional<WebCore::RenderingMethod>) const final;
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
     void setMaxEDRHeadroom(std::optional<float> headroom) final { m_maxEDRHeadroom = headroom; }

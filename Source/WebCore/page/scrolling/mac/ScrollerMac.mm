@@ -203,8 +203,7 @@ enum class FeatureToAnimate {
     if (!pair)
         return [NSAppearance currentDrawingAppearance];
     // The base system does not support dark Aqua, so we might get a null result.
-    // FIXME: This is a static analysis false positive.
-    SUPPRESS_UNRETAINED_ARG if (auto *appearance = [NSAppearance appearanceNamed:pair->useDarkAppearance() ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua])
+    if (auto *appearance = [NSAppearance appearanceNamed:pair->useDarkAppearance() ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua])
         return appearance;
     return [NSAppearance currentDrawingAppearance];
 }
@@ -296,7 +295,7 @@ enum class FeatureToAnimate {
             duration:duration]);
     } else {
         // If we don't need to initialize the animation, just reset the values in case they have changed.
-        [_expansionTransitionAnimation setStartValue:[scrollerImp uiStateTransitionProgress]];
+        [_expansionTransitionAnimation setStartValue:[scrollerImp expansionTransitionProgress]];
         [_expansionTransitionAnimation setEndValue:1.0];
         [_expansionTransitionAnimation setDuration:duration];
     }

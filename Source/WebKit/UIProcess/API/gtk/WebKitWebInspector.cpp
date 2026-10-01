@@ -86,7 +86,7 @@ struct _WebKitWebInspectorPrivate {
     }
 
     RefPtr<WebInspectorUIProxy> webInspector;
-    CString inspectedURI;
+    UTF8CString inspectedURI;
     unsigned attachedHeight;
     bool canAttach;
 };
@@ -312,7 +312,7 @@ private:
 
     void inspectedURLChanged(WebInspectorUIProxy&, const String& url) override
     {
-        CString uri = url.utf8();
+        auto uri = url.utf8();
         if (uri == m_inspector->priv->inspectedURI)
             return;
         m_inspector->priv->inspectedURI = uri;
@@ -390,7 +390,7 @@ WebKitWebViewBase* webkit_web_inspector_get_web_view(WebKitWebInspector* inspect
  *
  * This can be %NULL if
  * nothing has been loaded yet in the inspected view, if the inspector
- * has been closed or when inspected view was loaded from a HTML string
+ * has been closed or when the inspected view was loaded from an HTML string
  * instead of a URI.
  *
  * Returns: the URI that is currently being inspected or %NULL
@@ -399,7 +399,7 @@ const char* webkit_web_inspector_get_inspected_uri(WebKitWebInspector* inspector
 {
     g_return_val_if_fail(WEBKIT_IS_WEB_INSPECTOR(inspector), 0);
 
-    return inspector->priv->inspectedURI.data();
+    return inspector->priv->inspectedURI.legacyCStringPointer();
 }
 
 /**
@@ -503,7 +503,7 @@ void webkit_web_inspector_close(WebKitWebInspector* inspector)
  * webkit_web_inspector_get_attached_height:
  * @inspector: a #WebKitWebInspector
  *
- * Get the height that the inspector view when attached.
+ * Get the height that the inspector view should have when attached.
  *
  * Get the height that the inspector view should have when
  * it's attached. If the inspector view is not attached this

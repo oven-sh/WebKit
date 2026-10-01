@@ -42,7 +42,7 @@ void CodeBlock::forEachValueProfile(const Functor& func)
         func(profile, true);
 
     if (m_metadata) {
-        auto wrapper = [&] (ValueProfile& profile) {
+        auto wrapper = [&] (ValueProfileRef profile) {
             func(profile, false);
         };
         m_metadata->forEachValueProfile(wrapper);
@@ -80,7 +80,12 @@ void CodeBlock::forEachLLIntOrBaselineCallLinkInfo(const Functor& func)
 {
     if (m_metadata) {
 #define VISIT(__op) \
-    m_metadata->forEach<__op>([&] (auto& metadata) { func(metadata.m_callLinkInfo); });
+    m_metadata->forEach<__op>([&] (auto& metadata) { \
+        if constexpr (std::is_same_v<decltype(metadata.m_callLinkInfo), DataOnlyCallLinkInfo>) \
+            func(metadata.m_callLinkInfo); \
+        else if (auto* callLinkInfo = metadata.m_callLinkInfo.get()) \
+            func(*callLinkInfo); \
+    });
 
         FOR_EACH_OPCODE_WITH_CALL_LINK_INFO(VISIT)
 

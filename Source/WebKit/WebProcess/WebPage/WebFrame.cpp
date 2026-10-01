@@ -154,17 +154,11 @@
 namespace WebKit {
 using namespace WebCore;
 
-static uint64_t NODELETE generateListenerID()
-{
-    static uint64_t uniqueListenerID = 1;
-    return uniqueListenerID++;
-}
-
 void WebFrame::initWithCoreMainFrame(WebPage& page, Frame& coreFrame)
 {
     m_coreFrame = coreFrame;
     m_coreFrame->tree().setSpecifiedName(nullAtom());
-    if (auto* localFrame = dynamicDowncast<LocalFrame>(coreFrame))
+    if (RefPtr localFrame = dynamicDowncast<LocalFrame>(coreFrame))
         localFrame->init();
 }
 
@@ -299,10 +293,10 @@ WebCore::Frame* WebFrame::coreFrame() const
 
 Awaitable<std::optional<FrameInfoData>> WebFrame::getFrameInfo()
 {
-    co_return info(WithCertificateInfo::Yes);
+    co_return info();
 }
 
-FrameInfoData WebFrame::info(WithCertificateInfo withCertificateInfo) const
+FrameInfoData WebFrame::info() const
 {
     RefPtr parent = parentFrame();
     RefPtr coreFrame = this->coreFrame();
@@ -337,7 +331,6 @@ FrameInfoData WebFrame::info(WithCertificateInfo withCertificateInfo) const
         page ? std::optional { page->webPageProxyIdentifier() } : std::nullopt,
         parent ? std::optional { parent->frameID() } : std::nullopt,
         document ? std::optional { document->identifier() } : std::nullopt,
-        withCertificateInfo == WithCertificateInfo::Yes ? certificateInfo() : CertificateInfo(),
         getCurrentProcessID(),
         isFocused(),
         loadingFrame && loadingFrame->loader().errorOccurredInLoading(),
@@ -393,12 +386,13 @@ ScopeExit<Function<void()>> WebFrame::makeInvalidator()
     });
 }
 
-uint64_t WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunction, ForNavigationAction forNavigationAction, Markable<WebCore::ScriptExecutionContextIdentifier> downloadAttributeInitiatingDocument, SingleThreadWeakPtr<WebCore::DocumentLoader>&& downloadAttributePolicyDocumentLoader)
+PolicyListenerIdentifier WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunction, ForNavigationAction forNavigationAction, PolicyCheckKind kind, Markable<WebCore::ScriptExecutionContextIdentifier> initiatingDocument, SingleThreadWeakPtr<WebCore::DocumentLoader>&& downloadAttributePolicyDocumentLoader)
 {
-    auto policyListenerID = generateListenerID();
+    auto policyListenerID = PolicyListenerIdentifier::generate();
     m_pendingPolicyChecks.add(policyListenerID, PolicyCheck {
         forNavigationAction,
-        downloadAttributeInitiatingDocument,
+        kind,
+        initiatingDocument,
         WTF::move(downloadAttributePolicyDocumentLoader),
         WTF::move(policyFunction)
     });
@@ -406,18 +400,18 @@ uint64_t WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunc
     return policyListenerID;
 }
 
-// Unlike a navigation check, a download check is not cancelled by what this frame does next, so it can be
-// answered once the frame is no longer in a page - which startDownload() requires - or once another
-// document has committed. The document matters because PolicyChecker::checkNavigationPolicy() decides
-// against live frame state, including the sandbox allow-downloads flag that
-// LocalFrame::effectiveSandboxFlags() takes from the current document.
-bool WebFrame::shouldHonorDownloadAttributePolicyCheck(const PolicyCheck& policyCheck) const
+// Unlike a navigation check, a check that does not navigate this frame is not cancelled by what the frame does
+// next, so it can be answered once the frame is no longer in a page - which startDownload() requires - or once
+// another document has committed. The document matters because PolicyChecker decides against live frame state:
+// for a download, the sandbox allow-downloads flag that LocalFrame::effectiveSandboxFlags() takes from the
+// current document; for a new window, whether that document is allowed to open one at all.
+bool WebFrame::initiatingDocumentIsStillCurrent(const PolicyCheck& policyCheck) const
 {
     RefPtr localFrame = dynamicDowncast<LocalFrame>(m_coreFrame.get());
     if (!localFrame || !localFrame->page())
         return false;
     RefPtr document = localFrame->document();
-    return document && document->identifier() == policyCheck.downloadAttributeInitiatingDocument;
+    return document && document->identifier() == policyCheck.initiatingDocument;
 }
 
 // A download check outliving the navigation that started it also means its decision can arrive once a newer
@@ -663,9 +657,9 @@ void WebFrame::invalidatePolicyListeners()
     // download: https://html.spec.whatwg.org/multipage/links.html#downloading-hyperlinks
     m_policyDownloadID = { };
 
-    HashMap<uint64_t, PolicyCheck> policyChecksToCancel;
+    HashMap<PolicyListenerIdentifier, PolicyCheck> policyChecksToCancel;
     for (auto& [listenerID, policyCheck] : std::exchange(m_pendingPolicyChecks, { })) {
-        if (policyCheck.downloadAttributeInitiatingDocument && shouldHonorDownloadAttributePolicyCheck(policyCheck))
+        if (policyCheck.kind != PolicyCheckKind::Navigation && initiatingDocumentIsStillCurrent(policyCheck))
             m_pendingPolicyChecks.add(listenerID, WTF::move(policyCheck));
         else
             policyChecksToCancel.add(listenerID, WTF::move(policyCheck));
@@ -676,7 +670,16 @@ void WebFrame::invalidatePolicyListeners()
         policyCheck.policyFunction(PolicyAction::Ignore);
 }
 
-void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& policyDecision)
+bool WebFrame::dispatchPendingNavigateEventAfterNavigationPolicy(WebCore::PendingNavigateEventIdentifier identifier)
+{
+    RefPtr coreFrame = coreLocalFrame();
+    if (!coreFrame)
+        return true;
+
+    return coreFrame->loader().dispatchPendingNavigateEventAfterNavigationPolicy(identifier);
+}
+
+void WebFrame::didReceivePolicyDecision(PolicyListenerIdentifier listenerID, PolicyDecision&& policyDecision)
 {
     if (RefPtr page = m_page.get()) {
 #if ENABLE(APP_BOUND_DOMAINS)
@@ -701,7 +704,7 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
     FramePolicyFunction function = WTF::move(policyCheck.policyFunction);
     bool forNavigationAction = policyCheck.forNavigationAction == ForNavigationAction::Yes;
 
-    if (policyCheck.downloadAttributeInitiatingDocument && !shouldHonorDownloadAttributePolicyCheck(policyCheck))
+    if (policyCheck.kind != PolicyCheckKind::Navigation && !initiatingDocumentIsStillCurrent(policyCheck))
         return function(PolicyAction::Ignore);
 
     // Nothing below is the download's to apply once a newer navigation owns the load this check was made for.
@@ -709,7 +712,7 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
     // client allowed it for. Only a download is still meaningful, so answer anything else Ignore, which
     // FrameLoader::loadWithDocumentLoader() drops rather than continue with, since it no longer owns the
     // policy document loader.
-    bool newerNavigationOwnsTheLoad = policyCheck.downloadAttributeInitiatingDocument && newerNavigationOwnsDownloadAttributePolicyCheckLoad(policyCheck);
+    bool newerNavigationOwnsTheLoad = policyCheck.kind == PolicyCheckKind::DownloadAttribute && newerNavigationOwnsDownloadAttributePolicyCheckLoad(policyCheck);
     if (newerNavigationOwnsTheLoad && policyDecision.policyAction != PolicyAction::Download)
         return function(PolicyAction::Ignore);
 
@@ -721,9 +724,10 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
     }
 
     m_policyDownloadID = policyDecision.downloadID;
-    // Only a download skips this: a download attribute link the client answered Use for is a
-    // navigation like any other, and m_policyDocumentLoader is its own.
-    if (policyDecision.policyAction != PolicyAction::Download) {
+    // Only a download skips this: a download attribute link the client answered Use for is a navigation like
+    // any other, and m_policyDocumentLoader is its own. A new window skips it too, since its navigation state
+    // belongs to the window being opened rather than to this frame.
+    if (policyDecision.policyAction != PolicyAction::Download && policyCheck.kind != PolicyCheckKind::NewWindow) {
         if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_coreFrame.get())) {
             auto& loader = localFrame->loader();
             if (RefPtr policyDocumentLoader = loader.policyDocumentLoader()) {
@@ -736,7 +740,7 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
     }
 
     if (policyDecision.backForwardFrameState) {
-        RELEASE_LOG(Loading, "didReceivePolicyDecision: Received FrameState for child frame, URL=%" SENSITIVE_LOG_STRING, policyDecision.backForwardFrameState->urlString.utf8().data());
+        RELEASE_LOG(Loading, "didReceivePolicyDecision: Received FrameState for child frame, URL=%" SENSITIVE_LOG_STRING, policyDecision.backForwardFrameState->urlString.utf8());
         setHistoryItemForBackForwardNavigation(protect(*policyDecision.backForwardFrameState));
     }
 
@@ -780,7 +784,7 @@ void WebFrame::startDownload(const WebCore::ResourceRequest& request, const Stri
     std::optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
     isAppBound = m_isNavigatingToAppBoundDomain;
     if (localFrame)
-        WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::StartDownload(policyDownloadID, request, topOrigin, isAppBound, suggestedName, fromDownloadAttribute, localFrame->frameID(), localFrame->pageID()), 0);
+        protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->send(Messages::NetworkConnectionToWebProcess::StartDownload(policyDownloadID, request, topOrigin, isAppBound, suggestedName, fromDownloadAttribute, localFrame->frameID(), localFrame->pageID()), 0);
 }
 
 void WebFrame::convertMainResourceLoadToDownload(DocumentLoader* documentLoader, const ResourceRequest& request, const ResourceResponse& response)
@@ -805,7 +809,7 @@ void WebFrame::convertMainResourceLoadToDownload(DocumentLoader* documentLoader,
 
     std::optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
     isAppBound = m_isNavigatingToAppBoundDomain;
-    webProcess.ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::ConvertMainResourceLoadToDownload(mainResourceLoadIdentifier, policyDownloadID, request, topOrigin, response, isAppBound), 0);
+    protect(webProcess.ensureNetworkProcessConnection().connection())->send(Messages::NetworkConnectionToWebProcess::ConvertMainResourceLoadToDownload(mainResourceLoadIdentifier, policyDownloadID, request, topOrigin, response, isAppBound), 0);
 }
 
 void WebFrame::addConsoleMessage(MessageSource messageSource, MessageLevel messageLevel, const String& message, uint64_t requestID)
@@ -1443,7 +1447,7 @@ RetainPtr<CFDataRef> WebFrame::webArchiveData(FrameFilterFunction callback, void
 
 RefPtr<WebImage> WebFrame::createSelectionSnapshot() const
 {
-    auto snapshot = snapshotSelection(*protect(coreLocalFrame()), { { WebCore::SnapshotFlags::ForceBlackText, WebCore::SnapshotFlags::Shareable }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() });
+    auto snapshot = snapshotSelection(*protect(coreLocalFrame()), { { WebCore::SnapshotFlags::ForceBlackText, WebCore::SnapshotFlags::Shareable }, PixelFormat::BGRA8, ColorSpace::SRGB() });
     if (!snapshot)
         return nullptr;
 
@@ -1815,7 +1819,7 @@ static RefPtr<ShareableBitmap> shareableBitmapFromImageBuffer(ImageBuffer& image
     RefPtr nativeImage = imageBuffer.copyNativeImage();
     if (!nativeImage)
         return nullptr;
-    return ShareableBitmap::createFromImageDraw(*nativeImage, DestinationColorSpace::SRGB());
+    return ShareableBitmap::createFromImageDraw(*nativeImage, ColorSpace::SRGB());
 }
 
 RefPtr<ShareableBitmap> shareableBitmapFromImageData(ImageData& imageData)
@@ -1825,7 +1829,7 @@ RefPtr<ShareableBitmap> shareableBitmapFromImageData(ImageData& imageData)
     if (size.isEmpty())
         return nullptr;
 
-    RefPtr imageBuffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    RefPtr imageBuffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!imageBuffer)
         return nullptr;
 
@@ -1999,7 +2003,7 @@ void WebFrame::describeTextExtractionInteraction(TextExtraction::Interaction&& i
 {
     RefPtr frame = coreLocalFrame();
     if (!frame)
-        return completion({ { }, { }, false });
+        return completion({ { }, { }, false, false });
 
     auto resolvedInteraction = interactionWithResolvedTargetNode(WTF::move(interaction));
     completion(TextExtraction::interactionDescription(resolvedInteraction, *frame));
@@ -2075,6 +2079,17 @@ void WebFrame::requestContainerJSHandleForSearchTexts(Vector<String>&& searchTex
 void WebFrame::requestContentFrameIdentifierForNode(NodeIdentifier nodeIdentifier, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>&&)>&& completion)
 {
     completion(TextExtraction::contentFrameIdentifierForNode(nodeIdentifier));
+}
+
+void WebFrame::findFirstConnectedNode(Vector<NodeIdentifier>&& candidates, CompletionHandler<void(std::optional<NodeIdentifier>)>&& completion)
+{
+    for (auto& candidate : candidates) {
+        RefPtr node = Node::fromIdentifier(candidate);
+        if (node && node->isConnected())
+            return completion(candidate);
+    }
+
+    completion({ });
 }
 
 void WebFrame::getSelectorPathsForNode(JSHandleInfo&& handle, CompletionHandler<void(Vector<HashSet<String>>&&)>&& completion)

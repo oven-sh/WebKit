@@ -80,7 +80,7 @@ ProfilerSupport::ProfilerSupport()
     : m_queue(WorkQueue::create("JSC PerfLog"_s))
 {
     if (Options::useTextMarkers()) {
-        m_file = FileSystem::createDumpFile(makeString("marker-"_s, getCurrentThreadID(), "-"_s, WTF::getCurrentProcessID()), ".txt"_s, String::fromUTF8(Options::textMarkersDirectory()));
+        m_file = FileSystem::createDumpFile(makeString("marker-"_s, getCurrentThreadID(), "-"_s, WTF::getCurrentProcessID()), ".txt"_s, String { Options::textMarkersDirectory() });
         RELEASE_ASSERT(m_file);
 
 #if OS(LINUX)
@@ -113,16 +113,16 @@ uint32_t ProfilerSupport::getCurrentThreadID()
 #endif
 }
 
-void ProfilerSupport::write(const AbstractLocker&, uint64_t start, uint64_t end, const CString& message)
+void ProfilerSupport::write(const AbstractLocker&, uint64_t start, uint64_t end, const UTF8CString& message)
 {
-    auto header = toCString(start, " ", end, " ");
+    auto header = toUTF8CString(start, " ", end, " ");
     m_file.write(WTF::asByteSpan(header.span()));
     m_file.write(WTF::asByteSpan(message.span()));
     m_file.write(WTF::asByteSpan("\n"_span));
     m_file.flush();
 }
 
-void ProfilerSupport::markStart(const void* identifier, Category category, CString&&)
+void ProfilerSupport::markStart(const void* identifier, Category category, UTF8CString&&)
 {
     if (!Options::useTextMarkers())
         return;
@@ -136,7 +136,7 @@ void ProfilerSupport::markStart(const void* identifier, Category category, CStri
     table.add(identifier, generateTimestamp());
 }
 
-void ProfilerSupport::markEnd(const void* identifier, Category category, CString&& message)
+void ProfilerSupport::markEnd(const void* identifier, Category category, UTF8CString&& message)
 {
     if (!Options::useTextMarkers())
         return;
@@ -166,7 +166,7 @@ void ProfilerSupport::markEnd(const void* identifier, Category category, CString
     });
 }
 
-void ProfilerSupport::mark(const void* identifier, Category, CString&& message)
+void ProfilerSupport::mark(const void* identifier, Category, UTF8CString&& message)
 {
     if (!Options::useTextMarkers())
         return;
@@ -182,7 +182,7 @@ void ProfilerSupport::mark(const void* identifier, Category, CString&& message)
 }
 
 
-void ProfilerSupport::markInterval(const void* identifier, Category, MonotonicTime startTime, MonotonicTime endTime, CString&& message)
+void ProfilerSupport::markInterval(const void* identifier, Category, MonotonicTime startTime, MonotonicTime endTime, UTF8CString&& message)
 {
     if (!Options::useTextMarkers())
         return;
@@ -212,7 +212,7 @@ void ProfilerSupport::dumpIonGraphFunction(const String& functionName, ASCIILite
     auto string = json->toJSONString();
 
     auto tierSuffix = osr ? makeString("-"_s, tier, "-OSR"_s) : makeString("-"_s, tier);
-    auto handle = FileSystem::createDumpFile(makeString("iongraph-"_s, functionName, tierSuffix, "-"_s, WTF::getCurrentProcessID(), "-"_s, generateTimestamp()), ".json"_s, String::fromUTF8(Options::ionGraphDirectory()));
+    auto handle = FileSystem::createDumpFile(makeString("iongraph-"_s, functionName, tierSuffix, "-"_s, WTF::getCurrentProcessID(), "-"_s, generateTimestamp()), ".json"_s, String { Options::ionGraphDirectory() });
     RELEASE_ASSERT(handle);
     handle.write(WTF::asByteSpan(string.utf8().span()));
     handle.flush();

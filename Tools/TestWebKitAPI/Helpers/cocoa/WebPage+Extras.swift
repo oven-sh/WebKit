@@ -109,7 +109,7 @@ extension WebPage {
         #if WTF_PLATFORM_MAC
         backingWebView.insertText(text)
         #else
-        backingWebView.textInputContentView.insertText(text)
+        backingWebView.textInputContentView?.insertText(text)
         #endif
         await waitForNextPresentationUpdate()
     }
@@ -153,7 +153,11 @@ extension WebPage {
     ///   - location: The location in window coordinates.
     ///   - flags: Modifier flags to include in the event.
     public func mouseMove(to location: NSPoint, flags: NSEvent.ModifierFlags = []) {
-        backingWebView.mouseMoved(with: mouseEvent(.mouseMoved, at: location, flags: flags, clickCount: 0, pressure: 0))
+        // WKWebView receives mouse moves through tracking areas rather than the responder
+        // chain, so sending one to the view directly with `-mouseMoved:` would go nowhere.
+        // `_simulateMouseMove:` is the entry point that reaches `WebViewImpl::mouseMoved`.
+        // See precedent established in PlatformWebView, TestWKWebView, and EventSenderProxy.
+        backingWebView._simulateMouseMove(mouseEvent(.mouseMoved, at: location, flags: flags, clickCount: 0, pressure: 0))
     }
 
     /// Sends a left mouse-dragged NSEvent to the web view at the given location.
@@ -221,12 +225,39 @@ extension WebPage {
         }
     }
 
+    /// Monitors wheel events while `body` runs, then suspends until the resulting scroll comes to rest.
+    ///
+    /// - Parameters:
+    ///   - expectingMomentumEnd: Whether to additionally wait for a momentum phase to end.
+    ///   - body: The work producing the scroll.
+    /// - Throws: Whatever `body` throws, without waiting for the scroll to come to rest.
+    public func withWheelEventMonitoring<Failure: Error>(
+        expectingMomentumEnd: Bool = false,
+        perform body: () async throws(Failure) -> Void
+    ) async throws(Failure) {
+        await backingWebView._startMonitoringWheelEventsForTesting()
+
+        try await body()
+
+        if expectingMomentumEnd {
+            await backingWebView._waitForWheelEventsAndMomentumToCompleteForTesting()
+        } else {
+            await backingWebView._waitForWheelEventsToCompleteForTesting()
+        }
+    }
+
     /// Copies the current selection to the system pasteboard and returns its string representation.
     public func copySelection() async -> String? {
         NSPasteboard.general.clearContents()
         NSApp.sendAction(#selector(NSText.copy(_:)), to: backingWebView, from: nil)
         await waitForNextPresentationUpdate()
         return NSPasteboard.general.string(forType: .string)
+    }
+
+    /// Selects the entire contents of the page.
+    public func selectAll() async {
+        NSApp.sendAction(#selector(NSText.selectAll(_:)), to: backingWebView, from: nil)
+        await waitForNextPresentationUpdate()
     }
 
     private func mouseEvent(

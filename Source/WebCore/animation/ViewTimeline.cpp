@@ -58,23 +58,22 @@ ExceptionOr<Ref<ViewTimeline>> ViewTimeline::create(Document& document, ViewTime
     if (!insets)
         return Exception { ExceptionCode::TypeError };
 
-    auto viewTimeline = ViewTimeline::create(nullAtom(), options.axis, WTF::move(*insets), Style::ZoomFactor::none());
+    auto viewTimeline = ViewTimeline::create({ nullAtom() }, options.axis, WTF::move(*insets), Style::ZoomFactor::none());
 
-    viewTimeline->setSubject(options.subject.get());
-    if (auto subject = options.subject)
-        protect(subject->document())->updateLayoutIgnorePendingStylesheets();
+    viewTimeline->setSubject(options.subject.ptr());
+    protect(options.subject->document())->updateLayoutIgnorePendingStylesheets();
     viewTimeline->cacheCurrentTime();
 
     return viewTimeline;
 }
 
-Ref<ViewTimeline> ViewTimeline::create(const AtomString& name, ScrollAxis axis, const Style::ViewTimelineInsetItem& insets, const Style::ZoomFactor& usedZoomForLength)
+Ref<ViewTimeline> ViewTimeline::create(const Style::ScopedName& scopedName, ScrollAxis axis, const Style::ViewTimelineInsetItem& insets, const Style::ZoomFactor& usedZoomForLength)
 {
-    return adoptRef(*new ViewTimeline(name, axis, insets, usedZoomForLength));
+    return adoptRef(*new ViewTimeline(scopedName, axis, insets, usedZoomForLength));
 }
 
-ViewTimeline::ViewTimeline(const AtomString& name, ScrollAxis axis, const Style::ViewTimelineInsetItem& insets, const Style::ZoomFactor& usedZoomForLength)
-    : ScrollTimeline(name, axis)
+ViewTimeline::ViewTimeline(const Style::ScopedName& scopedName, ScrollAxis axis, const Style::ViewTimelineInsetItem& insets, const Style::ZoomFactor& usedZoomForLength)
+    : ScrollTimeline(scopedName, axis)
     , m_insets({ .insets = insets, .zoom = usedZoomForLength })
 {
 }
@@ -306,7 +305,8 @@ void ViewTimeline::cacheCurrentTime()
         };
     }();
 
-    auto metricsChanged = previousCurrentTimeData.scrollContainerSize != m_cachedCurrentTimeData.scrollContainerSize
+    auto metricsChanged = previousCurrentTimeData.maxScrollOffset != m_cachedCurrentTimeData.maxScrollOffset
+        || previousCurrentTimeData.scrollContainerSize != m_cachedCurrentTimeData.scrollContainerSize
         || previousCurrentTimeData.subjectOffset != m_cachedCurrentTimeData.subjectOffset
         || previousCurrentTimeData.subjectSize != m_cachedCurrentTimeData.subjectSize
         || previousCurrentTimeData.insetStart != m_cachedCurrentTimeData.insetStart
@@ -379,10 +379,9 @@ CheckedPtr<const RenderElement> ViewTimeline::stickyContainer() const
     CheckedPtr renderer = subject->renderer();
 
     CheckedPtr scrollerRenderer = sourceScrollerRenderer();
-    while (renderer && renderer.get() != scrollerRenderer) {
+    for (; renderer && renderer.get() != scrollerRenderer; renderer = renderer->parent()) {
         if (renderer->isStickilyPositioned())
             return renderer;
-        renderer = renderer->containingBlock();
     }
     return nullptr;
 }
@@ -552,7 +551,7 @@ Ref<CSSNumericValue> ViewTimeline::endOffset() const
 bool ViewTimeline::matchesAnonymousViewFunctionForSubject(const Style::ViewFunction& viewFunction, const Style::ZoomFactor& usedZoomForLength, const Styleable& subject) const
 {
     return isStyleOriginated()
-        && name().isEmpty()
+        && name().name.isEmpty()
         && m_insets.insets == viewFunction->insets
         && m_insets.zoom == usedZoomForLength
         && axis() == viewFunction->axis

@@ -96,8 +96,15 @@ RefPtr<ImageBuffer> CanvasBase::makeRenderingResultsAvailable(ShouldApplyPostPro
     }
     if (!validateArea())
         return nullptr;
-    // Currently we don't cache transparent black bitmaps of canvases that do not have a context.
-    return ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    // Transparent black bitmaps are not cached.
+    return createTransparentBlackImageBuffer();
+}
+
+RefPtr<ImageBuffer> CanvasBase::createTransparentBlackImageBuffer() const
+{
+    if (!validateArea())
+        return nullptr;
+    return ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
 }
 
 RefPtr<NativeImage> CanvasBase::copyNativeImage() const
@@ -106,7 +113,7 @@ RefPtr<NativeImage> CanvasBase::copyNativeImage() const
         return context->surfaceBufferToNativeImage(CanvasRenderingContext::SurfaceBuffer::DrawingBuffer);
     if (!validateArea())
         return nullptr;
-    return ImageBuffer::sinkIntoNativeImage(ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8));
+    return ImageBuffer::sinkIntoNativeImage(ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8));
 }
 
 static inline size_t NODELETE maxCanvasArea()
@@ -331,7 +338,7 @@ RefPtr<ImageBuffer> CanvasBase::createImageForNoiseInjection() const
         return { };
 
     auto seed = static_cast<unsigned>(context->noiseInjectionHashSalt().value_or(0));
-    auto buffer = ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    auto buffer = ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!buffer)
         return { };
 

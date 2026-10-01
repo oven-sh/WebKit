@@ -297,6 +297,26 @@ const Style::ComputedStyle& RenderElement::firstLineStyle() const
 
 Style::Difference RenderElement::adjustStyleDifference(Style::Difference diff) const
 {
+    auto canRecomputeOverflowWithoutLayout = [&] {
+        // Nothing under an SVG root runs simplified layout.
+        if (!isRenderOrLegacyRenderSVGRoot() && (isSVGLayerAwareRenderer() || isRenderSVGBlock() || isLegacyRenderSVGModelObject()))
+            return false;
+        // An out-of-flow box reaches its new position through simplified layout's movement only path.
+        if (isOutOfFlowPositioned())
+            return false;
+        // RenderTextControlSingleLine::layout() mutates the inner renderers' style heights and resets them on
+        // the next pass, so its geometry depends on how many times it has run. Keep the full layout it has
+        // always had rather than make its 1px rounding depend on this optimization.
+        if (isRenderTextControl())
+            return false;
+        // Let's still trigger layout on content with legacy line layout.
+        if (isInlineBox() && !LayoutIntegration::LineLayout::containing(*this))
+            return false;
+        return true;
+    };
+    if (diff.result == Style::DifferenceResult::Overflow && !canRecomputeOverflowWithoutLayout())
+        diff.result = Style::DifferenceResult::Layout;
+
     // If transform changed, and we are not composited, need to do a layout.
     if (diff.contextSensitiveProperties & Style::DifferenceContextSensitiveProperty::Transform) {
         // FIXME: when transforms are taken into account for overflow, we will need to do a layout.
@@ -489,6 +509,9 @@ bool RenderElement::repaintBeforeStyleChange(Style::Difference diff, const Style
         }
 
         if (shouldRepaintForStyleDifference(diff))
+            return RequiredRepaint::RendererOnly;
+
+        if (diff == Style::DifferenceResult::Overflow && !diff.contextSensitiveProperties.contains(Style::DifferenceContextSensitiveProperty::Transform))
             return RequiredRepaint::RendererOnly;
 
         auto deviceScaleFactor = newStyle.deviceScaleFactor();
@@ -1041,6 +1064,15 @@ void RenderElement::styleWillChange(Style::Difference diff, const Style::Compute
             view().decrementRendersWithOutline();
     }
 
+    bool hadPixelMovingFilter = oldStyle && oldStyle->filter().hasFilterThatMovesPixels();
+    bool hasPixelMovingFilter = newStyle.filter().hasFilterThatMovesPixels();
+    if (hadPixelMovingFilter != hasPixelMovingFilter) {
+        if (hasPixelMovingFilter)
+            view().incrementRenderersWithPixelMovingFilter();
+        else
+            view().decrementRenderersWithPixelMovingFilter();
+    }
+
     bool newStyleSlowScroll = false;
     if (Style::hasImageWithAttachment(newStyle.backgroundLayers(), FillAttachment::FixedBackground) && !settings().fixedBackgroundsPaintRelativeToDocument()) {
         newStyleSlowScroll = true;
@@ -1104,10 +1136,15 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
     if (!m_parent)
         return;
 
-    // When style containment changes, quote depth scoping boundaries change,
-    // so all quotes need to be recalculated.
-    if (oldStyle && oldStyle->usedContain().contains(Style::ContainValue::Style) != m_style.usedContain().contains(Style::ContainValue::Style))
-        view().setHasQuotesNeedingUpdate(true);
+    // When effective style containment changes, quote and counter scoping
+    // boundaries change, so all quotes and the counter tree need to be recalculated.
+    if (oldStyle && element()) {
+        bool oldAppliesStyleContainment = Style::ContainmentChecker { *oldStyle, *element() }.shouldApplyStyleContainment();
+        if (oldAppliesStyleContainment != shouldApplyStyleContainment()) {
+            view().setHasQuotesNeedingUpdate(true);
+            view().setHasCounterTreeNeedingUpdate(true);
+        }
+    }
 
     if (diff == Style::DifferenceResult::Layout || diff == Style::DifferenceResult::Overflow) {
         RenderCounter::rendererStyleChanged(*this, oldStyle, m_style);
@@ -1194,7 +1231,7 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
     }
 
     // FIXME: First line change on the block comes in as equal on inline boxes.
-    auto needsLayoutBoxStyleUpdate = (diff >= Style::DifferenceResult::Repaint || (is<RenderInline>(*this) && &style() != &firstLineStyle())) && layoutBox();
+    auto needsLayoutBoxStyleUpdate = (diff >= Style::DifferenceResult::Repaint || (isInlineBox() && &style() != &firstLineStyle())) && layoutBox();
     if (needsLayoutBoxStyleUpdate)
         LayoutIntegration::LineLayout::updateStyle(*this);
 }
@@ -1318,6 +1355,9 @@ void RenderElement::willBeDestroyed()
         if (style().hasOutline())
             view().decrementRendersWithOutline();
 
+        if (style().filter().hasFilterThatMovesPixels())
+            view().decrementRenderersWithPixelMovingFilter();
+
         if (auto* firstLineStyle = style().pseudoElementStyle({ PseudoElementType::FirstLine }))
             unregisterImages(*firstLineStyle);
     }
@@ -1409,7 +1449,16 @@ void RenderElement::paintAsInlineBlock(PaintInfo& paintInfo, const LayoutPoint& 
     // (See Appendix E.2, section 6.4 on inline block/table/replaced elements in the CSS2.1 specification.)
     // This is also used by other elements (e.g. flex items and grid items).
     PaintPhase paintPhaseToUse = isExcludedAndPlacedInBorder() ? paintInfo.phase : PaintPhase::Foreground;
-    if (paintInfo.phase == PaintPhase::Selection || paintInfo.phase == PaintPhase::EventRegion || paintInfo.phase == PaintPhase::TextClip || paintInfo.phase == PaintPhase::Accessibility)
+    bool paintsAllPhasesAtomically = paintInfo.phase == PaintPhase::Selection
+        || paintInfo.phase == PaintPhase::TextClip
+        || paintInfo.phase == PaintPhase::EventRegion
+        || paintInfo.phase == PaintPhase::Accessibility
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        || paintInfo.phase == PaintPhase::AXCustomColorComputeBackdrops
+        || paintInfo.phase == PaintPhase::AXCustomColorCollectBackgrounds
+#endif
+        ;
+    if (paintsAllPhasesAtomically)
         paint(paintInfo, childPoint);
     else if (paintInfo.phase == paintPhaseToUse) {
         paintPhase(*this, PaintPhase::BlockBackground, paintInfo, childPoint);
@@ -2599,7 +2648,6 @@ void RenderElement::repaintOldAndNewPositionsForSVGRenderer() const
     repaint();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
 static RenderObject::BlockContentHeightType includeNonFixedHeight(const RenderObject& renderer)
 {
     const Style::ComputedStyle& style = renderer.style();
@@ -2615,7 +2663,7 @@ static RenderObject::BlockContentHeightType includeNonFixedHeight(const RenderOb
     return RenderObject::FlexibleHeight;
 }
 
-void RenderElement::adjustComputedFontSizesOnBlocks(float size, float visibleWidth)
+void RenderElement::adjustFontSizesOnBlocks(float size, float visibleWidth)
 {
     RefPtr document = view().frameView().frame().document();
     if (!document)
@@ -2637,7 +2685,7 @@ void RenderElement::adjustComputedFontSizesOnBlocks(float size, float visibleWid
 
         int stackSize = depthStack.size();
         if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(*descendant); blockFlow && !blockFlow->isRenderListItem() && (!stackSize || currentDepth - depthStack[stackSize - 1] > TextAutoSizingFixedHeightDepth))
-            blockFlow->adjustComputedFontSizes(size, visibleWidth);
+            blockFlow->adjustFontSizes(size, visibleWidth);
         newFixedDepth = 0;
     }
 
@@ -2667,11 +2715,10 @@ void RenderElement::resetTextAutosizing()
 
         int stackSize = depthStack.size();
         if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(*descendant); blockFlow && !blockFlow->isRenderListItem() && (!stackSize || currentDepth - depthStack[stackSize - 1] > TextAutoSizingFixedHeightDepth))
-            blockFlow->resetComputedFontSize();
+            blockFlow->resetFontSize();
         newFixedDepth = 0;
     }
 }
-#endif // ENABLE(TEXT_AUTOSIZING)
 
 std::unique_ptr<Style::ComputedStyle> RenderElement::animatedStyle()
 {
@@ -2734,7 +2781,7 @@ FloatRect RenderElement::referenceBoxRect(CSSBoxType boxType) const
     // is removed this function should be moved to RenderLayerModelObject.
     // As this method is used by both SVG engines, we need to place it
     // here in RenderElement, as temporary solution.
-    if (element() && !is<SVGElement>(element()))
+    if (!is<SVGElement>(element()) && !is<RenderSVGViewportContainer>(*this))
         return { };
 
     auto alignReferenceBox = [&](FloatRect referenceBox) {

@@ -144,7 +144,7 @@ static void compileRecovery(
         value.dataFormat(), jit, GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2);
 }
 
-static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit, const FixedOperands<ExitValue>& exitValues, CodeBlock* codeBlock)
+static MacroAssemblerCodeRef<OSRExitPtrTag> compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit, const FixedOperands<ExitValue>& exitValues, const FixedVector<B3::ValueRep>& valueReps, CodeBlock* codeBlock)
 {
     // This code requires framePointerRegister is the same as callFrameRegister
     static_assert(MacroAssembler::framePointerRegister == GPRInfo::callFrameRegister, "MacroAssembler::framePointerRegister and GPRInfo::callFrameRegister must be the same");
@@ -167,13 +167,9 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
         jit.loadPtr(vm.addressOfCallFrameForCatch(), MacroAssembler::framePointerRegister);
         jit.addPtr(CCallHelpers::TrustedImm32(codeBlock->stackPointerOffset() * sizeof(Register)),
             MacroAssembler::framePointerRegister, CCallHelpers::stackPointerRegister);
-
-        // Do a pushToSave because that's what the exit compiler below expects the stack
-        // to look like because that's the last thing the ExitThunkGenerator does. The code
-        // below doesn't actually use the value that was pushed, but it does rely on the
-        // general shape of the stack being as it is in the non-exception OSR case.
-        jit.pushToSaveImmediateWithoutTouchingRegisters(CCallHelpers::TrustedImm32(0xbadbeef));
     }
+
+    jit.subPtr(CCallHelpers::TrustedImm32(MacroAssembler::pushToSaveByteOffset()), CCallHelpers::stackPointerRegister);
 
     // We need scratch space to save all registers, to build up the JS stack, to deal with unwind
     // fixup, pointers to all of the objects we materialize, and the elements inside those objects
@@ -211,13 +207,11 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     auto recoverValue = [&] (const ExitValue& value) {
         compileRecovery(
             jit, value,
-            exit.m_valueReps,
+            valueReps,
             registerScratch, materializationToPointer);
     };
     
-    // Note that we come in here, the stack used to be as B3 left it except that someone called pushToSave().
-    // We don't care about the value they saved. But, we do appreciate the fact that they did it, because we use
-    // that slot for saveAllRegisters().
+    // Note that the stack is as B3 left it except for the slot that we made above for saveAllRegisters().
 
     saveAllRegisters(jit, registerScratch);
     
@@ -258,13 +252,13 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     
     // Do some value profiling.
     if (exit.m_descriptor->m_profileDataFormat != DataFormatNone) {
-        Location::forValueRep(exit.m_valueReps[0]).restoreInto(jit, registerScratch, GPRInfo::regT0);
+        Location::forValueRep(valueReps[0]).restoreInto(jit, registerScratch, GPRInfo::regT0);
         reboxAccordingToFormat(exit.m_descriptor->m_profileDataFormat, jit, GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2);
         
         if (exit.m_kind == BadCache || exit.m_kind == BadIndexingType) {
             CodeOrigin codeOrigin = exit.m_codeOriginForExitProfile;
             CodeBlock* codeBlock = jit.baselineCodeBlockFor(codeOrigin);
-            if (ArrayProfile* arrayProfile = codeBlock->getArrayProfile(ConcurrentJSLocker(codeBlock->m_lock), codeOrigin.bytecodeIndex())) {
+            if (ArrayProfile* arrayProfile = codeBlock->getArrayProfile(codeOrigin.bytecodeIndex())) {
                 jit.move(CCallHelpers::TrustedImmPtr(arrayProfile), GPRInfo::regT3);
                 jit.load32(MacroAssembler::Address(GPRInfo::regT0, JSCell::structureIDOffset()), GPRInfo::regT1);
                 jit.store32(GPRInfo::regT1, CCallHelpers::Address(GPRInfo::regT3, ArrayProfile::offsetOfSpeculationFailureStructureID()));
@@ -286,7 +280,7 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
         }
 
         if (exit.m_descriptor->m_valueProfile)
-            exit.m_descriptor->m_valueProfile.emitReportValue(jit, jit.codeBlock(), JSValueRegs(GPRInfo::regT0), GPRInfo::regT1);
+            exit.m_descriptor->m_valueProfile.emitReportValue(jit, jit.codeBlock(), GPRInfo::regT0, GPRInfo::regT1);
     }
 
     // Materialize all objects. Don't materialize an object until all
@@ -417,7 +411,7 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
                 }
 
                 case ExitValueArgument:
-                    Location::forValueRep(exit.m_valueReps[value.exitArgument().argument()]).restoreInto(jit, registerScratch, GPRInfo::regT0);
+                    Location::forValueRep(valueReps[value.exitArgument().argument()]).restoreInto(jit, registerScratch, GPRInfo::regT0);
                     jit.store64(GPRInfo::regT0, CCallHelpers::Address(GPRInfo::regT3, index * sizeof(EncodedJSValue)));
                     break;
 
@@ -609,7 +603,7 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
 
     if (exit.m_codeOrigin.inlineStackContainsActiveCheckpoint()) {
         EncodedJSValue* tmpScratch = scratch + exitValues.tmpIndex(0);
-        jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
+        jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(exit.m_codeOrigin.inlineCallFrame()), CCallHelpers::TrustedImm32(exit.m_codeOrigin.bytecodeIndex().asBits()), CCallHelpers::TrustedImmPtr(tmpScratch));
         jit.prepareCallOperation(vm);
         jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeOSRExitSideState)), GPRInfo::nonArgGPR0);
         jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
@@ -648,20 +642,18 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     adjustAndJumpToTarget(vm, jit, exit);
     
     LinkBuffer patchBuffer(jit, codeBlock, LinkBuffer::Profile::FTLOSRExit);
-    exit.m_code = FINALIZE_CODE_IF(
+    return FINALIZE_CODE_IF(
         shouldDumpDisassembly() || Options::verboseOSR() || Options::verboseFTLOSRExit(),
         patchBuffer, OSRExitPtrTag, nullptr,
         "FTL OSR exit #%u (D@%u, %s, %s) from %s, with operands = %s",
-            exitID, exit.m_dfgNodeIndex, toCString(exit.m_codeOrigin).data(),
-            toCString(exit.m_kind).data(), toCString(*codeBlock).data(),
-            toCString(ignoringContext<DumpContext>(exitValues)).data()
+            exitID, exit.m_dfgNodeIndex, toUTF8CString(exit.m_codeOrigin),
+            toUTF8CString(exit.m_kind), toUTF8CString(*codeBlock),
+            toUTF8CString(ignoringContext<DumpContext>(exitValues))
         );
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame* callFrame, unsigned exitID))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame* callFrame, void* returnPC))
 {
-    dataLogLnIf(shouldDumpDisassembly() || Options::verboseOSR() || Options::verboseFTLOSRExit(), "Compiling OSR exit with exitID = ", exitID);
-
     VM& vm = callFrame->deprecatedVM();
     // Don't need an ActiveScratchBufferScope here because we DeferGCForAWhile below.
 
@@ -684,8 +676,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
     DeferGCForAWhile deferGC(vm);
 
     JITCode* jitCode = codeBlock->jitCode()->ftl();
+    unsigned exitID = jitCode->osrExitIndexForReturnPC(returnPC);
+    dataLogLnIf(shouldDumpDisassembly() || Options::verboseOSR() || Options::verboseFTLOSRExit(), "Compiling OSR exit with exitID = ", exitID);
+
     OSRExit& exit = jitCode->m_osrExit[exitID];
     FixedOperands<ExitValue> exitValues = exit.m_descriptor->values(*jitCode);
+    FixedVector<B3::ValueRep> valueReps = exit.valueReps(*jitCode);
     
     if (shouldDumpDisassembly() || Options::verboseOSR() || Options::verboseFTLOSRExit()) {
         dataLogLn(
@@ -698,7 +694,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
             "    Exit is exception handler: ", exit.isExceptionHandler(), "\n",
             "    Is unwind handler: ", exit.isGenericUnwindHandler(), "\n",
             "    Exit values: ", exitValues, "\n",
-            "    Value reps: ", listDump(exit.m_valueReps));
+            "    Value reps: ", listDump(valueReps));
         if (!exit.m_descriptor->m_materializations.isEmpty()) {
             dataLogLn("    Materializations:");
             for (ExitTimeObjectMaterialization* materialization : exit.m_descriptor->m_materializations)
@@ -706,12 +702,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
         }
     }
 
-    compileStub(vm, exitID, jitCode, exit, exitValues, codeBlock);
+    jitCode->m_osrExitStubs.append({ exitID, compileStub(vm, exitID, jitCode, exit, exitValues, valueReps, codeBlock) });
+    CodePtr<OSRExitPtrTag> code = jitCode->m_osrExitStubs.last().code.code();
 
-    MacroAssembler::repatchJump(
-        exit.codeLocationForRepatch(codeBlock), CodeLocationLabel<OSRExitPtrTag>(exit.m_code.code()));
-    
-    return exit.m_code.code().taggedPtr();
+    MacroAssembler::replaceWithJump(exit.m_entrance, CodeLocationLabel<OSRExitPtrTag>(code));
+    return code.taggedPtr();
 }
 
 } } // namespace JSC::FTL

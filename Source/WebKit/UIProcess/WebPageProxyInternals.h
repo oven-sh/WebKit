@@ -28,6 +28,7 @@
 #if ENABLE(WEBDRIVER_BIDI)
 #include "BidiDigitalCredentialsAgent.h"
 #endif
+#include "Connection.h"
 #include "ContextMenuContextData.h"
 #include "EditorState.h"
 #include "EnhancedSecurityTracking.h"
@@ -67,6 +68,10 @@
 #include "WebPaymentCoordinatorProxy.h"
 #endif
 
+#if __has_include(<WebKitAdditions/WebPageProxyAdditionsIncludes.h>)
+#include <WebKitAdditions/WebPageProxyAdditionsIncludes.h>
+#endif
+
 #if ENABLE(DRAG_SUPPORT)
 #include <WebCore/DragActions.h>
 #endif
@@ -103,6 +108,7 @@
 
 #if PLATFORM(COCOA)
 #include "CocoaWindow.h"
+#include "InteractionInformationRequest.h"
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
@@ -111,6 +117,11 @@
 
 #if ENABLE(IMAGE_ANALYSIS)
 #include <WebCore/ImageAnalysisQueue.h>
+#endif
+
+#if USE(GLIB)
+#include "WebKitWebView.h"
+#include <wtf/glib/GWeakPtr.h>
 #endif
 
 namespace WebKit {
@@ -136,12 +147,12 @@ struct SpeechSynthesisData {
 #if ENABLE(TOUCH_EVENTS)
 
 struct QueuedTouchEvents {
-    QueuedTouchEvents(const NativeWebTouchEvent& event)
-        : forwardedEvent(event)
+    QueuedTouchEvents(Ref<NativeWebTouchEvent>&& event)
+        : forwardedEvent(WTF::move(event))
     {
     }
-    NativeWebTouchEvent forwardedEvent;
-    Vector<NativeWebTouchEvent> deferredTouchEvents;
+    Ref<NativeWebTouchEvent> forwardedEvent;
+    Vector<Ref<NativeWebTouchEvent>> deferredTouchEvents;
 };
 
 struct TouchEventTracking {
@@ -193,7 +204,7 @@ public:
 
 #if ENABLE(WEB_AUTHN) && ENABLE(WEBDRIVER_BIDI)
     std::optional<VirtualWalletBehavior> testingVirtualWalletBehavior;
-    CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)> testingPendingDigitalCredentialHandler;
+    CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)> testingPendingDigitalCredentialHandler;
 #endif
 
     uint32_t checkedPtrCount() const { return WebPopupMenuProxy::Client::checkedPtrCount(); }
@@ -236,7 +247,7 @@ public:
     WebCore::IntSize fixedLayoutSize;
     GeolocationPermissionRequestManagerProxy geolocationPermissionRequestManager;
     HiddenPageThrottlingAutoIncreasesCounter::Token hiddenPageDOMTimerThrottlingAutoIncreasesCount;
-    Deque<NativeWebKeyboardEvent> keyEventQueue;
+    Deque<Ref<NativeWebKeyboardEvent>> keyEventQueue;
     WebCore::RectEdges<bool> mainFramePinnedState { true, true, true, true };
     WebCore::LayoutPoint maxStableLayoutViewportOrigin;
     WebCore::FloatSize maximumUnobscuredSize;
@@ -246,8 +257,8 @@ public:
     WebCore::LayoutPoint minStableLayoutViewportOrigin;
     WebCore::IntSize minimumSizeForAutoLayout;
     WebCore::FloatSize minimumUnobscuredSize;
-    Deque<NativeWebMouseEvent> mouseEventQueue;
-    Vector<WebMouseEvent> coalescedMouseEvents;
+    Deque<Ref<NativeWebMouseEvent>> mouseEventQueue;
+    Vector<Ref<WebMouseEvent>> coalescedMouseEvents;
     WebCore::MediaProducerMutedStateFlags mutedState;
     WebNotificationManagerMessageHandler notificationManagerMessageHandler;
     OptionSet<WebCore::LayoutMilestone> observedLayoutMilestones;
@@ -266,6 +277,9 @@ public:
     bool alwaysBounceVertical { true };
     bool alwaysBounceHorizontal { true };
     WebCore::Color sampledPageTopColor;
+#if __has_include(<WebKitAdditions/WebPageProxyInternalsAdditions.h>)
+#include <WebKitAdditions/WebPageProxyInternalsAdditions.h>
+#endif
     WebCore::ScrollPinningBehavior scrollPinningBehavior { WebCore::ScrollPinningBehavior::DoNotPin };
     WebCore::IntSize sizeToContentAutoSizeMaximumSize;
     WebCore::Color themeColor;
@@ -308,6 +322,19 @@ public:
 #if PLATFORM(COCOA)
     WeakObjCPtr<WKWebView> cocoaView;
     std::optional<TransactionID> firstLayerTreeTransactionIdAfterDidCommitLoad;
+
+    struct OutstandingPositionInformationRequest {
+        InteractionInformationRequest request;
+        IPC::AsyncReplyID replyID;
+        Ref<IPC::Connection> connection;
+    };
+    std::optional<OutstandingPositionInformationRequest> outstandingPositionInformationRequest;
+
+    Markable<WebCore::FrameIdentifier> interactionFrameID;
+#endif
+
+#if USE(GLIB)
+    GWeakPtr<WebKitWebView> platformView;
 #endif
 
 #if ENABLE(CONTEXT_MENUS)
@@ -333,7 +360,7 @@ public:
     RefPtr<WebColorPicker> colorPicker;
 
 #if ENABLE(MAC_GESTURE_EVENTS)
-    Deque<NativeWebGestureEvent> gestureEventQueue;
+    Deque<Ref<NativeWebGestureEvent>> gestureEventQueue;
     unsigned droppedGestureEventCount { 0 };
 #endif
 

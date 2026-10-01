@@ -115,7 +115,7 @@ bool StyleSheetList::isSupportedPropertyName(const AtomString& name) const
 Vector<AtomString> StyleSheetList::supportedPropertyNames()
 {
     // FIXME: Should be implemented.
-    return Vector<AtomString>();
+    return { };
 }
 
 } // namespace WebCore

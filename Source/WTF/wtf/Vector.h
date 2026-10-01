@@ -899,6 +899,7 @@ public:
 
     void removeAt(size_t position);
     void removeAt(size_t position, size_t length);
+    void moveTo(size_t oldPosition, size_t newPosition);
     bool removeFirst(const auto&);
     template<SmartPtr U = T, typename V> requires std::same_as<U, T> && std::derived_from<V, typename GetPtrHelper<U>::UnderlyingType>
     bool removeFirst(V*);
@@ -1023,7 +1024,7 @@ private:
 #if ASAN_ENABLED
     using Base::endOfBuffer;
 #endif
-} SWIFT_ESCAPABLE_IF(T);
+} SWIFT_ESCAPABLE_IF(T) SWIFT_COPYABLE_IF(T);
 
 template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
 Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::Vector(const Vector& other)
@@ -1732,6 +1733,26 @@ inline void Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::rem
     TypeOperations::moveOverlapping(endSpot, end(), beginSpot.data());
     asanBufferSizeWillChangeTo(m_size - length);
     m_size -= length;
+}
+
+template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
+inline void Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::moveTo(size_t oldPosition, size_t newPosition)
+{
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(oldPosition < size());
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(newPosition < size());
+
+    if (oldPosition == newPosition)
+        return;
+
+    // Lift the element out, shift only the range between the two positions into the gap, then drop it back.
+    T* data = mutableSpan().data();
+    T element = WTF::move(data[oldPosition]);
+    TypeOperations::destruct(data + oldPosition, data + oldPosition + 1);
+    if (oldPosition < newPosition)
+        TypeOperations::moveOverlapping(data + oldPosition + 1, data + newPosition + 1, data + oldPosition);
+    else
+        TypeOperations::moveOverlapping(data + newPosition, data + oldPosition, data + newPosition + 1);
+    new (NotNull, data + newPosition) T(WTF::move(element));
 }
 
 template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>

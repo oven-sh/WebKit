@@ -74,7 +74,7 @@ ImageDrawResult GraphicsContext::drawMultiRepresentationHEIC(Image& image, const
     if (!multiRepresentationHEIC)
         return ImageDrawResult::DidNothing;
 
-    RefPtr imageBuffer = createScaledImageBuffer(destination.size(), scaleFactor(), DestinationColorSpace::SRGB(), RenderingMode::Unaccelerated, RenderingMethod::Local);
+    RefPtr imageBuffer = createScaledImageBuffer(destination.size(), scaleFactor(), ColorSpace::SRGB(), RenderingMode::Unaccelerated, RenderingMethod::Local);
     if (!imageBuffer)
         return ImageDrawResult::DidNothing;
 
@@ -84,6 +84,7 @@ ImageDrawResult GraphicsContext::drawMultiRepresentationHEIC(Image& image, const
     CGContextTranslateCTM(cgContext, 0, -destination.height());
 
     // FIXME (rdar://123044459): This needs to account for vertical writing modes.
+    CGContextSetTextMatrix(cgContext, CGAffineTransformIdentity);
     CGContextSetTextPosition(cgContext, 0, font.metricsForMultiRepresentationHEIC().descent);
 
     CTFontDrawImageFromAdaptiveImageProviderAtPoint(font.ctFont(), multiRepresentationHEIC.get(), CGContextGetTextPosition(cgContext), cgContext);

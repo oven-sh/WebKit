@@ -72,7 +72,7 @@ namespace Types {
     f(Void, "void") \
     f(Bool, "bool") \
     f(Sampler, "sampler") \
-    f(SamplerComparison, "sampler_comparion") \
+    f(SamplerComparison, "sampler_comparison") \
     f(TextureExternal, "texture_external") \
     f(AccessMode, "access_mode") \
     f(TexelFormat, "texel_format") \
@@ -217,6 +217,8 @@ struct Function {
     WTF::Vector<const Type*> parameters;
     const Type* result;
     bool mustUse;
+    // An entry point may not be the target of a function call.
+    bool isEntryPoint;
 };
 
 struct Reference {

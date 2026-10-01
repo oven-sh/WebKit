@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -20,15 +20,294 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
 #include "FastMallocAlignedMemoryAllocator.h"
 
+#include "MarkedBlock.h"
+#include "Options.h"
+#include "VM.h"
+#include <mutex>
 #include <wtf/FastMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
+
+#if USE(LIBPAS)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#include <bmalloc/bmalloc_prefault_supply.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#else
+#include <wtf/AutomaticThread.h>
+#include <wtf/Box.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/PageBlock.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
+#endif
 
 namespace JSC {
+
+#if !ENABLE(MALLOC_HEAP_BREAKDOWN)
+
+static bool warmUpMarkedBlocksIsEnabled()
+{
+    // Mini mode trades throughput for footprint, which is the opposite bargain.
+    return Options::useWarmUpMarkedBlocks() && Options::warmUpMarkedBlockCount() && !VM::isInMiniMode();
+}
+
+// Bringing up a VM takes a few dozen blocks, and a short program never asks for many more; for
+// it the helper thread is only a thread to create, fault a supply on and tear down again at exit.
+// So the supply stays dormant until the process has requested this many blocks. A heap that
+// is ramping passes the threshold within its first milliseconds of allocation, and the helper
+// then fills the supply to its full depth as it would have from the first request.
+static bool isPastWarmUpStartThreshold()
+{
+    static std::atomic<bool> past { false };
+    static std::atomic<unsigned> requests { 0 };
+    if (past.load(std::memory_order_relaxed)) [[likely]]
+        return true;
+    if (requests.fetch_add(1, std::memory_order_relaxed) + 1 < Options::warmUpMarkedBlockStartAfterBlocks())
+        return false;
+    past.store(true, std::memory_order_relaxed);
+    return true;
+}
+
+#if USE(LIBPAS)
+
+static void configureWarmUpSupply()
+{
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        bmalloc_prefault_supply_set_block_size(MarkedBlock::blockSize);
+        bmalloc_prefault_supply_idle_timeout_in_milliseconds = Options::warmUpMarkedBlockIdleTimeout() * 1000;
+        bmalloc_prefault_supply_target = warmUpMarkedBlocksIsEnabled() ? Options::warmUpMarkedBlockCount() : 0;
+    });
+}
+
+#else // !USE(LIBPAS)
+
+// bmalloc_prefault_supply is part of libpas. A build whose fastMalloc is mimalloc or the system
+// allocator has no libpas, so it keeps the supply JSC had before 320895@main moved it there.
+namespace {
+
+// Lets a test drive the exhaustion path without running the machine out of memory.
+std::atomic<bool> s_allocationFailsForTesting { false };
+
+void* tryAllocateBlock()
+{
+    if (s_allocationFailsForTesting.load(std::memory_order_relaxed)) [[unlikely]]
+        return nullptr;
+    return tryFastCompactAlignedMalloc(MarkedBlock::blockSize, MarkedBlock::blockSize);
+}
+
+// The first store into a freshly allocated MarkedBlock takes a write fault, and a heap that is
+// ramping up pays that fault thousands of times on the mutator thread. WarmUpBlockProvider keeps a
+// supply of blocks whose pages a helper thread has already made resident, so the fault lands on the
+// helper instead.
+//
+// The supply has to be deep from the very first request, because ramp demand runs at tens of blocks
+// per millisecond and a depth that grows in proportion to observed demand arrives too late to help.
+// Warming a page is not free even when it is handed back promptly, so the supply is given up once an
+// interval passes with no demand at all.
+class WarmUpBlockProvider {
+public:
+    enum class Phase : uint8_t { Stopped, Armed, StandingDown };
+
+    WarmUpBlockProvider()
+        : m_lock(Box<Lock>::create())
+        , m_condition(AutomaticThreadCondition::create())
+        , m_thread(adoptRef(*new WarmUpThread(Locker { *m_lock }, *this)))
+    {
+    }
+
+    static WarmUpBlockProvider& singleton()
+    {
+        static LazyNeverDestroyed<WarmUpBlockProvider> provider;
+        static std::once_flag flag;
+        std::call_once(flag, [] {
+            provider.construct();
+        });
+        return provider;
+    }
+
+    void* tryTake()
+    {
+        Locker locker { *m_lock };
+        void* result = m_blocks.isEmpty() ? nullptr : m_blocks.takeLast();
+        m_demandSinceRefill = true;
+        m_demandSinceIdleCheck = true;
+        // A miss means the mutator is about to take the very fault this exists to avoid, and it is
+        // also the only thing that brings the helper back once it has shut itself down. While it is
+        // standing down, a notify would only postpone the timeout that lifts the stand-down.
+        if ((!result || isRunningLow()) && m_phase != Phase::StandingDown)
+            m_condition->notifyOne(locker);
+        return result;
+    }
+
+    unsigned blockCountForTesting()
+    {
+        Locker locker { *m_lock };
+        return static_cast<unsigned>(m_blocks.size());
+    }
+
+private:
+    // AutomaticThread has no voluntary temporary stop: PollResult::Stop is permanent, and start()
+    // release-asserts that the thread is still running. So giving up after an allocation failure has
+    // to be a wait that suppresses notifies, which is what leaves the idle timeout free to lift it.
+    class WarmUpThread final : public AutomaticThread {
+        WTF_MAKE_TZONE_ALLOCATED_INLINE(WarmUpThread);
+        WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WarmUpThread);
+    public:
+        WarmUpThread(const AbstractLocker& locker, WarmUpBlockProvider& provider)
+            : AutomaticThread(locker, provider.m_lock, provider.m_condition.copyRef(), Seconds(Options::warmUpMarkedBlockIdleTimeout()))
+            , m_provider(provider)
+        {
+        }
+
+        ASCIILiteral name() const final { return "JSCWarmUp"_s; }
+
+    protected:
+        void threadDidStart() final
+        {
+            Locker locker { *m_provider.m_lock };
+            m_provider.m_phase = Phase::Armed;
+        }
+
+        PollResult poll(const AbstractLocker&) final
+        {
+            assertIsHeld(*m_provider.m_lock);
+            if (m_provider.m_phase != Phase::Armed)
+                return PollResult::Wait;
+            // Topping the supply back up while demand is still arriving keeps it near its full depth
+            // on a ramp, rather than letting it drain to the watermark first.
+            if (m_provider.m_demandSinceRefill || m_provider.isRunningLow())
+                return PollResult::Work;
+            return PollResult::Wait;
+        }
+
+        WorkResult work() final
+        {
+            m_provider.refill();
+            return WorkResult::Continue;
+        }
+
+        bool shouldSleep(const AbstractLocker&) final
+        {
+            assertIsHeld(*m_provider.m_lock);
+            if (!std::exchange(m_provider.m_demandSinceIdleCheck, false))
+                return true;
+            m_provider.m_phase = Phase::Armed;
+            return false;
+        }
+
+        void threadIsStopping(const AbstractLocker&) final
+        {
+            assertIsHeld(*m_provider.m_lock);
+            // fastFree does not reach back into this lock, so it is safe to call with it held.
+            m_provider.m_phase = Phase::Stopped;
+            for (void* block : std::exchange(m_provider.m_blocks, { }))
+                fastFree(block);
+        }
+
+    private:
+        WarmUpBlockProvider& m_provider;
+    };
+
+    size_t targetDepth() WTF_REQUIRES_LOCK(*m_lock) { return m_phase == Phase::Armed ? Options::warmUpMarkedBlockCount() : 0; }
+
+    bool isRunningLow() WTF_REQUIRES_LOCK(*m_lock) { return m_blocks.size() * 4 < targetDepth(); }
+
+    static void makeResident(void* block)
+    {
+        // One store per page is what takes the fault. Striding by the real page size rather than by
+        // the smallest a supported system could have avoids repeating the store within a page.
+        size_t pageSize = WTF::pageSize();
+        ASSERT(!(MarkedBlock::blockSize % pageSize));
+        auto bytes = unsafeMakeSpan(static_cast<volatile char*>(block), MarkedBlock::blockSize);
+        for (size_t offset = 0; offset < bytes.size(); offset += pageSize)
+            bytes[offset] = 0;
+    }
+
+    void refill()
+    {
+        size_t want;
+        {
+            Locker locker { *m_lock };
+            m_demandSinceRefill = false;
+            size_t target = targetDepth();
+            want = target > m_blocks.size() ? target - m_blocks.size() : 0;
+        }
+
+        Vector<void*, 32> staging;
+        bool exhausted = false;
+        for (size_t i = 0; i < want; ++i) {
+            void* block = tryAllocateBlock();
+            if (!block) {
+                exhausted = true;
+                break;
+            }
+            makeResident(block);
+            staging.append(block);
+        }
+
+        Locker locker { *m_lock };
+        m_blocks.appendVector(WTF::move(staging));
+        if (exhausted)
+            m_phase = Phase::StandingDown;
+    }
+
+    const Box<Lock> m_lock;
+    const Ref<AutomaticThreadCondition> m_condition;
+    const Ref<WarmUpThread> m_thread;
+    Vector<void*, 32> m_blocks WTF_GUARDED_BY_LOCK(*m_lock);
+    Phase m_phase WTF_GUARDED_BY_LOCK(*m_lock) { Phase::Stopped };
+    bool m_demandSinceRefill WTF_GUARDED_BY_LOCK(*m_lock) { false };
+    bool m_demandSinceIdleCheck WTF_GUARDED_BY_LOCK(*m_lock) { false };
+};
+
+} // anonymous namespace
+
+#endif // USE(LIBPAS)
+
+bool warmUpMarkedBlocksAreEnabledForTesting()
+{
+#if USE(LIBPAS)
+    configureWarmUpSupply();
+    return !!bmalloc_prefault_supply_target;
+#else
+    return warmUpMarkedBlocksIsEnabled();
+#endif
+}
+
+unsigned warmUpMarkedBlockCountForTesting()
+{
+#if USE(LIBPAS)
+    configureWarmUpSupply();
+    return bmalloc_prefault_supply_block_count();
+#else
+    return WarmUpBlockProvider::singleton().blockCountForTesting();
+#endif
+}
+
+void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool shouldFail)
+{
+#if USE(LIBPAS)
+    // Read by the libpas filling thread, written here by whichever thread runs the test.
+    __atomic_store_n(&bmalloc_prefault_supply_allocation_should_fail_for_testing, shouldFail, __ATOMIC_RELAXED);
+#else
+    s_allocationFailsForTesting.store(shouldFail, std::memory_order_relaxed);
+#endif
+}
+
+#else // ENABLE(MALLOC_HEAP_BREAKDOWN)
+
+bool warmUpMarkedBlocksAreEnabledForTesting() { return false; }
+unsigned warmUpMarkedBlockCountForTesting() { return 0; }
+void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool) { }
+
+#endif
 
 FastMallocAlignedMemoryAllocator::FastMallocAlignedMemoryAllocator()
 #if ENABLE(MALLOC_HEAP_BREAKDOWN)
@@ -44,9 +323,21 @@ void* FastMallocAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignmen
 #if ENABLE(MALLOC_HEAP_BREAKDOWN)
     return m_heap.memalign(alignment, size, true);
 #else
+
+    // MarkedBlock::tryCreate is the only caller today and always asks for a block-shaped region.
+    // The guard keeps a future caller of some other size from being handed a block.
+    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && warmUpMarkedBlocksIsEnabled() && isPastWarmUpStartThreshold()) {
+#if USE(LIBPAS)
+        configureWarmUpSupply();
+        return bmalloc_prefault_supply_try_allocate();
+#else
+        if (void* block = WarmUpBlockProvider::singleton().tryTake())
+            return block;
+#endif
+    }
+
     return tryFastCompactAlignedMalloc(alignment, size);
 #endif
-
 }
 
 void FastMallocAlignedMemoryAllocator::freeAlignedMemory(void* basePtr)

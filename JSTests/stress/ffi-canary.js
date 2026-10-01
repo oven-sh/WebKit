@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Callee-saved register canary (SPEC section 11.1): ffi_canary_call loads
 // sentinels into every ABI-callee-saved GPR/FPR, calls the callback, and

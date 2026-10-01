@@ -61,7 +61,12 @@ RefPtr<CSSValue> consumeScale(CSSParserTokenRange&, CSS::PropertyParserState&);
 RefPtr<CSSValue> consumeRotate(CSSParserTokenRange&, CSS::PropertyParserState&);
 
 // MARK: <'transform'> parsing (raw)
-std::optional<Style::Transform> parseTransformRaw(const String&, const CSSParserContext&, const Document&);
+std::optional<Style::Transform> parseTransformRaw(StringView, const CSSParserContext&, const Document&);
+
+#if ENABLE(SPATIAL_PORTAL)
+// MARK: <'portal-transform'> consuming (CSSValue)
+RefPtr<CSSValue> consumePortalTransform(CSSParserTokenRange&, CSS::PropertyParserState&);
+#endif
 
 } // namespace CSSPropertyParserHelpers
 } // namespace WebCore

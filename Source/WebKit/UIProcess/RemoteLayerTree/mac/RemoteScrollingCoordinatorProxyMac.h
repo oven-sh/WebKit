@@ -45,7 +45,7 @@ public:
 private:
     void cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent&) override;
 
-    void handleWheelEvent(const WebWheelEvent&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges) override;
+    void handleWheelEvent(Ref<WebWheelEvent>&&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges) override;
     void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool wasHandled) override;
 
     WebCore::RequestsScrollHandling scrollingTreeNodeRequestsScroll(WebCore::ScrollingNodeID, const WebCore::RequestedScrollData&) override;
@@ -75,9 +75,11 @@ private:
     void animationsWereAddedToNode(RemoteLayerTreeNode&) override;
     void animationsWereRemovedFromNode(RemoteLayerTreeNode&) override;
     void updateTimelinesRegistration(WebCore::ProcessIdentifier, const WebCore::AcceleratedTimelinesUpdate&, MonotonicTime) override;
+    void removeTimelines(WebCore::ProcessIdentifier) override;
     RefPtr<const RemoteAnimationTimeline> timeline(const TimelineID&) const override;
     RefPtr<const RemoteAnimationStack> animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier) const override;
     HashSet<Ref<RemoteProgressBasedTimeline>> timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID) const override;
+    HashSet<Ref<RemoteMonotonicTimeline>> monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier) const override;
 #else
     void willCommitLayerAndScrollingTrees() override;
     void didCommitLayerAndScrollingTrees() override;

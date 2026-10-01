@@ -28,8 +28,7 @@
     Exposed=(Window,Worker),
     SecureContext
 ]
-interface GPUValidationError {
+interface GPUValidationError : GPUError {
     constructor(DOMString message);
-    readonly attribute DOMString message;
     readonly attribute DOMString stack;
 };

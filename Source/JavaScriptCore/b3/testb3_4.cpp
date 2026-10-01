@@ -2373,7 +2373,7 @@ void testComplex(unsigned numVars, unsigned numConstructs)
     compileProc(proc);
 
     MonotonicTime after = MonotonicTime::now();
-    dataLog(toCString("    That took ", (after - before).milliseconds(), " ms.\n"));
+    dataLog(toUTF8CString("    That took ", (after - before).milliseconds(), " ms.\n"));
 }
 
 void testBranchBitTest32TmpImm(uint32_t value, uint32_t imm)

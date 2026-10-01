@@ -830,7 +830,7 @@ void MediaPlayerPrivateMediaSourceAVFObjC::resetStallForTime(const MediaTime& ti
 
     auto stallAtTime = protect(m_mediaSourcePrivate)->nextStallTime(time);
     ALWAYS_LOG(LOGIDENTIFIER, "will stall playback at time: ", stallAtTime);
-    m_renderer->notifyTimeReachedAndStall(stallAtTime)->whenSettled(RunLoop::mainSingleton(), WTF::move(onStallReached))->track(m_stallRequest);
+    m_renderer->notifyTimeReachedAndStall(stallAtTime)->whenSettled(RunLoop::mainSingleton(), WTF::move(onStallReached))->track(protect(m_stallRequest));
 }
 
 void MediaPlayerPrivateMediaSourceAVFObjC::setLayerRequiresFlush()
@@ -939,12 +939,12 @@ RefPtr<VideoFrame> MediaPlayerPrivateMediaSourceAVFObjC::videoFrameForCurrentTim
     return m_lastVideoFrame;
 }
 
-DestinationColorSpace MediaPlayerPrivateMediaSourceAVFObjC::colorSpace()
+ColorSpace MediaPlayerPrivateMediaSourceAVFObjC::colorSpace()
 {
     assertIsMainThread();
     updateLastImage();
     RefPtr lastImage = m_lastImage;
-    return lastImage ? lastImage->colorSpace() : DestinationColorSpace::SRGB();
+    return lastImage ? lastImage->colorSpace() : ColorSpace::SRGB();
 }
 
 bool MediaPlayerPrivateMediaSourceAVFObjC::hasAvailableVideoFrame() const
@@ -1309,6 +1309,13 @@ void MediaPlayerPrivateMediaSourceAVFObjC::characteristicsFromMediaSourceChanged
     assertIsMainThread();
     if (RefPtr player = m_player.get())
         player->characteristicChanged();
+}
+
+void MediaPlayerPrivateMediaSourceAVFObjC::seekableRangesFromMediaSourceChanged()
+{
+    assertIsMainThread();
+    if (RefPtr player = m_player.get())
+        player->seekableTimeRangesChanged();
 }
 
 RetainPtr<PlatformLayer> MediaPlayerPrivateMediaSourceAVFObjC::createVideoFullscreenLayer()

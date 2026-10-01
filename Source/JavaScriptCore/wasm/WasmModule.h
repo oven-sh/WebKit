@@ -38,7 +38,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "WasmJS.h"
 #include "WasmMemory.h"
 #include "WasmOps.h"
-#include <wtf/Expected.h>
 #include <wtf/Lock.h>
 #include <wtf/SharedTask.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -59,7 +58,7 @@ enum class BindingFailure;
 
 class Module : public ThreadSafeRefCounted<Module> {
 public:
-    using ValidationResult = Expected<Ref<Module>, String>;
+    using ValidationResult = std::expected<Ref<Module>, String>;
     typedef void CallbackType(ValidationResult&&);
     using AsyncValidationCallback = RefPtr<SharedTask<CallbackType>>;
 
@@ -93,11 +92,6 @@ public:
     Ref<Wasm::InstanceAnchor> registerAnchor(JSWebAssemblyInstance*);
 
     std::unique_ptr<MergedProfile> createMergedProfile(const IPIntCallee&);
-
-#if ENABLE(WEBASSEMBLY_DEBUGGER)
-    uint32_t NODELETE debugId() const;
-    void NODELETE setDebugId(uint32_t);
-#endif
 
 private:
     Ref<CalleeGroup> getOrCreateCalleeGroup(VM&, MemoryMode);

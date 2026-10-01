@@ -46,6 +46,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "ICStats.h"
 #include "InlineCacheCompiler.h"
 #include "Interpreter.h"
+#include "IteratorOperations.h"
 #include "JIT.h"
 #include "JITExceptions.h"
 #include "JITThunks.h"
@@ -66,6 +67,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSMapIterator.h"
 #include "JSMicrotask.h"
+#include "JSModuleEnvironment.h"
 #include "JSPromise.h"
 #include "JSRemoteFunction.h"
 #include "JSSentinel.h"
@@ -74,12 +76,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSWithScope.h"
 #include "JumpTable.h"
 #include "LLIntEntrypoint.h"
+#include "LLIntSlowPaths.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "MegamorphicCache.h"
 #include "ObjectConstructor.h"
 #include "PropertyInlineCache.h"
 #include "PropertyName.h"
 #include "PropertyNameInlines.h"
-#include "RegExpObject.h"
+#include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
 #include "SuperSampler.h"
@@ -1143,60 +1147,20 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyGaveUp, void, (EncodedJSValue enc
     OPERATION_RETURN(scope);
 }
 
-ALWAYS_INLINE static void putByIdMegamorphic(JSGlobalObject* globalObject, VM& vm, CallFrame* callFrame, PropertyInlineCache* propertyCache, JSValue baseValue, JSValue value, CacheableIdentifier identifier, PutByKind kind)
+ALWAYS_INLINE static void putMegamorphic(JSGlobalObject* globalObject, VM& vm, CallFrame* callFrame, PropertyInlineCache* propertyCache, JSObject* baseObject, UniquedStringImpl* uid, JSValue value, PutPropertySlot& slot, PutByKind kind)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* uid = identifier.uid();
-    bool isStrict = kind == PutByKind::ByIdStrict;
-    PutPropertySlot slot(baseValue, isStrict, callFrame->codeBlock()->putByIdContext());
-
-    if (!baseValue.isObject()) [[unlikely]] {
-        if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
-        scope.release();
-        baseValue.put(globalObject, uid, value, slot);
-        return;
-    }
-
-    JSObject* baseObject = asObject(baseValue);
-    Structure* structure = baseObject->structure();
-
-    if (structure->typeInfo().overridesPut()) [[unlikely]] {
-        if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
-        scope.release();
-        baseValue.put(globalObject, uid, value, slot);
-        return;
-    }
-
-    {
-        JSObject* object = baseObject;
-        while (true) {
-            if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->typeInfo().overridesGetPrototype() || structure->typeInfo().overridesPut() || structure->hasPolyProto()) [[unlikely]] {
-                if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                    repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
-                scope.release();
-                baseObject->putInlineSlow(globalObject, uid, value, slot);
-                return;
-            }
-            JSValue prototype = object->getPrototypeDirect();
-            if (prototype.isNull())
-                break;
-            object = asObject(prototype);
-            structure = object->structure();
-        }
-    }
-
     Structure* oldStructure = baseObject->structure();
-    baseObject->putInlineFast(globalObject, uid, value, slot);
+    baseObject->putInline(globalObject, uid, value, slot);
     RETURN_IF_EXCEPTION(scope, void());
 
-    if (!slot.isCacheablePut() || !oldStructure->propertyAccessesAreCacheable()) [[unlikely]] {
+    if (!slot.isCacheablePut() || !oldStructure->propertyAccessesAreCacheable() || !canUseMegamorphicPutFastPath(oldStructure)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
             repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
         return;
     }
+    ASSERT(slot.base() == baseObject);
 
     Structure* newStructure = baseObject->structure();
     if (slot.type() == PutPropertySlot::ExistingProperty) {
@@ -1222,6 +1186,26 @@ ALWAYS_INLINE static void putByIdMegamorphic(JSGlobalObject* globalObject, VM& v
     bool reallocating = newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity();
     if (slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]]
         vm.megamorphicCache()->initAsTransition(StructureID::encode(oldStructure), StructureID::encode(newStructure), uid, slot.cachedOffset(), reallocating);
+}
+
+ALWAYS_INLINE static void putByIdMegamorphic(JSGlobalObject* globalObject, VM& vm, CallFrame* callFrame, PropertyInlineCache* propertyCache, JSValue baseValue, JSValue value, CacheableIdentifier identifier, PutByKind kind)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = identifier.uid();
+    bool isStrict = kind == PutByKind::ByIdStrict;
+    PutPropertySlot slot(baseValue, isStrict, callFrame->codeBlock()->putByIdContext());
+
+    if (!baseValue.isObject()) [[unlikely]] {
+        if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
+            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+        scope.release();
+        baseValue.put(globalObject, uid, value, slot);
+        return;
+    }
+
+    scope.release();
+    putMegamorphic(globalObject, vm, callFrame, propertyCache, asObject(baseValue), uid, value, slot, kind);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictMegamorphic, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
@@ -1851,8 +1835,8 @@ static ALWAYS_INLINE void directPutByValOptimize(JSGlobalObject* globalObject, C
             AccessType accessType = static_cast<AccessType>(propertyCache->accessType);
             PutPropertySlot slot(baseValue, isStrict, codeBlock->putByIdContext());
 
-            Structure* structure = CommonSlowPaths::originalStructureBeforePut(baseValue);
-            CommonSlowPaths::putDirectWithReify(vm, globalObject, baseObject, identifier, value, slot);
+            Structure* structure = nullptr;
+            CommonSlowPaths::putDirectWithReify(vm, globalObject, baseObject, identifier, value, slot, &structure);
 
             RETURN_IF_EXCEPTION(scope, void());
 
@@ -2030,13 +2014,10 @@ ALWAYS_INLINE static void putByValMegamorphic(JSGlobalObject* globalObject, VM& 
     Identifier propertyName = subscript.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
-    JSObject* baseObject = asObject(baseValue);
-    Structure* structure = baseObject->structure();
-
     PutPropertySlot slot(baseValue, isStrict);
 
     UniquedStringImpl* uid = propertyName.impl();
-    if (!canUseMegamorphicPutById(vm, uid) || structure->typeInfo().overridesPut()) [[unlikely]] {
+    if (!canUseMegamorphicPutById(vm, uid)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
             repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
         scope.release();
@@ -2044,58 +2025,8 @@ ALWAYS_INLINE static void putByValMegamorphic(JSGlobalObject* globalObject, VM& 
         return;
     }
 
-    {
-        JSObject* object = baseObject;
-        while (true) {
-            if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->typeInfo().overridesGetPrototype() || structure->typeInfo().overridesPut() || structure->hasPolyProto()) [[unlikely]] {
-                if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                    repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
-                scope.release();
-                baseObject->putInlineSlow(globalObject, uid, value, slot);
-                return;
-            }
-            JSValue prototype = object->getPrototypeDirect();
-            if (prototype.isNull())
-                break;
-            object = asObject(prototype);
-            structure = object->structure();
-        }
-    }
-
-    Structure* oldStructure = baseObject->structure();
-    baseObject->putInlineFast(globalObject, uid, value, slot);
-    RETURN_IF_EXCEPTION(scope, void());
-
-    if (!slot.isCacheablePut() || !oldStructure->propertyAccessesAreCacheable()) [[unlikely]] {
-        if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
-        return;
-    }
-
-    Structure* newStructure = baseObject->structure();
-    if (slot.type() == PutPropertySlot::ExistingProperty) {
-        if (oldStructure == newStructure && slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]] {
-            oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset()); // Ensure invalidating watchpoint set.
-            vm.megamorphicCache()->initAsReplace(StructureID::encode(oldStructure), uid, slot.cachedOffset());
-        }
-        return;
-    }
-
-    ASSERT(slot.type() == PutPropertySlot::NewProperty);
-    // This is not worth registering. Dictionary Structure is one-on-one to this object. And NewProperty happens only once.
-    // So this cache will be never used again.
-    if (oldStructure->isDictionary() || newStructure->isDictionary())
-        return;
-
-    if (oldStructure->mayBePrototype() || (newStructure->previousID() != oldStructure) || !newStructure->propertyAccessesAreCacheable()) [[unlikely]] {
-        if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
-        return;
-    }
-
-    bool reallocating = newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity();
-    if (slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]]
-        vm.megamorphicCache()->initAsTransition(StructureID::encode(oldStructure), StructureID::encode(newStructure), uid, slot.cachedOffset(), reallocating);
+    scope.release();
+    putMegamorphic(globalObject, vm, callFrame, propertyCache, asObject(baseValue), uid, value, slot, kind);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValStrictMegamorphic, void, (EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue, PropertyInlineCache* propertyCache, ArrayProfile* profile))
@@ -2519,7 +2450,8 @@ JSC_DEFINE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame* cal
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
     JSCell* calleeAsFunctionCell;
@@ -2541,7 +2473,8 @@ JSC_DEFINE_JIT_OPERATION(operationVirtualCall, UCPURegister, (CallFrame* calleeF
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
     JSCell* calleeAsFunctionCell;
@@ -2558,12 +2491,48 @@ JSC_DEFINE_JIT_OPERATION(operationDefaultCall, UCPURegister, (CallFrame* calleeF
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
     void* callTarget = linkFor(vm, owner, calleeFrame, callLinkInfo);
     // Keep owner alive explicitly. Now this function can be called from tail-call. This means that CallFrame for that owner already goes away, so we should keep it alive if we would like to use it.
     ensureStillAliveHere(owner);
+    if (scope.exception()) [[unlikely]]
+        OPERATION_RETURN(scope, std::bit_cast<UCPURegister>(vm.getCTIStub(CommonJITThunkID::ThrowExceptionFromCall).template retagged<JSEntryPtrTag>().code().taggedPtr()));
+    OPERATION_RETURN(scope, std::bit_cast<UCPURegister>(std::bit_cast<uintptr_t>(callTarget)));
+}
+
+// For the call sites of Baseline code that cannot leave it to operationUnlinkedCall(): see JIT::compileOpCall().
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationEnsureCallLinkInfo, void, (CodeBlock* codeBlock, uint32_t bytecodeIndexBits))
+{
+    VM& vm = codeBlock->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    codeBlock->ensureCallLinkInfoAt(codeBlock->instructionAt(BytecodeIndex::fromBits(bytecodeIndexBits)));
+}
+
+// For a tail call of Baseline code whose site has not run yet: CallLinkInfo::emitFastPathImpl(). The caller has stored the call
+// site in its frame.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationEnsureCallLinkInfoForTailCall, CallLinkInfo*, (CallFrame* callFrame))
+{
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    VM& vm = codeBlock->vm();
+    NativeCallFrameTracer tracer(vm, callFrame); // The inline cache's code has not said where the top of the stack is.
+    const JSInstruction* instruction = codeBlock->instructionAt(callFrame->bytecodeIndex());
+    RELEASE_ASSERT(instruction->opcodeID() == op_tail_call);
+    return &codeBlock->ensureCallLinkInfoAt(instruction);
+}
+
+// See LLInt::handleUnlinkedCall().
+JSC_DEFINE_JIT_OPERATION(operationUnlinkedCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo*))
+{
+    VM& vm = calleeFrame->callerFrame()->codeBlock()->vm();
+    NativeCallFrameTracer tracer(vm, calleeFrame);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    void* callTarget = LLInt::handleUnlinkedCall(vm, calleeFrame);
     if (scope.exception()) [[unlikely]]
         OPERATION_RETURN(scope, std::bit_cast<UCPURegister>(vm.getCTIStub(CommonJITThunkID::ThrowExceptionFromCall).template retagged<JSEntryPtrTag>().code().taggedPtr()));
     OPERATION_RETURN(scope, std::bit_cast<UCPURegister>(std::bit_cast<uintptr_t>(callTarget)));
@@ -2972,6 +2941,16 @@ JSC_DEFINE_JIT_OPERATION(operationNewRegExp, JSCell*, (JSGlobalObject* globalObj
     OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regexp, areLegacyFeaturesEnabled));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationNewRegExpShared, JSCell*, (JSGlobalObject* globalObject, JSCell* regexpPtr, WriteBarrier<JSCell>* cachedObject, int32_t forTest))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, RegExpObject::literalAsReceiver(globalObject, callFrame->codeBlock(), static_cast<RegExp*>(regexpPtr), forTest, *cachedObject));
+}
+
 // The only reason for returning an UnusedPtr (instead of void) is so that we can reuse the
 // existing DFG slow path generator machinery when creating the slow path for CheckTraps
 // in the DFG. If a DFG slow path generator that supports a void return type is added in the
@@ -3155,6 +3134,14 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
             OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
         }
     } else {
+        if (codeBlock->ensureCatchLivenessIsComputedForExecutedCatches()) {
+            // Options::useLazyCatchLiveness(): those catches only start profiling now; give them a warm-up like the other value profiles had.
+            CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("catch profiling just started"));
+            updateAllPredictionsAndOptimizeAfterWarmUp(codeBlock);
+            dataLogLnIf(Options::verboseOSR(), "Delaying optimization for ", *codeBlock, " because its catch value profiles were just created.");
+            OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+        }
+
         if (!codeBlock->shouldOptimizeNowFromBaseline()) {
             dataLogLnIf(Options::verboseOSR(),
                 "Delaying optimization for ", *codeBlock,
@@ -3263,10 +3250,10 @@ JSC_DEFINE_JIT_OPERATION(operationTryOSREnterAtCatchAndValueProfile, UGPRPair, (
         break;
     }
 
-    codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(bytecodeIndex);
-    auto bytecode = codeBlock->instructions().at(bytecodeIndex)->as<OpCatch>();
-    auto& metadata = bytecode.metadata(codeBlock);
-    metadata.m_buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
+    auto* buffer = codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(bytecodeIndex);
+    if (!buffer)
+        OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+    buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
         profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
     });
 
@@ -3496,6 +3483,23 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
 
     RELEASE_ASSERT_NOT_REACHED();
     OPERATION_RETURN(scope, makeUGPRPair(0, 0));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationIteratorNextWithIndexInFrame, UGPRPair, (JSGlobalObject* globalObject, EncodedJSValue encodedIterable, EncodedJSValue* indexInFrame, void* metadataPointer))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto& metadata = *std::bit_cast<OpIteratorNext::Metadata*>(metadataPointer);
+    JSValue index = JSValue::decode(*indexInFrame);
+    JSValue value;
+    bool hasNext = iteratorNextWithIndexInFrame(globalObject, metadata, JSValue::decode(encodedIterable), index, value);
+    *indexInFrame = JSValue::encode(index);
+    OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+
+    OPERATION_RETURN(scope, makeUGPRPair(JSValue::encode(jsBoolean(!hasNext)), JSValue::encode(value)));
 }
 
 #endif
@@ -4593,15 +4597,19 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     auto bytecode = pc->as<OpResolveScope>();
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* environment = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+    auto& metadata = bytecode.metadata(codeBlock);
+
+    if (metadata.m_resolveType == ModuleVar) {
+        JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, environment, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot));
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        OPERATION_RETURN(scope, JSValue::encode(result));
+    }
+
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_resolveType;
-
-    // ModuleVar does not keep the scope register value alive in DFG.
-    ASSERT(resolveType != ModuleVar);
 
     switch (resolveType) {
     case GlobalProperty:
@@ -4649,6 +4657,10 @@ JSC_DEFINE_JIT_OPERATION(operationGetFromScope, EncodedJSValue, (JSGlobalObject*
 
     // ModuleVar is always converted to ClosureVar for get_from_scope.
     ASSERT(getPutInfo.resolveType() != ModuleVar);
+
+    // The shared baseline code for LazyClosureVar also runs in CodeBlocks that linked this as ClosureVar.
+    if (getPutInfo.resolveType() == LazyClosureVar || getPutInfo.resolveType() == ClosureVar)
+        OPERATION_RETURN(scope, JSValue::encode(JSModuleEnvironment::readLazyClosureVar(vm, environment, ScopeOffset(bytecode.metadata(codeBlock).m_operand))));
 
     OPERATION_RETURN(scope, JSValue::encode(environment->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {

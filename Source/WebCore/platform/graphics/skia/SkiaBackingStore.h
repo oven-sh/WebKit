@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
 #include "CoordinatedBackingStoreProxy.h"
 #include "FloatRect.h"
 #include "IntRect.h"
@@ -50,6 +50,9 @@ public:
     float scale() const { return m_scale; }
     bool hasPendingTileUpdates() const { return m_hasPendingTileUpdates; }
     FloatSize size() const { return m_size; }
+
+    SkSamplingOptions samplingOptionsForMatrix(const SkMatrix&) const;
+    bool requiresStrictSourceConstraint(SkSamplingOptions sampling) const { return sampling.filter == SkFilterMode::kLinear && m_hasPaddedTiles; }
 
     void update(const FloatSize&, float scale, CoordinatedBackingStoreProxy::Update&&);
     void processPendingTileUpdates();
@@ -79,6 +82,7 @@ private:
 
         const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
         sk_sp<SkImage> image() const;
+        bool isPadded() const;
 
         // Logical region to sample from image() - smaller than the image for padded super-tiled textures.
         SkRect imageSourceRect() const;
@@ -105,8 +109,9 @@ private:
     FloatSize m_size;
     float m_scale { 1. };
     bool m_hasPendingTileUpdates { false };
+    bool m_hasPaddedTiles { false };
 };
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)

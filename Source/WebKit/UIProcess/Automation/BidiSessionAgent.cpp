@@ -26,6 +26,8 @@
 #include "config.h"
 #include "BidiSessionAgent.h"
 
+#include <wtf/text/TextStream.h>
+
 #if ENABLE(WEBDRIVER_BIDI)
 
 #include "BidiEventNames.h"
@@ -117,9 +119,7 @@ void BidiSessionAgent::subscribe(Ref<JSON::Array>&& events, RefPtr<JSON::Array>&
             addResult.iterator->value++;
     }
 
-    LOG(Automation, "BidiSessionAgent::subscribe: adding subscriptionID=%s, events=%s",
-        subscriptionID.utf8().data(),
-        events->toJSONString().utf8().data());
+    LOG_WITH_STREAM(Automation, stream << "BidiSessionAgent::subscribe: adding subscriptionID="_s << subscriptionID << ", events="_s << events->toJSONString());
     m_eventSubscriptions.add(subscriptionID, BidiEventSubscription { subscriptionID, WTF::move(atomEventNames), WTF::move(browsingContextIDs), { } });
 
     if (shouldReplayRealmCreatedEvents(m_eventSubscriptions.get(subscriptionID).events)) {
@@ -134,8 +134,7 @@ void BidiSessionAgent::subscribe(Ref<JSON::Array>&& events, RefPtr<JSON::Array>&
 void BidiSessionAgent::unsubscribeByEventName(RefPtr<JSON::Array>&& events, Inspector::CommandCallback<void>&& callback)
 {
 IGNORE_GCC_WARNINGS_BEGIN("format-overflow")
-    LOG(Automation, "BidiSessionAgent::unsubscribeByEventName: events=%s",
-        events ? events->toJSONString().utf8().data() : "null");
+    LOG_WITH_STREAM(Automation, stream << "BidiSessionAgent::unsubscribeByEventName: events="_s << (events ? events->toJSONString() : "null"_s));
 IGNORE_GCC_WARNINGS_END
 
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!events || !events->length(), InvalidParameter, "At least one event name must be provided."_s);
@@ -189,9 +188,7 @@ IGNORE_GCC_WARNINGS_END
 void BidiSessionAgent::unsubscribe(RefPtr<JSON::Array>&& subscriptions, RefPtr<JSON::Array>&& events, Inspector::CommandCallback<void>&& callback)
 {
 IGNORE_GCC_WARNINGS_BEGIN("format-overflow")
-    LOG(Automation, "BidiSessionAgent::unsubscribe: subscriptions=%s, events=%s",
-        subscriptions ? subscriptions->toJSONString().utf8().data() : "null",
-        events ? events->toJSONString().utf8().data() : "null");
+    LOG_WITH_STREAM(Automation, stream << "BidiSessionAgent::unsubscribe: subscriptions="_s << (subscriptions ? subscriptions->toJSONString() : "null"_s) << ", events="_s << (events ? events->toJSONString() : "null"_s));
 IGNORE_GCC_WARNINGS_END
 
     if (!subscriptions) {

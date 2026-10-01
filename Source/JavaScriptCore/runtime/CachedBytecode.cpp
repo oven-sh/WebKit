@@ -25,15 +25,312 @@
 
 #include "config.h"
 #include "CachedBytecode.h"
-#include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 #include "CachedTypes.h"
+#include "JSCInlines.h"
+#include "SourceProvider.h"
+#include "UnlinkedCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
+#include "WeakInlines.h"
+#include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PersistentBytecodePayloads);
+
+#if USE(BUN_JSC_ADDITIONS)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeOrderRecorder);
+
+BytecodeOrderRecorder::BytecodeOrderRecorder(bool isOver)
+    : m_isOver(isOver)
+{
+}
+BytecodeOrderRecorder::~BytecodeOrderRecorder() = default;
+
+static Lock s_orderRecordersLock;
+static bool s_orderRecordingIsOver WTF_GUARDED_BY_LOCK(s_orderRecordersLock) { false };
+static Vector<Ref<BytecodeOrderRecorder>>& orderRecorders() WTF_REQUIRES_LOCK(s_orderRecordersLock)
+{
+    static NeverDestroyed<Vector<Ref<BytecodeOrderRecorder>>> recorders;
+    return recorders;
+}
+
+Ref<BytecodeOrderRecorder> BytecodeOrderRecorder::create()
+{
+    Locker locker { s_orderRecordersLock };
+    Ref recorder = adoptRef(*new BytecodeOrderRecorder(s_orderRecordingIsOver));
+    orderRecorders().append(recorder);
+    return recorder;
+}
+
+Vector<Ref<BytecodeOrderRecorder>> BytecodeOrderRecorder::endRecordingInProcess()
+{
+    Locker locker { s_orderRecordersLock };
+    s_orderRecordingIsOver = true;
+    return orderRecorders();
+}
+
+BytecodeOrderRecorder* BytecodeOrderRecorder::ofVM(VM& vm)
+{
+    auto* payloads = vm.persistentBytecodePayloadsIfExists();
+    return payloads ? payloads->orderRecorderIfRecording() : nullptr;
+}
+
+unsigned BytecodeOrderRecorder::indexOf(RecordedOrderSource source)
+{
+    // Most of what is decoded comes out of the source the last thing came out of.
+    if (m_lastSource < m_recorded.sources.size() && m_recorded.sources[m_lastSource] == source)
+        return m_lastSource;
+    auto result = m_sources.add({ source.payload, source.entryOffset }, m_recorded.sources.size());
+    if (result.isNewEntry)
+        m_recorded.sources.append(source);
+    m_lastSource = result.iterator->value;
+    return m_lastSource;
+}
+
+void BytecodeOrderRecorder::didDecodeFunction(RecordedOrderSource source, OrderFunctionKey key)
+{
+    if (isOver())
+        return;
+    Locker locker { m_lock };
+    if (m_isOver)
+        return;
+    unsigned index = indexOf(source);
+    // Two bits of kind, 32 of start, 30 of source; the top two values are the table's own.
+    RELEASE_ASSERT(index < (1u << 30) - 1);
+    if (m_seenFunctions.add(static_cast<uint64_t>(index) << 34 | static_cast<uint64_t>(key.start) << 2 | static_cast<uint64_t>(key.kind)).isNewEntry)
+        m_recorded.functions.append({ index, key });
+}
+
+void BytecodeOrderRecorder::didDecodeModule(RecordedOrderSource source)
+{
+    if (isOver())
+        return;
+    Locker locker { m_lock };
+    if (m_isOver)
+        return;
+    unsigned index = indexOf(source);
+    if (!m_seenModules.set(index))
+        m_recorded.modules.append(index);
+}
+
+void BytecodeOrderRecorder::didRejectModule(RecordedOrderSource source)
+{
+    if (isOver())
+        return;
+    Locker locker { m_lock };
+    if (m_isOver)
+        return;
+    unsigned index = indexOf(source);
+    if (!m_seenRejectedModules.set(index))
+        m_recorded.rejectedModules.append(index);
+}
+
+void BytecodeOrderRecorder::didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal)
+{
+    if (isOver())
+        return;
+    Locker locker { m_lock };
+    if (m_isOver || m_seenStrings.set(ordinal))
+        return;
+    // Ordinals mean something in one table only: a VM has one for as long as it records.
+    RELEASE_ASSERT(m_recorded.stringOrdinals.isEmpty() || m_recorded.stringTable.data() == stringTable.data());
+    m_recorded.stringTable = stringTable;
+    m_recorded.stringOrdinals.append(ordinal);
+}
+
+auto BytecodeOrderRecorder::take() -> Snapshot
+{
+    Locker locker { m_lock };
+    m_isOver.store(true);
+    m_sources.clear();
+    m_seenFunctions.clear();
+    return std::exchange(m_recorded, { });
+}
+
+void PersistentBytecodePayloads::setLinkedPayload(std::span<const uint8_t> payload, const std::array<uint32_t, BytecodeLinkRegions::Count>& regionEnds)
+{
+    m_linkedPayloadBase = payload.data();
+    m_linkedPayloadStatistics = { };
+    m_linkedPayloadStatistics.regionEnds = regionEnds;
+}
+
+BytecodeOrderRecorder& PersistentBytecodePayloads::enableOrderRecording()
+{
+    if (!m_orderRecorder) {
+        m_orderRecorder = BytecodeOrderRecorder::create();
+        // Each function's code is decoded once: a recording is the same whenever the collector runs.
+        m_vm.keepUnlinkedCodeUntil(m_orderRecorder->isOverFlag());
+    }
+    return *m_orderRecorder;
+}
+
+BytecodeOrderRecorder* PersistentBytecodePayloads::orderRecorderIfRecording()
+{
+    // (The process keeps every recorder for good: VM::keepUnlinkedCodeUntil.)
+    if (m_orderRecorder && m_orderRecorder->isOver()) [[unlikely]]
+        m_orderRecorder = nullptr;
+    return m_orderRecorder.get();
+}
+#endif
+
+PersistentBytecodePayloads::PersistentBytecodePayloads(VM& vm)
+    : m_vm(vm)
+{
+    vm.heap.registerWeakGCHashTable(this);
+}
+
+PersistentBytecodePayloads::~PersistentBytecodePayloads()
+{
+    m_vm.heap.unregisterWeakGCHashTable(this);
+    for (auto& entry : m_entries) {
+        if (entry.decoder)
+            entry.decoder->clearPersistentPayloadIndex();
+    }
+}
+
+uint16_t PersistentBytecodePayloads::indexFor(CachedBytecode& payload, SourceProvider& provider)
+{
+    ASSERT(payload.payloadIsPersistent());
+    const uint8_t* bytes = payload.span().data();
+    if (!bytes || payload.size() > std::numeric_limits<int32_t>::max())
+        return 0;
+    Identity identity { bytes, &provider };
+    auto it = m_indices.find(identity);
+    if (it != m_indices.end()) {
+        if (m_entries[it->value - 1].payload->size() == payload.size())
+            return it->value;
+        return 0;
+    }
+    uint16_t index;
+    if (!m_freeIndices.isEmpty())
+        index = m_freeIndices.takeLast();
+    else {
+        if (m_entries.size() >= std::numeric_limits<uint16_t>::max())
+            return 0;
+        m_entries.append(Entry { });
+        index = m_entries.size();
+    }
+    Entry& entry = m_entries[index - 1];
+    ASSERT(!entry.payload && !entry.users && !entry.decoder);
+    entry.payload = &payload;
+    entry.provider = &provider;
+    m_indices.add(identity, index);
+    return index;
+}
+
+void PersistentBytecodePayloads::didCreateDecoder(uint16_t index, Decoder& decoder)
+{
+    Entry& entry = m_entries[index - 1];
+    if (!entry.decoder)
+        entry.decoder = &decoder;
+    retain(index);
+}
+
+void PersistentBytecodePayloads::willDestroyDecoder(uint16_t index, Decoder& decoder)
+{
+    Entry& entry = m_entries[index - 1];
+    if (entry.decoder == &decoder)
+        entry.decoder = nullptr;
+    release(index);
+}
+
+void PersistentBytecodePayloads::retain(uint16_t index)
+{
+    RELEASE_ASSERT(index && index <= m_entries.size() && m_entries[index - 1].payload);
+    ++m_entries[index - 1].users;
+}
+
+void PersistentBytecodePayloads::release(uint16_t index)
+{
+    RELEASE_ASSERT(index && index <= m_entries.size() && m_entries[index - 1].users);
+    if (!--m_entries[index - 1].users)
+        removeEntry(index);
+}
+
+void PersistentBytecodePayloads::removeEntry(uint16_t index)
+{
+    Entry& entry = m_entries[index - 1];
+    ASSERT(!entry.users && !entry.decoder);
+    m_indices.remove(Identity { entry.payload->span().data(), entry.provider.get() });
+    // Nothing can ask for these any more: asking takes a code block or a Decoder of this slot.
+    m_childExecutables.removeIf([&](auto& remembered) {
+        return remembered.key >> 32 == index;
+    });
+    // Last: dropping the provider can run the embedder's code.
+    RefPtr payload = std::exchange(entry.payload, nullptr);
+    RefPtr provider = std::exchange(entry.provider, nullptr);
+    m_freeIndices.append(index);
+}
+
+RefPtr<Decoder> PersistentBytecodePayloads::decoderFor(VM& vm, uint16_t index)
+{
+    if (!index || index > m_entries.size())
+        return nullptr;
+    Entry& entry = m_entries[index - 1];
+    if (!entry.payload)
+        return nullptr;
+    if (entry.decoder)
+        return entry.decoder;
+    return Decoder::create(vm, *entry.payload, entry.provider.get());
+}
+
+void PersistentBytecodePayloads::rememberChildExecutables(UnlinkedCodeBlock& codeBlock)
+{
+    unsigned declarations = codeBlock.numberOfFunctionDecls();
+    unsigned count = declarations + codeBlock.numberOfFunctionExprs();
+    if (!count)
+        return;
+    auto child = [&](unsigned position) {
+        return position < declarations ? codeBlock.functionDeclIfDecoded(position) : codeBlock.functionExpr(position - declarations);
+    };
+    bool any = false;
+    for (unsigned position = 0; position < count && !any; ++position)
+        any = !!child(position);
+    if (!any)
+        return;
+    FixedVector<Weak<UnlinkedFunctionExecutable>> children(count);
+    for (unsigned position = 0; position < count; ++position) {
+        if (UnlinkedFunctionExecutable* executable = child(position))
+            children[position] = Weak<UnlinkedFunctionExecutable>(executable);
+    }
+    m_childExecutables.set(key(codeBlock.cachedPayloadIndex(), codeBlock.cachedRecordOffset()), WTF::move(children));
+}
+
+void PersistentBytecodePayloads::reconcileWeakReferencesAtGCEnd(VM&, CollectionScope)
+{
+    if (m_childExecutables.isEmpty())
+        return;
+    m_childExecutables.removeIf([](auto& entry) {
+        bool anyAlive = false;
+        for (auto& child : entry.value) {
+            if (child)
+                anyAlive = true;
+            else
+                child.clear();
+        }
+        return !anyAlive;
+    });
+}
+
+auto PersistentBytecodePayloads::statistics() const -> Statistics
+{
+    Statistics result;
+    for (auto& entry : m_entries) {
+        if (!entry.payload)
+            continue;
+        result.payloads++;
+        if (!entry.decoder)
+            continue;
+        result.liveDecoders++;
+        entry.decoder->addRetainedTableSizes(result.decoderMappedPointers, result.decoderAtomsByOrdinal, result.decoderFinalizers);
+    }
+    result.parentsWithRememberedChildren = m_childExecutables.size();
+    return result;
+}
 
 void CachedBytecode::addGlobalUpdate(Ref<CachedBytecode> bytecode)
 {
@@ -65,40 +362,6 @@ void CachedBytecode::copyLeafExecutables(const CachedBytecode& bytecode)
 
 void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
 {
-    // The executable records being patched, as they will read after every patch so far, so each can be re-sealed.
-    HashMap<ptrdiff_t, Vector<uint8_t>> patchedRecords;
-    auto recordBytes = [&](ptrdiff_t base) -> Vector<uint8_t>& {
-        return patchedRecords.ensure(base, [&] {
-            // The record lives either in the original payload or in an update appended before this one.
-            auto findIn = [&](std::span<const uint8_t> bytes, ptrdiff_t start) -> std::span<const uint8_t> {
-                if (base < start || base >= start + static_cast<ptrdiff_t>(bytes.size()))
-                    return { };
-                auto record = bytes.subspan(base - start);
-                RELEASE_ASSERT(record.size() >= CachedFunctionExecutableOffsets::fixedSize());
-                RELEASE_ASSERT(CachedFunctionExecutableOffsets::isUpdatable(record)); // only the jsc shell's disk cache writes patchable records
-                uint32_t extent;
-                memcpySpan(std::span { reinterpret_cast<uint8_t*>(&extent), sizeof(extent) }, record.subspan(CachedFunctionExecutableOffsets::extentOffset(), sizeof(extent)));
-                RELEASE_ASSERT(extent >= CachedFunctionExecutableOffsets::fixedSize() && extent <= record.size()); // our own encoder wrote this record moments ago
-                return record.first(extent);
-            };
-            auto found = findIn(m_payload.span(), 0);
-            ptrdiff_t start = m_payload.size();
-            for (const auto& earlier : m_updates) {
-                if (!found.empty())
-                    break;
-                const CachePayload& earlierPayload = earlier.isGlobal() ? earlier.asGlobal().m_payload : earlier.asFunction().m_payload;
-                found = findIn(earlierPayload.span(), start);
-                start += earlierPayload.size();
-            }
-            RELEASE_ASSERT(!found.empty());
-            return Vector<uint8_t>(found);
-        }).iterator->value;
-    };
-    auto patch = [&](ptrdiff_t base, ptrdiff_t fieldOffset, std::span<const uint8_t> bytes) {
-        callback(base + fieldOffset, bytes);
-        memcpySpan(recordBytes(base).mutableSpan().subspan(fieldOffset, bytes.size()), bytes);
-    };
-
     off_t offset = m_payload.size();
     for (const auto& update : m_updates) {
         const CachePayload* payload = nullptr;
@@ -112,13 +375,9 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
                 ptrdiff_t fieldOffset = kindOffset + CachedWriteBarrierOffsets::ptrOffset() + CachedPtrOffsets::offsetOffset();
                 VariableLengthObjectBase::Offset offsetPayload = safeCast<VariableLengthObjectBase::Offset>(static_cast<ptrdiff_t>(offset + functionUpdate.m_rootOffset) - (functionUpdate.m_base + fieldOffset));
                 static_assert(std::is_same<decltype(VariableLengthObjectBase::m_offset), VariableLengthObjectBase::Offset>::value);
-                patch(functionUpdate.m_base, fieldOffset, { reinterpret_cast<const uint8_t*>(&offsetPayload), sizeof(offsetPayload) });
+                callback(functionUpdate.m_base + fieldOffset, { reinterpret_cast<const uint8_t*>(&offsetPayload), sizeof(offsetPayload) });
             }
-            patch(functionUpdate.m_base, CachedFunctionExecutableOffsets::metadataOffset(), { reinterpret_cast<const uint8_t*>(&functionUpdate.m_metadata), sizeof(functionUpdate.m_metadata) });
-            {
-                uint32_t checksum = bytecodeCacheRecordChecksum(recordBytes(functionUpdate.m_base).span(), CachedFunctionExecutableOffsets::checksumOffset());
-                callback(functionUpdate.m_base + CachedFunctionExecutableOffsets::checksumOffset(), { reinterpret_cast<const uint8_t*>(&checksum), sizeof(checksum) });
-            }
+            callback(functionUpdate.m_base + CachedFunctionExecutableOffsets::metadataOffset(), { reinterpret_cast<const uint8_t*>(&functionUpdate.m_metadata), sizeof(functionUpdate.m_metadata) });
         }
 
         ASSERT(payload);

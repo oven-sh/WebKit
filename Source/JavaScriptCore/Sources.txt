@@ -171,6 +171,7 @@ b3/B3ReduceDoubleToFloat.cpp
 b3/B3ReduceStrength.cpp
 b3/B3SIMDValue.cpp
 b3/B3SlotBaseValue.cpp
+b3/B3SpecializeSelect.cpp
 b3/B3StackmapGenerationParams.cpp
 b3/B3StackmapSpecial.cpp
 b3/B3StackmapValue.cpp
@@ -214,6 +215,7 @@ bytecode/ArrayProfile.cpp
 bytecode/BytecodeBasicBlock.cpp
 bytecode/BytecodeDumper.cpp
 bytecode/BytecodeGeneratorification.cpp
+bytecode/BytecodeOptimizer.cpp
 bytecode/BytecodeIndex.cpp
 bytecode/BytecodeIntrinsicRegistry.cpp
 bytecode/BytecodeLivenessAnalysis.cpp
@@ -645,7 +647,6 @@ jit/ExecutableAllocator.cpp
 jit/ExecutableMemoryHandle.cpp
 jit/GCAwareJITStubRoutine.cpp
 jit/GdbJIT.cpp
-jit/GPRInfo.cpp
 jit/ICStats.cpp
 jit/JIT.cpp
 jit/JITAddGenerator.cpp
@@ -713,6 +714,7 @@ parser/Nodes.cpp
 parser/NodesAnalyzeModule.cpp
 parser/Parser.cpp @no-unify-when(bundle<=8) @cost:4
 parser/ParserArena.cpp
+parser/SourceCharacters.cpp
 parser/SourceProvider.cpp
 parser/SourceProviderCache.cpp
 parser/SourceTaintedOrigin.cpp
@@ -1031,6 +1033,7 @@ runtime/PageCount.cpp
 runtime/PinballCompletion.cpp
 runtime/PinballHandlerContext.cpp
 runtime/PredictionFileCreatingFuzzerAgent.cpp
+runtime/PrelinkedModuleGraph.cpp
 runtime/PrivateFieldPutKind.cpp
 runtime/ProfilerSupport.cpp
 runtime/ProgramExecutable.cpp
@@ -1064,6 +1067,7 @@ runtime/ScopeOffset.cpp
 runtime/ScopedArguments.cpp
 runtime/ScopedArgumentsTable.cpp
 runtime/ScriptExecutable.cpp
+runtime/ScriptFetchParameters.cpp
 runtime/SetConstructor.cpp
 runtime/SetIteratorPrototype.cpp
 runtime/SetPrototype.cpp
@@ -1078,6 +1082,7 @@ runtime/StringConstructor.cpp
 runtime/StringIteratorPrototype.cpp
 runtime/StringObject.cpp
 runtime/StringPrototype.cpp
+runtime/StringRecursionChecker.cpp
 runtime/StringReplaceCache.cpp
 runtime/StringSplitCache.cpp
 runtime/Structure.cpp

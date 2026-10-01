@@ -503,6 +503,12 @@ void FindController::selectLastFoundRange(const String& string, OptionSet<FindOp
 
 void FindController::findString(const String& string, OptionSet<FindOptions> options, unsigned maxMatchCount, ShouldReuseLastFoundRange shouldReuseLastFoundRange, CompletionHandler<void(std::optional<FrameIdentifier>, Vector<IntRect>&&, uint32_t, int32_t, bool)>&& completionHandler)
 {
+    if (m_previousFindString != string) {
+        m_foundStringMatchIndex = std::nullopt;
+        m_lastFoundRange = std::nullopt;
+        m_previousFindString = string;
+    }
+
 #if ENABLE(PDF_PLUGIN)
     RefPtr pluginView = mainFramePlugIn();
 #endif
@@ -561,6 +567,7 @@ void FindController::findString(const String& string, OptionSet<FindOptions> opt
                 idOfFrameContainingString = frameID;
                 found = true;
                 didWrap = m_lastFoundRangeDidWrap ? WebCore::DidWrap::Yes : WebCore::DidWrap::No;
+                options.add(FindOptions::NoIndexChange);
             }
         }
 
@@ -725,6 +732,7 @@ void FindController::hideFindUI()
 {
     m_findMatches.clear();
     m_lastFoundRange = std::nullopt;
+    m_previousFindString = { };
 #if ENABLE(VIDEO)
     protect(protect(m_webPage.get())->corePage())->clearFindCaptionTracks();
 #endif
@@ -863,7 +871,7 @@ void FindController::drawRect(PageOverlay&, GraphicsContext& graphicsContext, co
         return;
 
     if (RefPtr selectedFrame = frameWithSelection(protect(protect(m_webPage)->corePage()))) {
-        auto findIndicatorRect = protect(selectedFrame->view())->contentsToRootView(enclosingIntRect(protect(selectedFrame->selection())->selectionBounds(FrameSelection::ClipToVisibleContent::No)));
+        auto findIndicatorRect = protect(selectedFrame->view())->contentsToMainFrameView(enclosingIntRect(protect(selectedFrame->selection())->selectionBounds(FrameSelection::ClipToVisibleContent::No)));
 
         if (findIndicatorRect != m_findIndicator->rect()) {
             // We are underneath painting, so it's not safe to mutate the layer tree synchronously.

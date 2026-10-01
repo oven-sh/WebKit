@@ -163,10 +163,6 @@ public:
 
     bool NODELETE containsPC(void* pc) const;
 
-    JSValueRegs valueRegs() const { return JSValueRegs(valueGPR()); }
-    JSValueRegs propertyRegs() const { return JSValueRegs(propertyGPR()); }
-    JSValueRegs baseRegs() const { return JSValueRegs(baseGPR()); }
-
     bool thisValueIsInExtraGPR() const { return accessType == AccessType::GetByIdWithThis || accessType == AccessType::GetByValWithThis; }
 
     bool isHandlerIC() const { return m_icType == PropertyInlineCacheType::Handler; }
@@ -242,7 +238,6 @@ public:
     static constexpr ptrdiff_t offsetOfByIdSelfOffset() { return OBJECT_OFFSETOF(PropertyInlineCache, byIdSelfOffset); }
     static constexpr ptrdiff_t offsetOfInlineAccessBaseStructureID() { return OBJECT_OFFSETOF(PropertyInlineCache, m_inlineAccessBaseStructureID); }
     static constexpr ptrdiff_t offsetOfInlineHolder() { return OBJECT_OFFSETOF(PropertyInlineCache, m_inlineHolder); }
-    static constexpr ptrdiff_t offsetOfDoneLocation() { return OBJECT_OFFSETOF(PropertyInlineCache, doneLocation); }
     static constexpr ptrdiff_t offsetOfCountdown() { return OBJECT_OFFSETOF(PropertyInlineCache, countdown); }
     static constexpr ptrdiff_t offsetOfCallSiteIndex() { return OBJECT_OFFSETOF(PropertyInlineCache, callSiteIndex); }
     static constexpr ptrdiff_t offsetOfHandler() { return OBJECT_OFFSETOF(PropertyInlineCache, m_handler); }
@@ -292,7 +287,6 @@ public:
     WriteBarrierStructureID m_inlineAccessBaseStructureID;
     JSCell* m_inlineHolder { nullptr };
     CacheableIdentifier m_identifier;
-    CodeLocationLabel<JSInternalPtrTag> doneLocation;
 
     JSGlobalObject* m_globalObject { nullptr };
 private:
@@ -549,6 +543,7 @@ public:
 
     // This is either the start of the inline IC for *byId caches, or the location of patchable jump for 'instanceof' caches.
     CodeLocationLabel<JITStubRoutinePtrTag> startLocation;
+    CodeLocationLabel<JSInternalPtrTag> doneLocation;
     CodeLocationLabel<JITStubRoutinePtrTag> slowPathStartLocation;
     CodeLocationCall<JSInternalPtrTag> m_slowPathCallLocation;
     std::unique_ptr<PolymorphicAccess> m_stub;
@@ -782,6 +777,7 @@ inline bool hasConstantIdentifier(AccessType accessType)
 }
 
 struct UnlinkedPropertyInlineCache {
+    CacheableIdentifier m_identifier; // This only comes from already marked one. Thus, we do not mark it via GC.
     AccessType accessType;
     CacheType preconfiguredCacheType { CacheType::Unset };
     bool propertyIsInt32 : 1 { false };
@@ -789,12 +785,11 @@ struct UnlinkedPropertyInlineCache {
     bool propertyIsSymbol : 1 { false };
     bool prototypeIsKnownObject : 1 { false };
     bool canBeMegamorphic : 1 { false };
-    CacheableIdentifier m_identifier; // This only comes from already marked one. Thus, we do not mark it via GC.
-    CodeLocationLabel<JSInternalPtrTag> doneLocation;
 };
 
 struct BaselineUnlinkedPropertyInlineCache : JSC::UnlinkedPropertyInlineCache {
     BytecodeIndex bytecodeIndex;
+    CodeLocationLabel<JSInternalPtrTag> doneLocation;
 };
 
 } // namespace JSC

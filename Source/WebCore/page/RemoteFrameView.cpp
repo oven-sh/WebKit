@@ -38,6 +38,14 @@
 
 namespace WebCore {
 
+// Page::syncLocalFrameInfoToRemote running in a parent frame process only sends transforms for
+// child frame subtrees containing a remote frame. From our perspective, that means that the
+// transforms are only valid on child subtrees containing a local frame.
+//
+// As an example, the absoluteToChildFrameOwnerLocalTransform for a child frame whose subtree is
+// hosted entirely in other processes will likely return an invalid result in this process.
+#define ASSERT_CHILD_CONTAINS_LOCAL_FRAME(child) ASSERT((child).tree().containsLocalFrame())
+
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteFrameView);
 
 RemoteFrameView::RemoteFrameView(RemoteFrame& frame)
@@ -74,17 +82,17 @@ void RemoteFrameView::setFrameRect(const IntRect& newRect)
 
 LayoutRect RemoteFrameView::layoutViewportRect() const
 {
-    return m_frame->frameTreeSyncData().frameLayoutViewportRect;
+    return m_frame->frameTreeSyncData().frameViewportInfo.layoutViewportRect;
 }
 
 IntSize RemoteFrameView::contentsSize() const
 {
-    return m_frame->frameTreeSyncData().frameContentsSize;
+    return m_frame->frameTreeSyncData().frameGeometry.contentsSize;
 }
 
 std::optional<LayoutRect> RemoteFrameView::visibleRectOfChild(const Frame& child) const
 {
-    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
         return info->visibleRectInParent();
 
     return std::nullopt;
@@ -92,7 +100,7 @@ std::optional<LayoutRect> RemoteFrameView::visibleRectOfChild(const Frame& child
 
 OptionSet<FrameOwnerElementAppearance> RemoteFrameView::appearanceOfOwnerElementOfChildFrame(const Frame& child) const
 {
-    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
         return info->ownerElementAppearance();
 
     return { };
@@ -100,7 +108,7 @@ OptionSet<FrameOwnerElementAppearance> RemoteFrameView::appearanceOfOwnerElement
 
 LayoutPoint RemoteFrameView::childFrameOwnerContentBoxLocation(const Frame& child) const
 {
-    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
         return info->contentBoxLocation();
 
     return { };
@@ -108,7 +116,9 @@ LayoutPoint RemoteFrameView::childFrameOwnerContentBoxLocation(const Frame& chil
 
 TransformationMatrix RemoteFrameView::childFrameOwnerToRootContentTransform(const Frame& child) const
 {
-    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+    ASSERT_CHILD_CONTAINS_LOCAL_FRAME(child);
+
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
         return info->childFrameOwnerToRootContentTransform();
 
     return { };
@@ -116,7 +126,9 @@ TransformationMatrix RemoteFrameView::childFrameOwnerToRootContentTransform(cons
 
 TransformationMatrix RemoteFrameView::absoluteToChildFrameOwnerLocalTransform(const Frame& child) const
 {
-    if (RefPtr info = m_frame->frameTreeSyncData().childrenFrameLayoutInfo.get(child.frameID()))
+    ASSERT_CHILD_CONTAINS_LOCAL_FRAME(child);
+
+    if (RefPtr info = m_frame->frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
         return info->absoluteToChildFrameOwnerLocalTransform();
 
     return { };

@@ -21,8 +21,6 @@
 
 #pragma once
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 #include <wtf/OptionSet.h>
 
 namespace WebCore {
@@ -50,7 +48,7 @@ public:
     constexpr bool contains(Fields) const;
 
     bool isIdempotentTextAutosizingCandidate(const Style::ComputedStyle&);
-    static float idempotentTextSize(float specifiedSize, float pageScale);
+    static float idempotentTextSize(float size, float pageScale);
     static bool probablyContainsASmallFixedNumberOfLines(const Style::ComputedStyle&);
 
     constexpr bool operator==(const AutosizeStatus&) const = default;
@@ -70,5 +68,3 @@ constexpr bool AutosizeStatus::contains(Fields fields) const
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(TEXT_AUTOSIZING)

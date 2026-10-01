@@ -293,9 +293,9 @@ JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncFinally, (JSGlobalObject* globalObject,
             JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
             auto* context = JSSlimPromiseReaction::create(vm, resultPromise, onFinally, /* isFulfill */ false, /* next */ nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-            promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, resultPromise, AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, context));
+            promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, nullptr, context, AsyncContextSwapScope::current(vm, globalObject));
 #else
-            promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, resultPromise, context);
+            promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, nullptr, context);
 #endif
             return JSValue::encode(resultPromise);
         }

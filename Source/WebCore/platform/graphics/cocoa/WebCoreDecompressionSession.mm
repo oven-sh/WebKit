@@ -32,6 +32,7 @@
 #import "Logging.h"
 #import "MediaSampleAVFObjC.h"
 #import "PixelBufferConformerCV.h"
+#import "SharedBuffer.h"
 #import "VideoDecoder.h"
 #import "VideoDecoderVTB.h"
 #import "VideoFrame.h"
@@ -100,7 +101,6 @@ WorkQueue& WebCoreDecompressionSession::queueSingleton()
 
 void WebCoreDecompressionSession::invalidate()
 {
-    assertIsMainThread();
     m_invalidated = true;
     Locker lock { m_lock };
     m_dispatcher->dispatch([decoder = WTF::move(m_videoDecoder)] {
@@ -248,7 +248,7 @@ static RetainPtr<CMTaggedBufferGroupRef> createTaggedBufferGroupWithRequiredVide
     return adoptCF(refinedTaggedBufferGroup);
 }
 
-Expected<RefPtr<VideoDecoderVTB>, OSStatus> WebCoreDecompressionSession::ensureDecoderForSample(CMSampleBufferRef cmSample)
+std::expected<RefPtr<VideoDecoderVTB>, OSStatus> WebCoreDecompressionSession::ensureDecoderForSample(CMSampleBufferRef cmSample)
 {
     if (m_waitingForKeyframe) {
         if (!isCMSampleBufferRandomAccess(cmSample))
@@ -354,7 +354,7 @@ static RetainPtr<CMFormatDescriptionRef> NODELETE copyDescriptionExtensionValues
 #endif
 }
 
-static Expected<RetainPtr<CMSampleBufferRef>, OSStatus> handleDecompressionOutput(WebCoreDecompressionSession::DecodingFlags flags, OSStatus status, VTDecodeInfoFlags, CVImageBufferRef imageBuffer, CMTaggedBufferGroupRef group, CMTime presentationTimeStamp, CMTime presentationDuration, CMFormatDescriptionRef currentImageDescription, CMVideoFormatDescriptionRef description = nullptr)
+static std::expected<RetainPtr<CMSampleBufferRef>, OSStatus> handleDecompressionOutput(WebCoreDecompressionSession::DecodingFlags flags, OSStatus status, VTDecodeInfoFlags, CVImageBufferRef imageBuffer, CMTaggedBufferGroupRef group, CMTime presentationTimeStamp, CMTime presentationDuration, CMFormatDescriptionRef currentImageDescription, CMVideoFormatDescriptionRef description = nullptr)
 {
     if (isNonRecoverableError(status)) {
         RELEASE_LOG_ERROR(Media, "Video sample decompression failed with error:%d", int(status));
@@ -476,18 +476,10 @@ Ref<WebCoreDecompressionSession::DecodingPromise> WebCoreDecompressionSession::d
                 MediaTime presentationTimestamp = PAL::toMediaTime(PAL::CMSampleBufferGetPresentationTimeStamp(cmSample.get()));
                 RetainPtr rawBuffer = PAL::CMSampleBufferGetDataBuffer(cmSample.get());
                 ASSERT(rawBuffer);
-                RetainPtr buffer = rawBuffer;
-                // Make sure block buffer is contiguous.
-                if (!PAL::CMBlockBufferIsRangeContiguous(rawBuffer.get(), 0, 0)) {
-                    CMBlockBufferRef contiguousBuffer;
-                    if (auto status = PAL::CMBlockBufferCreateContiguous(nullptr, rawBuffer.get(), nullptr, nullptr, 0, 0, 0, &contiguousBuffer))
-                        return DecodingPromise::createAndReject(status);
-                    buffer = adoptCF(contiguousBuffer);
-                }
-                auto data = PAL::CMBlockBufferGetDataSpan(buffer.get());
-                if (!data.data())
-                    return DecodingPromise::createAndReject(-1);
-                promises.append(videoDecoder->decode({ data, true, presentationTimestamp.toMicroseconds(), 0 }));
+                Ref data = sharedBufferFromCMBlockBuffer(rawBuffer.get());
+                if (data->isEmpty())
+                    return DecodingPromise::createAndReject(kVTAllocationFailedErr);
+                promises.append(videoDecoder->decode({ WTF::move(data), true, presentationTimestamp.toMicroseconds(), 0 }));
             }
             DecodingPromise::Producer producer;
             auto promise = producer.promise();

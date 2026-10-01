@@ -1,6 +1,7 @@
 /*
  *  Copyright (C) 2003-2026 Apple Inc. All rights reserved.
  *  Copyright (C) 2007 Eric Seidel <eric@webkit.org>
+ *  Copyright (C) 2026 Igalia S.L.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -25,11 +26,14 @@
 
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
+#include "ButterflyInlines.h"
 #include "CachedTypes.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectingScope.h"
+#include "CompleteSubspaceInlines.h"
 #include "ConservativeRoots.h"
+#include "DeferGCInlines.h"
 #include "EdenGCActivityCallback.h"
 #include "EvalExecutable.h"
 #include "Exception.h"
@@ -56,11 +60,16 @@
 #include "IsoInlinedHeapCellTypeInlines.h"
 #include "JITStubRoutineSet.h"
 #include "JITWorklistInlines.h"
+#include "JSAsyncFunctionGenerator.h"
+#include "JSAsyncGenerator.h"
 #include "JSFinalizationRegistry.h"
+#include "JSFunctionInlines.h"
 #include "JSFunctionWithFields.h"
+#include "JSGenerator.h"
 #include "JSIterator.h"
 #include "JSMicrotaskDispatcher.h"
 #include "JSModuleLoader.h"
+#include "JSObjectInlines.h"
 #include "JSPromiseCombinatorsContext.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseReaction.h"
@@ -114,6 +123,8 @@
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SimpleStats.h>
+#include <wtf/SpinBackoff.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
@@ -333,7 +344,7 @@ private:
     , name ISO_SUBSPACE_INIT(*this, heapCellType, type)
 
 #define INIT_SERVER_STRUCTURE_ISO_SUBSPACE(name, heapCellType, type) \
-    , name(#name, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, makeUnique<StructureAlignedMemoryAllocator>())
+    , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
 
 Heap::Heap(VM& vm, HeapType heapType)
     : m_heapType(heapType)
@@ -374,7 +385,6 @@ Heap::Heap(VM& vm, HeapType heapType)
     , callbackObjectHeapCellType(IsoHeapCellType::Args<JSCallbackObject<JSNonFinalObject>>())
     , customGetterFunctionHeapCellType(IsoHeapCellType::Args<JSCustomGetterFunction>())
     , customSetterFunctionHeapCellType(IsoHeapCellType::Args<JSCustomSetterFunction>())
-    , dateInstanceHeapCellType(IsoHeapCellType::Args<DateInstance>())
     , errorInstanceHeapCellType(IsoHeapCellType::Args<ErrorInstance>())
     , finalizationRegistryCellType(IsoHeapCellType::Args<JSFinalizationRegistry>())
     , globalLexicalEnvironmentHeapCellType(IsoHeapCellType::Args<JSGlobalLexicalEnvironment>())
@@ -426,6 +436,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     // AlignedMemoryAllocators
     , fastMallocAllocator(makeUnique<FastMallocAlignedMemoryAllocator>())
     , primitiveGigacageAllocator(makeUnique<GigacageAlignedMemoryAllocator>(Gigacage::Primitive))
+    , structureAllocator(makeUnique<StructureAlignedMemoryAllocator>())
 
     // Subspaces
     , primitiveGigacageAuxiliarySpace("Primitive Gigacage Auxiliary"_s, *this, auxiliaryHeapCellType, primitiveGigacageAllocator.get()) // Hash:0x3e7cd762
@@ -449,7 +460,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     m_worldState.store(0);
 
     for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
-        std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toCString("P", i + 1));
+        std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
         if (Options::optimizeParallelSlotVisitorsForStoppedMutator())
             visitor->optimizeForStoppedMutator();
         m_availableParallelSlotVisitors.append(visitor.get());
@@ -495,13 +506,10 @@ Heap::~Heap()
     m_mutatorMarkStack->clear();
     m_raceMarkStack->clear();
     
-    for (WeakBlock* block : m_logicallyEmptyWeakBlocks)
+    while (WeakBlock* block = m_detachedWeakBlocks.removeHead())
         WeakBlock::destroy(*this, block);
-}
-
-bool Heap::isPagedOut()
-{
-    return m_objectSpace.isPagedOut();
+    destroyAllPooledWeakBlocks();
+    ASSERT(!m_weakBlockCount);
 }
 
 void Heap::dumpHeapStatisticsAtVMDestruction()
@@ -611,10 +619,8 @@ void Heap::lastChanceToFinalize()
     Wasm::TypeInformation::cleanupIfRequested();
 #endif
 
-    sweepAllLogicallyEmptyWeakBlocks();
-    
     m_objectSpace.freeMemory();
-    
+
     dataLogIf(Options::logGC(), (MonotonicTime::now() - before).milliseconds(), "ms]\n");
 }
 
@@ -773,11 +779,13 @@ bool Heap::unprotect(JSValue k)
     return m_protectedValues.remove(k.asCell());
 }
 
-void Heap::addReference(JSCell* cell, ArrayBuffer* buffer)
+void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyReported)
 {
     if (m_arrayBuffers.addReference(cell, buffer)) {
         collectIfNecessaryOrDefer();
-        didAllocate(buffer->gcSizeEstimateInBytes());
+        size_t size = buffer->gcSizeEstimateInBytes();
+        ASSERT(bytesAlreadyReported <= size);
+        didAllocate(size - std::min(size, bytesAlreadyReported));
     }
 }
 
@@ -1144,7 +1152,7 @@ TypeCountSet Heap::objectTypeCounts()
     return result;
 }
 
-void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
+void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort, bool keepWhatNeedsParsing)
 {
     if (m_collectionScope && effort == DeleteAllCodeIfNotCollecting)
         return;
@@ -1166,7 +1174,7 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
             set.forEachLiveCell(
                 [&] (HeapCell* cell, HeapCell::Kind) {
                     ScriptExecutable* executable = static_cast<ScriptExecutable*>(cell);
-                    executable->clearCode(set);
+                    executable->clearCode(set, keepWhatNeedsParsing ? ScriptExecutable::ClearCode::KeepWhatNeedsParsing : ScriptExecutable::ClearCode::All);
                 });
         });
 
@@ -1193,22 +1201,85 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
 #endif
 }
 
-void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
+void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<UnlinkedCodeToDelete> which)
 {
     if (m_collectionScope && effort == DeleteAllCodeIfNotCollecting)
         return;
 
     VM& vm = this->vm();
+    // Shared Baseline code, below, still goes.
+    if (vm.keepsUnlinkedCode()) [[unlikely]]
+        which.remove({ UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
     PreventCollectionScope preventCollectionScope(*this);
 
     RELEASE_ASSERT(!m_collectionScope);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Compiler threads read unlinked code blocks through the CodeBlocks they compile: either those keep theirs, or
+    // there are none left to compile. Finishing the compilations that are ready allocates (DFG::LazyJSValue), so that
+    // happens before the heap is prepared for iteration, as in deleteAllCodeBlocks().
+    // What they allocate must not start a collection either (this thread could still start one): returning code to its
+    // cache rewrites an executable's code block slots into something a marker must not see half done.
+    bool returnsCodeToCache = which.contains(UnlinkedCodeToDelete::RecoverableFromCache);
+    UncheckedKeyHashSet<UnlinkedCodeBlock*> linkedAgainst;
+    std::optional<DeferGC> deferGC;
+    if (returnsCodeToCache) {
+        deferGC.emplace(vm);
+        if (which.contains(UnlinkedCodeToDelete::OnlyWithoutLinkedCode)) {
+            forEachCodeBlock([&](CodeBlock* codeBlock) {
+                linkedAgainst.add(codeBlock->unlinkedCodeBlock());
+            });
+        } else
+            completeAllJITPlans();
+        RELEASE_ASSERT(!m_collectionScope);
+    }
+#endif
+
     HeapIterationScope heapIterationScope(*this);
-    unlinkedFunctionExecutableSpaceAndSet.set.forEachLiveCell(
-        [&] (HeapCell* cell, HeapCell::Kind) {
-            UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
-            executable->clearCode(vm);
-        });
+#if USE(BUN_JSC_ADDITIONS)
+    if (returnsCodeToCache) {
+        // A generator or an async function that is suspended resumes in the code it is suspended in: its CodeBlock may have
+        // been jettisoned for old age, so nothing links against that code now, but it is about to be linked again, and
+        // decoding it again first would only hand the resumed activation new copies of everything it already has.
+        // Suspended, or not started yet: the state is a resume point (not negative). One that is running has a CodeBlock,
+        // and one that has finished is Completed, or for an async function, which never gets there, still Executing.
+        UncheckedKeyHashSet<UnlinkedFunctionExecutable*> suspended;
+        auto addIfSuspended = [&] (JSValue state, JSValue next) {
+            if (!state.isInt32() || state.asInt32() < static_cast<int32_t>(JSGenerator::State::Init))
+                return;
+            auto* function = dynamicDowncast<JSFunction>(next);
+            if (!function || function->isHostOrBuiltinFunction())
+                return;
+            suspended.add(function->jsExecutable()->unlinkedExecutable());
+        };
+        auto addSuspendedIn = [&]<typename GeneratorType>(IsoSubspace* space) {
+            if (!space)
+                return;
+            space->forEachLiveCell([&] (HeapCell* cell, HeapCell::Kind) {
+                auto* generator = static_cast<GeneratorType*>(cell);
+                addIfSuspended(generator->internalField(GeneratorType::Field::State).get(), generator->internalField(GeneratorType::Field::Next).get());
+            });
+        };
+        addSuspendedIn.template operator()<JSGenerator>(m_generatorSpace.get());
+        addSuspendedIn.template operator()<JSAsyncGenerator>(m_asyncGeneratorSpace.get());
+        addSuspendedIn.template operator()<JSAsyncFunctionGenerator>(m_asyncFunctionGeneratorSpace.get());
+
+        // Executables decoded from a cache are not in the set below; it only tracks the ones holding generated code.
+        unlinkedFunctionExecutableSpaceAndSet.space.forEachLiveCell(
+            [&] (HeapCell* cell, HeapCell::Kind) {
+                auto* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
+                if (!suspended.contains(executable))
+                    executable->returnCodeToCache(vm, linkedAgainst);
+            });
+    }
+#endif
+    if (which.contains(UnlinkedCodeToDelete::Generated)) {
+        unlinkedFunctionExecutableSpaceAndSet.set.forEachLiveCell(
+            [&] (HeapCell* cell, HeapCell::Kind) {
+                UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
+                executable->clearCode(vm);
+            });
+    }
 
 #if ENABLE(JIT)
     // Shareable Baseline JIT code is cached on UnlinkedCodeBlock::m_unlinkedBaselineCode (populated by
@@ -1218,7 +1289,8 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
     // executable memory across memory warnings indefinitely. Drop the cache eagerly here: any still-linked
     // CodeBlock holds its own ref to the BaselineJITCode (so we never free code that is still in use),
     // while a cache-only entry is freed as soon as its last ref goes away, synchronously here.
-    if (Options::useBaselineJITCodeSharing()) {
+    // (Not when only code that nothing links against goes: what stays linked would recompile what it shares.)
+    if (Options::useBaselineJITCodeSharing() && !which.contains(UnlinkedCodeToDelete::OnlyWithoutLinkedCode)) {
         auto clearUnlinkedBaselineCode = [] (HeapCell* cell, HeapCell::Kind) {
             static_cast<UnlinkedCodeBlock*>(cell)->m_unlinkedBaselineCode = nullptr;
         };
@@ -1233,6 +1305,29 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
 void Heap::deleteUnmarkedCompiledCode()
 {
     m_jitStubRoutines->deleteUnmarkedJettisonedStubRoutines(vm());
+}
+
+// Baseline JIT code is cached on the UnlinkedCodeBlock (CodeBlock::setupWithUnlinkedBaselineCode) so a re-created
+// CodeBlock can reuse it, but nothing ever releases that cache: once every CodeBlock that used it has died, the machine
+// code stays for as long as the unlinked code does. Drop cache entries that no CodeBlock has used for a baseline TTL
+// lease; a later warm-up simply compiles baseline again.
+void Heap::releaseUnusedSharedBaselineCode()
+{
+#if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
+    if (!Options::useBaselineJITCodeSharing() || !Options::useExecutionCountForCodeBlockAging())
+        return;
+    MonotonicTime cutoff = m_currentGCStartTime - CodeBlock::timeToLive(JITType::BaselineJIT) * Options::codeBlockAgingLeaseMultiplier();
+    // End phase: the world is stopped and allocation already is, so no HeapIterationScope.
+    auto visit = [&] (HeapCell* cell, HeapCell::Kind) {
+        auto& code = static_cast<UnlinkedCodeBlock*>(cell)->m_unlinkedBaselineCode;
+        if (code && code->hasOneRef() && code->m_ownerWentAwayAt < cutoff)
+            code = nullptr;
+    };
+    for (auto* space : { m_unlinkedFunctionCodeBlockSpace.get(), m_unlinkedProgramCodeBlockSpace.get(), m_unlinkedEvalCodeBlockSpace.get(), m_unlinkedModuleProgramCodeBlockSpace.get() }) {
+        if (space)
+            space->forEachLiveCell(visit);
+    }
+#endif
 }
 
 void Heap::addToRememberedSet(const JSCell* constCell)
@@ -1333,6 +1428,7 @@ void Heap::sweepSynchronously()
     }
     m_objectSpace.sweepBlocks();
     m_objectSpace.shrink();
+    destroyAllPooledWeakBlocks();
 #if ENABLE(WEBASSEMBLY)
     Wasm::TypeInformation::cleanupIfRequested();
 #endif
@@ -1341,6 +1437,429 @@ void Heap::sweepSynchronously()
         dataLog("=> ", capacity() / 1024, "kb, ", (after - before).milliseconds(), "ms");
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+
+// Reads stack memory across frames, like ConservativeRoots::genericAddSpan.
+template<typename Func>
+SUPPRESS_ASAN static void forEachWordInSpanConservatively(void* begin, void* end, const Func& func)
+{
+    if (begin > end)
+        std::swap(begin, end);
+    auto* word = std::bit_cast<uintptr_t*>(WTF::roundUpToMultipleOf<sizeof(uintptr_t)>(std::bit_cast<uintptr_t>(begin)));
+    for (; word + 1 <= std::bit_cast<uintptr_t*>(end); ++word) {
+        uintptr_t value = *word;
+        func(std::bit_cast<uintptr_t>(removeArrayPtrTag(std::bit_cast<void*>(value))));
+    }
+}
+
+// The live cells of a block that no allocator is in the middle of (no valid newlyAllocated bits): all of them if the block
+// was filled up since the last collection, otherwise the marked ones. This is MarkedBlock::Handle::isLive() outside of
+// marking, decided once per block instead of once per cell.
+template<typename Func>
+static void forEachLiveCellOfSettledBlock(MarkedBlock::Handle& handle, const Func& func)
+{
+    ASSERT(!handle.block().hasAnyNewlyAllocated());
+    if (handle.isAllocated()) {
+        char* cell = std::bit_cast<char*>(handle.start());
+        char* end = std::bit_cast<char*>(handle.end());
+        for (; cell + handle.cellSize() <= end; cell += handle.cellSize())
+            func(std::bit_cast<HeapCell*>(cell));
+        return;
+    }
+    handle.forEachMarkedCell([&](size_t, HeapCell* cell, HeapCell::Kind) {
+        func(cell);
+        return IterationStatus::Continue;
+    });
+}
+
+static size_t liveCellCountOfSettledBlock(MarkedBlock::Handle& handle)
+{
+    ASSERT(!handle.block().hasAnyNewlyAllocated());
+    size_t result;
+    if (handle.isAllocated())
+        result = handle.cellsPerBlock();
+    else if (handle.block().areMarksStale())
+        result = 0;
+    else
+        result = handle.block().markCount();
+#if ASSERT_ENABLED
+    size_t slowCount = 0;
+    handle.forEachLiveCell([&](size_t, HeapCell*, HeapCell::Kind) {
+        slowCount++;
+        return IterationStatus::Continue;
+    });
+    ASSERT(slowCount == result);
+#endif
+    return result;
+}
+
+// Where the out-of-line storage of an object begins, if Heap::evacuateSparseAuxiliaryBlocks may move it: it is a cell of a
+// MarkedBlock of the Auxiliary subspace. Null for an object without storage, for copy-on-write storage (a JSCellButterfly,
+// possibly shared) and for storage that is a precise allocation.
+static void* baseOfMovableStorage(JSObject* object)
+{
+    Butterfly* butterfly = object->butterfly();
+    if (!butterfly || isCopyOnWrite(object->indexingMode()))
+        return nullptr;
+    void* base = butterfly->base(object->structure());
+    if (PreciseAllocation::isPreciseAllocation(static_cast<HeapCell*>(base)))
+        return nullptr;
+    return base;
+}
+
+// Null if Heap::evacuateSparseAuxiliaryBlocks can run now. None of this is an error on the caller's part.
+ASCIILiteral Heap::reasonNotToEvacuateAuxiliaryBlocksNow()
+{
+    VM& vm = this->vm();
+    if (!Options::useGC())
+        return "the collector is off"_s;
+#if ENABLE(C_LOOP)
+    return "the CLoop stack is not scanned"_s;
+#endif
+    if (!vm.currentThreadIsHoldingAPILock())
+        return "the caller does not hold the API lock"_s;
+    if (!hasHeapAccess())
+        return "the caller has released heap access"_s;
+    if (!m_isSafeToCollect || m_isShuttingDown)
+        return "the heap is not ready for collections"_s;
+    if (m_collectionScope || worldIsStopped() || m_mutatorState != MutatorState::Running)
+        return "a collection is in progress"_s;
+    if (m_objectSpace.isIterating())
+        return "the heap is being iterated"_s;
+    // Taking the PreventCollectionScope waits for the collector, which can mean collecting right here.
+    if (isDeferred())
+        return "collection is deferred"_s;
+    // preventCollection() does not nest. (This is also what stops the allocations made by an evacuation from starting another.)
+    if (m_isCollectionPrevented)
+        return "collection is prevented by the caller"_s;
+    {
+        // Only this thread's stack is looked at.
+        Locker locker { m_machineThreads->getLock() };
+        if (m_machineThreads->threads(locker).size() > 1)
+            return "more than one thread is registered with the VM"_s;
+    }
+    return { };
+}
+
+// A butterfly is the one kind of GC memory with exactly one pointer to it that the collector knows how to find: the
+// m_butterfly of its object. So a butterfly can be moved without a moving collector, provided nothing else holds a raw
+// pointer to it at that moment. Raw butterfly pointers exist in machine registers and on the machine stack of code that
+// runs on behalf of this VM (JIT code hoists the load, C++ keeps Butterfly* locals across calls that can collect), in
+// active DFG scratch buffers and OSR exit side state, and in the copies of machine stack that a suspended JSPI
+// computation keeps (PinballCompletion): everything the collector itself scans conservatively. Generated code, inline
+// caches and profiles hold offsets and cells, suspended generators hold JSValues, compiler threads are parked at a
+// safepoint while cells move, the collector is not running. A cell of a candidate block that any such word points into,
+// or up to sizeof(IndexingHeader) past (the butterfly pointer of an object without indexed storage is that far beyond the
+// end of its allocation), is left where it is, and so is its block. The arithmetic is ConservativeRoots::genericAddPointer's.
+// Pointers into the storage are what matters, but the storage of an object that such a word refers to stays as well
+// (objects in MarkedBlocks and in precise allocations alike): code that has the object at hand may hold a pointer derived
+// from its butterfly that no longer points into the allocation.
+//
+// Not moved: what is not the butterfly of exactly one JSObject (property name enumerator buffers, ScopedArguments
+// overflow storage, StructureChain vectors: they keep their whole block in place), copy-on-write storage (a cell in
+// another subspace), precise allocations, the blocks allocators are in the middle of, blocks that are not sparse, and
+// size classes where moving would not free a block.
+//
+// The copy is installed with JSObject::setButterfly, i.e. the ordinary barrier: the owner goes to the remembered set and
+// the next collection marks the new storage through it, as it does when an old array grows. The old copy stays marked
+// and untouched until the next full collection finds it unreferenced.
+Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maximumOccupancy)
+{
+    AuxiliaryEvacuationResult result;
+    VM& vm = this->vm();
+    bool isTesting = Options::evacuateAuxiliaryBlocksAfterEveryFullCollection();
+    MonotonicTime before = MonotonicTime::now();
+    auto finish = [&] {
+        result.duration = MonotonicTime::now() - before;
+        if (result.skipped)
+            dataLogLnIf(Options::logGC(), "[no evacuation of sparse Auxiliary blocks: ", result.skipped, "]");
+        else
+            dataLogLnIf(Options::logGC(), "[evacuated ", result.evacuatedBlocks, " of ", result.candidateBlocks, " sparse Auxiliary blocks: ", result.movedCells, " cells, ", result.movedBytes / KB, " KB; pinned ", result.pinnedCells, ", without a single owner ", result.cellsWithoutSingleOwner, "; ", result.duration.milliseconds(), " ms]");
+        return result;
+    };
+
+    result.skipped = reasonNotToEvacuateAuxiliaryBlocksNow();
+    if (result.skipped)
+        return finish();
+    // The old copies of what the last call moved are still marked: they would only get in the way.
+    if (m_lastAuxiliaryEvacuationVersion == m_objectSpace.markingVersion()) {
+        result.skipped = "no full collection since the last evacuation"_s;
+        return finish();
+    }
+    if (!(maximumOccupancy > 0))
+        maximumOccupancy = 0;
+    maximumOccupancy = std::min(maximumOccupancy, 1.0);
+
+    PreventCollectionScope preventCollection(*this);
+    DeferGCForAWhile deferGC(vm);
+
+    struct Candidate {
+        MarkedBlock::Handle* handle { nullptr };
+        size_t liveBytes { 0 };
+        bool couldAllocate { false };
+        bool isEvacuated { false };
+    };
+    struct Claim {
+        JSObject* owner { nullptr };
+        unsigned count { 0 };
+    };
+    Vector<Candidate> candidates;
+    UncheckedKeyHashSet<MarkedBlock*> candidateBlocks;
+    UncheckedKeyHashSet<HeapCell*> pinned;
+    UncheckedKeyHashSet<HeapCell*> cellsOnStack;
+    UncheckedKeyHashMap<HeapCell*, Claim> claims;
+
+    // A candidate that is not evacuated in the end hands out its free cells again.
+    auto restoreCandidates = makeScopeExit([&] {
+        for (Candidate& candidate : candidates) {
+            if (candidate.isEvacuated || !candidate.couldAllocate)
+                continue;
+            BlockDirectory* directory = candidate.handle->directory();
+            Locker locker { directory->bitvectorLock() };
+            directory->setIsCanAllocate(candidate.handle, true);
+        }
+    });
+
+    {
+        HeapIterationScope iterationScope(*this);
+
+        size_t maximumLiveBytes = static_cast<size_t>(maximumOccupancy * MarkedBlock::payloadSize);
+        auxiliarySpace.forEachDirectory([&](BlockDirectory& directory) {
+            size_t firstCandidate = candidates.size();
+            size_t liveBytes = 0;
+            directory.forEachBlock([&](MarkedBlock::Handle* handle) {
+                // A block an allocator was in the middle of goes back to that allocator when iteration ends.
+                if (handle->block().hasAnyNewlyAllocated())
+                    return;
+                size_t liveBytesInBlock = liveCellCountOfSettledBlock(*handle) * handle->cellSize();
+                if (!liveBytesInBlock || liveBytesInBlock > maximumLiveBytes)
+                    return;
+                candidates.append({ handle, liveBytesInBlock, false, false });
+                liveBytes += liveBytesInBlock;
+            });
+            size_t count = candidates.size() - firstCandidate;
+            if (!count || isTesting)
+                return;
+            // Moving has to free at least one block of this size class, or the next call finds the block that this one
+            // filled half sparse again, and so on for ever.
+            size_t bytesPerBlock = directory.cellSize() * (MarkedBlock::payloadSize / directory.cellSize());
+            size_t blocksNeeded = (liveBytes + bytesPerBlock - 1) / bytesPerBlock;
+            if (count < 2 || blocksNeeded >= count)
+                candidates.shrink(firstCandidate);
+        });
+        result.candidateBlocks = candidates.size();
+        if (candidates.isEmpty())
+            return finish();
+        for (Candidate& candidate : candidates)
+            candidateBlocks.add(&candidate.handle->block());
+
+        // Objects in precise allocations (large ones, and the first few cells of every IsoSubspace), by address.
+        Vector<std::pair<uintptr_t, PreciseAllocation*>> preciseObjects;
+        for (PreciseAllocation* allocation : m_objectSpace.preciseAllocations()) {
+            if (isJSCellKind(allocation->attributes().cellKind))
+                preciseObjects.append({ std::bit_cast<uintptr_t>(allocation->cell()), allocation });
+        }
+        std::ranges::sort(preciseObjects, { }, &std::pair<uintptr_t, PreciseAllocation*>::first);
+
+        const auto& allBlocks = m_objectSpace.blocks().set();
+        auto pinIfInCandidate = [&](uintptr_t address) {
+            MarkedBlock* block = MarkedBlock::blockFor(std::bit_cast<void*>(address));
+            if (!candidateBlocks.contains(block))
+                return;
+            MarkedBlock::Handle& handle = block->handle();
+            if (!handle.contains(std::bit_cast<void*>(address)))
+                return;
+            pinned.add(static_cast<HeapCell*>(handle.cellAlign(std::bit_cast<void*>(address))));
+        };
+        auto noteCellOnStack = [&](uintptr_t address) {
+            if (!preciseObjects.isEmpty() && address >= preciseObjects.first().first) {
+                auto iterator = std::ranges::upper_bound(preciseObjects, address, { }, &std::pair<uintptr_t, PreciseAllocation*>::first);
+                PreciseAllocation* allocation = (iterator - 1)->second;
+                // One past the end included: that keeps a precise allocation alive (ConservativeRoots::genericAddPointer).
+                if (address - (iterator - 1)->first <= allocation->cellSize()) {
+                    cellsOnStack.add(allocation->cell());
+                    return;
+                }
+            }
+            MarkedBlock* block = MarkedBlock::blockFor(std::bit_cast<void*>(address));
+            if (!allBlocks.contains(block))
+                return;
+            MarkedBlock::Handle& handle = block->handle();
+            if (isJSCellKind(handle.cellKind()) && handle.contains(std::bit_cast<void*>(address)))
+                cellsOnStack.add(static_cast<HeapCell*>(handle.cellAlign(std::bit_cast<void*>(address))));
+        };
+        auto scanSpan = [&](void* begin, void* end) {
+            forEachWordInSpanConservatively(begin, end, [&](uintptr_t value) {
+                if (value < 2 * MarkedBlock::blockSize)
+                    return;
+                // Into the allocation; or at its end or up to sizeof(IndexingHeader) past it.
+                pinIfInCandidate(value);
+                pinIfInCandidate(value - sizeof(IndexingHeader) - 1);
+                noteCellOnStack(value);
+            });
+        };
+        auto scanThreadState = [&](CurrentThreadState& state) {
+            scanSpan(state.registerState, state.registerState + 1);
+            scanSpan(state.stackTop, state.stackOrigin);
+        };
+        callWithCurrentThreadState(scanThreadState);
+#if ENABLE(DFG_JIT)
+        vm.forEachConservativelyScannedBuffer(scanSpan);
+#endif
+#if ENABLE(WEBASSEMBLY)
+        if (IsoSubspace* pinballCompletions = m_pinballCompletionSpace.get()) {
+            pinballCompletions->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+                auto* pinball = uncheckedDowncast<PinballCompletion>(static_cast<JSCell*>(cell));
+                for (auto& slice : pinball->slices()) {
+                    std::span<Register> slots = slice->slots();
+                    scanSpan(slots.data(), slots.data() + slots.size());
+                }
+                scanSpan(pinball->calleeSaves(), pinball->calleeSaves() + NUMBER_OF_CALLEE_SAVES_REGISTERS);
+            });
+        }
+#endif
+
+        // Who owns what in the candidate blocks.
+        auto noteObject = [&](JSCell* cell) {
+            if (!cell->isObject())
+                return;
+            JSObject* object = asObject(cell);
+            void* base = baseOfMovableStorage(object);
+            if (!base)
+                return;
+            MarkedBlock* block = MarkedBlock::blockFor(base);
+            if (!candidateBlocks.contains(block))
+                return;
+            HeapCell* storage = static_cast<HeapCell*>(block->handle().cellAlign(base));
+            Claim& claim = claims.add(storage, Claim { }).iterator->value;
+            claim.owner = object;
+            claim.count++;
+            if (cellsOnStack.contains(cell))
+                pinned.add(storage);
+        };
+        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+            if (!isJSCellKind(handle->cellKind()))
+                return;
+            if (handle->block().hasAnyNewlyAllocated()) {
+                handle->forEachLiveCell([&](size_t, HeapCell* cell, HeapCell::Kind) {
+                    noteObject(static_cast<JSCell*>(cell));
+                    return IterationStatus::Continue;
+                });
+                return;
+            }
+            forEachLiveCellOfSettledBlock(*handle, [&](HeapCell* cell) {
+                noteObject(static_cast<JSCell*>(cell));
+            });
+        });
+        for (auto& [address, allocation] : preciseObjects) {
+            if (allocation->isLive())
+                noteObject(static_cast<JSCell*>(allocation->cell()));
+        }
+
+        result.pinnedCells = pinned.size();
+
+        // What is about to be emptied is not where the copies go.
+        for (Candidate& candidate : candidates) {
+            BlockDirectory* directory = candidate.handle->directory();
+            Locker locker { directory->bitvectorLock() };
+            candidate.couldAllocate = directory->isCanAllocate(candidate.handle);
+            directory->setIsCanAllocate(candidate.handle, false);
+        }
+    }
+
+    // Compiler threads read the butterflies of constant objects. At a safepoint, which is where this parks them, they hold cells only.
+    bool didSuspendCompilerThreads = suspendCompilerThreads();
+    auto resumeCompilerThreadsOnExit = makeScopeExit([&] {
+        if (didSuspendCompilerThreads)
+            resumeCompilerThreads();
+    });
+
+    Vector<HeapCell*> evacuatedCells;
+    for (Candidate& candidate : candidates) {
+        MarkedBlock::Handle& handle = *candidate.handle;
+        Vector<std::pair<HeapCell*, JSObject*>, 32> toMove;
+        bool canEvacuate = true;
+        forEachLiveCellOfSettledBlock(handle, [&](HeapCell* cell) {
+            auto iterator = claims.find(cell);
+            if (iterator == claims.end() || iterator->value.count != 1) {
+                result.cellsWithoutSingleOwner++;
+                canEvacuate = false;
+            } else if (pinned.contains(cell))
+                canEvacuate = false;
+            else
+                toMove.append({ cell, iterator->value.owner });
+        });
+        if (!canEvacuate || toMove.isEmpty())
+            continue;
+
+        size_t cellSize = handle.cellSize();
+        Allocator allocator = auxiliarySpace.allocatorFor(cellSize, AllocatorForMode::EnsureAllocator);
+        bool ranOutOfMemory = false;
+        for (auto [oldCell, owner] : toMove) {
+            void* newCell = allocator.allocate(*this, cellSize, nullptr, AllocationFailureMode::ReturnNull);
+            if (!newCell) {
+                ranOutOfMemory = true;
+                break;
+            }
+            RELEASE_ASSERT(!candidateBlocks.contains(MarkedBlock::blockFor(newCell)));
+            RELEASE_ASSERT(MarkedBlock::blockFor(newCell)->handle().cellSize() == cellSize);
+            Butterfly* oldButterfly = owner->butterfly();
+            memcpySpan(unsafeMakeSpan(static_cast<uint8_t*>(newCell), cellSize), unsafeMakeSpan(std::bit_cast<const uint8_t*>(oldCell), cellSize));
+            owner->setButterfly(vm, std::bit_cast<Butterfly*>(std::bit_cast<char*>(oldButterfly) + (std::bit_cast<char*>(newCell) - std::bit_cast<char*>(oldCell))));
+            if (isTesting) [[unlikely]] {
+                // As a JSValue this is a cell at an address that is never mapped; as a length it is out of bounds.
+                for (uint64_t* word = std::bit_cast<uint64_t*>(oldCell); word < std::bit_cast<uint64_t*>(std::bit_cast<char*>(oldCell) + cellSize); ++word)
+                    *word = 0xbadbeef0;
+                evacuatedCells.append(oldCell);
+            }
+            result.movedCells++;
+            result.movedBytes += cellSize;
+        }
+        if (ranOutOfMemory)
+            break;
+        candidate.isEvacuated = true;
+        result.evacuatedBlocks++;
+    }
+    if (result.movedCells)
+        m_lastAuxiliaryEvacuationVersion = m_objectSpace.markingVersion();
+
+    if (isTesting) [[unlikely]] {
+        UncheckedKeyHashSet<HeapCell*> evacuated;
+        for (HeapCell* cell : evacuatedCells)
+            evacuated.add(cell);
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind) || !static_cast<JSCell*>(heapCell)->isObject())
+                return IterationStatus::Continue;
+            void* base = baseOfMovableStorage(asObject(static_cast<JSCell*>(heapCell)));
+            if (!base)
+                return IterationStatus::Continue;
+            MarkedBlock::Handle& handle = MarkedBlock::blockFor(base)->handle();
+            HeapCell* storage = static_cast<HeapCell*>(handle.cellAlign(base));
+            RELEASE_ASSERT(!evacuated.contains(storage));
+            RELEASE_ASSERT(handle.isLive(storage));
+            return IterationStatus::Continue;
+        });
+    }
+
+    return finish();
+}
+
+// Testing (evacuateAuxiliaryBlocksAfterEveryFullCollection): called by the allocation slow path (where that has no
+// GCDeferralContext) once a full collection has finished, i.e. under whatever frames the mutator has on its stack at that
+// allocation: compiled code and natives in the middle of an allocation, with storage pointers in registers and spill slots.
+// Not called where a synchronous collection (gc()) returns to its caller: once cells have moved nothing moves again before
+// the next full collection, so an evacuation there would take the place of the one under those frames.
+void Heap::evacuateAuxiliaryBlocksIfDue()
+{
+    if (!m_auxiliaryEvacuationIsDue || reasonNotToEvacuateAuxiliaryBlocksNow())
+        return;
+    m_auxiliaryEvacuationIsDue = false;
+    evacuateSparseAuxiliaryBlocks(1);
+}
+
+#endif // USE(BUN_JSC_ADDITIONS)
 
 void Heap::collect(Synchronousness synchronousness, GCRequest request)
 {
@@ -1388,8 +1907,6 @@ void Heap::collectNow(Synchronousness synchronousness, GCRequest request)
             dataLogIf(Options::logGC(), "]\n");
         }
         m_objectSpace.assertNoUnswept();
-        
-        sweepAllLogicallyEmptyWeakBlocks();
         return;
     } }
     RELEASE_ASSERT_NOT_REACHED();
@@ -1551,6 +2068,16 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
         RELEASE_ASSERT(!m_requests.isEmpty());
         m_currentRequest = m_requests.first();
     }
+#if USE(BUN_JSC_ADDITIONS)
+    m_currentGCStartApproximateTime = ApproximateTime::now();
+    // Accumulated across collections, so a mutator that works steadily but is collected often (each cycle small) still
+    // reads as active; only a genuinely quiet stretch leaves the stamp to age.
+    m_bytesAllocatedSinceLastActiveCollection += totalBytesAllocatedThisCycle();
+    if (m_bytesAllocatedSinceLastActiveCollection > Options::optimizedCodeAgingQuietAllocationMB() * MB) {
+        m_bytesAllocatedSinceLastActiveCollection = 0;
+        m_lastActiveCollectionTime.store(m_currentGCStartApproximateTime, std::memory_order_relaxed);
+    }
+#endif
 
     dataLogIf(Options::logGC(), "[GC<", RawPointer(this), ">: START ", gcConductorShortName(conn), " ", capacity() / 1024, "kb ");
 
@@ -1580,8 +2107,8 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
     if (Options::useGCSignpost()) [[unlikely]] {
         StringPrintStream stream;
         stream.print("GC:(", RawPointer(this), "),mode:(", (isFullGC ? "Full" : "Eden"), "),version:(", m_gcVersion, "),conn:(", gcConductorShortName(conn), "),capacity(", capacity() / 1024, "kb)");
-        m_signpostMessage = stream.toCString();
-        WTFBeginSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.data() ? m_signpostMessage.data() : "(nullptr)");
+        m_signpostMessage = stream.toUTF8CString();
+        WTFBeginSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.isNull() ? "(nullptr)"_s : m_signpostMessage);
     }
 
     prepareForMarking();
@@ -1664,21 +2191,14 @@ NEVER_INLINE bool Heap::runFixpointPhase(GCConductor conn)
     SlotVisitor& visitor = *m_collectorSlotVisitor;
     
     if (Options::logGC()) [[unlikely]] {
-        UncheckedKeyHashMap<const char*, size_t> visitMap;
+        UncheckedKeyHashMap<ASCIICString, size_t> visitMap;
         forEachSlotVisitor(
             [&] (SlotVisitor& visitor) {
                 visitMap.add(visitor.codeName(), visitor.bytesVisited() / 1024);
             });
-        
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        auto perVisitorDump = sortedMapDump(
-            visitMap,
-            [] (const char* a, const char* b) -> bool {
-                return strcmp(a, b) < 0;
-            },
-            ":"_s, " "_s);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-        
+
+        auto perVisitorDump = sortedMapDump(visitMap, std::less<>(), ":"_s, " "_s);
+
         dataLog("v=", bytesVisited() / 1024, "kb (", perVisitorDump, ") o=", m_opaqueRoots.size(), " b=", m_barriersExecuted, " ");
     }
         
@@ -1835,16 +2355,18 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
 
         cancelDeferredWorkIfNeeded();
         reapWeakHandles();
-        pruneStaleEntriesFromWeakGCHashTables();
+        reconcileWeakGCHashTables();
         sweepArrayBuffers();
         snapshotUnswept();
         reconcileWeakReferencesAtGCEnd(); // Must precede clearCurrentlyExecuting: CodeBlock::reconcileWeakReferencesAtGCEnd queries which CodeBlocks are currently executing.
         removeDeadCompilerWorklistEntries();
         deleteUnmarkedCompiledCode();
+        if (m_collectionScope == CollectionScope::Full)
+            releaseUnusedSharedBaselineCode();
     }
 
-    notifyIncrementalSweeper();
-    
+    m_sweeper->startSweeping(*this);
+
     m_codeBlocks->iterateCurrentlyExecuting(
         [&] (CodeBlock* codeBlock) {
             writeBarrier(codeBlock);
@@ -1886,7 +2408,7 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
 
     dataLogLnIf(Options::logGC(), "GC END!");
     if (Options::useGCSignpost()) [[unlikely]] {
-        WTFEndSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.data() ? m_signpostMessage.data() : "(nullptr)");
+        WTFEndSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.isNull() ? "(nullptr)"_s : m_signpostMessage);
         m_signpostMessage = { };
     }
 
@@ -2015,6 +2537,7 @@ NEVER_INLINE void Heap::resumeThePeriphery()
             visitorsToUpdate.append(&visitor);
         });
     
+    SpinBackoff backoff;
     for (unsigned countdown = 40; !visitorsToUpdate.isEmpty() && countdown--;) {
         for (unsigned index = 0; index < visitorsToUpdate.size(); ++index) {
             SlotVisitor& visitor = *visitorsToUpdate[index];
@@ -2031,7 +2554,7 @@ NEVER_INLINE void Heap::resumeThePeriphery()
                 visitorsToUpdate.takeLast();
             }
         }
-        Thread::yield();
+        backoff.spinOnce();
     }
     
     for (SlotVisitor* visitor : visitorsToUpdate)
@@ -2412,6 +2935,11 @@ void Heap::runCollectionEpilogue()
     
     for (const GCCompletionCallback& callback : m_gcCompletionCallbacks)
         callback.run(vm());
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::evacuateAuxiliaryBlocksAfterEveryFullCollection() && m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) [[unlikely]]
+        m_auxiliaryEvacuationIsDue = true;
+#endif
     
     if (shouldSweepSynchronously())
         sweepSynchronously();
@@ -2536,12 +3064,24 @@ void Heap::reapWeakHandles()
     m_objectSpace.reapWeakSets();
 }
 
-void Heap::pruneStaleEntriesFromWeakGCHashTables()
+void Heap::reconcileWeakGCHashTables()
 {
-    if (!m_collectionScope || m_collectionScope.value() != CollectionScope::Full)
+    CollectionScope collectionScope = m_collectionScope.value_or(CollectionScope::Full);
+    if (collectionScope == CollectionScope::Full) {
+        for (auto* weakGCHashTable : m_weakGCHashTables)
+            weakGCHashTable->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
+        m_dirtyWeakGCHashTables.forEach([](WeakGCHashTable* weakGCHashTable) {
+            weakGCHashTable->remove();
+        });
         return;
-    for (auto* weakGCHashTable : m_weakGCHashTables)
-        weakGCHashTable->pruneStaleEntries();
+    }
+
+    // Only a table that gained an entry since the last collection can hold an entry that dies here:
+    // everything that survived that collection is old, and an eden collection cannot free it.
+    m_dirtyWeakGCHashTables.forEach([&](WeakGCHashTable* weakGCHashTable) {
+        weakGCHashTable->remove();
+        weakGCHashTable->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
+    });
 }
 
 void Heap::sweepArrayBuffers()
@@ -2559,16 +3099,6 @@ void Heap::deleteSourceProviderCaches()
 {
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full)
         vm().clearSourceProviderCaches();
-}
-
-void Heap::notifyIncrementalSweeper()
-{
-    if (m_collectionScope && m_collectionScope.value() == CollectionScope::Full) {
-        if (!m_logicallyEmptyWeakBlocks.isEmpty())
-            m_indexOfNextLogicallyEmptyWeakBlockToSweep = 0;
-    }
-
-    m_sweeper->startSweeping(*this);
 }
 
 void Heap::updateAllocationLimits()
@@ -2655,6 +3185,9 @@ void Heap::updateAllocationLimits()
         m_fullActivityCallback->setEnabled(true);
 #endif
     dataLogLnIf(verbose, "sizeAfterLastCollect = ", m_sizeAfterLastCollect);
+#if USE(BUN_JSC_ADDITIONS)
+    m_bytesAllocatedInPastCycles += totalBytesAllocatedThisCycle();
+#endif
     m_nonOversizedBytesAllocatedThisCycle = 0;
     m_oversizedBytesAllocatedThisCycle = 0;
     m_lastOversidedAllocationThisCycle = 0;
@@ -2844,43 +3377,65 @@ bool Heap::shouldDoFullCollection()
     return *m_currentRequest.scope == CollectionScope::Full;
 }
 
-void Heap::addLogicallyEmptyWeakBlock(WeakBlock* block)
+void Heap::addDetachedWeakBlock(WeakBlock* block)
 {
     RELEASE_ASSERT(!block->next() && !block->prev());
-    m_logicallyEmptyWeakBlocks.append(block);
+    ASSERT(&block->heap() == this);
+    block->setDetached();
+    m_detachedWeakBlocks.append(block);
 }
 
-void Heap::sweepAllLogicallyEmptyWeakBlocks()
+void Heap::releaseDetachedWeakBlock(WeakBlock* block)
 {
-    if (m_logicallyEmptyWeakBlocks.isEmpty())
-        return;
-
-    m_indexOfNextLogicallyEmptyWeakBlockToSweep = 0;
-    while (sweepNextLogicallyEmptyWeakBlock()) { }
+    ASSERT(&block->heap() == this);
+    m_detachedWeakBlocks.remove(block);
+    returnWeakBlockToPool(block);
 }
 
-bool Heap::sweepNextLogicallyEmptyWeakBlock()
+void Heap::returnWeakBlockToPool(WeakBlock* block)
 {
-    if (m_indexOfNextLogicallyEmptyWeakBlockToSweep == WTF::notFound)
-        return false;
-
-    WeakBlock* block = m_logicallyEmptyWeakBlocks[m_indexOfNextLogicallyEmptyWeakBlockToSweep];
     RELEASE_ASSERT(!block->next() && !block->prev());
+    ASSERT(&block->heap() == this);
+    ASSERT(block->isEmpty());
 
-    block->sweep();
-    if (block->isEmpty()) {
-        std::swap(m_logicallyEmptyWeakBlocks[m_indexOfNextLogicallyEmptyWeakBlockToSweep], m_logicallyEmptyWeakBlocks.last());
-        m_logicallyEmptyWeakBlocks.removeLast();
+    if (m_pooledWeakBlockCount >= maxPooledWeakBlocks()) {
         WeakBlock::destroy(*this, block);
-    } else
-        m_indexOfNextLogicallyEmptyWeakBlockToSweep++;
-
-    if (m_indexOfNextLogicallyEmptyWeakBlockToSweep >= m_logicallyEmptyWeakBlocks.size()) {
-        m_indexOfNextLogicallyEmptyWeakBlockToSweep = WTF::notFound;
-        return false;
+        return;
     }
 
-    return true;
+    block->setPooled();
+    m_pooledWeakBlocks.push(block);
+    ++m_pooledWeakBlockCount;
+}
+
+unsigned Heap::maxPooledWeakBlocks()
+{
+    unsigned divisor = Options::weakBlockPoolDivisor();
+    if (!divisor)
+        return 0;
+
+    // One spare per divisor MarkedBlocks, so a bigger heap keeps a proportionally bigger cache.
+    // The floor covers a heap too small for the ratio to name anything; the ceiling keeps the
+    // cache from becoming a memory sink in its own right.
+    constexpr unsigned minPooledWeakBlocks = 8;
+    constexpr unsigned maxPooledWeakBlocksEver = 1024;
+    size_t pooled = m_objectSpace.capacity() / (MarkedBlock::blockSize * static_cast<size_t>(divisor));
+    return clampTo<unsigned>(pooled, minPooledWeakBlocks, maxPooledWeakBlocksEver);
+}
+
+WeakBlock* Heap::takeWeakBlockFromPool()
+{
+    WeakBlock* block = m_pooledWeakBlocks.removeHead();
+    if (block)
+        --m_pooledWeakBlockCount;
+    return block;
+}
+
+void Heap::destroyAllPooledWeakBlocks()
+{
+    while (WeakBlock* block = m_pooledWeakBlocks.removeHead())
+        WeakBlock::destroy(*this, block);
+    m_pooledWeakBlockCount = 0;
 }
 
 size_t Heap::visitCount()
@@ -3076,7 +3631,20 @@ void Heap::registerWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
 
 void Heap::unregisterWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
 {
+    if (weakGCHashTable->isOnList())
+        weakGCHashTable->remove();
     m_weakGCHashTables.remove(weakGCHashTable);
+}
+
+void Heap::addDirtyWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
+{
+    ASSERT(!weakGCHashTable->isOnList());
+    m_dirtyWeakGCHashTables.append(weakGCHashTable);
+}
+
+void WeakGCHashTable::addToDirtyList(VM& vm)
+{
+    vm.heap.addDirtyWeakGCHashTable(this);
 }
 
 void Heap::didAllocateBlock(size_t capacity)
@@ -3119,7 +3687,7 @@ static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) { }
 void Heap::addCoreConstraints()
 {
     m_constraintSet->add(
-        "Cs", "Conservative Scan",
+        "Cs"_s, "Conservative Scan"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this, lastVersion = static_cast<uint64_t>(0)] (auto& visitor) mutable {
             bool shouldNotProduceWork = lastVersion == m_phaseVersion;
             SuperSamplerScope superSamplerScope(false);
@@ -3169,7 +3737,7 @@ void Heap::addCoreConstraints()
         ConstraintVolatility::GreyedByExecution);
     
     m_constraintSet->add(
-        "Msr", "Misc Small Roots",
+        "Msr"_s, "Misc Small Roots"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             VM& vm = this->vm();
 #if JSC_OBJC_API_ENABLED
@@ -3217,7 +3785,7 @@ void Heap::addCoreConstraints()
         ConstraintVolatility::GreyedByExecution);
     
     m_constraintSet->add(
-        "Sh", "Strong Handles",
+        "Sh"_s, "Strong Handles"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongHandles);
             m_strongSet.visitAggregate(visitor);
@@ -3226,7 +3794,7 @@ void Heap::addCoreConstraints()
         ConstraintVolatility::GreyedByExecution);
     
     m_constraintSet->add(
-        "D", "Debugger",
+        "D"_s, "Debugger"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::Debugger);
 
@@ -3243,7 +3811,7 @@ void Heap::addCoreConstraints()
         ConstraintVolatility::GreyedByExecution);
     
     m_constraintSet->add(
-        "Ws", "Weak Sets",
+        "Ws"_s, "Weak Sets"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::WeakSets);
             RefPtr<SharedTask<void(decltype(visitor)&)>> task = m_objectSpace.forEachWeakInParallel<decltype(visitor)>(visitor);
@@ -3253,7 +3821,7 @@ void Heap::addCoreConstraints()
         ConstraintParallelism::Parallel);
     
     m_constraintSet->add(
-        "O", "Output",
+        "O"_s, "Output"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([] (auto& visitor) {
             JSC::Heap* heap = visitor.heap();
 
@@ -3287,7 +3855,7 @@ void Heap::addCoreConstraints()
 
 #if ENABLE(WEBASSEMBLY)
     m_constraintSet->add(
-        "Pbc", "Pinball Completions",
+        "Pbc"_s, "Pinball Completions"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             // FIXME: Unlike the "Cs" constraint which is skipped during verification
             // because conservative roots are not stable, this skip is only here because
@@ -3319,7 +3887,7 @@ void Heap::addCoreConstraints()
 #if ENABLE(JIT)
     if (Options::useJIT()) {
         m_constraintSet->add(
-            "Jw", "JIT Worklist",
+            "Jw"_s, "JIT Worklist"_s,
             MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::JITWorkList);
 
@@ -3341,7 +3909,7 @@ void Heap::addCoreConstraints()
 #endif
     
     m_constraintSet->add(
-        "Cb", "CodeBlocks",
+        "Cb"_s, "CodeBlocks"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
             iterateExecutingAndCompilingCodeBlocksWithoutHoldingLocks(visitor,
@@ -3431,6 +3999,9 @@ void Heap::preventCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     
     // Now a collection can only start if this thread starts it.
     RELEASE_ASSERT(!m_collectionScope);
+#if USE(BUN_JSC_ADDITIONS)
+    m_isCollectionPrevented = true;
+#endif
 }
 
 // Use WTF_IGNORES_THREAD_SAFETY_ANALYSIS because this function conditionally unlocks m_collectContinuouslyLock,
@@ -3440,6 +4011,9 @@ void Heap::allowCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     if (!m_isSafeToCollect)
         return;
     
+#if USE(BUN_JSC_ADDITIONS)
+    m_isCollectionPrevented = false;
+#endif
     m_collectContinuouslyLock.unlock();
 }
 
@@ -3684,6 +4258,14 @@ void Heap::finalizeWasmCalleeCleanup()
                 && !m_wasmCalleesDiscoveredDuringGC.contains(callee.ptr());
         });
     }
+
+    // We need to ensure our thread sees all the new callsites otherwise we could be discarding a BBQCallee
+    // for foo but a different Callee could still have a stale direct call to foo's BBQ code on this core.
+    // Realistically, this is probably not needed, since we're essentially guarenteed to make a syscall
+    // that will syncronize the instruction cache during GC. That said, this happens so infrequently it's
+    // better to just have the code be clear.
+    if (!wasmCalleesToRelease.isEmpty())
+        WTF::crossModifyingCodeFence();
 
     m_wasmCalleesPendingDestructionSnapshot.clear();
     m_wasmCalleesDiscoveredDuringGC.clear();

@@ -992,7 +992,8 @@ int indexForVisiblePosition(const VisiblePosition& visiblePosition, RefPtr<Conta
     auto position = visiblePosition.deepEquivalent();
     Ref document = *position.document();
 
-    auto editableRoot = highestEditableRoot(position, AXObjectCache::accessibilityEnabled() ? HasEditableAXRole : ContentIsEditable);
+    bool useAccessibilityEditability = AXObjectCache::accessibilityEnabled() && document->existingAXObjectCache();
+    auto editableRoot = highestEditableRoot(position, useAccessibilityEditability ? HasEditableAXRole : ContentIsEditable);
     if (editableRoot && !document->inDesignMode())
         scope = editableRoot;
     else {
@@ -1205,12 +1206,13 @@ LayoutRect localCaretRectInRendererForRect(LayoutRect& localRect, Node* node, Re
     caretPainter = rendererForCaretPainting(node);
 
     // Compute an offset between the renderer and the caretPainter.
-    while (renderer != caretPainter) {
-        CheckedPtr containerObject = renderer->container();
+    CheckedPtr currentRenderer = renderer;
+    while (currentRenderer != caretPainter) {
+        CheckedPtr containerObject = currentRenderer->container();
         if (!containerObject)
             return LayoutRect();
-        localRect.move(renderer->offsetFromContainer(*containerObject, localRect.location()));
-        renderer = containerObject.get();
+        localRect.move(currentRenderer->offsetFromContainer(*containerObject, localRect.location()));
+        currentRenderer = containerObject;
     }
 
     return localRect;

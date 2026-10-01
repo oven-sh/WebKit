@@ -27,10 +27,13 @@
 
 #include "RenderTreePosition.h"
 #include "RenderWidget.h"
+#include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 
 class RenderGrid;
+class RenderListItem;
+class RenderListOutsideMarker;
 class RenderTreeUpdater;
 
 class RenderTreeBuilder {
@@ -68,7 +71,14 @@ public:
     void destroyAndCleanUpAnonymousWrappers(RenderObject& child, const RenderElement* destroyRoot);
     void normalizeTreeAfterStyleChange(RenderElement&, Style::ComputedStyle& oldStyle);
 
+    // Fills in what the marker registration below collected. Called from RenderTreeUpdater::GeneratedContent.
+    void updateListMarkerContents();
+
 private:
+    // Collected while the tree is being built: a marker's text is made of its list item's list-item counter value,
+    // which is only settled once the tree is done changing.
+    void addListItemNeedingMarkerUpdate(RenderListItem&);
+
     static void markBoxForRelayoutAfterSplit(RenderBoxModelObject&);
 
     void attachInternal(RenderElement& parent, RenderPtr<RenderObject>, RenderObject* beforeChild);
@@ -109,6 +119,7 @@ private:
     class FormControls;
     class Block;
     class BlockFlow;
+    class Canvas;
     class Inline;
     class SVG;
 #if ENABLE(MATHML)
@@ -125,12 +136,14 @@ private:
     BlockFlow& blockFlowBuilder() LIFETIME_BOUND { return m_blockFlowBuilder; }
     Inline& inlineBuilder() LIFETIME_BOUND { return m_inlineBuilder; }
     SVG& svgBuilder() LIFETIME_BOUND { return m_svgBuilder; }
+    Canvas& canvasBuilder() LIFETIME_BOUND { return m_canvasBuilder; }
 #if ENABLE(MATHML)
     MathML& mathMLBuilder() LIFETIME_BOUND { return m_mathMLBuilder; }
 #endif
 
     WidgetHierarchyUpdatesSuspensionScope m_widgetHierarchyUpdatesSuspensionScope;
     RenderView& m_view;
+    SingleThreadWeakHashSet<RenderListItem> m_listItemsNeedingMarkerUpdate;
     RenderTreeBuilder* m_previous { nullptr };
     static RenderTreeBuilder* s_current;
 
@@ -144,6 +157,7 @@ private:
     const UniqueRef<BlockFlow> m_blockFlowBuilder;
     const UniqueRef<Inline> m_inlineBuilder;
     const UniqueRef<SVG> m_svgBuilder;
+    const UniqueRef<Canvas> m_canvasBuilder;
 #if ENABLE(MATHML)
     const UniqueRef<MathML> m_mathMLBuilder;
 #endif

@@ -129,7 +129,7 @@ public:
         else
             string.print("    RELEASE_ASSERT(iter != ", m_id, "->end());\n");
         string.print("}\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return result;
     }
     
@@ -146,7 +146,7 @@ public:
         else
             string.print("    RELEASE_ASSERT(iter != ", m_id, "->end());\n");
         string.print("}\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return result;
     }
     
@@ -176,7 +176,7 @@ public:
         string.print(", ");
         LoggingValueTraits::print(string, passedValue);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return set(key, std::forward<PassedType>(passedValue));
     }
     
@@ -189,7 +189,7 @@ public:
         string.print(", ");
         LoggingValueTraits::print(string, passedValue);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return set(WTF::move(key), std::forward<PassedType>(passedValue));
     }
     
@@ -202,7 +202,7 @@ public:
         string.print(", ");
         LoggingValueTraits::print(string, passedValue);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return add(key, std::forward<PassedType>(passedValue));
     }
     
@@ -215,7 +215,7 @@ public:
         string.print(", ");
         LoggingValueTraits::print(string, passedValue);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return add(WTF::move(key), std::forward<PassedType>(passedValue));
     }
     
@@ -251,7 +251,7 @@ public:
         if (!didCallFunctor)
             LoggingValueTraits::print(string, MappedTraitsArg::emptyValue());
         string.print("; });\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return result;
     }
     
@@ -275,7 +275,7 @@ public:
         if (!didCallFunctor)
             LoggingValueTraits::print(string, MappedTraitsArg::emptyValue());
         string.print("; });\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return result;
     }
     
@@ -285,7 +285,7 @@ public:
         string.print(m_id, "->remove(");
         LoggingKeyTraits::print(string, key);
         string.print(");\n");
-        dataLog(string.toCString());
+        dataLog(string.toUTF8CString());
         return m_map.remove(key);
     }
     

@@ -26,9 +26,9 @@
 
 #pragma once
 
+#include <WebCore/ColorSpace.h>
 #include <WebCore/ControlPart.h>
 #include <WebCore/DashArray.h>
-#include <WebCore/DestinationColorSpace.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/FloatSegment.h>
 #include <WebCore/FontCascade.h>
@@ -47,6 +47,7 @@
 namespace WebCore {
 
 class AffineTransform;
+class BitmapImage;
 class Filter;
 class FilterResults;
 class FloatRoundedRect;
@@ -58,6 +59,8 @@ class TextRun;
 class VideoFrame;
 
 enum class RequiresClipToRect : bool { No, Yes };
+
+enum class ShouldDiscardAlpha : bool { No, Yes };
 
 namespace DisplayList {
 class DisplayList;
@@ -81,7 +84,7 @@ public:
     virtual bool hasPlatformContext() const { return false; }
     virtual PlatformGraphicsContext* platformContext() const { return nullptr; }
 
-    virtual const DestinationColorSpace& colorSpace() const { return DestinationColorSpace::SRGB(); }
+    virtual const ColorSpace& colorSpace() const { return ColorSpace::SRGB(); }
 
     virtual bool paintingDisabled() const { return false; }
     virtual bool performingPaintInvalidation() const { return false; }
@@ -170,6 +173,10 @@ public:
     // to the platform context's state.
     virtual void didUpdateState(GraphicsContextState&) = 0;
 
+    void didInvalidatePlatformState(GraphicsContextState::ChangeFlags properties) { m_state.markChanged(properties); }
+
+    void updatePlatformContextState() { didUpdateState(m_state); }
+
     WEBCORE_EXPORT virtual void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore);
     WEBCORE_EXPORT virtual void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore);
 
@@ -245,14 +252,14 @@ public:
 
     IntSize compatibleImageBufferSize(const FloatSize&) const;
 
-    WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, float resolutionScale = 1, const DestinationColorSpace& = DestinationColorSpace::SRGB(), std::optional<RenderingMode> = std::nullopt, std::optional<RenderingMethod> = std::nullopt, ImageBufferFormat = { PixelFormat::BGRA8 }) const;
-    RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, const DestinationColorSpace&, PixelFormat) const;
+    WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, float resolutionScale = 1, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMode> = std::nullopt, std::optional<RenderingMethod> = std::nullopt, ImageBufferFormat = { PixelFormat::BGRA8 }) const;
+    RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, const ColorSpace&, PixelFormat) const;
 
-    WEBCORE_EXPORT RefPtr<ImageBuffer> createScaledImageBuffer(const FloatSize&, const FloatSize& scale = { 1, 1 }, const DestinationColorSpace& = DestinationColorSpace::SRGB(), std::optional<RenderingMode> = std::nullopt, std::optional<RenderingMethod> = std::nullopt) const;
-    WEBCORE_EXPORT RefPtr<ImageBuffer> createScaledImageBuffer(const FloatRect&, const FloatSize& scale = { 1, 1 }, const DestinationColorSpace& = DestinationColorSpace::SRGB(), std::optional<RenderingMode> = std::nullopt, std::optional<RenderingMethod> = std::nullopt) const;
+    WEBCORE_EXPORT RefPtr<ImageBuffer> createScaledImageBuffer(const FloatSize&, const FloatSize& scale = { 1, 1 }, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMode> = std::nullopt, std::optional<RenderingMethod> = std::nullopt) const;
+    WEBCORE_EXPORT RefPtr<ImageBuffer> createScaledImageBuffer(const FloatRect&, const FloatSize& scale = { 1, 1 }, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMode> = std::nullopt, std::optional<RenderingMethod> = std::nullopt) const;
 
-    WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatSize&, const DestinationColorSpace& = DestinationColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
-    WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatRect&, const DestinationColorSpace& = DestinationColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
+    WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatSize&, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
+    WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatRect&, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
 
     WEBCORE_EXPORT virtual void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) = 0;
 
@@ -261,6 +268,10 @@ public:
     WEBCORE_EXPORT ImageDrawResult drawImage(Image&, const FloatPoint& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
     WEBCORE_EXPORT ImageDrawResult drawImage(Image&, const FloatRect& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
     WEBCORE_EXPORT virtual ImageDrawResult drawImage(Image&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
+
+    WEBCORE_EXPORT ImageDrawResult drawBitmapImage(BitmapImage&, const FloatPoint& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
+    WEBCORE_EXPORT ImageDrawResult drawBitmapImage(BitmapImage&, const FloatRect& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
+    WEBCORE_EXPORT virtual ImageDrawResult drawBitmapImage(BitmapImage&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
 
     WEBCORE_EXPORT virtual ImageDrawResult drawTiledImage(Image&, const FloatRect& destination, const FloatPoint& source, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions = { });
     WEBCORE_EXPORT virtual ImageDrawResult drawTiledImage(Image&, const FloatRect& destination, const FloatRect& source, const FloatSize& tileScaleFactor, Image::TileRule, Image::TileRule, ImagePaintingOptions = { });
@@ -285,7 +296,7 @@ public:
     WEBCORE_EXPORT virtual void drawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&);
 
 #if ENABLE(VIDEO)
-    WEBCORE_EXPORT virtual void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ImageOrientation, bool shouldDiscardAlpha);
+    WEBCORE_EXPORT virtual void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, ImagePaintingOptions = { });
 #endif
 
     // Clipping
@@ -308,6 +319,9 @@ public:
     WEBCORE_EXPORT virtual void drawBidiText(const FontCascade&, const TextRun&, const FloatPoint&, FontCascade::CustomFontNotReadyAction = FontCascade::CustomFontNotReadyAction::DoNotPaintIfFontNotReady);
 
     WEBCORE_EXPORT virtual void drawGlyphs(const Font&, std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, const FloatPoint&, FontSmoothingMode);
+    // Currently needed in the base class because CoreText DrawGlyphsRecorder must use GraphicsContext instead of a DisplayList::Recorder.
+    WEBCORE_EXPORT virtual void drawGlyphsImmediate(const FontBase&, std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, const FloatPoint&, FontSmoothingMode);
+
     WEBCORE_EXPORT void drawDisplayList(const DisplayList::DisplayList&);
     WEBCORE_EXPORT virtual void drawDisplayList(const DisplayList::DisplayList&, ControlFactory&);
     WEBCORE_EXPORT FloatRect computeUnderlineBoundsForText(const FloatRect&, bool printing);
@@ -375,11 +389,18 @@ public:
 #endif
 
 protected:
+    // Returns the interpolation quality a draw operation should use. InterpolationQuality::Default
+    // in the options means the context image interpolation quality is used.
+    InterpolationQuality imageInterpolationQualityForOptions(ImagePaintingOptions options) const
+    {
+        if (options.interpolationQuality() == InterpolationQuality::Default)
+            return imageInterpolationQuality();
+        return options.interpolationQuality();
+    }
+
     WEBCORE_EXPORT RefPtr<NativeImage> nativeImageForDrawing(ImageBuffer&);
     WEBCORE_EXPORT void fillEllipseAsPath(const FloatRect&);
     WEBCORE_EXPORT void strokeEllipseAsPath(const FloatRect&);
-    // Currently needed in the base class because CoreText DrawGlyphsRecorder must use GraphicsContext instead of a DisplayList::Recorder.
-    WEBCORE_EXPORT virtual void drawGlyphsImmediate(const Font&, std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, const FloatPoint&, FontSmoothingMode);
 
     FloatRect computeLineBoundsAndAntialiasingModeForText(const FloatRect&, bool printing, Color&);
 

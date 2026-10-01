@@ -563,6 +563,8 @@ public:
     bool NODELETE isList() const;
     virtual bool isDescriptionList() const = 0;
     bool isFileUploadButton() const;
+    // True for a native select.
+    bool isSelectElement() const { return elementName() == ElementName::HTML_select; }
     // Returns true for objects whose role implies interactivity. For example, when a screen
     // reader announces "link", it doesn't need to announce "clickable" or "pressable" — that
     // is implicit in the concept of a link.
@@ -602,7 +604,6 @@ public:
     virtual bool isColumnHeader() const { return false; }
     virtual bool isRowHeader() const { return false; }
     bool isTableCellInSameRowGroup(AXCoreObject&);
-    bool isTableCellInSameColGroup(AXCoreObject*);
     std::optional<AXID> rowGroupAncestorID() const;
     virtual String cellScope() const { return { }; }
     // Returns the start location and row span of the cell.
@@ -844,6 +845,10 @@ public:
     String currentValue() const;
     virtual bool supportsKeyShortcuts() const = 0;
     virtual String keyShortcuts() const = 0;
+#if PLATFORM(COCOA)
+    // keyShortcuts(), with the modifier keys renamed to match the labels printed on Apple keyboards.
+    String keyShortcutsPlatformString() const;
+#endif
 
     virtual bool isModalNode() const = 0;
 
@@ -975,7 +980,6 @@ public:
     // True when this object's node is in the shadow tree of an <input> or <textarea>, as opposed to
     // an ARIA text control.
     virtual bool isInsideNativeTextControl() const = 0;
-    virtual AXTextRunLineID listMarkerLineID() const = 0;
     virtual String listMarkerText() const = 0;
     virtual FontOrientation fontOrientation() const = 0;
 #endif
@@ -1214,7 +1218,6 @@ public:
     RefPtr<AXCoreObject> nextInPreOrder(bool updateChildrenIfNeeded, AXCoreObject* stayWithin, bool includeCrossFrame);
     AXCoreObject* nextSiblingIncludingIgnored(bool updateChildrenIfNeeded) const;
     AXCoreObject* nextSiblingIncludingIgnored(bool updateChildrenIfNeeded, bool includeCrossFrame) const;
-    AXCoreObject* nextUnignoredSibling(bool updateChildrenIfNeeded, AXCoreObject* unignoredParent = nullptr) const;
     AXCoreObject* nextSiblingIncludingIgnoredOrParent() const;
     std::optional<AXID> idOfNextSiblingIncludingIgnoredOrParent() const
     {

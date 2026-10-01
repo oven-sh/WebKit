@@ -63,7 +63,7 @@ public:
     // Decoding
     virtual DecodingDestination preferredDecodingDestination(GraphicsContext&, ImagePaintingOptions) const { return DecodingDestination::Base; }
     virtual bool isLargeForDecoding() const { return false; }
-    virtual void stopDecoderWorkQueue() { RELEASE_ASSERT_NOT_REACHED(); }
+    virtual void stopDecodingWorkQueue() { RELEASE_ASSERT_NOT_REACHED(); }
     virtual void decode(Function<void(DecodingStatus)>&&)  { RELEASE_ASSERT_NOT_REACHED(); }
 
     // ImageFrame
@@ -79,8 +79,8 @@ public:
 
     virtual RefPtr<NativeImage> nativeImageAtIndex(unsigned) { return primaryNativeImage(); }
 
-    virtual Expected<Ref<NativeImage>, DecodingStatus> primaryNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
-    virtual Expected<Ref<NativeImage>, DecodingStatus> currentNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
+    virtual std::expected<Ref<NativeImage>, DecodingStatus> primaryNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
+    virtual std::expected<Ref<NativeImage>, DecodingStatus> currentNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
 
     // Overridden by BitmapImageSource to keep decoded-size accounting in step with the
     // platform-image replacement the GPU process performs while the image is drawn.
@@ -94,7 +94,7 @@ public:
     virtual ImageOrientation orientation() const { return ImageOrientation::Orientation::None; }
     virtual unsigned primaryFrameIndex() const { return 0; }
     virtual unsigned frameCount() const { return 1; }
-    virtual DestinationColorSpace colorSpace() const = 0;
+    virtual ColorSpace colorSpace() const = 0;
     virtual std::optional<Color> singlePixelSolidColor() const = 0;
     virtual bool hasHDRGainMap() const { return false; }
     virtual bool hasHDRContent() const = 0;

@@ -167,11 +167,11 @@ static BOOL isArrayOfClass(id object, Class elementClass)
 
     Vector<Ref<WebCore::ArchiveResource>> coreResources;
     for (WebResource *subresource in subresources)
-        coreResources.append([subresource _coreResource].get());
+        coreResources.append(protect([subresource _coreResource].get()));
 
     Vector<Ref<WebCore::LegacyWebArchive>> coreArchives;
     for (WebArchive *subframeArchive in subframeArchives)
-        coreArchives.append(*[subframeArchive->_private coreArchive]);
+        coreArchives.append(protect(*[subframeArchive->_private coreArchive]));
 
     [_private setCoreArchive:WebCore::LegacyWebArchive::create([mainResource _coreResource].get(), WTF::move(coreResources), WTF::move(coreArchives), std::nullopt)];
     return self;
@@ -256,8 +256,8 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this. 
     if (!_private->cachedMainResource) {
-        if (auto* coreArchive = [_private coreArchive]) {
-            if (auto* mainResource = coreArchive->mainResource())
+        if (RefPtr coreArchive = [_private coreArchive]) {
+            if (RefPtr mainResource = coreArchive->mainResource())
                 _private->cachedMainResource = adoptNS([[WebResource alloc] _initWithCoreResource:*mainResource]);
         }
     }
@@ -273,7 +273,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this.     
     if (!_private->cachedSubresources) {
-        auto coreArchive = [_private coreArchive];
+        RefPtr coreArchive = [_private coreArchive];
         if (!coreArchive)
             _private->cachedSubresources = adoptNS([[NSArray alloc] init]);
         else {
@@ -298,7 +298,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this.  
     if (!_private->cachedSubframeArchives) {
-        auto* coreArchive = [_private coreArchive];
+        RefPtr coreArchive = [_private coreArchive];
         if (!coreArchive)
             _private->cachedSubframeArchives = adoptNS([[NSArray alloc] init]);
         else {
@@ -320,7 +320,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
 #endif
 
-    RetainPtr<CFDataRef> data = [_private coreArchive]->rawDataRepresentation();
+    RetainPtr<CFDataRef> data = protect([_private coreArchive])->rawDataRepresentation();
     
 #if !LOG_DISABLED
     CFAbsoluteTime end = CFAbsoluteTimeGetCurrent();

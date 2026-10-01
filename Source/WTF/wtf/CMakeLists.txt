@@ -91,7 +91,6 @@ set(WTF_PUBLIC_HEADERS
     EnumTraits.h
     EnumeratedArray.h
     EscapableByteSpan.h
-    Expected.h
     ExperimentalFeatureNames.h
     ExportMacros.h
     FailureAction.h
@@ -123,7 +122,6 @@ set(WTF_PUBLIC_HEADERS
     GlobalVersion.h
     GraphNodeWorklist.h
     GraphOrdering.h
-    GregorianDateTime.h
     HashCountedSet.h
     HashFunctions.h
     HashIterators.h
@@ -244,6 +242,7 @@ set(WTF_PUBLIC_HEADERS
     ParallelJobsOpenMP.h
     ParallelVectorIterator.h
     ParkingLot.h
+    PlainGregorianDateTime.h
     Platform.h
     PlatformCallingConventions.h
     PlatformCPU.h
@@ -333,6 +332,7 @@ set(WTF_PUBLIC_HEADERS
     SpanningTree.h
     SparseBitVector.h
     Spectrum.h
+    SpinBackoff.h
     StackAllocation.h
     StackBounds.h
     StackCheck.h
@@ -586,7 +586,6 @@ set(WTF_SOURCES
     FileSystem.cpp
     FunctionDispatcher.cpp
     GlobalVersion.cpp
-    GregorianDateTime.cpp
     HashTable.cpp
     HexNumber.cpp
     Int128.cpp
@@ -614,6 +613,7 @@ set(WTF_SOURCES
     ParallelHelperPool.cpp
     ParallelJobsGeneric.cpp
     ParkingLot.cpp
+    PlainGregorianDateTime.cpp
     PreciseSum.cpp
     PrintStream.cpp
     ProcessPrivilege.cpp
@@ -732,6 +732,7 @@ elseif (APPLE)
     list(APPEND WTF_SOURCES
         darwin/OSLogPrintStream.mm
     )
+    set_source_files_properties(darwin/OSLogPrintStream.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 
     list(APPEND WTF_PUBLIC_HEADERS
         cf/CFURLExtras.h
@@ -803,6 +804,7 @@ elseif (APPLE)
 elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
     list(APPEND WTF_PUBLIC_HEADERS
         linux/CurrentProcessMemoryStatus.h
+        linux/HighPriorityThreads.h
         linux/ProcessMemoryFootprint.h
     )
 endif ()
@@ -850,7 +852,6 @@ set(WTF_INTERFACE_DEPENDENCIES WTF_CopyHeaders)
 
 WEBKIT_FRAMEWORK_DECLARE(WTF)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
-WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS(WTF)
 WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WTF)
 
 WEBKIT_COPY_FILES(WTF_CopyHeaders

@@ -53,7 +53,7 @@ struct ImageAsset;
 }
 
 namespace WebCore {
-class DestinationColorSpace;
+class ColorSpace;
 class FloatSize;
 class GraphicsLayerContentsDisplayDelegate;
 class ImageBuffer;
@@ -89,7 +89,7 @@ private:
     void sizeDidChange(WebCore::LayoutSize) final;
     void configureGraphicsLayer(WebCore::GraphicsLayer&, WebCore::ModelPlayerGraphicsLayerConfiguration&&) final;
     void adoptContentsDisplayDelegateFrom(WebCore::ModelPlayer&) final;
-    RefPtr<WebCore::ImageBuffer> snapshotCurrentFrame(const WebCore::FloatSize& deviceSize, const WebCore::DestinationColorSpace&) final;
+    RefPtr<WebCore::ImageBuffer> snapshotCurrentFrame(const WebCore::FloatSize& deviceSize, const WebCore::ColorSpace&) final;
     void enterFullscreen() final;
     void handleMouseDown(const WebCore::LayoutPoint&, MonotonicTime) final;
     void handleMouseMove(const WebCore::LayoutPoint&, MonotonicTime) final;
@@ -141,7 +141,7 @@ private:
 
     void setStageMode(WebCore::StageModeOperation) final;
     void notifyEntityTransformUpdated();
-    void setEnvironmentMap(Ref<WebCore::SharedBuffer>&&) final;
+    void setEnvironmentMap(Ref<WebCore::SharedBuffer>&&, const URL&) final;
 
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
     void setDynamicRangeLimit(WebCore::PlatformDynamicRangeLimit, float currentEDRHeadroom, bool suppressEDR) final;
