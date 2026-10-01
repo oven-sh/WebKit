@@ -1,0 +1,18 @@
+a
+   show 4 4 9 12 'try: f()'
+   a 10 11 4 13 'except* Exception as e:'
+b
+   show 4 4 9 12 'try: f()'
+   b 14 14 8 64 'raise ExceptionGroup("g", [ValueError(1), TypeError(2)])'
+c
+   show 4 4 9 12 'try: f()'
+   c 19 19 8 64 'raise ExceptionGroup("g", [ValueError(1), TypeError(2)])'
+d
+   show 4 4 9 12 'try: f()'
+   d 26 26 8 25 'raise KeyError(5)'
+e
+   show 4 4 9 12 'try: f()'
+   e 29 29 8 27 'raise ValueError(1)'
+f
+   show 4 4 9 12 'try: f()'
+   f 34 34 8 64 'raise ExceptionGroup("g", [ValueError(1), TypeError(2)])'

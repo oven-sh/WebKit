@@ -4433,7 +4433,7 @@ private:
                         JumpBlock matching(*this, CodeDetails::JumpBlock::Kind::Matching);
                         Reg type = emit(handler->type);
                         Reg pair = g.newTemporary();
-                        emitRuntimeCall(pair.get(), "matchExceptionGroup"_s, { rest.get(), type.get() }, *handler->type);
+                        emitRuntimeCall(pair.get(), "matchExceptionGroup"_s, { rest.get(), type.get() }, *handler); // CHECK_EG_MATCH is where the whole handler is.
                         auto parts = emitUnpackExactly(pair.get(), 2);
                         g.move(match.get(), parts[0].get());
                         g.move(rest.get(), parts[1].get());
