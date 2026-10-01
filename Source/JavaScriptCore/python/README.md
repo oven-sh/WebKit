@@ -1495,7 +1495,7 @@ An array of characters says that its items are `w`, which a `memoryview` knows n
 `PythonBinasciiModule.cpp` is `Modules/binascii.c`. The tables for the two checksums are worked out from their polynomials when it is compiled. `b2a_qp()` goes through what it is given once, where CPython goes through it twice, the
 first time to find how long the result will be.
 
-### `_md5`, `_sha1`, `_sha2`, `_sha3` and `_blake2`
+### `_md5`, `_sha1`, `_sha2`, `_sha3`, `_blake2` and `_hmac`
 
 CPython has each hash twice over. `_hashlib` is over OpenSSL, and is what `hashlib` goes by if it is there. These five need nothing but themselves, and are what it goes by otherwise, and for what OpenSSL will not do: BLAKE2 with a key, a salt or
 a place in a tree. It is the same here. A library like OpenSSL is something that a host may have and the engine has not, so `_hashlib` is up to the host, and these are the engine's. With them `hashlib`, `hmac`, `uuid.uuid3()` and
@@ -1507,8 +1507,10 @@ a place in a tree. It is the same here. A library like OpenSSL is something that
   sixteen words of its schedule and no more, which there are registers for, and SHA-3 takes in a word at a time. Each is then between 0.9 and 1.6 times as quick as CPython's, on ARM64.
 - **`PythonHashModules.cpp` is the five modules**, which are as alike as they look: one kind of object, that has any one of the algorithms.
 - What is said of arguments that are wrong follows CPython's, down to all six classes of `_sha3` saying that they are `sha3_224()`.
+- **`PythonHMACModule.cpp` is `_hmac`**, which is RFC 2104 over twelve of them. It keeps two hashes, each already given its pad, and the message goes to the inner one as it comes. A hash is found by a name and by nothing else, and
+  the name ends at a NUL, since CPython looks it up as a string of C's. `hmac` goes to `_hashlib` first if a host has one.
 
-`programs/the-hash-modules.py`, `programs/hashing-with-the-library.py`
+`programs/the-hash-modules.py`, `programs/hashing-with-the-library.py`, `programs/hmac-module.py`
 
 ### `select`
 

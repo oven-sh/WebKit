@@ -204,6 +204,7 @@ JSObject* createABCModule(JSGlobalObject*);
 JSObject* createOperatorModule(JSGlobalObject*);
 JSObject* createFunctoolsModule(JSGlobalObject*);
 JSObject* createGCModule(JSGlobalObject*);
+JSObject* createHMACModule(JSGlobalObject*);
 JSObject* createMD5Module(JSGlobalObject*);
 JSObject* createSHA1Module(JSGlobalObject*);
 JSObject* createSHA2Module(JSGlobalObject*);

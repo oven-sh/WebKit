@@ -314,6 +314,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "builtins"_s, nullptr },
     { "errno"_s, createErrnoModule },
     { "gc"_s, createGCModule },
+    { "_hmac"_s, createHMACModule },
     { "_md5"_s, createMD5Module },
     { "_sha1"_s, createSHA1Module },
     { "_sha2"_s, createSHA2Module },

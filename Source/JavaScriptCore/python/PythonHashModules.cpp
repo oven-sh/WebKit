@@ -125,8 +125,6 @@ constexpr AlgorithmDescription descriptions[numberOfAlgorithms] = {
 bool isSHA3(Algorithm algorithm) { return algorithm >= Algorithm::SHA3_224 && algorithm <= Algorithm::SHAKE256; }
 bool isSHAKE(Algorithm algorithm) { return algorithm == Algorithm::SHAKE128 || algorithm == Algorithm::SHAKE256; }
 
-using AnyHash = Variant<MD5Hash, SHA1Hash, SHA256Hash, SHA512Hash, KeccakHash, Blake2bHash, Blake2sHash>;
-
 struct HashState final : NativeState {
     PYTHON_NATIVE_STATE(HashState);
     HashState(Algorithm algorithm, AnyHash&& hash)
@@ -135,10 +133,7 @@ struct HashState final : NativeState {
     {
     }
 
-    void update(std::span<const uint8_t> data)
-    {
-        WTF::switchOn(hash, [&] (auto& hash) { hash.update(data); });
-    }
+    void update(std::span<const uint8_t> data) { updateHash(hash, data); }
 
     // 0 for a SHAKE, of which there is as much as is asked for.
     size_t digestSize() const
@@ -157,13 +152,7 @@ struct HashState final : NativeState {
             [] (const auto& hash) -> size_t { return std::remove_cvref_t<decltype(hash)>::blockSize; });
     }
 
-    void digest(std::span<uint8_t> out) const
-    {
-        WTF::switchOn(hash,
-            [&] (const MD5Hash& hash) { hash.digest(out.first<MD5Hash::digestSize>()); },
-            [&] (const SHA1Hash& hash) { hash.digest(out.first<SHA1Hash::digestSize>()); },
-            [&] (const auto& hash) { hash.digest(out); });
-    }
+    void digest(std::span<uint8_t> out) const { digestOfHash(hash, out); }
 
     Algorithm algorithm;
     AnyHash hash;

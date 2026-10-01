@@ -29,6 +29,7 @@
 #include <array>
 #include <span>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Variant.h>
 
 // The hashes that CPython has of its own, in Modules/_hacl: MD5, SHA-1, SHA-2, SHA-3 and BLAKE2. What comes of each is laid down elsewhere (RFC 1321, FIPS 180-4, FIPS 202, RFC 7693), and these are written from that. They know
 // nothing of Python. The modules are in PythonHashModules.cpp.
@@ -211,5 +212,22 @@ private:
 
 using Blake2bHash = Blake2Hash<uint64_t>;
 using Blake2sHash = Blake2Hash<uint32_t>;
+
+// Any one of them
+using AnyHash = Variant<MD5Hash, SHA1Hash, SHA256Hash, SHA512Hash, KeccakHash, Blake2bHash, Blake2sHash>;
+
+inline void updateHash(AnyHash& hash, std::span<const uint8_t> data)
+{
+    WTF::switchOn(hash, [&] (auto& hash) { hash.update(data); });
+}
+
+// `out` is as long as what comes of it.
+inline void digestOfHash(const AnyHash& hash, std::span<uint8_t> out)
+{
+    WTF::switchOn(hash,
+        [&] (const MD5Hash& hash) { hash.digest(out.first<MD5Hash::digestSize>()); },
+        [&] (const SHA1Hash& hash) { hash.digest(out.first<SHA1Hash::digestSize>()); },
+        [&] (const auto& hash) { hash.digest(out); });
+}
 
 } } // namespace JSC::Python

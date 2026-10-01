@@ -1,0 +1,278 @@
+===== what it comes to
+md5 c3dee475a49c99e2a393153377b95900 True eb01ff92f00d651abcdd1f56f1a74725
+sha1 9e2b2536c83ceddf254132b25916d6f8 True 37dc8976df0a29180c80070b234998f5be3712d7
+sha224 776edd193c701f9ec13defa2228ec417 True 521219145667863b5428b8ba24c6d5328c09aeff7a3c18209091e73e
+sha256 1598e57719fdac3fa4792d0ba2787b28 True e75865ac3fe73a8074997001fcdf339dbb878200ace6efa70f0ee1b2df3a3cf6
+sha384 dcbdc49191b4d3145d5319322e8ccd04 True fd6a2f3aac06b57f73da24301d5e09bcbfe9bffda3de7d856fbcc36456e7b1758c85c5baa2cdfff99c37f3ad318ba49a
+sha512 b4959a455ef3bf241b6ec2fdce7898da True 227a38aae5f62292fe155de50a2c85f8e8f94acb797a4e86da8e7cc3c5f4d579429b67a572f53538d4676341d298c150124f3c61f71b98070be30f77fdd5011a
+sha3_224 120652cce46005c33165aea419e3d4b9 True a1ef141f192068b907226fc5c1c827e66e5b06082e30acdd791cc0c3
+sha3_256 304568224d2706ade797d366752b84f0 True f0fc56da0e9abdba296f32dd2844e0e4e0c36f0820b6c3c06ee7c6f9635be781
+sha3_384 fa8939d15ca4d29004969b06d1e79bfb True e063a2f9d5209d11f4f0e1c3633e2c483c0720513688fd3ebcc7abe56945cea82c8dbbc2e56f4a3ce97d725e549eda6c
+sha3_512 e78c6f42fcc4f96695419049510308fc True 1aa2acd3dcbb33b25aba6c733870403187e76f8ab41cb24e622ff6e8111e1bc7b2e2aa33320131d9f469766c0bfb3abed7d6e46820d9800625bb8e18e30d347f
+blake2s 67e19dbb001d8392d2b9a5106219fb5b True 575228fe989248845c4a019c8c59253af87bfdce1c43f85293a2f85003a850d8
+blake2b 36734116c01db110f75f2d03444e00f6 True 28dcbad1cb6dc7445f4b6ce499bbb8fe150c8d63e7afe9dc8df0a8d215bb1e3840fc3f6286f01a42838e87a5ddc9d96df3518dae9be9496134ed55ae1c2d6a43
+===== one of them
+md5 -> ('hmac-md5', 64, 16, '<md5 HMAC object @ 0x>', 'str', 'int', 16, 32)
+sha1 -> ('hmac-sha1', 64, 20, '<sha1 HMAC object @ 0x>', 'str', 'int', 20, 40)
+sha224 -> ('hmac-sha224', 64, 28, '<sha224 HMAC object @ 0x>', 'str', 'int', 28, 56)
+sha256 -> ('hmac-sha256', 64, 32, '<sha256 HMAC object @ 0x>', 'str', 'int', 32, 64)
+sha384 -> ('hmac-sha384', 128, 48, '<sha384 HMAC object @ 0x>', 'str', 'int', 48, 96)
+sha512 -> ('hmac-sha512', 128, 64, '<sha512 HMAC object @ 0x>', 'str', 'int', 64, 128)
+sha3_224 -> ('hmac-sha3_224', 144, 28, '<sha3_224 HMAC object @ 0x>', 'str', 'int', 28, 56)
+sha3_256 -> ('hmac-sha3_256', 136, 32, '<sha3_256 HMAC object @ 0x>', 'str', 'int', 32, 64)
+sha3_384 -> ('hmac-sha3_384', 104, 48, '<sha3_384 HMAC object @ 0x>', 'str', 'int', 48, 96)
+sha3_512 -> ('hmac-sha3_512', 72, 64, '<sha3_512 HMAC object @ 0x>', 'str', 'int', 64, 128)
+blake2s -> ('hmac-blake2s', 64, 32, '<blake2s HMAC object @ 0x>', 'str', 'int', 32, 64)
+blake2b -> ('hmac-blake2b', 128, 64, '<blake2b HMAC object @ 0x>', 'str', 'int', 64, 128)
+sha2_224 -> ('hmac-sha224', 64, 28, '<sha224 HMAC object @ 0x>', 'str', 'int', 28, 56)
+sha2_256 -> ('hmac-sha256', 64, 32, '<sha256 HMAC object @ 0x>', 'str', 'int', 32, 64)
+sha2_384 -> ('hmac-sha384', 128, 48, '<sha384 HMAC object @ 0x>', 'str', 'int', 48, 96)
+sha2_512 -> ('hmac-sha512', 128, 64, '<sha512 HMAC object @ 0x>', 'str', 'int', 64, 128)
+blake2s_32 -> ('hmac-blake2s', 64, 32, '<blake2s HMAC object @ 0x>', 'str', 'int', 32, 64)
+blake2b_32 -> ('hmac-blake2b', 128, 64, '<blake2b HMAC object @ 0x>', 'str', 'int', 64, 128)
+MD5 -> ('hmac-md5', 64, 16, '<md5 HMAC object @ 0x>', 'str', 'int', 16, 32)
+Sha256 -> ('hmac-sha256', 64, 32, '<sha256 HMAC object @ 0x>', 'str', 'int', 32, 64)
+SHA3_256 -> ('hmac-sha3_256', 136, 32, '<sha3_256 HMAC object @ 0x>', 'str', 'int', 32, 64)
+BLAKE2B -> ('hmac-blake2b', 128, 64, '<blake2b HMAC object @ 0x>', 'str', 'int', 64, 128)
+Sha2_256 -> ('hmac-sha256', 64, 32, '<sha256 HMAC object @ 0x>', 'str', 'int', 32, 64)
+asked again and again -> (True, '9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab', None, '4c5277d3e85316d1762c7e219862a9440546171f5ae5f1b29499ff9fbdd4c56a', '4c5277d3e85316d1762c7e219862a9440546171f5ae5f1b29499ff9fbdd4c56a')
+copy -> (True, True, True, None, False, 'hmac-sha256', '<sha256 HMAC object @ 0x>')
+copy.copy -> "TypeError: cannot pickle '_hmac.HMAC' object"
+pickle -> "TypeError: cannot pickle '_hmac.HMAC' object"
+attributes -> "AttributeError: '_hmac.HMAC' object has no attribute 'x' and no __dict__ for setting new attributes"
+set name -> "AttributeError: attribute 'name' of '_hmac.HMAC' objects is not writable"
+set block_size -> "AttributeError: attribute 'block_size' of '_hmac.HMAC' objects is not writable"
+set digest_size -> "AttributeError: attribute 'digest_size' of '_hmac.HMAC' objects is not writable"
+hash, ==, bool -> (True, True, False, True)
+weak reference -> "TypeError: cannot create weak reference to '_hmac.HMAC' object"
+===== what is no hash
+new('') -> "UnknownHashError: unsupported hash type: ''"
+   compute_digest -> "UnknownHashError: unsupported hash type: ''"
+new('x') -> "UnknownHashError: unsupported hash type: 'x'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'x'"
+new('sha') -> "UnknownHashError: unsupported hash type: 'sha'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'sha'"
+new('sha-256') -> "UnknownHashError: unsupported hash type: 'sha-256'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'sha-256'"
+new('sha256 ') -> "UnknownHashError: unsupported hash type: 'sha256 '"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'sha256 '"
+new(' sha256') -> "UnknownHashError: unsupported hash type: ' sha256'"
+   compute_digest -> "UnknownHashError: unsupported hash type: ' sha256'"
+new('sha512_224') -> "UnknownHashError: unsupported hash type: 'sha512_224'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'sha512_224'"
+new('sha512_256') -> "UnknownHashError: unsupported hash type: 'sha512_256'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'sha512_256'"
+new('shake_128') -> "UnknownHashError: unsupported hash type: 'shake_128'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'shake_128'"
+new('shake_256') -> "UnknownHashError: unsupported hash type: 'shake_256'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'shake_256'"
+new('ripemd160') -> "UnknownHashError: unsupported hash type: 'ripemd160'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'ripemd160'"
+new('sm3') -> "UnknownHashError: unsupported hash type: 'sm3'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'sm3'"
+new('md5-sha1') -> "UnknownHashError: unsupported hash type: 'md5-sha1'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'md5-sha1'"
+new('blake2') -> "UnknownHashError: unsupported hash type: 'blake2'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'blake2'"
+new('blake2b_64') -> "UnknownHashError: unsupported hash type: 'blake2b_64'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'blake2b_64'"
+new('sha2_') -> "UnknownHashError: unsupported hash type: 'sha2_'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'sha2_'"
+new('sha256\x00') -> 'hmac-sha256'
+   compute_digest -> 32
+new('sha\u0132') -> "UnknownHashError: unsupported hash type: 'sha\u0132'"
+   compute_digest -> "UnknownHashError: unsupported hash type: 'sha\u0132'"
+new('\u017fha256') -> "UnknownHashError: unsupported hash type: '\u017fha256'"
+   compute_digest -> "UnknownHashError: unsupported hash type: '\u017fha256'"
+new('\ud800') -> "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+   compute_digest -> "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+new(None) -> 'UnknownHashError: unsupported hash type: None'
+   compute_digest -> 'UnknownHashError: unsupported hash type: None'
+new(5) -> 'UnknownHashError: unsupported hash type: 5'
+   compute_digest -> 'UnknownHashError: unsupported hash type: 5'
+new(b'sha256') -> "UnknownHashError: unsupported hash type: b'sha256'"
+   compute_digest -> "UnknownHashError: unsupported hash type: b'sha256'"
+new(sha256) -> 'UnknownHashError: unsupported hash type: <built-in function sha256>'
+   compute_digest -> 'UnknownHashError: unsupported hash type: <built-in function sha256>'
+new(md5) -> 'UnknownHashError: unsupported hash type: <built-in function md5>'
+   compute_digest -> 'UnknownHashError: unsupported hash type: <built-in function md5>'
+new(SHA256Type:<_sha2.SHA256Type object at 0x>) -> 'UnknownHashError: unsupported hash type: <_sha2.SHA256Type object at 0x>'
+   compute_digest -> 'UnknownHashError: unsupported hash type: <_sha2.SHA256Type object at 0x>'
+new(list:[]) -> 'UnknownHashError: unsupported hash type: []'
+   compute_digest -> 'UnknownHashError: unsupported hash type: []'
+new(tuple:('sha256',)) -> "UnknownHashError: unsupported hash type: ('sha256',)"
+   compute_digest -> "UnknownHashError: unsupported hash type: ('sha256',)"
+new(S:'sha256') -> 'hmac-sha256'
+   compute_digest -> 32
+new(S:'SHA256') -> 'hmac-sha256'
+   compute_digest -> 32
+new(L:'nothing') -> 'hmac-sha256'
+   compute_digest -> 32
+new(B:'nothing') -> 'TypeError: bad argument type for built-in operation'
+   compute_digest -> 'TypeError: bad argument type for built-in operation'
+new(R:'nothing') -> 'ZeroDivisionError: '
+   compute_digest -> 'ZeroDivisionError: '
+new(L:'sha1') -> 'hmac-sha1'
+   compute_digest -> 20
+new(True) -> 'UnknownHashError: unsupported hash type: True'
+   compute_digest -> 'UnknownHashError: unsupported hash type: True'
+===== keys and messages
+key bytes -> 'de3e953b45eba2b2476f9e316ec72380'
+   message -> '3c09015047adcf83a96f5fdfa75fde59'
+   update -> (None, '3c09015047adcf83a96f5fdfa75fde59')
+   compute_digest, key -> 'de3e953b45eba2b2476f9e316ec72380'
+   compute_digest, message -> '3c09015047adcf83a96f5fdfa75fde59'
+   compute_md5 -> ('de3e953b45eba2b2476f9e316ec72380', '3c09015047adcf83a96f5fdfa75fde59')
+key bytearray -> 'de3e953b45eba2b2476f9e316ec72380'
+   message -> '3c09015047adcf83a96f5fdfa75fde59'
+   update -> (None, '3c09015047adcf83a96f5fdfa75fde59')
+   compute_digest, key -> 'de3e953b45eba2b2476f9e316ec72380'
+   compute_digest, message -> '3c09015047adcf83a96f5fdfa75fde59'
+   compute_md5 -> ('de3e953b45eba2b2476f9e316ec72380', '3c09015047adcf83a96f5fdfa75fde59')
+key memoryview -> 'de3e953b45eba2b2476f9e316ec72380'
+   message -> '3c09015047adcf83a96f5fdfa75fde59'
+   update -> (None, '3c09015047adcf83a96f5fdfa75fde59')
+   compute_digest, key -> 'de3e953b45eba2b2476f9e316ec72380'
+   compute_digest, message -> '3c09015047adcf83a96f5fdfa75fde59'
+   compute_md5 -> ('de3e953b45eba2b2476f9e316ec72380', '3c09015047adcf83a96f5fdfa75fde59')
+key array -> 'de3e953b45eba2b2476f9e316ec72380'
+   message -> '3c09015047adcf83a96f5fdfa75fde59'
+   update -> (None, '3c09015047adcf83a96f5fdfa75fde59')
+   compute_digest, key -> 'de3e953b45eba2b2476f9e316ec72380'
+   compute_digest, message -> '3c09015047adcf83a96f5fdfa75fde59'
+   compute_md5 -> ('de3e953b45eba2b2476f9e316ec72380', '3c09015047adcf83a96f5fdfa75fde59')
+key array of ints -> '3c7ac02367a06d66dc2dec00b0f972d8'
+   message -> '2f58a49b43569b1ae7a30b81625d8078'
+   update -> (None, '2f58a49b43569b1ae7a30b81625d8078')
+   compute_digest, key -> '3c7ac02367a06d66dc2dec00b0f972d8'
+   compute_digest, message -> '2f58a49b43569b1ae7a30b81625d8078'
+   compute_md5 -> ('3c7ac02367a06d66dc2dec00b0f972d8', '2f58a49b43569b1ae7a30b81625d8078')
+key a slice -> 'BufferError: memoryview: underlying buffer is not C-contiguous'
+   message -> 'BufferError: memoryview: underlying buffer is not C-contiguous'
+   update -> 'BufferError: memoryview: underlying buffer is not C-contiguous'
+   compute_digest, key -> 'BufferError: memoryview: underlying buffer is not C-contiguous'
+   compute_digest, message -> 'BufferError: memoryview: underlying buffer is not C-contiguous'
+   compute_md5 -> 'BufferError: memoryview: underlying buffer is not C-contiguous'
+key two dimensions -> 'fe3dce23cb02243bcb626491430dd741'
+   message -> 'f89257918ecf805a58f8a6f406774da9'
+   update -> (None, 'f89257918ecf805a58f8a6f406774da9')
+   compute_digest, key -> 'fe3dce23cb02243bcb626491430dd741'
+   compute_digest, message -> 'f89257918ecf805a58f8a6f406774da9'
+   compute_md5 -> ('fe3dce23cb02243bcb626491430dd741', 'f89257918ecf805a58f8a6f406774da9')
+key its own buffer -> '140d3a89b1489897a7fb5e5a835a1474'
+   message -> 'f996738ae99ad240f0e53969d66f1186'
+   update -> (None, 'f996738ae99ad240f0e53969d66f1186')
+   compute_digest, key -> '140d3a89b1489897a7fb5e5a835a1474'
+   compute_digest, message -> 'f996738ae99ad240f0e53969d66f1186'
+   compute_md5 -> ('140d3a89b1489897a7fb5e5a835a1474', 'f996738ae99ad240f0e53969d66f1186')
+key str -> 'TypeError: Strings must be encoded before hashing'
+   message -> 'TypeError: Strings must be encoded before hashing'
+   update -> 'TypeError: Strings must be encoded before hashing'
+   compute_digest, key -> 'TypeError: Strings must be encoded before hashing'
+   compute_digest, message -> 'TypeError: Strings must be encoded before hashing'
+   compute_md5 -> 'TypeError: Strings must be encoded before hashing'
+key an empty str -> 'TypeError: Strings must be encoded before hashing'
+   message -> 'TypeError: Strings must be encoded before hashing'
+   update -> 'TypeError: Strings must be encoded before hashing'
+   compute_digest, key -> 'TypeError: Strings must be encoded before hashing'
+   compute_digest, message -> 'TypeError: Strings must be encoded before hashing'
+   compute_md5 -> 'TypeError: Strings must be encoded before hashing'
+key None -> 'TypeError: object supporting the buffer API required'
+   message -> 'cd32bedd46aa63cffa3023f050fc78e3'
+   update -> 'TypeError: object supporting the buffer API required'
+   compute_digest, key -> 'TypeError: object supporting the buffer API required'
+   compute_digest, message -> 'TypeError: object supporting the buffer API required'
+   compute_md5 -> 'TypeError: object supporting the buffer API required'
+key int -> 'TypeError: object supporting the buffer API required'
+   message -> 'TypeError: object supporting the buffer API required'
+   update -> 'TypeError: object supporting the buffer API required'
+   compute_digest, key -> 'TypeError: object supporting the buffer API required'
+   compute_digest, message -> 'TypeError: object supporting the buffer API required'
+   compute_md5 -> 'TypeError: object supporting the buffer API required'
+key list -> 'TypeError: object supporting the buffer API required'
+   message -> 'TypeError: object supporting the buffer API required'
+   update -> 'TypeError: object supporting the buffer API required'
+   compute_digest, key -> 'TypeError: object supporting the buffer API required'
+   compute_digest, message -> 'TypeError: object supporting the buffer API required'
+   compute_md5 -> 'TypeError: object supporting the buffer API required'
+key a released view -> 'ValueError: operation forbidden on released memoryview object'
+   message -> 'ValueError: operation forbidden on released memoryview object'
+   update -> 'ValueError: operation forbidden on released memoryview object'
+   compute_digest, key -> 'ValueError: operation forbidden on released memoryview object'
+   compute_digest, message -> 'ValueError: operation forbidden on released memoryview object'
+   compute_md5 -> 'ValueError: operation forbidden on released memoryview object'
+key derived from bytes -> 'de3e953b45eba2b2476f9e316ec72380'
+   message -> '3c09015047adcf83a96f5fdfa75fde59'
+   update -> (None, '3c09015047adcf83a96f5fdfa75fde59')
+   compute_digest, key -> 'de3e953b45eba2b2476f9e316ec72380'
+   compute_digest, message -> '3c09015047adcf83a96f5fdfa75fde59'
+   compute_md5 -> ('de3e953b45eba2b2476f9e316ec72380', '3c09015047adcf83a96f5fdfa75fde59')
+which is found wrong first -> "UnknownHashError: unsupported hash type: 'nothing'"
+   the key before the message -> 'TypeError: Strings must be encoded before hashing'
+   in compute_digest -> "UnknownHashError: unsupported hash type: 'nothing'"
+   in compute_md5 -> 'TypeError: object supporting the buffer API required'
+===== how they are called
+new() -> "TypeError: new() missing required argument 'key' (pos 1)"
+new(key) -> "TypeError: new() missing 1 required argument 'digestmod'"
+new(key, msg) -> "TypeError: new() missing 1 required argument 'digestmod'"
+new(key, None, None) -> 'UnknownHashError: unsupported hash type: None'
+by name -> 'hmac-md5'
+digestmod by name -> 'hmac-md5'
+four -> 'TypeError: new() takes at most 3 arguments (4 given)'
+unknown -> "TypeError: new() got an unexpected keyword argument 'x'"
+twice -> "TypeError: argument for new() given by name ('key') and position (1)"
+compute_digest() -> "TypeError: compute_digest() missing required argument 'key' (pos 1)"
+compute_digest: two -> "TypeError: compute_digest() missing required argument 'digest' (pos 3)"
+compute_digest: by name -> 'ed7e724d3a91554aaa2043041d9c5305'
+compute_digest: four -> 'TypeError: compute_digest() takes at most 3 arguments (4 given)'
+compute_md5() -> 'TypeError: compute_md5 expected 2 arguments, got 0'
+compute_md5: one -> 'TypeError: compute_md5 expected 2 arguments, got 1'
+compute_md5: three -> 'TypeError: compute_md5 expected 2 arguments, got 3'
+compute_md5: by name -> 'TypeError: _hmac.compute_md5() takes no keyword arguments'
+update() -> "TypeError: update() missing required argument 'msg' (pos 1)"
+update: two -> 'TypeError: update() takes at most 1 argument (2 given)'
+update: by name -> None
+update: unknown -> "TypeError: update() missing required argument 'msg' (pos 1)"
+digest: one -> 'TypeError: HMAC.digest() takes no arguments (1 given)'
+hexdigest: one -> 'TypeError: HMAC.hexdigest() takes no arguments (1 given)'
+hexdigest: by name -> 'TypeError: HMAC.hexdigest() takes no keyword arguments'
+copy: one -> 'TypeError: copy() takes no arguments'
+copy: by name -> 'TypeError: copy() takes no arguments'
+HMAC() -> "TypeError: cannot create '_hmac.HMAC' instances"
+HMAC(key) -> "TypeError: cannot create '_hmac.HMAC' instances"
+derived from -> "TypeError: type '_hmac.HMAC' is not an acceptable base type"
+of something else -> "TypeError: descriptor 'update' for '_hmac.HMAC' objects doesn't apply to a 'int' object"
+__new__ -> "TypeError: cannot create '_hmac.HMAC' instances"
+object.__new__ -> "TypeError: cannot create '_hmac.HMAC' instances"
+===== the module and the class
+the module -> (['new', 'compute_digest', 'compute_md5', 'compute_sha1', 'compute_sha224', 'compute_sha256', 'compute_sha384', 'compute_sha512', 'compute_sha3_224', 'compute_sha3_256', 'compute_sha3_384', 'compute_sha3_512', 'compute_blake2s_32', 'compute_blake2b_32', 'UnknownHashError', 'HMAC', '_GIL_MINSIZE'], '_hmac', None, 2048)
+UnknownHashError -> (<class '_hmac.UnknownHashError'>, (<class '_hmac.UnknownHashError'>, <class 'ValueError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>), '_hmac', None)
+HMAC -> ("<class '_hmac.HMAC'>", '_hmac', 'HMAC', (<class '_hmac.HMAC'>, <class 'object'>), True, 0, 0, '0x', None, None, ['__doc__', '__module__', '__repr__', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update'])
+set on it -> "TypeError: cannot set 'x' attribute of immutable type '_hmac.HMAC'"
+   __doc__ -> ('NoneType', 'The type of the None singleton.', None, None)
+   __module__ -> ('str', "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.", None, None)
+   __repr__ -> ('wrapper_descriptor', 'Return repr(self).', '($self, /)', 'HMAC.__repr__')
+   block_size -> ('getset_descriptor', None, None, 'HMAC.block_size')
+   copy -> ('method_descriptor', 'Return a copy ("clone") of the HMAC object.', '($self, /)', 'HMAC.copy')
+   digest -> ('method_descriptor', 'Return the digest of the bytes passed to the update() method so far.\n\nThis method may raise a MemoryError.', '($self, /)', 'HMAC.digest')
+   digest_size -> ('getset_descriptor', None, None, 'HMAC.digest_size')
+   hexdigest -> ('method_descriptor', 'Return hexadecimal digest of the bytes passed to the update() method so far.\n\nThis may be used to exchange the value safely in email or other\nnon-binary environments.\n\nThis method may raise a MemoryError.', '($self, /)', 'HMAC.hexdigest')
+   name -> ('getset_descriptor', None, None, 'HMAC.name')
+   update -> ('method_descriptor', 'Update the HMAC object with the given message.', '($self, /, msg)', 'HMAC.update')
+compute_blake2b_32 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_blake2b_32>')
+compute_blake2s_32 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_blake2s_32>')
+compute_digest -> (None, '($module, /, key, msg, digest)', '_hmac', '<built-in function compute_digest>')
+compute_md5 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_md5>')
+compute_sha1 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha1>')
+compute_sha224 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha224>')
+compute_sha256 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha256>')
+compute_sha384 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha384>')
+compute_sha3_224 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha3_224>')
+compute_sha3_256 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha3_256>')
+compute_sha3_384 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha3_384>')
+compute_sha3_512 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha3_512>')
+compute_sha512 -> (None, '($module, key, msg, /)', '_hmac', '<built-in function compute_sha512>')
+new -> ('Return a new HMAC object.', '($module, /, key, msg=None, digestmod=None)', '_hmac', '<built-in function new>')
+===== hmac is over it
+hmac.new -> [('hmac-sha256', 'b60090e3052297ae'), ('hmac-sha3_256', '1b92d4a226661543'), ('hmac-blake2b', 'cfb0a92a74f0b600'), ('hmac-sha256', 'b60090e3052297ae')]
+done

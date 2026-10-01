@@ -794,6 +794,7 @@ python/PythonExceptionTypes.cpp
 python/PythonFunctoolsModule.cpp
 python/PythonGCModule.cpp
 python/PythonHashAlgorithms.cpp
+python/PythonHMACModule.cpp
 python/PythonHashModules.cpp
 python/PythonHeapqModule.cpp
 python/PythonGenerators.cpp
