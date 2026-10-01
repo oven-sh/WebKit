@@ -144,7 +144,7 @@ static JSValue tupleOfNames(JSGlobalObject* globalObject, const Vector<Identifie
     VM& vm = globalObject->vm();
     PyTuple* tuple = PyTuple::create(globalObject, names.size());
     for (unsigned i = 0; i < names.size(); ++i)
-        tuple->initializeAt(vm, i, jsString(vm, names[i].string()));
+        tuple->initializeAt(vm, i, internedString(vm, names[i]));
     return tuple;
 }
 
@@ -265,7 +265,7 @@ static JSValue makeConstant(JSGlobalObject* globalObject, const CodeDetails::Con
     case Kind::Imaginary:
         return PyComplex::create(globalObject, 0, std::bit_cast<double>(constant.bits));
     case Kind::String:
-        return jsString(vm, constant.text);
+        return isInternedAsConstant(constant.text) ? internedString(vm, Identifier::fromString(vm, constant.text)) : jsString(vm, constant.text);
     case Kind::Bytes:
         return newBytes(globalObject, constant.text.is8Bit() ? byteCast<uint8_t>(constant.text.span8()) : std::span<const uint8_t>());
     case Kind::Code:
@@ -509,7 +509,7 @@ PYTHON_NATIVE(codeVariableName)
     const auto& variables = detailsOf(vm, executableOf(args[0])).frameVariables;
     if (*index < 0 || static_cast<uint64_t>(*index) >= variables.size())
         return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "tuple index out of range"_s));
-    return JSValue::encode(jsString(vm, variables[*index].name.string()));
+    return JSValue::encode(internedString(vm, variables[*index].name));
 }
 
 // ---- co_code

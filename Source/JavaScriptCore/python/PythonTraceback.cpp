@@ -479,7 +479,7 @@ PYTHON_NATIVE(frameVariableNames)
         return { };
     PyTuple* names_ = PyTuple::create(globalObject, frame->variableCount());
     for (unsigned i = 0; i < frame->variableCount(); ++i)
-        names_->initializeAt(vm, i, jsString(vm, frame->variableName(i).string()));
+        names_->initializeAt(vm, i, internedString(vm, frame->variableName(i)));
     return JSValue::encode(names_);
 }
 

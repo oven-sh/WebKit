@@ -138,6 +138,16 @@ void addNoteToRaised(JSGlobalObject*, const ScopedLambda<String()>& note);
 // The Python exception for whatever was thrown, which may have been thrown by JavaScript.
 JSValue exceptionValue(JSGlobalObject*, JSValue thrown);
 
+// ---- Names
+
+// The one str that there is for what is in the table of atoms, for as long as anything refers to it: what CPython calls interned. Every name is, so that the key of a __dict__ is the same object each time it is asked
+// for, and the same as the name is wherever else it turns up. It is by that that pickle writes a name once however many objects have an attribute of it. The engine has such a table, for strings that it compares by
+// where they are (VM::atomStringToJSStringMap), and this is that.
+JSString* internedString(VM&, UniquedStringImpl*);
+inline JSString* internedString(VM& vm, const Identifier& name) { return internedString(vm, name.impl()); }
+// Whether a str that is written out in a program is one of them: those that could be names.
+bool isInternedAsConstant(StringView);
+
 // ---- Attributes
 
 // What an object keeps for itself, under a name that no program can name. If it is nothing, the object keeps it no longer: there is no such thing as a property that has nothing.

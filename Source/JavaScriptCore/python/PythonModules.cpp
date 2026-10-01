@@ -92,7 +92,7 @@ JSArray* namesOfExports(JSGlobalObject* globalObject, JSModuleNamespaceObject* m
         bool isThere = module->isInitializedExport(globalObject, name);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (isThere)
-            strings.append(jsString(vm, name.string()));
+            strings.append(internedString(vm, name));
     }
     return asList(newList(globalObject, strings));
 }

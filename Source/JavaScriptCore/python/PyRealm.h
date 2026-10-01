@@ -334,7 +334,7 @@ public:
     // The namespace of the builtins module, which is where a global name is looked for after the module's own.
     // The module builtins.
     JSObject* builtinsModule() const { return m_builtinsModule.get(); }
-    // sys.intern(): the one str that stands for all that are equal to it, for as long as anything refers to it. As the engine has one Symbol for a SymbolImpl.
+    // sys.intern(): the one str that stands for all that are equal to it, for as long as anything refers to it. See Python::internedString().
     JSString* intern(JSGlobalObject*, JSString*);
     bool isInterned(JSGlobalObject*, JSString*);
 
@@ -405,7 +405,6 @@ public:
 private:
     PyRealm(VM& vm, Structure* structure)
         : Base(vm, structure)
-        , m_internedStrings(vm)
     {
     }
 
@@ -442,8 +441,6 @@ private:
     Python::Configuration m_configuration;
     std::optional<std::array<uint8_t, 24>> m_hashSecret;
     Python::ASTState m_ast;
-    // By the string in the table of atoms, which the str keeps there.
-    WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> m_internedStrings;
     WriteBarrier<JSArray> m_auditHooks;
     WriteBarrier<Unknown> m_asyncGeneratorFirstIterationHook;
     WriteBarrier<Unknown> m_asyncGeneratorFinalizerHook;

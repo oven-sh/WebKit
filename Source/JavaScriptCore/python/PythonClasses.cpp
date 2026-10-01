@@ -554,7 +554,7 @@ static void javaScriptClassWasDefined(JSGlobalObject* globalObject, PyType* type
         RETURN_IF_EXCEPTION(scope, void());
         if (!method)
             continue;
-        callMethod(globalObject, method, self, type->object(), jsString(vm, property.string()));
+        callMethod(globalObject, method, self, type->object(), internedString(vm, property));
         RETURN_IF_EXCEPTION(scope, void());
     }
     if (JSValue hook = type->lookupAfter(vm, type, vm.pythonNames().dunder_init_subclass)) {

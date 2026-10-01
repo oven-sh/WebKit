@@ -894,6 +894,11 @@ bare object, so compiled code always finds its globals the same way.
 - A name that JavaScript would take for an index, as `"0"`, cannot be that of a property. It is kept where a key that is not a string is: in the
   dict's own table.
 - Two objects can have one `__dict__`. The second finds its attributes in the first.
+- **There is one str for a name.** A property is kept under a string in the table of atoms, and not under a str, so a str has to be made when the keys are asked for. It is the same one each time, and the same as the name
+  is wherever else it turns up: in `co_names`, among `**kwargs`, as `f.__name__`, in a syntax tree, and where it is written out as a constant, in whatever code. CPython calls that interned, and does it to every name and
+  to every constant that could be one. It can be told by `is`, which few programs ask. But `pickle` goes by it: the name of an attribute is written once, however many objects have one of that name, and a list of
+  objects came to half as much again without. The engine has the table already, `VM::atomStringToJSStringMap`, for strings that it compares by where they are, and keeps nothing in it that nothing else refers to.
+  `sys.intern()` is that too: `internedString()`. `programs/one-str-for-a-name.py`.
 
 How many attributes there are is `len(o.__dict__)`, and it is asked at each step of going through the dict, to say so if it changes. What Python counts is what `Object.keys()` would list, less the accessors: what is enumerable, is
 not keyed by a symbol, which leaves out what the engine keeps in the object for itself, and is a value. An object with many properties has a table of its own that is changed where it is, so the count cannot be kept by

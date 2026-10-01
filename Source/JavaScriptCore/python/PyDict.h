@@ -32,6 +32,10 @@ namespace JSC {
 
 class PyTuple;
 
+namespace Python {
+JSString* internedString(VM&, UniquedStringImpl*); // See PythonOperations.h.
+}
+
 // What a dict or a set keeps its entries in. It is of a fixed size: to grow, a table gets another. So the collector can look at one
 // at any time, without a lock.
 //
@@ -303,7 +307,7 @@ void PyDict::forEach(JSGlobalObject* globalObject, const Function& function)
         for (auto& name : backingNames(vm)) {
             // It may have gone since, or become something else.
             JSValue value = backingValue(vm, name.get());
-            if (value && !function(jsString(vm, String(name.get())), value))
+            if (value && !function(Python::internedString(vm, name.get()), value))
                 return;
         }
     }

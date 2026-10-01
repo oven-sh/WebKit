@@ -431,7 +431,7 @@ JSValue localsOfFrame(JSGlobalObject* globalObject, PyFrame* frame)
     PyDict* locals = PyDict::create(globalObject);
     for (unsigned i = 0; i < frame->variableCount(); ++i) {
         if (JSValue value = frame->variable(vm, i))
-            locals->setString(globalObject, frame->variableName(i).string(), value);
+            locals->set(globalObject, internedString(vm, frame->variableName(i)), value);
     }
     if (PyDict* extra = frame->extraLocals()) {
         extra->forEach(globalObject, [&] (JSValue key, JSValue value) {

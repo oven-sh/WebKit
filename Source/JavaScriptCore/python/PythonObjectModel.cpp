@@ -334,7 +334,7 @@ JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, con
 JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, const String& name)
 {
     JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeNameError(), concatenate("name '"_s, name, "' is not defined"_s));
-    exception->putDirect(globalObject->vm(), globalObject->vm().pythonNames().field_name, jsString(globalObject->vm(), name));
+    exception->putDirect(globalObject->vm(), globalObject->vm().pythonNames().field_name, internedString(globalObject->vm(), Identifier::fromString(globalObject->vm(), name)));
     setContext(globalObject, exception);
     throwException(globalObject, scope, exception);
     return { };
@@ -587,7 +587,7 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
 
 JSValue nameAsString(VM& vm, PropertyName name)
 {
-    return jsString(vm, String(name.uid()));
+    return internedString(vm, name.uid());
 }
 
 // type.__getattribute__. Empty, with nothing raised, if there is no such attribute.

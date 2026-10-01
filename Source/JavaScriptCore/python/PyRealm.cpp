@@ -126,21 +126,50 @@ JSString* PyRealm::intern(JSGlobalObject* globalObject, JSString* string)
     }
     auto atom = string->toAtomString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (JSString* interned = m_internedStrings.get(atom.data))
-        return interned;
     // It is made of the atom now, having been asked for it, and so keeps it in the table for as long as it lasts.
-    m_internedStrings.set(atom.data, string);
-    return string;
+    return vm.atomStringToJSStringMap.ensureValue(atom.data, [&] { return string; });
 }
+
+namespace Python {
+
+JSString* internedString(VM& vm, UniquedStringImpl* atom)
+{
+    ASSERT(atom->isAtom());
+    if (!atom->length())
+        return jsEmptyString(vm);
+    if (atom->length() == 1 && atom->at(0) <= maxSingleCharacterString)
+        return vm.smallStrings.singleCharacterString(atom->at(0));
+    if (JSString* string = vm.atomStringToJSStringMap.get(atom))
+        return string;
+    // The table is not to be gone through while it is being added to.
+    DeferGC defer(vm);
+    return vm.atomStringToJSStringMap.ensureValue(atom, [&] { return jsString(vm, String(atom)); });
+}
+
+// all_name_chars()
+bool isInternedAsConstant(StringView text)
+{
+    if (!text.is8Bit())
+        return false;
+    for (Latin1Character character : text.span8()) {
+        if (!isASCIIAlphanumeric(character) && character != '_')
+            return false;
+    }
+    return true;
+}
+
+} // namespace Python
 
 bool PyRealm::isInterned(JSGlobalObject* globalObject, JSString* string)
 {
-    if (string->length() <= 1)
-        return intern(globalObject, string) == string;
+    if (!string->length())
+        return true;
     if (string->isRope())
         return false;
     StringImpl* impl = string->getValueImpl();
-    return impl->isAtom() && m_internedStrings.get(impl) == string;
+    if (impl->length() == 1 && impl->at(0) <= maxSingleCharacterString)
+        return true;
+    return impl->isAtom() && globalObject->vm().atomStringToJSStringMap.get(impl) == string;
 }
 
 Structure* PyRealm::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

@@ -1,0 +1,72 @@
+True False False True True True False False True True True True False
+intern of what was made True True
+False True
+not a name: the first to be interned True True
+and the next is that True True
+True False
+keys of two instances True True
+a key and the literal True True
+asked twice True True
+items True True
+iter True True
+reversed True True
+popitem True True
+copy True True
+a class True True
+dir True True
+dir of a class True True
+dir of a module True True
+globals True True
+vars of a module True True
+__name__ of a function True True
+__name__ of a method True True
+__name__ of a class True True
+co_name True True
+co_varnames first_one True True
+co_varnames key_only True True
+co_varnames rest_of True True
+co_varnames others_too True True
+co_varnames local_one True True
+co_names True True
+co_names, an attribute True True
+co_consts True True
+co_consts, in a tuple True True
+co_freevars True True
+co_cellvars True True
+locals() True True
+**kwargs True True
+**kwargs out of a dict True True
+__kwdefaults__ True True
+__annotations__ True True
+a signature True True
+setattr True True
+across code True True
+across functions True True
+exec True True
+a function made by exec True True
+the key that exec made True True
+not a name, in one code True True
+worked out True True
+marshal True True
+marshal, of what was made False True
+a namedtuple True True
+an enum True True
+__members__ True True
+a dataclass True True
+asdict True True
+ast True True
+ast, an attribute True True
+ast, a constant False True
+SimpleNamespace True True
+__slots__ True True
+AttributeError.name True True
+NameError.name True True
+__getattr__ True True
+__setattr__ True True
+__set_name__ True True
+0 True 2289
+1 True 1493
+2 True 1050
+3 True 1050
+4 True 953
+5 True 953

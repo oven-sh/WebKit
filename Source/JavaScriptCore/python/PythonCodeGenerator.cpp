@@ -599,7 +599,9 @@ private:
     }
 
     RegisterID* constant(JSValue value) { return g.addConstantValue(value); }
-    RegisterID* stringConstant(const Identifier& string) { return g.addConstantValue(g.addStringConstant(string)); }
+    // intern_string_constants(): a str that could be a name is the one str that there is for the name, in whatever code it is written.
+    JSString* stringFor(const Identifier& string) { return isInternedAsConstant(string.string()) ? internedString(m_vm, string) : g.addStringConstant(string); }
+    RegisterID* stringConstant(const Identifier& string) { return g.addConstantValue(stringFor(string)); }
     RegisterID* none() { return constant(jsUndefined()); }
 
     // ---- The runtime
@@ -1266,7 +1268,7 @@ private:
         case Kind::Imaginary:
             return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(purifyNaNKeepingPayload(std::bit_cast<double>(value.bits)))) }, location);
         case Kind::String:
-            return g.emitLoad(dst, identifierFor(value.text));
+            return g.emitLoad(dst, JSValue(stringFor(identifierFor(value.text))));
         case Kind::Bytes:
             return emitRuntimeCall(dst, "newBytes"_s, { stringConstant(identifierFor(value.text)) }, location);
         case Kind::Complex:
@@ -2090,7 +2092,7 @@ private:
     {
         auto* names = JSCellButterfly::create(m_vm, CopyOnWriteArrayWithContiguous, keywords.size());
         for (unsigned i = 0; i < keywords.size(); ++i)
-            names->setIndex(m_vm, i, g.addStringConstant(*keywords[i]->name));
+            names->setIndex(m_vm, i, internedString(m_vm, *keywords[i]->name));
         return constant(names);
     }
 

@@ -496,7 +496,7 @@ PyTuple* PyDict::backingKeys(JSGlobalObject* globalObject)
     auto names = backingNames(vm);
     PyTuple* keys = PyTuple::create(globalObject, names.size());
     for (unsigned i = 0; i < names.size(); ++i)
-        keys->initializeAt(vm, i, jsString(vm, String(names[i].get())));
+        keys->initializeAt(vm, i, Python::internedString(vm, names[i].get()));
     return keys;
 }
 
@@ -610,7 +610,7 @@ bool PyDict::mergeFrom(JSGlobalObject* globalObject, PyDict& other)
             JSValue value = other.backingValue(vm, name.get());
             if (!value)
                 continue;
-            add(globalObject, jsString(vm, String(name.get())), value);
+            add(globalObject, Python::internedString(vm, name.get()), value);
             RETURN_IF_EXCEPTION(scope, false);
         }
     }

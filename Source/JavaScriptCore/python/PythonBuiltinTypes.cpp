@@ -790,7 +790,7 @@ static JSValue getTypeDict(JSGlobalObject* globalObject, JSValue self)
                 value = PyNativeObject::create(globalObject, BuiltinType::Property, accessor->isGetterNull() ? jsUndefined() : JSValue(accessor->getter()), accessor->isSetterNull() ? jsUndefined() : JSValue(accessor->setter()), jsUndefined(), jsUndefined());
             else if (!value.isObject() && value.isCell() && !value.isString() && !value.isHeapBigInt() && !value.isSymbol())
                 continue;
-            dict->set(globalObject, jsString(vm, property.string()), value);
+            dict->set(globalObject, internedString(vm, property), value);
             RETURN_IF_EXCEPTION(scope, void());
         }
     };
@@ -909,7 +909,7 @@ static JSValue propertiesOfJavaScriptObject(JSGlobalObject* globalObject, JSObje
     for (auto& property : properties) {
         JSValue value = object->get(globalObject, property);
         RETURN_IF_EXCEPTION(scope, { });
-        dict->set(globalObject, jsString(vm, property.string()), value);
+        dict->set(globalObject, internedString(vm, property), value);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return dict;
@@ -1165,7 +1165,9 @@ JSValue nameObjectOfFunction(JSGlobalObject* globalObject, JSFunction* function,
         return set;
     if (JSValue made = function->getDirect(vm, kept))
         return made;
-    JSString* made = jsString(vm, nameOfFunction(globalObject, function, qualified));
+    String text = nameOfFunction(globalObject, function, qualified);
+    // What it is called is a name. Where it is to be found is put together.
+    JSString* made = qualified ? jsString(vm, text) : internedString(vm, Identifier::fromString(vm, text));
     function->putDirect(vm, kept, made);
     return made;
 }
