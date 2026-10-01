@@ -2906,14 +2906,21 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                         if (index >= storage->length())
                             return false;
 
-                        if (index < storage->vectorLength())
-                            return false;
+                        if (index < storage->vectorLength()) {
+                            // A frozen object keeps its elements in the vector; they never change
+                            // once the structure says so (JSObject::freeze fences the element stores
+                            // before the structure store).
+                            if (!structure->vectorElementsAreReadOnly())
+                                return false;
+                            WTF::loadLoadFence();
+                            value = storage->m_vector[index].get();
+                        } else {
+                            SparseArrayValueMap* map = storage->m_sparseMap.get();
+                            if (!map)
+                                return false;
 
-                        SparseArrayValueMap* map = storage->m_sparseMap.get();
-                        if (!map)
-                            return false;
-
-                        value = map->getConcurrently(index);
+                            value = map->getConcurrently(index);
+                        }
                     }
                     if (!value)
                         return false;
@@ -3241,8 +3248,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                 clobberWorld();
             break;
         case Array::SlowPutArrayStorage:
-            if (node->arrayMode().mayStoreToHole())
-                clobberWorld();
+            // The store in bounds takes a slow path that throws when the object is frozen (see
+            // clobberize).
+            clobberWorld();
             break;
         default:
             break;

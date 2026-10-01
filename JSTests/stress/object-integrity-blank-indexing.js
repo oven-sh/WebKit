@@ -100,6 +100,13 @@ function shouldBeArrayStorage(o) {
     if (mode !== "NonArrayWithArrayStorage" && mode !== "NonArrayWithSlowPutArrayStorage")
         throw new Error("bad value: " + mode + " expected: NonArrayWith{SlowPut,}ArrayStorage");
 }
+// A rejected [[Set]] allocates no storage unless the prototype chain may intercept the put
+// (--alwaysHaveABadTime=true), in which case the object goes through SlowPutArrayStorage.
+function shouldBeBlankOrSlowPutArrayStorage(o) {
+    let mode = indexingMode(o);
+    if (mode !== "NonArray" && mode !== "NonArrayWithSlowPutArrayStorage")
+        throw new Error("bad value: " + mode + " expected: NonArray or NonArrayWithSlowPutArrayStorage");
+}
 
 for (let make of [() => Object.freeze({ a: 1 }), () => Object.seal({ a: 1 }), () => Object.preventExtensions({ a: 1 }), () => Object.freeze({})]) {
     for (let i = 0; i < testLoopCount; ++i) {
@@ -110,7 +117,7 @@ for (let make of [() => Object.freeze({ a: 1 }), () => Object.seal({ a: 1 }), ()
         {
             let o = make();
             o[0] = 42;
-            shouldBeArrayStorage(o);
+            shouldBeBlankOrSlowPutArrayStorage(o);
             shouldBe(o[0], undefined);
             shouldBe(0 in o, false);
             // Second write on the same object must keep being rejected.
@@ -121,14 +128,14 @@ for (let make of [() => Object.freeze({ a: 1 }), () => Object.seal({ a: 1 }), ()
         {
             let o = make();
             shouldThrow(() => { "use strict"; o[0] = 42; }, TypeError);
-            shouldBeArrayStorage(o);
+            shouldBeBlankOrSlowPutArrayStorage(o);
             shouldBe(0 in o, false);
         }
         // putByIndex via Reflect.set.
         {
             let o = make();
             shouldBe(Reflect.set(o, 5, 42), false);
-            shouldBeArrayStorage(o);
+            shouldBeBlankOrSlowPutArrayStorage(o);
             shouldBe(5 in o, false);
         }
         // putByIndex via Array.prototype.push (generic [[Set]] on a non-array).
@@ -141,7 +148,7 @@ for (let make of [() => Object.freeze({ a: 1 }), () => Object.seal({ a: 1 }), ()
         {
             let o = make();
             o[0xFFFFFFFE] = 42;
-            shouldBeArrayStorage(o);
+            shouldBeBlankOrSlowPutArrayStorage(o);
             shouldBe(0xFFFFFFFE in o, false);
         }
         // defineOwnIndexedProperty: data descriptor.

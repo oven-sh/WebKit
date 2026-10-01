@@ -42,6 +42,13 @@ inline void JSObject::didBecomePrototype(VM& vm)
 {
     Structure* oldStructure = structure();
     if (!oldStructure->mayBePrototype()) [[unlikely]] {
+        // The read-only elements of a frozen object intercept the indexed puts of the objects that
+        // inherit from it. JSObject::freeze leaves this note to here so that a frozen array that is
+        // no prototype keeps its fast paths; nothing inherits from this object yet, so no bad time.
+        if (oldStructure->vectorElementsAreReadOnly() && hasIndexedElementsInArrayStorage()) [[unlikely]] {
+            notifyPresenceOfIndexedAccessors(vm);
+            oldStructure = structure();
+        }
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::becomePrototypeTransition(vm, oldStructure, &deferred));
     }

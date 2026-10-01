@@ -1150,12 +1150,25 @@ bool testIntegrityLevel(JSGlobalObject* globalObject, VM& vm, JSObject* object)
     return true;
 }
 
+// True when sealing / freezing |object| via the generic SetIntegrityLevel loop
+// is not observable and the result is equivalent to JSObject::seal / freeze,
+// which applies attributes to the PropertyTable and SparseArrayValueMap in bulk
+// without allocating a property-name array or dispatching through the method
+// table per element. This is the dominant cost for large arrays.
+static ALWAYS_INLINE bool canFastSetIntegrityLevel(JSObject* object)
+{
+    // JSFinalObject and (exact) JSArray use ordinary [[PreventExtensions]] and
+    // [[DefineOwnProperty]] and have no lazy own properties that must be reified
+    // via getOwnPropertyNames. JSArray's "length" is handled separately.
+    return is<JSFinalObject>(object) || isJSArray(object);
+}
+
 JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+    if (canFastSetIntegrityLevel(object)) {
         object->seal(vm);
         return object;
     }
@@ -1188,7 +1201,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+    if (canFastSetIntegrityLevel(object)) {
         object->freeze(vm);
         return object;
     }
@@ -1245,6 +1258,11 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsSealed, (JSGlobalObject* globalObjec
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
         return JSValue::encode(jsBoolean(object->isSealed(vm)));
 
+    // An object that JSObject::seal sealed answers from its structure. The generic loop still
+    // decides for one that reached the sealed state through Object.defineProperty calls.
+    if (canFastSetIntegrityLevel(object) && object->isSealed(vm))
+        return JSValue::encode(jsBoolean(true));
+
     // 2. Return ? TestIntegrityLevel(O, "sealed").
     return JSValue::encode(jsBoolean(testIntegrityLevel<IntegrityLevel::Sealed>(globalObject, vm, object)));
 }
@@ -1262,6 +1280,11 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsFrozen, (JSGlobalObject* globalObjec
     // Quick check for final objects.
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
         return JSValue::encode(jsBoolean(object->isFrozen(vm)));
+
+    // An object that JSObject::freeze froze answers from its structure. The generic loop still
+    // decides for one that reached the frozen state through Object.defineProperty calls.
+    if (canFastSetIntegrityLevel(object) && object->isFrozen(vm))
+        return JSValue::encode(jsBoolean(true));
 
     // 2. Return ? TestIntegrityLevel(O, "frozen").
     return JSValue::encode(jsBoolean(testIntegrityLevel<IntegrityLevel::Frozen>(globalObject, vm, object)));
