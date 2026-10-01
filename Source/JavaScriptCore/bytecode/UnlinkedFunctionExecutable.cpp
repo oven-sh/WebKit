@@ -82,9 +82,9 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
     // What is going to be compiled ahead of time is worth keeping it for: both specializations get it, and so does the compiler.
     // (Whoever has all the code generated takes it from the executable in the end: BytecodeLinkEncoder.)
-    RefPtr<DeclaredNamesLink> parentDeclaredNames = Options::resolveAllScopeSlotsStatically() ? executable->parentDeclaredNames() : executable->takeParentDeclaredNames();
+    RefPtr<DeclaredNamesLink> parentDeclaredNames = vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically ? executable->parentDeclaredNames() : executable->takeParentDeclaredNames();
 #if ENABLE(FTL_JIT)
-    if (Options::resolveAllScopeSlotsStatically())
+    if (vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
         AOT::noteDeclaredNames(result, RefPtr { parentDeclaredNames });
 #endif
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames = executable->generatorOrAsyncWrapperFunctionParameterNames();

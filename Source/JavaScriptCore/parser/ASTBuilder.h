@@ -133,7 +133,7 @@ public:
 
     ExpressionNode* makeBinaryNode(const JSTokenLocation&, int token, std::pair<ExpressionNode*, BinaryOpInfo>, std::pair<ExpressionNode*, BinaryOpInfo>);
     ExpressionNode* makeStaticBlockFunctionCallNode(const JSTokenLocation&, ExpressionNode* func, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
-    static std::optional<unsigned> soundTypeCheckMask(const Identifier& callee, ArgumentsNode*);
+    std::optional<unsigned> soundTypeCheckMask(const Identifier& callee, ArgumentsNode*);
     ExpressionNode* makeFunctionCallNode(const JSTokenLocation&, ExpressionNode* func, bool previousBaseWasSuper, ArgumentsNode* args, const JSTextPosition& divotStart, const JSTextPosition& divot, const JSTextPosition& divotEnd, size_t callOrApplyChildDepth, bool isOptionalCall);
 
     JSC::SourceElements* createSourceElements() { return new (m_parserArena) JSC::SourceElements(); }
@@ -1473,7 +1473,7 @@ ExpressionNode* ASTBuilder::makeStaticBlockFunctionCallNode(const JSTokenLocatio
 // the SyntaxChecker (which cannot see this) agrees with the ASTBuilder. The mask is matched after constant folding.
 inline std::optional<unsigned> ASTBuilder::soundTypeCheckMask(const Identifier& callee, ArgumentsNode* args)
 {
-    if (!Options::useSoundTypes())
+    if (!m_vm.bytecodeGenerationOptions.useSoundTypes)
         return std::nullopt;
     if (callee.length() != 3 || callee.string() != "$$t"_s)
         return std::nullopt;

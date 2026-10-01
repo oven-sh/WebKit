@@ -519,6 +519,17 @@ public:
     bool m_firstRealmHasBuiltinsOfStaticHeap { false };
     Vector<FunctionExecutable*> m_builtinsOfStaticHeap; // What it has been given, by BuiltinCodeIndex. The collector has nothing to do with them.
     AOT::Instance* m_aotInstanceOfProgram { nullptr }; // The one that has the environments of the program's modules in their places.
+
+    // How this VM's parser and bytecode generator shape the code they produce. Each starts as the option of the same name. A VM that
+    // generates bytecode to be compiled ahead of time sets them for itself, so that a build does not change how the rest of its process
+    // compiles anything.
+    struct BytecodeGenerationOptions {
+        bool useSoundTypes { Options::useSoundTypes() };
+        bool resolveAllScopeSlotsStatically { Options::resolveAllScopeSlotsStatically() };
+        bool evaluateObjectLiteralValuesFirst { Options::evaluateObjectLiteralValuesFirst() };
+        bool definePlainInstanceFieldsInConstructor { Options::definePlainInstanceFieldsInConstructor() };
+    };
+    BytecodeGenerationOptions bytecodeGenerationOptions;
     static constexpr ptrdiff_t offsetOfAOTInstanceOfProgram() { return OBJECT_OFFSETOF(VM, m_aotInstanceOfProgram); }
     static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); } // Which starts with its entries.
 #endif

@@ -1268,7 +1268,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     // the cloned symbol table from the linked code block by using this offset.
     codeBlock->setModuleEnvironmentSymbolTableConstantRegisterOffset(constantSymbolTable->index());
 #if ENABLE(FTL_JIT)
-    if (Options::resolveAllScopeSlotsStatically())
+    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
         AOT::noteDeclaredNames(codeBlock, currentDeclaredNames());
 #endif
 }
@@ -3684,7 +3684,7 @@ RegisterID* BytecodeGenerator::emitNewRegExp(RegisterID* dst, RegExp* regExp)
 void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, FunctionMetadataNode* function)
 {
     unsigned index = m_codeBlock->addFunctionExpr(makeFunction(function));
-    if (Options::resolveAllScopeSlotsStatically()) [[unlikely]]
+    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically) [[unlikely]]
         m_indicesOfFunctionExprs.set(function, index);
 
     switch (function->parseMode()) {
@@ -3709,7 +3709,7 @@ void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, Functio
 
 void BytecodeGenerator::recordFunctionAssignment(const Identifier& ident, const Variable& var, ExpressionNode* right)
 {
-    if (!Options::resolveAllScopeSlotsStatically()) [[likely]]
+    if (!m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically) [[likely]]
         return;
     if (right->isClassExprNode())
         right = static_cast<ClassExprNode*>(right)->constructorExpression();
@@ -3785,7 +3785,7 @@ RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* 
     metadata.finishParsing(m_scopeNode->source(), Identifier(), FunctionMode::MethodDefinition);
     auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     initializer->setClassElementDefinitions(WTF::move(classElementDefinitions));
-    if (Options::resolveAllScopeSlotsStatically())
+    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
         initializer->setParentDeclaredNames(currentDeclaredNames());
 
     unsigned index = m_codeBlock->addFunctionExpr(initializer);

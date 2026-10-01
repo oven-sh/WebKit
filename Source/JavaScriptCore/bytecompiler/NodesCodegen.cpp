@@ -655,7 +655,7 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
         }
     }
 
-    if (!newObject && Options::evaluateObjectLiteralValuesFirst()) {
+    if (!newObject && generator.vm().bytecodeGenerationOptions.evaluateObjectLiteralValuesFirst) {
         // { a: x, b: f() }: until it has all its properties nothing has a way of getting at the object, so when it is made makes no
         // difference to anybody.
         constexpr unsigned maximumCount = 64;
@@ -5797,7 +5797,7 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         metadata->setClassSource(m_classSource);
         metadata->setNeedsClassFieldInitializer(needsClassFieldInitializer == NeedsClassFieldInitializer::Yes);
         metadata->setPrivateBrandRequirement(privateBrandRequirement);
-        if (Options::definePlainInstanceFieldsInConstructor() && needsClassFieldInitializer == NeedsClassFieldInitializer::Yes)
+        if (generator.vm().bytecodeGenerationOptions.definePlainInstanceFieldsInConstructor && needsClassFieldInitializer == NeedsClassFieldInitializer::Yes)
             metadata->setPlainInstanceFieldNames(m_classElements->plainInstanceFieldNames());
         constructor = generator.emitNode(constructor.get(), m_constructorExpression);
         needsHomeObject = m_classHeritage || metadata->superBinding() == SuperBinding::Needed;

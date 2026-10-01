@@ -101,7 +101,7 @@ static void generateUnlinkedCodeBlocksOfFunction(VM& vm, UnlinkedFunctionExecuta
         generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1, optimize);
     // When all the code there is going to be is generated now: also what `new` runs, of a function that looks as if it is
     // for that. (Not of any function that says `this`: some of those have a whole library inside, which would be there twice.)
-    if (!Options::resolveAllScopeSlotsStatically() || !unlinkedFunctionCodeBlock || kind != CodeSpecializationKind::CodeForCall)
+    if (!vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically || !unlinkedFunctionCodeBlock || kind != CodeSpecializationKind::CodeForCall)
         return;
     if (unlinkedExecutable->constructAbility() != ConstructAbility::CanConstruct)
         return;
