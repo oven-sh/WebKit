@@ -23,6 +23,7 @@
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include <wtf/BitVector.h>
+#include <wtf/NeverDestroyed.h>
 #include <sys/mman.h>
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/SymbolRegistry.h>
@@ -197,9 +198,22 @@ PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
 // See retainNeededFunctionData().
 static bool s_allocatesFunctionsInScratch;
 static bool s_nextCellIsOfAFunction;
-static Vector<FunctionExecutable*> s_executablesInScratch;
-static UncheckedKeyHashSet<void*> s_cellsInScratch;
-static Vector<std::span<const WriteBarrier<UnlinkedFunctionExecutable>>> s_listsOfFunctionsInFunctions;
+// (At file scope these would have destructors to register whenever a process starts.)
+static Vector<FunctionExecutable*>& executablesInScratch()
+{
+    static NeverDestroyed<Vector<FunctionExecutable*>> executables;
+    return executables;
+}
+static UncheckedKeyHashSet<void*>& cellsInScratch()
+{
+    static NeverDestroyed<UncheckedKeyHashSet<void*>> cells;
+    return cells;
+}
+static Vector<std::span<const WriteBarrier<UnlinkedFunctionExecutable>>>& listsOfFunctionsInFunctions()
+{
+    static NeverDestroyed<Vector<std::span<const WriteBarrier<UnlinkedFunctionExecutable>>>> lists;
+    return lists;
+}
 const StaticHeap::RowOfFunction* StaticHeap::s_rowsOfFunctions;
 
 bool StaticHeap::keepsNothingForGeneratingCode()
@@ -213,13 +227,17 @@ void StaticHeap::willAllocateUnlinkedFunctionSlow()
 }
 
 // The address and size of each cell, kept only while the heap is being built.
-static Vector<std::pair<void*, size_t>> s_cellsBeingBuilt[2]; // For Arena::Cells and for Arena::MutableCells.
+static std::array<Vector<std::pair<void*, size_t>>, 2>& cellsBeingBuilt() // For Arena::Cells and for Arena::MutableCells.
+{
+    static NeverDestroyed<std::array<Vector<std::pair<void*, size_t>>, 2>> cells;
+    return cells;
+}
 
 template<typename Functor> static void forEachCell(Region::Arena arena, const Functor& functor)
 {
     RELEASE_ASSERT(arena == Region::Arena::Cells || arena == Region::Arena::MutableCells);
     // (Iterates by index, because the functor may allocate another cell.)
-    auto& cells = s_cellsBeingBuilt[arena == Region::Arena::MutableCells];
+    auto& cells = cellsBeingBuilt()[arena == Region::Arena::MutableCells];
     for (size_t i = 0; i < cells.size(); ++i)
         functor(cells[i].first, cells[i].second);
 }
@@ -312,13 +330,13 @@ void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
     if (std::exchange(s_nextCellIsOfAFunction, false) && s_allocatesFunctionsInScratch) {
         void* cell = Region::allocate(Region::Arena::Scratch, size, 16, sizeOfCellHeader);
         Region::AllocationScope notInRegion(false);
-        s_cellsInScratch.add(cell);
+        cellsInScratch().add(cell);
         return cell;
     }
     bool isMutable = Region::isAllocatingMutable();
     void* cell = Region::allocate(isMutable ? Region::Arena::MutableCells : Region::Arena::Cells, size, 16, sizeOfCellHeader);
     Region::AllocationScope notInRegion(false);
-    s_cellsBeingBuilt[isMutable].append({ cell, size });
+    cellsBeingBuilt()[isMutable].append({ cell, size });
     return cell;
 }
 
@@ -771,7 +789,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         executable = unlinked->link(vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
         if (s_allocatesFunctionsInScratch) {
             Region::AllocationScope notInRegion(false);
-            s_executablesInScratch.append(executable);
+            executablesInScratch().append(executable);
         }
         executable->becomeStatic(vm);
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
@@ -1052,11 +1070,11 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
 // The code that contains a function refers to its FunctionExecutable directly (UnlinkedCodeBlock::executableIn()).
 void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
 {
-    auto isScratch = [](uintptr_t bits) { return bits - Region::startOf(Region::Arena::Scratch) < Region::used(Region::Arena::Scratch) && s_cellsInScratch.contains(std::bit_cast<void*>(bits)); };
+    auto isScratch = [](uintptr_t bits) { return bits - Region::startOf(Region::Arena::Scratch) < Region::used(Region::Arena::Scratch) && cellsInScratch().contains(std::bit_cast<void*>(bits)); };
     auto place = [&](const void* bytes, size_t size) {
         void* cell = Region::allocate(Region::Arena::Cells, size, 16, sizeOfCellHeader);
         memcpy(cell, bytes, size);
-        s_cellsBeingBuilt[0].append({ cell, size });
+        cellsBeingBuilt()[0].append({ cell, size });
         return cell;
     };
     UncheckedKeyHashMap<UnlinkedFunctionExecutable*, UnlinkedFunctionExecutable*> kept;
@@ -1075,7 +1093,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     Vector<std::pair<uint32_t, UnlinkedFunctionExecutable*>> inShortForm;
     Vector<FunctionExecutable*> inFull;
     Structure* structureOfShortForm = vm.shortFunctionExecutableStructure.get();
-    for (auto* executable : s_executablesInScratch) {
+    for (auto* executable : executablesInScratch()) {
         UnlinkedFunctionExecutable* unlinked = executable->unlinkedExecutable();
         RELEASE_ASSERT(isScratch(std::bit_cast<uintptr_t>(executable)) && isScratch(std::bit_cast<uintptr_t>(unlinked)));
         bool hasCodeToCall = executable->aotEntryFor(CodeSpecializationKind::CodeForCall);
@@ -1106,7 +1124,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
             copy = pages + pageSizeOfImage - sizeOfCellHeader - FunctionExecutable::sizeOfShortForm;
             memcpy(copy, static_cast<const void*>(executable), FunctionExecutable::sizeOfShortForm);
             memset(copy + FunctionExecutable::sizeOfShortForm, 0xfb, sizeOfCellHeader);
-            s_cellsBeingBuilt[0].append({ copy, FunctionExecutable::sizeOfShortForm });
+            cellsBeingBuilt()[0].append({ copy, FunctionExecutable::sizeOfShortForm });
         } else
             copy = static_cast<char*>(place(executable, FunctionExecutable::sizeOfShortForm));
         *reinterpret_cast<uint32_t*>(copy + JSCell::structureIDOffset()) = structureOfShortForm->id().bits();
@@ -1194,7 +1212,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     // are unreachable.
     // (ClosureChecker reports any other reference to Arena::Scratch.)
     size_t inFunctionsWithoutCode = 0;
-    for (auto list : s_listsOfFunctionsInFunctions) {
+    for (auto list : listsOfFunctionsInFunctions()) {
         for (auto& entry : list) {
             if (!isScratch(std::bit_cast<uintptr_t>(entry)))
                 continue;
@@ -1204,7 +1222,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     }
     s_rowsOfFunctions = rows.data();
     if (Options::verboseAOTCompilation()) [[unlikely]]
-        dataLogLn("StaticHeap: of ", s_executablesInScratch.size(), " FunctionExecutables ", inShortForm.size(), " are in the short form, with ", shared.size(), " UnlinkedFunctionExecutables between them and ", rows.size_bytes(), " bytes of rows; ", inFull.size(), " are kept in full; ", foundBy, " more UnlinkedFunctionExecutables are kept for what finds a function by one; ", inFunctionsWithoutCode, " functions are in functions that there is no code for");
+        dataLogLn("StaticHeap: of ", executablesInScratch().size(), " FunctionExecutables ", inShortForm.size(), " are in the short form, with ", shared.size(), " UnlinkedFunctionExecutables between them and ", rows.size_bytes(), " bytes of rows; ", inFull.size(), " are kept in full; ", foundBy, " more UnlinkedFunctionExecutables are kept for what finds a function by one; ", inFunctionsWithoutCode, " functions are in functions that there is no code for");
 }
 
 // SymbolTables are created in Arena::Scratch too (CachedSymbolTable::decode()). By now dropUnreferencedVariableNames() has removed
@@ -1217,7 +1235,7 @@ static void deduplicateSymbolTables()
     UncheckedKeyHashMap<uintptr_t, uintptr_t> moved;
     // (In address order, which is creation order, so that the output is deterministic.)
     Vector<uintptr_t> tables;
-    for (void* cell : s_cellsInScratch) {
+    for (void* cell : cellsInScratch()) {
         if (dynamicDowncast<SymbolTable>(static_cast<JSCell*>(cell)))
             tables.append(std::bit_cast<uintptr_t>(cell));
     }
@@ -1227,7 +1245,7 @@ static void deduplicateSymbolTables()
         moved.add(table, kept.ensure(String { bytes }, [&] {
             void* cell = Region::allocate(Region::Arena::Cells, sizeof(SymbolTable), 16, StaticHeap::sizeOfCellHeader);
             memcpy(cell, bytes.data(), bytes.size());
-            s_cellsBeingBuilt[0].append({ cell, sizeof(SymbolTable) });
+            cellsBeingBuilt()[0].append({ cell, sizeof(SymbolTable) });
             return std::bit_cast<uintptr_t>(cell);
         }).iterator->value);
     }
@@ -1249,13 +1267,13 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     s_identifiersOfProgram = { };
     s_constantsOfProgram = { };
     auto forgetCells = makeScopeExit([] {
-        for (auto& cells : s_cellsBeingBuilt)
+        for (auto& cells : cellsBeingBuilt())
             cells = { };
         s_allocatesFunctionsInScratch = false;
         s_nextCellIsOfAFunction = false;
-        s_executablesInScratch = { };
-        s_cellsInScratch = { };
-        s_listsOfFunctionsInFunctions = { };
+        executablesInScratch() = { };
+        cellsInScratch() = { };
+        listsOfFunctionsInFunctions() = { };
         s_rowsOfFunctions = nullptr;
     });
     if (positionsToKeep)
@@ -1439,8 +1457,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                                     if (auto* code = function->codeBlockIfExists(kind); code && s_allocatesFunctionsInScratch) {
                                         Region::AllocationScope notInRegion(false);
-                                        s_listsOfFunctionsInFunctions.append(code->functionDecls());
-                                        s_listsOfFunctionsInFunctions.append(code->functionExprs());
+                                        listsOfFunctionsInFunctions().append(code->functionDecls());
+                                        listsOfFunctionsInFunctions().append(code->functionExprs());
                                     }
                                     if (auto* code = function->codeBlockIfExists(kind))
                                         code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets(), !!s_arrayDeduplicator);

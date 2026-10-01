@@ -437,7 +437,10 @@ public:
     };
 
     // At the same address in every process, unlike data in the executable, because objects that are created when a program is built
-    // (bmalloc::StaticRegion) refer to it. It exists before any other static initializer of the process has run.
+    // (bmalloc::StaticRegion) refer to it. It exists once constructEmpty() has run, which is the first thing for a process to do,
+    // on its first thread: WTF::initialize() does, but an embedder that uses strings before that has to call it itself. (Not a
+    // static initializer: those run in every process that contains this code, whether or not it goes on to use it.)
+    WTF_EXPORT_PRIVATE static void constructEmpty();
     ALWAYS_INLINE static StaticStringImpl* emptyAsStaticStringImpl() { return reinterpret_cast<StaticStringImpl*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfEmptyStringInBss); }
     ALWAYS_INLINE static StringImpl* empty() { SUPPRESS_MEMORY_UNSAFE_CAST return reinterpret_cast<StringImpl*>(emptyAsStaticStringImpl()); }
 
