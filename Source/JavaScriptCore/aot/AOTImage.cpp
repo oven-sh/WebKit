@@ -1630,6 +1630,17 @@ ImageAddressInfo classifyAddress(const void* address)
     return { ImageAddressInfo::Function, index, static_cast<uint32_t>(offset - starts[index]) };
 }
 
+std::optional<uint32_t> offsetInCodeOfImage(const void* address)
+{
+    Image* image = Image::withCode();
+    if (!image)
+        return std::nullopt;
+    uintptr_t offset = std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->code());
+    if (offset >= image->header().codeSize)
+        return std::nullopt;
+    return static_cast<uint32_t>(offset);
+}
+
 bool hasCode()
 {
     return s_headerOfImageWithCode || Image::withCode();

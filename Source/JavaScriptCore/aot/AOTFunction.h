@@ -13,6 +13,7 @@
 #include "WriteBarrier.h"
 #include <optional>
 #include <span>
+#include <wtf/StackBounds.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -158,9 +159,24 @@ struct ImageAddressInfo {
     uint32_t offset { 0 };
 };
 JS_EXPORT_PRIVATE ImageAddressInfo classifyAddress(const void* address); // Any thread.
+// The offset of an address in the code of the image, functions or not. It is what the map of the image lists
+// (Options::aotMapFilePath()), so a crash report can say where in the program's code a frame is. Any thread, and signal handlers.
+JS_EXPORT_PRIVATE std::optional<uint32_t> offsetInCodeOfImage(const void* address);
 // The return address into `frame`, found by walking outward from a more recent frame (that of a running C++ function, or the
 // EntryFrame of code that `frame` is waiting on). Returns null if `frame` is not reachable from there.
 JS_EXPORT_PRIVATE void* returnAddressForFrame(const void* frame, const void* startingFrom);
+// For a profiler that has stopped a thread outside of JavaScript: in a C or C++ function, or in the code of a regular expression.
+// Code from the JIT and the interpreter stores its frame in VM::topCallFrame before it calls such a function. Ahead-of-time
+// compiled code leaves that to the function, and not all of them do it: sin() and memmove() do not. In those, VM::topCallFrame is
+// the frame of whatever stored it last, usually a host function that has returned long ago.
+// This walks outward from the machine's frame. It returns `topCallFrame` if that comes first, which means that it is up to date,
+// or else the first frame that something returns to in the image. `pc` is where the frame will resume. It returns nothing if it
+// finds neither, which means that no ahead-of-time compiled code is running. `machineLinkRegister` may be null.
+struct FrameAndPC {
+    void* frame { nullptr };
+    void* pc { nullptr };
+};
+JS_EXPORT_PRIVATE std::optional<FrameAndPC> innermostFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* topCallFrame, const StackBounds&);
 // The call site (CallSiteIndex::bits()) for a return address at this offset in the function's code.
 JS_EXPORT_PRIVATE uint32_t callSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
 JS_EXPORT_PRIVATE const RegisterAtOffsetList& adapterSavedRegisters();

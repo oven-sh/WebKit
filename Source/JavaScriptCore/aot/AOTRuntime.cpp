@@ -463,6 +463,32 @@ struct FrameRecord {
 };
 }
 
+SUPPRESS_ASAN std::optional<FrameAndPC> innermostFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* topCallFrame, const StackBounds& stack)
+{
+    // (The thread may have been stopped anywhere, so the frame pointer may be anything.)
+    auto isValid = [&](const FrameRecord* record) {
+        return stack.contains(const_cast<FrameRecord*>(record)) && !(std::bit_cast<uintptr_t>(record) % sizeof(void*));
+    };
+    auto* record = static_cast<const FrameRecord*>(machineFrame);
+    // A function that calls nothing makes no frame, and no function has made one yet when it begins. Then the frame is still the
+    // caller's, and only the link register says where the caller will resume.
+    if (machineLinkRegister && machineFrame != topCallFrame && isValid(record) && removeCodePtrTag(record->returnAddress) != machineLinkRegister
+        && classifyAddress(machineLinkRegister).kind != ImageAddressInfo::NotInImage)
+        return FrameAndPC { machineFrame, machineLinkRegister };
+    void* pc = machinePC;
+    while (isValid(record)) {
+        if (record == topCallFrame)
+            return FrameAndPC { topCallFrame, pc };
+        pc = removeCodePtrTag(record->returnAddress);
+        if (classifyAddress(pc).kind != ImageAddressInfo::NotInImage)
+            return FrameAndPC { const_cast<FrameRecord*>(record->previous), pc };
+        if (record->previous <= record)
+            break;
+        record = record->previous;
+    }
+    return std::nullopt;
+}
+
 SUPPRESS_ASAN Instance* instanceForFrame(const void* frame)
 {
     for (auto* record = static_cast<const FrameRecord*>(frame);; record = record->previous) {

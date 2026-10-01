@@ -442,6 +442,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             void* machineFrame;
             CallFrame* callFrame;
             void* machinePC;
+            void* machineLinkRegister = nullptr;
             bool topFrameIsLLInt = false;
             RegExp* regExp = nullptr;
             void* llintPC;
@@ -455,6 +456,9 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     machinePC = instructionPointer->untaggedPtr();
                 else
                     machinePC = nullptr;
+#if OS(DARWIN) && CPU(ARM64)
+                machineLinkRegister = MachineContext::linkRegister(registers).untaggedPtr();
+#endif
                 llintPC = removeCodePtrTag(MachineContext::llintInstructionPointer(registers));
                 assertIsNotTagged(machinePC);
             }
@@ -486,8 +490,14 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 
             void* pcOfFrame = machinePC;
 #if ENABLE(FTL_JIT)
-            if (callFrame && callFrame != machineFrame && AOT::hasCode())
-                pcOfFrame = AOT::returnAddressForFrame(callFrame, machineFrame);
+            if (callFrame != machineFrame && AOT::hasCode()) {
+                // (It is VM::topCallFrame.)
+                if (auto innermost = AOT::innermostFrame(machineFrame, machinePC, machineLinkRegister, callFrame, m_jscExecutionThread->stack())) {
+                    callFrame = static_cast<CallFrame*>(innermost->frame);
+                    pcOfFrame = innermost->pc;
+                } else if (callFrame)
+                    pcOfFrame = AOT::returnAddressForFrame(callFrame, machineFrame);
+            }
 #endif
 
             size_t walkSize;
