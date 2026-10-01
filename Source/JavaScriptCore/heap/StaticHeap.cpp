@@ -2005,6 +2005,27 @@ FunctionExecutable* StaticHeap::engineBuiltinFor(JSGlobalObject* globalObject, u
     return result;
 }
 
+bool StaticHeap::ensureSourceProviderOf(VM& vm, ScriptExecutable* executable)
+{
+    if (!s_header || !contains(executable) || executable->isShortForm())
+        return true;
+    uintptr_t place = std::bit_cast<uintptr_t>(executable->source().provider());
+    uintptr_t first = std::bit_cast<uintptr_t>(addressOfSourceProvider(0));
+    size_t index = (place - first) / sizeOfPlaceForSourceProvider;
+    if (place < first || index >= s_header->numberOfModules)
+        return true;
+    auto& isMade = sourceProviderSlotStates(s_header->numberOfModules)[index].isMade;
+    if (isMade.load(std::memory_order_acquire))
+        return true;
+    auto& module = std::bit_cast<const StaticHeapModule*>(s_header->modules)[index];
+    // (It allocates.)
+    if (module.isBuiltinFunction && BuiltinExecutables::isStamp(module.keyHash) && vm.m_aotInstanceOfProgram && vm.heap.mutatorState() == MutatorState::Running) {
+        unsigned which = module.keyHash & 0xffff;
+        engineBuiltinFor(vm.m_aotInstanceOfProgram->globalObject, which, BuiltinExecutables::textOf(which));
+    }
+    return isMade.load(std::memory_order_acquire);
+}
+
 FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin& sourceOrigin, const String& sourceURL)
 {
     VM& vm = globalObject->vm();
@@ -2081,6 +2102,7 @@ String StaticHeap::nameOfSource(uint32_t) { return { }; }
 std::span<const uint8_t> StaticHeap::omittedPayload() { return { }; }
 FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject*, uint32_t, unsigned, const String&, const SourceOrigin&, const String&) { return nullptr; }
 FunctionExecutable* StaticHeap::engineBuiltinFor(JSGlobalObject*, unsigned, std::span<const Latin1Character>) { return nullptr; }
+bool StaticHeap::ensureSourceProviderOf(VM&, ScriptExecutable*) { return true; }
 RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&) { return nullptr; }
 LineColumn StaticHeap::whereFunctionStarts(uint32_t) { return { }; }
 bool StaticHeap::keepsNothingForGeneratingCode() { return false; }

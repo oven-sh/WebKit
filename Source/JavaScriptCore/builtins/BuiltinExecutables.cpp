@@ -324,6 +324,19 @@ std::optional<unsigned> BuiltinExecutables::indexOf(UnlinkedFunctionExecutable* 
     return std::nullopt;
 }
 
+std::span<const Latin1Character> BuiltinExecutables::textOf(unsigned index)
+{
+    switch (static_cast<BuiltinCodeIndex>(index)) {
+#define TEXT_OF(name, functionName, overriddenName, length) \
+    case BuiltinCodeIndex::name: \
+        return { std::bit_cast<const Latin1Character*>(s_##name), static_cast<size_t>(length) };
+    JSC_FOREACH_BUILTIN_CODE(TEXT_OF)
+#undef TEXT_OF
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
 FunctionExecutable* BuiltinExecutables::staticExecutableFor(BuiltinCodeIndex index, const char* text, size_t length)
 {
     JSGlobalObject* realm = m_vm.m_realmForBuiltins;

@@ -157,6 +157,10 @@ public:
     JS_EXPORT_PRIVATE static FunctionExecutable* builtinFunctionFor(JSGlobalObject*, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
     // The same for one of JSC's own builtins (BuiltinExecutables::stampOf()). May be called while the realm is being initialized.
     static FunctionExecutable* engineBuiltinFor(JSGlobalObject*, unsigned index, std::span<const Latin1Character> text);
+    // The provider of a builtin is made when its function object is. Compiled code calls some builtins without one, so a frame can be
+    // of an executable whose provider has yet to be made. For whoever is about to look at the source of an executable that it
+    // found on the stack: makes the provider if it can. False if there is none, and source().provider() is not to be used.
+    static bool ensureSourceProviderOf(VM&, ScriptExecutable*);
     JS_EXPORT_PRIVATE static RefPtr<TDZEnvironmentLink> parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&);
 
     // A cell's header identifies its Structure by StructureID, which is an offset into the structure heap. The first VM of a
