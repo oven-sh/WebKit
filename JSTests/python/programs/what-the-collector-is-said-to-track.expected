@@ -1,0 +1,89 @@
+None False
+int False
+big int False
+float False
+complex False
+bool False
+str False
+bytes False
+bytearray False
+Ellipsis False
+NotImplemented False
+list True
+list of one True
+dict True
+dict of atoms True
+dict of a list True
+tuple False
+tuple of atoms False
+tuple of a list True
+set True
+set of one True
+frozenset True
+frozenset of one True
+range False
+slice True
+instance True
+no slots True
+slots True
+class True
+int the class False
+type False
+object the class False
+object() False
+function True
+builtin True
+method True
+bound True
+generator True
+module True
+code False
+lambda True
+iter of a list True
+iter of a str True
+memoryview True
+property True
+staticmethod True
+deque True
+OrderedDict True
+defaultdict True
+Counter True
+namedtuple True
+date False
+datetime False
+aware False
+timedelta False
+timezone False
+date the class False
+ZoneInfo the class True
+BytesIO True
+StringIO True
+partial True
+count True
+pattern True
+array True
+exception True
+exception the class False
+SimpleNamespace True
+mappingproxy True
+dict keys True
+cell True
+enumerate True
+zip True
+map True
+weakref True
+GenericAlias True
+union True
+deque the class True
+OrderedDict the class False
+io.BytesIO the class True
+super True
+classmethod True
+reversed True
+str iterator True
+range iterator False
+wrapper descriptor True
+method descriptor True
+getset True
+member True
+done

@@ -109,17 +109,12 @@ void invokeCallbacks(JSGlobalObject* globalObject, ASCIILiteral phase, int gener
 
 bool isTrackedIfNotATuple(JSGlobalObject* globalObject, JSValue value)
 {
-    if (!value.isCell() || value.isString() || value.isHeapBigInt())
+    // PyObject_IS_GC(): its class says whether it could, which is one of the flags that are CPython's for what CPython has. A class is one that could if it was made while the program ran: type_is_gc().
+    constexpr unsigned long haveGC = 1ul << 14;
+    constexpr unsigned long heapType = 1ul << 9;
+    if (!(typeOf(globalObject, value)->flagsForPython() & haveGC))
         return false;
-    if (bytesKindOf(value) != BytesKind::None)
-        return false;
-    if (isType(value))
-        return asType(value)->hasFlag(PyType::IsHeapType);
-    for (BuiltinType type : { BuiltinType::Object, BuiltinType::Complex, BuiltinType::Range, BuiltinType::Ellipsis, BuiltinType::NotImplementedType }) {
-        if (isExactly(globalObject, value, type))
-            return false;
-    }
-    return true;
+    return !isType(value) || (asType(value)->flagsForPython() & heapType);
 }
 
 // PyObject_GC_IsTracked(): whether it is something that could refer to itself, by way of whatever it refers to. Nothing here goes by the answer.
