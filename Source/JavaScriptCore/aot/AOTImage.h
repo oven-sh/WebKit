@@ -212,6 +212,7 @@ private:
     uint32_t m_numberOfConstantsOfProgram { 0 };
     bool m_identifiesModulesByText { false };
     Vector<RegExpCode> m_regExps;
+    unsigned m_numberOfRegExpsNotCompiled { 0 };
     UncheckedKeyHashMap<String, bool> m_regExpsAsked; // Keyed by flags and pattern.
 };
 

@@ -428,18 +428,25 @@ bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flag
     if (!asked.isNewEntry)
         return asked.iterator->value;
     RegExpCode result { pattern, flags, { } };
+    // Without a JIT, a pattern that has no code in the image is matched by the Yarr interpreter, which is about ten times slower.
+    auto notCompiled = [&](ASCIILiteral reason) {
+        ++m_numberOfRegExpsNotCompiled;
+        if (Options::verboseAOTCompilation()) [[unlikely]]
+            dataLogLn("AOT: regular expression not compiled (", reason, "): /", pattern, "/ flags ", flags.toRaw());
+        return false;
+    };
     for (auto charSize : { Yarr::CharSize::Char8, Yarr::CharSize::Char16 }) {
         // The same steps as RegExp::compile().
         Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
         Yarr::YarrPattern yarrPattern(pattern, flags, error);
         if (Yarr::hasError(error) || yarrPattern.containsUnsignedLengthPattern() || (yarrPattern.m_containsLookbehinds && !Options::useRegExpLookbehindJIT()))
-            return false;
+            return notCompiled("the JIT does not support it either"_s);
         // (Such a pattern is matched with a plain string search, without running compiled code.)
         if (!yarrPattern.m_atom.isNull())
             return false;
         auto code = Yarr::jitCompileForImage(yarrPattern, pattern, charSize, &vm, Yarr::ExecutionMode::IncludeSubpatterns);
         if (!code)
-            return false;
+            return notCompiled(charSize == Yarr::CharSize::Char8 ? "no code for 8-bit subjects"_s : "no code for 16-bit subjects"_s);
         result.code[charSize == Yarr::CharSize::Char16] = WTF::move(*code);
     }
     m_regExps.append(WTF::move(result));
@@ -450,6 +457,8 @@ bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flag
 Vector<uint8_t> ImageBuilder::finish()
 {
     Locker locker { m_lock };
+    if (Options::verboseAOTCompilation()) [[unlikely]]
+        dataLogLn("AOT: compiled ", m_regExps.size(), " regular expressions, and left ", m_numberOfRegExpsNotCompiled, " to the interpreter");
     std::ranges::sort(m_functions, [](const Function& a, const Function& b) {
         return a.rank < b.rank;
     });
@@ -2186,6 +2195,13 @@ std::optional<size_t> aotImageSize(std::span<const uint8_t> image)
     if (header.magic != AOT::imageMagic || header.size > image.size())
         return std::nullopt;
     return static_cast<size_t>(header.size);
+}
+
+std::optional<unsigned> aotImageNumberOfRegExps(std::span<const uint8_t> image)
+{
+    if (!aotImageSize(image))
+        return std::nullopt;
+    return reinterpret_cast<const AOT::ImageHeader*>(image.data())->numberOfRegExps;
 }
 
 std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image)

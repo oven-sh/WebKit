@@ -691,7 +691,8 @@ static void emitVerifySubjectRead(CCallHelpers& jit, AddressType address, unsign
 }
 
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
-static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::RegisterID resultReg)
+// Code for an image cannot call a thunk. It calls its own copy of the slow path instead, which YarrGenerator::compile() emits and links `callsToOwnSlowPath` to.
+static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::RegisterID resultReg, Vector<MacroAssembler::Call>* callsToOwnSlowPath)
 {
     MacroAssembler::JumpList slowCases;
     MacroAssembler::JumpList done;
@@ -732,7 +733,10 @@ static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::Re
     done.append(jit.jump());
 
     slowCases.link(&jit);
-    jit.nearCallThunk(CodeLocationLabel { vm.getCTIStub(tryReadUnicodeCharSlowThunkGenerator).template retaggedCode<NoPtrTag>() });
+    if (callsToOwnSlowPath)
+        callsToOwnSlowPath->append(jit.nearCall());
+    else
+        jit.nearCallThunk(CodeLocationLabel { vm.getCTIStub(tryReadUnicodeCharSlowThunkGenerator).template retaggedCode<NoPtrTag>() });
     done.link(&jit);
 
     if (resultReg != regs.regT0)
@@ -1809,7 +1813,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         m_jit.getEffectiveAddress(address, m_regs.regUnicodeInputAndTrail);
 
-        tryReadUnicodeCharImpl(*m_vm, m_jit, resultReg);
+        tryReadUnicodeCharImpl(*m_vm, m_jit, resultReg, m_forImage ? &m_callsToOwnTryReadUnicodeCharSlowPath : nullptr);
     }
 
     void tryReadNonBMPUnicodeChar(Checked<unsigned> negativeCharacterOffset, MacroAssembler::RegisterID resultReg, MacroAssembler::RegisterID indexReg)
@@ -1819,7 +1823,7 @@ class YarrGenerator final : public YarrJITInfo {
         MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, resultReg, indexReg);
 
         m_jit.getEffectiveAddress(address, m_regs.regUnicodeInputAndTrail);
-        tryReadUnicodeCharImpl(*m_vm, m_jit, resultReg);
+        tryReadUnicodeCharImpl(*m_vm, m_jit, resultReg, m_forImage ? &m_callsToOwnTryReadUnicodeCharSlowPath : nullptr);
     }
 
     // Backward unicode read: decode the code point whose LAST code unit lives at
@@ -9449,8 +9453,8 @@ public:
         // are used during generation.
         opCompileBody(m_pattern.m_body);
 
-        // Those call thunks, which are somewhere else.
-        if (m_forImage && (m_decodeSurrogatePairs || m_decode16BitForBackreferencesWithCalls))
+        // Those call a thunk that calls a C++ function.
+        if (m_forImage && m_decode16BitForBackreferencesWithCalls)
             m_failureReason = JITFailureReason::DecodeSurrogatePair;
 
         if (m_failureReason) {
@@ -9598,6 +9602,16 @@ public:
             });
         }
 
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+        MacroAssembler::Label ownTryReadUnicodeCharSlowPath;
+        if (!m_callsToOwnTryReadUnicodeCharSlowPath.isEmpty()) {
+            ownTryReadUnicodeCharSlowPath = m_jit.label();
+            m_jit.tagReturnAddress();
+            tryReadUnicodeCharSlowImpl(m_jit);
+            m_jit.ret();
+        }
+#endif
+
         // Code for an image is only copied, never run from here, so it is linked in ordinary memory. That works in a process without a JIT.
         Vector<uint32_t> storageForImage;
         if (m_forImage) {
@@ -9613,6 +9627,10 @@ public:
         }
 
         if (m_forImage) {
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+            for (auto& call : m_callsToOwnTryReadUnicodeCharSlowPath)
+                linkBuffer.link(call, linkBuffer.locationOf<NoPtrTag>(ownTryReadUnicodeCharSlowPath));
+#endif
             auto* start = static_cast<const uint8_t*>(linkBuffer.entrypoint<NoPtrTag>().untaggedPtr());
             auto& bytes = m_forImage->bytes;
             // Branch compaction leaves nops at the end.
@@ -10029,6 +10047,7 @@ private:
     VM* m_vm;
 public:
     YarrCodeForImage* m_forImage { nullptr };
+    Vector<MacroAssembler::Call> m_callsToOwnTryReadUnicodeCharSlowPath;
 private:
     struct ReferenceToTable {
         MacroAssembler::Label instruction;

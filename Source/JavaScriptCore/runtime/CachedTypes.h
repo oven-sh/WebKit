@@ -540,15 +540,17 @@ private:
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-// `image` is what BytecodeLinkEncoder::Result::aotImage was, readable for as long as the process lives, and `code` is where
-// the part of it from aotImageCodeOffset() on is mapped executable. False if it is not for this engine.
+// `image` holds the bytes of BytecodeLinkEncoder::Result::aotImage and must stay readable for the life of the process. `code` is the
+// address at which its code (aotImageCodeRange()) is mapped executable. Returns false if the image was built for another engine.
 JS_EXPORT_PRIVATE bool registerAOTImage(std::span<const uint8_t> image, const void* code);
-// Whether it is in the code of an image that has been registered. Takes no lock and allocates nothing.
+// Whether the address is in the code of a registered image. Takes no lock and does not allocate.
 JS_EXPORT_PRIVATE bool isPCOfAOTImage(const void*);
-// Where the code starts in the image and how much there is, both in whole pages. Nothing if it is not an image.
+// The offset and size of the code in the image, both multiples of the page size. Returns nullopt if `image` is not an image.
 JS_EXPORT_PRIVATE std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image);
-// How much of `image` is the image: a whole number of pages. Something else may follow.
+// The size of the image at the start of `image`, a multiple of the page size. Other data may follow it.
 JS_EXPORT_PRIVATE std::optional<size_t> aotImageSize(std::span<const uint8_t> image);
+// The number of regular expressions that the image has code for.
+JS_EXPORT_PRIVATE std::optional<unsigned> aotImageNumberOfRegExps(std::span<const uint8_t> image);
 #endif
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);
