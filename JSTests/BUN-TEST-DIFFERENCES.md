@@ -152,8 +152,11 @@ Rules for an edit to an upstream test:
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
   Two modes, `aot` and `aot-validate`, are part of the default run on arm64: the main script is compiled ahead of time, in-process
   (`--compileMainScriptAheadOfTime=true`), and runs that code with the JIT off. `aot-validate` also checks every type the compiler
-  inferred against the value at run time. Both are skipped wherever `lockdown` is: that is upstream's default mode with the JIT off, so
-  a test that needs the JIT already skips it. To run only these modes: `--filter '\.aot(-validate)?$'`.
+  inferred against the value at run time, and runs the B3 and Air validators on what the compiler emits and after every phase. Both are
+  skipped wherever `lockdown` is: that is upstream's default mode with the JIT off, so a test that needs the JIT already skips it. To
+  run only these modes: `--filter '\.aot(-validate)?$'`.
+- On a machine that is also used for something else, pass `--memory-limited`. It skips the 132 tests marked `//@ memoryHog!`, some of
+  which allocate until allocation fails: `stress/typed-array-oom-in-buffer-accessor.js` takes about 130 GB on a machine that has it.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated
   x64 perl on Windows-on-ARM reports `AMD64`); `ARM64` as cmake on Windows spells it is `arm64`.
 

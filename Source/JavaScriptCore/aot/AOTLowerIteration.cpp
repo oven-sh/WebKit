@@ -430,16 +430,17 @@ bool Lowering::tryLowerIteration(Node* node)
         Vector<ValueFromBlock, 3> names;
         Vector<ValueFromBlock, 3> modes;
         Vector<ValueFromBlock, 3> indices;
-        LValue ownStructureMode = m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(JSPropertyNameEnumerator::OwnStructureMode))));
+        // (A value belongs to the block it is made in, a constant too: one for each block that uses it.)
+        auto ownStructureMode = [&] { return m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(JSPropertyNameEnumerator::OwnStructureMode)))); };
         names.append(m_out.anchor(m_out.loadPtr(m_out.baseIndex(m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, m_out.loadPtr(enumerator, m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVector), m_out.zeroExtPtr(next)))));
-        modes.append(m_out.anchor(ownStructureMode));
+        modes.append(m_out.anchor(ownStructureMode()));
         indices.append(m_out.anchor(boxInt32(next)));
         m_out.jump(continuation);
 
         m_out.appendTo(isAtTheEnd);
         orElse(m_out.equal(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex), end), generic);
         names.append(m_out.anchor(fixedPointer(Instance::offsetOfSentinelString())));
-        modes.append(m_out.anchor(ownStructureMode));
+        modes.append(m_out.anchor(ownStructureMode()));
         indices.append(m_out.anchor(boxInt32(next)));
         m_out.jump(continuation);
 

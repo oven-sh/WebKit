@@ -1401,7 +1401,8 @@ BASE_MODES = [
             "--useJIT=false",
         ]
     ],
-    # Bun: the same, and every type the compiler inferred is checked against the value at run time.
+    # Bun: the same, every type the compiler inferred is checked against the value at run time, and the B3 and Air validators run on what
+    # the compiler emits and after every phase.
     [
         "AOTValidate",
         "aot-validate",
@@ -1409,6 +1410,7 @@ BASE_MODES = [
             "--compileMainScriptAheadOfTime=true",
             "--useJIT=false",
             "--validateAOTInferredTypes=true",
+            "--validateGraphAtEachPhase=true",
         ]
     ],
     [
