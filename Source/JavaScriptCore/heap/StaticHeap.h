@@ -36,12 +36,27 @@ class ScriptExecutable;
 class SourceCodeKey;
 class SourceOrigin;
 class SourceProvider;
-struct ReportableSitesOfFunction;
 class TDZEnvironmentLink;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
 class VM;
+
+// Where a frame of a function that was compiled ahead of time can say it is.
+struct ReportableSitesOfFunction {
+    struct Construction {
+        uint32_t offset;
+        // Where the expression starts (the `new`), from where the frame says it is: that many lines up, and then at this column,
+        // counting from one; or, on the same line, this many columns to the left.
+        uint32_t linesUp;
+        uint32_t columnOrColumnsLeft;
+    };
+    Vector<uint32_t> offsets; // In the bytecode. In order.
+    Vector<Construction> constructions; // Those of them that construct something, if it is known where the `new` is.
+    // What the code says for each of the function's identifiers, if that is not simply which of them it is (AOT::NumbersOfIdentifiers).
+    Vector<uint32_t> numbersOfIdentifiers;
+    Vector<uint32_t> numbersOfConstants; // Likewise (AOT::NumbersOfConstants). None: the function has its own.
+};
 
 // GC cells that live in bmalloc::StaticRegion. They are created when a program is built, are present from startup, and are never
 // freed.
