@@ -301,7 +301,7 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
 #if USE(BUN_JSC_ADDITIONS)
     // The result still starts the way that code which classifies functions by their source text expects.
     // (The source of a default class constructor belongs to the engine. Its class's source belongs to the program.)
-    if ((isClass() ? classSource().provider() : sourceProvider())->hasNoText()) {
+    if ((isClass() ? classSource().provider() : sourceProvider())->hasNoText() || (Options::hideTextOfFunctionsForTesting() && !isBuiltinFunction())) [[unlikely]] {
         if (isClass())
             return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, ecmaName().string(), " { [native code] }"_s));
         ASCIILiteral before = "function "_s;
