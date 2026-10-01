@@ -9,6 +9,8 @@ data = importlib.import_module(name)
 print(type(data.build_time_vars).__name__, data.__name__ == name)
 for key in ("ABIFLAGS", "EXE", "LDVERSION", "MACHDEP", "MULTIARCH", "PLATLIBDIR", "PYTHONFRAMEWORK", "Py_DEBUG", "Py_ENABLE_SHARED", "Py_GIL_DISABLED", "Py_TRACE_REFS", "TZPATH", "VERSION", "WITH_DOC_STRINGS"):
     print(key, repr(data.build_time_vars[key]), repr(sysconfig.get_config_var(key)))
+soabi, suffix, shared = sysconfig.get_config_vars("SOABI", "EXT_SUFFIX", "SHLIB_SUFFIX")
+print(soabi == "%s-%s" % (sys.implementation.cache_tag, sys.implementation._multiarch), suffix == "." + soabi + shared, shared)
 print(sysconfig.get_config_var("there is no such thing"), sysconfig.get_config_vars("VERSION", "nor this"))
 print(sysconfig.get_python_version(), sysconfig.get_default_scheme(), sysconfig.get_preferred_scheme("prefix"), sorted(sysconfig.get_path_names()), sorted(sysconfig.get_scheme_names()))
 print(sysconfig.get_platform().split("-")[0], sysconfig.get_platform().split("-")[-1], sysconfig.is_python_build())

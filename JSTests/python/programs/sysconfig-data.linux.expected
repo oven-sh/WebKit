@@ -14,6 +14,7 @@ Py_TRACE_REFS 0 0
 TZPATH '/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo' '/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo'
 VERSION '3.14' '3.14'
 WITH_DOC_STRINGS 1 1
+True True .so
 None ['3.14', None]
 3.14 posix_prefix posix_prefix ['data', 'include', 'platlib', 'platstdlib', 'purelib', 'scripts', 'stdlib'] ['nt', 'nt_user', 'nt_venv', 'osx_framework_user', 'posix_home', 'posix_prefix', 'posix_user', 'posix_venv', 'venv']
 linux aarch64 False

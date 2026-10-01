@@ -1060,6 +1060,8 @@ Where a class of CPython's has `PyObject_GenericGetAttr` written into its own `t
 
 One file of the library CPython writes when it is built: what `sysconfig` is told about the build, `_sysconfigdata__darwin_darwin` or the like. It is Python there, so it is Python here (`lib/_sysconfigdata.py`), and comes with the
 engine since it is about the engine. It says what is true of this implementation, which is little: nearly all of CPython's is about the C compiler. A host that has more to say lists one of its own, which is found first.
+It has `SOABI` and `EXT_SUFFIX`, though no module written in C can be loaded, because `pip` works out from them which packages are for this interpreter and raises `SystemError` without. They are made as CPython's are, of
+`sys.implementation.cache_tag` and `_multiarch`, so nothing that was built for another implementation is taken for ours.
 
 What is ported from CPython is CPython's authors' work made over, and is under CPython's licence, which is in `lib/importlib/LICENSE`. What matches regular expressions has a notice of its own, which is at the top of it, and so has the Mersenne Twister.
 
