@@ -1,0 +1,44 @@
+===== which variables are cells, and in what order
+parameters_first ('cls', 'segments', 'style', 'post_style', 'result') ('cls', 'post_style', 'apply') () 5 None
+parameters_first.<locals>.<genexpr> ('.0', 't', 's') () ('apply', 'cls') 3 None
+parameters_first.<locals>.<genexpr> ('.0', 't', 's') () ('cls', 'post_style') 3 None
+one_of_each ('z', 'a') ('z', 'a', 'b', 'y') () 2 None
+one_of_each.<locals>.<lambda> () () ('a', 'b', 'y', 'z') 0 None
+only_parameters ('c', 'b', 'a') ('c', 'b', 'a') () 3 None
+only_parameters.<locals>.<lambda> () () ('a', 'b', 'c') 0 None
+only_the_rest ('x',) ('a', 'b', 'c') () 1 None
+only_the_rest.<locals>.<lambda> () () ('a', 'b', 'c') 0 None
+star ('zs', 'ks') ('zs', 'ks', 'a') () 2 None
+star.<locals>.<lambda> () () ('a', 'ks', 'zs') 0 None
+keyword_only ('p', 'z', 'm') ('p', 'z', 'm', 'a', 'n') () 3 None
+keyword_only.<locals>.<lambda> () () ('a', 'm', 'n', 'p', 'z') 0 None
+positional_only ('z', 'y', 'x') ('z', 'y', 'x', 'a') () 3 None
+positional_only.<locals>.<lambda> () () ('a', 'x', 'y', 'z') 0 None
+not_all ('z', 'y', 'x', 'w') ('y', 'a') () 4 None
+not_all.<locals>.<lambda> () () ('a', 'y') 0 None
+deeper ('z', 'middle') ('z', 'a') () 2 None
+deeper.<locals>.middle ('y',) ('y', 'b') ('a', 'z') 1 None
+deeper.<locals>.middle.<locals>.<lambda> () () ('a', 'b', 'y', 'z') 0 None
+set_again ('z', 'inner') ('z', 'a') () 2 None
+set_again.<locals>.inner () () ('a', 'z') 0 None
+Methods.uses_super ('self', 'zed') ('self', 'zed', 'able') ('__class__',) 2 None
+Methods.uses_super.<locals>.<lambda> () () ('__class__', 'able', 'self', 'zed') 0 None
+Methods.names_the_class ('zed',) ('zed', 'able') ('__class__',) 1 None
+Methods.names_the_class.<locals>.<lambda> () () ('__class__', 'able', 'zed') 0 None
+comprehensions ('zed', 'items', 'i', 'k') ('zed', 'i', 'able') () 4 None
+comprehensions.<locals>.<lambda> () () ('able', 'i', 'zed') 0 None
+comprehensions.<locals>.<lambda> () () ('able',) 0 None
+comprehensions.<locals>.<genexpr> ('.0', '_') () ('zed',) 2 None
+coroutine ('zed',) ('zed', 'able') () 1 None
+coroutine.<locals>.<lambda> () () ('able', 'zed') 0 None
+generator ('zed',) ('zed', 'able') () 1 None
+generator.<locals>.<lambda> () () ('able', 'zed') 0 None
+generic ('zed', 'able') ('zed', 'able', 'first') ('A', 'T') 2 None
+generic.<locals>.<lambda> () () ('A', 'T', 'able', 'first', 'zed') 0 None
+===== the closure is in the order of co_freevars
+('a', 'b', 'y', 'z') ['int', 'int', 'int', 'int']
+('a', 'm', 'n', 'p', 'z') ['int', 'int', 'int', 'int', 'int']
+('a', 'b', 'y', 'z') ['int', 'int', 'int', 'int']
+('__class__', 'able', 'self', 'zed') ['type', 'int', 'Methods', 'int']
+===== the library
+True []

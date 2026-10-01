@@ -90,6 +90,8 @@ public:
         }
         auto byCodePoint = [] (auto& a, auto& b) { return codePointCompareLessThan(a.string(), b.string()); };
         std::ranges::sort(m_details->cellVariables, byCodePoint);
+        // _PyCode_GetCellvars(): they are in the order of co_localsplusnames. A parameter that is a cell is among the variables there, which come first.
+        std::ranges::stable_sort(m_details->cellVariables, { }, [&] (auto& name) { return std::min(m_details->variableNames.find(name), m_details->variableNames.size()); });
         describeFrame(byCodePoint);
         m_info.details = WTF::move(m_details);
     }
@@ -1064,8 +1066,10 @@ private:
         }
     }
 
-    // The register to have a value put straight into, if that is all that assigning it to the name takes.
-    RegisterID* registerForStore(Expression* target)
+    // The register to have a value put straight into, if that is all that assigning it to the name takes. The name is in co_varnames from when it is stored to, which may be after the names in the value: `NotesName::Later` is for
+    // what will call noteStore() then.
+    enum class NotesName : bool { Later, Now };
+    RegisterID* registerForStore(Expression* target, NotesName notesName = NotesName::Now)
     {
         auto* name = target->tryAs<Name>();
         if (!name)
@@ -1073,9 +1077,12 @@ private:
         Location location = locate(mangle(*name->id));
         if (location.where != Where::Register)
             return nullptr;
-        locateAndNote(mangle(*name->id));
+        if (notesName == NotesName::Now)
+            noteStore(target);
         return location.local;
     }
+
+    void noteStore(Expression* target) { locateAndNote(mangle(*target->as<Name>().id)); }
 
     // ---- Constants
 
@@ -3408,8 +3415,9 @@ private:
         case Statement::Kind::Assign: {
             auto& node = statement.as<Assign>();
             if (node.targets.size() == 1) {
-                if (RegisterID* local = registerForStore(node.targets[0])) {
+                if (RegisterID* local = registerForStore(node.targets[0], NotesName::Later)) {
                     emitInto(local, node.value);
+                    noteStore(node.targets[0]);
                     markIfOnAnotherLine(*node.targets[0]);
                     return;
                 }
@@ -5153,6 +5161,7 @@ private:
         for (Alias* alias : node.names) {
             // import a.b.c gives a.
             Reg module = g.newTemporary();
+            noteName(*alias->name); // IMPORT_NAME
             emitImportName(module.get(), stringConstant(*alias->name), none(), 0, node);
             StringView name = alias->name->string();
             size_t dot = name.find('.');
@@ -5165,6 +5174,7 @@ private:
                 size_t start = dot + 1;
                 dot = name.find('.', start);
                 Identifier attribute = Identifier::fromString(m_vm, name.substring(start, dot == notFound ? name.length() - start : dot - start).toString());
+                noteName(attribute); // IMPORT_FROM
                 emitRuntimeCall(module.get(), "importFrom"_s, { module.get(), stringConstant(attribute) }, node);
             }
             emitStoreName(*alias->asName, module.get(), node);
@@ -5185,6 +5195,7 @@ private:
 
         Reg module = g.newTemporary();
         Reg moduleName = node.module ? Reg(stringConstant(*node.module)) : Reg(stringConstant(m_vm.propertyNames->emptyIdentifier));
+        noteName(node.module ? *node.module : m_vm.propertyNames->emptyIdentifier); // IMPORT_NAME
         emitImportName(module.get(), moduleName.get(), fromList.get(), node.level, node);
         for (Alias* alias : node.names) {
             if (*alias->name == "*"_s) {
@@ -5192,6 +5203,7 @@ private:
                 continue;
             }
             Reg value = g.newTemporary();
+            noteName(*alias->name); // IMPORT_FROM
             emitRuntimeCall(value.get(), "importFrom"_s, { module.get(), stringConstant(*alias->name) }, node);
             emitStoreName(alias->asName ? *alias->asName : *alias->name, value.get(), node);
         }
