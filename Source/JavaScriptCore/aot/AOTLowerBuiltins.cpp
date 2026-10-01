@@ -677,6 +677,8 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     case Builtin::ArrayIncludes: {
         if (count != 1)
             return false;
+        // The operations pass over holes.
+        also(m_out.notZero32(changing32(Instance::offsetOfArraysInheritNoElements())));
         begin(true);
         LValue butterfly = butterflyOfJSValueArray(thisValue);
         if (builtin == Builtin::ArrayIndexOf)
@@ -719,7 +721,9 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     case Builtin::ArrayConcat: {
         if (count != 1)
             return false;
+        // What arrayProtoFuncConcat() tests of `this` before tryConcatOneArgFast(), beyond its being an original array.
         also(m_out.notZero32(changing32(Instance::offsetOfStructureIDOfNewArrayWithContiguous())));
+        also(m_out.notZero32(changing32(Instance::offsetOfArraysInheritNoIsConcatSpreadable())));
         begin(true);
         LValue made = vmCall(node, pointerType(), Entry::operationArrayConcatAppendOne, m_globalObject, thisValue, arguments[1]);
         orElse(m_out.notNull(made), otherwise);

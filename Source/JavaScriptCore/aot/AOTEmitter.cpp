@@ -247,6 +247,8 @@ LValue Emitter::isOriginalArray(LValue cell)
 // JSValues. (Iterating over such an array cannot be distinguished from copying it: VM::useImmutableIntrinsics.)
 LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue spreadMask, LBasicBlock giveUp)
 {
+    // A hole is copied as undefined.
+    orElse(m_out.notZero32(changing32(Instance::offsetOfArraysInheritNoElements())), giveUp);
     auto isSpreadAt = [&](LValue index) {
         return m_out.testNonZero32(m_out.lShr(spreadMask, m_out.castToInt32(index)), m_out.int32One);
     };
@@ -339,7 +341,7 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue spreadMas
 
     m_out.appendTo(copyOne);
     LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, from, copied));
-    // Iteration yields undefined for a hole.
+    // Iteration yields undefined for a hole: arrays inherit no elements.
     m_out.store64(m_out.select(m_out.isZero64(element), m_out.constInt64(JSValue::encode(jsUndefined())), element), m_out.baseIndex(m_heaps.indexedContiguousProperties, elements, m_out.add(place, copied)));
     m_out.addIncomingToPhi(copied, m_out.anchor(m_out.add(copied, m_out.intPtrOne)));
     m_out.jump(copy);

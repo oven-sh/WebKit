@@ -180,6 +180,8 @@ struct Instance::Collections {
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
     bool hasFieldAdditions { false }; // See Instance::fieldAdditions.
+    AssumptionWatchpoint arraysInheritNoIsConcatSpreadable;
+    AssumptionWatchpoint arraysInheritNoElements;
     // Functions linked without a Data, which would otherwise mark these. Their FunctionInfo points into the UnlinkedCodeBlock, which the
     // executable does not keep alive: an UnlinkedFunctionExecutable drops code that has aged (UnlinkedCodeBlock::maxAge).
     struct FunctionWithoutData {
@@ -315,6 +317,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
             instance->structureIDsOfNewCopyOnWriteArrays[1] = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithDouble));
             instance->structureIDsOfNewCopyOnWriteArrays[2] = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithContiguous));
         }
+        instance->collections->arraysInheritNoIsConcatSpreadable.install(globalObject->arrayIsConcatSpreadableWatchpointSet(), instance->arraysInheritNoIsConcatSpreadable);
+        instance->collections->arraysInheritNoElements.install(globalObject->arrayPrototypeChainIsSaneWatchpointSet(), instance->arraysInheritNoElements);
         // (The JIT tiers have to be notified of the first and second activation created for each SymbolTable. Inline allocation
         // skips that, so it is only enabled without the JIT.)
         if (!Options::useJIT())

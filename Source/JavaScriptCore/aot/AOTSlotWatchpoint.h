@@ -43,6 +43,19 @@ private:
     ObjectPropertyCondition m_key;
 };
 
+// The other tiers add a watchpoint to a set, and have their code thrown away when it fires. Code that was compiled ahead of time
+// stays: it tests a flag of its Instance, which one of these clears.
+class AssumptionWatchpoint final : public Watchpoint {
+public:
+    AssumptionWatchpoint();
+
+    void install(InlineWatchpointSet&, uint32_t& flag); // Sets the flag if the set is still valid.
+    void fireInternal(VM&, const FireDetail&);
+
+private:
+    uint32_t* m_flag { nullptr };
+};
+
 using SlotWatchpointMap = UncheckedKeyHashMap<Slot*, FixedVector<SlotWatchpoint>>;
 
 // Installs watchpoints for the conditions on behalf of the slot, replacing any existing ones. Returns false, with nothing watched,
