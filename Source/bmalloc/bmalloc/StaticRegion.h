@@ -154,7 +154,7 @@ private:
 
     BEXPORT static bool s_isBuilding;
 #if !BENABLE(STATIC_REGION)
-    BEXPORT alignas(16) static char s_bss[offsetOfVTablesInBss];
+    alignas(16) BEXPORT static char s_bss[offsetOfVTablesInBss];
 #endif
 };
 

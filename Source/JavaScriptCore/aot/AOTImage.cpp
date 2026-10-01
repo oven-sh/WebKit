@@ -2258,4 +2258,22 @@ std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8
 
 } // namespace JSC
 
+#elif USE(BUN_JSC_ADDITIONS)
+
+#include "CachedTypes.h"
+#include "CodeCache.h"
+
+namespace JSC {
+
+// What embedders can call whether or not programs can be compiled ahead of time here.
+bool isPCOfAOTImage(const void*) { return false; }
+bool registerAOTImage(std::span<const uint8_t>, const void*) { return false; }
+std::optional<AOTCompileAllResult> aotCompileAllFunctions(VM&, const SourceCode&, bool) { return std::nullopt; }
+bool aotCompileAndRegisterImage(VM&, const SourceCode&, bool) { return false; }
+std::optional<size_t> aotImageSize(std::span<const uint8_t>) { return std::nullopt; }
+std::optional<unsigned> aotImageNumberOfRegExps(std::span<const uint8_t>) { return std::nullopt; }
+std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t>) { return std::nullopt; }
+
+} // namespace JSC
+
 #endif // ENABLE(AOT)
