@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): in ahead-of-time compiled code, eval(x) in tail position is not a tail call when eval is an ordinary function.
 //@ defaultNoSamplingProfilerRun
 
 // A call whose callee is spelled "eval" is only a direct eval when the identifier

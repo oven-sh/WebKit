@@ -177,7 +177,13 @@ struct Instance::Collections {
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
     bool hasAddsOfFields { false }; // Instance::addsOfFields
-    Vector<ScriptExecutable*> executablesWithoutData; // That the collector has to be told of.
+    // Functions linked without a Data, which would otherwise mark these. Their FunctionInfo points into the UnlinkedCodeBlock, which the
+    // executable does not keep alive: an UnlinkedFunctionExecutable drops code that has aged (UnlinkedCodeBlock::maxAge).
+    struct FunctionWithoutData {
+        ScriptExecutable* executable;
+        UnlinkedCodeBlock* unlinkedCodeBlock;
+    };
+    Vector<FunctionWithoutData> functionsWithoutData;
     // The slots that have, or have had, a transition. The collector goes over them again and again while it marks, and they are few.
     Vector<Slot*> transitions;
     Vector<Slot*> transitionsSinceLastCollection;
@@ -1225,7 +1231,7 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
             dataLogLn("AOT: nothing was known of function ", index, " when the program was built");
         fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
         instance.infos[index].flags |= FunctionInfo::startsCold;
-        instance.collections->executablesWithoutData.append(executable);
+        instance.collections->functionsWithoutData.append({ executable, unlinkedCodeBlock });
         instance.setLinkedWithoutData(index);
     } else if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
         return false;
@@ -1338,8 +1344,10 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
         if (to)
             visitor.appendUnbarriered(to);
     }
-    for (ScriptExecutable* executable : collections->executablesWithoutData)
-        visitor.appendUnbarriered(executable);
+    for (auto& function : collections->functionsWithoutData) {
+        visitor.appendUnbarriered(function.executable);
+        visitor.appendUnbarriered(function.unlinkedCodeBlock);
+    }
 }
 
 Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names)

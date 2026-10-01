@@ -138,6 +138,9 @@ Rules for an edit to an upstream test:
 | `microbenchmarks/parse-line-comment.js`, `stress/class-subclassing-function.js` | `SourceCodeKey::operator==` does not compare source text (3186362fe1a8). Two sources of the same length, flags, name and host whose 24-bit `StringImpl::hash()` collide share a code cache entry, and the second runs the first's code. 3 collisions in 20,000 same-length sources measured |
 | `microbenchmarks/regexp-buffer-boundary-anchor-start.js`, `-anchor-end.js`, `stress/regexp-boundary-assertions.js`, `stress/regexp-buffer-boundaries-anchoring.js` | upstream's RegExp buffer boundaries (`\A \z \Z`, 2f66f5ed23f9). Sync #455 brought the tests but not the `yarr/` changes: no feature, no `--useRegExpBufferBoundaries` |
 | `stress/module-loader-promise-then-tampered.js` | `globalFuncImportModule()` wraps the loader's promise and resolves the wrapper through `resolve()`, which looks up `Promise.prototype.then`. The fast path that avoided it (8a5ce3999589) is unreachable since the loader rewrite (4a638109b905) |
+| `stress/`: `assign-argument-in-inlined-call`, `cloned-arguments-should-visit-callee-during-gc`, `dfg-tail-calls`, `exit-from-ftl-when-caller-passed-extra-args-then-use-function-dot-arguments`, `ftl-function-dot-arguments-with-callee-saves`, `function-bind-caller`, `function-caller-cross-realm-via-call-apply`, `function-hidden-as-caller`, `get-stack-mapping`, `get-stack-mapping-with-dead-get-stack`, `inline-varargs-get-arguments`, `iteration-helper-hidden`, `regress-114860483`, `tail-call-recognize`, `weird-put-stack-varargs` (modes `aot`, `aot-validate`) | `f.arguments` and `f.caller` are `null` while a sloppy function `f` runs ahead-of-time compiled code. Its frame keeps neither the callee nor the arguments. |
+| `stress/dfg-to-string-on-string-object-does-not-gc.js` (modes `aot`, `aot-validate`) | `ShadowChicken::update()` calls `CallFrame::bytecodeIndex()` on every frame. A frame of ahead-of-time compiled code has no call site index slot. |
+| `stress/tail-call-eval-identifier-resolving-to-non-eval-function.js` (modes `aot`, `aot-validate`) | `return eval(x)` in strict code, where `eval` is an ordinary function, is compiled as a call, not a tail call. |
 
 ---
 
@@ -147,6 +150,10 @@ Rules for an edit to an upstream test:
   also runs wherever `--jsc-only` is given (so the JSCOnly port can be tested on macOS and Windows, where `jsc` is
   `<root>/bin/jsc`).
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
+  Two modes, `aot` and `aot-validate`, are part of the default run on arm64: the main script is compiled ahead of time, in-process
+  (`--compileMainScriptAheadOfTime=true`), and runs that code with the JIT off. `aot-validate` also checks every type the compiler
+  inferred against the value at run time. Both are skipped wherever `lockdown` is: that is upstream's default mode with the JIT off, so
+  a test that needs the JIT already skips it. To run only these modes: `--filter '\.aot(-validate)?$'`.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated
   x64 perl on Windows-on-ARM reports `AMD64`); `ARM64` as cmake on Windows spells it is `arm64`.
 

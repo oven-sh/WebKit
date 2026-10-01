@@ -68,6 +68,8 @@ public:
             for (size_t arg = 0; arg < static_cast<size_t>(codeBlock()->numParameters()); ++arg) {
                 ArgumentValueProfile& profile = profiledBlock()->valueProfileForArgument(arg);
                 SpeculatedType prediction = profile.computeUpdatedPrediction();
+                if (Options::ignoreArgumentProfilesForTesting()) [[unlikely]]
+                    prediction = SpecNone;
                 if (SpeculatedType bound = argumentBounds[arg]; bound != SpecFullTop)
                     prediction = (prediction & bound) ? (prediction & bound) : bound;
                 arguments[arg]->variableAccessData()->predict(prediction);
@@ -87,6 +89,8 @@ public:
                 Operand operand = mustHandleValues.operandForIndex(i);
                 std::optional<JSValue> value = mustHandleValues[i];
                 if (!value)
+                    continue;
+                if (operand.isArgument() && Options::ignoreArgumentProfilesForTesting()) [[unlikely]]
                     continue;
                 Node* node = block->variablesAtHead.operand(operand);
                 if (!node)

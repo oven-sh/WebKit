@@ -879,6 +879,11 @@ def addRunCommandConfig(config, *additionalEnv)
     if $skipModes.include?(kind.to_sym) or $skipModes.include?(kind.gsub('-', '_').to_sym)
         return
     end
+    # Bun: lockdown is upstream's default mode with the JIT off, so a test that needs the JIT (it counts compiles, say) already skips it.
+    # The AOT modes run with the JIT off too.
+    if kind =~ /\Aaot(-|\z)/ and $skipModes.include?(:lockdown)
+        return
+    end
     $didAddRunCommand = true
     name = baseOutputName(config[:kind])
     if $filter and name !~ $filter

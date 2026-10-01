@@ -940,11 +940,13 @@ private:
         case op_create_async_generator:
         case op_get_scope:
         case op_get_parent_scope:
-        case op_resolve_scope:
         case op_create_lexical_environment:
         case op_create_generator_frame_environment:
         case op_push_with_scope:
             return TObject;
+        case op_resolve_scope:
+            // Inside `with (x)`, the result may be x itself (JSScope::objectAtScope()), which can be any object.
+            return node->as<OpResolveScope>().m_resolveType == Dynamic ? TAnyObject : TObject;
         case op_construct:
             if (Node* callee = node->use(node->as<OpConstruct>().m_callee); callee->kind == NodeKind::Intrinsic) {
                 if (auto result = resultOfConstructingIntrinsic(callee->intrinsic))

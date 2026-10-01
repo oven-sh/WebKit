@@ -2516,13 +2516,25 @@ static void findCodeOfCallee(CCallHelpers& jit, CodeSpecializationKind kind, CCa
     hasExecutable.link(&jit);
     otherwise.append(jit.branchIfNotType(T11, JSTypeRange { FunctionExecutableType, ShortFunctionExecutableType }));
     jit.load64(Address(T11, FunctionExecutable::offsetOfAOTEntryFor(kind)), T12);
-    otherwise.append(jit.branchTest64(CCallHelpers::Zero, T12));
+    Jump isNotStatic = jit.branchTest64(CCallHelpers::Zero, T12);
     jit.load32(Address(T11, FunctionExecutable::offsetOfAOTIndexFor(kind)), T13);
     if (kind == CodeSpecializationKind::CodeForConstruct)
         otherwise.append(jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(static_cast<int32_t>(FunctionExecutable::aotIndexOfWhatConstructsByCalling))));
     jit.addPtr(TrustedImm32(Instance::offsetOfStates()), instanceGPR, T11);
     jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T11);
     otherwise.append(jit.branch32(CCallHelpers::Below, T11, TrustedImm32(Instance::isLinkedWithoutData)));
+    Jump isLinked = jit.jump();
+
+    // The executable is not from the static heap, so its code was installed at run time (AOT::install()), which also linked it. The
+    // callee runs with the caller's Instance, so it must belong to the same realm: another realm may have linked the same function.
+    isNotStatic.link(&jit);
+    otherwise.append(jit.branchIfNotType(T11, FunctionExecutableType));
+    jit.loadPtr(Address(T11, ExecutableBase::offsetOfJITCodeFor(kind)), T11);
+    otherwise.append(jit.branchTestPtr(CCallHelpers::Zero, T11));
+    otherwise.append(jit.branch8(CCallHelpers::NotEqual, Address(T11, JSC::JITCode::offsetOfJITType()), TrustedImm32(static_cast<int32_t>(JITType::AOTJIT))));
+    otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, Address(T11, JITCode::offsetOfInstance()), instanceGPR));
+    jit.load64(Address(T11, JITCode::offsetOfEntry()), T12);
+    isLinked.link(&jit);
 }
 
 // Runs in the stub's own frame, with a standard frame set up below it except for its CodeBlock. Calls calleeGPR using the standard

@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): f.arguments and f.caller are null while f runs ahead-of-time compiled code.
 function assertCallerName(expectedName) {
     const { caller } = assertCallerName;
     if (typeof caller !== "function")

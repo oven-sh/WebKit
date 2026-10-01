@@ -2992,6 +2992,13 @@ private:
         }
     }
 
+    // The instruction after the block counts too: inlineCall() may make it part of the block.
+    template<typename Handler>
+    static bool isCoveredBy(BasicBlock* block, const Handler& handler)
+    {
+        return block->bytecodeBegin < handler.end && handler.start <= block->bytecodeEnd;
+    }
+
     void computeLiveness()
     {
         unsigned numRegisters = m_graph.numRegisters();
@@ -3020,6 +3027,16 @@ private:
                 });
             }
         }
+        // Any instruction of a block that a handler covers may jump to the handler. A block that ends in op_throw has no other successor.
+        Vector<Vector<BasicBlock*, 2>> handlersOfBlocks(m_graph.blocks.size());
+        for (unsigned i = 0; i < m_codeBlock->numberOfExceptionHandlers(); ++i) {
+            auto& handler = m_codeBlock->exceptionHandler(i);
+            BasicBlock* target = m_graph.blockForOffset[handler.target];
+            for (BasicBlock* block : m_graph.m_rpo) {
+                if (isCoveredBy(block, handler))
+                    handlersOfBlocks[block->index].append(target);
+            }
+        }
         bool changed = true;
         while (changed) {
             changed = false;
@@ -3030,6 +3047,9 @@ private:
                     live.merge(successor->liveIn);
                 live.exclude(defs[block->index]);
                 live.merge(uses[block->index]);
+                // A definition in the block does not end this liveness, because the jump may happen before it.
+                for (BasicBlock* handler : handlersOfBlocks[block->index])
+                    live.merge(handler->liveIn);
                 if (live != block->liveIn) {
                     block->liveIn = WTF::move(live);
                     changed = true;
@@ -3071,8 +3091,7 @@ private:
             auto& handler = m_codeBlock->exceptionHandler(i);
             BasicBlock* target = m_graph.blockForOffset[handler.target];
             for (BasicBlock* block : m_graph.m_rpo) {
-                // (What a block ends in may be done as part of it: see inlineCall().)
-                if (block->bytecodeBegin < handler.end && handler.start <= block->bytecodeEnd)
+                if (isCoveredBy(block, handler))
                     block->readByHandlersOfBlock.merge(target->liveIn);
             }
         }
