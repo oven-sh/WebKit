@@ -657,7 +657,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
-        if (visitor->hasBeenLeftByTailCall())
+        if (visitor->isTailDeleted())
             return IterationStatus::Continue;
         // (A frame like that of a native function, for a function that is not one: see skipFramesOfStubs(). The function's own is below it.)
         if (!visitor->aotFunction() && !visitor->isNativeCalleeFrame() && visitor->callee().isCell() && !*visitor->callFrame()->addressOfCodeBlock()) {
@@ -696,7 +696,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 }
                 }
 #if ENABLE(FTL_JIT)
-            } else if (AOT::FunctionRef function = visitor->aotFunction(); function && function.codeType() == FunctionCode && !function.codeBlockIfThereIsOne() && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
+            } else if (AOT::FunctionRef function = visitor->aotFunction(); function && function.codeType() == FunctionCode && !function.codeBlockIfExists() && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
                 results.append(StackFrame(vm, owner, visitor->callee().asCell(), uncheckedDowncast<FunctionExecutable>(function.executable()), function.info().kind(), visitor->bytecodeIndex()));
 #endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)

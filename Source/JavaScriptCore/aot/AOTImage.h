@@ -73,6 +73,7 @@ struct ImageHeader {
     uint32_t largestFieldID; // Property name IDs (VM::aotPropertyNameIDs) start above this. Both kinds of ID are stored in Structure::m_fieldIDInSlot.
     uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes; // Options::auditAOTTypedFields()
+    uint32_t identifiesModulesByText; // ImageKey::module is a hash of the source text, because no embedder numbered the modules. See moduleIDFor().
     // If numberOfIdentifiersOfProgram is nonzero, a selector number is an identifier number and StaticHeap holds the strings.
     uint32_t selectorsOffset; // ImageSelector[], by selector number.
     uint32_t numberOfSelectors; // Highest selector number plus one.
@@ -183,6 +184,7 @@ public:
         m_numberOfIdentifiersOfProgram = number;
     }
     void setNumberOfConstantsOfProgram(uint32_t number) { m_numberOfConstantsOfProgram = number; }
+    void setIdentifiesModulesByText() { m_identifiesModulesByText = true; }
     // VM thread only. Returns false if the pattern cannot be compiled.
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
@@ -208,6 +210,7 @@ private:
     uint32_t m_numberOfIdentifiersOfProgram { 0 };
     const NumbersOfIdentifiers* m_numbersOfIdentifiersOfProgram { nullptr };
     uint32_t m_numberOfConstantsOfProgram { 0 };
+    bool m_identifiesModulesByText { false };
     Vector<RegExpCode> m_regExps;
     UncheckedKeyHashMap<String, bool> m_regExpsAsked; // Keyed by flags and pattern.
 };
@@ -223,6 +226,7 @@ public:
     // For the jsc shell, and for platforms where a file cannot be mapped executable. Reads the file and copies its code into JIT
     // memory.
     static Image* registerImageFromFile(const char* path);
+    static Image* registerImageCopyingCode(Vector<uint8_t>&&);
 
     static bool hasAny();
     static bool containsCode(const void*); // In any image.
@@ -309,6 +313,7 @@ private:
 
 // The module number images use for this provider, or zero if it is in no image.
 uint32_t moduleIDFor(SourceProvider&);
+uint32_t moduleIDFromText(SourceProvider&);
 std::optional<ImageKey> imageKeyFor(ScriptExecutable*, CodeSpecializationKind);
 JS_EXPORT_PRIVATE ImageKey imageKeyForTopLevelCode(uint32_t module); // For a program, or for a module's top-level code.
 unsigned hashOfCode(std::span<const uint8_t>); // For checking that two compilations produced the same code.

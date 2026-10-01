@@ -104,7 +104,7 @@ public:
         bool isInlinedAOTFrame() const { return !!m_aotInlineFrame; }
         // What it was doing last was a tail call, which such code has made no more (as above). The frame is there, and whoever unwinds
         // has to reckon with it. As far as the program can tell there is no such frame.
-        bool hasBeenLeftByTailCall() const { return m_aotHasBeenLeft; }
+        bool isTailDeleted() const { return m_isTailDeleted; }
         // Of the code that the frame runs, if it is JavaScript.
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
         JS_EXPORT_PRIVATE bool isBuiltinFunction() const; // hasCode()
@@ -175,7 +175,7 @@ public:
         CallFrame* m_aotAdapterFrame { nullptr };
         AOT::FunctionRef m_aotFunctionOfFrame; // Whose code it is that runs in the frame.
         unsigned m_aotInlineFrame { 0 };
-        bool m_aotHasBeenLeft { false };
+        bool m_isTailDeleted { false };
         void* m_returnPC { nullptr };
         void* m_callerReturnPC { nullptr }; // Where m_callerFrame is going to be returned to.
         size_t m_index { 0 };

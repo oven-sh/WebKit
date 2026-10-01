@@ -16,7 +16,7 @@ namespace JSC { namespace AOT {
 
 // An operation is called by a stub, in a frame of the stub's: which is what it takes itself to have been called from, and what `callFrame`
 // is in all of them. Where the stub is to go back to says which function called it, and where that has got to.
-// (The function whose code that is. What it is in the middle of may be what another does: FunctionRef::placeAt().)
+// (The function whose code that is. What it is in the middle of may be what another does: FunctionRef::locationForReturnAddress().)
 ALWAYS_INLINE FunctionRef caller(JSGlobalObject* globalObject, CallFrame* callFrame) { return FunctionRef::at(globalObject->aotInstance(), removeCodePtrTag(callFrame->rawReturnPC())); }
 // The function whose bytecode it is that the caller is in the middle of: itself, unless that is one that was made part of it. Whatever goes
 // by a number that the bytecode has is a matter for this one; slots and the like are the caller's.
@@ -25,7 +25,7 @@ ALWAYS_INLINE FunctionRef functionOfBytecodeOfCaller(JSGlobalObject* globalObjec
     FunctionRef function = caller(globalObject, callFrame);
     if (!function.info().function()->hasInlineFrames) [[likely]]
         return function;
-    return function.placeAt(removeCodePtrTag(callFrame->rawReturnPC())).function;
+    return function.locationForReturnAddress(removeCodePtrTag(callFrame->rawReturnPC())).function;
 }
 ALWAYS_INLINE BytecodeIndex bytecodeIndexOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame) { return caller(globalObject, callFrame).bytecodeIndexAt(removeCodePtrTag(callFrame->rawReturnPC())); }
 
@@ -37,7 +37,7 @@ ALWAYS_INLINE void countOperationFor(JSGlobalObject* globalObject, CallFrame* ca
     if (++globalObject->aotInstance()->operationsNotCounted % oneIn) [[likely]]
         return;
     FunctionRef function = caller(globalObject, callFrame);
-    if (!function.instance->dataIfItHasAny(function.index)) [[unlikely]]
+    if (!function.instance->dataIfExists(function.index)) [[unlikely]]
         function.instance->countMisses(function.index, oneIn);
 }
 
@@ -63,7 +63,7 @@ ALWAYS_INLINE void countOperationFor(JSGlobalObject* globalObject, CallFrame* ca
 ALWAYS_INLINE Data* callerData(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     FunctionRef function = caller(globalObject, callFrame);
-    Data* data = function.instance->dataIfItHasAny(function.index);
+    Data* data = function.instance->dataIfExists(function.index);
     return data ? data : function.instance->sharedData;
 }
 ALWAYS_INLINE UnlinkedCodeBlock* callerCode(JSGlobalObject* globalObject, CallFrame* callFrame) { return functionOfBytecodeOfCaller(globalObject, callFrame).ensureUnlinkedCodeBlock(); }

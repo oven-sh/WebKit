@@ -316,11 +316,11 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         toTheWayIn.linkTo(proc.code().entrypointLabel(0), &jit);
     else
         RELEASE_ASSERT(!CCallHelpers::differenceBetween(startOfCode, proc.code().entrypointLabel(0)));
-    LinkBuffer linkBuffer(jit, nullptr, LinkBuffer::Profile::FTL, JITCompilationCanFail);
-    if (linkBuffer.didFailToAllocate()) {
-        graph.fail("out of executable memory"_s);
-        return declined();
-    }
+    // The code is linked in ordinary memory. It is only copied into the image and never runs from here, so compiling needs no JIT memory.
+    jit.breakpoint();
+    jit.padBeforePatch();
+    Vector<uint32_t> storage(jit.m_assembler.codeSize() / sizeof(uint32_t));
+    LinkBuffer linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(storage.mutableSpan().data()), storage.sizeInBytes(), LinkBuffer::Profile::FTL);
 
     CompiledFunctionInfo info;
     info.stubCalls = stubCalls.link(linkBuffer);
@@ -357,7 +357,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (program) {
         auto noteKeysOf = [&](UnlinkedFunctionExecutable* executable, Vector<ImageKey>& keys) {
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                if (UnlinkedFunctionCodeBlock* code = executable->codeBlockIfThereIsOne(kind)) {
+                if (UnlinkedFunctionCodeBlock* code = executable->codeBlockIfExists(kind)) {
                     if (auto about = program->about(code))
                         keys.append(about->key);
                 }
@@ -389,10 +389,13 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
 
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
 #if CPU(ARM64)
-    // What the JIT's memory is handed out in multiples of is made up with these. One stays if what is before it is a call: where that
-    // would come back to says whose frame it is, and what comes after the function is another function.
+    // Branch compaction leaves nops at the end, after the breakpoint emitted above. The breakpoint stays only if it follows a call: the
+    // call's return address identifies the frame, so it must not be the start of the next function.
     {
         constexpr uint32_t breakpoint = 0xd4200000;
+        constexpr uint32_t nop = 0xd503201f;
+        while (info.codeSize > sizeof(uint32_t) && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == nop)
+            info.codeSize -= sizeof(uint32_t);
         unsigned atLeast = sizeof(uint32_t);
         for (auto& call : info.stubCalls) {
             if (!call.isTailCall)
@@ -402,7 +405,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
             info.codeSize -= sizeof(uint32_t);
     }
 #endif
-    // Out of the JIT's memory, which goes back to the JIT.
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
     result.info = WTF::move(info);
     return true;

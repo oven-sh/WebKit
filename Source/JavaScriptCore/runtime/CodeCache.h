@@ -310,6 +310,9 @@ struct AOTCompileAllResult {
     size_t bytecodeBytes { 0 };
 };
 JS_EXPORT_PRIVATE std::optional<AOTCompileAllResult> aotCompileAllFunctions(VM&, const SourceCode&, bool isModule);
+// For Options::useAOT() in the jsc shell. Compiles the source and all its functions into an AOT image and registers it. Returns false if
+// nothing was compiled or an image with code is already registered.
+JS_EXPORT_PRIVATE bool aotCompileAndRegisterImage(VM&, const SourceCode&, bool isModule);
 #endif
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);

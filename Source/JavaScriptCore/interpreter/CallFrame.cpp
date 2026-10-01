@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CallFrame.h"
 
+#include "AOTRuntime.h"
 #include "CodeBlock.h"
 #include "DebuggerCallFrame.h"
 #include "ExecutableAllocator.h"
@@ -375,17 +376,24 @@ void CallFrame::convertToZombieFrame(VM& vm, CodeBlock* codeBlockToKeepAliveUnti
     ASSERT(!isEmptyTopLevelCallFrameForDebugger());
     ASSERT(codeBlockToKeepAliveUntilFrameIsUnwound->inherits<CodeBlock>());
 
-    EntryFrame* entryFrame = vm.topEntryFrame;
-    CallFrame* throwOriginFrame = this;
-    do {
-        throwOriginFrame = throwOriginFrame->callerFrame(entryFrame);
-    } while (throwOriginFrame && throwOriginFrame->callee().isNativeCallee());
-
     JSGlobalObject* globalObject = nullptr;
-    if (throwOriginFrame)
-        globalObject = throwOriginFrame->lexicalGlobalObject(vm);
-    else
-        globalObject = vm.entryScope->globalObject();
+#if ENABLE(FTL_JIT)
+    // A frame of AOT code has no callee or CodeBlock slot, so the loop below must not look at one.
+    if (AOT::FunctionRef caller = AOT::callerFunction(this))
+        globalObject = caller.instance->globalObject;
+#endif
+    if (!globalObject) {
+        EntryFrame* entryFrame = vm.topEntryFrame;
+        CallFrame* throwOriginFrame = this;
+        do {
+            throwOriginFrame = throwOriginFrame->callerFrame(entryFrame);
+        } while (throwOriginFrame && throwOriginFrame->callee().isNativeCallee());
+
+        if (throwOriginFrame)
+            globalObject = throwOriginFrame->lexicalGlobalObject(vm);
+        else
+            globalObject = vm.entryScope->globalObject();
+    }
     JSObject* zombieFrameCallee = globalObject->zombieFrameCallee();
 
     setCodeBlock(codeBlockToKeepAliveUntilFrameIsUnwound);

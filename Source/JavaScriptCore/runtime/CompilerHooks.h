@@ -19,7 +19,6 @@ struct CompilerHooks {
     CompilationResult (*compileBaselineNow)(VM&, CodeBlock*, JITCompilationEffort) { nullptr };
     void* compileRegExp { nullptr }; // Yarr::jitCompile
     void* newBBQPlan { nullptr }; // Wasm::BBQPlan::create
-    const void* (*stubBlobOfAOT)() { nullptr }; // AOT::stubBlob
     Vector<uint8_t> (*compileImage)(void* implOfBytecodeLinkEncoder) { nullptr };
 
     bool areInstalled() const { return !!enqueueBaselinePlan; }

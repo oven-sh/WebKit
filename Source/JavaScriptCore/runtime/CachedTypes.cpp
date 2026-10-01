@@ -6682,7 +6682,7 @@ struct BytecodeLinkEncoder::Impl {
             }
             UnlinkedFunctionCodeBlock* codeOfBuiltin(unsigned index) const final
             {
-                return index < builtins->size() && builtins->at(index) ? builtins->at(index)->codeBlockIfThereIsOne(CodeSpecializationKind::CodeForCall) : nullptr;
+                return index < builtins->size() && builtins->at(index) ? builtins->at(index)->codeBlockIfExists(CodeSpecializationKind::CodeForCall) : nullptr;
             }
             UncheckedKeyHashMap<UnlinkedCodeBlock*, About> all;
             const Vector<UnlinkedFunctionExecutable*>* builtins { nullptr };

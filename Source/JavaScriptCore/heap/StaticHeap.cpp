@@ -720,7 +720,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
             return;
         std::optional<AOT::ImageView::Function> code[2];
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-            if (!unlinked->codeBlockIfThereIsOne(kind))
+            if (!unlinked->codeBlockIfExists(kind))
                 continue;
             AOT::ImageKey key;
             key.module = moduleID;
@@ -733,7 +733,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         if (isDefaultConstructor) {
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto& function = code[static_cast<unsigned>(kind)]; function && !byIndex[function->index].sites)
-                    fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfThereIsOne(kind), nullptr, kind);
+                    fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfExists(kind), nullptr, kind);
             }
             return;
         }
@@ -754,7 +754,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
                 return;
             unlinked->setStaticExecutable(executable);
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                if (auto* nested = unlinked->codeBlockIfThereIsOne(kind))
+                if (auto* nested = unlinked->codeBlockIfExists(kind))
                     makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, made);
             }
             return;
@@ -769,7 +769,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto& function = code[static_cast<unsigned>(kind)]) {
                     executable->setAOTCode(kind, image.addressOfStub(isCall(kind) ? AOT::Stub::EnterStaticFunctionForCall : AOT::Stub::EnterStaticFunctionForConstruct), function->entry, function->index);
-                fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfThereIsOne(kind), executable, kind);
+                fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfExists(kind), executable, kind);
             }
         }
         // (Whatever cannot be constructed with like that has code for it, or is not to be constructed with.)
@@ -780,7 +780,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         unlinked->setStaticExecutable(executable);
         made++;
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-            if (auto* nested = unlinked->codeBlockIfThereIsOne(kind))
+            if (auto* nested = unlinked->codeBlockIfExists(kind))
                 makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, made);
         }
     };
@@ -843,7 +843,7 @@ static void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, NamesLoo
             own.mayBeAny = true;
         bool hasCode = false;
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-            if (auto* nested = function->codeBlockIfThereIsOne(kind)) {
+            if (auto* nested = function->codeBlockIfExists(kind)) {
                 hasCode = true;
                 dropUnreferencedVariableNames(nested, own, tables, tablesWithNames);
             }
@@ -1428,7 +1428,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             }
                             else if (builtinFunction) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                                    if (auto* code = builtinFunction->codeBlockIfThereIsOne(kind))
+                                    if (auto* code = builtinFunction->codeBlockIfExists(kind))
                                         dropUnreferencedVariableNames(code, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames);
                                 }
                             }
@@ -1438,12 +1438,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         if (decoder.leavesFunctionCodeInPayload()) {
                             for (auto& [function, offsets] : functions) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                                    if (auto* code = function->codeBlockIfThereIsOne(kind); code && s_allocatesFunctionsInScratch) {
+                                    if (auto* code = function->codeBlockIfExists(kind); code && s_allocatesFunctionsInScratch) {
                                         Region::AllocationScope notInRegion(false);
                                         s_listsOfFunctionsInFunctions.append(code->functionDecls());
                                         s_listsOfFunctionsInFunctions.append(code->functionExprs());
                                     }
-                                    if (auto* code = function->codeBlockIfThereIsOne(kind))
+                                    if (auto* code = function->codeBlockIfExists(kind))
                                         code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets(), !!s_arraysBeingBuilt);
                                 }
                                 function->leaveCodeInPayload(decoder, offsets);

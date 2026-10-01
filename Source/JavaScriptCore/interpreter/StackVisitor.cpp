@@ -51,7 +51,7 @@ static CallFrame* callerOf(CallFrame* callFrame, EntryFrame*& entryFrame, void*&
 #if ENABLE(FTL_JIT)
     // What is above the way in to the VM is what called out of it, some way further up.
     if (entryFrame != entryFrameOfCallee && caller && AOT::hasCode())
-        returnPC = AOT::returnAddressInto(caller, entryFrameOfCallee);
+        returnPC = AOT::returnAddressForFrame(caller, entryFrameOfCallee);
 #else
     UNUSED_VARIABLE(entryFrameOfCallee);
 #endif
@@ -106,7 +106,7 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 #if ENABLE(FTL_JIT)
             // What kind of frame it is has to be known before anything is read from it.
             if (AOT::hasCode()) {
-                void* returnPC = AOT::returnAddressInto(topFrame, __builtin_frame_address(0));
+                void* returnPC = AOT::returnAddressForFrame(topFrame, __builtin_frame_address(0));
                 if (returnPC && AOT::classifyAddress(returnPC).kind != AOT::ImageAddressInfo::NotInImage) {
                     CallFrame* adapter = nullptr;
                     topFrame = skipFramesOfStubs(topFrame, m_frame.m_entryFrame, returnPC, adapter);
@@ -152,15 +152,15 @@ void StackVisitor::gotoNextFrame()
     m_frame.m_index++;
 #if ENABLE(FTL_JIT)
     if (m_frame.m_aotInlineFrame) {
-        auto place = m_frame.m_aotFunctionOfFrame.placeOfInlinedCall(m_frame.m_aotInlineFrame);
-        m_frame.m_aotFunction = place.function;
-        m_frame.m_aotInlineFrame = place.inlineFrame;
-        m_frame.m_aotHasBeenLeft = place.hasBeenLeft;
-        m_frame.m_bytecodeIndex = place.bytecodeIndex;
-        m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfThereIsOne();
+        auto location = m_frame.m_aotFunctionOfFrame.inlineCallSiteLocation(m_frame.m_aotInlineFrame);
+        m_frame.m_aotFunction = location.function;
+        m_frame.m_aotInlineFrame = location.inlineFrame;
+        m_frame.m_isTailDeleted = location.isTailDeleted;
+        m_frame.m_bytecodeIndex = location.bytecodeIndex;
+        m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfExists();
         return;
     }
-    m_frame.m_aotHasBeenLeft = false;
+    m_frame.m_isTailDeleted = false;
 #endif
 #if ENABLE(DFG_JIT)
     if (m_frame.isInlinedDFGFrame()) {
@@ -307,14 +307,14 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
 #endif
     m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
     if (!m_aotInstance)
-        m_aotInstance = AOT::instanceOfFrame(callFrame);
+        m_aotInstance = AOT::instanceForFrame(callFrame);
     m_frame.m_aotFunctionOfFrame = { m_aotInstance, index };
-    auto place = m_frame.m_aotFunctionOfFrame.placeAt(returnPC);
-    m_frame.m_aotFunction = place.function;
-    m_frame.m_aotInlineFrame = place.inlineFrame;
-    m_frame.m_aotHasBeenLeft = place.isTailCall && calleeRuns;
-    m_frame.m_bytecodeIndex = place.bytecodeIndex;
-    m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfThereIsOne();
+    auto location = m_frame.m_aotFunctionOfFrame.locationForReturnAddress(returnPC);
+    m_frame.m_aotFunction = location.function;
+    m_frame.m_aotInlineFrame = location.inlineFrame;
+    m_frame.m_isTailDeleted = location.isTailCall && calleeRuns;
+    m_frame.m_bytecodeIndex = location.bytecodeIndex;
+    m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfExists();
     findCaller(callFrame);
     // What is above that came in some other way.
     if (m_frame.m_aotAdapterFrame)

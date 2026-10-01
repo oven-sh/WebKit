@@ -1137,7 +1137,6 @@ void installCompilers()
     g_compilerHooks.newBBQPlan = reinterpret_cast<void*>(&Wasm::BBQPlan::create);
 #endif
 #if ENABLE(FTL_JIT)
-    g_compilerHooks.stubBlobOfAOT = []() -> const void* { return &AOT::stubBlob(); };
     installImageCompiler();
 #endif
 }

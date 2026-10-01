@@ -202,7 +202,7 @@ private:
         if (calleeNode->isBytecode(op_new_func_exp)) {
             // The closure is made here, so what it closes over is at hand.
             auto bytecode = calleeNode->as<OpNewFuncExp>();
-            callee = calleeNode->graph->codeBlock()->functionExpr(bytecode.m_functionDecl)->codeBlockIfThereIsOne(CodeSpecializationKind::CodeForCall);
+            callee = calleeNode->graph->codeBlock()->functionExpr(bytecode.m_functionDecl)->codeBlockIfExists(CodeSpecializationKind::CodeForCall);
             if (!callee || readsCallee(callee))
                 return false;
             scopeOfClosure = resolve(calleeNode->use(bytecode.m_scope));

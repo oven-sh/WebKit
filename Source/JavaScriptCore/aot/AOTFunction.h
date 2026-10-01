@@ -67,11 +67,11 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef at(Instance*, const void* address);
     // The bytecode location corresponding to a return address in this function's code. If the address is inside an inlined callee,
     // the result names that callee and the location within it, and inlineFrame identifies the inlined call.
-    struct Place;
-    JS_EXPORT_PRIVATE Place placeAt(const void* returnAddress) const;
-    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress) const; // Place::bytecodeIndex
+    struct Location;
+    JS_EXPORT_PRIVATE Location locationForReturnAddress(const void* returnAddress) const;
+    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress) const; // Location::bytecodeIndex
     // The location of the inlined call itself, in its caller.
-    JS_EXPORT_PRIVATE Place placeOfInlinedCall(unsigned inlineFrame) const;
+    JS_EXPORT_PRIVATE Location inlineCallSiteLocation(unsigned inlineFrame) const;
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*); // Empty unless its code is ahead-of-time compiled.
     // The function that has run as this executable's code of this kind. Empty if its realm is gone.
     JS_EXPORT_PRIVATE static FunctionRef of(VM&, FunctionExecutable*, CodeSpecializationKind);
@@ -79,10 +79,10 @@ struct FunctionRef {
 
     // These allocate nothing, take no locks, and may be called from any thread while the VM's thread is stopped.
     const FunctionInfo& info() const;
-    JS_EXPORT_PRIVATE Data* dataIfItHasAny() const;
+    JS_EXPORT_PRIVATE Data* dataIfExists() const;
     JS_EXPORT_PRIVATE ScriptExecutable* executable() const;
-    JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlockIfThereIsOne() const; // Non-null if there is no metadata().
-    JS_EXPORT_PRIVATE CodeBlock* codeBlockIfThereIsOne() const;
+    JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlockIfExists() const; // Non-null if there is no metadata().
+    JS_EXPORT_PRIVATE CodeBlock* codeBlockIfExists() const;
     const FunctionMetadata* metadata() const;
     // Properties of the unlinked code block, available whether or not it has been decoded.
     JS_EXPORT_PRIVATE CodeType codeType() const;
@@ -129,13 +129,13 @@ struct FunctionRef {
     uint32_t index { 0 };
 };
 
-struct FunctionRef::Place {
+struct FunctionRef::Location {
     FunctionRef function;
     BytecodeIndex bytecodeIndex;
     unsigned inlineFrame { 0 };
-    // Set by placeOfInlinedCall(): the call was a tail call, so this frame no longer logically exists.
-    bool hasBeenLeft { false };
-    // Set by placeAt(): the call being made here is a tail call (PackedSite::isTailCall).
+    // Set by inlineCallSiteLocation(): the call was a tail call, so this frame no longer logically exists.
+    bool isTailDeleted { false };
+    // Set by locationForReturnAddress(): the call being made here is a tail call (PackedSite::isTailCall).
     bool isTailCall { false };
 };
 
@@ -160,7 +160,7 @@ struct ImageAddressInfo {
 JS_EXPORT_PRIVATE ImageAddressInfo classifyAddress(const void* address); // Any thread.
 // The return address into `frame`, found by walking outward from a more recent frame (that of a running C++ function, or the
 // EntryFrame of code that `frame` is waiting on). Returns null if `frame` is not reachable from there.
-JS_EXPORT_PRIVATE void* returnAddressInto(const void* frame, const void* startingFrom);
+JS_EXPORT_PRIVATE void* returnAddressForFrame(const void* frame, const void* startingFrom);
 // The call site (CallSiteIndex::bits()) for a return address at this offset in the function's code.
 JS_EXPORT_PRIVATE uint32_t callSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
 JS_EXPORT_PRIVATE const RegisterAtOffsetList& adapterSavedRegisters();
@@ -170,13 +170,13 @@ JS_EXPORT_PRIVATE std::optional<uint32_t> tryCallSiteAt(const ImageFunction&, ui
 std::optional<uint32_t> siteOfSpread(const ImageFunction&, uint32_t callSite, unsigned item); // See SiteOfSpread.
 // A call that was inlined (Graph::InlineFrame): its parent (another inline frame, or none for the outermost function), its call
 // site in the parent, and the callee.
-struct InlineFrameOfImage {
+struct ImageInlineFrame {
     uint32_t parent;
     uint32_t callSite;
     uint32_t function;
     bool isTailCall;
 };
-JS_EXPORT_PRIVATE InlineFrameOfImage inlineFrameOf(const ImageFunction&, unsigned frame);
+JS_EXPORT_PRIVATE ImageInlineFrame inlineFrameOf(const ImageFunction&, unsigned frame);
 // While this object is alive, the function that will be returned to at returnAddress reports `site` as its current call site.
 class CallSiteOverride {
     WTF_MAKE_NONCOPYABLE(CallSiteOverride);
@@ -188,15 +188,15 @@ private:
 };
 // The Instance for a frame of ahead-of-time compiled code, or of a stub called by such code. It is recovered from the entry
 // adapter's frame.
-JS_EXPORT_PRIVATE Instance* instanceOfFrame(const void* frame);
-// Whether instanceOfFrame() can be called. It can for any frame that stack walkers are expected to visit. An asynchronous observer
+JS_EXPORT_PRIVATE Instance* instanceForFrame(const void* frame);
+// Whether instanceForFrame() can be called. It can for any frame that stack walkers are expected to visit. An asynchronous observer
 // (such as an allocation profiler) may see a call that is still being set up, with no adapter frame above it yet.
-JS_EXPORT_PRIVATE bool canTellInstanceOfFrame(const void* frame);
+JS_EXPORT_PRIVATE bool canFindInstanceForFrame(const void* frame);
 // `frame` is VM::topCallFrame. Returns whether it belongs to a stub or to ahead-of-time compiled code. Such a frame has no standard
 // frame header and must only be inspected through a StackVisitor.
-JS_EXPORT_PRIVATE bool topFrameIsNotTheEnginesOwn(const void* frame);
+JS_EXPORT_PRIVATE bool topCallFrameIsAOTFrame(const void* frame);
 // `frame` uses the standard calling convention (a host function's frame, for example). Returns the calling function if it is
-// ahead-of-time compiled. With inlining, this is the function whose bytecode made the call (see FunctionRef::placeAt()).
+// ahead-of-time compiled. With inlining, this is the function whose bytecode made the call (see FunctionRef::locationForReturnAddress()).
 JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 // The caller's CodeBlock, created if necessary, for error reporting paths that require one. Null if the caller is not ahead-of-time
 // compiled.

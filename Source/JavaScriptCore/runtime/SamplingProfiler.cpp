@@ -201,7 +201,7 @@ protected:
         EntryFrame* entryFrameOfCallee = m_entryFrame;
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
         if (m_entryFrame != entryFrameOfCallee && m_callFrame && AOT::hasCode())
-            pc = AOT::returnAddressInto(m_callFrame, entryFrameOfCallee);
+            pc = AOT::returnAddressForFrame(m_callFrame, entryFrameOfCallee);
         m_pc = pc;
 #else
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
@@ -487,7 +487,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             void* pcOfFrame = machinePC;
 #if ENABLE(FTL_JIT)
             if (callFrame && callFrame != machineFrame && AOT::hasCode())
-                pcOfFrame = AOT::returnAddressInto(callFrame, machineFrame);
+                pcOfFrame = AOT::returnAddressForFrame(callFrame, machineFrame);
 #endif
 
             size_t walkSize;

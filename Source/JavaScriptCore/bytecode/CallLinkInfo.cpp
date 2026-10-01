@@ -350,7 +350,7 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
         VM& vm = codeBlock->vm();
         BytecodeIndex bytecodeIndex(0);
         StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
-            if (!visitor->aotFunction() || visitor->aotFunction().codeBlockIfThereIsOne() != codeBlock)
+            if (!visitor->aotFunction() || visitor->aotFunction().codeBlockIfExists() != codeBlock)
                 return IterationStatus::Continue;
             bytecodeIndex = visitor->bytecodeIndex();
             return IterationStatus::Done;

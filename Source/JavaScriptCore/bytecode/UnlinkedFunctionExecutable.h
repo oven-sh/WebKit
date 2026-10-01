@@ -294,7 +294,7 @@ public:
 
     // The FunctionExecutable that StaticHeap made for it when the program was built, which link() gives to whoever it is good for.
     FunctionExecutable* staticExecutable() const { return m_staticExecutable; }
-    UnlinkedFunctionCodeBlock* codeBlockIfThereIsOne(CodeSpecializationKind kind) const
+    UnlinkedFunctionCodeBlock* codeBlockIfExists(CodeSpecializationKind kind) const
     {
         if (m_isCached)
             return nullptr;

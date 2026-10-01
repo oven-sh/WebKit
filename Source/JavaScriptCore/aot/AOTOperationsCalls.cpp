@@ -386,7 +386,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* ins
     const ImageFunction* function = instance->infos[index].function();
     Ref<JITCode> code = codeOfFunctionFromImage({ &Image::of(*function), function }, kind);
     code->setInstance(*instance);
-    RELEASE_ASSERT(Data::create(*instance, executable, executable->unlinkedExecutable()->codeBlockIfThereIsOne(kind), code.get()));
+    RELEASE_ASSERT(Data::create(*instance, executable, executable->unlinkedExecutable()->codeBlockIfExists(kind), code.get()));
 }
 
 // For a stub that is about to fill a slot: didFillSlot(), but for the epoch.

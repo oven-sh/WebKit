@@ -455,7 +455,7 @@ struct Instance {
     static constexpr uint32_t leastStateWithData = 1u << 17;
     static constexpr unsigned shiftOfStateWithData = 4;
     bool isLinked(uint32_t index) const { return states[index] >= isLinkedWithoutData; }
-    Data* dataIfItHasAny(uint32_t index) const
+    Data* dataIfExists(uint32_t index) const
     {
         uint32_t state = states[index];
         if (state < leastStateWithData)
@@ -628,7 +628,7 @@ struct Instance {
     static constexpr unsigned numberOfCustomGetters = 128;
     CustomGetter customGetters[numberOfCustomGetters] { };
     CustomGetter& customGetterFor(uint32_t structureID, UniquedStringImpl* uid) { return customGetters[((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4)) % numberOfCustomGetters]; }
-    // Cache of code address lookups (FunctionRef::at(), placeAt()). The results never change.
+    // Cache of code address lookups (FunctionRef::at(), locationForReturnAddress()). The results never change.
     struct CachedAddressInfo {
         static constexpr uint32_t siteNotLookedFor = std::numeric_limits<uint32_t>::max();
         static constexpr uint32_t hasNoSite = siteNotLookedFor - 1;

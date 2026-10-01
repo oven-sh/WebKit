@@ -243,7 +243,7 @@ private:
         Escape result = Escape::StaysHere;
         if (!isParameter && kindOfAllocation(value) == AllocationKind::Closure) {
             UnlinkedFunctionExecutable* executable = value->opcode == op_new_func ? value->graph->codeBlock()->functionDecl(value->as<OpNewFunc>().m_functionDecl) : value->graph->codeBlock()->functionExpr(value->as<OpNewFuncExp>().m_functionDecl);
-            UnlinkedFunctionCodeBlock* code = executable->codeBlockIfThereIsOne(CodeSpecializationKind::CodeForCall);
+            UnlinkedFunctionCodeBlock* code = executable->codeBlockIfExists(CodeSpecializationKind::CodeForCall);
             if (!code || mayReferenceItself(code))
                 result = Escape::Other;
         }
@@ -443,7 +443,7 @@ private:
         case op_new_func_exp:
         case op_new_func: {
             UnlinkedFunctionExecutable* executable = user->opcode == op_new_func ? user->graph->codeBlock()->functionDecl(user->as<OpNewFunc>().m_functionDecl) : user->graph->codeBlock()->functionExpr(user->as<OpNewFuncExp>().m_functionDecl);
-            UnlinkedFunctionCodeBlock* code = executable->codeBlockIfThereIsOne(CodeSpecializationKind::CodeForCall);
+            UnlinkedFunctionCodeBlock* code = executable->codeBlockIfExists(CodeSpecializationKind::CodeForCall);
             if (!code || !keepsItsScopeToItself(code))
                 return escapes(Escape::ClosureLetsScopeOut);
             return { Verdict::FieldType };

@@ -60,12 +60,9 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(VirtualCallInfo);
 
 void* addressOfStub(Stub stub)
 {
-    if (const void* inImage = Image::addressOfStub(stub))
-        return const_cast<void*>(inImage);
-    // (They are made now, which takes somewhere to put them.)
-    RELEASE_ASSERT_WITH_MESSAGE(Options::useJIT(), "There is no image with code in it, and no JIT to do without one.");
-    const StubBlob& blob = *static_cast<const StubBlob*>(g_compilerHooks.stubBlobOfAOT());
-    return static_cast<uint8_t*>(blob.inJITMemory) + blob.offsets[static_cast<unsigned>(stub)];
+    const void* inImage = Image::addressOfStub(stub);
+    RELEASE_ASSERT_WITH_MESSAGE(inImage, "No AOT image with code is registered.");
+    return const_cast<void*>(inImage);
 }
 
 void* catchThunk()
@@ -429,7 +426,7 @@ void* Instance::placeForEnvironment(ImageEnvironment environment) const
     return const_cast<char*>(reinterpret_cast<const char*>(this)) - environment.distance;
 }
 
-SUPPRESS_ASAN void* returnAddressInto(const void* frame, const void* startingFrom)
+SUPPRESS_ASAN void* returnAddressForFrame(const void* frame, const void* startingFrom)
 {
     struct Record {
         const Record* previous;
@@ -449,7 +446,7 @@ struct FrameRecord {
 };
 }
 
-SUPPRESS_ASAN Instance* instanceOfFrame(const void* frame)
+SUPPRESS_ASAN Instance* instanceForFrame(const void* frame)
 {
     for (auto* record = static_cast<const FrameRecord*>(frame);; record = record->previous) {
         ImageAddressInfo::Kind kind = classifyAddress(removeCodePtrTag(record->returnAddress)).kind;
@@ -459,7 +456,7 @@ SUPPRESS_ASAN Instance* instanceOfFrame(const void* frame)
     }
 }
 
-SUPPRESS_ASAN bool canTellInstanceOfFrame(const void* frame)
+SUPPRESS_ASAN bool canFindInstanceForFrame(const void* frame)
 {
     for (auto* record = static_cast<const FrameRecord*>(frame); record; record = record->previous) {
         ImageAddressInfo::Kind kind = classifyAddress(removeCodePtrTag(record->returnAddress)).kind;
@@ -471,11 +468,11 @@ SUPPRESS_ASAN bool canTellInstanceOfFrame(const void* frame)
     return false;
 }
 
-NEVER_INLINE bool topFrameIsNotTheEnginesOwn(const void* frame)
+NEVER_INLINE bool topCallFrameIsAOTFrame(const void* frame)
 {
     if (!hasCode())
         return false;
-    void* returnAddress = returnAddressInto(frame, __builtin_frame_address(0));
+    void* returnAddress = returnAddressForFrame(frame, __builtin_frame_address(0));
     return returnAddress && classifyAddress(returnAddress).kind != ImageAddressInfo::NotInImage;
 }
 
@@ -486,10 +483,10 @@ SUPPRESS_ASAN FunctionRef callerFunction(const CallFrame* callFrame)
     for (auto* record = reinterpret_cast<const FrameRecord*>(callFrame);; record = record->previous) {
         ImageAddressInfo what = classifyAddress(removeCodePtrTag(record->returnAddress));
         if (what.kind == ImageAddressInfo::Function) {
-            FunctionRef function { instanceOfFrame(record->previous), what.index };
+            FunctionRef function { instanceForFrame(record->previous), what.index };
             // (What it is in the middle of may be what another does, that was made part of it.)
             if (function.info().function()->hasInlineFrames) [[unlikely]]
-                return function.placeAt(removeCodePtrTag(record->returnAddress)).function;
+                return function.locationForReturnAddress(removeCodePtrTag(record->returnAddress)).function;
             return function;
         }
         if (what.kind != ImageAddressInfo::Stub)
@@ -649,7 +646,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->slotEpoch = 1;
 
     RELEASE_ASSERT(code.index() < instance.collections->numberOfFunctions);
-    RELEASE_ASSERT(!instance.dataIfItHasAny(code.index()));
+    RELEASE_ASSERT(!instance.dataIfExists(code.index()));
     instance.setData(code.index(), data);
     data->indexAmongAll = instance.collections->all.size();
     instance.collections->all.append(data);
@@ -673,12 +670,12 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
 Data* Instance::ensureData(uint32_t index)
 {
     // (One that starts cold, and that only those have called that know what they are calling, has nothing there at all.)
-    Data* data = dataIfItHasAny(index);
+    Data* data = dataIfExists(index);
     if (data)
         return data;
     const FunctionInfo& info = infos[index];
     auto* executable = uncheckedDowncast<FunctionExecutable>(info.executable());
-    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(info.kind());
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfExists(info.kind());
     // (An executable that was made when the program was built has no way of holding on to one.)
     Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function()), info.function() }, info.kind());
     RELEASE_ASSERT(code->index() == index);
@@ -712,7 +709,7 @@ CallSiteOverride::~CallSiteOverride()
     m_instance.overriddenReturnAddress = nullptr;
 }
 
-static FunctionRef::Place placeOfSite(FunctionRef function, uint32_t site)
+static FunctionRef::Location locationForSite(FunctionRef function, uint32_t site)
 {
     const ImageFunction& record = *function.info().function();
     if (!record.hasInlineFrames) [[likely]]
@@ -724,10 +721,10 @@ static FunctionRef::Place placeOfSite(FunctionRef function, uint32_t site)
     return { FunctionRef { function.instance, inlineFrameOf(record, frame).function }, bytecodeIndex, frame, false, PackedSite::isOfTailCall(site) };
 }
 
-FunctionRef::Place FunctionRef::placeAt(const void* returnAddress) const
+FunctionRef::Location FunctionRef::locationForReturnAddress(const void* returnAddress) const
 {
     if (returnAddress == instance->overriddenReturnAddress) [[unlikely]]
-        return placeOfSite(*this, instance->overridingSite);
+        return locationForSite(*this, instance->overridingSite);
     using Asked = Instance::CachedAddressInfo;
     auto& asked = instance->cachedAddressInfo(returnAddress);
     if (asked.address != returnAddress || asked.site == Asked::siteNotLookedFor) [[unlikely]] {
@@ -742,20 +739,20 @@ FunctionRef::Place FunctionRef::placeAt(const void* returnAddress) const
     // something may look at the stack at any time (a profiler of allocations does). Then it is the function, and nowhere in particular.
     if (asked.site == Asked::hasNoSite) [[unlikely]]
         return { *this, BytecodeIndex(), 0 };
-    return placeOfSite(*this, asked.site);
+    return locationForSite(*this, asked.site);
 }
 
-FunctionRef::Place FunctionRef::placeOfInlinedCall(unsigned inlineFrame) const
+FunctionRef::Location FunctionRef::inlineCallSiteLocation(unsigned inlineFrame) const
 {
-    InlineFrameOfImage frame = inlineFrameOf(*info().function(), inlineFrame);
-    Place place = placeOfSite(*this, PackedSite::pack(frame.parent, frame.callSite));
-    place.hasBeenLeft = frame.isTailCall;
-    return place;
+    ImageInlineFrame frame = inlineFrameOf(*info().function(), inlineFrame);
+    Location location = locationForSite(*this, PackedSite::pack(frame.parent, frame.callSite));
+    location.isTailDeleted = frame.isTailCall;
+    return location;
 }
 
 BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
 {
-    return placeAt(returnAddress).bytecodeIndex;
+    return locationForReturnAddress(returnAddress).bytecodeIndex;
 }
 
 FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind)
@@ -774,9 +771,9 @@ CodeBlock* FunctionRef::ensureCodeBlock() const
     return ensureData()->ensureCodeBlock();
 }
 
-Data* FunctionRef::dataIfItHasAny() const
+Data* FunctionRef::dataIfExists() const
 {
-    return instance->dataIfItHasAny(index);
+    return instance->dataIfExists(index);
 }
 
 Data* FunctionRef::ensureData() const
@@ -787,21 +784,21 @@ Data* FunctionRef::ensureData() const
 ScriptExecutable* FunctionRef::executable() const
 {
     // (That of the code of a module is made when the program runs, so nothing that was made before says which it is.)
-    if (Data* data = dataIfItHasAny())
+    if (Data* data = dataIfExists())
         return data->executable;
     return info().executable();
 }
 
-CodeBlock* FunctionRef::codeBlockIfThereIsOne() const
+CodeBlock* FunctionRef::codeBlockIfExists() const
 {
-    Data* data = dataIfItHasAny();
+    Data* data = dataIfExists();
     return data ? data->codeBlock : nullptr;
 }
 
 uint32_t FunctionRef::siteConstantOf(const Slot* slot) const
 {
     const FunctionInfo& info = this->info();
-    size_t which = slot - (SharedData::contains(slot) ? instance->sharedData : instance->dataIfItHasAny(index))->slots;
+    size_t which = slot - (SharedData::contains(slot) ? instance->sharedData : instance->dataIfExists(index))->slots;
     if (info.flags & FunctionInfo::sitesHaveTheirConstants)
         return info.sites[which].identifierAndExtra;
     if (!(info.flags & FunctionInfo::hasSiteConstants))
@@ -841,11 +838,11 @@ AllocationPlan FunctionRef::planOf(const Slot* firstOfSite) const
     return { info().function()->plans() + constant - 1 };
 }
 
-UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfThereIsOne() const
+UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfExists() const
 {
-    if (Data* data = dataIfItHasAny(); data && data->unlinkedCodeBlock)
+    if (Data* data = dataIfExists(); data && data->unlinkedCodeBlock)
         return data->unlinkedCodeBlock;
-    return uncheckedDowncast<FunctionExecutable>(executable())->unlinkedExecutable()->codeBlockIfThereIsOne(info().kind());
+    return uncheckedDowncast<FunctionExecutable>(executable())->unlinkedExecutable()->codeBlockIfExists(info().kind());
 }
 
 // As many zeros as any function has bytes of instructions, in memory that is nobody's until somebody reads it.
@@ -891,7 +888,7 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromMetadata() const
 
 UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
 {
-    if (UnlinkedCodeBlock* existing = unlinkedCodeBlockIfThereIsOne())
+    if (UnlinkedCodeBlock* existing = unlinkedCodeBlockIfExists())
         return existing;
     VM& vm = *instance->vm;
     DeferGCForAWhile deferGC(vm);
@@ -985,21 +982,21 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
 
 CodeType FunctionRef::codeType() const
 {
-    return metadata() ? FunctionCode : unlinkedCodeBlockIfThereIsOne()->codeType();
+    return metadata() ? FunctionCode : unlinkedCodeBlockIfExists()->codeType();
 }
 
 bool FunctionRef::isBuiltinFunction() const
 {
     if (auto* metadata = this->metadata())
         return metadata->flagsAndInstructionsSize & FunctionMetadata::isBuiltinFunction;
-    return unlinkedCodeBlockIfThereIsOne()->isBuiltinFunction();
+    return unlinkedCodeBlockIfExists()->isBuiltinFunction();
 }
 
 unsigned FunctionRef::instructionsSize() const
 {
     if (auto* metadata = this->metadata())
         return metadata->instructionsSize();
-    return unlinkedCodeBlockIfThereIsOne()->instructions().size();
+    return unlinkedCodeBlockIfExists()->instructions().size();
 }
 
 void* FunctionRef::addressOfCatchEntrypoint(unsigned bytecodeOffset) const
@@ -1016,7 +1013,7 @@ const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) cons
 {
     auto* metadata = this->metadata();
     if (!metadata)
-        return unlinkedCodeBlockIfThereIsOne()->handlerForIndex(bytecodeOffset, RequiredHandler::AnyHandler);
+        return unlinkedCodeBlockIfExists()->handlerForIndex(bytecodeOffset, RequiredHandler::AnyHandler);
     const uint32_t* words = metadata->find(FunctionMetadata::Handlers);
     if (!words)
         return nullptr;
@@ -1028,7 +1025,7 @@ const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned table
 {
     auto* metadata = this->metadata();
     if (!metadata)
-        return unlinkedCodeBlockIfThereIsOne()->unlinkedStringSwitchJumpTable(tableIndex);
+        return unlinkedCodeBlockIfExists()->unlinkedStringSwitchJumpTable(tableIndex);
     return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*metadata->find(FunctionMetadata::StringSwitchJumpTables))[tableIndex];
 }
 
@@ -1051,7 +1048,7 @@ BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
             if (state >= table[0] && static_cast<uint32_t>(state - table[0]) < static_cast<uint32_t>(table[1]))
                 offset = table[2 + state - table[0]];
         }
-    } else if (UnlinkedCodeBlock* codeBlock = unlinkedCodeBlockIfThereIsOne(); codeBlock && codeBlock->numberOfUnlinkedSwitchJumpTables())
+    } else if (UnlinkedCodeBlock* codeBlock = unlinkedCodeBlockIfExists(); codeBlock && codeBlock->numberOfUnlinkedSwitchJumpTables())
         offset = codeBlock->unlinkedSwitchJumpTable(codeBlock->numberOfUnlinkedSwitchJumpTables() - 1).offsetForValue(state);
     return BytecodeIndex(std::max(offset, 0));
 }
@@ -1068,14 +1065,14 @@ std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionD
 {
     if (auto* metadata = this->metadata())
         return functionsIn(*metadata, FunctionMetadata::FunctionDecls);
-    return unlinkedCodeBlockIfThereIsOne()->functionDecls();
+    return unlinkedCodeBlockIfExists()->functionDecls();
 }
 
 std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionExprs() const
 {
     if (auto* metadata = this->metadata())
         return functionsIn(*metadata, FunctionMetadata::FunctionExprs);
-    return unlinkedCodeBlockIfThereIsOne()->functionExprs();
+    return unlinkedCodeBlockIfExists()->functionExprs();
 }
 
 void Data::destroy(Data* data)
@@ -1084,7 +1081,7 @@ void Data::destroy(Data* data)
     // (MegamorphicCache::ConstructionEntry::m_site)
     if (auto* cache = instance.vm->megamorphicCache())
         cache->bumpEpoch();
-    RELEASE_ASSERT(instance.dataIfItHasAny(data->code->index()) == data);
+    RELEASE_ASSERT(instance.dataIfExists(data->code->index()) == data);
     instance.setNotLinked(data->code->index());
     auto isOfThis = [&](Slot* slot) { return slot >= data->slots && slot < data->slots + data->numSlots; };
     instance.collections->transitions.removeAllMatching(isOfThis);
@@ -1152,7 +1149,7 @@ LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
         if (const uint32_t* word = metadata->find(FunctionMetadata::ExpressionInfo))
             lineColumn = decodeBorrowedExpressionInfo(StaticHeap::inData<uint8_t>(*word))->lineColumnForInstPC(bytecodeIndex.offset());
     } else
-        lineColumn = unlinkedCodeBlockIfThereIsOne()->lineColumnForBytecodeIndex(bytecodeIndex);
+        lineColumn = unlinkedCodeBlockIfExists()->lineColumnForBytecodeIndex(bytecodeIndex);
     lineColumn.column += lineColumn.line ? 1 : executable->startColumn();
     lineColumn.line += executable->firstLine();
     return lineColumn;
@@ -1194,7 +1191,7 @@ FunctionExecutable* Data::functionExpr(unsigned index)
 
 FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
 {
-    if (!dataIfItHasAny()) {
+    if (!dataIfExists()) {
         auto& entry = functionDecls()[index];
         if (FunctionExecutable* result = UnlinkedCodeBlock::executableIn(entry))
             return result;
@@ -1206,7 +1203,7 @@ FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
 
 FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
 {
-    if (!dataIfItHasAny()) {
+    if (!dataIfExists()) {
         auto& entry = functionExprs()[index];
         if (FunctionExecutable* result = UnlinkedCodeBlock::executableIn(entry))
             return result;
@@ -1253,7 +1250,7 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
         instance->setLinkedWithoutData(index);
         return true;
     }
-    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(kind);
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfExists(kind);
     ImageCode found = findInImage(executable, kind, unlinkedCodeBlock, scope);
     if (!found)
         return false;

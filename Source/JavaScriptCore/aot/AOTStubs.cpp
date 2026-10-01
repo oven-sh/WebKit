@@ -3902,7 +3902,10 @@ const StubBlob& stubBlob()
             RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
         }
 
-        LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
+        // Linked in ordinary memory: the stubs only ever run from the copies in an image.
+        jit.padBeforePatch();
+        Vector<uint32_t> storage(jit.m_assembler.codeSize() / sizeof(uint32_t));
+        LinkBuffer linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(storage.mutableSpan().data()), storage.sizeInBytes(), LinkBuffer::Profile::Thunk);
         for (auto& [call, stub] : callsBetweenStubs)
             linkBuffer.link<JITThunkPtrTag>(call, linkBuffer.locationOf<JITThunkPtrTag>(labels[static_cast<unsigned>(stub)]));
 #if CPU(ARM64)
@@ -3923,9 +3926,12 @@ const StubBlob& stubBlob()
         for (auto& label : thunkLabels)
             blob->thunkOffsets.append(static_cast<uint8_t*>(linkBuffer.locationOf<JITThunkPtrTag>(label).untaggedPtr()) - start);
         size_t size = linkBuffer.size();
-        static NeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> code;
-        code.get() = FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "AOTStubs"_s, "Stubs of the static compiler");
-        blob->inJITMemory = start;
+        MacroAssemblerCodeRef<JITThunkPtrTag> code = FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "AOTStubs"_s, "AOT stubs");
+#if CPU(ARM64)
+        // Branch compaction leaves nops at the end.
+        while (size > sizeof(uint32_t) && *reinterpret_cast<const uint32_t*>(start + size - sizeof(uint32_t)) == 0xd503201f)
+            size -= sizeof(uint32_t);
+#endif
         blob->bytes.append(std::span { start, size });
         if (Options::verboseAOTCompilation()) [[unlikely]] {
             static constexpr ASCIILiteral names[] = {
@@ -4126,12 +4132,11 @@ void IndexReferences::fill(uint8_t* code, const IndexReference& reference, uint3
 
 Vector<StubCall> StubCalls::link(LinkBuffer& linkBuffer)
 {
-    const StubBlob& blob = stubBlob();
     auto* start = static_cast<uint8_t*>(linkBuffer.entrypoint<JSEntryPtrTag>().untaggedPtr());
     Vector<StubCall> result;
     for (auto& pending : m_pending) {
-        void* target = static_cast<uint8_t*>(blob.inJITMemory) + (pending.thunk ? blob.thunkOffsets[pending.thunk - 1] : blob.offsets[static_cast<unsigned>(pending.stub)]);
-        linkBuffer.link<JITThunkPtrTag>(pending.call, CodeLocationLabel<JITThunkPtrTag>(tagCodePtr<JITThunkPtrTag>(target)));
+        // A placeholder within range. ImageBuilder retargets every call when it places the code.
+        linkBuffer.link<JITThunkPtrTag>(pending.call, CodeLocationLabel<JITThunkPtrTag>(tagCodePtr<JITThunkPtrTag>(start)));
         // The location of a near call is the end of the instruction; that of a near tail call is the instruction.
         auto* location = static_cast<uint8_t*>(linkBuffer.locationOfNearCall<JITThunkPtrTag>(pending.call).dataLocation());
         result.append({ static_cast<uint32_t>(location - start - (pending.isTailCall ? 0 : sizeof(uint32_t))), pending.stub, pending.isTailCall, pending.thunk, pending.function, pending.callSite });

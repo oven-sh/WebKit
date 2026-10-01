@@ -91,7 +91,7 @@ inline CallFrame* VM::topJSCallFrame() const
         return frame;
 #if ENABLE(FTL_JIT)
     // There is nothing to be asked of it.
-    if (AOT::topFrameIsNotTheEnginesOwn(frame)) [[unlikely]]
+    if (AOT::topCallFrameIsAOTFrame(frame)) [[unlikely]]
         return nullptr;
 #endif
     if (!frame->isNativeCalleeFrame() && !frame->isZombieFrame()) [[likely]]

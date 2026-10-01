@@ -1188,6 +1188,7 @@ Vector<uint8_t> ImageBuilder::finish()
     for (unsigned i = 0; i < 4; ++i)
         header.linkTimeConstantsUsed[i] = s_linkTimeConstantsUsed[i].load();
     header.numberOfCopiesOfStubs = stubsAt.size();
+    header.identifiesModulesByText = m_identifiesModulesByText;
     for (unsigned i = 0; i < stubsAt.size(); ++i)
         header.copiesOfStubs[i] = safeCast<uint32_t>(stubsAt[i]);
     RELEASE_ASSERT(stubs.returnsIntoAdapters.size() == numberOfAdapters);
@@ -1593,7 +1594,7 @@ static void skipInlineFrames(const uint8_t*& at, uint64_t first)
         readVarint(at);
 }
 
-InlineFrameOfImage inlineFrameOf(const ImageFunction& function, unsigned frame)
+ImageInlineFrame inlineFrameOf(const ImageFunction& function, unsigned frame)
 {
     RELEASE_ASSERT(function.hasInlineFrames && frame);
     Image& image = Image::of(function);
@@ -1602,7 +1603,7 @@ InlineFrameOfImage inlineFrameOf(const ImageFunction& function, unsigned frame)
     RELEASE_ASSERT(first & 2);
     uint64_t count = readVarint(at);
     RELEASE_ASSERT(frame <= count);
-    InlineFrameOfImage result { };
+    ImageInlineFrame result { };
     for (unsigned i = 0; i < frame; ++i) {
         uint64_t parentAndIsTailCall = readVarint(at);
         result.parent = static_cast<uint32_t>(parentAndIsTailCall >> 1);
@@ -1670,10 +1671,17 @@ uint32_t callSiteAt(const ImageFunction& function, uint32_t offsetOfReturnAddres
 Image* Image::registerImageFromFile(const char* path)
 {
     auto contents = FileSystem::readEntireFile(String::fromUTF8(path));
-    if (!contents || contents->size() < sizeof(ImageHeader))
+    if (!contents)
         return nullptr;
-    // Both for good.
-    auto* data = new Vector<uint8_t>(WTF::move(*contents));
+    return registerImageCopyingCode(WTF::move(*contents));
+}
+
+Image* Image::registerImageCopyingCode(Vector<uint8_t>&& contents)
+{
+    if (contents.size() < sizeof(ImageHeader))
+        return nullptr;
+    // The image and its code are never freed.
+    auto* data = new Vector<uint8_t>(WTF::move(contents));
     auto& header = *reinterpret_cast<const ImageHeader*>(data->span().data());
     if (header.magic != imageMagic || header.codeOffset + header.codeSize > data->size())
         return nullptr;
@@ -1815,9 +1823,14 @@ uint32_t moduleIDFor(SourceProvider& provider)
 {
     if (uint32_t id = provider.aotModuleID())
         return id;
-    // Without an embedder to number the modules, a module is known by its text.
-    if (!Options::aotImagePath())
+    Image* image = Image::withCode();
+    if (!image || !image->header().identifiesModulesByText)
         return 0;
+    return moduleIDFromText(provider);
+}
+
+uint32_t moduleIDFromText(SourceProvider& provider)
+{
     uint32_t id = provider.hash() | 1;
     provider.setAOTModuleID(id);
     return id;
@@ -1888,6 +1901,8 @@ bool moduleIsLinkedAsCompiled(JSScope* scope)
 
 ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
 {
+    if (!Options::useAOT())
+        return { };
     static std::once_flag once;
     std::call_once(once, [] {
         if (const char* path = Options::aotImagePath()) {
@@ -2029,6 +2044,87 @@ std::optional<AOTCompileAllResult> aotCompileAllFunctions(VM& vm, const SourceCo
     }
     vm.stopKeepingUnlinkedCode();
     return result;
+}
+
+namespace {
+
+class SourceCompiler {
+public:
+    SourceCompiler(VM& vm, uint32_t module)
+        : m_vm(vm)
+        , m_module(module)
+    {
+        m_builder.setIdentifiesModulesByText();
+    }
+
+    void add(AOT::ImageKey key, UnlinkedCodeBlock* codeBlock)
+    {
+        // An inner function of a function with both call and construct code blocks is reached twice.
+        if (!m_keys.add({ key.start, key.kind }).isNewEntry)
+            return;
+        AOT::CompiledCode code;
+        if (AOT::compileForImage(m_vm, codeBlock, code))
+            m_builder.add(key, m_rank++, WTF::move(code));
+    }
+
+    void addFunctionsIn(UnlinkedCodeBlock& codeBlock, const SourceCode& source)
+    {
+        for (unsigned i = 0; i < codeBlock.numberOfFunctionDecls(); ++i)
+            addFunction(*codeBlock.functionDecl(i), source);
+        for (unsigned i = 0; i < codeBlock.numberOfFunctionExprs(); ++i)
+            addFunction(*codeBlock.functionExpr(i), source);
+    }
+
+    Vector<uint8_t> finish() { return m_builder.numberOfFunctions() ? m_builder.finish() : Vector<uint8_t> { }; }
+
+private:
+    void addFunction(UnlinkedFunctionExecutable& executable, const SourceCode& parentSource)
+    {
+        SourceCode source = executable.linkedSourceCode(parentSource);
+        auto functionKey = orderFunctionKey(executable, executable.isBuiltinDefaultClassConstructor() ? parentSource : source);
+        auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(m_vm);
+        for (bool isConstruct : { false, true }) {
+            UnlinkedFunctionCodeBlock* codeBlock = isConstruct ? forConstruct : forCall;
+            if (!codeBlock)
+                continue;
+            if (functionKey)
+                add({ m_module, functionKey->start, static_cast<uint32_t>(functionKey->kind) << 1 | isConstruct, 0 }, codeBlock);
+            addFunctionsIn(*codeBlock, source);
+        }
+    }
+
+    VM& m_vm;
+    uint32_t m_module;
+    uint64_t m_rank { 0 };
+    AOT::ImageBuilder m_builder;
+    UncheckedKeyHashSet<std::pair<uint32_t, uint32_t>> m_keys;
+};
+
+} // anonymous namespace
+
+bool aotCompileAndRegisterImage(VM& vm, const SourceCode& source, bool isModule)
+{
+    // The runtime supports one image with code per process.
+    if (!AOT::usesStubs || AOT::Image::withCode())
+        return false;
+    Vector<uint8_t> image;
+    {
+        DeferGC deferGC(vm);
+        vm.keepUnlinkedCode();
+        ParserError error;
+        UnlinkedCodeBlock* codeBlock = isModule
+            ? static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, { }, error, EvalContextType::None))
+            : static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, NoLexicallyScopedFeatures, JSParserScriptMode::Classic, { }, error, EvalContextType::None));
+        if (!error.isValid() && codeBlock) {
+            uint32_t module = AOT::moduleIDFromText(*source.provider());
+            SourceCompiler compiler(vm, module);
+            compiler.add(AOT::imageKeyForTopLevelCode(module), codeBlock);
+            compiler.addFunctionsIn(*codeBlock, source);
+            image = compiler.finish();
+        }
+        vm.stopKeepingUnlinkedCode();
+    }
+    return !image.isEmpty() && AOT::Image::registerImageCopyingCode(WTF::move(image));
 }
 
 std::optional<size_t> aotImageSize(std::span<const uint8_t> image)

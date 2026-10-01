@@ -419,7 +419,6 @@ struct StubBlob {
     unsigned offsets[numberOfStubs];
     Vector<unsigned> thunkOffsets; // Indexed by thunkFor().
     Vector<unsigned> returnsIntoAdapters; // Return addresses of the calls that adapters make. See ImageAddressInfo::Adapter.
-    void* inJITMemory; // A copy that code in JIT memory can call.
 };
 const StubBlob& stubBlob();
 
@@ -520,7 +519,7 @@ public:
     void tailCall(CCallHelpers&, Stub, uint32_t valueOfT9);
     void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite);
     void jumpToFunction(CCallHelpers&, uint32_t knownCallee);
-    // Links the calls to the copy of the stubs in JIT memory and returns their locations.
+    // Returns the locations of the calls, for ImageBuilder to retarget.
     Vector<StubCall> link(LinkBuffer&);
 
 private:

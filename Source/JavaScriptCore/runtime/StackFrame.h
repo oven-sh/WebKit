@@ -97,7 +97,7 @@ public:
 
     // What is mostly asked of the CodeBlock of a frame that hasLineAndColumnInfo(). None of these makes one, so they can be asked
     // at the end of a collection, which codeBlock() cannot.
-    CodeBlock* codeBlockIfThereIsOne() const
+    CodeBlock* codeBlockIfExists() const
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
             return jsFrame->codeBlock.get();
