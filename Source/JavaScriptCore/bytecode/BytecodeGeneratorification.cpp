@@ -45,7 +45,7 @@ struct YieldData {
     JSInstructionStream::Offset point { 0 };
     VirtualRegister argument { 0 };
     FastBitVector liveness;
-    FastBitVector written; // What may have been written since the function was entered or last resumed.
+    FastBitVector save; // The part of liveness that has to be copied to the generator frame before suspending.
     bool found { false }; // The bytecode optimizer may have removed an unreachable op_yield, leaving a hole in the numbering.
 };
 
@@ -199,17 +199,17 @@ public:
             if (!data.found)
                 continue;
             data.liveness = getLivenessInfoAtInstruction(codeBlock, instructions, m_generatorification.graph(), BytecodeIndex(m_generatorification.instructions().at(data.point).next().offset()));
-            data.written = data.liveness;
+            data.save = data.liveness;
         }
 
-        if (Options::useGeneratorFramePruning())
-            computeWrittenLocals(codeBlock, instructions);
+        if (Options::useGeneratorSavePruning())
+            saveOnlyWrittenLocals(codeBlock, instructions);
     }
 
 private:
     // Resuming loads every live local from its slot in the generator frame, so the slot is still right at the next suspend point
     // unless the register has been written in between. Only the locals that may have been need saving there.
-    void computeWrittenLocals(UnlinkedCodeBlockGenerator* codeBlock, JSInstructionStreamWriter& instructions)
+    void saveOnlyWrittenLocals(UnlinkedCodeBlockGenerator* codeBlock, JSInstructionStreamWriter& instructions)
     {
         // A lone suspend point is reached from the function's entry, and everything live has been written on the way from there.
         if (m_generatorification.yields().size() < 2)
@@ -217,14 +217,29 @@ private:
 
         BytecodeGraph& graph = m_generatorification.graph();
 
-        // Liveness is done with in(). From here on it is what may have been written by the time the block is reached.
+        // Handlers are ordered innermost first, and the ends of their ranges are jump targets, so a whole block unwinds to the
+        // first handler that has it in its range.
+        Vector<JSBytecodeBasicBlock*, 32> handlerBlocks(FillWith { }, graph.size(), nullptr);
+        for (size_t i = 0; i < codeBlock->numberOfExceptionHandlers(); ++i) {
+            auto& handler = codeBlock->exceptionHandler(i);
+            auto* handlerBlock = graph.findBasicBlockWithLeaderOffset(handler.target);
+            auto* firstBlock = graph.findBasicBlockWithLeaderOffset(handler.start);
+            ASSERT(handlerBlock);
+            ASSERT(firstBlock);
+            for (unsigned index = firstBlock->index(); graph[index].leaderOffset() < handler.end; ++index) {
+                if (!handlerBlocks[index])
+                    handlerBlocks[index] = handlerBlock;
+            }
+        }
+
+        // What may have been written, since the function was entered or last resumed, by the time each block is reached.
+        Vector<FastBitVector, 32> writtenAtHead(FillWith { }, graph.size(), FastBitVector(codeBlock->numCalleeLocals()));
+
         Vector<unsigned, 32> worklist;
         worklist.reserveInitialCapacity(graph.size());
         FastBitVector isInWorklist(FillWith { }, graph.size(), true);
-        for (auto& block : graph.basicBlocksInReverseOrder()) {
-            block.in().clearAll();
+        for (auto& block : graph.basicBlocksInReverseOrder())
             worklist.append(block.index());
-        }
 
         FastBitVector written;
         while (!worklist.isEmpty()) {
@@ -233,26 +248,25 @@ private:
             if (block.isEntryBlock() || block.isExitBlock())
                 continue;
 
-            written = block.in();
-            auto flowTo = [&](JSBytecodeBasicBlock& target) {
-                if (!target.in().setAndCheck(target.in() | written) || isInWorklist[target.index()])
+            written = writtenAtHead[block.index()];
+            auto flowTo = [&](unsigned target) {
+                if (!writtenAtHead[target].setAndCheck(writtenAtHead[target] | written) || isInWorklist[target])
                     return;
-                isInWorklist[target.index()] = true;
-                worklist.append(target.index());
+                isInWorklist[target] = true;
+                worklist.append(target);
             };
-
-            // The ends of a handler's range are jump targets, so a whole block unwinds to the same place.
-            JSBytecodeBasicBlock* handlerBlock = nullptr;
-            if (auto* handler = codeBlock->handlerForBytecodeIndex(BytecodeIndex(block.leaderOffset())))
-                handlerBlock = graph.findBasicBlockWithLeaderOffset(handler->target);
+            auto flowToHandler = [&] {
+                if (auto* handlerBlock = handlerBlocks[block.index()])
+                    flowTo(handlerBlock->index());
+            };
 
             JSInstructionStream::Offset offset = block.leaderOffset();
             for (unsigned length : block.delta()) {
                 auto instruction = instructions.at(offset);
                 if (instruction->opcodeID() == op_yield) {
-                    if (handlerBlock)
-                        flowTo(*handlerBlock);
-                    m_generatorification.yields()[instruction->as<OpYield>().m_yieldPoint].written = written;
+                    flowToHandler();
+                    YieldData& data = m_generatorification.yields()[instruction->as<OpYield>().m_yieldPoint];
+                    data.save = data.liveness & written;
                     written.clearAll();
                 } else {
                     for (Checkpoint checkpoint = instruction->numberOfCheckpoints(); checkpoint--;) {
@@ -264,10 +278,9 @@ private:
                 offset += length;
             }
 
-            if (handlerBlock)
-                flowTo(*handlerBlock);
+            flowToHandler();
             for (unsigned successor : block.successors())
-                flowTo(graph[successor]);
+                flowTo(successor);
         }
     }
 
@@ -315,7 +328,7 @@ void BytecodeGeneratorification::run()
         auto instruction = m_instructions.at(data.point);
         // Emit save sequence.
         rewriter.insertFragmentBefore(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
-            (data.liveness & data.written).forEachSetBit([&](size_t index) {
+            data.save.forEachSetBit([&](size_t index) {
                 VirtualRegister operand = virtualRegisterForLocal(index);
                 Storage storage = storageForGeneratorLocal(vm, index);
 
@@ -333,7 +346,7 @@ void BytecodeGeneratorification::run()
             fragment.appendInstruction<OpRet>(data.argument);
         });
 
-        // Emit resume sequence.
+        // Emit resume sequence. It has to load everything that is live: saveOnlyWrittenLocals() relies on that.
         rewriter.replaceBytecodeWithFragment(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
             data.liveness.forEachSetBit([&](size_t index) {
                 VirtualRegister operand = virtualRegisterForLocal(index);
