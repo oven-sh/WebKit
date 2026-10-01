@@ -84,13 +84,15 @@ for (let i = 0; i < 1500; ++i) {
         gc();
 }
 
-// ---- What every one of them inherits from.
+// ---- What every one of them inherits from cannot be added to, in a program that is compiled ahead of time.
 Object.prototype.c = "on Object.prototype";
-check(c(ab(1, 2)), "on Object.prototype", "absent no longer"); check(c(abc(1, 2, 3)), 3, "own all the same");
-Object.defineProperty(Object.prototype, "b", { get() { return "getter on Object.prototype"; }, configurable: true });
-check(b(xa(1, 2)), "getter on Object.prototype", "absent no longer"); check(b(ab(1, 2)), 2, "own all the same");
-delete Object.prototype.c; delete Object.prototype.b;
-check(c(ab(1, 2)), undefined, "absent again"); check(b(xa(1, 2)), undefined, "absent again");
+check(c(ab(1, 2)), undefined, "still absent"); check(c(abc(1, 2, 3)), 3, "own all the same");
+{
+    let refused = false;
+    try { Object.defineProperty(Object.prototype, "b", { get() { return "getter on Object.prototype"; }, configurable: true }); } catch (e) { refused = e instanceof TypeError; }
+    check(refused, true, "Object.prototype is not extensible");
+}
+check(b(xa(1, 2)), undefined, "still absent"); check(b(ab(1, 2)), 2, "own all the same");
 
 // ---- Another realm, with the same code.
 if (typeof createGlobalObject === "function") {
@@ -174,8 +176,7 @@ if (typeof createGlobalObject === "function") {
     let threw = false; try { strictSetA(frozen, 5); } catch (e) { threw = e instanceof TypeError; } check(threw, true, "frozen, strict");
     let readOnly = Object.defineProperty(ab(1, 2), "a", { writable: false }); setA(readOnly, 5); check(a(readOnly), 1, "read only");
     let seen; let withSetter = Object.defineProperty(ab(1, 2), "a", { set(v) { seen = v; }, configurable: true }); setA(withSetter, 9); check(seen, 9, "a setter");
-    Object.defineProperty(Object.prototype, "c", { set(v) { seen = "prototype " + v; }, configurable: true });
-    let plain = ab(1, 2); setC(plain, 3); check(seen, "prototype 3", "a setter on Object.prototype"); check(Object.hasOwn(plain, "c"), false, "and nothing added");
+    let plain = ab(1, 2); setC(plain, 3); check(c(plain), 3, "a new property"); check(Object.hasOwn(plain, "c"), true, "of its own");
+    let inheritsSetter = Object.setPrototypeOf(ab(1, 2), { set c(v) { seen = "prototype " + v; } }); setC(inheritsSetter, 3); check(seen, "prototype 3", "a setter to inherit"); check(Object.hasOwn(inheritsSetter, "c"), false, "and nothing added");
     let own = abc(1, 2, 3); setC(own, 4); check(c(own), 4, "own all the same");
-    delete Object.prototype.c;
 }
