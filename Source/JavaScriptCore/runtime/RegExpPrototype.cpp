@@ -329,6 +329,9 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncCompile, (JSGlobalObject* globalObject, 
     if (!thisRegExp->areLegacyFeaturesEnabled())
         return throwVMTypeError(globalObject, scope, "|this| RegExp object's legacy features are not enabled"_s);
 
+    if (thisRegExp->structure()->isLocked()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "Cannot compile a locked RegExp object"_s);
+
     RegExp* regExp;
     JSValue arg0 = callFrame->argument(0);
     JSValue arg1 = callFrame->argument(1);

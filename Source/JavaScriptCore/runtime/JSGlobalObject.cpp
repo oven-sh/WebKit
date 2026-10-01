@@ -2506,6 +2506,10 @@ bool JSGlobalObject::canDeclareGlobalFunction(const Identifier& ident)
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
 
+    // A locked global object takes no new or replaced top-level function.
+    if (structure()->isLocked()) [[unlikely]]
+        return false;
+
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
     bool hasProperty = getOwnPropertySlot(this, this, ident, slot);
     RETURN_IF_EXCEPTION(scope, { });

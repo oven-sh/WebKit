@@ -92,6 +92,8 @@ bool RegExpObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
 
 bool RegExpObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
+    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked()) [[unlikely]]
+        return JSObject::lockedDeleteRefusal(uncheckedDowncast<JSObject>(cell), globalObject, propertyName);
     VM& vm = globalObject->vm();
     if (propertyName == vm.propertyNames->lastIndex)
         return false;
@@ -107,6 +109,8 @@ void RegExpObject::getOwnSpecialPropertyNames(JSObject*, JSGlobalObject* globalO
 
 bool RegExpObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    if (object->structure()->isLocked()) [[unlikely]]
+        return JSObject::defineOwnPropertyOnLockedObject(object, globalObject, propertyName, descriptor, shouldThrow);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -155,6 +159,8 @@ JSC_DEFINE_CUSTOM_SETTER(regExpObjectSetLastIndexSloppy, (JSGlobalObject* global
 
 bool RegExpObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
+    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked() && !isThisValueAltered(slot, uncheckedDowncast<JSObject>(cell))) [[unlikely]]
+        return JSObject::lockedPutRefusal(globalObject, slot.isStrictMode());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     RegExpObject* thisObject = uncheckedDowncast<RegExpObject>(cell);

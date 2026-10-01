@@ -108,6 +108,11 @@ public:
         return !(m_regExpAndFlags & lastIndexIsNotWritableFlag);
     }
 
+    void setLastIndexIsNotWritable()
+    {
+        m_regExpAndFlags = (m_regExpAndFlags | lastIndexIsNotWritableFlag);
+    }
+
     bool isSharedLiteral() const { return m_regExpAndFlags & sharedLiteralFlag; }
     // Still exactly what evaluating the literal makes. Nothing in the language can get at a shared object to change that, but the
     // inspector can (it hands out live cells by class): an object that is no longer in this state is not handed out again.
@@ -178,11 +183,6 @@ private:
 #if ASSERT_ENABLED
     JS_EXPORT_PRIVATE void finishCreation(VM&);
 #endif
-
-    void setLastIndexIsNotWritable()
-    {
-        m_regExpAndFlags = (m_regExpAndFlags | lastIndexIsNotWritableFlag);
-    }
 
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     JS_EXPORT_PRIVATE static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);

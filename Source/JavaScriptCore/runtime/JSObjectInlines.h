@@ -371,10 +371,17 @@ inline bool JSObject::mayInterceptIndexedAccesses()
     return structure()->mayInterceptIndexedAccesses();
 }
 
+ALWAYS_INLINE bool JSObject::refusesMutation(VM& vm) const
+{
+    return structure()->isLocked() && !vm.lockedObjectInternalMutationDepth;
+}
+
 inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)
 {
     ASSERT(!value.isGetterSetter() && !(attributes & PropertyAttribute::Accessor));
     ASSERT(!value.isCustomGetterSetter());
+    if (refusesMutation(vm)) [[unlikely]]
+        return;
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     PropertyOffset offset = prepareToPutDirectWithoutTransition(vm, propertyName, attributes, structureID, structure);
@@ -418,6 +425,12 @@ ALWAYS_INLINE bool JSObject::putInlineForJSObject(JSCell* cell, JSGlobalObject* 
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
     ASSERT(value);
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(thisObject));
+
+    // A locked object refuses every put it is the receiver of: data properties, setters and custom setters alike.
+    if (thisObject->structure()->isLocked() && !isThisValueAltered(slot, thisObject)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+    }
 
     // Try indexed put first. This is required for correctness, since loads on property names that appear like
     // valid indices will never look in the named property storage.
@@ -502,6 +515,18 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
+    if (structure->isLocked()) [[unlikely]] {
+        if constexpr (mode == PutModePut)
+            return ReadonlyPropertyChangeError;
+        else if (!vm.lockedObjectInternalMutationDepth) {
+            // A direct define that changes nothing succeeds, as it does through validateAndApplyPropertyDescriptor().
+            unsigned currentAttributes;
+            PropertyOffset currentOffset = structure->get(vm, propertyName, currentAttributes);
+            if (currentOffset != invalidOffset && currentAttributes == newAttributes && getDirect(currentOffset) == value)
+                return { };
+            return ReadonlyPropertyChangeError;
+        }
+    }
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));
         if constexpr (mode == PutModePut) {
@@ -937,6 +962,8 @@ inline void JSObject::setPrivateField(JSGlobalObject* globalObject, PropertyName
     EXCEPTION_ASSERT(!scope.exception());
 
     scope.release();
+    // The field exists. Its value is the object's private state, as an internal slot is, so a locked object keeps accepting it.
+    LockedObjectInternalMutationScope allowPrivateFieldWrite(vm);
     putDirect(vm, propertyName, value, putSlot);
 }
 
@@ -947,6 +974,11 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
 
     if (type() == WebAssemblyGCObjectType) {
         throwTypeError(globalObject, scope, "Cannot define private field on a WebAssembly GC object"_s);
+        return;
+    }
+
+    if (structure()->isLocked()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Cannot define private field on a locked object"_s);
         return;
     }
 
@@ -1020,6 +1052,11 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
 
     if (type() == WebAssemblyGCObjectType) {
         throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
+        return;
+    }
+
+    if (structure->isLocked()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Cannot add private method to a locked object"_s);
         return;
     }
 
@@ -1559,7 +1596,7 @@ inline void JSObject::setIndexQuickly(VM& vm, unsigned i, JSValue v)
 ALWAYS_INLINE bool JSObject::putByIndexInline(JSGlobalObject* globalObject, unsigned propertyName, JSValue value, bool shouldThrow)
 {
     VM& vm = getVM(globalObject);
-    if (trySetIndexQuickly(vm, propertyName, value))
+    if (!structure()->isLocked() && trySetIndexQuickly(vm, propertyName, value))
         return true;
     return methodTable()->putByIndex(this, globalObject, propertyName, value, shouldThrow);
 }
@@ -1578,6 +1615,8 @@ ALWAYS_INLINE bool JSObject::putByIndexInline(JSGlobalObject* globalObject, uint
 inline bool JSObject::putDirectIndex(JSGlobalObject* globalObject, unsigned propertyName, JSValue value, unsigned attributes, PutDirectIndexMode mode)
 {
     ASSERT(!value.isCustomGetterSetterSlow());
+    if (refusesMutation(getVM(globalObject))) [[unlikely]]
+        return lockedDefineRefusal(globalObject, mode == PutDirectIndexShouldThrow);
     auto canSetIndexQuicklyForPutDirect = [&] () -> bool {
         switch (indexingMode()) {
         case ALL_BLANK_INDEXING_TYPES:

@@ -472,6 +472,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
+        // An error has these properties from the start; a locked one still gets them. No JavaScript runs from here on.
+        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
         putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
         putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
         if (!m_sourceURL.isEmpty())
@@ -489,10 +491,14 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
     if (!m_stackString.isNull()) {
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
-        putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-        putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
-        if (!m_sourceURL.isEmpty())
-            putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        {
+            // An error has these properties from the start; a locked one still gets them. No JavaScript runs inside.
+            LockedObjectInternalMutationScope allowLazyMaterialization(vm);
+            putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
+            putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
+            if (!m_sourceURL.isEmpty())
+                putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        }
 
         if (!m_stackPropertyAlreadyMaterialized) {
             WTF::String stackString;
@@ -500,12 +506,16 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 Locker locker { cellLock() };
                 stackString = WTF::move(m_stackString);
             }
+            // The value is made before the scope opens: stackWithHeader() reads this error's name and message.
+            JSValue stackValue;
 #if USE(BUN_JSC_ADDITIONS)
             if (m_stackStringIsFramesOnly)
-                putDirect(vm, vm.propertyNames->stack, stackWithHeader(vm, WTF::move(stackString)), attributes);
+                stackValue = stackWithHeader(vm, WTF::move(stackString));
             else
 #endif
-                putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
+                stackValue = jsString(vm, WTF::move(stackString));
+            LockedObjectInternalMutationScope allowLazyMaterialization(vm);
+            putDirect(vm, vm.propertyNames->stack, stackValue, attributes);
         }
         m_errorInfoMaterialized = true;
     }
@@ -551,6 +561,8 @@ void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject*
 
 bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    if (object->structure()->isLocked()) [[unlikely]]
+        return JSObject::defineOwnPropertyOnLockedObject(object, globalObject, propertyName, descriptor, shouldThrow);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
@@ -561,6 +573,8 @@ bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
 
 bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
+    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked() && !isThisValueAltered(slot, uncheckedDowncast<JSObject>(cell))) [[unlikely]]
+        return JSObject::lockedPutRefusal(globalObject, slot.isStrictMode());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
@@ -573,6 +587,8 @@ bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
 
 bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
+    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked()) [[unlikely]]
+        return JSObject::lockedDeleteRefusal(uncheckedDowncast<JSObject>(cell), globalObject, propertyName);
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
     bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);

@@ -484,13 +484,16 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     if (value.attributes() & PropertyAttribute::Builtin) {
         if (value.attributes() & PropertyAttribute::Accessor)
             reifyStaticAccessor(vm, value, thisObj, propertyName);
-        else
+        else {
+            LockedObjectInternalMutationScope allowLazyMaterialization(vm);
             SUPPRESS_FORWARD_DECL_ARG thisObj.putDirectBuiltinFunction(vm, thisObj.realm(), propertyName, value.builtinGenerator()(vm), attributesForStructure(value.attributes()));
+        }
         return;
     }
 
     if (value.attributes() & PropertyAttribute::Function) {
         if (value.attributes() & PropertyAttribute::DOMJITFunction) {
+            LockedObjectInternalMutationScope allowLazyMaterialization(vm);
             thisObj.putDirectNativeFunction(
                 vm, thisObj.realm(), propertyName, value.functionLength(),
                 value.domJITFunction(), ImplementationVisibility::Public, value.intrinsic(), value.signature(), attributesForStructure(value.attributes()));
@@ -500,10 +503,12 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
         if (value.attributes() & PropertyAttribute::Constructable) {
             StringImpl *name = propertyName.publicName();
             JSFunction* function = JSFunction::create(vm, thisObj.realm(), value.functionLength(), name, value.function(), ImplementationVisibility::Public, value.intrinsic(), value.function(), nullptr);
+            LockedObjectInternalMutationScope allowLazyMaterialization(vm);
             thisObj.putDirect(vm, propertyName, function, attributesForStructure(value.attributes()));
             return;
         }
         #endif
+        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
         thisObj.putDirectNativeFunction(
             vm, thisObj.realm(), propertyName, value.functionLength(),
             value.function(), ImplementationVisibility::Public, value.intrinsic(), attributesForStructure(value.attributes()));
@@ -511,6 +516,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     }
 
     if (value.attributes() & PropertyAttribute::ConstantInteger) {
+        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
         thisObj.putDirect(vm, propertyName, jsNumber(value.constantInteger()), attributesForStructure(value.attributes()));
         return;
     }
@@ -524,6 +530,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
         LazyCellProperty* property = std::bit_cast<LazyCellProperty*>(
             std::bit_cast<char*>(&thisObj) + value.lazyCellPropertyOffset());
         JSCell* result = property->get(&thisObj);
+        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
         thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
         return;
     }
@@ -532,6 +539,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
         LazyClassStructure* lazyStructure = std::bit_cast<LazyClassStructure*>(
             std::bit_cast<char*>(&thisObj) + value.lazyClassStructureOffset());
         JSObject* constructor = lazyStructure->constructor(&uncheckedDowncast<JSGlobalObject>(thisObj));
+        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
         thisObj.putDirect(vm, propertyName, constructor, attributesForStructure(value.attributes()));
         return;
     }
@@ -543,6 +551,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
         // check and propagate, so don't put an empty value in the slot here.
         if (!result) [[unlikely]]
             return;
+        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
         thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
         return;
     }
@@ -551,6 +560,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
         ASSERT_WITH_MESSAGE(classInfo, "DOMJITAttribute should have class info for type checking.");
         const DOMJIT::GetterSetter* domJIT = value.domJIT();
         auto* customGetterSetter = DOMAttributeGetterSetter::create(vm, domJIT->getter(), value.domJITSetter(), DOMAttributeAnnotation { classInfo, domJIT });
+        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
         thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributesForStructure(value.attributes()));
         return;
     }
@@ -558,11 +568,13 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     if (value.attributes() & PropertyAttribute::DOMAttribute) {
         ASSERT_WITH_MESSAGE(classInfo, "DOMAttribute should have class info for type checking.");
         auto* customGetterSetter = DOMAttributeGetterSetter::create(vm, value.propertyGetter(), value.propertyPutter(), DOMAttributeAnnotation { classInfo, nullptr });
+        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
         thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributesForStructure(value.attributes()));
         return;
     }
 
     CustomGetterSetter* customGetterSetter = CustomGetterSetter::create(vm, value.propertyGetter(), value.propertyPutter());
+    LockedObjectInternalMutationScope allowLazyMaterialization(vm);
     thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributesForStructure(value.attributes()));
 }
 

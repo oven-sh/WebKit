@@ -63,6 +63,8 @@ bool StringObject::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* g
 
 bool StringObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
+    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked() && !isThisValueAltered(slot, uncheckedDowncast<JSObject>(cell))) [[unlikely]]
+        return JSObject::lockedPutRefusal(globalObject, slot.isStrictMode());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -79,6 +81,8 @@ bool StringObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
 
 bool StringObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned propertyName, JSValue value, bool shouldThrow)
 {
+    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked()) [[unlikely]]
+        return JSObject::lockedPutRefusal(globalObject, shouldThrow);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -102,6 +106,8 @@ static bool NODELETE isStringOwnProperty(JSGlobalObject* globalObject, StringObj
 
 bool StringObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool throwException)
 {
+    if (object->structure()->isLocked()) [[unlikely]]
+        return JSObject::defineOwnPropertyOnLockedObject(object, globalObject, propertyName, descriptor, throwException);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     StringObject* thisObject = uncheckedDowncast<StringObject>(object);
@@ -126,6 +132,8 @@ bool StringObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObj
 
 bool StringObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
+    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked()) [[unlikely]]
+        return JSObject::lockedDeleteRefusal(uncheckedDowncast<JSObject>(cell), globalObject, propertyName);
     VM& vm = globalObject->vm();
     StringObject* thisObject = uncheckedDowncast<StringObject>(cell);
     if (propertyName == vm.propertyNames->length)
@@ -138,6 +146,8 @@ bool StringObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Pr
 
 bool StringObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned i)
 {
+    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked()) [[unlikely]]
+        return JSObject::lockedDeleteRefusal(uncheckedDowncast<JSObject>(cell), globalObject, Identifier::from(globalObject->vm(), i));
     StringObject* thisObject = uncheckedDowncast<StringObject>(cell);
     if (thisObject->internalValue()->canGetIndex(i))
         return false;

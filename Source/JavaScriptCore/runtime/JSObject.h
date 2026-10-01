@@ -75,6 +75,7 @@ struct HashTableValue;
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const String&);
 extern JS_EXPORT_PRIVATE const ASCIILiteral NonExtensibleObjectPropertyDefineError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral LockedObjectDefineError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError;
@@ -523,6 +524,19 @@ public:
 
     JS_EXPORT_PRIVATE void seal(VM&);
     JS_EXPORT_PRIVATE void freeze(VM&);
+    // Locks this object. It becomes non-extensible, and from now on a put with it as the receiver, a define or a delete that would
+    // change one of its own properties, and a change of its prototype all fail. Property attributes are left as they are, so an
+    // inherited property still reads as writable and assignment on an object that inherits from this one works as before.
+    // Returns false, and changes nothing, for a class whose write hooks have not been audited for the lock: ProxyObject, typed
+    // arrays, DirectArguments and ScopedArguments, and any class outside JavaScriptCore that has write hooks of its own.
+    JS_EXPORT_PRIVATE bool lockProperties(VM&);
+    JS_EXPORT_PRIVATE bool isLockedObject() const;
+    // True when a write to this object must be refused: it is locked and the engine is not materializing a lazy property.
+    ALWAYS_INLINE bool refusesMutation(VM&) const;
+    JS_EXPORT_PRIVATE static bool lockedPutRefusal(JSGlobalObject*, bool shouldThrow);
+    JS_EXPORT_PRIVATE static bool lockedDefineRefusal(JSGlobalObject*, bool shouldThrow);
+    JS_EXPORT_PRIVATE static bool defineOwnPropertyOnLockedObject(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    JS_EXPORT_PRIVATE static bool lockedDeleteRefusal(JSObject*, JSGlobalObject*, PropertyName);
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
     JS_EXPORT_PRIVATE static bool NODELETE isExtensible(JSObject*, JSGlobalObject*);

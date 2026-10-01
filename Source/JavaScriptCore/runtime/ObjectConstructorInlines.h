@@ -77,6 +77,12 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
         return false;
     }
 
+    // Cloning reuses the structure itself: a copy of a locked object must not be born locked, and a locked target takes no clone.
+    if (structure->isLocked()) {
+        dataLogLnIf(verbose, "structure is locked");
+        return false;
+    }
+
     if (structure->isDictionary()) {
         dataLogLnIf(verbose, "target is dictionary");
         return false;
@@ -295,6 +301,9 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 
     // FIXME: This fast path is very similar to ObjectConstructor' one. But extracting it to a function caused performance
     // regression in object-assign-replace. Since the code is small and fast path, we keep both.
+
+    if (target->structure()->isLocked()) [[unlikely]]
+        return false;
 
     // Do not clear since Vector::clear shrinks the backing store.
     VM& vm = globalObject->vm();

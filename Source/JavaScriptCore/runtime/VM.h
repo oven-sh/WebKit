@@ -1150,6 +1150,9 @@ public:
     MicrotaskQueue& defaultMicrotaskQueue();
 
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
+    // Depth of LockedObjectInternalMutationScope: while non-zero, the engine's own lazy materialization may write to a locked object.
+    unsigned lockedObjectInternalMutationDepth { 0 };
+
     JS_EXPORT_PRIVATE void drainMicrotasks();
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
@@ -1556,6 +1559,18 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
+
+// The only way to write a property onto a locked object (Structure::isLocked). Used by the engine where it materializes a
+// property the object logically already has (static tables, function name/length/prototype, error info, arguments specials).
+// Keep it around the write alone: nothing inside it may run user JavaScript.
+class LockedObjectInternalMutationScope {
+    WTF_MAKE_NONCOPYABLE(LockedObjectInternalMutationScope);
+public:
+    explicit LockedObjectInternalMutationScope(VM& vm) : m_vm(vm) { ++m_vm.lockedObjectInternalMutationDepth; }
+    ~LockedObjectInternalMutationScope() { --m_vm.lockedObjectInternalMutationDepth; }
+private:
+    VM& m_vm;
+};
 
 } // namespace JSC
 
