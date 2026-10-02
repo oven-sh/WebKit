@@ -1950,6 +1950,82 @@ void Graph::computeBlockOrder()
     }
 }
 
+void Graph::computeDominators()
+{
+    auto& rpo = m_rpo;
+    for (unsigned i = 0; i < rpo.size(); ++i) {
+        rpo[i]->rpoIndex = i;
+        rpo[i]->immediateDominator = nullptr;
+    }
+    auto isEntry = [&](BasicBlock* block) { return block == root || block->isCatchEntrypoint; };
+    BitVector processed(rpo.size());
+    auto intersect = [&](BasicBlock* a, BasicBlock* b) -> BasicBlock* {
+        while (a != b) {
+            if (!a || !b)
+                return nullptr;
+            while (a && b && a->rpoIndex > b->rpoIndex)
+                a = a->immediateDominator;
+            while (a && b && b->rpoIndex > a->rpoIndex)
+                b = b->immediateDominator;
+        }
+        return a;
+    };
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (BasicBlock* block : rpo) {
+            if (isEntry(block)) {
+                processed.set(block->rpoIndex);
+                continue;
+            }
+            BasicBlock* dominator = nullptr;
+            bool first = true;
+            for (BasicBlock* predecessor : block->predecessors) {
+                if (!processed.get(predecessor->rpoIndex))
+                    continue;
+                dominator = first ? predecessor : intersect(dominator, predecessor);
+                first = false;
+            }
+            if (!processed.get(block->rpoIndex) || block->immediateDominator != dominator) {
+                processed.set(block->rpoIndex);
+                block->immediateDominator = dominator;
+                changed = true;
+            }
+        }
+    }
+
+    Vector<Vector<BasicBlock*, 2>> children(blocks.size());
+    Vector<BasicBlock*, 4> roots;
+    for (BasicBlock* block : rpo) {
+        if (block->immediateDominator)
+            children[block->immediateDominator->index].append(block);
+        else
+            roots.append(block);
+    }
+    unsigned number = 0;
+    struct Frame {
+        BasicBlock* block;
+        unsigned next;
+    };
+    Vector<Frame> stack;
+    for (BasicBlock* treeRoot : roots) {
+        treeRoot->dominatorPreNumber = number++;
+        stack.append({ treeRoot, 0 });
+        while (!stack.isEmpty()) {
+            Frame& frame = stack.last();
+            auto& list = children[frame.block->index];
+            if (frame.next < list.size()) {
+                BasicBlock* child = list[frame.next++];
+                child->dominatorPreNumber = number++;
+                stack.append({ child, 0 });
+                continue;
+            }
+            frame.block->dominatorPostNumber = number++;
+            stack.removeLast();
+        }
+    }
+}
+
 void Graph::fail(ASCIILiteral reason, OpcodeID opcode)
 {
     if (!isOutermost()) {

@@ -31,18 +31,11 @@ public:
 
     void run()
     {
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (BasicBlock* block : m_graph.m_rpo) {
-                for (Node* phi : block->phis)
-                    changed |= update(phi);
-                for (Node* node : block->nodes)
-                    changed |= update(node);
-            }
-            changed |= std::exchange(m_elementTypesChanged, false);
-            if (!changed && !std::exchange(m_treatsEmptyArraysAsUntyped, true))
-                changed = true;
+        iterateToFixpoint();
+        constexpr unsigned maxRounds = 4;
+        for (unsigned round = 0; round < maxRounds && narrowTestedValues(); ++round) {
+            forgetTypes();
+            iterateToFixpoint();
         }
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
@@ -92,6 +85,237 @@ public:
                 }
             }
         }
+    }
+
+    void iterateToFixpoint()
+    {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (BasicBlock* block : m_graph.m_rpo) {
+                for (Node* phi : block->phis)
+                    changed |= update(phi);
+                for (Node* node : block->nodes)
+                    changed |= update(node);
+            }
+            changed |= std::exchange(m_elementTypesChanged, false);
+            if (!changed && !std::exchange(m_treatsEmptyArraysAsUntyped, true))
+                changed = true;
+        }
+    }
+
+    void forgetTypes()
+    {
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* phi : block->phis)
+                phi->type = TNone;
+            for (Node* node : block->nodes) {
+                switch (node->kind) {
+                case NodeKind::Constant:
+                case NodeKind::ConstantCell:
+                case NodeKind::Intrinsic:
+                case NodeKind::LinkTimeConstant:
+                case NodeKind::Argument:
+                    break;
+                default:
+                    node->type = TNone;
+                    break;
+                }
+            }
+        }
+        m_graph.frameRegisterTypes.fill(TNone);
+        m_elementTypes.clear();
+        m_elementTypesChanged = false;
+        m_treatsEmptyArraysAsUntyped = false;
+    }
+
+    struct TestedValue {
+        Node* value { nullptr };
+        Type ifTrue { TAll };
+        Type ifFalse { TAll };
+        TestedValue inverted() const { return { value, ifFalse, ifTrue }; }
+    };
+
+    static TestedValue valueTestedByCondition(Node* condition, unsigned depth = 0)
+    {
+        if (condition->kind != NodeKind::Bytecode || condition->guard || condition->guarded)
+            return { condition, TAll & ~TOther, TAll };
+        constexpr Type notObject = TPrimitive | TEmpty;
+        constexpr Type neverCallable = TAnyObject & ~(TFunction | TOtherObject);
+        switch (condition->opcode) {
+        case op_not:
+            if (depth < 4)
+                return valueTestedByCondition(condition->use(condition->as<OpNot>().m_operand), depth + 1).inverted();
+            return { };
+        case op_is_undefined_or_null:
+            return { condition->use(condition->as<OpIsUndefinedOrNull>().m_operand), TOther, TAll & ~TOther };
+        case op_is_number:
+            return { condition->use(condition->as<OpIsNumber>().m_operand), TNumber, TAll & ~TNumber };
+        case op_is_boolean:
+            return { condition->use(condition->as<OpIsBoolean>().m_operand), TBoolean, TAll & ~TBoolean };
+        case op_is_object:
+            return { condition->use(condition->as<OpIsObject>().m_operand), TAnyObject, TAll & ~TAnyObject };
+        case op_is_cell_with_type: {
+            auto bytecode = condition->as<OpIsCellWithType>();
+            Type type = bytecode.m_type == StringType ? TString : bytecode.m_type == SymbolType ? TSymbol : TNone;
+            if (!type)
+                return { };
+            return { condition->use(bytecode.m_operand), type, TAll & ~type };
+        }
+        case op_typeof_is_undefined:
+            return { condition->use(condition->as<OpTypeofIsUndefined>().m_operand), TAll, TAll & ~TUndefined };
+        case op_typeof_is_object:
+            return { condition->use(condition->as<OpTypeofIsObject>().m_operand), TAll & ~(notObject & ~TNull), TAll & ~(TNull | neverCallable) };
+        case op_typeof_is_function:
+            return { condition->use(condition->as<OpTypeofIsFunction>().m_operand), TAll & ~(notObject | neverCallable), TAll & ~TFunction };
+        default:
+            return { condition, TAll & ~TOther, TAll };
+        }
+    }
+
+    static TestedValue valueTestedBy(Node* terminal)
+    {
+        auto comparedWithConstant = [&](VirtualRegister left, VirtualRegister right) -> TestedValue {
+            Node* operands[2] = { terminal->use(left), terminal->use(right) };
+            for (unsigned i = 0; i < 2; ++i) {
+                Node* constant = operands[i];
+                if (constant->kind != NodeKind::Constant || !constant->constant || !constant->constant.isUndefinedOrNull())
+                    continue;
+                Type type = constant->constant.isUndefined() ? TUndefined : TNull;
+                return { operands[1 - i], type, TAll & ~type };
+            }
+            return { };
+        };
+        switch (terminal->opcode) {
+        case op_jstricteq:
+            return comparedWithConstant(terminal->as<OpJstricteq>().m_lhs, terminal->as<OpJstricteq>().m_rhs);
+        case op_jnstricteq:
+            return comparedWithConstant(terminal->as<OpJnstricteq>().m_lhs, terminal->as<OpJnstricteq>().m_rhs).inverted();
+        case op_jundefined_or_null:
+            return { terminal->use(terminal->as<OpJundefinedOrNull>().m_value), TOther, TAll & ~TOther };
+        case op_jnundefined_or_null:
+            return { terminal->use(terminal->as<OpJnundefinedOrNull>().m_value), TAll & ~TOther, TOther };
+        case op_jeq_null:
+            return { terminal->use(terminal->as<OpJeqNull>().m_value), TAll, TAll & ~TOther };
+        case op_jneq_null:
+            return { terminal->use(terminal->as<OpJneqNull>().m_value), TAll & ~TOther, TAll };
+        case op_jtrue:
+            return valueTestedByCondition(terminal->use(terminal->as<OpJtrue>().m_condition));
+        case op_jfalse:
+            return valueTestedByCondition(terminal->use(terminal->as<OpJfalse>().m_condition)).inverted();
+        default:
+            return { };
+        }
+    }
+
+    static bool isWorthNarrowing(Type before, Type after)
+    {
+        if (!after || after == before)
+            return false;
+        if (repForType(after) != repForType(before) || (isSubtype(after, TCell) && !isSubtype(before, TCell)))
+            return true;
+        return mayBe(after, TOther) && isSubtype(before & ~after, TOther) && isWorthNarrowing(before, before & ~TOther);
+    }
+
+    bool narrowOnEdge(BasicBlock* from, unsigned successorIndex, Node* value, Type narrowedTo, bool& addedBlock)
+    {
+        BasicBlock* to = from->successors[successorIndex];
+        if (to->isGeneric || to->isCatchEntrypoint || to->isReentry || to->isPreHeader)
+            return false;
+        Node* narrow = nullptr;
+        auto narrowed = [&] {
+            if (!narrow) {
+                narrow = m_graph.addNode(NodeKind::Narrow);
+                narrow->graph = from->graph;
+                narrow->narrowedTo = narrowedTo;
+                narrow->bytecodeIndex = from->terminal()->bytecodeIndex;
+                narrow->uses.append({ VirtualRegister(), value });
+            }
+            return narrow;
+        };
+        if (to->predecessors.size() == 1) {
+            for (BasicBlock* block : m_graph.m_rpo) {
+                for (Node* phi : block->phis) {
+                    for (unsigned i = 0; i < phi->uses.size(); ++i) {
+                        if (phi->uses[i].node == value && to->dominates(block->predecessors[i]))
+                            phi->uses[i].node = narrowed();
+                    }
+                }
+                if (!to->dominates(block))
+                    continue;
+                for (Node* node : block->nodes) {
+                    for (auto& use : node->uses) {
+                        if (use.node == value)
+                            use.node = narrowed();
+                    }
+                }
+            }
+            if (!narrow)
+                return false;
+            narrow->block = to;
+            to->nodes.insert(0, narrow);
+            return true;
+        }
+
+        if (to->isLoopHeader)
+            return false;
+        size_t index = to->predecessors.find(from);
+        RELEASE_ASSERT(index != notFound);
+        for (Node* phi : to->phis) {
+            if (phi->uses[index].node == value)
+                phi->uses[index].node = narrowed();
+        }
+        if (!narrow)
+            return false;
+        BasicBlock* edge = m_graph.addBlock();
+        edge->graph = from->graph;
+        edge->bytecodeBegin = to->bytecodeBegin;
+        edge->bytecodeEnd = to->bytecodeBegin;
+        edge->isReachable = true;
+        edge->isInLoop = from->isInLoop && to->isInLoop;
+        edge->isInProfitableLoop = from->isInProfitableLoop && to->isInProfitableLoop;
+        edge->isInBuiltinLoopOnly = from->isInBuiltinLoopOnly && to->isInBuiltinLoopOnly;
+        edge->isRarelyExecuted = from->isRarelyExecuted || to->isRarelyExecuted;
+        narrow->block = edge;
+        edge->nodes.append(narrow);
+        edge->predecessors.append(from);
+        edge->successors.append(to);
+        from->successors[successorIndex] = edge;
+        to->predecessors[index] = edge;
+        addedBlock = true;
+        return true;
+    }
+
+    bool narrowTestedValues()
+    {
+        bool hasDominators = false;
+        bool addedBlock = false;
+        bool changed = false;
+        Vector<BasicBlock*> blocks = m_graph.m_rpo;
+        for (BasicBlock* block : blocks) {
+            if (block->isGeneric || block->endsWithGuard || block->isReentry || block->isPreHeader || block->successors.size() != 2 || block->successors[0] == block->successors[1])
+                continue;
+            Node* terminal = block->terminal();
+            if (!terminal || terminal->kind != NodeKind::Bytecode || terminal->guard || terminal->guarded)
+                continue;
+            TestedValue tested = valueTestedBy(terminal);
+            if (!tested.value || tested.value->isElided)
+                continue;
+            for (unsigned i = 0; i < 2; ++i) {
+                Type narrowedTo = i ? tested.ifFalse : tested.ifTrue;
+                if (!isWorthNarrowing(tested.value->type, tested.value->type & narrowedTo))
+                    continue;
+                if (!std::exchange(hasDominators, true))
+                    m_graph.computeDominators();
+                if (narrowOnEdge(block, i, tested.value, narrowedTo, addedBlock)) {
+                    m_graph.remark("narrowed-tested-value"_s);
+                    changed = true;
+                }
+            }
+        }
+        if (addedBlock)
+            m_graph.computeBlockOrder();
+        return changed;
     }
 
     bool isReached() const { return !m_graph.summary() || m_graph.summary()->isReached(); }

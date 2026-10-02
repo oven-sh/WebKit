@@ -355,6 +355,7 @@ public:
     Vector<InlineFrame> inlineFrames;
     void adoptInlinee(std::unique_ptr<Graph>&&, InlineFrame);
     void computeBlockOrder();
+    void computeDominators();
     const ModuleLinkage* linkage() const { return m_linkage; }
     Node* closureScope { nullptr };
     Node* closureFunction { nullptr };
