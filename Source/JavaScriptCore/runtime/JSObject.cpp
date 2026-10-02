@@ -2316,6 +2316,9 @@ bool JSObject::putDirectCustomAccessor(VM& vm, PropertyName propertyName, JSValu
 
     PutPropertySlot slot(this);
     bool result = putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot).isNull();
+    // (Refused, for an object with immutable properties: nothing was put, so there is nothing to record on the Structure.)
+    if (!result) [[unlikely]]
+        return false;
 
     ASSERT(slot.type() == PutPropertySlot::NewProperty);
 
@@ -2350,6 +2353,9 @@ bool JSObject::putDirectNonIndexAccessor(VM& vm, PropertyName propertyName, Gett
     ASSERT(attributes & PropertyAttribute::Accessor);
     PutPropertySlot slot(this);
     bool result = putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, accessor, attributes, slot).isNull();
+    // (As in putDirectCustomAccessor().)
+    if (!result) [[unlikely]]
+        return false;
 
     Structure* structure = this->structure();
     if (attributes & PropertyAttribute::ReadOnly)
@@ -3105,9 +3111,12 @@ bool JSObject::makePropertiesImmutable(VM& vm)
         if (!staysPacked)
             enterDictionaryIndexingMode(vm);
     }
-    // Compiled code tests RegExpObject's own lastIndex-writable flag, not the Structure: make the two agree.
-    if (auto* regExpObject = dynamicDowncast<RegExpObject>(this))
+    // Compiled code tests RegExpObject's own lastIndex-writable flag, not the Structure: make the two agree, and tell the realm, as
+    // RegExpObject::defineOwnProperty() does, so that code which folded a search on a constant RegExp is not relied on.
+    if (auto* regExpObject = dynamicDowncast<RegExpObject>(this)) {
         regExpObject->setLastIndexIsNotWritable();
+        regExpObject->realm()->regExpLastIndexWritableWatchpointSet().fireAll(vm, "RegExp lastIndex was made non-writable");
+    }
     StructureID oldStructureID = structureID();
     Structure* oldStructure = oldStructureID.decode();
     // Deferred, so adaptive watchpoints on this object see the new structure and re-install instead of firing their sets.
