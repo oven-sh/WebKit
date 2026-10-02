@@ -197,6 +197,10 @@ public:
     bool isQuickFTLTierUp() const { return m_quickFTLTierUp; }
     void setQuickFTLTierUp(bool value) { m_quickFTLTierUp = value; }
 
+    // VM::startupJITDeferralScale() does not apply to llintExecuteCounter(). See CodeBlock::noteLLIntInlineCacheMiss().
+    bool isExemptFromStartupJITDeferral() const { return m_isExemptFromStartupJITDeferral; }
+    void setIsExemptFromStartupJITDeferral(bool value) { m_isExemptFromStartupJITDeferral = value; }
+
     // Special registers
     void setThisRegister(VirtualRegister thisRegister) { m_thisRegister = thisRegister; }
     void setScopeRegister(VirtualRegister scopeRegister) { m_scopeRegister = scopeRegister; }
@@ -458,6 +462,10 @@ private:
 
 public:
     ConcurrentJSLock m_lock;
+private:
+    // Not one of the bits above: the collector writes m_age while the mutator writes this.
+    bool m_isExemptFromStartupJITDeferral { false };
+public:
 #if ENABLE(JIT)
     RefPtr<BaselineJITCode> m_unlinkedBaselineCode;
 #endif

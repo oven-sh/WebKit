@@ -66,6 +66,16 @@ void ExecutionCounter<countingVariant>::setNewThreshold(int32_t threshold, CodeB
 }
 
 template<CountingVariant countingVariant>
+bool ExecutionCounter<countingVariant>::lowerThreshold(int32_t threshold, CodeBlock* codeBlock)
+{
+    if (m_activeThreshold == std::numeric_limits<int32_t>::max())
+        return false;
+    m_activeThreshold = std::min(m_activeThreshold, threshold);
+    setThreshold(codeBlock);
+    return true;
+}
+
+template<CountingVariant countingVariant>
 void ExecutionCounter<countingVariant>::deferIndefinitely()
 {
     m_totalCount = 0;

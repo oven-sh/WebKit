@@ -1717,7 +1717,28 @@ llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, meta
     loadConstantOrVariableCell(size, t0, t3, .opGetLengthSlow)
     metadata(t2, t1)
     arrayProfile(OpGetLength::Metadata::m_arrayProfile, t3, t2, t5)
-    performGetByIDHelper(OpGetLength, m_modeMetadata, m_valueProfile, .opGetLengthSlow, size, return)
+    performGetByIDHelper(OpGetLength, m_modeMetadata, m_valueProfile, .opGetLengthMiss, size, return)
+
+.opGetLengthMiss:
+    # The cache of the site is not for this receiver. The length of a string needs no cache.
+    # The helper can leave something else in t3.
+    loadBoolJSCOption(useLLIntStringLengthFastPath, t1)
+    btbz t1, .opGetLengthSlow
+    get(m_base, t0)
+    loadConstantOrVariable(size, t0, t3)
+    bbneq JSCell::m_type[t3], StringType, .opGetLengthSlow
+    loadp JSString::m_fiber[t3], t0
+    btpnz t0, isRopeInPointer, .opGetLengthRope
+    loadi StringImpl::m_length[t0], t0
+    orq numberTag, t0
+    valueProfile(size, OpGetLength, m_valueProfile, t0, t2)
+    return(t0)
+
+.opGetLengthRope:
+    loadi JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t3], t0
+    orq numberTag, t0
+    valueProfile(size, OpGetLength, m_valueProfile, t0, t2)
+    return(t0)
 
 .opGetLengthSlow:
     callSlowPath(_llint_slow_path_get_length)

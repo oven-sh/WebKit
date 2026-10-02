@@ -32,6 +32,7 @@
 #include "CallFrameInlines.h"
 #include "CodeBlockHash.h"
 #include "DirectEvalCodeCache.h"
+#include "GetByIdMetadata.h"
 #include "ICStatusMap.h"
 #include "JSCell.h"
 #include "MetadataTable.h"
@@ -634,7 +635,10 @@ public:
 
     bool checkIfJITThresholdReached()
     {
-        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, jitType() == JITType::BaselineJIT ? 1 : vm().startupJITDeferralScale());
+        // The startup deferral keeps code in the LLInt for as long as an execution there costs what it usually costs.
+        // It costs more in a CodeBlock that noteLLIntInlineCacheMiss() lowered the threshold of.
+        bool isDeferred = jitType() != JITType::BaselineJIT && !m_unlinkedCode->isExemptFromStartupJITDeferral();
+        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, isDeferred ? vm().startupJITDeferralScale() : 1);
     }
 
     void dontJITAnytimeSoon()
@@ -644,14 +648,43 @@ public:
 
     void jitSoon();
     void jitNextInvocation();
+    // Counts a call of the LLInt slow path from one get_by_id or put_by_id site, in the byte that the site has for
+    // it. The call that makes the count Options::missCountForLLIntTierUp() lowers the threshold of the Baseline JIT
+    // to thresholdForJITSoon: the inline cache of the LLInt has one entry, and that of the Baseline JIT has more.
+    ALWAYS_INLINE void noteLLIntInlineCacheMiss(uint8_t& siteCount)
+    {
+        // True for a count of 0 too, which is the option off.
+        if (siteCount >= Options::missCountForLLIntTierUp())
+            return;
+        if (++siteCount == Options::missCountForLLIntTierUp()) [[unlikely]]
+            lowerJITThresholdForLLIntInlineCacheMisses();
+    }
 
     const BaselineExecutionCounter& llintExecuteCounter() const
     {
         return m_unlinkedCode->llintExecuteCounter();
     }
 
-    typedef UncheckedKeyHashMap<std::tuple<StructureID, BytecodeIndex>, FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint>> StructureWatchpointMap;
+    // What guards the prototype load cache of one get_by_id site in the LLInt.
+    struct LLIntGetByIdGuards {
+        StructureID structureID; // Of the receiver that the cache is for.
+        GetByIdSiteCounts counts; // Of the site, while it is in ProtoLoad mode.
+        FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint> watchpoints;
+    };
+    // A site is a BytecodeIndex with its checkpoint: an instruction such as iterator_next has more than one.
+    typedef UncheckedKeyHashMap<BytecodeIndex, LLIntGetByIdGuards> StructureWatchpointMap;
     StructureWatchpointMap& llintGetByIdWatchpointMap() LIFETIME_BOUND { return m_llintGetByIdWatchpointMap; }
+    // The LLInt cache of the get_by_id site. Null if the instruction there has no such site.
+    GetByIdModeMetadata* llintGetByIdModeMetadata(BytecodeIndex);
+    // The counts of the site, from where a site in its mode keeps them.
+    ALWAYS_INLINE GetByIdSiteCounts llintGetByIdSiteCounts(BytecodeIndex bytecodeIndex, const GetByIdModeMetadata& metadata)
+    {
+        if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]]
+            return metadata.counts();
+        return llintGetByIdSiteCountsInProtoLoadMode(bytecodeIndex);
+    }
+    // For a watchpoint of the site that fired.
+    void clearLLIntGetByIdCache(BytecodeIndex);
 
     // Functions for controlling when tiered compilation kicks in. This
     // controls both when the optimizing compiler is invoked and when OSR
@@ -1098,6 +1131,10 @@ private:
     // Mutator-written bits; kept out of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
     uint8_t m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
     uint8_t m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // Options::useLazyCatchLiveness()
+    void lowerJITThresholdForLLIntInlineCacheMisses();
+    GetByIdSiteCounts llintGetByIdSiteCountsInProtoLoadMode(BytecodeIndex);
+    // The guards are those of the site. They are the entry of the site if the site has a cache with guards.
+    void clearLLIntGetByIdCache(BytecodeIndex, const LLIntGetByIdGuards*);
     unsigned firstLazilyMaterializedFunctionDecl() const;
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);

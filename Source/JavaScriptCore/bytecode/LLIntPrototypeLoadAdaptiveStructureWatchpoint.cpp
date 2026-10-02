@@ -79,63 +79,7 @@ void LLIntPrototypeLoadAdaptiveStructureWatchpoint::fireInternal(VM& vm, const F
         return;
     }
 
-    auto& instruction = m_owner->instructions().at(m_bytecodeIndex.get().offset());
-    switch (instruction->opcodeID()) {
-    case op_get_by_id:
-        clearLLIntGetByIdCache(instruction->as<OpGetById>().metadata(m_owner.get()).m_modeMetadata);
-        break;
-
-    case op_get_length:
-        clearLLIntGetByIdCache(instruction->as<OpGetLength>().metadata(m_owner.get()).m_modeMetadata);
-        break;
-
-    case op_iterator_open:
-        clearLLIntGetByIdCache(instruction->as<OpIteratorOpen>().metadata(m_owner.get()).m_modeMetadata);
-        break;
-
-    case op_async_iterator_open:
-        clearLLIntGetByIdCache(instruction->as<OpAsyncIteratorOpen>().metadata(m_owner.get()).m_modeMetadata);
-        break;
-
-    case op_iterator_next: {
-        auto& metadata = instruction->as<OpIteratorNext>().metadata(m_owner.get());
-        switch (m_bytecodeIndex.get().checkpoint()) {
-        case OpIteratorNext::getDone:
-            clearLLIntGetByIdCache(metadata.m_doneModeMetadata);
-            break;
-        case OpIteratorNext::getValue:
-            clearLLIntGetByIdCache(metadata.m_valueModeMetadata);
-            break;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        break;
-    }
-
-    case op_instanceof: {
-        auto& metadata = instruction->as<OpInstanceof>().metadata(m_owner.get());
-        switch (m_bytecodeIndex.get().checkpoint()) {
-        case OpInstanceof::getHasInstance:
-            clearLLIntGetByIdCache(metadata.m_hasInstanceModeMetadata);
-            break;
-        case OpInstanceof::getPrototype:
-            clearLLIntGetByIdCache(metadata.m_prototypeModeMetadata);
-            break;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        break;
-    }
-
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-        break;
-    }
-}
-
-void LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(GetByIdModeMetadata& metadata)
-{
-    metadata.clearToDefaultModeWithoutCache();
+    m_owner->clearLLIntGetByIdCache(m_bytecodeIndex.get());
 }
 
 } // namespace JSC

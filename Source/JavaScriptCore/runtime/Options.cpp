@@ -953,6 +953,10 @@ void Options::notifyOptionsChanged()
         }
     }
 
+    // A site counts in one byte.
+    if (Options::missCountForLLIntTierUp() > std::numeric_limits<uint8_t>::max())
+        Options::missCountForLLIntTierUp() = std::numeric_limits<uint8_t>::max();
+
     // TODO
     if (Options::useLOLJIT())
         Options::forceOSRExitToLLInt() = true;
