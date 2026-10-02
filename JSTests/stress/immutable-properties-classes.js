@@ -219,3 +219,31 @@ function snapshot(object) {
     shouldBe(array.length, 6);
     shouldBe(array[3], undefined);
 }
+
+// The realm starts "having a bad time" (a Proxy enters a prototype chain, or an indexed accessor appears on a prototype): every
+// array, including Array.prototype, which has no elements, is converted to slow-put storage. That conversion is the engine's own.
+{
+    let empty = $vm.makePropertiesImmutable([]);
+    let filled = $vm.makePropertiesImmutable([1, 2, 3]);
+    let arrayLike = $vm.makePropertiesImmutable(Object.assign(function () { }, { 0: "zero" }));
+    $vm.makePropertiesImmutable(Array.prototype);
+    let root = {};
+    let leaf = Object.create(new Proxy(Object.create(root), {}));
+    root.__proto__ = leaf;
+    shouldBe(Object.getPrototypeOf(root), leaf);
+    Object.defineProperty(Object.create(Array.prototype), 0, { get() { return 1; } });
+    $vm.haveABadTime(globalThis);
+    shouldBe($vm.isHavingABadTime(globalThis), true);
+    for (let target of [empty, filled, arrayLike, Array.prototype]) {
+        shouldBe($vm.hasImmutableProperties(target), true);
+        let before = snapshot(target);
+        shouldThrow(() => { "use strict"; target[0] = 9; }, TypeError);
+        shouldThrow(() => { "use strict"; target[7] = 9; }, TypeError);
+        try { Array.prototype.push.call(target, 9); } catch (error) { shouldBe(error instanceof TypeError, true); }
+        shouldBe(snapshot(target), before);
+    }
+    shouldBe([1, 2, 3].map(x => x * 2).join(), "2,4,6");
+    let fresh = [];
+    fresh[5] = 1;
+    shouldBe(fresh.length, 6);
+}

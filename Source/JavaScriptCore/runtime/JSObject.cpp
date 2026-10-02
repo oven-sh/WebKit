@@ -2103,7 +2103,12 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
 
     switch (indexingType()) {
     case ArrayClass:
-        ensureArrayStorage(vm);
+        // ensureArrayStorage() gives an object with immutable properties none, because compiled code asks for it before it stores
+        // elements in place. This conversion is the engine's own, and nothing stores in place into slow-put storage.
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            createInitialArrayStorage(vm);
+        else
+            ensureArrayStorage(vm);
         RELEASE_ASSERT(hasAnyArrayStorage(indexingType()));
         if (hasSlowPutArrayStorage(indexingType()))
             return;
