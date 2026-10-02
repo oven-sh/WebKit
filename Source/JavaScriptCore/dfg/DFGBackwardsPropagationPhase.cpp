@@ -81,7 +81,6 @@ public:
                     }
                 }
 
-            
                 // Prevent a tower of overflowing additions from creating a value that is out of the
                 // safe 2^48 range.
                 m_allowNestedOverflowingAdditions = block->size() < (1 << 16);
@@ -312,7 +311,6 @@ private:
             break;
 
         case CheckSoundType:
-            // Every number has the same tag, so this only tells numbers from other things.
             node->child1()->mergeFlags(NodeBytecodeUsesAsOther);
             break;
             
@@ -737,4 +735,3 @@ bool performBackwardsPropagation(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

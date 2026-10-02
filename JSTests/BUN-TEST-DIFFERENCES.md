@@ -165,7 +165,7 @@ Rules for an edit to an upstream test:
   having a directive, so that they stay as upstream has them. They fail with `--useImmutableIntrinsics=1` in the plain interpreter too.
 - A program that is compiled ahead of time has no source text, so `Function.prototype.toString()` says of its functions what it says of
   native ones. The 20 tests of `JSTests/stress` that depend on the text are listed in `JSTests/bun-tests-that-read-function-text.txt`, likewise.
-  They fail with `--hideTextOfFunctionsForTesting=1` in the plain interpreter too. `Tools/Scripts/aot/list-tests-that-read-function-text.py`
+  They fail with `--hideFunctionSourceForTesting=1` in the plain interpreter too. `Tools/Scripts/aot/list-tests-that-read-function-text.py`
   makes the list.
 - On a machine that is also used for something else, pass `--memory-limited`. It skips the 132 tests marked `//@ memoryHog!`, some of
   which allocate until allocation fails: `stress/typed-array-oom-in-buffer-accessor.js` takes about 130 GB on a machine that has it.

@@ -35,12 +35,9 @@ namespace JSC {
 // scope chain right then. Only built while generating with OptimizeBytecode::Yes; the bytecode optimizer uses it to
 // locate free variables statically and to tell environment-record bindings (stable for the lifetime of an
 // activation) from names that fall through to the global object.
-// `const f = function () { }`, `g = () => { }`, `class C { }`: the statement stores the function that it creates in the variable.
-// Recorded by the bytecode generator, from the syntax tree.
 struct FunctionAssignment {
-    unsigned identifier { 0 }; // Of the variable: UnlinkedCodeBlock::identifier().
-    unsigned functionExpr { 0 }; // UnlinkedCodeBlock::functionExpr(). Of a class, its constructor.
-    // If it is a variable of the code's own: the constant that has the symbol table of its scope, and where it is in that.
+    unsigned identifier { 0 };
+    unsigned functionExpr { 0 };
     bool isOwn { false };
     int symbolTableConstantIndex { 0 };
     unsigned scopeOffset { 0 };
@@ -66,13 +63,11 @@ public:
     struct Frame : public RefCounted<Frame> {
         using Slots = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash>; // name -> ScopeOffset | lazyFunctionSlotFlag
         static constexpr unsigned lazyFunctionSlotFlag = 1u << 31; // a module's function declaration: read it with ResolvedLazyClosureVar
-        static constexpr unsigned readOnlySlotFlag = 1u << 30; // storing to it, other than to initialize it, throws
+        static constexpr unsigned readOnlySlotFlag = 1u << 30;
         static Ref<Frame> create(bool isBarrier, Slots&& slots, RefPtr<Frame> next, const void* identity = nullptr) { return adoptRef(*new Frame { isBarrier, WTF::move(slots), WTF::move(next), identity }); }
         bool isBarrier;
         Slots slots;
         RefPtr<Frame> next;
-        // Which scope of the source the record is for: the same for every Frame there is for it (there is another whenever a name has
-        // been added to it), and for the code that makes the record: it is the SymbolTable among its constants that it makes it from.
         const void* identity;
 
     private:
@@ -85,8 +80,6 @@ public:
         }
     };
 
-    // isOutermost: for the code of a module or a program, which is only enclosed by the global scopes. (A function's link may lack
-    // a parent simply because none was provided.)
     static Ref<DeclaredNamesLink> create(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, bool isOutermost, RefPtr<DeclaredNamesLink> parent)
     {
         return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, isOutermost, WTF::move(parent)));
@@ -94,17 +87,17 @@ public:
 
     struct Resolution {
         enum Kind : uint8_t {
-            Dynamic, // may resolve differently at run time (eval/with in the way): leave alone
-            Stable, // always the same binding for a given starting scope, but no static slot (an import of the module whose environment is |hops| records out)
+            Dynamic,
+            Stable,
             Slot, // lives |hops| environment records out from the function's own scope, at |offset|
-            Global, // in none of the environment records of the code around the function: which global scope has it, if any, may change
+            Global,
         };
         Kind kind { Dynamic };
         unsigned hops { 0 };
         unsigned offset { 0 };
         bool isLazyFunctionSlot { false };
-        bool isInOutermostEnvironment { false }; // Slot: it is a variable of the module (or the program) itself.
-        const void* scope { nullptr }; // Slot: Frame::identity of the record.
+        bool isInOutermostEnvironment { false };
+        const void* scope { nullptr };
         bool isReadOnly { false };
     };
 
@@ -121,7 +114,6 @@ public:
                     return { Resolution::Slot, hops, it->value & ~(Frame::lazyFunctionSlotFlag | Frame::readOnlySlotFlag), !!(it->value & Frame::lazyFunctionSlotFlag), link->m_isOutermost && !frame->next, frame->identity, !!(it->value & Frame::readOnlySlotFlag) };
                 ++hops;
             }
-            // The link that has names is a module's, and the last of its frames the module's environment.
             if (link->m_names && link->m_names->names.contains(name))
                 return { Resolution::Stable, hops ? hops - 1 : 0, 0 };
             if (link->m_isDynamicBarrier)
@@ -132,8 +124,7 @@ public:
         return { };
     }
 
-    // Frame::identity of the record that is that many out from the [[Scope]] of a function created at this point. Null: there is no telling.
-    const void* identityOfScope(unsigned hops) const
+    const void* scopeIdentity(unsigned hops) const
     {
         for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
             for (const Frame* frame = link->m_frames.get(); frame; frame = frame->next.get()) {
@@ -157,7 +148,6 @@ public:
         }
     }
 
-    // Whether the [[Scope]] of a function created at this point is the environment of the module (or the program) itself.
     bool scopeIsOutermostEnvironment() const { return m_isOutermost && m_frames && !m_frames->isBarrier && !m_frames->next; }
 
     Names* names() const { return m_names.get(); }

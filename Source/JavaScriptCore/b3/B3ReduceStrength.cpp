@@ -1034,7 +1034,6 @@ private:
                 }
             }
 
-
             break;
 
         case Mul:
@@ -4691,8 +4690,6 @@ private:
         }
 
         // Bun: merging is a loop of its own, in pre-order, in which the head of a chain of blocks absorbs all of it. In the post-order loop
-        // above, each block of a chain would absorb everything after it, already merged: the copying is quadratic in the length of the
-        // chain, and so was the memory, because an emptied block kept its buffer. Code compiled ahead of time has no size limit.
         for (BasicBlock* block : m_proc.blocksInPreOrder()) {
             // Finally handle jumps to a block with one predecessor.
             while (block->numSuccessors() == 1) {

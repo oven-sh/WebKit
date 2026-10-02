@@ -1486,8 +1486,6 @@ void AbstractModuleRecord::asyncCapability(VM& vm, JSPromise* promise)
     m_asyncCapability.set(vm, this, promise);
 }
 
-// Stores to one of the variables that are at the same offset in every source text module's environment. While the symbol table's
-// entries are still in the bytecode cache they have no watchpoints, so a plain store is sufficient.
 void AbstractModuleRecord::putWellKnownVariable(JSGlobalObject* globalObject, JSModuleEnvironment* moduleEnvironment, const Identifier& name, ScopeOffset offsetInSourceTextModule, JSValue value)
 {
     VM& vm = globalObject->vm();

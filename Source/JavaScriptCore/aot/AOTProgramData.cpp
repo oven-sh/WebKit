@@ -28,9 +28,7 @@
 
 namespace JSC { namespace AOT {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramOfVM);
-
-// ---- When the program is built.
+WTF_MAKE_TZONE_ALLOCATED_IMPL(VMProgram);
 
 namespace {
 
@@ -43,11 +41,8 @@ void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
     bytes.append(static_cast<uint8_t>(value));
 }
 
-// The names in a SymbolTable are only needed to find a variable by name at run time. Compiled code refers to a variable by its
-// offset, unless the bytecode generator could not tell which scope declares the name. Code that is evaluated at run time can name
-// any variable in scope.
 struct DynamicallyResolvedNames {
-    bool mayBeAny { false };
+    bool mayBeAnything { false };
     UncheckedKeyHashSet<UniquedStringImpl*> names;
 };
 
@@ -58,7 +53,7 @@ bool isLookedUpByName(ResolveType type)
 
 class Builder {
 public:
-    Builder(VM& vm, const ImageView& image, const ProgramData::PositionsToKeep& positions, std::span<const ReportableSitesOfFunction> reportableSites)
+    Builder(VM& vm, const ImageView& image, const ProgramData::RetainedPositions& positions, std::span<const FunctionReportableSites> reportableSites)
         : m_vm(vm)
         , m_image(image)
         , m_positions(positions)
@@ -68,9 +63,9 @@ public:
         m_infos.grow(image.numberOfFunctions());
         zeroSpan(m_infos.mutableSpan());
         m_functionMetadataOffsets.fill(0, image.numberOfFunctions());
-        m_identifiers.fill(nullptr, image.numberOfIdentifiersOfProgram());
-        m_constants.fill(JSValue(), image.numberOfConstantsOfProgram());
-        RELEASE_ASSERT(image.numberOfIdentifiersOfProgram() && reportableSites.size() == image.numberOfFunctions());
+        m_identifiers.fill(nullptr, image.numberOfProgramIdentifiers());
+        m_constants.fill(JSValue(), image.numberOfProgramConstants());
+        RELEASE_ASSERT(image.numberOfProgramIdentifiers() && reportableSites.size() == image.numberOfFunctions());
     }
 
     uint32_t append(std::span<const uint8_t> bytes, size_t alignment)
@@ -84,7 +79,6 @@ public:
     template<typename T> uint32_t append(std::span<T> values) { return append(asBytes(values), alignof(T)); }
     template<typename T, size_t n> uint32_t append(const Vector<T, n>& values) { return append(asBytes(values.span()), alignof(T)); }
 
-    // Equal arrays share one copy.
     uint32_t appendOnce(std::span<const uint8_t> bytes, size_t alignment)
     {
         uint64_t hash = 1469598103934665603ull;
@@ -104,7 +98,7 @@ public:
     {
         if (!name)
             return 0;
-        return m_numbersOfIdentifiers.ensure(name, [&] {
+        return m_identifierIndices.ensure(name, [&] {
             m_identifiers.append(name);
             return safeCast<uint32_t>(m_identifiers.size() - 1);
         }).iterator->value;
@@ -112,27 +106,17 @@ public:
 
     uint32_t numberOfConstant(JSValue value)
     {
-        return m_numbersOfOtherConstants.ensure(JSValue::encode(value), [&] {
+        return m_otherConstantIndices.ensure(JSValue::encode(value), [&] {
             m_constants.append(value);
             return safeCast<uint32_t>(m_constants.size() - 1);
         }).iterator->value;
     }
 
-    // The format of a function's positions, as a sequence of varints:
-    //   - The line and column where the function starts in the module's text (ProgramData::whereFunctionStarts()).
-    //   - The number of entries.
-    //   - For each entry, in bytecode order: (delta of the bytecode offset from the previous entry) << 1 | isConstruction, then a
-    //     position. A construction has a second position, where its expression starts.
-    // A position on the same line of the same source as the previous one is zigzag(column delta) << 1 | 1. Any other position is
-    // zigzag(line delta) << 2 | sourceChanged << 1, then the number of the source if it changed (zero: no source, the position is in
-    // the module's text), then the column.
     uint32_t makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock, unsigned sourceOffset, LineStartTable& lineStarts)
     {
         Vector<uint8_t> stream;
         auto& sites = m_positions.sites[index];
         Vector<uint32_t> offsets = sites.offsets;
-        // Also keep the resume points of an async function, which is where it reports being while it is suspended
-        // (FunctionRef::resumePointOf()).
         if (size_t count = codeBlock->numberOfUnlinkedSwitchJumpTables(); count && isAsyncFunctionBodyParseMode(codeBlock->parseMode())) {
             auto& table = codeBlock->unlinkedSwitchJumpTable(count - 1);
             for (int32_t offset : table.m_branchOffsets)
@@ -161,10 +145,10 @@ public:
             CString name;
             LineColumn position = inModule;
             uint32_t source = 0;
-            if (m_positions.find(m_entryOffsetOfModule, inModule, name, position)) {
+            if (m_positions.find(m_moduleEntryOffset, inModule, name, position)) {
                 source = m_sources.ensure(name, [&] {
-                    m_namesOfSources.append(name);
-                    return static_cast<uint32_t>(m_namesOfSources.size());
+                    m_sourceNames.append(name);
+                    return static_cast<uint32_t>(m_sourceNames.size());
                 }).iterator->value;
             } else
                 position = inModule;
@@ -195,18 +179,16 @@ public:
                 LineColumn start = position;
                 if (construction->linesUp) {
                     start.line = position.line > construction->linesUp ? position.line - construction->linesUp : 1;
-                    start.column = construction->columnOrColumnsLeft;
-                } else if (position.column > construction->columnOrColumnsLeft)
-                    start.column = position.column - construction->columnOrColumnsLeft;
+                    start.column = construction->columnOrColumnDelta;
+                } else if (position.column > construction->columnOrColumnDelta)
+                    start.column = position.column - construction->columnOrColumnDelta;
                 appendPosition(start);
             }
         }
-        // (At an even offset: see FunctionMetadata.)
         return append(stream.span(), 2);
     }
 
-    // What the list says of each function is filled in once every executable has its number.
-    uint32_t appendListOfFunctions(std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functions)
+    uint32_t appendFunctionList(std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functions)
     {
         Vector<uint32_t> zeros;
         zeros.fill(0, functions.size());
@@ -214,7 +196,7 @@ public:
         Vector<UnlinkedFunctionExecutable*> list;
         for (auto& function : functions)
             list.append(function.get());
-        m_listsOfFunctions.append({ offset, WTF::move(list) });
+        m_functionLists.append({ offset, WTF::move(list) });
         return offset;
     }
 
@@ -223,15 +205,13 @@ public:
         if (m_functionMetadataOffsets[index])
             return;
         using Metadata = FunctionMetadata;
-        RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Metadata::shiftOfInstructionsSize)));
-        Vector<uint32_t, 16> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Metadata::shiftOfInstructionsSize | (codeBlock->isBuiltinFunction() ? Metadata::isBuiltinFunction : 0) };
-        // (A default class constructor gets its own executable in every realm, and has no position in any source.)
+        RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Metadata::instructionsSizeShift)));
+        Vector<uint32_t, 16> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Metadata::instructionsSizeShift | (codeBlock->isBuiltinFunction() ? Metadata::isBuiltinFunction : 0) };
         if (executable || codeBlock->codeType() != FunctionCode) {
             words[0] |= Metadata::ExpressionInfo;
             words.append(makePositions(index, codeBlock, executable ? executable->source().startOffset() : 0, lineStarts));
         }
         if (size_t count = codeBlock->numberOfExceptionHandlers()) {
-            // (Field by field, into zeros: what goes into the file has no bits that nothing has set.)
             Vector<UnlinkedHandlerInfo> handlers;
             handlers.grow(count);
             zeroSpan(handlers.mutableSpan());
@@ -250,7 +230,7 @@ public:
             if (all.empty())
                 return;
             words[0] |= section;
-            words.append(appendListOfFunctions(all));
+            words.append(appendFunctionList(all));
             words.append(all.size());
         };
         functions(Metadata::FunctionDecls, codeBlock->functionDecls());
@@ -259,15 +239,14 @@ public:
             Vector<uint32_t> list { static_cast<uint32_t>(count) };
             for (size_t i = 0; i < count; ++i) {
                 auto& table = codeBlock->unlinkedStringSwitchJumpTable(i);
-                // (The order in which the table gives them differs from one run to the next, and they may be given numbers here.)
                 Vector<std::pair<StringImpl*, int32_t>> inOrder;
                 for (auto& entry : table.m_offsetTable)
                     inOrder.append({ entry.key.get(), entry.value.m_branchOffset });
                 std::ranges::sort(inOrder, [](auto& a, auto& b) { return codePointCompare(StringView { *a.first }, StringView { *b.first }) < 0; });
                 Vector<std::pair<uint32_t, int32_t>> entries;
                 for (auto [string, offset] : inOrder) {
-                    m_atomsOfSwitches.append(AtomStringImpl::add(string));
-                    entries.append({ numberOfIdentifier(m_atomsOfSwitches.last().get()), offset });
+                    m_switchAtoms.append(AtomStringImpl::add(string));
+                    entries.append({ numberOfIdentifier(m_switchAtoms.last().get()), offset });
                 }
                 std::ranges::sort(entries);
                 list.append(entries.size());
@@ -306,7 +285,7 @@ public:
             words.append(append(list));
         }
         words[0] |= Metadata::Scalars;
-        words.append(appendOnce(scalarsToMakeFunctionCodeFrom(*codeBlock).span(), 1));
+        words.append(appendOnce(encodeCodeBlockScalars(*codeBlock).span(), 1));
         m_functionMetadataOffsets[index] = append(words);
     }
 
@@ -315,64 +294,60 @@ public:
     void fillInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t numberOfExecutable, CodeSpecializationKind kind, LineStartTable& lineStarts)
     {
         FunctionInfo& info = m_infos[function.index];
-        auto& numbersOfConstants = m_reportableSites[function.index].numbersOfConstants;
+        auto& constantIndices = m_reportableSites[function.index].constantIndices;
         {
-            RELEASE_ASSERT(numbersOfConstants.size() == codeBlock->constantRegisters().size());
-            for (unsigned i = 0; i < numbersOfConstants.size(); ++i) {
+            RELEASE_ASSERT(constantIndices.size() == codeBlock->constantRegisters().size());
+            for (unsigned i = 0; i < constantIndices.size(); ++i) {
                 JSValue value = codeBlock->constantRegisters()[i].get();
-                uint32_t number = numbersOfConstants[i];
-                // (A link-time constant is not read as a constant: see NodeKind::LinkTimeConstant.)
+                uint32_t number = constantIndices[i];
                 if (codeBlock->constantsSourceCodeRepresentation()[i] == SourceCodeRepresentation::LinkTimeConstant)
                     value = JSValue();
-                RELEASE_ASSERT(!value == (number == notAConstantOfProgram));
+                RELEASE_ASSERT(!value == (number == invalidConstantIndex));
                 if (!value)
                     continue;
                 JSValue& inTable = m_constants[number];
                 if (!inTable)
                     inTable = value;
                 else if (inTable != value) {
-                    // Two JSStrings with equal contents, or what two pieces of code have for one template. Either one can be used for both.
                     if (value.isString()) {
                         RELEASE_ASSERT(inTable.isString());
                         String said = asString(value)->tryGetValue();
-                        String saidByOther = asString(inTable)->tryGetValue();
-                        RELEASE_ASSERT(said == saidByOther);
+                        String otherString = asString(inTable)->tryGetValue();
+                        RELEASE_ASSERT(said == otherString);
                     } else
                         RELEASE_ASSERT(uncheckedDowncast<JSTemplateObjectDescriptor>(value.asCell())->descriptor() == uncheckedDowncast<JSTemplateObjectDescriptor>(inTable.asCell())->descriptor());
                 }
             }
         }
-        auto& numbers = m_reportableSites[function.index].numbersOfIdentifiers;
+        auto& numbers = m_reportableSites[function.index].identifierIndices;
         RELEASE_ASSERT(numbers.size() == codeBlock->numberOfIdentifiers());
         for (unsigned i = 0; i < numbers.size(); ++i) {
             UniquedStringImpl*& inTable = m_identifiers[numbers[i]];
             UniquedStringImpl* name = codeBlock->identifier(i).impl();
             RELEASE_ASSERT(!inTable || inTable == name);
             if (!inTable)
-                m_numbersOfIdentifiers.add(name, numbers[i]);
+                m_identifierIndices.add(name, numbers[i]);
             inTable = name;
         }
         info.sites = safeCast<uint32_t>(std::bit_cast<uintptr_t>(function.sites));
         info.set(numberOfExecutable == noExecutable ? 0 : numberOfExecutable + 1, kind, FunctionCode);
-        info.flags = (function.hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveTheirConstants) | (function.startsCold && executable ? FunctionInfo::startsCold : 0) | FunctionInfo::slotsAmongFlags(function.numSlots);
+        info.flags = (function.hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveInlineConstants) | (function.startsCold && executable ? FunctionInfo::startsCold : 0) | FunctionInfo::encodeSlotCountInFlags(function.numSlots);
         fillMetadata(function.index, codeBlock, executable, lineStarts);
     }
 
-    void fillInfoOfTopLevelCode(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, uint32_t numberOfTopLevelCode, LineStartTable& lineStarts)
+    void fillTopLevelCodeInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, uint32_t numberOfTopLevelCode, LineStartTable& lineStarts)
     {
         fillInfo(function, codeBlock, nullptr, noExecutable, CodeSpecializationKind::CodeForCall, lineStarts);
         FunctionInfo& info = m_infos[function.index];
         info.set(numberOfTopLevelCode + 1, CodeSpecializationKind::CodeForCall, codeBlock->codeType());
     }
 
-    // Numbers the executables of the functions nested in `codeBlock`, whose source is `source`, recursively.
-    void makeExecutables(UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t indexOfModule, LineStartTable& lineStarts, UnlinkedFunctionExecutable* only = nullptr)
+    void makeExecutables(UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleIndex, LineStartTable& lineStarts, UnlinkedFunctionExecutable* only = nullptr)
     {
-        uint32_t moduleID = m_entryOffsetOfModule + 1;
+        uint32_t moduleID = m_moduleEntryOffset + 1;
         auto make = [&](UnlinkedFunctionExecutable* unlinked) {
-            if (m_executableOfUnlinkedFunction.contains(unlinked))
+            if (m_unlinkedFunctionExecutable.contains(unlinked))
                 return;
-            // The source of a default class constructor belongs to the engine, so its executable is created at run time.
             bool isDefaultConstructor = unlinked->isBuiltinDefaultClassConstructor();
             auto functionKey = orderFunctionKey(*unlinked, isDefaultConstructor ? source : unlinked->linkedSourceCode(source));
             if (!functionKey)
@@ -396,45 +371,42 @@ public:
                 }
                 return;
             }
-            // A function compiled both for call and for construct has two copies of its nested functions. Each nested function still
-            // has only one compiled function, which belongs to one executable (FunctionInfo).
             uint32_t existing = noExecutable;
             for (auto& function : code) {
-                if (function && m_infos[function->index].oneMoreThanNumber())
-                    existing = m_infos[function->index].oneMoreThanNumber() - 1;
+                if (function && m_infos[function->index].indexPlusOne())
+                    existing = m_infos[function->index].indexPlusOne() - 1;
             }
             if (existing != noExecutable) {
                 bool isComplete = true;
                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                     if (auto& function = code[static_cast<unsigned>(kind)])
-                        isComplete &= m_infos[function->index].oneMoreThanNumber() == existing + 1 && m_infos[function->index].kind() == kind;
+                        isComplete &= m_infos[function->index].indexPlusOne() == existing + 1 && m_infos[function->index].kind() == kind;
                 }
                 if (!isComplete)
                     return;
-                m_executableOfUnlinkedFunction.add(unlinked, existing);
+                m_unlinkedFunctionExecutable.add(unlinked, existing);
                 FunctionExecutable* executable = m_executables[existing].executable;
                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                     if (auto* nested = unlinked->codeBlockIfExists(kind))
-                        makeExecutables(nested, executable->source(), executable->isInsideOrdinaryFunction(), indexOfModule, lineStarts);
+                        makeExecutables(nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleIndex, lineStarts);
                 }
                 return;
             }
             FunctionExecutable* executable = unlinked->link(m_vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
             uint32_t number = safeCast<uint32_t>(m_executables.size());
-            m_executables.append({ executable, indexOfModule });
+            m_executables.append({ executable, moduleIndex });
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto& function = code[static_cast<unsigned>(kind)]) {
                     executable->setAOTCode(kind, function->entry, function->index);
                     fillInfo(*function, unlinked->codeBlockIfExists(kind), executable, number, kind, lineStarts);
                 }
             }
-            // (Any other function either has code for construct or cannot be constructed.)
             if (code[0] && !code[1] && unlinked->constructAbility() == ConstructAbility::CanConstruct && !unlinked->isClassConstructorFunction())
-                executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, m_image.offsetInCodeOfStub(Stub::ConstructByCalling), FunctionExecutable::aotIndexOfWhatConstructsByCalling);
-            m_executableOfUnlinkedFunction.add(unlinked, number);
+                executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, m_image.stubCodeOffset(Stub::ConstructViaCall), FunctionExecutable::aotConstructViaCallIndex);
+            m_unlinkedFunctionExecutable.add(unlinked, number);
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto* nested = unlinked->codeBlockIfExists(kind))
-                    makeExecutables(nested, executable->source(), executable->isInsideOrdinaryFunction(), indexOfModule, lineStarts);
+                    makeExecutables(nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleIndex, lineStarts);
             }
         };
         if (only) {
@@ -447,16 +419,13 @@ public:
             make(codeBlock->functionExpr(i));
     }
 
-    // Adds the names that the code and its nested functions look up to `lookedUp`, and drops the other names from the symbol tables of
-    // the scopes the code creates. No other code can see those scopes.
-    // exportedByModule: for the code of a module, the scope offsets of the variables it exports, if known.
     void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, DynamicallyResolvedNames& lookedUp, const Vector<uint32_t>* exportedByModule = nullptr)
     {
         DynamicallyResolvedNames own;
         for (const auto& instruction : codeBlock->instructions()) {
             switch (instruction->opcodeID()) {
             case op_call_direct_eval:
-                own.mayBeAny = true;
+                own.mayBeAnything = true;
                 break;
             case op_resolve_scope:
                 if (auto bytecode = instruction->as<OpResolveScope>(); isLookedUpByName(bytecode.m_resolveType))
@@ -476,7 +445,7 @@ public:
         }
         auto inside = [&](UnlinkedFunctionExecutable* function) {
             if (function->features() & EvalFeature)
-                own.mayBeAny = true;
+                own.mayBeAnything = true;
             bool hasCode = false;
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto* nested = function->codeBlockIfExists(kind)) {
@@ -484,44 +453,38 @@ public:
                     dropUnreferencedVariableNames(nested, own);
                 }
             }
-            // (Without its code, assume that it may look up any name.)
             if (!hasCode)
-                own.mayBeAny = true;
+                own.mayBeAnything = true;
         };
         for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); ++i)
             inside(codeBlock->functionDecl(i));
         for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
             inside(codeBlock->functionExpr(i));
 
-        // A module's environment is also searched by name to resolve the module's exports, and by the engine for its private names.
-        SymbolTable* ofModule = nullptr;
+        SymbolTable* moduleValue = nullptr;
         if (auto* moduleCode = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock))
-            ofModule = dynamicDowncast<SymbolTable>(moduleCode->constantRegister(VirtualRegister(moduleCode->moduleEnvironmentSymbolTableConstantRegisterOffset())).get());
-        if (ofModule && exportedByModule && !own.mayBeAny) {
+            moduleValue = dynamicDowncast<SymbolTable>(moduleCode->constantRegister(VirtualRegister(moduleCode->moduleEnvironmentSymbolTableConstantRegisterOffset())).get());
+        if (moduleValue && exportedByModule && !own.mayBeAnything) {
             UncheckedKeyHashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> exported;
             for (uint32_t offset : *exportedByModule)
                 exported.add(offset);
-            ofModule->keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry& entry) {
+            moduleValue->keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry& entry) {
                 return name->isSymbol() || own.names.contains(name) || (entry.varOffset().isScope() && exported.contains(entry.scopeOffset().offset()));
             });
         }
         for (auto& constant : codeBlock->constantRegisters()) {
             auto* table = constant.get().isCell() ? dynamicDowncast<SymbolTable>(constant.get().asCell()) : nullptr;
-            if (!table || table == ofModule)
+            if (!table || table == moduleValue)
                 continue;
-            // Which names are kept depends on the code that can see the scope: the code that owns the table and the functions
-            // nested in it. So each table must be processed only once.
             RELEASE_ASSERT(m_processedSymbolTables.add(table).isNewEntry);
-            if (!own.mayBeAny)
+            if (!own.mayBeAnything)
                 table->keepOnlyNames(own.names);
         }
-        lookedUp.mayBeAny |= own.mayBeAny;
+        lookedUp.mayBeAnything |= own.mayBeAnything;
         for (auto* name : own.names)
             lookedUp.names.add(name);
     }
 
-    // By now dropUnreferencedVariableNames() has removed the names that nothing looks up, so most tables only say how many variables
-    // there are and what kind of scope it is. Nothing writes to them or compares them by identity.
     void mergeSymbolTables()
     {
         UncheckedKeyHashMap<uint64_t, SymbolTable*, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> kept;
@@ -529,62 +492,59 @@ public:
             auto* table = constant && constant.isCell() ? dynamicDowncast<SymbolTable>(constant.asCell()) : nullptr;
             if (!table)
                 continue;
-            if (auto said = table->whatIsSaidWithoutNames())
+            if (auto said = table->namelessContentKey())
                 constant = kept.add(*said, table).iterator->value;
         }
     }
 
     uint32_t numberOfUnlinkedFunction(UnlinkedFunctionExecutable* function)
     {
-        return m_numbersOfUnlinkedFunctions.ensure(function, [&] {
-            function->dropWhatOnlyGeneratingCodeNeeds();
+        return m_unlinkedFunctionIndices.ensure(function, [&] {
+            function->clearCodegenOnlyData();
             m_unlinkedFunctions.append(function);
             return safeCast<uint32_t>(m_unlinkedFunctions.size() - 1);
         }).iterator->value;
     }
 
-    uint32_t entryInListFor(UnlinkedFunctionExecutable* function)
+    uint32_t functionListEntryFor(UnlinkedFunctionExecutable* function)
     {
         if (!function)
             return 0;
-        if (auto it = m_executableOfUnlinkedFunction.find(function); it != m_executableOfUnlinkedFunction.end())
-            return FunctionMetadata::executableInList(it->value);
-        return FunctionMetadata::unlinkedFunctionInList(numberOfUnlinkedFunction(function));
+        if (auto it = m_unlinkedFunctionExecutable.find(function); it != m_unlinkedFunctionExecutable.end())
+            return FunctionMetadata::executableListEntry(it->value);
+        return FunctionMetadata::unlinkedFunctionListEntry(numberOfUnlinkedFunction(function));
     }
 
-    // Most of a FunctionExecutable and of its UnlinkedFunctionExecutable is for code that has yet to be parsed, compiled or replaced,
-    // and a program that ships without its bytecode has none. So most functions get the short form of the one (see
-    // FunctionExecutable::sizeOfShortForm), and share the other with every function that only differs in what the row says.
     void makeRows()
     {
         UncheckedKeyHashMap<String, uint32_t> shared;
-        for (auto& [executable, indexOfModule] : m_executables) {
+        for (auto& [executable, moduleIndex] : m_executables) {
             UnlinkedFunctionExecutable* unlinked = executable->unlinkedExecutable();
-            unlinked->dropWhatOnlyGeneratingCodeNeeds();
+            unlinked->clearCodegenOnlyData();
             bool hasCodeToCall = executable->aotEntryFor(CodeSpecializationKind::CodeForCall);
-            bool hasCode = hasCodeToCall || (executable->aotEntryFor(CodeSpecializationKind::CodeForConstruct) && !executable->constructsByCalling());
+            bool hasCode = hasCodeToCall || (executable->aotEntryFor(CodeSpecializationKind::CodeForConstruct) && !executable->constructsViaCall());
             uint32_t index = executable->aotIndexFor(hasCodeToCall ? CodeSpecializationKind::CodeForCall : CodeSpecializationKind::CodeForConstruct);
             auto hasStartPosition = [&] {
                 uint32_t at = m_functionMetadataOffsets[index];
                 return at && !(at & 1) && reinterpret_cast<const FunctionMetadata*>(m_out.span().data() + at)->find(FunctionMetadata::ExpressionInfo);
             };
-            RELEASE_ASSERT(indexOfModule < (1u << RowOfExecutable::bitsOfModule));
-            RowOfExecutable row { };
-            row.isShort = hasCode && unlinked->canBeSharedByShortExecutables() && hasStartPosition()
-                && unlinked->parameterCount() < (1u << RowOfExecutable::bitsOfParameterCount)
+            RELEASE_ASSERT(moduleIndex < (1u << ExecutableRow::moduleBits));
+            ExecutableRow row { };
+            row.isShort = hasCode && unlinked->canUseSharedTemplate() && hasStartPosition()
+                && unlinked->parameterCount() < (1u << ExecutableRow::parameterCountBits)
                 && executable->intrinsic() == NoIntrinsic && executable->evalContextType() == EvalContextType::None && !executable->overrideLineNumber()
                 && executable->derivedContextType() == unlinked->derivedContextType() && executable->lexicallyScopedFeatures() == unlinked->lexicallyScopedFeatures();
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 row.entry[static_cast<unsigned>(kind)] = executable->aotEntryFor(kind);
                 row.index[static_cast<unsigned>(kind)] = executable->aotIndexFor(kind);
             }
-            row.module = indexOfModule;
+            row.module = moduleIndex;
             row.isArrowFunctionContext = executable->isArrowFunctionContext();
             row.isInsideOrdinaryFunction = executable->isInsideOrdinaryFunction();
             if (row.isShort) {
                 row.name = numberOfIdentifier(unlinked->ecmaName().impl());
                 row.parameterCount = unlinked->parameterCount();
-                auto what = unlinked->whatIsSharedByShortExecutables();
+                auto what = unlinked->sharedTemplateKey();
                 row.unlinkedFunction = shared.ensure(String { byteCast<Latin1Character>(asByteSpan(what)) }, [&] {
                     return numberOfUnlinkedFunction(unlinked);
                 }).iterator->value;
@@ -599,44 +559,43 @@ public:
 
     VM& m_vm;
     const ImageView& m_image;
-    const ProgramData::PositionsToKeep& m_positions;
-    std::span<const ReportableSitesOfFunction> m_reportableSites;
-    uint32_t m_entryOffsetOfModule { 0 };
+    const ProgramData::RetainedPositions& m_positions;
+    std::span<const FunctionReportableSites> m_reportableSites;
+    uint32_t m_moduleEntryOffset { 0 };
 
     Vector<uint8_t> m_out;
     UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_copies;
     Vector<FunctionInfo> m_infos;
     Vector<uint32_t> m_functionMetadataOffsets;
-    Vector<RowOfExecutable> m_rows;
+    Vector<ExecutableRow> m_rows;
     struct Executable {
         FunctionExecutable* executable;
-        uint32_t indexOfModule;
+        uint32_t moduleIndex;
     };
     Vector<Executable> m_executables;
-    UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_executableOfUnlinkedFunction;
-    Vector<std::pair<uint32_t, Vector<UnlinkedFunctionExecutable*>>> m_listsOfFunctions;
+    UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_unlinkedFunctionExecutable;
+    Vector<std::pair<uint32_t, Vector<UnlinkedFunctionExecutable*>>> m_functionLists;
     Vector<UniquedStringImpl*> m_identifiers;
-    Vector<RefPtr<AtomStringImpl>> m_atomsOfSwitches; // (Nothing else may refer to them.)
-    UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_numbersOfIdentifiers;
+    Vector<RefPtr<AtomStringImpl>> m_switchAtoms;
+    UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_identifierIndices;
     Vector<JSValue> m_constants;
-    UncheckedKeyHashMap<EncodedJSValue, uint32_t, DefaultHash<EncodedJSValue>, WTF::UnsignedWithZeroKeyHashTraits<EncodedJSValue>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numbersOfOtherConstants;
+    UncheckedKeyHashMap<EncodedJSValue, uint32_t, DefaultHash<EncodedJSValue>, WTF::UnsignedWithZeroKeyHashTraits<EncodedJSValue>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_otherConstantIndices;
     Vector<UnlinkedFunctionExecutable*> m_unlinkedFunctions;
-    UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numbersOfUnlinkedFunctions;
+    UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_unlinkedFunctionIndices;
     Vector<UnlinkedCodeBlock*> m_topLevelCodes;
     UncheckedKeyHashMap<CString, uint32_t> m_sources;
-    Vector<CString> m_namesOfSources;
+    Vector<CString> m_sourceNames;
     UncheckedKeyHashSet<SymbolTable*> m_processedSymbolTables;
 };
 
-// What the executables that are made while a program is built say their source is. Nothing reads it.
-class ProviderWhileBuilding final : public SourceProvider {
+class BuildTimeProvider final : public SourceProvider {
 public:
-    static Ref<ProviderWhileBuilding> create() { return adoptRef(*new ProviderWhileBuilding); }
+    static Ref<BuildTimeProvider> create() { return adoptRef(*new BuildTimeProvider); }
     unsigned hash() const final { return 0; }
     StringView source() const final { return { }; }
 
 private:
-    ProviderWhileBuilding()
+    BuildTimeProvider()
         : SourceProvider(SourceOrigin(), String(), String(), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Program)
     {
     }
@@ -644,68 +603,67 @@ private:
 
 } // anonymous namespace
 
-Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, const PositionsToKeep& positions, std::span<const ReportableSitesOfFunction> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
+Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> moduleEntryOffsets, std::span<const uint8_t> codeImage, const RetainedPositions& positions, std::span<const FunctionReportableSites> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
 {
-    auto image = ImageView::tryCreate(imageOfCode, nullptr);
-    if (!image || payload.empty() || entryOffsetsOfModules.empty())
+    auto image = ImageView::tryCreate(codeImage, nullptr);
+    if (!image || payload.empty() || moduleEntryOffsets.empty())
         return { };
     DeferGC deferGC(vm);
     Builder builder(vm, *image, positions, reportableSites);
 
     DecoderStringTable table(strings);
-    EncoderStringTable stringsToEncodeWith;
+    EncoderStringTable encoderStringTable;
     for (uint32_t ordinal = 0; ordinal < table.count(); ++ordinal)
-        RELEASE_ASSERT(stringsToEncodeWith.ordinalFor(table.atomFor(vm, ordinal).get()) == ordinal);
+        RELEASE_ASSERT(encoderStringTable.ordinalFor(table.atomFor(vm, ordinal).get()) == ordinal);
 
-    Vector<uint32_t> sortedOffsets(entryOffsetsOfModules);
+    Vector<uint32_t> sortedOffsets(moduleEntryOffsets);
     std::ranges::sort(sortedOffsets);
-    Vector<ModuleOfProgram> modules;
+    Vector<ProgramModule> modules;
     Vector<Ref<Decoder>> decoders;
     bool ok = true;
     for (size_t i = 0; i < sortedOffsets.size(); ++i) {
-        builder.m_entryOffsetOfModule = sortedOffsets[i];
+        builder.m_moduleEntryOffset = sortedOffsets[i];
         Ref cachedBytecode = CachedBytecode::create(std::span { const_cast<uint8_t*>(payload.data()), payload.size() }, nullptr, { });
         cachedBytecode->setPayloadIsPersistent();
         cachedBytecode->setEntryOffset(sortedOffsets[i]);
         Ref decoder = Decoder::createForProgramData(vm, WTF::move(cachedBytecode), Decoder::IsBuilding::Yes);
         decoders.append(decoder.copyRef());
         decoder->setExternalStrings(table);
-        Ref provider = ProviderWhileBuilding::create();
+        Ref provider = BuildTimeProvider::create();
 
         SourceCodeKey key;
         Vector<UnlinkedFunctionExecutable*> functions;
         LineStartTable lineStarts;
-        auto setLineStarts = [&](const LineStarts& ofCode) {
-            // (A short builtin comes without. Its positions are all on its first line.)
-            lineStarts.setLineStarts(ofCode ? LineStarts { ofCode } : LineStartTable::encode(Vector<unsigned> { 0 }));
+        auto setLineStarts = [&](const LineStarts& codeLineStarts) {
+            lineStarts.setLineStarts(codeLineStarts ? LineStarts { codeLineStarts } : LineStartTable::encode(Vector<unsigned> { 0 }));
         };
-        if (entryIsOfBuiltinFunction(decoder.get())) {
-            unsigned lengthOfBuiltin = 0;
-            unsigned stampOfBuiltin = 0;
-            LineStarts lineStartsOfBuiltin;
-            UnlinkedFunctionExecutable* builtinFunction = decodeBuiltinForProgramData(decoder.get(), lengthOfBuiltin, stampOfBuiltin, lineStartsOfBuiltin, functions);
+        if (entryIsBuiltinFunction(decoder.get())) {
+            unsigned builtinLength = 0;
+            unsigned builtinStamp = 0;
+            LineStarts builtinLineStarts;
+            UnlinkedFunctionExecutable* builtinFunction = decodeBuiltinForProgramData(decoder.get(), builtinLength, builtinStamp, builtinLineStarts, functions);
             uint32_t number = 0;
             if (builtinFunction) {
-                setLineStarts(lineStartsOfBuiltin);
-                builder.makeExecutables(nullptr, SourceCode { provider.copyRef(), 0, static_cast<int>(lengthOfBuiltin) }, false, i, lineStarts, builtinFunction);
+                setLineStarts(builtinLineStarts);
+                builder.makeExecutables(nullptr, SourceCode { provider.copyRef(), 0, static_cast<int>(builtinLength) }, false, i, lineStarts, builtinFunction);
                 DynamicallyResolvedNames lookedUp;
                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                     if (auto* code = builtinFunction->codeBlockIfExists(kind))
                         builder.dropUnreferencedVariableNames(code, lookedUp);
                 }
-                if (auto it = builder.m_executableOfUnlinkedFunction.find(builtinFunction); it != builder.m_executableOfUnlinkedFunction.end())
+                if (auto it = builder.m_unlinkedFunctionExecutable.find(builtinFunction); it != builder.m_unlinkedFunctionExecutable.end())
                     number = it->value + 1;
             }
-            ModuleOfProgram module { };
+            ProgramModule module { };
             module.entryOffset = sortedOffsets[i];
-            module.keyHash = stampOfBuiltin;
-            module.keyLength = lengthOfBuiltin;
+            module.keyHash = builtinStamp;
+            module.keyLength = builtinLength;
             module.isBuiltinFunction = true;
             module.number = number;
             modules.append(module);
             continue;
         }
-        UnlinkedCodeBlock* codeBlock = decodeAllForProgramData(decoder.get(), key, functions);
+        UnlinkedCodeBlock* codeBlock = decodeModuleForProgramData(decoder.get(), key, functions);
         if (codeBlock && (!key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1))
             codeBlock = nullptr;
         if (!codeBlock) {
@@ -715,41 +673,39 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         }
         setLineStarts(uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->lineStarts());
         builder.makeExecutables(codeBlock, SourceCode { provider.copyRef(), 0, static_cast<int>(key.length()) }, false, i, lineStarts);
-        ModuleOfProgram module { };
+        ProgramModule module { };
         module.entryOffset = sortedOffsets[i];
         module.keyHash = key.hash();
         module.keyLength = static_cast<uint32_t>(key.length());
         module.keyFlags = key.flagsBits();
-        // Its top-level code. The executable of that is created at run time.
         auto function = image->find(imageKeyForTopLevelCode(sortedOffsets[i] + 1));
-        auto* ofModule = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock);
-        if (!ofModule) {
-            // (What a script declares, it declares by name.)
+        auto* moduleValue = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock);
+        if (!moduleValue) {
             module.number = safeCast<uint32_t>(builder.m_topLevelCodes.size()) + 1;
             builder.m_topLevelCodes.append(codeBlock);
         }
         if (function)
-            builder.fillInfoOfTopLevelCode(*function, codeBlock, safeCast<uint32_t>(modules.size()), lineStarts);
-        if (function && ofModule) {
-            module.oneMoreThanIndexOfCode = function->index + 1;
-            module.symbolTableOfEnvironment = builder.m_reportableSites[function->index].numbersOfConstants[VirtualRegister(ofModule->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex()];
-            RELEASE_ASSERT(module.symbolTableOfEnvironment != notAConstantOfProgram);
-            module.firstVarScopeOffset = ofModule->firstVarScopeOffset();
-            module.numberOfVarScopeOffsets = ofModule->numberOfVarScopeOffsets();
-            if (auto* slots = ofModule->heapAllocatedFunctionDeclSlots()) {
-                RELEASE_ASSERT(slots->size() == ofModule->numberOfHeapAllocatedFunctionDecls());
+            builder.fillTopLevelCodeInfo(*function, codeBlock, safeCast<uint32_t>(modules.size()), lineStarts);
+        if (function && moduleValue) {
+            module.functionIndex = function->index;
+            module.environmentSymbolTable = builder.m_reportableSites[function->index].constantIndices[VirtualRegister(moduleValue->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex()];
+            RELEASE_ASSERT(module.environmentSymbolTable != invalidConstantIndex);
+            module.firstVarScopeOffset = moduleValue->firstVarScopeOffset();
+            module.numberOfVarScopeOffsets = moduleValue->numberOfVarScopeOffsets();
+            if (auto* slots = moduleValue->heapAllocatedFunctionDeclSlots()) {
+                RELEASE_ASSERT(slots->size() == moduleValue->numberOfHeapAllocatedFunctionDecls());
                 module.offsetOfFunctionDeclarationSlots = builder.append(slots->offsets().span());
                 module.numberOfFunctionDeclarationSlots = slots->size();
             } else
-                RELEASE_ASSERT(!ofModule->numberOfHeapAllocatedFunctionDecls());
-            module.features = ofModule->codeFeatures();
-            module.lexicallyScopedFeaturesAndMore = ofModule->lexicallyScopedFeatures() | (ofModule->hasCapturedVariables() ? 1u << 16 : 0);
+                RELEASE_ASSERT(!moduleValue->numberOfHeapAllocatedFunctionDecls());
+            module.features = moduleValue->codeFeatures();
+            module.lexicallyScopedFeaturesAndFlags = moduleValue->lexicallyScopedFeatures() | (moduleValue->hasCapturedVariables() ? 1u << 16 : 0);
         }
         uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->setLineStarts({ });
         DynamicallyResolvedNames lookedUp;
         const Vector<uint32_t>* exported = nullptr;
-        for (size_t index = 0; index < variablesExportedByModules.size() && index < entryOffsetsOfModules.size(); ++index) {
-            if (entryOffsetsOfModules[index] == sortedOffsets[i] && variablesExportedByModules[index])
+        for (size_t index = 0; index < variablesExportedByModules.size() && index < moduleEntryOffsets.size(); ++index) {
+            if (moduleEntryOffsets[index] == sortedOffsets[i] && variablesExportedByModules[index])
                 exported = &*variablesExportedByModules[index];
         }
         builder.dropUnreferencedVariableNames(codeBlock, lookedUp, exported);
@@ -760,15 +716,14 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
 
     builder.mergeSymbolTables();
     builder.makeRows();
-    for (auto& [offset, list] : builder.m_listsOfFunctions) {
+    for (auto& [offset, list] : builder.m_functionLists) {
         for (size_t i = 0; i < list.size(); ++i) {
-            uint32_t entry = builder.entryInListFor(list[i]);
+            uint32_t entry = builder.functionListEntryFor(list[i]);
             memcpy(builder.m_out.mutableSpan().data() + offset + i * sizeof(uint32_t), &entry, sizeof(uint32_t));
         }
     }
-    // (The code of the functions has been looked at, and none of it is kept.)
     for (auto* function : builder.m_unlinkedFunctions)
-        function->leaveWithoutCode();
+        function->discardCode();
 
     ProgramData header { };
     header.magic = expectedMagic;
@@ -776,26 +731,25 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     header.offsetOfStrings = builder.append(strings, 16);
     header.sizeOfStrings = safeCast<uint32_t>(strings.size());
     {
-        ObjectsOfProgram objects;
+        ProgramObjects objects;
         objects.identifiers = builder.m_identifiers.span();
         objects.constants = builder.m_constants.span();
         objects.topLevelCodes = builder.m_topLevelCodes.span();
-        objects.entryInListFor = [&](UnlinkedFunctionExecutable* function) {
-            uint32_t entry = builder.entryInListFor(function);
+        objects.functionListEntryFor = [&](UnlinkedFunctionExecutable* function) {
+            uint32_t entry = builder.functionListEntryFor(function);
             RELEASE_ASSERT(entry);
             return entry;
         };
-        // (Which may add to the unlinked functions.)
         for (auto* codeBlock : builder.m_topLevelCodes) {
             for (auto list : { codeBlock->functionDecls(), codeBlock->functionExprs() }) {
                 for (auto& function : list) {
-                    if (builder.entryInListFor(function.get()) & 1)
-                        function->leaveWithoutCode();
+                    if (builder.functionListEntryFor(function.get()) & 1)
+                        function->discardCode();
                 }
             }
         }
         objects.unlinkedFunctions = builder.m_unlinkedFunctions.span();
-        Vector<uint8_t> encoded = encodeObjectsOfProgram(vm, stringsToEncodeWith, objects);
+        Vector<uint8_t> encoded = encodeProgramObjects(vm, encoderStringTable, objects);
         header.offsetOfObjects = builder.append(encoded.span(), 16);
         header.sizeOfObjects = safeCast<uint32_t>(encoded.size());
     }
@@ -810,31 +764,31 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             String said = asString(constant)->tryGetValue();
             if (said.isEmpty())
                 continue;
-            uint32_t ordinal = stringsToEncodeWith.ordinalFor(*said.impl());
+            uint32_t ordinal = encoderStringTable.ordinalFor(*said.impl());
             RELEASE_ASSERT(ordinal < table.count());
             records[i] = header.offsetOfStrings + offsets[ordinal];
         }
-        header.offsetOfRecordsOfStringConstants = builder.append(records);
+        header.offsetOfStringConstantRecords = builder.append(records);
     }
     header.offsetOfModules = builder.append(modules);
     header.numberOfModules = modules.size();
     {
-        Vector<uint32_t> modulesOfEngineBuiltins;
+        Vector<uint32_t> engineBuiltinModules;
         for (uint32_t i = 0; i < modules.size(); ++i) {
             if (!modules[i].isBuiltinFunction || !modules[i].number || !BuiltinExecutables::isStamp(modules[i].keyHash))
                 continue;
             unsigned which = modules[i].keyHash & 0xffff;
-            while (modulesOfEngineBuiltins.size() <= which)
-                modulesOfEngineBuiltins.append(0);
-            modulesOfEngineBuiltins[which] = i + 1;
+            while (engineBuiltinModules.size() <= which)
+                engineBuiltinModules.append(0);
+            engineBuiltinModules[which] = i + 1;
         }
-        header.offsetOfModulesOfEngineBuiltins = builder.append(modulesOfEngineBuiltins);
-        header.numberOfEngineBuiltins = modulesOfEngineBuiltins.size();
+        header.offsetOfEngineBuiltinModules = builder.append(engineBuiltinModules);
+        header.numberOfEngineBuiltins = engineBuiltinModules.size();
     }
     header.offsetOfInfos = builder.append(builder.m_infos);
     header.numberOfFunctions = builder.m_infos.size();
     header.offsetOfFunctionMetadataOffsets = builder.append(builder.m_functionMetadataOffsets);
-    header.offsetOfRowsOfExecutables = builder.append(builder.m_rows);
+    header.offsetOfExecutableRows = builder.append(builder.m_rows);
     header.numberOfExecutables = builder.m_rows.size();
     header.numberOfIdentifiers = builder.m_identifiers.size();
     header.numberOfConstants = builder.m_constants.size();
@@ -843,20 +797,18 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     {
         Vector<uint32_t> starts;
         Vector<uint8_t> text;
-        for (auto& name : builder.m_namesOfSources) {
+        for (auto& name : builder.m_sourceNames) {
             starts.append(text.size());
             text.append(name.span());
         }
         starts.append(text.size());
-        header.offsetOfNamesOfSources = builder.append(starts);
+        header.offsetOfSourceNames = builder.append(starts);
         builder.m_out.appendVector(text);
-        header.numberOfSources = builder.m_namesOfSources.size();
+        header.numberOfSources = builder.m_sourceNames.size();
     }
     if (image->keysAreOmitted()) {
-        // An executable that has a number records the index of its function. The others are created from their source at run time
-        // and find their functions by key, so only those keys are kept.
         auto isLookedUp = [&](const ImageKey& key) {
-            return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !builder.m_infos[image->indexOfFunctionWith(key)].hasExecutable();
+            return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !builder.m_infos[image->functionIndexWith(key)].hasExecutable();
         };
         size_t count = 0;
         for (auto& key : image->keys())
@@ -875,8 +827,8 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
                 bucket = (bucket + 1) & (capacity - 1);
             kept[bucket] = key;
         }
-        header.offsetOfKeysOfImage = builder.append(kept);
-        header.capacityOfKeysOfImage = capacity;
+        header.offsetOfImageKeys = builder.append(kept);
+        header.imageKeyCapacity = capacity;
     }
     header.size = safeCast<uint32_t>(builder.m_out.size());
     memcpy(builder.m_out.mutableSpan().data(), &header, sizeof(header));
@@ -884,8 +836,6 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         dataLogLn("AOT: program data: ", header.size, " bytes: strings ", header.sizeOfStrings, ", objects ", header.sizeOfObjects, "; ", header.numberOfFunctions, " functions, ", header.numberOfExecutables, " executables, ", header.numberOfUnlinkedFunctions, " unlinked functions, ", header.numberOfIdentifiers, " identifiers, ", header.numberOfConstants, " constants, ", header.numberOfSources, " sources");
     return WTF::move(builder.m_out);
 }
-
-// ---- When it runs.
 
 const ProgramData* ProgramData::tryUse(std::span<const uint8_t> bytes)
 {
@@ -906,38 +856,44 @@ std::optional<std::pair<size_t, size_t>> ProgramData::stringTableIn(std::span<co
     return std::pair { static_cast<size_t>(header.offsetOfStrings), static_cast<size_t>(header.sizeOfStrings) };
 }
 
-const ModuleOfProgram* ProgramData::moduleWithEntryOffset(uint32_t entryOffset) const
+std::span<const uint32_t> ProgramData::functionDeclarationListEntries(const ProgramModule& module) const
+{
+    const uint32_t* list = at<FunctionMetadata>(functionMetadataOffsets()[module.functionIndex])->find(FunctionMetadata::FunctionDecls);
+    RELEASE_ASSERT(list && list[1] >= module.numberOfFunctionDeclarationSlots);
+    return { at<uint32_t>(list[0]), module.numberOfFunctionDeclarationSlots };
+}
+
+const ProgramModule* ProgramData::moduleWithEntryOffset(uint32_t entryOffset) const
 {
     auto all = modules();
-    size_t index = std::ranges::lower_bound(all, entryOffset, { }, &ModuleOfProgram::entryOffset) - all.begin();
+    size_t index = std::ranges::lower_bound(all, entryOffset, { }, &ProgramModule::entryOffset) - all.begin();
     return index != all.size() && all[index].entryOffset == entryOffset ? &all[index] : nullptr;
 }
 
-uint32_t ProgramData::numberOfExecutableOfFunction(uint32_t indexOfFunction) const
+uint32_t ProgramData::executableIndexForFunction(uint32_t functionIndex) const
 {
-    const FunctionInfo& info = infos()[indexOfFunction];
-    RELEASE_ASSERT(indexOfFunction < numberOfFunctions && info.oneMoreThanNumber() && !info.isTopLevelCode());
-    return info.oneMoreThanNumber() - 1;
+    const FunctionInfo& info = infos()[functionIndex];
+    RELEASE_ASSERT(functionIndex < numberOfFunctions && info.indexPlusOne() && !info.isTopLevelCode());
+    return info.indexPlusOne() - 1;
 }
 
-const RowOfExecutable& ProgramData::rowOfExecutableOfFunction(uint32_t indexOfFunction) const
+const ExecutableRow& ProgramData::executableRowForFunction(uint32_t functionIndex) const
 {
-    return rowOfExecutable(numberOfExecutableOfFunction(indexOfFunction));
+    return executableRow(executableIndexForFunction(functionIndex));
 }
 
-String ProgramData::nameOfSource(uint32_t source) const
+String ProgramData::sourceName(uint32_t source) const
 {
     RELEASE_ASSERT(source && source <= numberOfSources);
-    auto* starts = at<uint32_t>(offsetOfNamesOfSources);
+    auto* starts = at<uint32_t>(offsetOfSourceNames);
     auto* text = reinterpret_cast<const char8_t*>(starts + numberOfSources + 1);
     return String::fromUTF8(std::span { text + starts[source - 1], static_cast<size_t>(starts[source] - starts[source - 1]) });
 }
 
-// Reads the first two values that Builder::makePositions() wrote.
-LineColumn ProgramData::whereFunctionStarts(uint32_t indexOfFunction) const
+LineColumn ProgramData::functionStartPosition(uint32_t functionIndex) const
 {
-    RELEASE_ASSERT(indexOfFunction < numberOfFunctions);
-    uint32_t word = functionMetadataOffsets()[indexOfFunction];
+    RELEASE_ASSERT(functionIndex < numberOfFunctions);
+    uint32_t word = functionMetadataOffsets()[functionIndex];
     RELEASE_ASSERT(word && !(word & 1));
     const uint32_t* where = at<FunctionMetadata>(word)->find(FunctionMetadata::ExpressionInfo);
     RELEASE_ASSERT(where);
@@ -955,40 +911,38 @@ LineColumn ProgramData::whereFunctionStarts(uint32_t indexOfFunction) const
     return { line, readVarint() };
 }
 
-Vector<uint32_t> ProgramData::entryOffsetsOfModules() const
+Vector<uint32_t> ProgramData::moduleEntryOffsets() const
 {
     Vector<uint32_t> result;
     for (auto& module : modules()) {
-        if (!module.isBuiltinFunction && (module.number || module.oneMoreThanIndexOfCode))
+        if (!module.isBuiltinFunction && (module.number || module.isCompiledModule()))
             result.append(module.entryOffset);
     }
     return result;
 }
 
-std::span<const ImageKey> ProgramData::keysOfImage() const
+std::span<const ImageKey> ProgramData::imageKeys() const
 {
-    return spanAt<ImageKey>(offsetOfKeysOfImage, capacityOfKeysOfImage);
+    return spanAt<ImageKey>(offsetOfImageKeys, imageKeyCapacity);
 }
 
-struct ProgramOfVM::Rest {
+struct VMProgram::Rest {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Rest);
 
     std::unique_ptr<DecoderStringTable> ownStrings;
-    std::unique_ptr<ObjectsOfProgramDecoder> decoder;
-    // For the collector. (It must not look through the tables: that would touch all of their pages.)
-    Vector<JSCell*> madeSinceLastCollection;
-    BitVector executablesMade;
-    Vector<uint32_t> identifiersMade;
+    std::unique_ptr<ProgramObjectsDecoder> decoder;
+    Vector<JSCell*> createdSinceLastCollection;
+    BitVector materializedExecutables;
+    Vector<uint32_t> materializedIdentifierCount;
     Vector<UnlinkedFunctionExecutable*> unlinkedFunctions;
     Vector<RefPtr<SourceProvider>> providers;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<SourceCode>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> sourcesOfShortExecutables;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<SourceCode>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> shortExecutableSources;
     UncheckedKeyHashMap<uint32_t, FixedVector<UnlinkedStringJumpTable>> stringSwitchJumpTables;
     UncheckedKeyHashMap<uint32_t, FixedVector<IdentifierSet>> identifierSets;
 };
 
 template<typename T> static T* zeroedTable(size_t count)
 {
-    // (Pages are committed when they are first touched.)
     return static_cast<T*>(OSAllocator::reserveAndCommit(roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(count, 1) * sizeof(T)), OSAllocator::FastMallocPages));
 }
 
@@ -997,14 +951,14 @@ template<typename T> static void freeTable(T* table, size_t count)
     OSAllocator::decommitAndRelease(table, roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(count, 1) * sizeof(T)));
 }
 
-ProgramOfVM* ProgramOfVM::of(VM& vm)
+VMProgram* VMProgram::of(VM& vm)
 {
     if (!vm.m_aotProgram && ProgramData::get()) [[unlikely]]
-        vm.m_aotProgram = makeUnique<ProgramOfVM>(vm);
+        vm.m_aotProgram = makeUnique<VMProgram>(vm);
     return vm.m_aotProgram.get();
 }
 
-ProgramOfVM::ProgramOfVM(VM& vm)
+VMProgram::VMProgram(VM& vm)
     : m_vm(vm)
     , m_data(*ProgramData::get())
     , m_identifiers(zeroedTable<UniquedStringImpl*>(m_data.numberOfIdentifiers))
@@ -1014,55 +968,54 @@ ProgramOfVM::ProgramOfVM(VM& vm)
     m_rest->unlinkedFunctions.fill(nullptr, m_data.numberOfUnlinkedFunctions);
     m_rest->providers.grow(m_data.numberOfModules);
     constexpr uint32_t initialCapacity = 1024;
-    m_valuesOfConstants = static_cast<EncodedJSValue*>(fastZeroedMalloc(initialCapacity * sizeof(EncodedJSValue)));
-    m_keysOfConstants = static_cast<uint32_t*>(fastZeroedMalloc(initialCapacity * sizeof(uint32_t)));
-    m_maskOfConstants = initialCapacity - 1;
-    m_rest->executablesMade.ensureSize(m_data.numberOfExecutables);
+    m_constantValues = static_cast<EncodedJSValue*>(fastZeroedMalloc(initialCapacity * sizeof(EncodedJSValue)));
+    m_constantKeys = static_cast<uint32_t*>(fastZeroedMalloc(initialCapacity * sizeof(uint32_t)));
+    m_constantMask = initialCapacity - 1;
+    m_rest->materializedExecutables.ensureSize(m_data.numberOfExecutables);
 }
 
-ProgramOfVM::~ProgramOfVM()
+VMProgram::~VMProgram()
 {
-    for (uint32_t number : m_rest->identifiersMade)
+    for (uint32_t number : m_rest->materializedIdentifierCount)
         m_identifiers[number]->deref();
-    fastFree(m_valuesOfConstants);
-    fastFree(m_keysOfConstants);
+    fastFree(m_constantValues);
+    fastFree(m_constantKeys);
     freeTable(m_identifiers, m_data.numberOfIdentifiers);
     freeTable(m_executables, m_data.numberOfExecutables);
 }
 
-DecoderStringTable& ProgramOfVM::strings()
+DecoderStringTable& VMProgram::strings()
 {
-    // (What is made of a string is remembered by the number of the identifier or the constant, so not by the string as well.)
     if (!m_rest->ownStrings)
         m_rest->ownStrings = makeUnique<DecoderStringTable>(m_data.strings(), DecoderStringTable::Slots::No);
     return *m_rest->ownStrings;
 }
 
-static ObjectsOfProgramDecoder& ensureDecoder(std::unique_ptr<ObjectsOfProgramDecoder>& decoder, VM& vm, const ProgramData& data, DecoderStringTable& strings)
+static ProgramObjectsDecoder& ensureDecoder(std::unique_ptr<ProgramObjectsDecoder>& decoder, VM& vm, const ProgramData& data, DecoderStringTable& strings)
 {
     if (!decoder)
-        decoder = makeUnique<ObjectsOfProgramDecoder>(vm, data.objects(), strings);
+        decoder = makeUnique<ProgramObjectsDecoder>(vm, data.objects(), strings);
     return *decoder;
 }
 
-void ProgramOfVM::didMake(JSCell* cell)
+void VMProgram::didMaterialize(JSCell* cell)
 {
-    m_rest->madeSinceLastCollection.append(cell);
+    m_rest->createdSinceLastCollection.append(cell);
 }
 
-JSValue ProgramOfVM::constant(uint32_t number)
+JSValue VMProgram::constant(uint32_t number)
 {
     RELEASE_ASSERT(number < m_data.numberOfConstants);
-    for (uint32_t place = hashOfConstant(number);; ++place) {
-        uint32_t key = m_keysOfConstants[place & m_maskOfConstants];
+    for (uint32_t place = constantHash(number);; ++place) {
+        uint32_t key = m_constantKeys[place & m_constantMask];
         if (key == number + 1)
-            return JSValue::decode(m_valuesOfConstants[place & m_maskOfConstants]);
+            return JSValue::decode(m_constantValues[place & m_constantMask]);
         if (!key)
             break;
     }
     DeferGC deferGC(m_vm);
-    ObjectsOfProgramDecoder& decoder = ensureDecoder(m_rest->decoder, m_vm, m_data, strings());
-    if (auto other = decoder.constantIsSameAs(number)) {
+    ProgramObjectsDecoder& decoder = ensureDecoder(m_rest->decoder, m_vm, m_data, strings());
+    if (auto other = decoder.constantAliasTarget(number)) {
         JSValue value = constant(*other);
         addConstant(number, value);
         return value;
@@ -1070,40 +1023,39 @@ JSValue ProgramOfVM::constant(uint32_t number)
     JSValue value = decoder.constant(number);
     RELEASE_ASSERT(value && (!value.isCell() || !value.isObject()));
     if (value.isCell())
-        didMake(value.asCell());
+        didMaterialize(value.asCell());
     addConstant(number, value);
     return value;
 }
 
-JSValue ProgramOfVM::constantForOneUse(uint32_t number)
+JSValue VMProgram::createTransientConstant(uint32_t number)
 {
     RELEASE_ASSERT(number < m_data.numberOfConstants);
     DeferGC deferGC(m_vm);
-    ObjectsOfProgramDecoder& decoder = ensureDecoder(m_rest->decoder, m_vm, m_data, strings());
-    // (One that many have is worth keeping.)
-    if (decoder.constantIsSameAs(number))
+    ProgramObjectsDecoder& decoder = ensureDecoder(m_rest->decoder, m_vm, m_data, strings());
+    if (decoder.constantAliasTarget(number))
         return constant(number);
     JSValue value = decoder.constant(number);
     RELEASE_ASSERT(value && (!value.isCell() || !value.isObject()));
     return value;
 }
 
-void ProgramOfVM::addConstant(uint32_t number, JSValue value)
+void VMProgram::addConstant(uint32_t number, JSValue value)
 {
     auto add = [&](uint32_t key, EncodedJSValue encoded) {
-        uint32_t place = hashOfConstant(key - 1);
-        while (m_keysOfConstants[place & m_maskOfConstants])
+        uint32_t place = constantHash(key - 1);
+        while (m_constantKeys[place & m_constantMask])
             ++place;
-        m_valuesOfConstants[place & m_maskOfConstants] = encoded;
-        m_keysOfConstants[place & m_maskOfConstants] = key;
+        m_constantValues[place & m_constantMask] = encoded;
+        m_constantKeys[place & m_constantMask] = key;
     };
-    if (++m_numberOfConstantsMade * 2 > m_maskOfConstants) {
-        uint32_t oldCapacity = m_maskOfConstants + 1;
-        EncodedJSValue* oldValues = m_valuesOfConstants;
-        uint32_t* oldKeys = m_keysOfConstants;
-        m_valuesOfConstants = static_cast<EncodedJSValue*>(fastZeroedMalloc(oldCapacity * 2 * sizeof(EncodedJSValue)));
-        m_keysOfConstants = static_cast<uint32_t*>(fastZeroedMalloc(oldCapacity * 2 * sizeof(uint32_t)));
-        m_maskOfConstants = oldCapacity * 2 - 1;
+    if (++m_numberOfMaterializedConstants * 2 > m_constantMask) {
+        uint32_t oldCapacity = m_constantMask + 1;
+        EncodedJSValue* oldValues = m_constantValues;
+        uint32_t* oldKeys = m_constantKeys;
+        m_constantValues = static_cast<EncodedJSValue*>(fastZeroedMalloc(oldCapacity * 2 * sizeof(EncodedJSValue)));
+        m_constantKeys = static_cast<uint32_t*>(fastZeroedMalloc(oldCapacity * 2 * sizeof(uint32_t)));
+        m_constantMask = oldCapacity * 2 - 1;
         for (uint32_t i = 0; i < oldCapacity; ++i) {
             if (oldKeys[i])
                 add(oldKeys[i], oldValues[i]);
@@ -1114,7 +1066,7 @@ void ProgramOfVM::addConstant(uint32_t number, JSValue value)
     add(number + 1, JSValue::encode(value));
 }
 
-UniquedStringImpl* ProgramOfVM::identifier(uint32_t number)
+UniquedStringImpl* VMProgram::identifier(uint32_t number)
 {
     RELEASE_ASSERT(number < m_data.numberOfIdentifiers);
     if (UniquedStringImpl* existing = m_identifiers[number])
@@ -1122,12 +1074,12 @@ UniquedStringImpl* ProgramOfVM::identifier(uint32_t number)
     Identifier identifier = ensureDecoder(m_rest->decoder, m_vm, m_data, strings()).identifier(number);
     RELEASE_ASSERT(!identifier.isNull());
     identifier.impl()->ref();
-    m_rest->identifiersMade.append(number);
+    m_rest->materializedIdentifierCount.append(number);
     m_identifiers[number] = identifier.impl();
     return identifier.impl();
 }
 
-const Identifier& ProgramOfVM::identifierAsIdentifier(uint32_t number)
+const Identifier& VMProgram::identifierAsIdentifier(uint32_t number)
 {
     static_assert(sizeof(Identifier) == sizeof(UniquedStringImpl*));
     if (number)
@@ -1135,7 +1087,7 @@ const Identifier& ProgramOfVM::identifierAsIdentifier(uint32_t number)
     return *reinterpret_cast<const Identifier*>(&m_identifiers[number]);
 }
 
-UnlinkedFunctionExecutable* ProgramOfVM::unlinkedFunction(uint32_t number, bool isShared)
+UnlinkedFunctionExecutable* VMProgram::unlinkedFunction(uint32_t number, bool isShared)
 {
     RELEASE_ASSERT(number < m_data.numberOfUnlinkedFunctions);
     if (UnlinkedFunctionExecutable* existing = m_rest->unlinkedFunctions[number])
@@ -1144,15 +1096,14 @@ UnlinkedFunctionExecutable* ProgramOfVM::unlinkedFunction(uint32_t number, bool 
     UnlinkedFunctionExecutable* result = ensureDecoder(m_rest->decoder, m_vm, m_data, strings()).unlinkedFunction(number);
     RELEASE_ASSERT(result);
     if (isShared)
-        result->becomeSharedByShortExecutables();
-    didMake(result);
+        result->convertToSharedTemplate();
+    didMaterialize(result);
     m_rest->unlinkedFunctions[number] = result;
     return result;
 }
 
-UnlinkedCodeBlock* ProgramOfVM::topLevelCode(uint32_t number)
+UnlinkedCodeBlock* VMProgram::topLevelCode(uint32_t number)
 {
-    // (It runs once in each instance, and whoever runs it lets go of it then. So it is not kept here.)
     RELEASE_ASSERT(number < m_data.numberOfTopLevelCodes);
     DeferGC deferGC(m_vm);
     UnlinkedCodeBlock* result = ensureDecoder(m_rest->decoder, m_vm, m_data, strings()).topLevelCode(number);
@@ -1160,77 +1111,76 @@ UnlinkedCodeBlock* ProgramOfVM::topLevelCode(uint32_t number)
     return result;
 }
 
-UnlinkedCodeBlock* ProgramOfVM::topLevelCodeFor(const SourceCodeKey& key)
+UnlinkedCodeBlock* VMProgram::topLevelCodeFor(const SourceCodeKey& key)
 {
     SourceProvider& provider = key.source().provider();
     uint32_t id = provider.aotModuleID();
-    if (!id || !provider.hasNoText())
+    if (!id || !provider.hasNoSourceText())
         return nullptr;
-    const ModuleOfProgram* module = m_data.moduleWithEntryOffset(id - 1);
+    const ProgramModule* module = m_data.moduleWithEntryOffset(id - 1);
     if (!module || module->isBuiltinFunction || !module->number || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
         return nullptr;
     didLoadModule(provider);
     return topLevelCode(module->number - 1);
 }
 
-const ModuleOfProgram* ProgramOfVM::moduleFor(SourceProvider& provider)
+const ProgramModule* VMProgram::moduleFor(SourceProvider& provider)
 {
     uint32_t id = provider.aotModuleID();
-    if (!id || !provider.hasNoText())
+    if (!id || !provider.hasNoSourceText())
         return nullptr;
-    const ModuleOfProgram* module = m_data.moduleWithEntryOffset(id - 1);
-    if (!module || !module->oneMoreThanIndexOfCode)
+    const ProgramModule* module = m_data.moduleWithEntryOffset(id - 1);
+    if (!module || !module->isCompiledModule())
         return nullptr;
     didLoadModule(provider);
     return module;
 }
 
-void ProgramOfVM::didLoadModule(SourceProvider& provider)
+void VMProgram::didLoadModule(SourceProvider& provider)
 {
-    const ModuleOfProgram* module = m_data.moduleWithEntryOffset(provider.aotModuleID() - 1);
+    const ProgramModule* module = m_data.moduleWithEntryOffset(provider.aotModuleID() - 1);
     RELEASE_ASSERT(module);
     RefPtr<SourceProvider>& first = m_rest->providers[module - m_data.modules().data()];
     if (!first)
         first = &provider;
 }
 
-SourceProvider* ProgramOfVM::providerOfModule(uint32_t indexOfModule)
+SourceProvider* VMProgram::moduleProvider(uint32_t moduleIndex)
 {
-    RefPtr<SourceProvider>& provider = m_rest->providers[indexOfModule];
+    RefPtr<SourceProvider>& provider = m_rest->providers[moduleIndex];
     if (!provider) {
-        // Compiled code calls some builtins without a function object, so a frame can be of one that nothing has asked for.
-        const ModuleOfProgram& module = m_data.modules()[indexOfModule];
+        const ProgramModule& module = m_data.modules()[moduleIndex];
         RELEASE_ASSERT(module.isBuiltinFunction);
         String text;
         if (BuiltinExecutables::isStamp(module.keyHash))
             text = StringImpl::createWithoutCopying(BuiltinExecutables::textOf(module.keyHash & 0xffff));
         provider = StringSourceProvider::create(text, SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
         if (text.isNull())
-            provider->setHasNoText();
+            provider->setHasNoSourceText();
         provider->setAOTModuleID(module.entryOffset + 1);
     }
     return provider.get();
 }
 
-const SourceCode& ProgramOfVM::sourceOfShortExecutable(uint32_t number)
+const SourceCode& VMProgram::shortExecutableSource(uint32_t number)
 {
-    return *m_rest->sourcesOfShortExecutables.ensure(number, [&] {
-        return makeUniqueWithoutFastMallocCheck<SourceCode>(RefPtr { providerOfModule(m_data.rowOfExecutable(number).module) }, 0, 0);
+    return *m_rest->shortExecutableSources.ensure(number, [&] {
+        return makeUniqueWithoutFastMallocCheck<SourceCode>(RefPtr { moduleProvider(m_data.executableRow(number).module) }, 0, 0);
     }).iterator->value;
 }
 
-FunctionExecutable* ProgramOfVM::executable(uint32_t number)
+FunctionExecutable* VMProgram::executable(uint32_t number)
 {
     RELEASE_ASSERT(number < m_data.numberOfExecutables);
     if (FunctionExecutable* existing = m_executables[number])
         return existing;
-    const RowOfExecutable& row = m_data.rowOfExecutable(number);
+    const ExecutableRow& row = m_data.executableRow(number);
     DeferGC deferGC(m_vm);
     FunctionExecutable* result;
     if (row.isShort)
         result = FunctionExecutable::createInShortForm(m_vm, row.entry, row.index);
     else {
-        SourceCode source { RefPtr { providerOfModule(row.module) }, static_cast<int>(row.startOffset), static_cast<int>(row.startOffset + row.sourceLength) };
+        SourceCode source { RefPtr { moduleProvider(row.module) }, static_cast<int>(row.startOffset), static_cast<int>(row.startOffset + row.sourceLength) };
         result = FunctionExecutable::create(m_vm, nullptr, source, unlinkedFunction(row.unlinkedFunction, false), NoIntrinsic, row.isInsideOrdinaryFunction);
         result->becomeSharedAcrossRealms(m_vm);
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
@@ -1238,17 +1188,17 @@ FunctionExecutable* ProgramOfVM::executable(uint32_t number)
                 result->setAOTCode(kind, entry, row.index[static_cast<unsigned>(kind)]);
         }
     }
-    didMake(result);
-    m_rest->executablesMade.quickSet(number);
+    didMaterialize(result);
+    m_rest->materializedExecutables.quickSet(number);
     m_executables[number] = result;
     return result;
 }
 
-FunctionExecutable* ProgramOfVM::builtinFunctionFor(uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin& sourceOrigin, const String& sourceURL)
+FunctionExecutable* VMProgram::builtinFunctionFor(uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin& sourceOrigin, const String& sourceURL)
 {
     if (BytecodeOrderRecorder::ofVM(m_vm))
         return nullptr;
-    const ModuleOfProgram* module = m_data.moduleWithEntryOffset(entryOffset);
+    const ProgramModule* module = m_data.moduleWithEntryOffset(entryOffset);
     if (!module || !module->isBuiltinFunction || !module->number || module->keyHash != embedderStamp || module->keyLength != text.length())
         return nullptr;
     RefPtr<SourceProvider>& provider = m_rest->providers[module - m_data.modules().data()];
@@ -1259,15 +1209,15 @@ FunctionExecutable* ProgramOfVM::builtinFunctionFor(uint32_t entryOffset, unsign
     return executable(module->number - 1);
 }
 
-FunctionExecutable* ProgramOfVM::engineBuiltinFor(unsigned index, std::span<const Latin1Character> text)
+FunctionExecutable* VMProgram::engineBuiltinFor(unsigned index, std::span<const Latin1Character> text)
 {
-    uint32_t oneMoreThanModule = index < m_data.numberOfEngineBuiltins ? m_data.at<uint32_t>(m_data.offsetOfModulesOfEngineBuiltins)[index] : 0;
-    if (!oneMoreThanModule)
+    uint32_t moduleIndexPlusOne = index < m_data.numberOfEngineBuiltins ? m_data.at<uint32_t>(m_data.offsetOfEngineBuiltinModules)[index] : 0;
+    if (!moduleIndexPlusOne)
         return nullptr;
-    const ModuleOfProgram& module = m_data.modules()[oneMoreThanModule - 1];
+    const ProgramModule& module = m_data.modules()[moduleIndexPlusOne - 1];
     if (BytecodeOrderRecorder::ofVM(m_vm) || module.keyLength != text.size())
         return nullptr;
-    RefPtr<SourceProvider>& provider = m_rest->providers[oneMoreThanModule - 1];
+    RefPtr<SourceProvider>& provider = m_rest->providers[moduleIndexPlusOne - 1];
     if (!provider) {
         provider = StringSourceProvider::create(StringImpl::createWithoutCopying(text), SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
         provider->setAOTModuleID(module.entryOffset + 1);
@@ -1275,7 +1225,7 @@ FunctionExecutable* ProgramOfVM::engineBuiltinFor(unsigned index, std::span<cons
     return executable(module.number - 1);
 }
 
-const UnlinkedStringJumpTable& ProgramOfVM::stringSwitchJumpTable(uint32_t offsetOfTables, unsigned which)
+const UnlinkedStringJumpTable& VMProgram::stringSwitchJumpTable(uint32_t offsetOfTables, unsigned which)
 {
     return m_rest->stringSwitchJumpTables.ensure(offsetOfTables, [&] {
         const uint32_t* words = m_data.at<uint32_t>(offsetOfTables);
@@ -1294,7 +1244,7 @@ const UnlinkedStringJumpTable& ProgramOfVM::stringSwitchJumpTable(uint32_t offse
     }).iterator->value[which];
 }
 
-const IdentifierSet& ProgramOfVM::identifierSet(uint32_t offsetOfSets, unsigned which)
+const IdentifierSet& VMProgram::identifierSet(uint32_t offsetOfSets, unsigned which)
 {
     return m_rest->identifierSets.ensure(offsetOfSets, [&] {
         const uint32_t* words = m_data.at<uint32_t>(offsetOfSets);
@@ -1308,18 +1258,18 @@ const IdentifierSet& ProgramOfVM::identifierSet(uint32_t offsetOfSets, unsigned 
 }
 
 template<typename Visitor>
-void ProgramOfVM::visit(Visitor& visitor, CollectionScope scope)
+void VMProgram::visit(Visitor& visitor, CollectionScope scope)
 {
     if (scope == CollectionScope::Eden) {
-        for (JSCell* cell : m_rest->madeSinceLastCollection)
+        for (JSCell* cell : m_rest->createdSinceLastCollection)
             visitor.appendUnbarriered(cell);
         return;
     }
-    for (uint32_t i = 0; i <= m_maskOfConstants; ++i) {
-        if (JSValue value = JSValue::decode(m_valuesOfConstants[i]); m_keysOfConstants[i] && value.isCell())
+    for (uint32_t i = 0; i <= m_constantMask; ++i) {
+        if (JSValue value = JSValue::decode(m_constantValues[i]); m_constantKeys[i] && value.isCell())
             visitor.appendUnbarriered(value.asCell());
     }
-    m_rest->executablesMade.forEachSetBit([&](size_t number) {
+    m_rest->materializedExecutables.forEachSetBit([&](size_t number) {
         visitor.appendUnbarriered(m_executables[number]);
     });
     for (auto* function : m_rest->unlinkedFunctions) {
@@ -1327,12 +1277,12 @@ void ProgramOfVM::visit(Visitor& visitor, CollectionScope scope)
             visitor.appendUnbarriered(function);
     }
 }
-template void ProgramOfVM::visit(AbstractSlotVisitor&, CollectionScope);
-template void ProgramOfVM::visit(SlotVisitor&, CollectionScope);
+template void VMProgram::visit(AbstractSlotVisitor&, CollectionScope);
+template void VMProgram::visit(SlotVisitor&, CollectionScope);
 
-void ProgramOfVM::didFinishCollection()
+void VMProgram::didFinishCollection()
 {
-    m_rest->madeSinceLastCollection.clear();
+    m_rest->createdSinceLastCollection.clear();
     if (Options::verboseAOTCompilation()) [[unlikely]] {
         UncheckedKeyHashMap<const ClassInfo*, std::pair<size_t, size_t>> byClass;
         auto count = [&](JSCell* cell) {
@@ -1340,16 +1290,16 @@ void ProgramOfVM::didFinishCollection()
             entry.first++;
             entry.second += cell->cellSize();
         };
-        for (uint32_t i = 0; i <= m_maskOfConstants; ++i) {
-            if (JSValue value = JSValue::decode(m_valuesOfConstants[i]); m_keysOfConstants[i] && value.isCell())
+        for (uint32_t i = 0; i <= m_constantMask; ++i) {
+            if (JSValue value = JSValue::decode(m_constantValues[i]); m_constantKeys[i] && value.isCell())
                 count(value.asCell());
         }
-        m_rest->executablesMade.forEachSetBit([&](size_t number) { count(m_executables[number]); });
+        m_rest->materializedExecutables.forEachSetBit([&](size_t number) { count(m_executables[number]); });
         for (auto* function : m_rest->unlinkedFunctions) {
             if (function)
                 count(function);
         }
-        dataLog("AOT: made so far: ", m_rest->identifiersMade.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfConstantsMade, " of ", m_data.numberOfConstants, " constants, ", m_rest->executablesMade.bitCount(), " of ", m_data.numberOfExecutables, " executables:");
+        dataLog("AOT: made so far: ", m_rest->materializedIdentifierCount.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfMaterializedConstants, " of ", m_data.numberOfConstants, " constants, ", m_rest->materializedExecutables.bitCount(), " of ", m_data.numberOfExecutables, " executables:");
         for (auto& [info, entry] : byClass)
             dataLog(" ", info->className, " ", entry.first, " (", entry.second, " bytes)");
         dataLogLn("; ", m_rest->stringSwitchJumpTables.size(), " + ", m_rest->identifierSets.size(), " tables of functions");

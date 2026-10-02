@@ -23,11 +23,9 @@ shouldBe(Object.isFrozen(first), true);
 fullGC();
 for (let i = 0; i < 100; i++)
     shouldBe(site(), first);
-// One for each place in the text, whether the function is called or constructed.
 shouldBe(new Both(), Both());
 shouldBe(tag`a${1}b` === first, false);
 
-// Another realm has its own.
 const other = createGlobalObject();
 shouldBe(first instanceof Array, true);
 shouldBe(first instanceof other.Array, false);

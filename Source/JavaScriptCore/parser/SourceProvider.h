@@ -188,13 +188,10 @@ public:
     void setSourceTaintedOrigin(SourceTaintedOrigin taintedness) { m_taintedness = taintedness; }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // The ID that an AOT::Image uses for this source. Zero: none.
     uint32_t aotModuleID() const { return m_aotModuleID; }
     void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
-    // A program that was compiled ahead of time can be built without its source text. source() then has the length of the original
-    // text, so that offsets into it stay valid, but its contents must not be read.
-    bool hasNoText() const { return m_hasNoText; }
-    void setHasNoText() { m_hasNoText = true; }
+    bool hasNoSourceText() const { return m_hasNoSourceText; }
+    void setHasNoSourceText() { m_hasNoSourceText = true; }
 #endif
 
     SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedness; }
@@ -293,7 +290,7 @@ private:
     SourceTaintedOrigin m_taintedness;
 #if USE(BUN_JSC_ADDITIONS)
     uint32_t m_aotModuleID { 0 };
-    bool m_hasNoText { false };
+    bool m_hasNoSourceText { false };
 #endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
@@ -406,7 +403,6 @@ private:
             return nullptr;
         }
 
-    
     private:
         JS_EXPORT_PRIVATE SyntheticSourceProvider(SyntheticSourceGenerator&& generator, LazySyntheticSourceGenerator&& lazyGenerator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
             : SourceProvider(sourceOrigin, WTF::move(sourceURL), WTF::move(preRedirectURL), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Synthetic)

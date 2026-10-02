@@ -72,7 +72,7 @@ private:
         Dominators& dominators = m_proc.dominators();
         UncheckedKeyHashMap<ValueKey, Value*> valueForConstant;
         IndexMap<BasicBlock*, Vector<Value*>> materializations(m_proc.size());
-        UncheckedKeyHashMap<Value*, BasicBlock*> materializationBlocks; // Value::owner is cleared once the constant has been inserted.
+        UncheckedKeyHashMap<Value*, BasicBlock*> materializationBlocks;
 
         // We determine where things get materialized based on where they are used.
         for (BasicBlock* block : m_proc) {
@@ -222,17 +222,14 @@ private:
                         if (Air::Arg::isValidImmForm(addendConst))
                             break;
                         // Bun: only the constant's negation can take its place, so look that up. findBestConstant() would go through
-                        // every constant of every dominator, which is quadratic in a function with many constants.
                         Value* bestAddend = valueForConstant.get(ValueKey(addend->kind(), addend->type(), static_cast<int64_t>(-static_cast<uint64_t>(addendConst))));
                         if (!bestAddend || bestAddend == addend || bestAddend->asInt() != -addendConst)
                             break;
-                        // As findBestConstant() does, prefer the one that is materialized in the outermost dominator. If that is the same
-                        // block, every user of either has to settle on the same one.
-                        BasicBlock* blockOfBest = materializationBlocks.get(bestAddend);
-                        BasicBlock* blockOfAddend = materializationBlocks.get(addend);
-                        if (!dominators.dominates(blockOfBest, block))
+                        BasicBlock* bestBlock = materializationBlocks.get(bestAddend);
+                        BasicBlock* addendBlock = materializationBlocks.get(addend);
+                        if (!dominators.dominates(bestBlock, block))
                             break;
-                        if (blockOfBest == blockOfAddend ? addendConst > 0 : dominators.dominates(blockOfAddend, blockOfBest))
+                        if (bestBlock == addendBlock ? addendConst > 0 : dominators.dominates(addendBlock, bestBlock))
                             break;
                         materialize(value->child(0));
                         materialize(bestAddend);
@@ -268,7 +265,6 @@ private:
     void lowerMaterializationCostHeavyConstants()
     {
         if (m_proc.positionIndependent()) {
-            // No table to load them from: made from an integer, at each use.
             for (BasicBlock* block : m_proc) {
                 for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
                     Value* value = block->at(valueIndex);

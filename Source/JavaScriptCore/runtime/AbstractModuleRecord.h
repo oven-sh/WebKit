@@ -347,8 +347,6 @@ protected:
     AbstractModuleRecord(VM&, Structure*, JSModuleLoader*, Identifier, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
 #if USE(BUN_JSC_ADDITIONS)
-    // Once the module has been evaluated nothing walks its requests or resolves its imports any more, as a rule. Both can be had
-    // from the graph again.
     void releaseLinkingData();
     void fillPrelinkedRequestedModules();
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
@@ -393,7 +391,7 @@ private:
     // Save the occurrence order since the module loader loads and runs the modules in this order.
     // http://www.ecma-international.org/ecma-262/6.0/#sec-moduleevaluation
     Vector<ModuleRequest> m_requestedModules;
-    bool m_didReleasePrelinkedRequests { false }; // They are recreated from the prelinked graph on demand.
+    bool m_didReleasePrelinkedRequests { false };
 
     WriteBarrier<JSModuleNamespaceObject> m_moduleNamespaceObject;
     WriteBarrier<JSModuleNamespaceObject> m_deferredNamespaceObject;

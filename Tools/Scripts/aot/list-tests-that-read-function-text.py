@@ -18,7 +18,7 @@ HEADER = """# Tests that are skipped in the aot and aot-validate modes of run-js
 # native ones. Each test here depends on the text.
 #
 # How the list was made: Tools/Scripts/aot/list-tests-that-read-function-text.py. These pass with --useImmutableIntrinsics=1 --useJIT=0 and
-# fail with --hideTextOfFunctionsForTesting=1 as well, in the plain interpreter (no AOT).
+# fail with --hideFunctionSourceForTesting=1 as well, in the plain interpreter (no AOT).
 """
 
 
@@ -43,7 +43,7 @@ def main():
             return False
         options = re.findall(r'"(--[^"]*)"', " ".join(line for line in text.split("\n")[:6] if line.startswith("//@ ")))
         base = ["--useImmutableIntrinsics=1", "--useJIT=0", *options]
-        hidden = [*base, "--hideTextOfFunctionsForTesting=1"]
+        hidden = [*base, "--hideFunctionSourceForTesting=1"]
         # (Twice: on a busy machine a slow test may time out once.)
         return passes(jsc, base, test) and not passes(jsc, hidden, test) and not passes(jsc, hidden, test)
 

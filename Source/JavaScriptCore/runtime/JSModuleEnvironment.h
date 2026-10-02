@@ -56,9 +56,6 @@ public:
 
     inline static Structure* createStructure(VM&, JSGlobalObject*);
 
-    // The offsets, in a source text module's environment, of the two variables that every such module has. BytecodeGenerator
-    // declares them first. Using these avoids looking the variables up by name, which would decode the symbol table's entries from
-    // the bytecode cache.
     static constexpr ScopeOffset starNamespaceScopeOffset() { return ScopeOffset(0); }
     static constexpr ScopeOffset moduleLoaderScopeOffset() { return ScopeOffset(1); }
 

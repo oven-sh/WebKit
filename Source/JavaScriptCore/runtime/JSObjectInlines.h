@@ -504,7 +504,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     uint32_t packedFieldType = 0;
 #if USE(BUN_JSC_ADDITIONS)
     if (uint16_t typedLayoutID = this->structure()->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
-        // (Where the slots are verified it is looked into once it is known where the property is: isRejectedAtOffset.)
         if (auto* field = TypedLayoutTable::usesFieldIDs(typedLayoutID) ? nullptr : TypedLayoutTable::findField(vm, typedLayoutID, propertyName.uid())) {
             if (mode == PutModeDefineOwnProperty && newAttributes) {
                 if (!TypedLayoutTable::isAuditing())
@@ -513,7 +512,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             }
             if (TypedLayoutTable::checkStore(*field, value) == TypedLayoutTable::StoreCheck::Rejected)
                 return TypedFieldError;
-            // (The outcome is not cached, so untyped code takes this path on every store.)
             isTypedField = true;
             value = TypedLayoutTable::toFieldRepresentation(*field, value);
             if (auto* fieldType = TypedLayoutTable::fieldTypeOf(*field))
@@ -523,17 +521,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && typedLayoutID) [[unlikely]]
             evictTypedField(vm, propertyName);
     }
-    // For a typed layout that uses field IDs. The Structure that the object has, or is about to get, says which field is at the
-    // offset, if any, and the stored value has to match that field's type.
-    // (A field that is not in its slot is checked by the code that reads it. A property that becomes an accessor is no longer
-    // recorded as being in its slot.)
-    auto isRejectedAtOffset = [&](Structure* itsStructure, PropertyOffset where) {
+    auto isRejectedAtOffset = [&](Structure* candidateStructure, PropertyOffset where) {
         if (static_cast<unsigned>(where) >= Structure::numberOfSlotsWithFieldIDs || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             return false;
-        // (Otherwise the table holds property name IDs, which constrain nothing: VM::aotPropertyNameIDs.)
-        if (itsStructure->recordsPropertyNames()) [[likely]]
+        if (candidateStructure->recordsPropertyNames()) [[likely]]
             return false;
-        uint16_t id = itsStructure->fieldIDInSlot(where);
+        uint16_t id = candidateStructure->fieldIDInSlot(where);
         if (!id || id == Structure::ambiguousFieldID) [[likely]]
             return false;
         auto& field = TypedLayoutTable::fieldWithID(where, id);
@@ -1724,6 +1717,5 @@ inline void JSObject::ensureWritable(VM& vm)
 }
 
 } // namespace JSC
-
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

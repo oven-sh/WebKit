@@ -1,5 +1,4 @@
 //@ requireOptions("--definePlainInstanceFieldsInConstructor=1", "--useSoundTypes=1")
-// A constructor's object is made with the properties that the constructor starts by giving it.
 function shouldBe(actual, expected) {
     if (!Object.is(actual, expected))
         throw new Error("bad value: " + actual + ", expected " + expected);
@@ -44,7 +43,6 @@ let error;
 try { new Checked(1, 2); } catch (e) { error = e; }
 shouldBe(String(error), "TypeError: Type check failed: expected string, got number");
 
-// On behalf of something else.
 class Derived extends Fields { extra; constructor(l, r) { super(l, r); this.extra = l + r; } }
 for (let i = 0; i < 50; i++) {
     const o = new Derived(i, 1);
@@ -57,7 +55,6 @@ function bound() { }
 const proxied = new Proxy(bound, { get(target, key) { return key === "prototype" ? NoFields.prototype : target[key]; } });
 shouldBe(Object.getPrototypeOf(Reflect.construct(Fields, [1, 2], proxied)), NoFields.prototype);
 
-// The prototype of a function is replaced.
 const before = Plain.prototype;
 Plain.prototype = { marker: 1 };
 shouldBe(new Plain(1, 2).marker, 1);
@@ -66,7 +63,6 @@ Plain.prototype = before;
 shouldBe(new Plain(1, 2).marker, undefined);
 shouldBe(Object.getPrototypeOf(new Plain(1, 2)), before);
 
-// A setter turns up on the way. It has a say about a store, and none about a field.
 let calls = [];
 Object.defineProperty(NoFields.prototype, "b", { set(v) { calls.push(v); }, configurable: true });
 shouldBe(show(new NoFields(1, 2)), '{"a":1,"c":3}/a,c');
@@ -88,12 +84,10 @@ shouldBe(error instanceof TypeError, true);
 delete Object.prototype.a;
 shouldBe(show(new NoFields(1, 2)), '{"a":1,"b":2,"c":3}/a,b,c');
 
-// Kept, through collections.
 function tree(depth) { return depth ? new Fields(tree(depth - 1), tree(depth - 1)) : new Fields(null, null); }
 function count(t) { return t.left === null ? 1 : 1 + count(t.left) + count(t.right); }
 shouldBe(count(tree(14)), 32767);
 
-// Where it is not an error for a store to come to nothing.
 const Sloppy = new Function("a", "b", "this.a = a; this.b = b;");
 shouldBe(show(new Sloppy(1, 2)), '{"a":1,"b":2}/a,b');
 shouldBe(show(new Sloppy(1, 2)), '{"a":1,"b":2}/a,b');

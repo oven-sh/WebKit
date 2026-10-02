@@ -119,12 +119,11 @@ public:
     unsigned parameterCount() const { return m_parameterCount; }; // Excluding 'this'!
     SourceParseMode parseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); };
 
-    // (`provider` is the provider of the function's own source. In a program that was compiled ahead of time it is not recorded.)
     SourceCode classSource(SourceProvider& provider) const
     {
         materializeDeferredMembersIfNeeded();
         if (!m_members.live().rareData)
-            return m_isClass ? SourceCode(RefPtr<SourceProvider> { &provider }, 0, 0) : SourceCode(); // (dropWhatOnlyGeneratingCodeNeeds())
+            return m_isClass ? SourceCode(RefPtr<SourceProvider> { &provider }, 0, 0) : SourceCode();
         const SourceCode& source = m_members.live().rareData->m_classSource;
         if (source.isNull() && m_isClass) [[unlikely]]
             return SourceCode(RefPtr<SourceProvider> { &provider }, source.startOffset(), source.endOffset());
@@ -289,7 +288,7 @@ public:
             return nullptr;
         return (kind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct).get();
     }
-    void leaveWithoutCode();
+    void discardCode();
     void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
 
     JSC::DerivedContextType derivedContextType() const {return static_cast<JSC::DerivedContextType>(m_derivedContextType); }
@@ -350,7 +349,6 @@ public:
         // Only while generating with OptimizeBytecode::Yes and only until this executable's code is generated: the
         // enclosing scopes at the creation site. Never encoded into a bytecode cache.
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
-        // FunctionMetadataNode::plainInstanceFieldNames(). Not encoded either: code generated without it does the same thing.
         FixedVector<Identifier> m_plainInstanceFieldNames;
 
         bool isEmpty() const
@@ -395,30 +393,27 @@ public:
 
     bool hasName() const { return m_hasName; }
 
-    // See the short form of FunctionExecutable. Functions that only differ in their name, parameter count and source position share
-    // one UnlinkedFunctionExecutable. These say whether this one can be shared, and which bytes are shared.
-    bool canBeSharedByShortExecutables() const
+    bool canUseSharedTemplate() const
     {
         return !m_nameIsDeferred && !m_membersAreDeferred && !m_scalarsAreDeferred && !m_members.live().rareData && !m_members.live().parentScopeTDZVariables
             && !m_isBuiltinDefaultClassConstructor;
     }
-    auto whatIsSharedByShortExecutables() const
+    auto sharedTemplateKey() const
     {
-        RELEASE_ASSERT(canBeSharedByShortExecutables());
+        RELEASE_ASSERT(canUseSharedTemplate());
         return std::to_array<uint32_t>({ m_isBuiltinFunction, m_hasCapturedVariables, m_constructAbility, m_scriptMode, m_needsClassFieldInitializer, m_superBinding, m_privateBrandRequirement,
             static_cast<uint32_t>(m_features), m_constructorKind, static_cast<uint32_t>(m_sourceParseMode), m_implementationVisibility, static_cast<uint32_t>(m_lexicallyScopedFeatures),
             m_functionMode, m_derivedContextType, m_inlineAttribute, m_evalContextType, m_hasName, m_isClass });
     }
-    // Of a program that was compiled ahead of time and comes without its text.
-    void dropWhatOnlyGeneratingCodeNeeds()
+    void clearCodegenOnlyData()
     {
         materializeDeferredMembersIfNeeded();
         m_members.live().parentScopeTDZVariables = nullptr;
         m_members.live().rareData = nullptr;
     }
-    void becomeSharedByShortExecutables()
+    void convertToSharedTemplate()
     {
-        RELEASE_ASSERT(canBeSharedByShortExecutables() && !m_isCached && !m_unlinkedCodeBlockForCall && !m_unlinkedCodeBlockForConstruct);
+        RELEASE_ASSERT(canUseSharedTemplate() && !m_isCached && !m_unlinkedCodeBlockForCall && !m_unlinkedCodeBlockForConstruct);
         m_parameterCount = 0;
         m_ecmaName = Identifier();
         m_unlinkedFunctionStart = 0;

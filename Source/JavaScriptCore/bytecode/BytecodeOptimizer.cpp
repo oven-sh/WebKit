@@ -1339,7 +1339,6 @@ bool BytecodeOptimizerAccess::resolveScopesStatically()
                     auto resolution = link->resolve(m_codeBlock->identifier(bytecode.m_var).impl());
                     // A slot past 255 would force the instruction wide (+8 bytes) just to save one link-time lookup;
                     // not worth the bytes unless the instruction is wide already.
-                    // Unless it is going to be compiled ahead of time, where it is a load instead of a lookup by name.
                     bool fits = resolution.offset <= UINT8_MAX || insn.instruction->isWide16() || insn.instruction->isWide32() || m_codeBlock->vm().bytecodeGenerationOptions.resolveAllScopeSlotsStatically;
                     if (resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.hops == it->value.hops && fits) {
                         insn.staticScopeOffset = resolution.offset;
@@ -2243,6 +2242,5 @@ void BytecodeOptimizer::run(BytecodeGenerator& generator)
 {
     BytecodeOptimizerAccess::runIfAppropriate(generator);
 }
-
 
 } // namespace JSC

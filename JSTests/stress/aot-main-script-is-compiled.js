@@ -1,6 +1,5 @@
 //@ skip if $architecture != "arm64"
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// If the image were not used, every other test of ahead-of-time compiled code would still pass, in the interpreter.
 
 function plain() { return 1; }
 const arrow = () => 2;
@@ -18,7 +17,6 @@ for (const f of functions) {
         throw new Error(`${f.name} should run ahead-of-time compiled code`);
 }
 
-// The compiler never saw this one.
 const evaluated = (0, eval)("(function evaluated() { return 7; })");
 evaluated();
 if (isAOTCompiled(evaluated))

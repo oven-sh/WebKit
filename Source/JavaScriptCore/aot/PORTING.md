@@ -1,168 +1,169 @@
-# Porting the ahead-of-time compiler to another CPU
+# Porting the AOT compiler to another CPU
 
-The back end is written for ARM64 and has run on macOS and Linux. Everywhere else `ENABLE(AOT)` is off, all of this compiles away,
-and the engine is as upstream has it. This says what assumes ARM64, where, and in what order to go about x86-64.
+The back end targets ARM64 and runs on macOS and Linux. On every other target `ENABLE(AOT)` is off and `aot/` compiles to nothing.
+This document lists the ARM64 assumptions, where they live, and a suggested order for an x86-64 port.
 
-The counts are from reading the source, not from compiling it for another CPU. Expect them to be low.
+The counts below come from reading the source, not from building for another CPU. Treat them as lower bounds.
 
-## How it fits together
+## Architecture
 
-| Stage | Files | Depends on the CPU? |
+| Stage | Files | CPU-dependent? |
 | --- | --- | --- |
-| Bytecode to a graph, and what is known about the whole program | `AOTGraph.*`, `AOTProgram.*`, `AOTEscapeAnalysis.*`, the type inference | No |
-| Graph to B3 | `AOTLower*.cpp` | Only in patchpoints |
-| B3 to machine code | `AOTCompiler.cpp`, then B3 and Air as they are | A little |
-| Code shared by all functions: calls to unknown callees, property access, entry and exit | `AOTStubs.*`, `AOTThunks.*` | **Yes, nearly all of it** |
-| Laying the code out and resolving references | `AOTImage.cpp`, with helpers at the end of `AOTStubs.cpp` | The helpers |
-| At run time: instances, linking, caches, operations | `AOTRuntime.*`, `AOTOperations*.cpp`, `AOTInlineCaches.cpp` | No |
-| What a program consists of besides its code, and the engine's objects for it | `AOTProgramData.*`, `runtime/CachedTypes.*` | No |
-| The interpreter's side | `llint/LowLevelInterpreter.asm` (`virtualThunkFor`) | No: offlineasm, and it already builds everywhere |
+| Bytecode to graph, whole-program analysis | `AOTGraph.*`, `AOTProgram.*`, `AOTEscapeAnalysis.*`, `AOTTypeInference.cpp` | No |
+| Graph to B3 | `AOTLower*.cpp` | Patchpoints only |
+| B3 to machine code | `AOTCompiler.cpp`, then stock B3 and Air | Slightly |
+| Shared code: virtual calls, property access, entry and exit | `AOTStubs.*`, `AOTThunks.*` | **Almost entirely** |
+| Image layout and relocation | `AOTImage.cpp`, helpers at the end of `AOTStubs.cpp` | The helpers |
+| Runtime: instances, linking, inline caches, operations | `AOTRuntime.*`, `AOTOperations*.cpp`, `AOTInlineCaches.cpp` | No |
+| Program data and the engine objects created from it | `AOTProgramData.*`, `runtime/CachedTypes.*` | No |
+| Interpreter support | `llint/LowLevelInterpreter.asm` (`virtualThunkFor`) | No (offlineasm, already builds everywhere) |
 
-## What assumes ARM64
+## ARM64 assumptions
 
-### 1. The gates
+### 1. Build gates
 
 - `ENABLE_AOT` in `wtf/PlatformEnable.h`.
-- The nine `AOTLower*.cpp` are gated as whole files on `ENABLE(AOT) && CPU(ARM64)`, as are most of `AOTCompiler.cpp`, `AOTStubs.cpp` and
-  `AOTThunks.cpp`. **None of that has ever been compiled for another CPU.**
-- `compileForImage()` declines everything where there is no back end. With the gates on and the back end missing, the shell runs its
-  script interpreted, and an embedder's build fails: an executable has no bytecode to fall back on. That is the first state to
-  reach.
+- All nine `AOTLower*.cpp` files, and most of `AOTCompiler.cpp`, `AOTStubs.cpp` and `AOTThunks.cpp`, are wrapped in
+  `ENABLE(AOT) && CPU(ARM64)`. **None of that code has been compiled for another CPU.**
+- Without a back end, `compileForImage()` rejects every function. The shell then falls back to the interpreter, but an embedder's
+  build fails because the executable contains no bytecode. This is the first milestone for a port.
 
-### 2. Registers: the hard part
+### 2. Registers (the hard part)
 
-`AOTConvention.h` describes the convention. It has choices for x86-64 that nothing has ever used.
+`AOTConvention.h` defines the calling convention. Its x86-64 branch has never been used.
 
-The stubs (`AOTStubs.cpp`, near the top) use 8 argument registers, `this`, the argument count, the callee, 5 scratch registers (`T11` to
-`T15`) and the 3 pinned registers (the instance, and the engine's two tag registers): 19, besides the frame pointer, the stack
-pointer and the link register.
+The stubs (top of `AOTStubs.cpp`) use 8 argument registers, `this`, the argument count, the callee, 5 scratch registers (`T11`-`T15`)
+and 3 pinned registers (the instance and the two tag registers). That is 19 registers, not counting the frame pointer, stack pointer
+and link register.
 
-x86-64 has 16 in all. Without the stack and frame pointers and the 3 pinned ones, 11 are left. With the 6 argument registers of
-`GPRInfo` and the other three, **2 are left as scratch where the stubs use 5.**
+x86-64 has 16 registers. Excluding the stack pointer, frame pointer and the 3 pinned registers leaves 11. Using `GPRInfo`'s 6
+argument registers plus `this`, count and callee leaves **2 scratch registers where the stubs need 5.**
 
-So decide this first. `numberOfArgumentGPRs` need not be `GPRInfo::numberOfArgumentRegisters`: with 4, there are 4 scratch registers,
-and functions with more parameters use `Signature::List`, which exists. (`EntryWord` has 4 bits for the count.) A function and its
-callers derive the convention from the bytecode alone (`conventionOf()`), so there is one place to change.
+Settle this first. `numberOfArgumentGPRs` does not have to equal `GPRInfo::numberOfArgumentRegisters`: with 4 argument registers
+there are 4 scratch registers, and functions with more parameters use the existing `Signature::List` convention. (`EntryWord` has 4
+bits for the count.) Callers and callees both derive the convention from bytecode via `conventionOf()`, so there is one place to change.
 
-An operation (C++) gets the instance as its first argument, which is a move from the pinned register. Operations that are shared with
-the other tiers get the global object, loaded from the instance. `takesInstance(Entry)` says which, from their signatures, and the
-compiler asserts it for every call.
+C++ operations take the instance as their first argument (a move from the pinned register). Operations shared with the JIT tiers
+take the global object, loaded from the instance. `takesInstance(Entry)` derives which from the signature, and the compiler asserts
+it at every call.
 
-Also: `indexOfFunctionGPR` in `AOTStubs.h`; the sequences that save and restore every register around a call into C++
-(`AOTStubs.cpp`, about line 290: `x0` to `x15` in pairs, `d0` to `d7` and `d16` to `d31`); the stubs that are generated once per result
-register (`x19` and up); stores of the zero register.
+Also register-specific: `functionIndexGPR` in `AOTStubs.h`; the save/restore sequences around C++ calls (`AOTStubs.cpp`, around line
+290: `x0`-`x15` in pairs, `d0`-`d7`, `d16`-`d31`); the stubs generated once per result register (`x19` and up); stores of the zero
+register.
 
 ### 3. The return address is in a register
 
-- A function that calls nothing and keeps nothing on the stack has no frame. `hasNoFrame()` in `AOTCompiler.cpp` recognizes a remaining
-  call by its patchpoint clobbering `lr`, which every call declares (`AOTLowerCalls.cpp`, `AOTLowerCore.cpp`).
-- **A stub pushes no frame.** It finds out who called it from `lr`: the function and the position in it are derived from the address
-  at which execution resumes (`FunctionRef::at()`, `classifyAddress()`). With `call` pushing the address, it is at
-  the top of the stack instead, and the stack is 8 bytes off its alignment inside a stub.
-- Two places materialize a return address other than the next instruction (`adr lr, label`, then a jump), and two take the address
-  of the same label to compare return addresses with, to tell whether a frame is to be popped on the way out: look for
-  `returnFromCallWithList()` and `s_addressesOfLabels`.
+- A leaf function with no spills has no frame. `hasNoFrame()` in `AOTCompiler.cpp` detects calls by looking for patchpoints that
+  clobber `lr`, which every call declares (`AOTLowerCalls.cpp`, `AOTLowerCore.cpp`).
+- **Stubs do not push a frame.** A stub identifies its caller from `lr`: the function and the position within it are derived from the
+  return address (`FunctionRef::at()`, `classifyAddress()`). On x86-64 `call` pushes the return address instead, so it is at the top of
+  the stack and the stack is misaligned by 8 bytes inside a stub.
+- Two sites materialize a return address that is not the next instruction (`adr lr, label` followed by a jump), and two compare return
+  addresses against that label to decide whether to pop a frame. Search for `returnFromCallWithList()` and `s_labelAddresses`.
 
-### 4. Instructions are four bytes
+### 4. Fixed four-byte instructions
 
 - Code is linked into a `Vector<uint32_t>` (`AOTCompiler.cpp`, `AOTStubs.cpp`).
-- A leading jump that turns out to be unnecessary is removed by moving every offset by `sizeof(uint32_t)`.
-- A near call is located as "the end of the instruction, less four bytes" (`StubCalls::link()`).
-- Padding loops and the sizes of veneers count in instructions.
+- Removing a redundant leading jump shifts every offset by `sizeof(uint32_t)`.
+- A near call is located as "end of instruction minus four bytes" (`StubCalls::link()`).
+- Padding loops and veneer sizes are counted in instructions.
 
-### 5. References that are resolved when the image is laid out
+### 5. Relocations applied at image layout
 
-Each is a small function at the end of `AOTStubs.cpp` with `RELEASE_ASSERT_NOT_REACHED()` for other CPUs, which makes them a list of what to
-write:
+Each is a small function at the end of `AOTStubs.cpp` that hits `RELEASE_ASSERT_NOT_REACHED()` on other CPUs, so together they form the
+list of what to implement:
 
-| Function | On ARM64 |
+| Function | ARM64 encoding |
 | --- | --- |
 | `retargetStubCall()` | `bl` or `b` with a 26-bit offset |
-| `writeVeneer()` | `adrp`, `add`, `br`: for a direct call whose target is out of reach |
-| `IndexReferences::load()` and `fill()` | `add` and `ldr` with 12-bit immediates: a table entry at a distance that depends on the function's index |
-| the fix-ups of `s_addressesOfLabels` | `adr` |
+| `writeVeneer()` | `adrp`, `add`, `br`, for direct calls whose target is out of range |
+| `IndexReferences::load()` and `fill()` | `add` and `ldr` with 12-bit immediates, addressing a table entry by function index |
+| `s_labelAddresses` fix-ups | `adr` |
 
-A branch reaches 128 MB, which is why an image has up to 8 copies of the stubs (`mostCopiesOfStubsInImage`) and veneers between
-functions. A 32-bit displacement reaches 2 GB, so on x86-64 there should be one copy and no veneers: see `reach` in `AOTImage.cpp`. The
-copies are identical byte for byte, so a stub cannot know which copy it is.
+An ARM64 branch reaches 128 MB, so an image holds up to 8 copies of the stubs (`maxStubCopiesPerImage`) and uses veneers between
+functions. A 32-bit displacement reaches 2 GB, so x86-64 should need one copy and no veneers (see `reach` in `AOTImage.cpp`). The copies
+are byte-identical, so a stub cannot tell which copy it is.
 
-**Nothing is at a known address.** No PC-relative reference leaves the code, and there is no absolute address in it or in the file:
-`compileForImage()` and `generateHelper()` check every constant. What the code needs it reaches from the instance register. An
-executable refers to its code by offset (`EntryWord`).
+**Nothing is at a fixed address.** No PC-relative reference leaves the code, and neither the code nor the file contains an absolute
+address; `compileForImage()` and `generateHelper()` check every constant. Compiled code reaches everything through the instance
+register. Executables refer to their code by offset (`EntryWord`).
 
 ### 6. Instances
 
-Everything that a program writes to is reached from the instance register. There is one `AOT::Instance` for each module loader, so a
-realm can run a program several times over. No instance, realm, VM or thread is special: whichever comes first may go first.
+All mutable program state is reached through the instance register. There is one `AOT::Instance` per module loader, so a realm can run
+the same program several times. No instance, realm, VM or thread is special, and they can be destroyed in any order.
 
-- Below the `Instance` is a table of pointers to the module environments, which are ordinary cells. `ImageEnvironment::distance` is the
-  distance of the pointer.
-- A function's Structure names its instance (`Structure::m_aotInstance`). None means that it runs under any instance of its realm, which
-  is so for builtins.
-- Three stubs depend on that: `findCodeOfCallee()` (the caller's, or none and of the caller's realm: straight in; otherwise the long way),
-  `generateEnterStaticFunction()` (callee, Structure, instance, or else that of its realm), and `adapt()`, which saves, switches and restores
-  the register.
-- Every realm has an instance from the start, because its builtins are compiled code.
-- A function belongs to the instance of the module whose environment it closes over (`instanceOf()`). One that closes over none is
-  the realm's.
-- An instance lives as long as its loader. Code that runs was entered through a frame with its callee in it, which is what keeps the
-  loader alive, so **the entry adapter's frame must have the callee where the collector's scan of the stack sees it.**
+- A table of pointers to module environments (ordinary cells) sits below the `Instance`. `ImageEnvironment::distance` is the offset of
+  the pointer.
+- A function's Structure records its instance (`Structure::m_aotInstance`). Null means it can run under any instance of its realm, which
+  is the case for builtins.
+- Three stubs depend on this: `findCalleeCode()` (fast path when the callee's instance is the caller's, or null in the same realm),
+  `generateEnterStaticFunction()` (callee to Structure to instance, falling back to the realm's instance), and `adapt()`, which saves,
+  switches and restores the register.
+- Every realm has an instance from creation, because its builtins are compiled code.
+- A function belongs to the instance of the module whose environment it closes over (`instanceOf()`), or to the realm's instance if it
+  closes over none.
+- An instance lives as long as its loader. Running code was entered through a frame that holds its callee, which keeps the loader alive,
+  so **the entry adapter's frame must keep the callee where conservative stack scanning can find it.**
 
-### 7. What belongs to whom
+### 7. Ownership levels
 
-| Level | What | Where |
+| Level | Contents | Where |
 | --- | --- | --- |
-| The process | The file: code, tables, `ProgramData`. Derived from the program alone, read-only, offsets and numbers only | `Image`, `ProgramData` |
-| The VM | The engine's objects for what the file describes, each made in the ordinary heap when it is first asked for: atoms, string and BigInt constants, executables, symbol tables, storage of array literals, regular expressions, source providers | `ProgramOfVM` |
-| The realm | Anything about objects: Structures of literals and known shapes, link-time constants, what is assumed of the built-in prototypes | the realm's `Instance` |
-| The instance | Module environments and records, functions, classes, template objects, inline caches | `Instance`, `Data` |
+| Process | The file: code, tables and `ProgramData`. Derived only from the program, read-only, offsets and indices only | `Image`, `ProgramData` |
+| VM | Engine objects for the file's contents, created lazily in the ordinary heap: atoms, string and BigInt constants, executables, symbol tables, array literal storage, regular expressions, source providers | `VMProgram` |
+| Realm | Anything involving objects: Structures for literals and known shapes, link-time constants, assumptions about built-in prototypes | The realm's `Instance` |
+| Instance | Module environments and records, functions, classes, template objects, inline caches | `Instance`, `Data` |
 
-**An object of the VM's refers only to primitives and to others of the VM's, never to a JSObject** (`ProgramOfVM::constant()` asserts
-it), because every realm and instance of the VM shares it.
+**A VM-level object may only reference primitives and other VM-level objects, never a `JSObject`** (asserted in
+`VMProgram::constant()`), because it is shared by every realm and instance in the VM.
 
-Compiled code reads two of the VM's tables itself, the constants and the identifiers. An entry is zero until it has been asked for,
-so a load of a constant is followed by a check (`Lowering::lowConstantRegister()`), and a stub that finds no identifier takes its slow
-path. It cannot be done when a function is linked: a function that is called directly, or starts cold, never is.
+Compiled code fetches a constant by index through `Stub::Constant`, which probes a per-VM hash table and creates the constant on a miss.
+Stubs read the per-VM identifier table directly and take their slow path when an entry is null. Neither can be resolved at link time,
+because functions that are called directly or start cold are never linked. A module's top-level code runs once, so its constants are
+created per use and are not cached (`Stub::TransientConstant`).
 
-### 8. Odds and ends
+A module has no `CodeBlock` or `UnlinkedCodeBlock`. `ProgramModule` holds what the module loader needs, module code has the same
+`FunctionMetadata` as a function, and `Interpreter::executeModuleProgram()` enters it through `Stub::EnterModule`. A `CodeBlock` is created
+on demand for direct `eval`.
 
-- A StructureID becomes an address by adding `Instance::structureIDBase` (`structureWithID()` in `AOTStubs.cpp`). The stub that enters a function
-  from outside has no instance yet, and finds the same in the VM, through the callee's block.
-- Of the 133 methods of the macro assembler that `aot/` uses (1,941 uses), four have no definition for x86-64 or in the shared
-  helpers: `extractUnsignedBitfield64` (6 uses), `div32`, `multiplySub32`, all in `AOTStubs.cpp`, and
-  `convertDoubleToInt32UsingJavaScriptSemantics` in `AOTLowerCore.cpp`, which is behind a check of the CPU's features already.
-- `imageStamp()` mixes in the CPU, and has a case for x86-64.
-- Compiled code runs with the JIT off (`Options::notifyOptionsChanged()`), and an image is refused with it on.
+### 8. Miscellaneous
 
-## The platform, as opposed to the CPU
+- A StructureID is converted to an address by adding `Instance::structureIDBase` (`structureWithID()` in `AOTStubs.cpp`). The stub that enters
+  compiled code from outside has no instance yet and reads the same value from the VM, found through the callee's `MarkedBlock`.
+- `aot/` uses 133 macro assembler methods (1,941 call sites). Four have no x86-64 or shared implementation:
+  `extractUnsignedBitfield64` (6 uses), `div32` and `multiplySub32`, all in `AOTStubs.cpp`, and
+  `convertDoubleToInt32UsingJavaScriptSemantics` in `AOTLowerCore.cpp`, which is already behind a CPU feature check.
+- `imageStamp()` includes the CPU and already has an x86-64 case.
+- Compiled code requires the JIT to be off (`Options::notifyOptionsChanged()`); an image is rejected otherwise.
 
-- **Mapping** is `useAOTFile()`, for the shell and for embedders alike. An embedder maps the file read-only wherever the system puts it and
-  says which file, and where in it. Only the code is mapped again, to be executable. Nothing else is asked of the platform: no
-  address is reserved, the allocators and WTF are as upstream has them, and a thread or a VM needs no preparation.
-- **Page sizes.** An image is aligned to 16 KB in its file (`imagePageSize`, `pageSizeOfImage`), so a kernel with larger pages cannot map its
-  code.
+## Platform (as opposed to CPU)
 
-## An order to do it in
+- **Mapping.** Both the shell and embedders use `useAOTFile()`. The embedder maps the file read-only at any address and passes the file and
+  offset. Only the code is mapped a second time, as executable. There are no other platform requirements: no reserved address ranges, no
+  allocator or WTF changes, and no per-thread or per-VM setup.
+- **Page size.** An image is aligned to 16 KB within its file (`imagePageSize`, `pageSizeOfImage`), so kernels with larger pages cannot map
+  the code.
 
-1. The gate on for the new CPU, the back end still missing. Everything compiles and links, in the engine and in the embedder.
-   `compileForImage()` declines everything, so `run-tests.py` runs the tests interpreted: all pass but those that call `isAOTCompiled()`.
-2. Decide the registers (2 above).
-3. Lift the whole-file gates of `AOTLower*.cpp` and `AOTCompiler.cpp`, and make them compile.
-4. The entry adapter, the prologue and the epilogue. A function that returns a constant, called from the interpreter.
-5. The references (5 above), then direct calls between functions.
-6. The stubs, in the order in which `JSTests/stress/aot-*.js` needs them. There are about 150 (`AOTStubs.h`), most of them small, and many are
-   one generator with different arguments.
-7. Exceptions and stack walking: `aot-*` tests with `catch`, stack overflow, `Error.stack`.
-8. `compare-with-interpreter.py` over all of `JSTests/stress`. Then the modes `aot` and `aot-validate` of `run-javascriptcore-tests`. Then `fuzz.py`.
+## Suggested order
+
+1. Enable the gate for the new CPU with no back end. Everything should compile and link, in the engine and the embedder.
+   `compileForImage()` rejects every function, so `run-tests.py` runs interpreted and only the tests that call `isAOTCompiled()` fail.
+2. Decide the register assignment (section 2).
+3. Remove the file-level gates from `AOTLower*.cpp` and `AOTCompiler.cpp` and fix the build.
+4. Entry adapter, prologue and epilogue. Target: a function that returns a constant, called from the interpreter.
+5. Relocations (section 5), then direct calls between functions.
+6. Stubs, in the order `JSTests/stress/aot-*.js` needs them. There are about 150 (`AOTStubs.h`); most are small and many share a generator.
+7. Exceptions and stack walking: the `aot-*` tests that use `catch`, stack overflow and `Error.stack`.
+8. `compare-with-interpreter.py` over `JSTests/stress`, then the `aot` and `aot-validate` modes of `run-javascriptcore-tests`, then `fuzz.py`.
 9. The embedder's tests.
 
-All but the last needs nothing but `jsc`, which builds a file and runs from it as an embedder does.
+Steps 1-8 only need `jsc`, which builds an image and runs from it the same way an embedder does. The tools are in
+`Tools/Scripts/aot/`; see the README there.
 
-The tools are in `Tools/Scripts/aot/`, with a README.
+## Pitfalls
 
-## What to be suspicious of
-
-- In the shell, what the compiler declines is interpreted, and the test passes. Check that it was compiled.
-- Anything that holds "usually": a mapping that tends to be nearby, a page size that happens to match. Make the rare case the normal
-  one in tests.
-- A syntax check cannot see a link error, and a build with a precompiled header cannot see a missing include.
+- In the shell, a function the compiler rejects is interpreted and the test still passes. Check that it was actually compiled.
+- Be wary of anything that only usually holds, such as a mapping that tends to land nearby or a page size that happens to match. Make
+  the rare case the common one in tests.
+- A syntax-only check cannot catch link errors, and a build with a precompiled header cannot catch missing includes.

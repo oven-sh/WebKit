@@ -804,7 +804,6 @@ static ALWAYS_INLINE bool cannotBeIdentPartOrEscapeStart(char16_t c)
     return isWhiteSpace(c) || isLineTerminator(c);
 }
 
-
 template<>
 ALWAYS_INLINE char32_t Lexer<Latin1Character>::currentCodePoint() const
 {
@@ -2968,7 +2967,6 @@ start:
     }
 
     case   1 /*   1 = Start of Heading CharacterInvalid */: {
-        // Six characters, each of them six bits of a number, the first the highest. It goes for the token that comes next.
         if (!Options::useTypeTags())
             goto invalidCharacter;
         uint64_t tag = 0;

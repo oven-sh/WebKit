@@ -8,14 +8,14 @@
 
 #if ENABLE(AOT)
 
-#include "LinkTimeConstant.h"
-#include "ImmutableIntrinsics.h"
 #include "AOTImage.h"
 #include "AOTType.h"
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
+#include "ImmutableIntrinsics.h"
 #include "JSCInlines.h"
 #include "JSGlobalLexicalEnvironment.h"
+#include "LinkTimeConstant.h"
 #include "PreciseJumpTargets.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
@@ -71,31 +71,31 @@ Vector<FunctionAssignment> functionAssignmentsIn(UnlinkedCodeBlock* codeBlock)
     return functionAssignments().get(codeBlock);
 }
 
-static const NumbersOfIdentifiers* s_numbersOfIdentifiersOfProgram;
+static const IdentifierIndices* s_programIdentifierIndices;
 
-void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers* numbers)
+void setProgramIdentifierIndices(const IdentifierIndices* numbers)
 {
-    s_numbersOfIdentifiersOfProgram = numbers;
+    s_programIdentifierIndices = numbers;
 }
 
-const NumbersOfIdentifiers* numbersOfIdentifiersOfProgram()
+const IdentifierIndices* programIdentifierIndices()
 {
-    return s_numbersOfIdentifiersOfProgram;
+    return s_programIdentifierIndices;
 }
 
-static const NumbersOfConstants* s_numbersOfConstantsOfProgram;
+static const ConstantIndices* s_programConstantIndices;
 
-void setNumbersOfConstantsOfProgram(const NumbersOfConstants* numbers)
+void setProgramConstantIndices(const ConstantIndices* numbers)
 {
-    s_numbersOfConstantsOfProgram = numbers;
+    s_programConstantIndices = numbers;
 }
 
-const Vector<uint32_t>* numbersOfConstantsOfProgramFor(UnlinkedCodeBlock* codeBlock)
+const Vector<uint32_t>* programConstantIndicesFor(UnlinkedCodeBlock* codeBlock)
 {
-    if (!s_numbersOfConstantsOfProgram)
+    if (!s_programConstantIndices)
         return nullptr;
-    auto it = s_numbersOfConstantsOfProgram->find(codeBlock);
-    return it == s_numbersOfConstantsOfProgram->end() ? nullptr : &it->value;
+    auto it = s_programConstantIndices->find(codeBlock);
+    return it == s_programConstantIndices->end() ? nullptr : &it->value;
 }
 
 void forgetDeclaredNames()
@@ -111,7 +111,7 @@ void VariableSummaries::giveUpOnName(UniquedStringImpl* name)
     m_untrackedNames.add(name);
 }
 
-void VariableSummaries::recordDynamicReadOfName(UniquedStringImpl* name)
+void VariableSummaries::recordDynamicNameRead(UniquedStringImpl* name)
 {
     Locker locker { m_givenUpLock };
     m_dynamicallyReadNames.add(name);
@@ -125,7 +125,7 @@ void VariableSummaries::giveUpOnScope(const void* scope)
 
 bool VariableSummaries::isUntracked(Variable variable, UniquedStringImpl* name) const
 {
-    return m_hasGivenUpOnEveryScope.load(std::memory_order_relaxed) || m_untrackedScopes.contains(variable.scope) || m_untrackedNames.contains(name);
+    return m_hasGivenUpOnAllScopes.load(std::memory_order_relaxed) || m_untrackedScopes.contains(variable.scope) || m_untrackedNames.contains(name);
 }
 
 Type VariableSummaries::read(Variable variable, UniquedStringImpl* name, unsigned reader)
@@ -145,8 +145,8 @@ Type VariableSummaries::read(Variable variable, UniquedStringImpl* name, unsigne
     return type;
 }
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionsOfProgram);
-WTF_MAKE_TZONE_ALLOCATED_IMPL(ClassesOfProgram);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramFunctions);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramClasses);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MultiValueReturnTable);
 
@@ -167,15 +167,14 @@ const MultiValueReturnTable::Names* registerReturnValuesOf(UnlinkedCodeBlock* co
     return s_multiValueReturnTable->returnValueNamesOf(code);
 }
 
-static ClassesOfProgram* s_classesOfProgram;
-void setClassesOfProgram(ClassesOfProgram* classes) { s_classesOfProgram = classes; }
-ClassesOfProgram* classesOfProgram() { return s_classesOfProgram; }
+static ProgramClasses* s_programClasses;
+void setProgramClasses(ProgramClasses* classes) { s_programClasses = classes; }
+ProgramClasses* programClasses() { return s_programClasses; }
 
-void ClassesOfProgram::recordNonEscapingMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function)
+void ProgramClasses::recordNonEscapingMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function)
 {
     Locker locker { m_lock };
     auto result = m_methods.add({ classType, name }, function);
-    // Defined twice: the bundler duplicated the source text, and it is unknown which copy a reference means.
     if (!result.isNewEntry && result.iterator->value != function) {
         m_nonEscapingMethods.remove(result.iterator->value);
         result.iterator->value = 0;
@@ -185,19 +184,19 @@ void ClassesOfProgram::recordNonEscapingMethod(uint32_t classType, UniquedString
         m_nonEscapingMethods.add(function);
 }
 
-void ClassesOfProgram::noteThisIn(UnlinkedCodeBlock* code, uint16_t layoutID)
+void ProgramClasses::noteThisIn(UnlinkedCodeBlock* code, uint16_t layoutID)
 {
     if (!code)
         return;
     Locker locker { m_lock };
-    auto result = m_layoutIDOfThis.add(code, layoutID);
+    auto result = m_thisLayoutID.add(code, layoutID);
     if (!result.isNewEntry && result.iterator->value != layoutID)
         result.iterator->value = 0;
 }
 
-static const FunctionsOfProgram* s_functionsOfProgram;
-void setFunctionsOfProgram(const FunctionsOfProgram* functions) { s_functionsOfProgram = functions; }
-const FunctionsOfProgram* functionsOfProgram() { return s_functionsOfProgram; }
+static const ProgramFunctions* s_programFunctions;
+void setProgramFunctions(const ProgramFunctions* functions) { s_programFunctions = functions; }
+const ProgramFunctions* programFunctions() { return s_programFunctions; }
 
 Type VariableSummaries::join(Variable variable, Type type)
 {
@@ -221,7 +220,7 @@ Vector<unsigned> VariableSummaries::untrackVariablesReadButNeverWritten(unsigned
                 made.add(entry.key.first);
         }
     }
-    SetOfReaders result;
+    ReaderSet result;
     for (auto& shard : m_shards) {
         for (auto& entry : shard.cells) {
             if (made.contains(entry.key.first) || m_untrackedScopes.contains(entry.key.first) || entry.value->readers.isEmpty())
@@ -239,9 +238,9 @@ Vector<unsigned> VariableSummaries::untrackVariablesReadButNeverWritten(unsigned
     return copyToVector(result);
 }
 
-Vector<unsigned> VariableSummaries::takeReadersOfWidenedVariables()
+Vector<unsigned> VariableSummaries::takeWidenedVariableReaders()
 {
-    SetOfReaders result;
+    ReaderSet result;
     for (auto& shard : m_shards) {
         for (auto& entry : shard.cells) {
             if (!std::exchange(entry.value->grew, false))
@@ -309,13 +308,12 @@ void ModuleHints::prove()
         Variable& variable = entry.value;
         variable.function.isExact = variable.binding.keepsDeclaredValue && variable.numberOfFunctions == 1 && variable.isDescribed;
         variable.function.escapes = variable.binding.escapes;
-        variable.function.isVisibleFromOutside = variable.binding.isVisibleFromOutside;
-        // (Strict code cannot be asked for its callee. Sloppy code can, through Function.prototype.caller.)
+        variable.function.isExternallyVisible = variable.binding.isExternallyVisible;
         variable.function.needsNoFunctionObject = variable.function.isExact && variable.function.forCall && !needsFunctionObject(variable.function.forCall);
     }
 }
 
-const void* ModuleHints::scopeOfVariables() const
+const void* ModuleHints::variableScope() const
 {
     return m_module ? m_module->getConstant(VirtualRegister(m_module->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell() : nullptr;
 }
@@ -323,13 +321,12 @@ const void* ModuleHints::scopeOfVariables() const
 void ModuleHints::noteEscape(unsigned scopeOffset)
 {
     if (auto it = m_variables.find(scopeOffset); it != m_variables.end())
-        it->value.function.escapes = it->value.function.isVisibleFromOutside = true;
+        it->value.function.escapes = it->value.function.isExternallyVisible = true;
 }
 
 unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)
 {
     unsigned capacity = std::min(std::max(numberOfProperties, 1u), JSFinalObject::maxInlineCapacity);
-    // Plus the extra capacity that fits in a cell of the size class that it is allocated from.
     size_t size = JSFinalObject::allocationSize(capacity);
     capacity += (MarkedSpace::optimalSizeFor(size) - size) / sizeof(WriteBarrier<Unknown>);
     return std::min(capacity, JSFinalObject::maxInlineCapacity);
@@ -361,14 +358,13 @@ std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant)
 ValueRepresentations valueRepresentations(const FunctionSummary* summary, Convention convention)
 {
     ValueRepresentations result;
-    // (Validation checks boxed values.)
     if (!summary || !summary->isNonEscaping || convention.signature != Signature::Registers || Options::validateAOTInferredTypes())
         return result;
     auto repFor = [](Type type) {
         Rep rep = type ? repForType(type) : Rep::JSValue;
         return rep == Rep::Int32 || rep == Rep::Double || rep == Rep::Boolean ? rep : Rep::JSValue;
     };
-    static_assert(numberOfArgumentGPRs < FunctionSummary::mostParameters);
+    static_assert(numberOfArgumentGPRs < FunctionSummary::maxParameters);
     for (unsigned i = 0; i < convention.numberOfParameters; ++i)
         result.parameters[i] = repFor(summary->parameterTypes[i + 1].load());
     if (!summary->returnsBoxed)
@@ -378,11 +374,11 @@ ValueRepresentations valueRepresentations(const FunctionSummary* summary, Conven
 
 Vector<Rep, 8> returnValueReps(const FunctionSummary* summary, unsigned count)
 {
-    bool asTheyAre = !Options::validateAOTInferredTypes();
+    bool skipsValidation = !Options::validateAOTInferredTypes();
     Vector<Rep, 8> result;
     for (unsigned i = 0; i < count; ++i) {
         Type type = summary->returnValueTypes[i].load();
-        Rep rep = asTheyAre && type ? repForType(type) : Rep::JSValue;
+        Rep rep = skipsValidation && type ? repForType(type) : Rep::JSValue;
         result.append(rep == Rep::Int32 || rep == Rep::Double || rep == Rep::Boolean ? rep : Rep::JSValue);
     }
     return result;
@@ -404,7 +400,6 @@ Convention conventionOf(UnlinkedCodeBlock* codeBlock)
             takesList = true;
             break;
         case op_get_argument:
-            // (op_get_argument counts `this`.)
             takesList |= static_cast<unsigned>(instruction->as<OpGetArgument>().m_index) > numberOfParameters;
             break;
         default:
@@ -433,7 +428,6 @@ bool needsFunctionObject(UnlinkedCodeBlock* codeBlock)
 
 bool readsCallee(UnlinkedCodeBlock* codeBlock)
 {
-    // A named function expression gets a copy of its callee bound to its name, whether or not it ever uses the name.
     Vector<VirtualRegister, 2> copies;
     bool result = false;
     for (const auto& instruction : codeBlock->instructions()) {

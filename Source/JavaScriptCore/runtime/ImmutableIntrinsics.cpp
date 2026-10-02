@@ -53,7 +53,6 @@ void ImmutableIntrinsics::ensureShared(VM& vm)
 
 static uint64_t keyFor(unsigned holder, const StringImpl& name)
 {
-    // (Not zero, and not all ones.)
     return static_cast<uint64_t>(holder + 1) << 32 | name.hash();
 }
 
@@ -67,7 +66,7 @@ unsigned ImmutableIntrinsics::find(unsigned holder, const StringImpl& name) cons
     return it->value;
 }
 
-Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObject, std::span<const ASCIILiteral> namesOfVariables)
+Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObject, std::span<const ASCIILiteral> variableNames)
 {
     VM& vm = globalObject->vm();
     auto description = std::unique_ptr<ImmutableIntrinsics>(new ImmutableIntrinsics);
@@ -91,7 +90,6 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
             }
         } else
             entry.primitive = JSValue::encode(value);
-        // (Of two names that cannot be told apart at a glance, neither is known.)
         if (number && !description->m_numbers.add(keyFor(holder, name), number).isNewEntry)
             description->m_numbers.set(keyFor(holder, name), 0);
         description->m_hash = WTF::pairIntHash(description->m_hash, WTF::pairIntHash(name.hash(), holder << 16 | entry.canonical)) + entry.type + entry.isCell;
@@ -100,11 +98,10 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
     };
 
     add(0, *StringImpl::empty(), globalObject);
-    for (ASCIILiteral name : namesOfVariables) {
+    for (ASCIILiteral name : variableNames) {
         Identifier identifier = Identifier::fromString(vm, name);
         add(ImmutableIntrinsics::globalObject, *identifier.impl(), globalObject->getDirect(vm, identifier));
     }
-    // Objects that are discovered along the way are appended, and visited in turn.
     for (unsigned number = 1; number < values.size(); ++number) {
         JSObject* object = JSValue::decode(values[number]).getObject();
         if (!object || description->m_entries[number].canonical != number || !object->structure()->inheritorsMayOverrideReadOnlyProperties())

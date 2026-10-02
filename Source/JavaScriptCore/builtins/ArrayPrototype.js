@@ -346,13 +346,8 @@ function at(index)
     return (k >= 0 && k < length) ? array[k] : @undefined;
 }
 
-// ---- Versions of the above that the AOT compiler inlines into their callers (AOT::Inliner). Nothing else ever runs them. |this|
-// is an array, and the only argument is a function, so there is nothing to convert or check, and no thisArg. In these functions,
-// and only when compiled by that compiler, reading a missing element yields the empty value (Graph::readsElementsOrEmpty), so
-// presence does not have to be tested separately.
-
 @overriddenName="forEach"
-function forEachOfArray(callback)
+function forEachKnownArray(callback)
 {
     "use strict";
 
@@ -366,7 +361,7 @@ function forEachOfArray(callback)
 }
 
 @overriddenName="map"
-function mapOfArrayForEffect(callback)
+function mapKnownArrayForEffect(callback)
 {
     "use strict";
 
@@ -380,7 +375,7 @@ function mapOfArrayForEffect(callback)
 }
 
 @overriddenName="filter"
-function filterOfArrayForEffect(callback)
+function filterKnownArrayForEffect(callback)
 {
     "use strict";
 
@@ -394,7 +389,7 @@ function filterOfArrayForEffect(callback)
 }
 
 @overriddenName="map"
-function mapOfArray(callback)
+function mapKnownArray(callback)
 {
     "use strict";
 
@@ -410,7 +405,7 @@ function mapOfArray(callback)
 }
 
 @overriddenName="filter"
-function filterOfArray(callback)
+function filterKnownArray(callback)
 {
     "use strict";
 
@@ -430,7 +425,7 @@ function filterOfArray(callback)
 }
 
 @overriddenName="some"
-function someOfArray(callback)
+function someKnownArray(callback)
 {
     "use strict";
 
@@ -446,7 +441,7 @@ function someOfArray(callback)
 }
 
 @overriddenName="every"
-function everyOfArray(callback)
+function everyKnownArray(callback)
 {
     "use strict";
 
@@ -462,7 +457,7 @@ function everyOfArray(callback)
 }
 
 @overriddenName="reduce"
-function reduceOfArray(callback, initialValue)
+function reduceKnownArray(callback, initialValue)
 {
     "use strict";
 

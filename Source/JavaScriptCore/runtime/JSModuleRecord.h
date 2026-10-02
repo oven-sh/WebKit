@@ -36,6 +36,9 @@ namespace JSC {
 
 class JSModuleEnvironment;
 class ModuleFunctionDeclarationSlots;
+namespace AOT {
+struct ProgramModule;
+}
 class UnlinkedFunctionExecutable;
 class UnlinkedModuleProgramCodeBlock;
 
@@ -88,6 +91,9 @@ public:
     // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did
     // not instantiate; each is instantiated into its module environment slot when the slot is first read while empty.
     void setFunctionDeclarationSlots(VM&, ModuleProgramExecutable*, UnlinkedModuleProgramCodeBlock*, bool leftUninstantiated);
+#if ENABLE(AOT)
+    void setProgramModule(VM&, ModuleProgramExecutable*);
+#endif
     // Whether readers of this module environment slot have to expect an uninstantiated function declaration. This only
     // depends on the module's code (and the option), never on what has been instantiated so far: code that is shared
     // between the CodeBlocks of one UnlinkedCodeBlock is specialized on the answer.
@@ -108,12 +114,9 @@ public:
     Resolution resolveImportWithSlot(JSGlobalObject*, const Identifier& localName, unsigned& importSlot);
     JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
 #if USE(BUN_JSC_ADDITIONS)
-    // Whether the imports that the prelinked module graph resolves to variables of other modules in the graph really are those
-    // variables for this record. Code that was compiled using the graph (AOT::ModuleLinkage) reads them at fixed locations without
-    // checking. Call this once the module is linked. The result is cached.
 #if ENABLE(AOT)
-    JS_EXPORT_PRIVATE bool isLinkedAsInImage(JSGlobalObject*);
-    bool isItselfLinkedAsInImage(JSGlobalObject*, const Function<bool(JSModuleRecord*)>& mayImportFrom);
+    JS_EXPORT_PRIVATE bool isLinkedAsCompiled(JSGlobalObject*);
+    bool isSelfLinkedAsCompiled(JSGlobalObject*, const Function<bool(JSModuleRecord*)>& mayImportFrom);
 #endif
 #endif
     std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
@@ -136,7 +139,7 @@ private:
     std::optional<Vector<Identifier>> m_importSlotNames;
     HashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> m_importSlotIndices; // filled with m_importSlotNames
     CodeFeatures m_features;
-    TriState m_isLinkedAsInImage { TriState::Indeterminate };
+    TriState m_isLinkedAsCompiled { TriState::Indeterminate };
 
     struct UninstantiatedFunctionDeclarations {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);
@@ -144,7 +147,12 @@ private:
         WriteBarrier<UnlinkedModuleProgramCodeBlock> unlinkedCodeBlock; // functionDecl(i) belongs to slot i of m_functionDeclarationSlots; null when the slots can decode the declarations without it
         unsigned remaining { 0 }; // released when it reaches zero; a slot that was assigned to before it was read keeps it above
     };
+    std::optional<unsigned> functionDeclarationIndex(ScopeOffset) const;
+
     RefPtr<ModuleFunctionDeclarationSlots> m_functionDeclarationSlots;
+#if ENABLE(AOT)
+    const AOT::ProgramModule* m_programModule { nullptr };
+#endif
     std::unique_ptr<UninstantiatedFunctionDeclarations> m_uninstantiatedFunctionDeclarations; // released under cellLock()
 };
 

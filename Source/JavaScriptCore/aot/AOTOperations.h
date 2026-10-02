@@ -39,9 +39,9 @@ JSC_DECLARE_JIT_OPERATION(operationAOTToNumber, EncodedJSValue, (Instance*, Enco
 JSC_DECLARE_JIT_OPERATION(operationAOTToNumeric, EncodedJSValue, (Instance*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTToString, EncodedJSValue, (Instance*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTToBoolean, size_t, (Instance*, EncodedJSValue));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstantOfProgram, EncodedJSValue, (Instance*, uint32_t number));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTProgramConstant, EncodedJSValue, (Instance*, uint32_t number));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTemplateObject, EncodedJSValue, (Instance*, uint32_t number));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstantForOneUse, EncodedJSValue, (Instance*, uint32_t number));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCreateTransientConstant, EncodedJSValue, (Instance*, uint32_t number));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareGreater, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
@@ -61,19 +61,18 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutToScope, void, (Instance*, JSObject* sc
 JSC_DECLARE_JIT_OPERATION(operationAOTThrow, void, (Instance*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckType, void, (Instance*, EncodedJSValue, uint32_t mask));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (Instance*, EncodedJSValue));
-JSC_DECLARE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (Instance*, EncodedJSValue, uint32_t layoutID)); // Lowering::checkTypedLayout()
-JSC_DECLARE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t layoutID)); // Lowering::coerceToTypedLayout()
-// which: the identifier number | typed layout << 32 | slot << 48 | allowsUndefined << 56.
-JSC_DECLARE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t which)); // Stub::ReadSlot0: id | slot << 16 | undefined will do << 24
+JSC_DECLARE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (Instance*, EncodedJSValue, uint32_t layoutID));
+JSC_DECLARE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t layoutID));
+JSC_DECLARE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (Instance*, EncodedJSValue base, uint64_t which));
-JSC_DECLARE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance*, JSObject*)); // Lowering::validateNewObject()
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Instance*, EncodedJSValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));
+JSC_DECLARE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance*, JSObject*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Instance*, EncodedJSValue, uint64_t typeLowHalf, uint64_t typeHighHalf, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));
 JSC_DECLARE_JIT_OPERATION(operationAOTHandleTraps, void, (Instance*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM*));
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo*);
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*));
-JSC_DECLARE_JIT_OPERATION(operationAOTNarrowStringEqualTo, StringImpl*, (Instance*, JSString*)); // Null: there is none.
+JSC_DECLARE_JIT_OPERATION(operationAOTLatin1StringEqualTo, StringImpl*, (Instance*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationAOTSwitchString, int32_t, (Instance*, EncodedJSValue, uint32_t tableIndex, uint32_t whose));
 JSC_DECLARE_JIT_OPERATION(operationAOTSwitchChar, int32_t, (Instance*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFMod, double, (double, double));

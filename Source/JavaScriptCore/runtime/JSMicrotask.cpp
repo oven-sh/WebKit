@@ -161,7 +161,6 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
 
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
         if ((sizeof...(args) + 1) >= (newCodeBlock ? newCodeBlock->numParameters() : functionExecutable->parameterCount() + 1)) [[likely]] {
-            // AOT code has no CodeBlock or JITCode. See Interpreter::prepareForMicrotaskCall().
             auto* entry = newCodeBlock ? functionExecutable->generatedJITCodeAddressForCall() : functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
             auto* callee = asObject(functionObject.asCell());
             if constexpr (!sizeof...(args))
@@ -186,7 +185,7 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
         calleeGlobalObject = functionScope->realm();
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            jitCode = functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForCall);
+            jitCode = functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall);
         }
     } else {
         ASSERT(callData.type == CallData::Type::Native);
@@ -203,7 +202,7 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     protoCallFrame.init(newCodeBlock, calleeGlobalObject, asObject(functionObject), thisValue, context, sizeof...(args) + 1, argArray.data());
 
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForCall));
+        ASSERT(jitCode == functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall));
         return JSValue::decode(vmEntryToJavaScript(functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
     }
 

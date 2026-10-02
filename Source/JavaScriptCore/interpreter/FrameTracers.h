@@ -165,8 +165,6 @@ public:
 #endif
 };
 
-// For an operation called from ahead-of-time compiled code. Its stubs have no equivalent of prepareCallOperation(), which only
-// stores anything in a build with assertions.
 class AOTOperationPrologueCallFrameTracer {
 public:
     ALWAYS_INLINE AOTOperationPrologueCallFrameTracer(VM& vm, CallFrame* callFrame)
@@ -183,7 +181,6 @@ public:
 #if ASSERT_ENABLED
     ~AOTOperationPrologueCallFrameTracer()
     {
-        // As for JITOperationPrologueCallFrameTracer.
         m_vm.topCallFrame = std::bit_cast<CallFrame*>(static_cast<uintptr_t>(0x0badbeef0badbeefULL));
     }
 
@@ -205,6 +202,5 @@ public:
     VM& m_vm;
 #endif
 };
-
 
 } // namespace JSC

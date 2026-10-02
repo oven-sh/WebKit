@@ -373,7 +373,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     programExecutableStructure.setWithoutWriteBarrier(ProgramExecutable::createStructure(*this, nullptr, jsNull()));
     functionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructure(*this, nullptr, jsNull()));
     m_structureIDBase = JSC::structureIDBase();
-    shortFunctionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructureOfShortForm(*this, nullptr, jsNull()));
+    shortFunctionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createShortFormStructure(*this, nullptr, jsNull()));
 #if ENABLE(WEBASSEMBLY)
     pinballCompletionStructure.setWithoutWriteBarrier(PinballCompletion::createStructure(*this, nullptr, jsNull()));
     webAssemblyStreamingContextStructure.setWithoutWriteBarrier(JSWebAssemblyStreamingContext::createStructure(*this, nullptr, jsNull()));
@@ -575,8 +575,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         m_sharedJITStubs = makeUnique<SharedJITStubSet>();
         getBoundFunction(/* isJSFunction */ true, SourceTaintedOrigin::Untainted);
     } else if (Options::useRegExpJIT()) {
-        // The code of a regular expression calls thunks of its own, which are made when they are first asked for. (So this leaves
-        // out initialize(), which makes the thunks that compiled JavaScript uses.)
         jitStubs = makeUnique<JITThunks>();
     }
 #endif // ENABLE(JIT)
@@ -687,7 +685,7 @@ VM::~VM()
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
 #if ENABLE(AOT)
-    AOT::Instance::destroyThoseNoLongerNeeded(*this);
+    AOT::Instance::destroyUnneededInstances(*this);
 #endif
     heap.lastChanceToFinalize();
 

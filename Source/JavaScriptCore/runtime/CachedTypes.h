@@ -105,7 +105,6 @@ public:
     // The 4-byte slot a cached non-symbol string occupies (CachedPtr's encoding): a 1-3 character Latin-1 string inline,
     // else an ordinal into this table, or the empty sentinel. DecoderStringTable::atomForSlot reads it back.
     JS_EXPORT_PRIVATE uint32_t slotFor(const StringImpl&);
-    // What slotFor was given. Null for a slot it did not make.
     String stringForSlot(uint32_t slot) const;
     // `hotStringHashes` (bytecodeOrderStringHash values, hottest first; from a payload order file) moves those strings'
     // records to the front, in that order; the rest follow in ordinal order. The offsets array stays indexed by ordinal.
@@ -121,7 +120,6 @@ class DecoderStringTable {
     WTF_MAKE_NONCOPYABLE(DecoderStringTable);
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(DecoderStringTable, JS_EXPORT_PRIVATE);
 public:
-    // Slots::No: what is made of a string is not remembered here. Every string that is asked for is made an atom.
     enum class Slots : bool { No, Yes };
     JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>, Slots = Slots::Yes);
     uint32_t count() const { return m_count; }
@@ -199,7 +197,7 @@ private:
     static StringImpl* impl(uintptr_t slot);
 
     std::span<const uint8_t> m_bytes;
-    uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal. None with Slots::No.
+    uintptr_t* m_slots { nullptr };
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
     // atomFor's outcomes so far (mutator only); expectedAtomTableInserts scales by them.
@@ -296,9 +294,6 @@ public:
     enum class RecoverableCode : bool { No, Yes };
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr, RecoverableCode = RecoverableCode::Yes);
     bool canBorrowPayload() const { return m_canBorrowPayload; } // the embedder promised the payload outlives every use, so decoded objects may alias it
-    // Of a program that is compiled ahead of time (AOT::ProgramData): its code is never generated, interpreted or optimized, and what
-    // is decoded is shared by every realm of the VM. So what is only for those is left out, nothing stays in the payload to be
-    // decoded later, and nothing is inferred by writing to what is decoded.
     enum class IsBuilding : bool { No, Yes };
     static Ref<Decoder> createForProgramData(VM&, Ref<CachedBytecode>, IsBuilding);
     bool isForProgramData() const { return m_isForProgramData; }
@@ -380,62 +375,50 @@ private:
     uint16_t m_persistentPayloadIndex { 0 };
 };
 
-// For AOT::ProgramData::build(). Decodes the code of the module that the Decoder's CachedBytecode is positioned at, and of every
-// function in it, and returns the key that it was cached under. Returns null on failure.
-UnlinkedCodeBlock* decodeAllForProgramData(Decoder&, SourceCodeKey&, Vector<UnlinkedFunctionExecutable*>& functions);
-// Creates an UnlinkedFunctionCodeBlock that describes a function's code as the original did, except for the instructions
-// themselves. It is for callers that need a code block for code that is never interpreted. The scalars come from
-// scalarsToMakeFunctionCodeFrom().
+UnlinkedCodeBlock* decodeModuleForProgramData(Decoder&, SourceCodeKey&, Vector<UnlinkedFunctionExecutable*>& functions);
 struct UnlinkedHandlerInfo;
-struct PartsOfFunctionCode {
+struct CodeBlockParts {
     const uint8_t* scalars;
-    std::span<const uint8_t> instructions; // The same number of bytes as the original. The contents are not read here.
+    std::span<const uint8_t> instructions;
     const Identifier* identifiers;
     const WriteBarrier<Unknown>* constants;
-    std::span<const uint32_t> linkTimeConstants; // Which of those are SourceCodeRepresentation::LinkTimeConstant.
+    std::span<const uint32_t> linkTimeConstants;
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls;
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionExprs;
     std::span<const UnlinkedHandlerInfo> handlers;
-    const void* expressionInfo; // See decodeBorrowedExpressionInfo(). May be null.
+    const void* expressionInfo;
 };
-Vector<uint8_t> scalarsToMakeFunctionCodeFrom(const UnlinkedCodeBlock&);
-UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM&, const PartsOfFunctionCode&);
-UnlinkedModuleProgramCodeBlock* makeModuleCodeFromParts(VM&, const PartsOfFunctionCode&);
+Vector<uint8_t> encodeCodeBlockScalars(const UnlinkedCodeBlock&);
+UnlinkedFunctionCodeBlock* createFunctionCodeBlockFromParts(VM&, const CodeBlockParts&);
+UnlinkedModuleProgramCodeBlock* createModuleCodeBlockFromParts(VM&, const CodeBlockParts&);
 
-// The same for an entry that encodeBuiltinFunction() or BytecodeLinkEncoder::addBuiltinFunction() wrote.
-bool entryIsOfBuiltinFunction(Decoder&);
+bool entryIsBuiltinFunction(Decoder&);
 UnlinkedFunctionExecutable* decodeBuiltinForProgramData(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, LineStarts&, Vector<UnlinkedFunctionExecutable*>& functions);
 
-// The objects of the engine's that a program compiled ahead of time has, each by its number. AOT::ProgramOfVM decodes one when it is
-// first asked for.
-struct ObjectsOfProgram {
-    std::span<UniquedStringImpl* const> identifiers; // Null: there is none with that number.
-    std::span<const JSValue> constants; // Empty: likewise.
-    std::span<UnlinkedFunctionExecutable* const> unlinkedFunctions; // Without their code.
-    // Of modules and programs, without instructions, positions or identifiers. In place of each function in it is what this says
-    // (AOT::FunctionMetadata::executableInList()).
+struct ProgramObjects {
+    std::span<UniquedStringImpl* const> identifiers;
+    std::span<const JSValue> constants;
+    std::span<UnlinkedFunctionExecutable* const> unlinkedFunctions;
     std::span<UnlinkedCodeBlock* const> topLevelCodes;
-    Function<uint32_t(UnlinkedFunctionExecutable*)> entryInListFor;
+    Function<uint32_t(UnlinkedFunctionExecutable*)> functionListEntryFor;
 };
-// The table has every string already: it was serialized before this.
-Vector<uint8_t> encodeObjectsOfProgram(VM&, EncoderStringTable&, const ObjectsOfProgram&);
-class CachedObjectsOfProgram;
-class ObjectsOfProgramDecoder {
-    WTF_MAKE_NONCOPYABLE(ObjectsOfProgramDecoder);
-    WTF_MAKE_TZONE_ALLOCATED(ObjectsOfProgramDecoder);
+Vector<uint8_t> encodeProgramObjects(VM&, EncoderStringTable&, const ProgramObjects&);
+class CachedProgramObjects;
+class ProgramObjectsDecoder {
+    WTF_MAKE_NONCOPYABLE(ProgramObjectsDecoder);
+    WTF_MAKE_TZONE_ALLOCATED(ProgramObjectsDecoder);
 public:
-    ObjectsOfProgramDecoder(VM&, std::span<const uint8_t>, DecoderStringTable&);
-    ~ObjectsOfProgramDecoder();
+    ProgramObjectsDecoder(VM&, std::span<const uint8_t>, DecoderStringTable&);
+    ~ProgramObjectsDecoder();
     Identifier identifier(uint32_t);
     JSValue constant(uint32_t);
-    std::optional<uint32_t> constantIsSameAs(uint32_t);
+    std::optional<uint32_t> constantAliasTarget(uint32_t);
     UnlinkedFunctionExecutable* unlinkedFunction(uint32_t);
     UnlinkedCodeBlock* topLevelCode(uint32_t);
 private:
     const Ref<Decoder> m_decoder;
-    const CachedObjectsOfProgram& m_objects;
+    const CachedProgramObjects& m_objects;
 };
-// Of that size, for code whose instructions nothing reads. Reading them is a crash.
 std::span<const uint8_t> absentInstructions(size_t);
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
@@ -503,23 +486,19 @@ public:
         Vector<uint64_t> knownFunctions; // the other functions the recorded build had; empty = not recorded
         Vector<uint64_t> evaluatedModules;
         Vector<uint64_t> notEvaluatedModules;
-        bool compileAheadOfTime { false }; // Result::aotImage
+        bool compileAheadOfTime { false };
     };
     static constexpr unsigned numberOfRegions = 6; // BytecodeLinkRegions::Count
     struct Result {
         RefPtr<CachedBytecode> payload;
         Vector<uint32_t> entryOffsets; // per addModule call, in call order
-        Vector<uint32_t> entryOffsetsOfModules; // Of those, what AOT::ProgramData::build() takes.
-        // For each of those, if setPrelinkedModuleGraph() said: where in its environment the variables are that something other than its code asks for by name (ScopeOffset::offset()):
-        // what it exports, and the namespaces that it imports.
+        Vector<uint32_t> moduleEntryOffsets;
         Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules;
-        Vector<ReportableSitesOfFunction> reportableSites; // Likewise. By the numbers that the functions have in aotImage.
+        Vector<FunctionReportableSites> reportableSites;
         unsigned namedHotFunctions { 0 }; // of Hints::hotFunctions, how many name a function of this link
         unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT
         unsigned functionsWithoutName { 0 }; // functions with code that the names of their module, which has some, do not cover
         std::array<uint32_t, numberOfRegions> regionEnds { };
-        // With Hints::compileAheadOfTime: the machine code of every function of the link (AOT::Image). The embedder places it on a
-        // page boundary of the executable's file, and passes it to registerAOTImage when the executable runs.
         Vector<uint8_t> aotImage;
     };
 
@@ -531,45 +510,32 @@ public:
     // An embedder's builtin (what encodeBuiltinFunction takes), `source` being all of its source: decodeBuiltinFunction
     // reads it back given the payload and the entry's offset. The builtin is a module, and a function of it.
     JS_EXPORT_PRIVATE void addBuiltinFunction(UnlinkedFunctionExecutable*, const SourceCode& source, unsigned embedderStamp, const BytecodeOrderNames&);
-    // Hints::compileAheadOfTime: how the embedder has linked the modules (what PrelinkedModuleGraph::tryCreate is given when the
-    // program runs), and which module of that graph each add* call so far was for, PrelinkedModuleGraph::noModule if none. Both
-    // spans are read by finish().
-    JS_EXPORT_PRIVATE void setPrelinkedModuleGraph(std::span<const uint8_t> blob, std::span<const uint32_t> stringSlots, Vector<uint32_t>&& graphModuleOfEachAdd);
+    JS_EXPORT_PRIVATE void setPrelinkedModuleGraph(std::span<const uint8_t> blob, std::span<const uint32_t> stringSlots, Vector<uint32_t>&& graphModuleIndices);
     JS_EXPORT_PRIVATE Result finish();
     JS_EXPORT_PRIVATE VM& vm() const;
 
 private:
-    friend void installImageCompiler(); // CompilerHooks.h
+    friend void installImageCompiler();
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-// `image` holds the bytes of BytecodeLinkEncoder::Result::aotImage and must stay readable for the life of the process. `code` is the
-// address at which its code (aotImageCodeRange()) is mapped executable. Returns false if the image was built for another engine.
 JS_EXPORT_PRIVATE bool registerAOTImage(std::span<const uint8_t> image, const void* code);
-// A program that was compiled ahead of time is one range of a file: its code (BytecodeLinkEncoder::Result::aotImage), then what
-// AOT::ProgramData::build() returned. `bytes` is that range, readable for as long as the process lives. Does what registerAOTImage()
-// and AOT::ProgramData::use() do.
-struct UseOfAOTFile {
-    const char* whyNoProgramData { nullptr };
-    const char* whyNoImage { nullptr };
-    size_t sizeOfProgramData { 0 };
-    size_t sizeOfCode { 0 };
+struct AOTFileUse {
+    const char* programDataRejectionReason { nullptr };
+    const char* imageRejectionReason { nullptr };
+    size_t programDataSize { 0 };
+    size_t codeSizeInBytes { 0 };
     const void* code { nullptr };
 };
-JS_EXPORT_PRIVATE UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile);
-// Such a range for one script or module. Empty if it cannot be compiled.
+JS_EXPORT_PRIVATE AOTFileUse useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile);
 JS_EXPORT_PRIVATE Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool isModule);
-// Whether the address is in the code of a registered image. Takes no lock and does not allocate.
-JS_EXPORT_PRIVATE bool isPCOfAOTImage(const void*);
-// The offset and size of the code in the image, both multiples of the page size. Returns nullopt if `image` is not an image.
+JS_EXPORT_PRIVATE bool isAOTImagePC(const void*);
 JS_EXPORT_PRIVATE std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image);
-// The size of the image at the start of `image`, a multiple of the page size. Other data may follow it.
 JS_EXPORT_PRIVATE std::optional<size_t> aotImageSize(std::span<const uint8_t> image);
-// The number of regular expressions that the image has code for.
-JS_EXPORT_PRIVATE std::optional<unsigned> aotImageNumberOfRegExps(std::span<const uint8_t> image);
+JS_EXPORT_PRIVATE std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t> image);
 #endif
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);

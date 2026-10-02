@@ -2,7 +2,6 @@
 //@ requireOptions("-m", "--compileMainScriptAheadOfTime=1")
 //@ defaultRun
 //@ run("gc-stress", "--slowPathAllocsBetweenGCs=20")
-// A realm can run a program several times over. Each instance has its own variables, and the same code.
 
 let n = 0;
 export function count() { return ++n; }

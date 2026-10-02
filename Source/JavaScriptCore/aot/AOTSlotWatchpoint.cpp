@@ -58,20 +58,16 @@ void SlotWatchpoint::install(VM&)
 
 void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
 {
-    // The object has a new structure, which need not make a difference to the property.
     if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {
         install(vm);
         return;
     }
 
-    // The others stay until the slot is filled again or a collection comes by: this one is being walked over by its set.
     Data* data = m_owner;
     m_slot->clear();
     data->slotEpoch++;
 }
 
-// Of an object whose properties were fixed (JSObject::makePropertiesImmutable()): what it had then, it has, where it had it. If it cannot be
-// given more either, what it does not have it never will. There is nothing to watch for.
 static bool isPermanentlyValid(const ObjectPropertyCondition& condition)
 {
     Structure* structure = condition.object()->structure();
@@ -92,23 +88,23 @@ bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditi
 {
     if (!conditions.isValid() || SharedData::contains(slot))
         return false;
-    unsigned numberToWatch = 0;
+    unsigned watchedCount = 0;
     for (const ObjectPropertyCondition& condition : conditions) {
         if (isPermanentlyValid(condition))
             continue;
         if (!condition.isWatchable(PropertyCondition::MakeNoChanges))
             return false;
-        numberToWatch++;
+        watchedCount++;
     }
 
-    if (!numberToWatch) {
+    if (!watchedCount) {
         stopWatching(data, slot);
         return true;
     }
 
     if (!data->watchpoints)
         data->watchpoints = new SlotWatchpointMap;
-    FixedVector<SlotWatchpoint> watchpoints(numberToWatch);
+    FixedVector<SlotWatchpoint> watchpoints(watchedCount);
     unsigned i = 0;
     for (const ObjectPropertyCondition& condition : conditions) {
         if (isPermanentlyValid(condition))
@@ -131,7 +127,6 @@ void moveWatching(Data* data, Slot* from, Slot* to)
 {
     if (!data->watchpoints)
         return;
-    // (They stay where they are: what they watch has hold of them.)
     auto watchpoints = data->watchpoints->take(from);
     if (watchpoints.isEmpty())
         return;

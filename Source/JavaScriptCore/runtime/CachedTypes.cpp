@@ -90,7 +90,6 @@ template<typename T> concept PayloadType = std::has_unique_object_representation
 
 namespace JSC {
 
-
 // Scalars of the per-function records are written as a LEB128 tail right after the fixed part of the record: most of them
 // are small or zero in almost every function, and they are read exactly once, into the object being constructed.
 class VarintWriter {
@@ -338,8 +337,6 @@ Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
 
 JSString* Decoder::jsStringForExternalString(uint32_t ordinal)
 {
-    // (Code that was compiled ahead of time takes a string constant to be an atom, as it was when it was compiled. That is what a
-    // table without slots makes.)
     return externalStrings().jsStringFor(m_vm, ordinal);
 }
 
@@ -926,10 +923,9 @@ public:
     }
 
     bool updatable() const { return m_updatable; }
-    // See ObjectsOfProgram::topLevelCodes.
-    bool leavesOutCode() const { return !!m_entryInListFor; }
-    void leaveOutCode(const Function<uint32_t(UnlinkedFunctionExecutable*)>& entryInListFor) { m_entryInListFor = &entryInListFor; }
-    uint32_t entryInListFor(UnlinkedFunctionExecutable* function) const { return (*m_entryInListFor)(function); }
+    bool omitsCode() const { return !!m_functionListEntryFor; }
+    void omitCode(const Function<uint32_t(UnlinkedFunctionExecutable*)>& functionListEntryFor) { m_functionListEntryFor = &functionListEntryFor; }
+    uint32_t functionListEntryFor(UnlinkedFunctionExecutable* function) const { return (*m_functionListEntryFor)(function); }
 
     VM& vm() { return m_vm; }
 
@@ -1493,7 +1489,7 @@ private:
     EncoderStringTable* m_externalStrings;
     bool m_numberStrings;
     bool m_updatable;
-    const Function<uint32_t(UnlinkedFunctionExecutable*)>* m_entryInListFor { nullptr };
+    const Function<uint32_t(UnlinkedFunctionExecutable*)>* m_functionListEntryFor { nullptr };
     Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
     bool m_arraySharingEnabled { false };
     UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
@@ -1540,7 +1536,6 @@ Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<
             payloads.didCreateDecoder(index, decoder.get());
         }
     }
-    // BytecodeLinkEncoder numbers the modules of an image the same way.
     if (decoder->m_provider && decoder->canBorrowPayload())
         decoder->m_provider->setAOTModuleID(static_cast<uint32_t>(decoder->m_cachedBytecode->entryOffset()) + 1);
 #endif
@@ -3046,7 +3041,7 @@ public:
             symbolTable->becomeSharedAcrossRealms(decoder.vm());
         if (decoder.canDeferIntoPayload() && m_map.entryCount() && !decoder.isForProgramData())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
-        else if (decoder.isForProgramData()) // As a clone has them: see SymbolTable::isSharedAcrossRealms().
+        else if (decoder.isForProgramData())
             m_map.decodeIf(decoder, symbolTable->m_map, [](const CachedSymbolTableEntry& entry) { return entry.isScope(); });
         else
 #endif
@@ -3244,15 +3239,15 @@ public:
         RegExp,
         TemplateObjectDescriptor,
         BigInt,
-        SameAsConstant, // Among the constants of a program: the slot holds the number of another.
+        ConstantAlias,
     };
 
-    Kind encodeSameAs(uint32_t number)
+    Kind encodeAlias(uint32_t number)
     {
         this->setRawSlot(number);
-        return Kind::SameAsConstant;
+        return Kind::ConstantAlias;
     }
-    uint32_t sameAs() const { return this->rawSlot(); }
+    uint32_t aliasTarget() const { return this->rawSlot(); }
 
     Kind encode(Encoder& encoder, JSValue v)
     {
@@ -3302,8 +3297,6 @@ public:
         }
 
         if (auto* immutableButterfly = dynamicDowncast<JSCellButterfly>(cell)) {
-            // (Decoding creates a new butterfly with the same contents, which would not work for a sentinel that is compared by
-            // identity.)
             RELEASE_ASSERT(cell != encoder.vm().orderedHashTableSentinel());
             this->allocate<CachedImmutableButterfly>(encoder)->encode(encoder, *immutableButterfly);
             return Kind::ImmutableButterfly;
@@ -3361,7 +3354,7 @@ public:
             return this->buffer<CachedTemplateObjectDescriptor>()->decode(decoder);
         case Kind::BigInt:
             return this->buffer<CachedBigInt>()->decode(decoder);
-        case Kind::SameAsConstant:
+        case Kind::ConstantAlias:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -3794,7 +3787,6 @@ private:
     int m_endOffset;
 };
 
-
 class CachedUnlinkedSourceCode : public CachedUnlinkedSourceCodeShape<UnlinkedSourceCode> { };
 
 class CachedSourceCode : public CachedUnlinkedSourceCodeShape<SourceCode> {
@@ -3948,8 +3940,6 @@ public:
 
     UnlinkedFunctionExecutable::RareData* decode(Decoder& decoder) const
     {
-        // The names of a wrapper's parameters and the private names around the function are for BytecodeGenerator and nothing else. (What eval() wants to know of private names it gets
-        // from the scopes. How many elements a class has is what its instances are given room by: FunctionRareData::initializeObjectAllocationProfile().)
         bool isForGeneratingCode = true;
 #if USE(BUN_JSC_ADDITIONS)
         if (decoder.isForProgramData()) [[unlikely]] {
@@ -4209,9 +4199,7 @@ public:
     enum LayoutFlag : uint8_t {
         LayoutHasMetadata = 1 << 0,
         LayoutHasExtras = 1 << 2,
-        // Encoder::leavesOutCode(). There are as many instructions as it says, and none of them. In place of each function is what
-        // ObjectsOfProgram::entryInListFor said.
-        LayoutIsWithoutCode = 1 << 3,
+        LayoutHasNoCode = 1 << 3,
     };
     struct Array {
         unsigned count { 0 };
@@ -4274,8 +4262,8 @@ public:
         Decoder& m_decoder;
     };
     Scalars scalars(Decoder& decoder) const { Tail storage; return tail(decoder, storage).scalars; }
-    static Vector<uint8_t> scalarsToMakeOneFrom(const UnlinkedCodeBlock&);
-    static CodeBlockType* makeFromParts(VM&, const PartsOfFunctionCode&);
+    static Vector<uint8_t> encodeScalars(const UnlinkedCodeBlock&);
+    static CodeBlockType* createFromParts(VM&, const CodeBlockParts&);
 
     const uint8_t* regionBegin(const Layout& layout) const { return std::bit_cast<const uint8_t*>(this) - layout.recordOffsetInRegion; }
     template<typename T> const T* at(const Layout& layout, const Array& array) const { return array.count ? reinterpret_cast<const T*>(regionBegin(layout) + array.at) : nullptr; }
@@ -4285,7 +4273,7 @@ public:
     {
         Tail storage;
         const Layout& layout = tail(decoder, storage).layout;
-        if (layout.flags & LayoutIsWithoutCode)
+        if (layout.flags & LayoutHasNoCode)
             return new JSInstructionStream(absentInstructions(layout.instructions.count), JSInstructionStream::Borrow);
         std::span<const uint8_t> bytes { at<uint8_t>(layout, layout.instructions), layout.instructions.count };
         if (decoder.canBorrowPayload())
@@ -4491,7 +4479,6 @@ public:
     UnlinkedFunctionCodeBlock* decode(Decoder&) const;
 };
 
-
 ALWAYS_INLINE UnlinkedFunctionCodeBlock::UnlinkedFunctionCodeBlock(Decoder& decoder, const CachedFunctionCodeBlock& cachedCodeBlock)
     : Base(decoder, decoder.vm().unlinkedFunctionCodeBlockStructure.get(), cachedCodeBlock)
 {
@@ -4579,7 +4566,7 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_llintExecuteCounter.setNewThreshold(thresholdForJIT(Options::thresholdForJITAfterWarmUp()));
 }
 
-static UnlinkedFunctionExecutable* unlinkedFunctionOfProgram(Decoder&, uint32_t number);
+static UnlinkedFunctionExecutable* programUnlinkedFunction(Decoder&, uint32_t number);
 
 template<typename CodeBlockType>
 ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, UnlinkedCodeBlock& codeBlock, const Tail& tail) const
@@ -4620,8 +4607,8 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
 #endif
         codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
     decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
-    if (layout.flags & LayoutIsWithoutCode) {
-        codeBlock.setIsWithoutCode();
+    if (layout.flags & LayoutHasNoCode) {
+        codeBlock.setHasNoInstructions();
         auto decodeNumbers = [&](const Array& array, auto& out) {
             if (!array.count)
                 return;
@@ -4629,9 +4616,9 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
             auto* numbers = at<uint32_t>(layout, array);
             for (unsigned i = 0; i < array.count; ++i) {
                 if (numbers[i] & 1)
-                    out[i].set(decoder.vm(), &codeBlock, unlinkedFunctionOfProgram(decoder, (numbers[i] >> 1) - 1));
+                    out[i].set(decoder.vm(), &codeBlock, programUnlinkedFunction(decoder, (numbers[i] >> 1) - 1));
                 else
-                    UnlinkedCodeBlock::setNumberOfExecutableIn(out[i], (numbers[i] >> 1) - 1);
+                    UnlinkedCodeBlock::setExecutableIndexIn(out[i], (numbers[i] >> 1) - 1);
             }
         };
         decodeNumbers(layout.functionDecls, codeBlock.m_functionDecls);
@@ -4760,7 +4747,6 @@ UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) con
     decodeOwnMembers(decoder, *codeBlock);
     return codeBlock;
 }
-
 
 ALWAYS_INLINE UnlinkedProgramCodeBlock::UnlinkedProgramCodeBlock(Decoder& decoder, const CachedProgramCodeBlock& cachedCodeBlock)
     : Base(decoder, decoder.vm().unlinkedProgramCodeBlockStructure.get(), cachedCodeBlock)
@@ -4939,7 +4925,6 @@ std::optional<uint32_t> UnlinkedFunctionExecutable::classSourceStartWithoutMater
 {
     if (!m_membersAreDeferred) {
         auto* rareData = m_members.live().rareData.get();
-        // (Of a program that was compiled ahead of time it is without its provider.)
         return rareData && (!rareData->m_classSource.isNull() || m_isClass) ? std::optional<uint32_t>(rareData->m_classSource.startOffset()) : std::nullopt;
     }
     auto* rareData = m_members.pending().record->slotsView().rareData;
@@ -5323,7 +5308,7 @@ void CachedCodeBlock<CodeBlockType>::readScalars(VarintReader& reader, Scalars& 
 }
 
 template<typename CodeBlockType>
-Vector<uint8_t> CachedCodeBlock<CodeBlockType>::scalarsToMakeOneFrom(const UnlinkedCodeBlock& codeBlock)
+Vector<uint8_t> CachedCodeBlock<CodeBlockType>::encodeScalars(const UnlinkedCodeBlock& codeBlock)
 {
     VarintWriter writer;
     packScalars(codeBlock, writer);
@@ -5336,7 +5321,7 @@ Vector<uint8_t> CachedCodeBlock<CodeBlockType>::scalarsToMakeOneFrom(const Unlin
 }
 
 template<typename CodeBlockType>
-CodeBlockType* CachedCodeBlock<CodeBlockType>::makeFromParts(VM& vm, const PartsOfFunctionCode& parts)
+CodeBlockType* CachedCodeBlock<CodeBlockType>::createFromParts(VM& vm, const CodeBlockParts& parts)
 {
     ASSERT(vm.heap.isDeferred());
     VarintReader reader(parts.scalars);
@@ -5368,7 +5353,6 @@ CodeBlockType* CachedCodeBlock<CodeBlockType>::makeFromParts(VM& vm, const Parts
         for (unsigned i = 0; i < numberOfIdentifiers; ++i)
             codeBlock.m_identifiers[i] = parts.identifiers[i];
     }
-    // (None: the program has one table of them. See AOT::NumbersOfConstants.)
     if (!parts.constants)
         numberOfConstants = 0;
     codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(numberOfConstants);
@@ -5422,17 +5406,17 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             place(layout.steps, steps.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, steps); });
         }
         const JSInstructionStream& instructions = *codeBlock.m_instructions;
-        if (encoder.leavesOutCode()) {
-            layout.flags |= LayoutIsWithoutCode;
+        if (encoder.omitsCode()) {
+            layout.flags |= LayoutHasNoCode;
             layout.instructions.count = instructions.size();
         } else {
-            RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
+            RELEASE_ASSERT(!instructions.isBorrowed());
             place(layout.instructions, instructions.m_instructions.size(), [&] { return encodeArrayForTail<uint8_t>(encoder, instructions.m_instructions); });
         }
         place(layout.constantsSourceCodeRepresentation, codeBlock.m_constantsSourceCodeRepresentation.size(), [&] { return encodeArrayForTail<SourceCodeRepresentation>(encoder, codeBlock.m_constantsSourceCodeRepresentation); });
     }
     place(layout.constants, codeBlock.m_constantRegisters.size(), [&] { return CachedJSValuePool::encode(encoder, codeBlock.m_constantRegisters.span()); });
-    if (!encoder.leavesOutCode())
+    if (!encoder.omitsCode())
         place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
     // The children's slots are part of this block's bytes; the records they point at are written after the region.
     auto allocateSlots = [&](unsigned count) {
@@ -5465,7 +5449,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     writer.copyTo(record->tailBytes());
     encoder.deferCold([record, &encoder, &codeBlock] {
         // Position-independent, so an identical one written earlier is reused.
-        auto bytes = encoder.leavesOutCode() ? CachedExpressionInfo::pack(*ExpressionInfo::Encoder { }.createExpressionInfo()) : CachedExpressionInfo::pack(codeBlock.expressionInfo());
+        auto bytes = encoder.omitsCode() ? CachedExpressionInfo::pack(*ExpressionInfo::Encoder { }.createExpressionInfo()) : CachedExpressionInfo::pack(codeBlock.expressionInfo());
         unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes.span()) ^ static_cast<unsigned>(bytes.size());
         ptrdiff_t at;
         if (auto existing = encoder.existingIdenticalArray(bytes.span(), hash, alignof(CachedExpressionInfo)))
@@ -5484,11 +5468,11 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         if (!slots.count)
             return;
         auto bytes = encoder.mutableBytesAt(regionStart + slots.at, sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * slots.count);
-        if (encoder.leavesOutCode()) {
+        if (encoder.omitsCode()) {
             static_assert(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) == sizeof(uint32_t));
             auto* number = reinterpret_cast<uint32_t*>(bytes.data());
             for (unsigned i = 0; i < slots.count; ++i)
-                number[i] = encoder.entryInListFor(executables[i].get());
+                number[i] = encoder.functionListEntryFor(executables[i].get());
             return;
         }
         auto* slot = reinterpret_cast<CachedWriteBarrier<CachedFunctionExecutable>*>(bytes.data());
@@ -5549,8 +5533,6 @@ protected:
     // 11: source positions are offsets only (321541@main): no lines or columns in ExpressionInfo, a function executable's
     // scalars, a global code block, a class source or a JSTextPosition.
     // 12: a global code block and the entry of a builtin function have the line starts of their source.
-    // 13: op_check_type (opcode numbering). 14: a module's code block records the range of scope offsets of its `var`s.
-    // 15: op_type_tag (opcode numbering).
     static constexpr uint32_t cachedTypesFormatRevision = 15;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
@@ -5711,7 +5693,7 @@ public:
         m_sourceLength = source.length();
         m_embedderStamp = embedderStamp;
         m_executable.encode(encoder, &executable);
-        m_lineStarts.encode(encoder, encoder.vm().bytecodeGenerationOptions.keepLineStartsOfEverySource ? source.provider()->lineStarts() : source.provider()->lineStartsForBytecode());
+        m_lineStarts.encode(encoder, encoder.vm().bytecodeGenerationOptions.keepAllSourceLineStarts ? source.provider()->lineStarts() : source.provider()->lineStartsForBytecode());
     }
 
     UnlinkedFunctionExecutable* decode(Decoder& decoder, SourceProvider& provider, unsigned embedderStamp) const
@@ -5725,7 +5707,6 @@ public:
         return m_executable.decode(decoder);
     }
 
-    // For AOT::ProgramData, which is built before there is a provider.
     UnlinkedFunctionExecutable* decode(Decoder& decoder, LineStarts& lineStarts) const
     {
         if (tag() != CachedCodeBlockTag::CachedBuiltinFunctionTag || !isUpToDate(decoder))
@@ -5827,7 +5808,7 @@ struct BytecodeLinkEncoder::Impl {
         Strong<JSCell> root;
         SourceCode source;
         unsigned builtinEmbedderStamp { 0 };
-        bool isEngineBuiltin { false }; // Added by addEngineBuiltins(), not by the embedder.
+        bool isEngineBuiltin { false };
         bool isLate { false };
         GenericCacheEntry* entry { nullptr }; // in the encoder's pages, which stay where they are until release()
         uint32_t entryOffset { 0 };
@@ -5881,10 +5862,7 @@ struct BytecodeLinkEncoder::Impl {
     }
 
 #if ENABLE(AOT)
-    // The engine's builtins that are written in JavaScript. Each is added the way an embedder's builtin would be, with its own
-    // source text. At run time they are obtained from AOT::ProgramOfVM (BuiltinExecutables::executableOfProgramFor()), so they are neither
-    // parsed nor interpreted.
-    Vector<UnlinkedFunctionExecutable*> engineBuiltins; // Indexed by BuiltinCodeIndex. Kept alive by `modules`.
+    Vector<UnlinkedFunctionExecutable*> engineBuiltins;
     void addEngineBuiltins()
     {
         unsigned added = 0;
@@ -5908,15 +5886,11 @@ struct BytecodeLinkEncoder::Impl {
     }
 #endif
 
-    // Counts of the functions that are not passed to the compiler: those without code, those that were not placed, and those
-    // without a key.
     std::array<unsigned, 3> omittedFunctions { };
 
-    // For every function of the module that has code: retains the code and decides where it is placed.
     void placeCodeOf(UnlinkedFunctionExecutable& executable, unsigned module, const SourceCode& around, Encoder::LinkClass aroundGoes)
     {
         auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(vm);
-        // All the code it is going to have has been generated (see generateUnlinkedFunctionCodeBlock()).
         executable.takeParentDeclaredNames();
         if (!forCall && !forConstruct) {
             omittedFunctions[0]++;
@@ -5945,8 +5919,6 @@ struct BytecodeLinkEncoder::Impl {
     }
 
 #if ENABLE(AOT)
-    // Where each import that the embedder resolved to a variable of another module is: the modules are all here, so what their
-    // environments are going to look like is known.
     Vector<std::unique_ptr<AOT::ModuleLinkage>> linkModules(const Vector<std::unique_ptr<AOT::ModuleHints>>& hints)
     {
         using Graph = PrelinkedModuleGraph;
@@ -5968,8 +5940,8 @@ struct BytecodeLinkEncoder::Impl {
             unsigned index { 0 };
         };
         Vector<Linked> linked(graphModules.size());
-        for (unsigned index = 0; index < modules.size() && index < graphModuleOfEachAdd.size(); ++index) {
-            uint32_t graphModule = graphModuleOfEachAdd[index];
+        for (unsigned index = 0; index < modules.size() && index < graphModuleIndices.size(); ++index) {
+            uint32_t graphModule = graphModuleIndices[index];
             auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
             if (graphModule >= linked.size() || !codeBlock)
                 continue;
@@ -5977,13 +5949,13 @@ struct BytecodeLinkEncoder::Impl {
             linked[graphModule] = { codeBlock, uncheckedDowncast<SymbolTable>(symbolTable.asCell()), index };
         }
 
-        environmentsOfLink.fill(AOT::ImageEnvironment { }, graphModules.size());
+        linkEnvironments.fill(AOT::ImageEnvironment { }, graphModules.size());
         for (unsigned graphModule = 0; graphModule < linked.size(); ++graphModule) {
             if (!linked[graphModule].codeBlock)
                 continue;
             size_t size = JSModuleEnvironment::allocationSize(linked[graphModule].symbolTable, graphModules[graphModule].importCount);
-            environmentsSizeOfLink += sizeof(void*);
-            environmentsOfLink[graphModule] = { static_cast<uint32_t>(environmentsSizeOfLink), static_cast<uint32_t>(size) };
+            linkEnvironmentsSize += sizeof(void*);
+            linkEnvironments[graphModule] = { static_cast<uint32_t>(linkEnvironmentsSize), static_cast<uint32_t>(size) };
         }
 
         auto nameOf = [&](uint32_t sid) -> Identifier {
@@ -6001,7 +5973,7 @@ struct BytecodeLinkEncoder::Impl {
             auto& module = graphModules[graphModule];
             RELEASE_ASSERT(module.firstImport <= graphImports.size() && module.importCount <= graphImports.size() - module.firstImport);
             auto linkage = makeUnique<AOT::ModuleLinkage>();
-            linkage->distanceOfEnvironment = environmentsOfLink[graphModule].distance;
+            linkage->environmentDepth = linkEnvironments[graphModule].distance;
             for (unsigned slot = 0; slot < module.importCount; ++slot) {
                 auto& import = graphImports[module.firstImport + slot];
                 if (import.resolution() != Graph::ResolutionKind::Binding || import.isNamespace() || import.resolvedModule >= linked.size())
@@ -6015,15 +5987,12 @@ struct BytecodeLinkEncoder::Impl {
                 if (entry.isNull() || !entry.varOffset().isScope())
                     continue;
                 const AOT::KnownFunction* function = hints[exporter.index] ? hints[exporter.index]->find(nameInExporter.impl(), entry.scopeOffset().offset()) : nullptr;
-                linkage->addImport(localName.impl(), { slot, JSModuleEnvironment::importSlotScopeOffset(importer.symbolTable, slot).offset(), entry.scopeOffset().offset(), function, environmentsOfLink[import.resolvedModule].distance, exporter.symbolTable });
-                namesOfLinkage.append(WTF::move(localName));
+                linkage->addImport(localName.impl(), { slot, JSModuleEnvironment::importSlotScopeOffset(importer.symbolTable, slot).offset(), entry.scopeOffset().offset(), function, linkEnvironments[import.resolvedModule].distance, exporter.symbolTable });
+                linkageNames.append(WTF::move(localName));
             }
             result[importer.index] = WTF::move(linkage);
         }
 
-        // The bundler knows which code can access a module's exports. But what it treats as an import of a variable is only
-        // compiled as one here if it was resolved, above, to the variable itself. Any other import is read in another way, as an
-        // ordinary value, so the variable escapes.
         auto graphExports = arrayAt(header.exportsOffset, header.exportCount, static_cast<const Graph::Export*>(nullptr));
         auto graphRequests = arrayAt(header.requestsOffset, header.requestCount, static_cast<const Graph::Request*>(nullptr));
         auto graphStarExports = arrayAt(header.starExportsOffset, header.starExportCount, static_cast<const uint32_t*>(nullptr));
@@ -6038,12 +6007,12 @@ struct BytecodeLinkEncoder::Impl {
                 hints[linked[graphModule].index]->noteEscape(entry.scopeOffset().offset());
         };
         BitVector allExportsEscape(graphModules.size());
-        Vector<uint32_t> toDo;
+        Vector<uint32_t> pendingIndices;
         auto everyExportEscapes = [&](uint32_t graphModule) {
             if (graphModule < graphModules.size() && !allExportsEscape.set(graphModule))
-                toDo.append(graphModule);
+                pendingIndices.append(graphModule);
         };
-        unsigned importsReadSomeOtherWay = 0;
+        unsigned indirectlyReadImports = 0;
         for (unsigned graphModule = 0; graphModule < graphModules.size(); ++graphModule) {
             auto& module = graphModules[graphModule];
             bool isLinked = graphModule < linked.size() && linked[graphModule].codeBlock && result[linked[graphModule].index];
@@ -6052,27 +6021,25 @@ struct BytecodeLinkEncoder::Impl {
                 uint32_t requested = import.request() < module.requestCount ? graphRequests[module.firstRequest + import.request()].moduleIndex : Graph::noModule;
                 if (import.isNamespace()) {
                     everyExportEscapes(requested);
-                    // A namespace import is a variable of the importing module, in which the module linker stores the namespace
-                    // object.
                     if (Identifier localName = nameOf(import.localSid); !localName.isNull() && graphModule < linked.size() && linked[graphModule].codeBlock) {
                         SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(localName.impl());
                         if (!entry.isNull() && entry.varOffset().isScope())
-                            variablesWrittenNativelyOfLink.append({ linked[graphModule].symbolTable, entry.scopeOffset().offset() });
+                            linkVariablesWrittenNatively.append({ linked[graphModule].symbolTable, entry.scopeOffset().offset() });
                     }
                     continue;
                 }
                 Identifier localName = nameOf(import.localSid);
                 if (isLinked && !localName.isNull() && result[linked[graphModule].index]->findImport(localName.impl()))
                     continue;
-                importsReadSomeOtherWay += requested != Graph::noModule;
+                indirectlyReadImports += requested != Graph::noModule;
                 if (import.resolution() == Graph::ResolutionKind::Binding)
                     variableEscapes(import.resolvedModule, import.resolvedLocalSid);
                 else
                     everyExportEscapes(requested);
             }
         }
-        while (!toDo.isEmpty()) {
-            uint32_t graphModule = toDo.takeLast();
+        while (!pendingIndices.isEmpty()) {
+            uint32_t graphModule = pendingIndices.takeLast();
             auto& module = graphModules[graphModule];
             auto requested = [&](uint32_t request) {
                 return request < module.requestCount ? graphRequests[module.firstRequest + request].moduleIndex : Graph::noModule;
@@ -6093,19 +6060,18 @@ struct BytecodeLinkEncoder::Impl {
         }
         return result;
     }
-    Vector<AOT::Variable> variablesWrittenNativelyOfLink;
+    Vector<AOT::Variable> linkVariablesWrittenNatively;
 
-    // What the bundler says of the variables at the top of a module, by where each is in the environment of the module.
-    Vector<AOT::ModuleHints::Binding> bindingsOfModule(unsigned index)
+    Vector<AOT::ModuleHints::Binding> moduleBindings(unsigned index)
     {
         using Graph = PrelinkedModuleGraph;
         Vector<AOT::ModuleHints::Binding> result;
         auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
-        if (!codeBlock || index >= graphModuleOfEachAdd.size() || prelinkedGraph.size() < sizeof(Graph::Header))
+        if (!codeBlock || index >= graphModuleIndices.size() || prelinkedGraph.size() < sizeof(Graph::Header))
             return result;
         auto& header = *reinterpret_cast<const Graph::Header*>(prelinkedGraph.data());
         RELEASE_ASSERT(header.magic == Graph::magic && header.version == Graph::currentVersion);
-        uint32_t graphModule = graphModuleOfEachAdd[index];
+        uint32_t graphModule = graphModuleIndices[index];
         if (graphModule >= header.moduleCount)
             return result;
         RELEASE_ASSERT(header.modulesOffset <= prelinkedGraph.size() && header.moduleCount <= (prelinkedGraph.size() - header.modulesOffset) / sizeof(Graph::Module));
@@ -6123,21 +6089,19 @@ struct BytecodeLinkEncoder::Impl {
             SymbolTableEntry::Fast entry = symbolTable->get(Identifier::fromString(vm, string).impl());
             if (entry.isNull() || !entry.varOffset().isScope())
                 continue;
-            result.append({ entry.scopeOffset().offset(), bindings[i].keepsDeclaredValue(), !!(bindings[i].flags & Graph::Binding::Escapes), !!(bindings[i].flags & Graph::Binding::IsVisibleFromOutside) });
+            result.append({ entry.scopeOffset().offset(), bindings[i].keepsDeclaredValue(), !!(bindings[i].flags & Graph::Binding::Escapes), !!(bindings[i].flags & Graph::Binding::IsExternallyVisible) });
         }
         return result;
     }
-    // The scope offsets of the variables that the module exports, according to the prelinked graph, and of the variables that the
-    // module linker initializes by name.
     std::optional<Vector<uint32_t>> variablesExportedBy(unsigned index)
     {
         using Graph = PrelinkedModuleGraph;
         auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
-        if (!codeBlock || index >= graphModuleOfEachAdd.size() || prelinkedGraph.size() < sizeof(Graph::Header))
+        if (!codeBlock || index >= graphModuleIndices.size() || prelinkedGraph.size() < sizeof(Graph::Header))
             return std::nullopt;
         auto& header = *reinterpret_cast<const Graph::Header*>(prelinkedGraph.data());
         RELEASE_ASSERT(header.magic == Graph::magic && header.version == Graph::currentVersion);
-        uint32_t graphModule = graphModuleOfEachAdd[index];
+        uint32_t graphModule = graphModuleIndices[index];
         if (graphModule >= header.moduleCount)
             return std::nullopt;
         RELEASE_ASSERT(header.modulesOffset <= prelinkedGraph.size() && header.moduleCount <= (prelinkedGraph.size() - header.modulesOffset) / sizeof(Graph::Module));
@@ -6148,11 +6112,9 @@ struct BytecodeLinkEncoder::Impl {
         auto* symbolTable = uncheckedDowncast<SymbolTable>(codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell());
         Vector<uint32_t> result;
         for (unsigned i = 0; i < module.exportCount; ++i) {
-            // (A re-export is a variable of the other module.)
             if (exports[i].kind() != Graph::ExportKind::Local)
                 continue;
             uint32_t sid = exports[i].localOrImportSid;
-            // (The engine's private names are kept anyway.)
             if (sid == Graph::starDefaultSid)
                 continue;
             if (sid >= prelinkedGraphStringSlots.size())
@@ -6164,9 +6126,6 @@ struct BytecodeLinkEncoder::Impl {
             if (!entry.isNull() && entry.varOffset().isScope())
                 result.append(entry.scopeOffset().offset());
         }
-        // An import is a variable of another module, unless it is a namespace import: the namespace object is stored by name in a
-        // variable of this module when the module is linked (CyclicModuleRecord::initializeEnvironment()). Whether an import is a
-        // namespace is not always known at this point.
         RELEASE_ASSERT(header.importsOffset <= prelinkedGraph.size() && header.importCount <= (prelinkedGraph.size() - header.importsOffset) / sizeof(Graph::Import));
         RELEASE_ASSERT(module.firstImport <= header.importCount && module.importCount <= header.importCount - module.firstImport);
         auto* imports = reinterpret_cast<const Graph::Import*>(prelinkedGraph.data() + header.importsOffset) + module.firstImport;
@@ -6183,16 +6142,14 @@ struct BytecodeLinkEncoder::Impl {
         }
         return result;
     }
-    Vector<Identifier> namesOfLinkage; // Keeps what the linkages are keyed on.
-    Vector<AOT::ImageEnvironment> environmentsOfLink;
-    size_t environmentsSizeOfLink { 0 };
+    Vector<Identifier> linkageNames;
+    Vector<AOT::ImageEnvironment> linkEnvironments;
+    size_t linkEnvironmentsSize { 0 };
 
-    // Compiles every function of the link. All of the program's code has been generated by now. Returns an empty image on failure.
     Vector<uint8_t> compileImage()
     {
         ImmutableIntrinsics::ensureShared(vm);
         AOT::TypeTable::load(vm);
-        // The whole-program analysis is only sound if it sees every store and every call.
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
             dataLogLn("AOT: the compiler needs all of the program's code: ", omittedFunctions[0], " functions have no bytecode (is the bytecode depth limited?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
             return { };
@@ -6206,15 +6163,13 @@ struct BytecodeLinkEncoder::Impl {
         };
         Vector<Job> jobs;
         for (unsigned index = 0; index < modules.size(); ++index) {
-            // The code of the module itself, which comes before its functions' as it runs before them.
             if (auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get()))
                 jobs.append({ AOT::imageKeyForTopLevelCode(modules[index].entryOffset + 1), static_cast<uint64_t>(index) << 34, codeBlock, index });
         }
 
-        // What the variables at the top of each module hold, as far as its code says.
-        UncheckedKeyHashMap<UnlinkedFunctionExecutable*, unsigned> indexOfFunction;
+        UncheckedKeyHashMap<UnlinkedFunctionExecutable*, unsigned> functionIndex;
         for (unsigned i = 0; i < functionsToCompile.size(); ++i)
-            indexOfFunction.add(functionsToCompile[i].executable, i);
+            functionIndex.add(functionsToCompile[i].executable, i);
         Vector<std::unique_ptr<AOT::ModuleHints>> hints(modules.size());
         Vector<std::array<AOT::Convention, 2>> conventions(functionsToCompile.size());
         for (unsigned i = 0; i < functionsToCompile.size(); ++i) {
@@ -6224,8 +6179,8 @@ struct BytecodeLinkEncoder::Impl {
                 conventions[i][1] = AOT::conventionOf(codeBlock);
         }
         AOT::ModuleHints::Describe describe = [&](UnlinkedFunctionExecutable* executable, AOT::KnownFunction& known) {
-            auto it = indexOfFunction.find(executable);
-            if (it == indexOfFunction.end())
+            auto it = functionIndex.find(executable);
+            if (it == functionIndex.end())
                 return false;
             auto& function = functionsToCompile[it->value];
             known.forCall = function.forCall;
@@ -6241,10 +6196,9 @@ struct BytecodeLinkEncoder::Impl {
             auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get());
             if (!codeBlock)
                 continue;
-            hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, bindingsOfModule(index).span(), describe);
+            hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, moduleBindings(index).span(), describe);
             hints[index]->recordFunctionAssignmentsIn(codeBlock, describe);
         }
-        // (A function nested in a function that has code for both call and construct appears twice, with identical code.)
         std::set<std::tuple<uint32_t, uint32_t, uint32_t>> keys;
         for (auto& function : functionsToCompile) {
             for (bool isConstruct : { false, true }) {
@@ -6257,40 +6211,37 @@ struct BytecodeLinkEncoder::Impl {
                 key.kind = static_cast<uint32_t>(function.key.kind) << 1 | isConstruct;
                 if (!keys.insert({ key.module, key.start, key.kind }).second)
                     continue;
-                // In the order the modules are loaded in, and in a module in the order of the text.
                 jobs.append({ key, static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module, function.executable });
             }
         }
 
-        auto textOfModule = [&](unsigned module) -> StringView {
+        auto moduleText = [&](unsigned module) -> StringView {
             return modules[module].source.provider()->source();
         };
-        auto isModuleOfProgram = [&](unsigned module) {
+        auto isProgramModule = [&](unsigned module) {
             return !!dynamicDowncast<UnlinkedCodeBlock>(modules[module].root.get());
         };
 
         for (auto& function : functionsToCompile) {
             if (!hints[function.module])
                 continue;
-            // (Both code blocks are generated from the same syntax tree.)
             if (auto* codeBlock = function.forCall ? function.forCall : function.forConstruct)
                 hints[function.module]->recordFunctionAssignmentsIn(codeBlock, describe);
         }
         unsigned variables = 0;
         unsigned proven = 0;
-        for (auto& hintsOfModule : hints) {
-            if (!hintsOfModule)
+        for (auto& moduleHints : hints) {
+            if (!moduleHints)
                 continue;
-            hintsOfModule->prove();
-            variables += hintsOfModule->numberOfVariables();
-            proven += hintsOfModule->numberOfSingleFunctionVariables();
+            moduleHints->prove();
+            variables += moduleHints->numberOfVariables();
+            proven += moduleHints->numberOfSingleFunctionVariables();
         }
         if (Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: ", proven, " of ", variables, " candidate module variables always hold the same function");
 
         auto linkages = linkModules(hints);
         unsigned numberOfThreads = Options::numberOfAOTCompilerThreads() ? Options::numberOfAOTCompilerThreads() : WTF::numberOfProcessorCores();
-        // The compiler reads unlinked code and allocates nothing in the heap; this thread, which has the heap, waits.
         DeferGC deferGC(vm);
         auto inParallel = [&](size_t count, const auto& functor) {
             std::atomic<size_t> nextIndex { 0 };
@@ -6306,20 +6257,18 @@ struct BytecodeLinkEncoder::Impl {
                 thread->waitForCompletion();
         };
 
-        // What becomes of each function that is proven: see AOT::FunctionSummary.
         Vector<std::unique_ptr<AOT::FunctionSummary>> functionSummaries;
         AOT::FunctionSummaryMap summariesByExecutable;
-        UncheckedKeyHashMap<UnlinkedCodeBlock*, const AOT::FunctionSummary*> summariesByCodeBlock; // Of the code for a call.
+        UncheckedKeyHashMap<UnlinkedCodeBlock*, const AOT::FunctionSummary*> summariesByCodeBlock;
         AOT::VariableSummaries allVariableSummaries;
         AOT::VariableSummaries* variableSummaries = &allVariableSummaries;
         if (variableSummaries) {
-            // What gets into the variables of a module other than by its code putting it there.
             for (unsigned index = 0; index < modules.size(); ++index) {
                 auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
                 if (!codeBlock)
                     continue;
                 JSCell* scope = codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell();
-                variableSummaries->noteScopeOfModule(scope);
+                variableSummaries->noteModuleScope(scope);
                 if (!linkages[index]) {
                     variableSummaries->giveUpOnScope(scope);
                     continue;
@@ -6330,20 +6279,18 @@ struct BytecodeLinkEncoder::Impl {
                         variableSummaries->join({ scope, slots->at(i).offset() }, AOT::TFunction);
                 } else if (codeBlock->numberOfFunctionDecls())
                     variableSummaries->giveUpOnScope(scope);
-                // AbstractModuleRecord::putWellKnownVariable(), and import.meta.
                 for (auto* name : { vm.propertyNames->starNamespacePrivateName.impl(), vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), vm.propertyNames->builtinNames().metaPrivateName().impl() }) {
                     SymbolTableEntry::Fast entry = uncheckedDowncast<SymbolTable>(scope)->get(name);
                     if (!entry.isNull() && entry.varOffset().isScope())
                         variableSummaries->join({ scope, entry.scopeOffset().offset() }, AOT::TAll);
                 }
             }
-            for (auto& variable : variablesWrittenNativelyOfLink)
+            for (auto& variable : linkVariablesWrittenNatively)
                 variableSummaries->join(variable, AOT::TAll);
         }
-        // Every function has a number, and a unit is kept for each.
-        Vector<unsigned> modulesOfNumberedFunctions { 0 };
-        auto moduleOfFunctionNumbered = [&](uint32_t number) { return modulesOfNumberedFunctions[number]; };
-        AOT::FunctionsOfProgram functionsOfProgram;
+        Vector<unsigned> functionNumberModules { 0 };
+        auto moduleForFunctionNumber = [&](uint32_t number) { return functionNumberModules[number]; };
+        AOT::ProgramFunctions programFunctions;
         std::map<std::tuple<uint32_t, uint32_t, uint32_t>, uint32_t> numberOfKey;
         for (auto& function : functionsToCompile) {
             auto result = numberOfKey.try_emplace({ modules[function.module].entryOffset + 1, function.key.start, static_cast<uint32_t>(function.key.kind) }, 0);
@@ -6354,31 +6301,31 @@ struct BytecodeLinkEncoder::Impl {
                 known.isExact = true;
                 functionSummaries.append(makeUnique<AOT::FunctionSummary>());
                 known.summary = functionSummaries.last().get();
-                result.first->second = functionsOfProgram.add(known);
+                result.first->second = programFunctions.add(known);
                 known.summary->number = result.first->second;
-                modulesOfNumberedFunctions.append(function.module);
+                functionNumberModules.append(function.module);
             }
             uint32_t number = result.first->second;
-            functionsOfProgram.isAlso(number, function.executable);
-            AOT::FunctionSummary* summary = functionsOfProgram.function(number)->summary;
+            programFunctions.addAlias(number, function.executable);
+            AOT::FunctionSummary* summary = programFunctions.function(number)->summary;
             summariesByExecutable.add(function.executable, summary);
             if (function.forCall)
                 summariesByCodeBlock.add(function.forCall, summary);
         }
-        AOT::setFunctionsOfProgram(&functionsOfProgram);
-        auto forgetFunctionsOfProgram = makeScopeExit([] { AOT::setFunctionsOfProgram(nullptr); });
-        AOT::ClassesOfProgram classesOfProgram;
-        AOT::setClassesOfProgram(&classesOfProgram);
-        auto forgetClassesOfProgram = makeScopeExit([] { AOT::setClassesOfProgram(nullptr); });
+        AOT::setProgramFunctions(&programFunctions);
+        auto forgetProgramFunctions = makeScopeExit([] { AOT::setProgramFunctions(nullptr); });
+        AOT::ProgramClasses programClasses;
+        AOT::setProgramClasses(&programClasses);
+        auto forgetProgramClasses = makeScopeExit([] { AOT::setProgramClasses(nullptr); });
         AOT::MultiValueReturnTable multiValueReturnTable;
         AOT::setMultiValueReturnTable(&multiValueReturnTable);
-        auto forgetThingsReturnedByFunctions = makeScopeExit([] { AOT::setMultiValueReturnTable(nullptr); });
+        auto forgetFunctionReturnValues = makeScopeExit([] { AOT::setMultiValueReturnTable(nullptr); });
         {
             MonotonicTime before = MonotonicTime::now();
-            for (auto& hintsOfModule : hints) {
-                if (!hintsOfModule)
+            for (auto& moduleHints : hints) {
+                if (!moduleHints)
                     continue;
-                hintsOfModule->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
+                moduleHints->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
                     auto result = summariesByExecutable.add(function.executable, nullptr);
                     if (result.isNewEntry) {
                         functionSummaries.append(makeUnique<AOT::FunctionSummary>());
@@ -6391,12 +6338,10 @@ struct BytecodeLinkEncoder::Impl {
             }
             std::atomic<unsigned> unreadable { 0 };
             inParallel(jobs.size(), [&](size_t index) {
-                if (!AOT::recordUsesOfKnownFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries))
+                if (!AOT::recordKnownFunctionUsesForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries))
                     unreadable++;
             });
             {
-                // What a function that is called repeatedly calls is called repeatedly too. Two levels down: with each level it is
-                // less certain that the call is on the path taken.
                 Vector<AOT::FunctionSummary*> calledRepeatedly;
                 for (auto& summary : functionSummaries) {
                     if (summary->isCalledRepeatedly.load(std::memory_order_relaxed))
@@ -6420,15 +6365,13 @@ struct BytecodeLinkEncoder::Impl {
             }
             AOT::TypeTable::finalizeAtomizedFields();
             RELEASE_ASSERT(!unreadable.load());
-            classesOfProgram.forEachNonEscapingMethod([&](uint32_t number) {
-                const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+            programClasses.forEachNonEscapingMethod([&](uint32_t number) {
+                const AOT::KnownFunction& function = *programFunctions.function(number);
                 function.needsNoFunctionObject.store(function.forCall && !AOT::needsFunctionObject(function.forCall), std::memory_order_relaxed);
             });
             if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: ", classesOfProgram.numberOfNonEscapingMethods(), " methods do not escape");
-            // Tracking where a function object flows starts at its creation: by an instruction, or at module instantiation for a
-            // variable that the bundler tracks. A function that is created in any other way escapes.
-            BitVector hasVisibleCreationSite(functionsOfProgram.size() + 1);
+                dataLogLn("AOT: ", programClasses.numberOfNonEscapingMethods(), " methods do not escape");
+            BitVector hasVisibleCreationSite(programFunctions.size() + 1);
             for (auto& job : jobs) {
                 for (const auto& instruction : job.codeBlock->instructions()) {
                     UnlinkedFunctionExecutable* made = nullptr;
@@ -6461,28 +6404,28 @@ struct BytecodeLinkEncoder::Impl {
                         break;
                     }
                     if (made)
-                        hasVisibleCreationSite.set(functionsOfProgram.numberOf(made));
+                        hasVisibleCreationSite.set(programFunctions.numberOf(made));
                 }
             }
-            for (auto& hintsOfModule : hints) {
-                if (!hintsOfModule)
+            for (auto& moduleHints : hints) {
+                if (!moduleHints)
                     continue;
-                hintsOfModule->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
-                    uint32_t number = functionsOfProgram.numberOf(function.executable);
-                    if (function.isVisibleFromOutside)
+                moduleHints->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
+                    uint32_t number = programFunctions.numberOf(function.executable);
+                    if (function.isExternallyVisible)
                         function.summary->markEscaping(AOT::FunctionSummary::ReportedByBundler);
                     else if (function.isDeclaration)
                         hasVisibleCreationSite.set(number);
                 });
             }
-            for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
-                const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+            for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
+                const AOT::KnownFunction& function = *programFunctions.function(number);
                 function.summary->isNonEscaping = !!function.forCall;
                 if (!function.forCall)
                     function.summary->markEscaping(AOT::FunctionSummary::NotCallable);
-                else if (number > AOT::largestFunctionNumberInTypes())
-                    function.summary->markEscaping(AOT::FunctionSummary::NumberDoesNotFitInTypes);
-                else if (!isModuleOfProgram(moduleOfFunctionNumbered(number)))
+                else if (number > AOT::maxFunctionNumberInTypes())
+                    function.summary->markEscaping(AOT::FunctionSummary::FunctionNumberOverflow);
+                else if (!isProgramModule(moduleForFunctionNumber(number)))
                     function.summary->markEscaping(AOT::FunctionSummary::ExternalFunction);
                 else if (!hasVisibleCreationSite.get(number))
                     function.summary->markEscaping(AOT::FunctionSummary::CreationSiteUnknown);
@@ -6491,47 +6434,43 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
 
-        // Infer the return types of the functions that are called directly. Each depends on the return types of its callees, so
-        // they are computed together, from bottom, to a fixpoint.
         {
-            // The parameter types of non-escaping functions are inferred too. They depend on the values at their call sites, so all
-            // of the program's code has to be analyzed.
-            using SetOfUnits = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+            using UnitSet = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
             struct AnalysisUnit {
-                Vector<const AOT::KnownFunction*, 1> functions; // The functions whose code for call this is.
+                Vector<const AOT::KnownFunction*, 1> functions;
                 const AOT::FunctionSummary* summary { nullptr };
-                SetOfUnits dependents;
+                UnitSet dependents;
                 Vector<const AOT::KnownFunction*> callees;
                 Vector<const AOT::KnownFunction*> calleesWithWidenedInputs;
                 bool changed { false };
             };
             Vector<AnalysisUnit> units(jobs.size());
-            UncheckedKeyHashMap<UnlinkedCodeBlock*, unsigned> summaryOfCode;
+            UncheckedKeyHashMap<UnlinkedCodeBlock*, unsigned> codeSummary;
             for (unsigned i = 0; i < jobs.size(); ++i)
-                summaryOfCode.add(jobs[i].codeBlock, i);
-            UncheckedKeyHashMap<const AOT::KnownFunction*, unsigned> indexOfSummary;
+                codeSummary.add(jobs[i].codeBlock, i);
+            UncheckedKeyHashMap<const AOT::KnownFunction*, unsigned> summaryIndex;
             for (unsigned module = 0; module < hints.size(); ++module) {
                 if (!hints[module])
                     continue;
                 hints[module]->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
                     if (!function.forCall)
                         return;
-                    auto it = summaryOfCode.find(function.forCall);
-                    if (it == summaryOfCode.end())
+                    auto it = codeSummary.find(function.forCall);
+                    if (it == codeSummary.end())
                         return;
-                    indexOfSummary.add(&function, it->value);
+                    summaryIndex.add(&function, it->value);
                     units[it->value].functions.append(&function);
                     units[it->value].summary = function.summary;
                 });
             }
-            for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
-                const AOT::KnownFunction* function = functionsOfProgram.function(number);
+            for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
+                const AOT::KnownFunction* function = programFunctions.function(number);
                 if (!function->forCall)
                     continue;
-                auto it = summaryOfCode.find(function->forCall);
-                if (it == summaryOfCode.end())
+                auto it = codeSummary.find(function->forCall);
+                if (it == codeSummary.end())
                     continue;
-                indexOfSummary.add(function, it->value);
+                summaryIndex.add(function, it->value);
                 units[it->value].functions.append(function);
                 units[it->value].summary = function->summary;
             }
@@ -6541,8 +6480,7 @@ struct BytecodeLinkEncoder::Impl {
             MonotonicTime before = MonotonicTime::now();
             unsigned rounds = 0;
             size_t inferences = 0;
-            unsigned scopesNeverMade = 0;
-            // All that has been said, so far. (In an order, and of things, that are the same from one time the program is built to the next.)
+            unsigned neverCreatedScopes = 0;
             auto summaryDigest = [&] {
                 uint64_t digest = 0;
                 auto mix = [&](uint64_t value) {
@@ -6577,7 +6515,7 @@ struct BytecodeLinkEncoder::Impl {
                     });
                 }
                 mix(variables);
-                mix(scopesNeverMade);
+                mix(neverCreatedScopes);
                 return digest;
             };
             unsigned fullReanalysisCount = 0;
@@ -6607,16 +6545,16 @@ struct BytecodeLinkEncoder::Impl {
                     if (unit.summary)
                         unit.summary->returnType.join(type);
                 });
-                SetOfUnits next;
+                UnitSet next;
                 for (unsigned index : worklist) {
                     for (auto* callee : units[index].callees) {
-                        if (auto it = indexOfSummary.find(callee); it != indexOfSummary.end())
+                        if (auto it = summaryIndex.find(callee); it != summaryIndex.end())
                             units[it->value].dependents.add(index);
                     }
                 }
                 for (unsigned index : worklist) {
                     for (auto* callee : units[index].calleesWithWidenedInputs) {
-                        if (auto it = indexOfSummary.find(callee); it != indexOfSummary.end())
+                        if (auto it = summaryIndex.find(callee); it != summaryIndex.end())
                             next.add(it->value);
                     }
                     if (!std::exchange(units[index].changed, false))
@@ -6625,17 +6563,15 @@ struct BytecodeLinkEncoder::Impl {
                         next.add(dependent);
                 }
                 if (variableSummaries) {
-                    for (unsigned reader : variableSummaries->takeReadersOfWidenedVariables())
+                    for (unsigned reader : variableSummaries->takeWidenedVariableReaders())
                         next.add(reader);
                     if (next.isEmpty()) {
-                        for (unsigned reader : variableSummaries->untrackVariablesReadButNeverWritten(scopesNeverMade))
+                        for (unsigned reader : variableSummaries->untrackVariablesReadButNeverWritten(neverCreatedScopes))
                             next.add(reader);
                     }
                 }
                 worklist = copyToVector(next);
             }
-            // The worklist of known dependents is empty. If the recorded dependencies are complete, analyzing everything again
-            // changes nothing, which the digest confirms.
             uint64_t digest = summaryDigest();
             if (fullReanalysisCount && digest == digestBefore)
                 break;
@@ -6647,22 +6583,20 @@ struct BytecodeLinkEncoder::Impl {
             }
             unsigned withCode = 0;
             unsigned closed = 0;
-            unsigned neverCalled = 0;
-            for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
-                const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+            unsigned isNeverCalled = 0;
+            for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
+                const AOT::KnownFunction& function = *programFunctions.function(number);
                 function.summary->isNonEscaping = function.forCall && !function.summary->escapes.load();
                 withCode += !!function.forCall;
                 closed += function.summary->isNonEscaping;
-                neverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
+                isNeverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
             }
-            // See FunctionSummary::returnsBoxed. Where the two ends of a tail call differ, both box. That may make either differ from
-            // another function it is tied to, so until nothing changes.
             for (bool changed = true; changed;) {
                 changed = false;
-                for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
-                    const AOT::KnownFunction& caller = *functionsOfProgram.function(number);
-                    for (const AOT::FunctionSummary* summaryOfCallee : caller.summary->knownTailCallees) {
-                        const AOT::KnownFunction& callee = *functionsOfProgram.function(summaryOfCallee->number);
+                for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
+                    const AOT::KnownFunction& caller = *programFunctions.function(number);
+                    for (const AOT::FunctionSummary* calleeSummary : caller.summary->knownTailCallees) {
+                        const AOT::KnownFunction& callee = *programFunctions.function(calleeSummary->number);
                         if (AOT::valueRepresentations(caller.summary, caller.conventionForCall).result == AOT::valueRepresentations(callee.summary, callee.conventionForCall).result)
                             continue;
                         caller.summary->returnsBoxed = true;
@@ -6672,10 +6606,9 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
             if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: ", withCode, " functions have code for calls, ", closed, " of them do not escape, ", neverCalled, " of those have no call site");
+                dataLogLn("AOT: ", withCode, " functions have code for calls, ", closed, " of them do not escape, ", isNeverCalled, " of those have no call site");
             if (Options::logAOTTypeInference()) [[unlikely]] {
-                // Run the analysis once more at the fixpoint, so that each unit logs its inputs and its results.
-                auto nameOfJob = [&](unsigned index) {
+                auto jobName = [&](unsigned index) {
                     auto* executable = jobs[index].executable;
                     return makeString('`', executable ? executable->name().string() : "(top level)"_s, "` @"_s, jobs[index].key.module, ':', jobs[index].key.start);
                 };
@@ -6683,78 +6616,75 @@ struct BytecodeLinkEncoder::Impl {
                     AnalysisUnit& unit = units[index];
                     if (unit.summary) {
                         StringPrintStream out;
-                        for (unsigned p = 1; p < std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::FunctionSummary::mostParameters); ++p)
+                        for (unsigned p = 1; p < std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::FunctionSummary::maxParameters); ++p)
                             out.print(" ", AOT::TypeDump(unit.summary->parameterTypes[p].load()));
-                        dataLogLn("AOT inference: function ", nameOfJob(index), unit.summary->isNonEscaping ? " CLOSED, is passed" : " open", unit.summary->isNonEscaping ? out.toString() : String(), ", returns ", AOT::TypeDump(unit.functions[0]->returnType.load()), ", direct calls ", unit.summary->directCalls.load());
+                        dataLogLn("AOT inference: function ", jobName(index), unit.summary->isNonEscaping ? " CLOSED, is passed" : " open", unit.summary->isNonEscaping ? out.toString() : String(), ", returns ", AOT::TypeDump(unit.functions[0]->returnType.load()), ", direct calls ", unit.summary->directCalls.load());
                     }
                     Vector<const AOT::KnownFunction*> ignored;
-                    Vector<const AOT::KnownFunction*> ignoredToo;
-                    uint32_t ignoredAsWell = 0;
-                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), unit.summary, variableSummaries, AOT::VariableSummaries::nobody, ignored, ignoredToo, ignoredAsWell, nameOfJob(index));
+                    Vector<const AOT::KnownFunction*> alsoIgnored;
+                    uint32_t ignoredAlso = 0;
+                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), unit.summary, variableSummaries, AOT::VariableSummaries::nobody, ignored, alsoIgnored, ignoredAlso, jobName(index));
                 }
             }
         }
 
         AOT::ImageBuilder builder;
-        builder.setEnvironments(WTF::move(environmentsOfLink), safeCast<uint32_t>(environmentsSizeOfLink));
+        builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
         std::atomic<size_t> next { 0 };
         Lock declinedLock;
         UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
-        class CodeOfThisProgram final : public AOT::CodeOfProgram {
+        class LinkedProgramCode final : public AOT::ProgramCode {
         public:
             std::optional<About> about(UnlinkedCodeBlock* codeBlock) const final
             {
                 auto it = all.find(codeBlock);
                 return it == all.end() ? std::nullopt : std::optional { it->value };
             }
-            UnlinkedFunctionCodeBlock* codeOfBuiltin(unsigned index) const final
+            UnlinkedFunctionCodeBlock* codeForBuiltin(unsigned index) const final
             {
                 return index < builtins->size() && builtins->at(index) ? builtins->at(index)->codeBlockIfExists(CodeSpecializationKind::CodeForCall) : nullptr;
             }
             UncheckedKeyHashMap<UnlinkedCodeBlock*, About> all;
             const Vector<UnlinkedFunctionExecutable*>* builtins { nullptr };
         };
-        CodeOfThisProgram codeOfProgram;
-        codeOfProgram.builtins = &engineBuiltins;
+        LinkedProgramCode programCode;
+        programCode.builtins = &engineBuiltins;
         for (auto& job : jobs)
-            codeOfProgram.all.add(job.codeBlock, AOT::CodeOfProgram::About { hints[job.module].get(), linkages[job.module].get(), summariesByCodeBlock.get(job.codeBlock), job.key });
-        std::atomic<uint64_t> functionsNeverReached { 0 };
-        std::atomic<uint64_t> bytecodeNeverReached { 0 };
+            programCode.all.add(job.codeBlock, AOT::ProgramCode::About { hints[job.module].get(), linkages[job.module].get(), summariesByCodeBlock.get(job.codeBlock), job.key });
+        std::atomic<uint64_t> unreachedFunctions { 0 };
+        std::atomic<uint64_t> unreachedBytecodeSize { 0 };
         auto work = [&] {
             for (size_t index = next++; index < jobs.size(); index = next++) {
-                // All callers of a non-escaping function are known. One without callers needs no code.
                 if (const AOT::FunctionSummary* summary = summariesByCodeBlock.get(jobs[index].codeBlock); summary && !summary->isReached()) {
-                    functionsNeverReached++;
-                    bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
+                    unreachedFunctions++;
+                    unreachedBytecodeSize += jobs[index].codeBlock->instructionsSize();
                     if (Options::verboseAOTCompilation()) [[unlikely]]
                         dataLogLn("AOT: omitted as unreachable: `", jobs[index].executable ? jobs[index].executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
                     continue;
                 }
                 AOT::CompiledCode code;
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, &codeOfProgram)) {
-                    // (A function's key gives the start of its source, unless the function is synthesized.)
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, &programCode)) {
                     {
-                        auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
+                        auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                         bool isTopLevel = !(jobs[index].rank & 2);
-                        bool startIsKnown = isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody;
-                        AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? textOfModule(jobs[index].module) : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
+                        bool startIsKnown = isTopLevel || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody;
+                        AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? moduleText(jobs[index].module) : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
                     }
                     if (Options::logAOTTypeInference()) [[unlikely]] {
                         auto* executable = jobs[index].executable;
                         dataLogLn("CODESIZE `", executable ? executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, " ", code.bytes.size());
                     }
-                    auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
+                    auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                     bool isTopLevel = !(jobs[index].rank & 2);
-                    // (An embedder's builtin has its text wherever the embedder has it.)
-                    bool isOfProgram = isModuleOfProgram(jobs[index].module);
-                    if (isOfProgram && (isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody))
-                        AOT::collectQuotes(code.info, jobs[index].codeBlock, textOfModule(jobs[index].module), isTopLevel ? 0 : jobs[index].key.start);
-                    if (auto* numbers = AOT::numbersOfIdentifiersOfProgram()) {
+                    bool isInProgram = isProgramModule(jobs[index].module);
+                    if (isInProgram && (isTopLevel || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody))
+                        AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), isTopLevel ? 0 : jobs[index].key.start);
+                    if (auto* numbers = AOT::programIdentifierIndices()) {
                         for (auto& identifier : jobs[index].codeBlock->identifiers())
-                            code.info.numbersOfIdentifiers.append(numbers->get(identifier.impl()));
+                            code.info.identifierIndices.append(numbers->get(identifier.impl()));
                     }
-                    if (auto* numbers = AOT::numbersOfConstantsOfProgramFor(jobs[index].codeBlock))
-                        code.info.numbersOfConstants = *numbers;
+                    if (auto* numbers = AOT::programConstantIndicesFor(jobs[index].codeBlock))
+                        code.info.constantIndices = *numbers;
                     String nameForMap;
                     if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
                         nameForMap = executable->ecmaName().string();
@@ -6766,18 +6696,17 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
         };
-        // See AOT::NumbersOfIdentifiers. The ones that most functions have come first, so that theirs are the small numbers.
-        AOT::NumbersOfIdentifiers numbersOfIdentifiers;
+        AOT::IdentifierIndices identifierIndices;
         {
-            uint64_t inAll = 0;
+            uint64_t totalCount = 0;
             for (auto& job : jobs) {
                 for (auto& identifier : job.codeBlock->identifiers()) {
-                    numbersOfIdentifiers.add(identifier.impl(), 0).iterator->value++;
-                    ++inAll;
+                    identifierIndices.add(identifier.impl(), 0).iterator->value++;
+                    ++totalCount;
                 }
             }
             Vector<std::pair<UniquedStringImpl*, uint32_t>> inOrder;
-            for (auto& entry : numbersOfIdentifiers)
+            for (auto& entry : identifierIndices)
                 inOrder.append({ entry.key, entry.value });
             std::ranges::sort(inOrder, [](auto& a, auto& b) {
                 if (a.second != b.second)
@@ -6786,32 +6715,28 @@ struct BytecodeLinkEncoder::Impl {
                     return order == std::weak_ordering::less;
                 return a.first->isSymbol() < b.first->isSymbol();
             });
-            // (Numbered from one: they index the dispatch table, where zero means no entry.)
             for (uint32_t number = 0; number < inOrder.size(); ++number)
-                numbersOfIdentifiers.set(inOrder[number].first, number + 1);
-            AOT::setNumbersOfIdentifiersOfProgram(&numbersOfIdentifiers);
-            builder.setNumbersOfIdentifiersOfProgram(&numbersOfIdentifiers, inOrder.size() + 1);
+                identifierIndices.set(inOrder[number].first, number + 1);
+            AOT::setProgramIdentifierIndices(&identifierIndices);
+            builder.setProgramIdentifierIndices(&identifierIndices, inOrder.size() + 1);
         }
 
-        // See AOT::NumbersOfConstants.
-        AOT::NumbersOfConstants numbersOfConstants;
-        if (AOT::numbersOfIdentifiersOfProgram()) {
+        AOT::ConstantIndices constantIndices;
+        if (AOT::programIdentifierIndices()) {
             UncheckedKeyHashMap<String, uint32_t> strings;
             uint64_t cells = 0;
             UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> others;
             uint32_t next = 0;
-            // (One for each place in the text, whichever code of the function gets there.)
             UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> templates;
             for (auto& job : jobs) {
                 Vector<uint32_t> numbers;
                 auto& representations = job.codeBlock->constantsSourceCodeRepresentation();
                 for (auto& constant : job.codeBlock->constantRegisters()) {
                     JSValue value = constant.get();
-                    uint32_t number = AOT::notAConstantOfProgram;
+                    uint32_t number = AOT::invalidConstantIndex;
                     auto take = [&] {
                         return next++;
                     };
-                    // (What says which of the realm's things is meant is not read as a constant: NodeKind::LinkTimeConstant.)
                     if (!value || representations[numbers.size()] == SourceCodeRepresentation::LinkTimeConstant) {
                     } else if (!value.isCell())
                         number = others.ensure(static_cast<uint64_t>(JSValue::encode(value)), take).iterator->value;
@@ -6819,8 +6744,6 @@ struct BytecodeLinkEncoder::Impl {
                         String said;
                         if (value.isString())
                             said = asString(value)->tryGetValue();
-                        // (Any other cell gets a number of its own, even if two functions share it here, because
-                        // AOT::ProgramData::build() decodes each function's constants separately.)
                         if (!said.isNull())
                             number = strings.ensure(said, take).iterator->value;
                         else if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(value.asCell()))
@@ -6832,15 +6755,14 @@ struct BytecodeLinkEncoder::Impl {
                     }
                     numbers.append(number);
                 }
-                numbersOfConstants.add(job.codeBlock, WTF::move(numbers));
+                constantIndices.add(job.codeBlock, WTF::move(numbers));
             }
-            // The ones that most functions have get the small numbers: code gets at those with one instruction fewer.
             {
                 Vector<uint32_t> uses;
                 uses.fill(0, next);
-                for (auto& entry : numbersOfConstants) {
+                for (auto& entry : constantIndices) {
                     for (uint32_t number : entry.value) {
-                        if (number != AOT::notAConstantOfProgram)
+                        if (number != AOT::invalidConstantIndex)
                             uses[number]++;
                     }
                 }
@@ -6856,19 +6778,17 @@ struct BytecodeLinkEncoder::Impl {
                     if (i < 4096)
                         within += uses[inOrder[i]];
                 }
-                for (auto& entry : numbersOfConstants) {
+                for (auto& entry : constantIndices) {
                     for (uint32_t& number : entry.value) {
-                        if (number != AOT::notAConstantOfProgram)
+                        if (number != AOT::invalidConstantIndex)
                             number = rank[number];
                     }
                 }
             }
-            AOT::setNumbersOfConstantsOfProgram(&numbersOfConstants);
-            builder.setNumberOfConstantsOfProgram(next);
+            AOT::setProgramConstantIndices(&constantIndices);
+            builder.setNumberOfProgramConstants(next);
         }
 
-        // A call that passes no function object has nowhere to go but the function's code. If there turns out to be none, it is all
-        // done again with that known.
         for (bool again = true; again;) {
             Vector<Ref<Thread>> threads;
             for (unsigned i = 1; i < numberOfThreads; ++i)
@@ -6877,36 +6797,36 @@ struct BytecodeLinkEncoder::Impl {
             for (auto& thread : threads)
                 thread->waitForCompletion();
             again = false;
-            for (auto& hintsOfModule : hints) {
-                if (!hintsOfModule)
+            for (auto& moduleHints : hints) {
+                if (!moduleHints)
                     continue;
-                hintsOfModule->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
+                moduleHints->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
                     if (function.needsNoFunctionObject.load(std::memory_order_relaxed) && declined.contains(function.forCall)) {
                         function.needsNoFunctionObject.store(false, std::memory_order_relaxed);
                         again = true;
                     }
                 });
             }
-            classesOfProgram.forEachNonEscapingMethod([&](uint32_t number) {
-                const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+            programClasses.forEachNonEscapingMethod([&](uint32_t number) {
+                const AOT::KnownFunction& function = *programFunctions.function(number);
                 if (function.needsNoFunctionObject.load(std::memory_order_relaxed) && declined.contains(function.forCall)) {
                     function.needsNoFunctionObject.store(false, std::memory_order_relaxed);
                     again = true;
                 }
             });
             if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: omitted ", functionsNeverReached.load(), " unreachable functions (", bytecodeNeverReached.load(), " bytes of bytecode)");
+                dataLogLn("AOT: omitted ", unreachedFunctions.load(), " unreachable functions (", unreachedBytecodeSize.load(), " bytes of bytecode)");
             if (again) {
-                functionsNeverReached = 0;
-                bytecodeNeverReached = 0;
+                unreachedFunctions = 0;
+                unreachedBytecodeSize = 0;
                 builder.clear();
                 declined.clear();
                 next = 0;
             }
         }
         AOT::forgetDeclaredNames();
-        AOT::setNumbersOfIdentifiersOfProgram(nullptr);
-        AOT::setNumbersOfConstantsOfProgram(nullptr);
+        AOT::setProgramIdentifierIndices(nullptr);
+        AOT::setProgramConstantIndices(nullptr);
         for (auto& job : jobs) {
             for (auto& constant : job.codeBlock->constantRegisters()) {
                 if (auto* regExp = constant.get().isCell() ? dynamicDowncast<RegExp>(constant.get().asCell()) : nullptr)
@@ -6917,7 +6837,7 @@ struct BytecodeLinkEncoder::Impl {
         reportableSites = builder.takeReportableSites();
         return image;
     }
-    Vector<ReportableSitesOfFunction> reportableSites;
+    Vector<FunctionReportableSites> reportableSites;
 
     struct FunctionToCompile {
         unsigned module;
@@ -6945,7 +6865,7 @@ struct BytecodeLinkEncoder::Impl {
     Vector<Module> modules;
     std::span<const uint8_t> prelinkedGraph;
     std::span<const uint32_t> prelinkedGraphStringSlots;
-    Vector<uint32_t> graphModuleOfEachAdd;
+    Vector<uint32_t> graphModuleIndices;
     OrderHashSet notEvaluatedModules;
 };
 
@@ -6989,16 +6909,15 @@ void BytecodeLinkEncoder::addBuiltinFunction(UnlinkedFunctionExecutable* executa
     m_impl->add(Impl::Module { SourceCodeKey(), Strong<JSCell>(m_impl->vm, executable), source, embedderStamp }, names);
 }
 
-void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob, std::span<const uint32_t> stringSlots, Vector<uint32_t>&& graphModuleOfEachAdd)
+void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob, std::span<const uint32_t> stringSlots, Vector<uint32_t>&& graphModuleIndices)
 {
     m_impl->prelinkedGraph = blob;
     m_impl->prelinkedGraphStringSlots = stringSlots;
-    m_impl->graphModuleOfEachAdd = WTF::move(graphModuleOfEachAdd);
+    m_impl->graphModuleIndices = WTF::move(graphModuleIndices);
 }
 
 void installImageCompiler()
 {
-    // The back end is only written for ARM64 so far.
 #if ENABLE(AOT) && CPU(ARM64)
     g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };
 #endif
@@ -7037,7 +6956,6 @@ auto BytecodeLinkEncoder::finish() -> Result
     for (auto& module : m_impl->modules)
         *module.entry->payloadSizeSlot() = payloadSize;
 #if ENABLE(AOT)
-    // While the code is still rooted, and now that every module has its number.
     if (m_impl->compilesAheadOfTime) {
         RELEASE_ASSERT_WITH_MESSAGE(g_compilerHooks.compileImage, "This executable was linked without the compilers: it cannot compile ahead of time.");
         result.aotImage = g_compilerHooks.compileImage(m_impl.get());
@@ -7055,7 +6973,7 @@ auto BytecodeLinkEncoder::finish() -> Result
         auto& module = m_impl->modules[index];
         if (!module.isEngineBuiltin)
             result.entryOffsets.append(module.entryOffset);
-        result.entryOffsetsOfModules.append(module.entryOffset);
+        result.moduleEntryOffsets.append(module.entryOffset);
 #if ENABLE(AOT)
         result.variablesExportedByModules.append(m_impl->variablesExportedBy(index));
 #endif
@@ -7149,7 +7067,6 @@ std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM& vm, const Sourc
     return result;
 }
 
-
 std::optional<CachedCodeDigest> digestOfAllCachedCode(VM& vm, const SourceCode& source, bool isModule, Ref<CachedBytecode> cachedBytecode)
 {
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
@@ -7186,9 +7103,9 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
         return std::nullopt;
     return key;
 }
-class CachedObjectsOfProgram {
+class CachedProgramObjects {
 public:
-    void encode(Encoder& encoder, const ObjectsOfProgram& objects)
+    void encode(Encoder& encoder, const ProgramObjects& objects)
     {
         m_identifiers.encodeRange(encoder, objects.identifiers.size(), objects.identifiers | std::views::transform([&](UniquedStringImpl* impl) {
             return impl ? Identifier::fromUid(encoder.vm(), impl) : Identifier();
@@ -7196,24 +7113,24 @@ public:
         {
             auto values = m_constants.allocateElements(encoder, objects.constants);
             Vector<uint8_t> kinds(objects.constants.size());
-            UncheckedKeyHashMap<JSCell*, uint32_t, DefaultHash<JSCell*>, HashTraits<JSCell*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstThatIs;
+            UncheckedKeyHashMap<JSCell*, uint32_t, DefaultHash<JSCell*>, HashTraits<JSCell*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstIndexByCell;
             for (size_t i = 0; i < objects.constants.size(); ++i) {
                 JSValue value = objects.constants[i];
                 if (value && value.isCell() && value.asCell()->inherits<SymbolTable>()) {
-                    auto result = firstThatIs.add(value.asCell(), static_cast<uint32_t>(i));
+                    auto result = firstIndexByCell.add(value.asCell(), static_cast<uint32_t>(i));
                     if (!result.isNewEntry) {
-                        kinds[i] = static_cast<uint8_t>(values[i].encodeSameAs(result.iterator->value));
+                        kinds[i] = static_cast<uint8_t>(values[i].encodeAlias(result.iterator->value));
                         continue;
                     }
                 }
                 kinds[i] = static_cast<uint8_t>(values[i].encode(encoder, value));
             }
-            m_kindsOfConstants.encode(encoder, kinds);
+            m_constantKinds.encode(encoder, kinds);
         }
         m_unlinkedFunctions.encodeRange(encoder, objects.unlinkedFunctions.size(), objects.unlinkedFunctions | std::views::transform([](UnlinkedFunctionExecutable* function) -> const UnlinkedFunctionExecutable* {
             return function;
         }));
-        encoder.leaveOutCode(objects.entryInListFor);
+        encoder.omitCode(objects.functionListEntryFor);
         auto modules = m_modules.allocateElements(encoder, objects.topLevelCodes);
         auto programs = m_programs.allocateElements(encoder, objects.topLevelCodes);
         for (size_t i = 0; i < objects.topLevelCodes.size(); ++i) {
@@ -7225,12 +7142,12 @@ public:
     }
 
     Identifier identifier(Decoder& decoder, uint32_t number) const { return m_identifiers.elements()[number].decode(decoder); }
-    JSValue constant(Decoder& decoder, uint32_t number) const { return m_constants.elements()[number].decode(decoder, static_cast<CachedJSValue::Kind>(m_kindsOfConstants.elements()[number])); }
-    std::optional<uint32_t> constantIsSameAs(uint32_t number) const
+    JSValue constant(Decoder& decoder, uint32_t number) const { return m_constants.elements()[number].decode(decoder, static_cast<CachedJSValue::Kind>(m_constantKinds.elements()[number])); }
+    std::optional<uint32_t> constantAliasTarget(uint32_t number) const
     {
-        if (static_cast<CachedJSValue::Kind>(m_kindsOfConstants.elements()[number]) != CachedJSValue::Kind::SameAsConstant)
+        if (static_cast<CachedJSValue::Kind>(m_constantKinds.elements()[number]) != CachedJSValue::Kind::ConstantAlias)
             return std::nullopt;
-        return m_constants.elements()[number].sameAs();
+        return m_constants.elements()[number].aliasTarget();
     }
     UnlinkedFunctionExecutable* unlinkedFunction(Decoder& decoder, uint32_t number) const { return m_unlinkedFunctions.elements()[number].decode(decoder); }
     UnlinkedCodeBlock* topLevelCode(Decoder& decoder, uint32_t number) const
@@ -7243,23 +7160,23 @@ public:
 private:
     CachedVector<CachedIdentifier> m_identifiers;
     CachedVector<CachedJSValue> m_constants;
-    CachedVector<uint8_t> m_kindsOfConstants;
+    CachedVector<uint8_t> m_constantKinds;
     CachedVector<CachedPtr<CachedFunctionExecutable>> m_unlinkedFunctions;
     CachedVector<CachedPtr<CachedModuleCodeBlock>> m_modules;
     CachedVector<CachedPtr<CachedProgramCodeBlock>> m_programs;
 };
 
-static UnlinkedFunctionExecutable* unlinkedFunctionOfProgram(Decoder& decoder, uint32_t number)
+static UnlinkedFunctionExecutable* programUnlinkedFunction(Decoder& decoder, uint32_t number)
 {
-    return AOT::ProgramOfVM::of(decoder.vm())->unlinkedFunction(number, false);
+    return AOT::VMProgram::of(decoder.vm())->unlinkedFunction(number, false);
 }
 
-Vector<uint8_t> encodeObjectsOfProgram(VM& vm, EncoderStringTable& strings, const ObjectsOfProgram& objects)
+Vector<uint8_t> encodeProgramObjects(VM& vm, EncoderStringTable& strings, const ProgramObjects& objects)
 {
     uint32_t numberOfStrings = strings.count();
     FileSystem::FileHandle invalidFileHandle;
     Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, &strings, BytecodeCacheUpdatable::No);
-    auto* root = encoder.template malloc<CachedObjectsOfProgram>();
+    auto* root = encoder.template malloc<CachedProgramObjects>();
     RELEASE_ASSERT(!encoder.offsetOf(root));
     root->encode(encoder, objects);
     encoder.encodeDeferred();
@@ -7269,9 +7186,9 @@ Vector<uint8_t> encodeObjectsOfProgram(VM& vm, EncoderStringTable& strings, cons
     return Vector<uint8_t> { result->span() };
 }
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(ObjectsOfProgramDecoder);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramObjectsDecoder);
 
-static Ref<Decoder> decoderOfObjectsOfProgram(VM& vm, std::span<const uint8_t> bytes, DecoderStringTable& strings)
+static Ref<Decoder> programObjectsDecoder(VM& vm, std::span<const uint8_t> bytes, DecoderStringTable& strings)
 {
     Ref cachedBytecode = CachedBytecode::create(std::span { const_cast<uint8_t*>(bytes.data()), bytes.size() }, nullptr, { });
     cachedBytecode->setPayloadIsPersistent();
@@ -7280,26 +7197,26 @@ static Ref<Decoder> decoderOfObjectsOfProgram(VM& vm, std::span<const uint8_t> b
     return decoder;
 }
 
-ObjectsOfProgramDecoder::ObjectsOfProgramDecoder(VM& vm, std::span<const uint8_t> bytes, DecoderStringTable& strings)
-    : m_decoder(decoderOfObjectsOfProgram(vm, bytes, strings))
-    , m_objects(*reinterpret_cast<const CachedObjectsOfProgram*>(bytes.data()))
+ProgramObjectsDecoder::ProgramObjectsDecoder(VM& vm, std::span<const uint8_t> bytes, DecoderStringTable& strings)
+    : m_decoder(programObjectsDecoder(vm, bytes, strings))
+    , m_objects(*reinterpret_cast<const CachedProgramObjects*>(bytes.data()))
 {
 }
 
-ObjectsOfProgramDecoder::~ObjectsOfProgramDecoder() = default;
+ProgramObjectsDecoder::~ProgramObjectsDecoder() = default;
 
-Identifier ObjectsOfProgramDecoder::identifier(uint32_t number) { return m_objects.identifier(m_decoder.get(), number); }
-JSValue ObjectsOfProgramDecoder::constant(uint32_t number) { return m_objects.constant(m_decoder.get(), number); }
-std::optional<uint32_t> ObjectsOfProgramDecoder::constantIsSameAs(uint32_t number) { return m_objects.constantIsSameAs(number); }
-UnlinkedFunctionExecutable* ObjectsOfProgramDecoder::unlinkedFunction(uint32_t number) { return m_objects.unlinkedFunction(m_decoder.get(), number); }
-UnlinkedCodeBlock* ObjectsOfProgramDecoder::topLevelCode(uint32_t number) { return m_objects.topLevelCode(m_decoder.get(), number); }
+Identifier ProgramObjectsDecoder::identifier(uint32_t number) { return m_objects.identifier(m_decoder.get(), number); }
+JSValue ProgramObjectsDecoder::constant(uint32_t number) { return m_objects.constant(m_decoder.get(), number); }
+std::optional<uint32_t> ProgramObjectsDecoder::constantAliasTarget(uint32_t number) { return m_objects.constantAliasTarget(number); }
+UnlinkedFunctionExecutable* ProgramObjectsDecoder::unlinkedFunction(uint32_t number) { return m_objects.unlinkedFunction(m_decoder.get(), number); }
+UnlinkedCodeBlock* ProgramObjectsDecoder::topLevelCode(uint32_t number) { return m_objects.topLevelCode(m_decoder.get(), number); }
 
 std::span<const uint8_t> absentInstructions(size_t size)
 {
     return { reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(sizeof(void*))), size };
 }
 
-static void decodeAllInsideForProgramData(VM& vm, UnlinkedCodeBlock* codeBlockOrNull, UnlinkedFunctionExecutable* functionOrNull, Vector<UnlinkedFunctionExecutable*>& functions)
+static void decodeNestedFunctionsForProgramData(VM& vm, UnlinkedCodeBlock* codeBlockOrNull, UnlinkedFunctionExecutable* functionOrNull, Vector<UnlinkedFunctionExecutable*>& functions)
 {
     Vector<UnlinkedCodeBlock*> worklist;
     auto decodeFunction = [&](UnlinkedFunctionExecutable* executable) {
@@ -7324,18 +7241,18 @@ static void decodeAllInsideForProgramData(VM& vm, UnlinkedCodeBlock* codeBlockOr
     }
 }
 
-UnlinkedCodeBlock* decodeAllForProgramData(Decoder& decoder, SourceCodeKey& key, Vector<UnlinkedFunctionExecutable*>& functions)
+UnlinkedCodeBlock* decodeModuleForProgramData(Decoder& decoder, SourceCodeKey& key, Vector<UnlinkedFunctionExecutable*>& functions)
 {
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
     if (!cachedEntry->decode(decoder, entry) || !entry.second)
         return nullptr;
     key = entry.first;
-    decodeAllInsideForProgramData(decoder.vm(), entry.second, nullptr, functions);
+    decodeNestedFunctionsForProgramData(decoder.vm(), entry.second, nullptr, functions);
     return entry.second;
 }
 
-bool entryIsOfBuiltinFunction(Decoder& decoder)
+bool entryIsBuiltinFunction(Decoder& decoder)
 {
     return std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()))->matchesAssumedType();
 }
@@ -7347,7 +7264,7 @@ UnlinkedFunctionExecutable* decodeBuiltinForProgramData(Decoder& decoder, unsign
     embedderStamp = entry->embedderStamp();
     UnlinkedFunctionExecutable* executable = entry->decode(decoder, lineStarts);
     if (executable)
-        decodeAllInsideForProgramData(decoder.vm(), nullptr, executable, functions);
+        decodeNestedFunctionsForProgramData(decoder.vm(), nullptr, executable, functions);
     return executable;
 }
 
@@ -7410,7 +7327,6 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode));
     return cachedEntry->isStillValid(decoder.get(), key, tagFromSourceCodeType(type));
 }
-
 
 // The size of every record under every ABI we build (see PayloadType). Changing a record means changing its number here,
 // and with it the serialized form.
@@ -7492,19 +7408,19 @@ void decodeSymbolTableEntries(Decoder& decoder, const CachedSymbolTable& cachedS
     cachedSymbolTable.decodeEntries(decoder, symbolTable, scopePartOnly);
 }
 
-Vector<uint8_t> scalarsToMakeFunctionCodeFrom(const UnlinkedCodeBlock& codeBlock)
+Vector<uint8_t> encodeCodeBlockScalars(const UnlinkedCodeBlock& codeBlock)
 {
-    return CachedCodeBlock<UnlinkedFunctionCodeBlock>::scalarsToMakeOneFrom(codeBlock);
+    return CachedCodeBlock<UnlinkedFunctionCodeBlock>::encodeScalars(codeBlock);
 }
 
-UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM& vm, const PartsOfFunctionCode& parts)
+UnlinkedFunctionCodeBlock* createFunctionCodeBlockFromParts(VM& vm, const CodeBlockParts& parts)
 {
-    return CachedCodeBlock<UnlinkedFunctionCodeBlock>::makeFromParts(vm, parts);
+    return CachedCodeBlock<UnlinkedFunctionCodeBlock>::createFromParts(vm, parts);
 }
 
-UnlinkedModuleProgramCodeBlock* makeModuleCodeFromParts(VM& vm, const PartsOfFunctionCode& parts)
+UnlinkedModuleProgramCodeBlock* createModuleCodeBlockFromParts(VM& vm, const CodeBlockParts& parts)
 {
-    return CachedCodeBlock<UnlinkedModuleProgramCodeBlock>::makeFromParts(vm, parts);
+    return CachedCodeBlock<UnlinkedModuleProgramCodeBlock>::createFromParts(vm, parts);
 }
 
 std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo)

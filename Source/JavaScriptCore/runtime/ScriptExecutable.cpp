@@ -257,10 +257,10 @@ bool ScriptExecutable::hasClearableCode() const
 {
     if (isShortForm())
         return false;
-    if (inFull()->m_jitCodeForCall
-        || inFull()->m_jitCodeForConstruct
-        || inFull()->m_jitCodeForCallWithArityCheck
-        || inFull()->m_jitCodeForConstructWithArityCheck)
+    if (fullForm()->m_jitCodeForCall
+        || fullForm()->m_jitCodeForConstruct
+        || fullForm()->m_jitCodeForCallWithArityCheck
+        || fullForm()->m_jitCodeForConstructWithArityCheck)
         return true;
 
     if (structure()->classInfoForCells() == FunctionExecutable::info()) {
@@ -351,8 +351,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
             }
         }
 #endif
-        // Running it in another tier requires the instructions, which are not available.
-        if (unlinkedCodeBlock->isWithoutCode()) [[unlikely]] {
+        if (unlinkedCodeBlock->hasNoInstructions()) [[unlikely]] {
             throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and the executable was built without its bytecode. The compiled code cannot be used in this context, and there is no other code to run."_s));
             return nullptr;
         }
@@ -363,13 +362,11 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     RELEASE_ASSERT(function);
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
-    // The constructor of a class is compiled ahead of time to construct with. All that its code to be called with does is throw this.
     if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && executable->hasAOTEntry()) [[unlikely]] {
         String name = executable->name().string();
         throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
         return nullptr;
     }
-    // An executable in the short form only has its AOT code.
     RELEASE_ASSERT(!executable->isShortForm());
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
@@ -396,7 +393,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
 #if ENABLE(AOT)
     if (AOT::Image::hasAny()) {
         if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
-            // Nothing, and no exception: it has code, which wants no CodeBlock.
             throwScope.release();
             AOT::install(vm, executable, kind, unlinkedCodeBlock, scope, AOT::codeFromImage(code, unlinkedCodeBlock));
             return nullptr;
@@ -493,7 +489,6 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     if (Options::validateBytecode())
         codeBlock->validate();
 
-    // newCodeBlockFor() found it code in an image.
     bool installedUnlinkedBaselineCode = codeBlock->jitType() == JITType::AOTJIT;
 #if ENABLE(JIT)
     if (RefPtr<BaselineJITCode> baselineRef = installedUnlinkedBaselineCode ? nullptr : codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
@@ -597,7 +592,6 @@ unsigned ScriptExecutable::typeProfilingEndOffset() const
         return UINT_MAX;
     return source().length() - 1;
 }
-
 
 int ScriptExecutable::lastLine() const
 {

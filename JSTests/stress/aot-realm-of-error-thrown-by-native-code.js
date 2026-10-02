@@ -1,6 +1,4 @@
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// Native code that throws on behalf of its caller looks for the caller's realm on the stack. A frame of ahead-of-time
-// compiled code has no callee slot to find it through.
 
 function callIt(f) { return f(); }
 function constructIt(f) { return new f(); }
@@ -21,8 +19,6 @@ for (let i = 0; i < 100; ++i) {
     }
 }
 
-// A stack overflow found while fixing up the arity of an interpreted or compiled callee, and one found when C++ re-enters the VM.
-// (Not tail calls, which would loop forever in strict code without growing the stack.)
 function tooFewArguments(a, b, c, d, e, f, g, h) { return 1 + recurseThroughArityFixup(); }
 function recurseThroughArityFixup() { return 1 + tooFewArguments(1); }
 const withGetter = { get next() { return withGetter.next; } };

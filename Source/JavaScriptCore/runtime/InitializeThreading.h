@@ -35,9 +35,7 @@
 namespace JSC {
 
 JS_EXPORT_PRIVATE void initialize();
-// Before that, or there is no JIT, and nothing that compiles ahead of time. See CompilerHooks.h.
 JS_EXPORT_PRIVATE void installCompilers();
-// Instead of that: only regular expressions are compiled at run time.
 JS_EXPORT_PRIVATE void installRegExpCompiler();
 JS_EXPORT_PRIVATE void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCustomizationCallback);
 

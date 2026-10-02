@@ -1,5 +1,4 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-// The prototypes of plain functions all start out with the same structure, and some go on to have more in them.
 function Other() { }
 Other.prototype.method = function () { return 1; };
 
@@ -16,7 +15,6 @@ for (let i = 0; i < 2000; ++i) {
         throw new Error("before, at " + i);
 }
 
-// Now the prototype has a say about all of it.
 let stored = [];
 Object.defineProperty(Point.prototype, "y", { set(v) { stored.push(v); }, get() { return "from the accessor"; }, configurable: true });
 Object.defineProperty(Point.prototype, "added", { value: "read only", writable: false, configurable: true });

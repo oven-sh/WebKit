@@ -112,14 +112,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetDelete, size_t, (Instance* instance, JSC
     OPERATION_RETURN(scope, uncheckedDowncast<JSSet>(set)->remove(globalObject, JSValue::decode(key)));
 }
 
-// (The values are in the caller's frame, where the collector finds them.)
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (Instance* instance, JSArray* array, EncodedJSValue* values, uint32_t count))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     uint64_t length = array->length();
     if (length + count > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
-        // The same steps as arrayProtoFuncPush() with several arguments: every value is stored, past the last index as a named property,
-        // and then setting the length throws. pushInline() would throw a different error at the first value that does not fit.
         for (uint32_t i = 0; i < count; ++i) {
             array->putByIndexInline(globalObject, length + i, JSValue::decode(values[i]), true);
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -135,7 +132,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (Instanc
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(array->length())));
 }
 
-// end: INT32_MAX if the argument was omitted.
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySlice, JSArray*, (Instance* instance, JSArray* array, int32_t start, int32_t end))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -173,9 +169,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDateField, EncodedJSValue, (VM* vm
     return 0;
 }
 
-// The fallback for when compiled code cannot allocate the array inline (Lowering::newArrayOf()). Creates an array with those
-// elements and that indexing type.
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfValues, JSCell*, (Instance* instance, const EncodedJSValue* values, uint32_t count, uint32_t indexingType))
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromValues, JSCell*, (Instance* instance, const EncodedJSValue* values, uint32_t count, uint32_t indexingType))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(static_cast<IndexingType>(indexingType));

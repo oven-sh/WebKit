@@ -37,7 +37,7 @@ inline Structure* FunctionExecutable::createStructure(VM& vm, JSGlobalObject* gl
     return Structure::create(vm, globalObject, proto, TypeInfo(FunctionExecutableType, StructureFlags), info());
 }
 
-inline Structure* FunctionExecutable::createStructureOfShortForm(VM& vm, JSGlobalObject* globalObject, JSValue proto)
+inline Structure* FunctionExecutable::createShortFormStructure(VM& vm, JSGlobalObject* globalObject, JSValue proto)
 {
     return Structure::create(vm, globalObject, proto, TypeInfo(ShortFunctionExecutableType, StructureFlags), info());
 }
@@ -46,14 +46,14 @@ inline void FunctionExecutable::notifyCreation(VM& vm, JSFunction* function, con
 {
     if (isShortForm())
         return;
-    inFull()->m_singleton.notifyWrite(vm, this, function, reason);
-    if (inFull()->m_singleton.hasBeenInvalidated() && !inFull()->m_unlinkedExecutable->singletonHasBeenInvalidated())
-        inFull()->m_unlinkedExecutable->setSingletonHasBeenInvalidated();
+    fullForm()->m_singleton.notifyWrite(vm, this, function, reason);
+    if (fullForm()->m_singleton.hasBeenInvalidated() && !fullForm()->m_unlinkedExecutable->singletonHasBeenInvalidated())
+        fullForm()->m_unlinkedExecutable->setSingletonHasBeenInvalidated();
 }
 
 inline void FunctionExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
 {
-    inFull()->m_singleton.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
+    fullForm()->m_singleton.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
     jettisonCodeBlockEdgeIfDead(vm, m_codeBlockForCall);
     jettisonCodeBlockEdgeIfDead(vm, m_codeBlockForConstruct);
     vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(this);
@@ -64,12 +64,12 @@ inline FunctionCodeBlock* FunctionExecutable::replaceCodeBlockWith(VM& vm, CodeS
     RELEASE_ASSERT(!isShortForm());
     if (kind == CodeSpecializationKind::CodeForCall) {
         FunctionCodeBlock* oldCodeBlock = codeBlockForCall();
-        inFull()->m_codeBlockForCall.setMayBeNull(vm, this, newCodeBlock);
+        fullForm()->m_codeBlockForCall.setMayBeNull(vm, this, newCodeBlock);
         return oldCodeBlock;
     }
     ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
     FunctionCodeBlock* oldCodeBlock = codeBlockForConstruct();
-    inFull()->m_codeBlockForConstruct.setMayBeNull(vm, this, newCodeBlock);
+    fullForm()->m_codeBlockForConstruct.setMayBeNull(vm, this, newCodeBlock);
     return oldCodeBlock;
 }
 

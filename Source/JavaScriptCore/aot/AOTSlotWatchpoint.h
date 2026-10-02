@@ -23,9 +23,6 @@ namespace AOT {
 struct Data;
 struct Slot;
 
-// An inline cache that rests on more than the structure the code checks: that a property is still where it was found on the
-// prototype chain, or that there still is none. One of these watches each object involved, and empties the cache when what it
-// watches for stops being so. The code never hears of them.
 class SlotWatchpoint final : public Watchpoint {
 public:
     SlotWatchpoint();
@@ -39,17 +36,15 @@ public:
 
 private:
     Data* m_owner;
-    Slot* m_slot { nullptr }; // One of the owner's own, or of one of its PolymorphicSlots.
+    Slot* m_slot { nullptr };
     ObjectPropertyCondition m_key;
 };
 
-// The other tiers add a watchpoint to a set, and have their code thrown away when it fires. Code that was compiled ahead of time
-// stays: it tests a flag of its Instance, which one of these clears.
 class AssumptionWatchpoint final : public Watchpoint {
 public:
     AssumptionWatchpoint();
 
-    void install(InlineWatchpointSet&, uint32_t& flag); // Sets the flag if the set is still valid.
+    void install(InlineWatchpointSet&, uint32_t& flag);
     void fireInternal(VM&, const FireDetail&);
 
 private:
@@ -58,11 +53,9 @@ private:
 
 using SlotWatchpointMap = UncheckedKeyHashMap<Slot*, FixedVector<SlotWatchpoint>>;
 
-// Installs watchpoints for the conditions on behalf of the slot, replacing any existing ones. Returns false, with nothing watched,
-// if that is not possible. The slot must then not be filled.
 bool watchConditions(VM&, Data*, Slot*, const ObjectPropertyConditionSet&);
 void stopWatching(Data*, Slot*);
-void moveWatching(Data*, Slot* from, Slot* to); // What the one had is in the other now.
+void moveWatching(Data*, Slot* from, Slot* to);
 
 } } // namespace JSC::AOT
 

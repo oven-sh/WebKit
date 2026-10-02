@@ -473,7 +473,6 @@ static EncodedJSValue throwSerializationError(JSGlobalObject* globalObject, Thro
     return throwVMException(globalObject, scope, createError(globalObject, "Value could not be cloned."_s));
 }
 
-
 static JSC_DECLARE_HOST_FUNCTION(functionAtob);
 static JSC_DECLARE_HOST_FUNCTION(functionBtoa);
 static JSC_DECLARE_HOST_FUNCTION(functionStructuredClone);
@@ -1659,7 +1658,7 @@ static inline SourceCode jscSource(const String& source, const SourceOrigin& sou
 }
 
 #if ENABLE(AOT)
-static SourceCode sourceOfProgram(JSGlobalObject* globalObject, SourceCode&& source, bool isModule)
+static SourceCode programSource(JSGlobalObject* globalObject, SourceCode&& source, bool isModule)
 {
     VM& vm = globalObject->vm();
     if (const char* path = byteCast<char>(Options::writeAOTImageTo())) {
@@ -1671,17 +1670,16 @@ static SourceCode sourceOfProgram(JSGlobalObject* globalObject, SourceCode&& sou
     const AOT::ProgramData* data = AOT::ProgramData::get();
     if (!data)
         return WTF::move(source);
-    Vector<uint32_t> modules = data->entryOffsetsOfModules();
+    Vector<uint32_t> modules = data->moduleEntryOffsets();
     if (modules.isEmpty())
         return WTF::move(source);
-    const AOT::ModuleOfProgram& module = *data->moduleWithEntryOffset(modules[0]);
+    const AOT::ProgramModule& module = *data->moduleWithEntryOffset(modules[0]);
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
     if (key.length() != module.keyLength || key.hash() != module.keyHash || key.flagsBits() != module.keyFlags)
         return WTF::move(source);
-    // (A script's code is for the first time that it runs in a realm.)
     if (!isModule && AOT::Instance::ensure(globalObject).topLevelExecutableOf(modules[0] + 1))
         return WTF::move(source);
-    source.provider()->setHasNoText();
+    source.provider()->setHasNoSourceText();
     source.provider()->setAOTModuleID(modules[0] + 1);
     return WTF::move(source);
 }
@@ -1793,7 +1791,7 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
 
     SourceCode moduleSource = jscSource(stringFromUTF(buffer), SourceOrigin { moduleURL }, WTF::move(moduleKey), TextPosition(), SourceProviderSourceType::Module);
 #if ENABLE(AOT)
-    moduleSource = sourceOfProgram(globalObject, WTF::move(moduleSource), true);
+    moduleSource = programSource(globalObject, WTF::move(moduleSource), true);
 #endif
     auto sourceCode = JSSourceCode::create(vm, WTF::move(moduleSource));
     scope.release();
@@ -2698,7 +2696,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLoad, (JSGlobalObject* globalObject, CallFrame*
     NakedPtr<Exception> evaluationException;
     SourceCode source = jscSource(script, SourceOrigin { path }, path.fileSystemPath());
 #if ENABLE(AOT)
-    source = sourceOfProgram(globalObject, WTF::move(source), false);
+    source = programSource(globalObject, WTF::move(source), false);
 #endif
     JSValue result = evaluate(globalObject, source, JSValue(), evaluationException);
     if (evaluationException) {
@@ -3016,7 +3014,6 @@ JSC_DEFINE_HOST_FUNCTION(functionNumberOfDFGCompiles, (JSGlobalObject* globalObj
     return JSValue::encode(numberOfDFGCompiles(globalObject, callFrame));
 }
 
-// Like import(), but of another instance of the module and of what it imports, in the same realm.
 JSC_DEFINE_HOST_FUNCTION(functionImportInNewLoader, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -3029,7 +3026,6 @@ JSC_DEFINE_HOST_FUNCTION(functionImportInNewLoader, (JSGlobalObject* globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr)));
 }
 
-// Whether calls to a function run AOT code. The function must have been called at least once.
 JSC_DEFINE_HOST_FUNCTION(functionIsAOTCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
 #if ENABLE(AOT)
@@ -4606,7 +4602,7 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
             NakedPtr<Exception> evaluationException;
             SourceCode source = jscSource(scriptBuffer, sourceOrigin, fileName);
 #if ENABLE(AOT)
-            source = sourceOfProgram(globalObject, WTF::move(source), false);
+            source = programSource(globalObject, WTF::move(source), false);
 #endif
             JSValue returnValue = evaluate(globalObject, source, JSValue(), evaluationException);
             scope.assertNoException();
@@ -4664,7 +4660,6 @@ static void runInteractive(GlobalObject* globalObject)
             SAFE_PRINTF("%s:%d\n", error.message().utf8(), error.line());
             continue;
         }
-        
         
         NakedPtr<Exception> evaluationException;
         JSValue returnValue = evaluate(globalObject, jscSource(source, sourceOrigin), JSValue(), evaluationException);
@@ -5188,7 +5183,6 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
                 fprintf(stderr, "could not save profiler output.\n");
         }
 
-
 #if ENABLE(REGEXP_TRACING)
         {
             JSLockHolder locker(vm);
@@ -5273,7 +5267,7 @@ extern const JITOperationAnnotation endOfJITOperationsInShell __asm__("section$e
 #if ENABLE(AOT)
 extern char** environ;
 
-[[noreturn]] static void compileAheadOfTimeAndRunAgain(int argc, char** argv)
+[[noreturn]] static void compileAOTAndRerun(int argc, char** argv)
 {
 #if OS(DARWIN)
     char executable[PATH_MAX * 2];
@@ -5289,7 +5283,7 @@ extern char** environ;
     RELEASE_ASSERT(fileDescriptor >= 0);
     unsetenv("JSC_compileMainScriptAheadOfTime");
 
-    auto argumentsWith = [&](std::initializer_list<const char*> added) {
+    auto argumentsPlus = [&](std::initializer_list<const char*> added) {
         Vector<char*> result { argv[0] };
         for (const char* argument : added)
             result.append(const_cast<char*>(argument));
@@ -5301,20 +5295,19 @@ extern char** environ;
         return result;
     };
 
-    char toWrite[PATH_MAX + 32];
-    snprintf(toWrite, sizeof(toWrite), "--writeAOTImageTo=%s", path);
+    char pathBuffer[PATH_MAX + 32];
+    snprintf(pathBuffer, sizeof(pathBuffer), "--writeAOTImageTo=%s", path);
     pid_t builder;
-    RELEASE_ASSERT(!posix_spawn(&builder, executable, nullptr, nullptr, argumentsWith({ toWrite }).mutableSpan().data(), environ));
+    RELEASE_ASSERT(!posix_spawn(&builder, executable, nullptr, nullptr, argumentsPlus({ pathBuffer }).mutableSpan().data(), environ));
     int status = 0;
     while (waitpid(builder, &status, 0) < 0 && errno == EINTR) { }
     unlink(path);
 
     struct stat written;
     bool isBuilt = WIFEXITED(status) && !WEXITSTATUS(status) && !fstat(fileDescriptor, &written) && written.st_size;
-    char toUse[64];
-    snprintf(toUse, sizeof(toUse), "--aotImagePath=/dev/fd/%d", fileDescriptor);
-    // What cannot be compiled, such as a script with a syntax error, is interpreted.
-    auto arguments = argumentsWith({ isBuilt ? toUse : "--useAOT=1" });
+    char optionBuffer[64];
+    snprintf(optionBuffer, sizeof(optionBuffer), "--aotImagePath=/dev/fd/%d", fileDescriptor);
+    auto arguments = argumentsPlus({ isBuilt ? optionBuffer : "--useAOT=1" });
     execv(executable, arguments.mutableSpan().data());
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -5334,8 +5327,6 @@ int jscmain(int argc, char** argv)
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
-    // This has to come before any option is set: Options::notifyOptionsChanged() permanently turns useJIT off if the compilers are
-    // not installed yet.
     JSC::installCompilers();
     mainCommandLine.construct(argc, argv);
 
@@ -5361,14 +5352,14 @@ int jscmain(int argc, char** argv)
 
 #if ENABLE(AOT)
     if (Options::compileMainScriptAheadOfTime())
-        compileAheadOfTimeAndRunAgain(argc, argv);
+        compileAOTAndRerun(argc, argv);
     if (const char* path = byteCast<char>(Options::aotImagePath())) {
         int fileDescriptor = open(path, O_RDONLY);
         struct stat status;
         void* bytes = fileDescriptor >= 0 && !fstat(fileDescriptor, &status) ? mmap(nullptr, status.st_size, PROT_READ, MAP_PRIVATE, fileDescriptor, 0) : MAP_FAILED;
-        UseOfAOTFile use = bytes != MAP_FAILED ? useAOTFile({ static_cast<const uint8_t*>(bytes), static_cast<size_t>(status.st_size) }, fileDescriptor, 0) : UseOfAOTFile { "cannot read it", "cannot read it" };
-        if (use.whyNoProgramData || use.whyNoImage) {
-            dataLogLn("Cannot use ", path, ": ", use.whyNoImage ? use.whyNoImage : use.whyNoProgramData);
+        AOTFileUse use = bytes != MAP_FAILED ? useAOTFile({ static_cast<const uint8_t*>(bytes), static_cast<size_t>(status.st_size) }, fileDescriptor, 0) : AOTFileUse { "cannot read it", "cannot read it" };
+        if (use.programDataRejectionReason || use.imageRejectionReason) {
+            dataLogLn("Cannot use ", path, ": ", use.imageRejectionReason ? use.imageRejectionReason : use.programDataRejectionReason);
             jscExit(EXIT_FAILURE);
         }
     }

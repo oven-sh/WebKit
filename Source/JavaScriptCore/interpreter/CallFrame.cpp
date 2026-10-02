@@ -376,7 +376,6 @@ void CallFrame::convertToZombieFrame(VM& vm, CodeBlock* codeBlockToKeepAliveUnti
     ASSERT(!isEmptyTopLevelCallFrameForDebugger());
     ASSERT(codeBlockToKeepAliveUntilFrameIsUnwound->inherits<CodeBlock>());
 
-    // The realm of the nearest caller that is not a native callee.
     JSGlobalObject* globalObject = nullptr;
     StackVisitor::visit(this, vm, [&](StackVisitor& visitor) {
         if (visitor->callFrame() == this || visitor->isNativeCalleeFrame())
@@ -453,7 +452,6 @@ JSWebAssemblyInstance* CallFrame::wasmInstance() const
     return uncheckedDowncast<JSWebAssemblyInstance>(this[static_cast<int>(CallFrameSlot::codeBlock)].jsValue());
 }
 #endif
-
 
 } // namespace JSC
 

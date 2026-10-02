@@ -183,7 +183,7 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 
 #if ENABLE(FTL_JIT)
 namespace AOT {
-class ProgramOfVM;
+class VMProgram;
 class RuntimeTable;
 struct Instance;
 }
@@ -316,7 +316,6 @@ public:
     bool isEntered() const { return !!entryScope; }
 
     inline CallFrame* topJSCallFrame() const;
-    // The realm of the code running in the top call frame, or the realm that entered the VM if there is no frame. Null if neither exists.
     JS_EXPORT_PRIVATE JSGlobalObject* topFrameGlobalObject();
 
     // Global object in which execution began.
@@ -501,31 +500,23 @@ public:
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
 #endif
     Vector<AOT::Instance*, 1> m_aotInstances;
-    uintptr_t m_structureIDBase { 0 }; // JSC::structureIDBase(), where code that was compiled ahead of time can find it from a cell.
+    uintptr_t m_structureIDBase { 0 };
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VM, m_structureIDBase); }
     Vector<AOT::Instance*> m_aotInstancesToDestroy;
-    std::unique_ptr<AOT::ProgramOfVM> m_aotProgram;
+    std::unique_ptr<AOT::VMProgram> m_aotProgram;
 
-    // How this VM's parser and bytecode generator shape the code they produce. Each starts as the option of the same name. A VM that
-    // generates bytecode to be compiled ahead of time sets them for itself, so that a build does not change how the rest of its process
-    // compiles anything.
     struct BytecodeGenerationOptions {
         bool useSoundTypes { Options::useSoundTypes() };
         bool resolveAllScopeSlotsStatically { Options::resolveAllScopeSlotsStatically() };
         bool evaluateObjectLiteralValuesFirst { Options::evaluateObjectLiteralValuesFirst() };
         bool definePlainInstanceFieldsInConstructor { Options::definePlainInstanceFieldsInConstructor() };
-        // However short the source is (SourceProvider::minimumLengthToHaveLineStartsWithTheCode). What is built from the code
-        // may have no text to scan.
-        bool keepLineStartsOfEverySource { false };
+        bool keepAllSourceLineStarts { false };
     };
     BytecodeGenerationOptions bytecodeGenerationOptions;
 
-    // Whether the realms of this VM have immutable intrinsics (JSGlobalObject::makeIntrinsicsImmutable()). Code that is compiled ahead
-    // of time relies on it. Starts as the option of the same name, and is set before the VM's first realm is made. A VM that
-    // compiles ahead of time sets it for itself, so that a build does not change the realms of the rest of its process.
     bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
 #if ENABLE(AOT)
-    static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); } // Which starts with its entries.
+    static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); }
 #endif
 #endif
     
@@ -690,14 +681,10 @@ public:
     Ref<StringImpl> lastAtomizedIdentifierStringImpl { *StringImpl::empty() };
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
     JSONAtomStringCache jsonAtomStringCache;
-    // Of the last big result of JSON.stringify. A program that makes one is likely to make another much like it.
     struct {
         uint32_t length { 0 };
-        bool isWide { false };
+        bool isUTF16 { false };
     } jsonStringifyHints;
-    // 16-bit ids for property names, assigned on first use by AOT::cacheGetById(). A Structure without a layout class records the id of the plain data property in each of its
-    // first inline slots (Structure::fieldIDInSlot()), so that a monomorphic inline cache also hits on other Structures that have the same name at the same offset.
-    // Per VM because objects cross realms. A name with an id is kept alive, so that its address is not reused by another name.
     struct {
         UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint16_t> ids;
         uint32_t next { 0 };
@@ -1608,9 +1595,7 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
-
 } // namespace JSC
-
 
 namespace WTF {
 
@@ -1642,6 +1627,5 @@ template<> struct DefaultRefDerefTraits<JSC::VM> {
 };
 
 } // namespace WTF
-
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

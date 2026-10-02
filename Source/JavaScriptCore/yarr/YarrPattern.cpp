@@ -637,7 +637,6 @@ private:
         mergeRangesFrom(ranges, iter - ranges.begin());
     }
 
-
     void addSortedRange(char32_t lo, char32_t hi)
     {
         if (lo == hi) {
@@ -3631,8 +3630,6 @@ public:
             return false;
         };
 
-        // ^(?:word|word|...)$, e.g. a parser's keyword list. Without the multiline, sticky and ignoreCase flags (excluded above) it matches
-        // exactly when the whole input is one of the words.
         auto tryExtractAnchoredWordList = [&]() -> bool {
             auto& alternatives = m_pattern.m_body->m_alternatives;
             if (alternatives.size() != 1)

@@ -183,7 +183,6 @@ constexpr bool typeExposedByDefault = true;
     macro(BigInt, bigInt, bigIntObject, BigIntObject, BigInt, object, typeExposedByDefault) \
     macro(Symbol, symbol, symbolObject, SymbolObject, Symbol, object, typeExposedByDefault) \
 
-
 #define FOR_EACH_BUILTIN_DERIVED_ITERATOR_TYPE(macro) \
     macro(StringIterator, stringIterator, stringIterator, JSStringIterator, StringIterator, iterator, typeExposedByDefault) \
 
@@ -245,7 +244,7 @@ private:
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* const m_vm;
-    AOT::Instance* m_aotInstance { nullptr }; // The per-realm data of AOT code. Created when there is such code.
+    AOT::Instance* m_aotInstance { nullptr };
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
@@ -1280,14 +1279,7 @@ public:
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
     bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
-    // For VM::useImmutableIntrinsics. Makes the initial properties of the language's built-in objects immutable, together with the
-    // global variables that hold those objects. A program that is compiled ahead of time can then rely on the identity of
-    // Math.floor or [].push. New properties can still be added to every object except Object.prototype, so that polyfills for newer
-    // language features work. Object.prototype is not extensible, which guarantees that a property that no object on a prototype
-    // chain has is really absent.
     JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
-    // The values that it made immutable, indexed by their ImmutableIntrinsics numbers. (The objects stay reachable through their
-    // properties, so this does not have to keep them alive.)
     std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();
 

@@ -38,9 +38,8 @@ class JSModuleRecord;
 class SymbolTable;
 class UnlinkedFunctionExecutable;
 class UnlinkedModuleProgramCodeBlock;
-class ModuleFunctionDeclarationSlots;
 namespace AOT {
-struct ModuleOfProgram;
+struct ProgramModule;
 }
 
 class ModuleProgramExecutable final : public GlobalExecutable {
@@ -84,9 +83,7 @@ public:
 
     UnlinkedModuleProgramCodeBlock* getUnlinkedCodeBlock(JSGlobalObject*);
 #if ENABLE(AOT)
-    // Of a program that was compiled ahead of time: then there is no code block of either kind.
-    const AOT::ModuleOfProgram* moduleOfProgram() const { return m_moduleOfProgram; }
-    RefPtr<ModuleFunctionDeclarationSlots> functionDeclarationSlotsOfProgram() const;
+    const AOT::ProgramModule* programModule() const { return m_programModule; }
 #endif
 
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock() const
@@ -168,7 +165,7 @@ private:
 
 #if ENABLE(AOT)
     bool useProgramData(VM&);
-    const AOT::ModuleOfProgram* m_moduleOfProgram { nullptr };
+    const AOT::ProgramModule* m_programModule { nullptr };
 #endif
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;

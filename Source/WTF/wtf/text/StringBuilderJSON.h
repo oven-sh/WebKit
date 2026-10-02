@@ -19,7 +19,6 @@
 
 namespace WTF {
 
-// Appends the first character of the input, which is not empty, escaped if it has to be. (Two, if they are a surrogate pair.)
 template<typename OutputCharacterType, typename InputCharacterType>
 ALWAYS_INLINE static bool appendOneEscapedJSONCharacter(std::span<OutputCharacterType>& output, std::span<const InputCharacterType>& input)
 {
@@ -46,8 +45,6 @@ ALWAYS_INLINE static bool appendOneEscapedJSONCharacter(std::span<OutputCharacte
         return true;
     }
 
-    // We can end up calling appendEscapedJSONStringContent if we've already proven the string has only Latin1 characters when stringifying JSONs.
-    // This optimization prevents us from bailing out mid-stream just because we saw e.g. a UTF-16 substring that was actually Latin1.
     if constexpr (std::same_as<OutputCharacterType, Latin1Character>)
         return false;
 
@@ -83,8 +80,6 @@ ALWAYS_INLINE static bool appendOneEscapedJSONCharacter(std::span<OutputCharacte
 }
 
 #if CPU(ARM64) && COMPILER(CLANG)
-// A shuffle table for eight input characters, indexed by the mask of the characters that need a backslash. Each output byte selects
-// its source. 0 to 7: the characters. 8 to 15: the escaped form of each character, which follows its backslash. 16: a backslash.
 struct JSONEscapeExpansion {
     alignas(16) uint8_t shuffle[256][16];
     uint8_t length[256];
@@ -107,8 +102,6 @@ inline constexpr JSONEscapeExpansion jsonEscapeExpansion = [] {
     return result;
 }();
 
-// As many whole vectors as there are in the first `count` characters. Text has a line break every few dozen characters: whether a vector has something to escape in it is not to be
-// guessed, so nothing hangs on it. skipsCleanPages: for text that has next to nothing to escape, where it is.
 template<bool skipsCleanPages, typename OutputCharacterType>
 ALWAYS_INLINE static void appendEscapedJSONVectors(std::span<OutputCharacterType>& output, std::span<const Latin1Character>& input, size_t count)
 {
@@ -141,8 +134,6 @@ ALWAYS_INLINE static void appendEscapedJSONVectors(std::span<OutputCharacterType
                 continue;
             }
         }
-        // The form of each character after its backslash: the character itself, or its escape letter. (Most control characters have
-        // none.)
         auto written = simde_vbslq_u8(controls, simde_vqtbl1q_u8(forms, characters), characters);
         if (simde_vmaxvq_u8(simde_vandq_u8(controls, simde_vceqzq_u8(written)))) [[unlikely]] {
             std::span<OutputCharacterType> room { to, 16 * 6 };
@@ -163,24 +154,22 @@ ALWAYS_INLINE static void appendEscapedJSONVectors(std::span<OutputCharacterType
 }
 #endif
 
-// The output has room for six characters for each one of the input.
 template<typename OutputCharacterType, typename InputCharacterType>
 ALWAYS_INLINE static bool appendEscapedJSONStringContent(std::span<OutputCharacterType>& output, std::span<const InputCharacterType> input)
 {
 #if CPU(ARM64) && COMPILER(CLANG)
     if constexpr (sizeof(InputCharacterType) == 1) {
-        // (How the last stretch was says how the next is likely to be.)
-        bool hasMuchToEscape = false;
+        bool needsHeavyEscaping = false;
         while (input.size() >= 16) {
             size_t count = std::min<size_t>(input.size(), 512);
             size_t before = input.size();
             auto* start = output.data();
-            if (hasMuchToEscape)
+            if (needsHeavyEscaping)
                 appendEscapedJSONVectors<false>(output, input, count);
             else
                 appendEscapedJSONVectors<true>(output, input, count);
             size_t taken = before - input.size();
-            hasMuchToEscape = (static_cast<size_t>(output.data() - start) - taken) * 64 > taken;
+            needsHeavyEscaping = (static_cast<size_t>(output.data() - start) - taken) * 64 > taken;
         }
         while (!input.empty())
             appendOneEscapedJSONCharacter(output, input);
@@ -188,8 +177,6 @@ ALWAYS_INLINE static bool appendEscapedJSONStringContent(std::span<OutputCharact
     }
 #endif
 #if (CPU(ARM64) || CPU(X86_64)) && COMPILER(CLANG)
-    // Text that needs escaping still consists mostly of characters that are copied unchanged. Those are copied a vector at a time,
-    // up to the next character that needs attention.
     using InputLane = SameSizeUnsignedInteger<InputCharacterType>;
     using OutputLane = SameSizeUnsignedInteger<OutputCharacterType>;
     constexpr size_t stride = SIMD::stride<InputLane>;
@@ -198,14 +185,13 @@ ALWAYS_INLINE static bool appendEscapedJSONStringContent(std::span<OutputCharact
     constexpr auto controlMask = SIMD::splat<InputLane>(' ');
     while (input.size() >= stride) {
         auto vector = SIMD::load(std::bit_cast<const InputLane*>(input.data()));
-        auto wantsLookingAt = SIMD::bitOr(SIMD::equal(vector, quoteMask), SIMD::equal(vector, escapeMask), SIMD::lessThan(vector, controlMask));
+        auto needsInspection = SIMD::bitOr(SIMD::equal(vector, quoteMask), SIMD::equal(vector, escapeMask), SIMD::lessThan(vector, controlMask));
         if constexpr (sizeof(InputCharacterType) != 1) {
             if constexpr (sizeof(OutputCharacterType) == 1)
-                wantsLookingAt = SIMD::bitOr(wantsLookingAt, SIMD::greaterThan(vector, SIMD::splat<InputLane>(0xff)));
+                needsInspection = SIMD::bitOr(needsInspection, SIMD::greaterThan(vector, SIMD::splat<InputLane>(0xff)));
             else
-                wantsLookingAt = SIMD::bitOr(wantsLookingAt, SIMD::equal(SIMD::bitAnd(vector, SIMD::splat<InputLane>(0xf800)), SIMD::splat<InputLane>(0xd800)));
+                needsInspection = SIMD::bitOr(needsInspection, SIMD::equal(SIMD::bitAnd(vector, SIMD::splat<InputLane>(0xf800)), SIMD::splat<InputLane>(0xd800)));
         }
-        // (All of it: what comes after a character that wants looking at is written over.)
         auto* destination = std::bit_cast<OutputLane*>(output.data());
         if constexpr (sizeof(InputCharacterType) == sizeof(OutputCharacterType))
             SIMD::store(vector, destination);
@@ -213,7 +199,7 @@ ALWAYS_INLINE static bool appendEscapedJSONStringContent(std::span<OutputCharact
             simde_vst2q_u8(std::bit_cast<uint8_t*>(destination), (simde_uint8x16x2_t { vector, SIMD::splat<uint8_t>(0) }));
         else
             simde_vst1_u8(destination, simde_vmovn_u16(vector));
-        auto index = SIMD::findFirstNonZeroIndex(wantsLookingAt);
+        auto index = SIMD::findFirstNonZeroIndex(needsInspection);
         if (!index) [[likely]] {
             skip(input, stride);
             skip(output, stride);

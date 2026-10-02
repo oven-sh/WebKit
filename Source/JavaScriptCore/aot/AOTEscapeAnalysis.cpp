@@ -24,7 +24,7 @@ ASCIILiteral nameOf(Escape escape)
         return "not looked at"_s;
     case Escape::StaysHere:
         return "STAYS: nothing but this code sees it"_s;
-    case Escape::IsOnlyLent:
+    case Escape::IsOnlyBorrowed:
         return "STAYS: lent to what gives it back"_s;
     case Escape::Returned:
         return "returned"_s;
@@ -46,7 +46,7 @@ ASCIILiteral nameOf(Escape escape)
         return "receiver of a call of what was read from it or another"_s;
     case Escape::PassedToBuiltin:
         return "passed to one of the language's own functions"_s;
-    case Escape::PassedToClosureMadeHere:
+    case Escape::PassedToLocalClosure:
         return "passed to a closure that is made here"_s;
     case Escape::PassedToParameter:
         return "passed to a function that was itself passed in"_s;
@@ -54,7 +54,7 @@ ASCIILiteral nameOf(Escape escape)
         return "passed to what was read from a variable, not proven"_s;
     case Escape::PassedToUnknown:
         return "passed to something else"_s;
-    case Escape::PassedToKnownCalleeThatRetainsIt:
+    case Escape::PassedToRetainingCallee:
         return "passed to a known function that lets it out"_s;
     case Escape::PassedInList:
         return "passed in a call that takes a list, or constructs"_s;
@@ -80,7 +80,7 @@ ASCIILiteral nameOf(Escape escape)
     return "?"_s;
 }
 
-std::optional<AllocationKind> kindOfAllocation(const Node* node)
+std::optional<AllocationKind> allocationKind(const Node* node)
 {
     if (node->kind != NodeKind::Bytecode)
         return std::nullopt;
@@ -103,13 +103,10 @@ std::optional<AllocationKind> kindOfAllocation(const Node* node)
     }
 }
 
-// Whether the code never lets the scope it closes over escape. It must not create closures, whose scope chain would include that
-// scope, and nothing else can obtain a scope as a value. Judged from the bytecode alone.
 static bool doesNotLeakScope(UnlinkedCodeBlock* code)
 {
     if (code->codeType() != FunctionCode)
         return false;
-    // (A generator or an async function saves its live values when it suspends, including its scope.)
     if (code->parseMode() != SourceParseMode::NormalFunctionMode && code->parseMode() != SourceParseMode::ArrowFunctionMode && code->parseMode() != SourceParseMode::MethodMode)
         return false;
     for (const auto& instruction : code->instructions()) {
@@ -169,14 +166,12 @@ public:
     {
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
-                if (kindOfAllocation(node))
-                    node->escape = fateOf(node, false);
+                if (allocationKind(node))
+                    node->escape = escapeOf(node, false);
             }
         }
     }
 
-    // One bit per parameter, with `this` as the first. FunctionSummary::extraArgumentsEscape covers the remaining
-    // arguments.
     uint32_t escapingParameters()
     {
         UnlinkedCodeBlock* code = m_graph.codeBlock();
@@ -185,7 +180,6 @@ public:
         uint32_t result = 0;
         for (const auto& instruction : code->instructions()) {
             switch (instruction->opcodeID()) {
-            // These access the arguments without saying which.
             case op_call_direct_eval:
             case op_create_direct_arguments:
             case op_create_scoped_arguments:
@@ -208,7 +202,7 @@ public:
                     result |= FunctionSummary::extraArgumentsEscape;
                     continue;
                 }
-                if (!stays(fateOf(node, true)))
+                if (!stays(escapeOf(node, true)))
                     result |= 1u << index;
             }
         }
@@ -228,22 +222,20 @@ private:
     }
 
     struct Verdict {
-        enum Kind : uint8_t { Harmless, IsTheSame, Lent, RetainedByUser, Escapes } kind { Harmless };
+        enum Kind : uint8_t { Harmless, Aliases, Lent, RetainedByUser, Escapes } kind { Harmless };
         Escape why { Escape::Other };
     };
     static Verdict escapes(Escape why) { return { Verdict::Escapes, why }; }
 
-    Escape fateOf(Node* value, bool isParameter)
+    Escape escapeOf(Node* value, bool isParameter)
     {
         if (!isParameter) {
             if (auto it = m_escapes.find(value); it != m_escapes.end())
                 return it->value;
-            // (Whatever retains the value was created after it, so the recursion terminates. This entry guards against a cycle
-            // anyway.)
             m_escapes.add(value, Escape::Other);
         }
         Escape result = Escape::StaysHere;
-        if (!isParameter && kindOfAllocation(value) == AllocationKind::Closure) {
+        if (!isParameter && allocationKind(value) == AllocationKind::Closure) {
             UnlinkedFunctionExecutable* executable = value->opcode == op_new_func ? value->graph->codeBlock()->functionDecl(value->as<OpNewFunc>().m_functionDecl) : value->graph->codeBlock()->functionExpr(value->as<OpNewFuncExp>().m_functionDecl);
             UnlinkedFunctionCodeBlock* code = executable->codeBlockIfExists(CodeSpecializationKind::CodeForCall);
             if (!code || mayReferenceItself(code))
@@ -261,21 +253,21 @@ private:
                 switch (verdict.kind) {
                 case Verdict::Harmless:
                     continue;
-                case Verdict::IsTheSame:
+                case Verdict::Aliases:
                     if (seen.add(user.node).isNewEntry)
                         worklist.append(user.node);
                     continue;
                 case Verdict::Lent:
-                    result = Escape::IsOnlyLent;
+                    result = Escape::IsOnlyBorrowed;
                     continue;
                 case Verdict::RetainedByUser: {
-                    Escape ofHolder = fateOf(user.node, false);
-                    if (!stays(ofHolder)) {
+                    Escape holderEscape = escapeOf(user.node, false);
+                    if (!stays(holderEscape)) {
                         result = Escape::StoredInEscapingObject;
                         break;
                     }
-                    if (ofHolder == Escape::IsOnlyLent)
-                        result = Escape::IsOnlyLent;
+                    if (holderEscape == Escape::IsOnlyBorrowed)
+                        result = Escape::IsOnlyBorrowed;
                     continue;
                 }
                 case Verdict::Escapes:
@@ -292,15 +284,12 @@ private:
 
     Verdict escapeThroughCall(Node* call, VirtualRegister reg, VirtualRegister calleeRegister, unsigned argc, unsigned argv, bool isTailCall, bool isParameter)
     {
-        // Being called does not make a function escape, except to itself. (A function created here that can refer to itself does so
-        // through a variable.)
         if (reg == calleeRegister)
             return { };
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         int index = reg.offset() - firstArgument;
         if (index < 0 || static_cast<unsigned>(index) >= argc)
             return escapes(Escape::Other);
-        // (What this function allocates on its stack is released with its frame. What it was passed belongs to a caller.)
         if (isTailCall && !isParameter)
             return escapes(Escape::PassedInTailCall);
 
@@ -311,9 +300,9 @@ private:
                 m_calleesConsulted->append(known);
             uint32_t mask = known->summary->escapingParameters.load(std::memory_order_relaxed);
             unsigned parameters = std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::maxTrackedEscapingParameters);
-            bool letsItOut = static_cast<unsigned>(index) < parameters ? mask >> index & 1 : mask & FunctionSummary::extraArgumentsEscape;
-            if (letsItOut)
-                return escapes(Escape::PassedToKnownCalleeThatRetainsIt);
+            bool leaksValue = static_cast<unsigned>(index) < parameters ? mask >> index & 1 : mask & FunctionSummary::extraArgumentsEscape;
+            if (leaksValue)
+                return escapes(Escape::PassedToRetainingCallee);
             return { Verdict::Lent };
         }
         Node* callee = call->use(calleeRegister);
@@ -322,7 +311,7 @@ private:
         if (callee->isBytecode(op_get_by_id) || callee->isBytecode(op_get_by_val))
             return escapes(index ? Escape::PassedToMethod : Escape::PassedAsThisToMethod);
         if (callee->isBytecode(op_new_func_exp) || callee->isBytecode(op_new_func))
-            return escapes(Escape::PassedToClosureMadeHere);
+            return escapes(Escape::PassedToLocalClosure);
         if (callee->kind == NodeKind::Argument)
             return escapes(Escape::PassedToParameter);
         if (callee->isBytecode(op_get_from_scope))
@@ -330,7 +319,6 @@ private:
         return escapes(Escape::PassedToUnknown);
     }
 
-    // value: the value being analyzed. `user` reads it, or an alias of it, from `reg`.
     Verdict escapeThroughUse(Node* user, VirtualRegister reg, Node* value, bool isParameter)
     {
         switch (user->kind) {
@@ -339,7 +327,6 @@ private:
             return escapes(Escape::Merged);
         case NodeKind::SetStack:
             return escapes(Escape::Homed);
-        // (A guard only inspects the value. The node that it guards is a user in its own right.)
         case NodeKind::Guard:
             return { };
         case NodeKind::Bytecode:
@@ -348,11 +335,8 @@ private:
             return escapes(Escape::Other);
         }
 
-        bool isLocallyAllocatedArray = !isParameter && kindOfAllocation(value) == AllocationKind::Array;
+        bool isLocallyAllocatedArray = !isParameter && allocationKind(value) == AllocationKind::Array;
         switch (user->opcode) {
-        // ---- Uses that only inspect the value. What is read out of it is analyzed separately.
-        // (For a parameter, this assumes that reading and writing its properties runs no code. The caller has to guarantee that,
-        // which it can for an object whose allocation it can see.)
         case op_get_by_id:
             return reg == user->as<OpGetById>().m_base ? Verdict { } : escapes(Escape::Other);
         case op_get_by_id_direct:
@@ -401,23 +385,19 @@ private:
         case op_del_by_val:
             return reg == user->as<OpDelByVal>().m_base ? Verdict { } : escapes(Escape::Converted);
 
-        // ---- Uses whose result is the same value.
         case op_check_type:
         case op_type_tag:
         case op_mov:
         case op_to_this:
         case op_to_object:
         case op_identity_with_profile:
-        // (The result is one of the scopes from that one outwards, which may be that one.)
         case op_resolve_scope:
-            return { Verdict::IsTheSame };
+            return { Verdict::Aliases };
 
-        // ---- Stores into the value, and stores of the value.
         case op_put_by_id: {
             auto bytecode = user->as<OpPutById>();
             if (reg == bytecode.m_value)
                 return escapes(Escape::StoredInProperty);
-            // (`__proto__` is a setter that every object inherits.)
             return user->graph->codeBlock()->identifier(bytecode.m_property) == m_graph.vm().propertyNames->underscoreProto ? escapes(Escape::Other) : Verdict { };
         }
         case op_put_by_val:
@@ -439,7 +419,6 @@ private:
         case op_define_accessor_property:
             return escapes(Escape::StoredInProperty);
 
-        // ---- A user that has the value as its scope retains it for as long as the user is live.
         case op_create_lexical_environment:
             return reg == user->as<OpCreateLexicalEnvironment>().m_scope ? Verdict { Verdict::RetainedByUser } : escapes(Escape::Other);
         case op_new_func_exp:
@@ -458,7 +437,6 @@ private:
         case op_new_async_generator_func_exp:
             return escapes(Escape::ClosureLetsScopeOut);
 
-        // ---- Uses that pass the value on.
         case op_call: {
             auto bytecode = user->as<OpCall>();
             return escapeThroughCall(user, reg, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, false, isParameter);
@@ -469,7 +447,6 @@ private:
         }
         case op_tail_call: {
             auto bytecode = user->as<OpTailCall>();
-            // (In an inlinee that is not in tail position, this is an ordinary call.)
             return escapeThroughCall(user, reg, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, user->graph->isInTailPosition, isParameter);
         }
         case op_construct:
@@ -490,7 +467,6 @@ private:
         case op_create_generator_frame_environment:
             return escapes(Escape::Suspended);
 
-        // ---- Uses that iterate over an array created here, as long as array iteration has not been modified.
         case op_spread:
         case op_iterator_open:
         case op_iterator_next:
@@ -523,11 +499,6 @@ private:
     UncheckedKeyHashMap<Node*, Escape> m_escapes;
 };
 
-// ---- Scalar replacement of environments.
-//
-// A function whose inner functions use its variables keeps them in an environment record on the heap, where the closures find them.
-// Once all of those closures have been inlined into the function (inlineCalls()), nothing has to find them any more, and they
-// become ordinary locals.
 namespace {
 
 class Promoter {
@@ -537,7 +508,6 @@ public:
     {
     }
 
-    // Identifies a scope as `hops` scopes out from `base`. An environment created in this function is its own base.
     struct Where {
         Node* base { nullptr };
         unsigned hops { 0 };
@@ -547,29 +517,27 @@ public:
     static Where out(Where from, unsigned hops, unsigned depth)
     {
         while (hops && from.isLocalEnvironment()) {
-            from = whereIs(from.base->use(from.base->as<OpCreateLexicalEnvironment>().m_scope), depth + 1);
+            from = locationOf(from.base->use(from.base->as<OpCreateLexicalEnvironment>().m_scope), depth + 1);
             --hops;
         }
         from.hops += hops;
         return from;
     }
 
-    // Mirrors the lowering (lowerResolveScope() and related functions).
-    static Where whereIs(Node* scope, unsigned depth = 0)
+    static Where locationOf(Node* scope, unsigned depth = 0)
     {
         if (depth > 24 || scope->kind != NodeKind::Bytecode)
             return { scope, 0 };
         switch (scope->opcode) {
         case op_get_scope:
-            if (Node* closedOver = scope->graph->scopeOfClosure)
-                return whereIs(closedOver, depth + 1);
+            if (Node* closedOver = scope->graph->closureScope)
+                return locationOf(closedOver, depth + 1);
             return { scope, 0 };
         case op_get_parent_scope:
-            return out(whereIs(scope->use(scope->as<OpGetParentScope>().m_scope), depth + 1), 1, depth);
+            return out(locationOf(scope->use(scope->as<OpGetParentScope>().m_scope), depth + 1), 1, depth);
         case op_resolve_scope: {
             auto bytecode = scope->as<OpResolveScope>();
-            // (The environment is at a static location, so the scope operand is not used.)
-            if (scope->graph->distanceOfEnvironmentResolvedTo(scope))
+            if (scope->graph->resolvedEnvironmentDepth(scope))
                 return { scope, 0 };
             unsigned hops;
             if (isStaticClosureVarResolveType(bytecode.m_resolveType))
@@ -582,17 +550,16 @@ public:
                     return { scope, 0 };
                 hops = variable.depth;
             }
-            return out(whereIs(scope->use(bytecode.m_scope), depth + 1), hops, depth);
+            return out(locationOf(scope->use(bytecode.m_scope), depth + 1), hops, depth);
         }
         default:
             return { scope, 0 };
         }
     }
 
-    // The offset of the variable that the instruction accesses in the environment that is its scope, if it is known statically.
     static std::optional<unsigned> offsetAccessedBy(Node* node)
     {
-        if (node->graph->distanceOfEnvironmentAccessed(node))
+        if (node->graph->accessedEnvironmentDepth(node))
             return std::nullopt;
         if (node->opcode == op_get_from_scope) {
             auto bytecode = node->as<OpGetFromScope>();
@@ -618,22 +585,20 @@ public:
         return std::nullopt;
     }
 
-    // Whether the node, which takes the environment as an operand, still works if the environment is not allocated.
     bool worksWithoutEnvironment(Node* user, const Use& use)
     {
         if (user->kind != NodeKind::Bytecode || user->guard || user->guarded)
             return false;
         switch (user->opcode) {
-        case op_get_scope: // (In an inlinee, this is an alias for the environment.)
+        case op_get_scope:
         case op_get_parent_scope:
             return true;
         case op_resolve_scope:
-            // (The search for a name that is resolved at run time starts further out: see keepEnvironmentsSearchedFor().)
             return user->as<OpResolveScope>().m_resolveType != Dynamic;
         case op_get_from_scope:
-            return use.reg == user->as<OpGetFromScope>().m_scope && (user->graph->distanceOfEnvironmentAccessed(user) || offsetAccessedBy(user));
+            return use.reg == user->as<OpGetFromScope>().m_scope && (user->graph->accessedEnvironmentDepth(user) || offsetAccessedBy(user));
         case op_put_to_scope:
-            return use.reg == user->as<OpPutToScope>().m_scope && (user->graph->distanceOfEnvironmentAccessed(user) || offsetAccessedBy(user));
+            return use.reg == user->as<OpPutToScope>().m_scope && (user->graph->accessedEnvironmentDepth(user) || offsetAccessedBy(user));
         case op_create_lexical_environment:
             return use.reg == user->as<OpCreateLexicalEnvironment>().m_scope && m_candidates.contains(user);
         default:
@@ -641,17 +606,14 @@ public:
         }
     }
 
-    // A name that is resolved at run time is looked for in each scope, from the inside out. One of the environments that this code
-    // creates may have it: not everything that could be resolved statically is (the functions nested in an embedder's builtin
-    // come without the names that are declared around them). That environment has to be there to be found.
-    bool keepEnvironmentsSearchedFor(Node* resolve)
+    bool keepSearchedEnvironments(Node* resolve)
     {
-        if (!resolve->isBytecode(op_resolve_scope) || whereIs(resolve).base != resolve || resolve->graph->distanceOfEnvironmentResolvedTo(resolve))
+        if (!resolve->isBytecode(op_resolve_scope) || locationOf(resolve).base != resolve || resolve->graph->resolvedEnvironmentDepth(resolve))
             return false;
         auto bytecode = resolve->as<OpResolveScope>();
         UniquedStringImpl* name = resolve->graph->codeBlock()->identifier(bytecode.m_var).impl();
         bool changed = false;
-        for (Where where = whereIs(resolve->use(bytecode.m_scope)); where.isLocalEnvironment(); where = out(where, 1, 0)) {
+        for (Where where = locationOf(resolve->use(bytecode.m_scope)); where.isLocalEnvironment(); where = out(where, 1, 0)) {
             Node* environment = where.base;
             if (!m_candidates.contains(environment))
                 continue;
@@ -693,13 +655,13 @@ public:
             changed = false;
             forEachUser([&](Node* user) {
                 for (auto& use : user->uses) {
-                    Where where = whereIs(use.node);
+                    Where where = locationOf(use.node);
                     if (!where.isLocalEnvironment() || !m_candidates.contains(where.base) || worksWithoutEnvironment(user, use))
                         continue;
                     m_candidates.remove(where.base);
                     changed = true;
                 }
-                changed |= keepEnvironmentsSearchedFor(user);
+                changed |= keepSearchedEnvironments(user);
             });
         }
         if (m_candidates.isEmpty())
@@ -712,9 +674,9 @@ public:
             switch (user->opcode) {
             case op_get_from_scope:
             case op_put_to_scope: {
-                if (user->graph->distanceOfEnvironmentAccessed(user))
+                if (user->graph->accessedEnvironmentDepth(user))
                     return;
-                Where where = whereIs(user->use(user->opcode == op_get_from_scope ? user->as<OpGetFromScope>().m_scope : user->as<OpPutToScope>().m_scope));
+                Where where = locationOf(user->use(user->opcode == op_get_from_scope ? user->as<OpGetFromScope>().m_scope : user->as<OpPutToScope>().m_scope));
                 if (!where.isLocalEnvironment() || !where.base->isPromoted)
                     return;
                 user->promotedEnvironment = where.base;
@@ -724,30 +686,29 @@ public:
             case op_get_scope:
             case op_get_parent_scope:
             case op_resolve_scope: {
-                Where where = whereIs(user);
+                Where where = locationOf(user);
                 if (where.base == user) {
-                    if (user->opcode != op_resolve_scope || user->graph->distanceOfEnvironmentResolvedTo(user))
+                    if (user->opcode != op_resolve_scope || user->graph->resolvedEnvironmentDepth(user))
                         return;
-                    Where start = whereIs(user->use(user->as<OpResolveScope>().m_scope));
-                    unsigned passedOver = 0;
-                    for (; start.isLocalEnvironment() && start.base->isPromoted; ++passedOver)
+                    Where start = locationOf(user->use(user->as<OpResolveScope>().m_scope));
+                    unsigned skippedScopes = 0;
+                    for (; start.isLocalEnvironment() && start.base->isPromoted; ++skippedScopes)
                         start = out(start, 1, 0);
-                    if (!passedOver)
+                    if (!skippedScopes)
                         return;
                     user->scopeToStartFrom = start.base;
-                    user->hopsFromThere = start.hops;
-                    user->environmentsPassedOver = passedOver;
+                    user->remainingHops = start.hops;
+                    user->skippedEnvironments = skippedScopes;
                     user->uses.append({ VirtualRegister(), start.base });
                     return;
                 }
-                // An alias for an environment that is not allocated. All of its users work without it.
                 if (where.isLocalEnvironment() && where.base->isPromoted) {
                     user->isElided = true;
                     return;
                 }
                 if (user->opcode != op_get_scope) {
                     user->scopeToStartFrom = where.base;
-                    user->hopsFromThere = where.hops;
+                    user->remainingHops = where.hops;
                     user->uses.append({ VirtualRegister(), where.base });
                 }
                 return;
@@ -767,7 +728,6 @@ private:
 
 void promoteEnvironments(Graph& graph)
 {
-    // A value that a handler reads has to be in memory, and a generator has to save its live values when it suspends.
     UnlinkedCodeBlock* code = graph.codeBlock();
     if (!graph.catchEntrypoints.isEmpty() || graph.hasFrameRegisters() || code->codeType() != FunctionCode)
         return;
@@ -784,7 +744,7 @@ void promoteEnvironments(Graph& graph)
     Promoter(graph).run();
 }
 
-UsersOfNodes::UsersOfNodes(Graph& graph)
+NodeUsers::NodeUsers(Graph& graph)
 {
     auto note = [&](Node* user) {
         if (user->isElided)
@@ -800,7 +760,7 @@ UsersOfNodes::UsersOfNodes(Graph& graph)
     }
 }
 
-std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t layoutID) const
+std::optional<NodeUsers::OnlyRead> NodeUsers::isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t layoutID) const
 {
     OnlyRead result;
     result.aliasingUsers.append(object);
@@ -818,7 +778,6 @@ std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std
                 result.aliasingUsers.append(user);
                 break;
             case op_check_type: {
-                // (The check must be certain to pass, because otherwise it would have to throw.)
                 unsigned mask = user->as<OpCheckType>().m_mask;
                 if (mask > SoundTypeAll || !(mask & SoundTypeOtherObject))
                     return std::nullopt;
@@ -826,7 +785,6 @@ std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std
                 break;
             }
             case op_type_tag:
-                // (Likewise. With field IDs, op_type_tag checks nothing.)
                 if (!user->firstLayout || !TypeTable::shared() || (user->firstLayout != layoutID && !user->isTrusted && !TypeTable::shared()->usesFieldIDs(user->firstLayout)))
                     return std::nullopt;
                 result.aliasingUsers.append(user);
@@ -841,7 +799,6 @@ std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std
                     if (names[candidate] == name)
                         index = candidate;
                 }
-                // (A property that the object does not have itself would come from the prototype chain.)
                 if (index == names.size())
                     return std::nullopt;
                 result.reads.append({ user, static_cast<unsigned>(index) });
@@ -861,11 +818,10 @@ std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std
     return result;
 }
 
-// Returns nullopt if a name occurs twice.
-static std::optional<MultiValueReturnTable::Names> namesOfLiteral(Node* node)
+static std::optional<MultiValueReturnTable::Names> literalNames(Node* node)
 {
     auto& instructions = node->graph->codeBlock()->instructions();
-    auto& stores = node->graph->storesOfLiteral(node->bytecodeIndex.offset());
+    auto& stores = node->graph->literalStores(node->bytecodeIndex.offset());
     RELEASE_ASSERT(stores.size() >= node->numberOfLiteralProperties);
     MultiValueReturnTable::Names names;
     for (unsigned i = 0; i < node->numberOfLiteralProperties; ++i) {
@@ -883,16 +839,14 @@ void recordReturnedLiterals(Graph& graph)
     UnlinkedCodeBlock* code = graph.codeBlock();
     if (!all || code->codeType() != FunctionCode || code->isConstructor())
         return;
-    // (The return value of a function that can suspend goes to whatever resumes it.)
     if (code->parseMode() != SourceParseMode::NormalFunctionMode && code->parseMode() != SourceParseMode::ArrowFunctionMode && code->parseMode() != SourceParseMode::MethodMode)
         return;
-    std::optional<UsersOfNodes> users;
+    std::optional<NodeUsers> users;
     std::optional<MultiValueReturnTable::Names> names;
     for (BasicBlock* block : graph.m_rpo) {
         for (Node* node : block->nodes) {
             if (node->kind != NodeKind::Bytecode)
                 continue;
-            // (A tail call returns another function's result.)
             if (node->opcode == op_tail_call || node->opcode == op_tail_call_varargs)
                 return;
             if (node->opcode != op_ret)
@@ -904,16 +858,15 @@ void recordReturnedLiterals(Graph& graph)
                 users.emplace(graph);
             if (users->of(object).size() != 1)
                 return;
-            auto itsNames = namesOfLiteral(object);
-            if (!itsNames || (names && !(*names == *itsNames)))
+            auto literalPropertyNames = literalNames(object);
+            if (!literalPropertyNames || (names && !(*names == *literalPropertyNames)))
                 return;
-            names = WTF::move(itsNames);
+            names = WTF::move(literalPropertyNames);
         }
     }
     if (names)
         all->note(code, WTF::move(*names));
 }
-
 
 void planMultiValueReturns(Graph& graph)
 {
@@ -931,7 +884,7 @@ void planMultiValueReturns(Graph& graph)
         }
         graph.numberOfRegisterReturnValues = names->size();
     }
-    std::optional<UsersOfNodes> users;
+    std::optional<NodeUsers> users;
     for (BasicBlock* block : graph.m_rpo) {
         for (Node* node : block->nodes) {
             if (!node->isBytecode(op_call) || node->isElided)
@@ -946,7 +899,6 @@ void planMultiValueReturns(Graph& graph)
             if (!users)
                 users.emplace(graph);
             auto onlyRead = users->isOnlyRead(node, names->span(), 0);
-            // (Otherwise the summary would say that the object is needed.)
             RELEASE_ASSERT(onlyRead);
             node->numberOfReturnValues = names->size();
             auto& reads = graph.returnValueReads.add(node, Vector<Node*, 8> { }).iterator->value;
@@ -971,7 +923,6 @@ void planMultiValueReturns(Graph& graph)
     }
 }
 
-
 void scalarReplaceReadOnlyObjects(Graph& graph)
 {
     auto resolve = [](Node* node) {
@@ -979,29 +930,28 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
             node = node->replacement;
         return node;
     };
-    // (Eliminating one allocation may make it possible to eliminate another that it was stored in.)
     for (bool changed = true; changed;) {
         changed = false;
-        std::optional<UsersOfNodes> users;
+        std::optional<NodeUsers> users;
         for (BasicBlock* block : graph.m_rpo) {
             for (Node* node : block->nodes) {
                 if (!node->isBytecode(op_new_object) || !node->numberOfLiteralProperties || node->isElided)
                     continue;
                 auto& instructions = node->graph->codeBlock()->instructions();
-                auto& stores = node->graph->storesOfLiteral(node->bytecodeIndex.offset());
+                auto& stores = node->graph->literalStores(node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= node->numberOfLiteralProperties);
                 Vector<UniquedStringImpl*, 8> names;
-                bool hasOneTwice = false;
+                bool hasDuplicateEntry = false;
                 for (unsigned i = 0; i < node->numberOfLiteralProperties; ++i) {
                     UniquedStringImpl* name = node->graph->codeBlock()->identifier(instructions.at(stores[i])->as<OpPutById>().m_property).impl();
-                    hasOneTwice |= names.contains(name);
+                    hasDuplicateEntry |= names.contains(name);
                     names.append(name);
                 }
-                if (hasOneTwice)
+                if (hasDuplicateEntry)
                     continue;
                 if (!users)
                     users.emplace(graph);
-                auto onlyRead = users->isOnlyRead(node, names.span(), Graph::layoutIDOfNewObject(node));
+                auto onlyRead = users->isOnlyRead(node, names.span(), Graph::newObjectLayoutID(node));
                 if (!onlyRead)
                     continue;
                 for (auto [read, index] : onlyRead->reads) {

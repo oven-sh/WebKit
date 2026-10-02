@@ -51,11 +51,9 @@ struct JSFrameData {
     WriteBarrier<CodeBlock> codeBlock;
     BytecodeIndex bytecodeIndex;
     bool m_isAsyncFrame { false };
-    // AOT code has no CodeBlock unless one is requested, and most stack traces are never inspected. These fields identify the code
-    // until StackFrame::codeBlock() is called.
     CodeSpecializationKind aotKind { CodeSpecializationKind::CodeForCall };
-    WriteBarrier<ScriptExecutable> aotExecutable { }; // Of a function or of a module.
-    WriteBarrier<JSCell> aotInstanceToken { }; // AOT::tokenOf() the instance that it ran in: the executable is shared by all of them.
+    WriteBarrier<ScriptExecutable> aotExecutable { };
+    WriteBarrier<JSCell> aotInstanceToken { };
 };
 
 struct WasmFrameData {
@@ -73,7 +71,7 @@ public:
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex);
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex, bool isAsyncFrame);
     StackFrame(VM&, JSCell* owner, CodeBlock*, BytecodeIndex);
-    StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, ScriptExecutable*, CodeSpecializationKind, JSCell* tokenOfInstance, BytecodeIndex, bool isAsyncFrame = false); // JSFrameData::aotExecutable
+    StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, ScriptExecutable*, CodeSpecializationKind, JSCell* instanceToken, BytecodeIndex, bool isAsyncFrame = false);
     StackFrame(VM&, JSCell* owner, JSCell* callee, bool isAsyncFrame);
     StackFrame(Wasm::IndexOrName);
     StackFrame(Wasm::IndexOrName, size_t functionIndex);
@@ -96,8 +94,6 @@ public:
         return nullptr;
     }
 
-    // The most common queries about the CodeBlock of a frame that hasLineAndColumnInfo(). None of them creates a CodeBlock, so they
-    // can be used at the end of a collection, unlike codeBlock().
     CodeBlock* codeBlockIfExists() const
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
@@ -108,7 +104,7 @@ public:
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isConstructor() const;
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
-    JS_EXPORT_PRIVATE JSGlobalObject* globalObjectOfCode() const;
+    JS_EXPORT_PRIVATE JSGlobalObject* codeGlobalObject() const;
 
     JSCell* callee() const
     {
@@ -145,9 +141,7 @@ public:
     }
 
     LineColumn computeLineAndColumn() const;
-    // For a frame of AOT code that records its position in the program's original sources. computeLineAndColumn() and sourceURL()
-    // then use this too.
-    JS_EXPORT_PRIVATE std::optional<AOT::FunctionRef::ReportedPosition> reportedPosition(AOT::FunctionRef::OfConstruction = AOT::FunctionRef::OfConstruction::WhereItIs) const;
+    JS_EXPORT_PRIVATE std::optional<AOT::FunctionRef::ReportedPosition> reportedPosition(AOT::FunctionRef::ConstructPosition = AOT::FunctionRef::ConstructPosition::AtDivot) const;
     String functionName(VM&) const;
     SourceID sourceID() const;
     JS_EXPORT_PRIVATE String sourceURL(VM&, AllowURLOverride = AllowURLOverride::Yes) const;
@@ -163,7 +157,7 @@ public:
     bool isMarked(VM&) const;
 
 private:
-    JS_EXPORT_PRIVATE CodeBlock* makeCodeBlock() const; // On the VM's thread, and not while the collector is at work.
+    JS_EXPORT_PRIVATE CodeBlock* makeCodeBlock() const;
 
     FrameData m_frameData { JSFrameData {} };
 };

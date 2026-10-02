@@ -46,9 +46,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Image);
 
 uint64_t imageStamp()
 {
-    // Compiled code depends on the layout of the engine's objects and on the order of the runtime table. The stamp does not detect
-    // every change (an image belongs in the executable that contains its engine), but it catches images and engines from different
-    // builds.
     uint64_t stamp = computeJSCBytecodeCacheVersion();
     auto mix = [&](uint64_t value) {
         stamp = (stamp ^ value) * 0x100000001b3ULL;
@@ -56,7 +53,7 @@ uint64_t imageStamp()
     };
     mix(numberOfEntries);
     mix(Instance::offsetOfStates());
-    mix(Instance::leastStateWithData);
+    mix(Instance::minStateWithData);
     mix(numberOfStubs);
     mix(numOpcodeIDs);
     mix(sizeof(VM));
@@ -75,7 +72,6 @@ uint64_t imageStamp()
     return stamp;
 }
 
-// The sort order of ImageHeader::selectorsInOrderOffset.
 static int compareSelectors(bool is8BitA, std::span<const uint8_t> a, bool is8BitB, std::span<const uint8_t> b)
 {
     if (is8BitA != is8BitB)
@@ -88,17 +84,11 @@ static int compareSelectors(bool is8BitA, std::span<const uint8_t> a, bool is8Bi
 static std::span<const uint8_t> bytesOf(const StringImpl& string) { return string.is8Bit() ? asBytes(string.span8()) : asBytes(string.span16()); }
 static int compareSelectors(const StringImpl& a, const StringImpl& b) { return compareSelectors(a.is8Bit(), bytesOf(a), b.is8Bit(), bytesOf(b)); }
 
-// ---- Building
-
-// ---- The source text that error messages quote, for a program that ships without its source
-
 static constexpr unsigned maxUntruncatedQuoteLength = 64;
 static constexpr unsigned maxCalleeQuoteLength = 96;
 static constexpr unsigned truncatedQuoteEndLength = 40;
 
-// In "f.g(a, (b))": the index of the "(" that matches the final ")". Found the same way as functionCallBase() in
-// ExceptionHelpers.cpp.
-static size_t indexOfArgumentListStart(StringView text)
+static size_t argumentListStartIndex(StringView text)
 {
     unsigned length = text.length();
     if (length < 2 || text[length - 1] != ')')
@@ -133,7 +123,6 @@ void collectQuotes(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBlock, Str
         return;
     int length = text.length();
     for (uint32_t offset : info.quotableSites) {
-        // The same computation as appendSourceToErrorMessage() in ErrorInstance.cpp.
         auto entry = codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(offset));
         int divot = entry.divot + sourceOffset;
         int start = divot - entry.startOffset;
@@ -145,7 +134,7 @@ void collectQuotes(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBlock, Str
             StringView said = text.substring(start, stop - start);
             if (said.length() <= maxUntruncatedQuoteLength)
                 quote.text = said.utf8();
-            else if (size_t open = indexOfArgumentListStart(said); open != notFound && open < maxCalleeQuoteLength) {
+            else if (size_t open = argumentListStartIndex(said); open != notFound && open < maxCalleeQuoteLength) {
                 quote.kind = Quote::Call;
                 quote.text = said.left(open + 1).utf8();
             } else {
@@ -200,7 +189,6 @@ void setCodec(Compress compress, Decompress decompress)
     s_decompress = decompress;
 }
 
-// See ImageHeader::sizeOfBlockOfTextOfQuotes. Returns nullopt if there is no compressor or compression fails.
 static std::optional<Vector<uint8_t>> compressInBlocks(std::span<const uint8_t> bytes, size_t sizeOfBlock)
 {
     if (!s_compress || !s_decompress || bytes.size() < 4 * KB)
@@ -226,8 +214,6 @@ static std::optional<Vector<uint8_t>> compressInBlocks(std::span<const uint8_t> 
     return result;
 }
 
-// Reads the bytes that compressInBlocks() was given, one at a time, from any offset. A block size of zero means the bytes are not
-// compressed.
 class BlockReader {
 public:
     BlockReader(const uint8_t* bytes, size_t sizeOfBlock, uint64_t start)
@@ -239,7 +225,6 @@ public:
 
     bool failed() const { return m_failed; }
 
-    // (Returns only zeros after a failure, which terminates a varint and a list.)
     uint8_t next()
     {
         if (!m_sizeOfBlock)
@@ -292,22 +277,20 @@ private:
     bool m_failed { false };
 };
 
-String Image::textOfQuote(uint64_t start, size_t length) const
+String Image::quoteText(uint64_t start, size_t length) const
 {
-    BlockReader reader(this->at<uint8_t>(header().textOfQuotesOffset), header().sizeOfBlockOfTextOfQuotes, start);
+    BlockReader reader(this->at<uint8_t>(header().quotesTextOffset), header().quoteTextBlockSize, start);
     Vector<uint8_t> bytes(length, [&](size_t) { return reader.next(); });
     if (reader.failed())
         return { };
     return String::fromUTF8(bytes.span());
 }
 
-// The format: the number of quotes, then for each quote, in order: the delta of its bytecode offset from the previous quote, the
-// signed delta of its start in the text of quotes from the previous quote's start, and its length combined with its Quote::Kind.
 std::optional<std::pair<String, bool>> Image::quoteAt(const ImageFunction& function, unsigned bytecodeOffset) const
 {
     if (!function.quotes)
         return std::nullopt;
-    BlockReader reader(this->at<uint8_t>(header().quotesOffset), header().sizeOfBlockOfQuotes, function.quotes);
+    BlockReader reader(this->at<uint8_t>(header().quotesOffset), header().quoteBlockSize, function.quotes);
     uint64_t offset = 0;
     int64_t start = 0;
     for (uint64_t count = reader.varint(); count--;) {
@@ -321,7 +304,7 @@ std::optional<std::pair<String, bool>> Image::quoteAt(const ImageFunction& funct
             continue;
         if (offset > bytecodeOffset)
             break;
-        String text = textOfQuote(start, static_cast<size_t>(lengthAndKind >> 2));
+        String text = quoteText(start, static_cast<size_t>(lengthAndKind >> 2));
         if (text.isNull())
             return std::nullopt;
         auto kind = static_cast<Quote::Kind>(lengthAndKind & 3);
@@ -357,7 +340,7 @@ void collectConstructSites(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBl
                     }
                 }
             }
-            info.startsOfConstructions.append(start);
+            info.constructionStarts.append(start);
             break;
         }
         default:
@@ -366,32 +349,30 @@ void collectConstructSites(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBl
     }
 }
 
-Vector<ReportableSitesOfFunction> ImageBuilder::reportableSites()
+Vector<FunctionReportableSites> ImageBuilder::reportableSites()
 {
-    Vector<ReportableSitesOfFunction> all;
+    Vector<FunctionReportableSites> all;
     all.reserveInitialCapacity(m_functions.size());
     for (auto& function : m_functions) {
         auto& info = function.code.info;
-        ReportableSitesOfFunction result;
+        FunctionReportableSites result;
         result.offsets = WTF::move(info.callSites);
-        result.numbersOfIdentifiers = WTF::move(info.numbersOfIdentifiers);
-        result.numbersOfConstants = WTF::move(info.numbersOfConstants);
+        result.identifierIndices = WTF::move(info.identifierIndices);
+        result.constantIndices = WTF::move(info.constantIndices);
         for (unsigned i = 0; i < info.constructSites.size(); ++i) {
-            if (info.startsOfConstructions[i].first || info.startsOfConstructions[i].second)
-                result.constructions.append({ info.constructSites[i], info.startsOfConstructions[i].first, info.startsOfConstructions[i].second });
+            if (info.constructionStarts[i].first || info.constructionStarts[i].second)
+                result.constructions.append({ info.constructSites[i], info.constructionStarts[i].first, info.constructionStarts[i].second });
         }
         all.append(WTF::move(result));
     }
     return all;
 }
 
-// This list follows the one that quoteAt() reads. The format: the number of entries, then for each entry, in order, the delta of
-// its bytecode offset from the previous entry.
 bool Image::constructsAt(const ImageFunction& function, unsigned bytecodeOffset) const
 {
     if (!function.quotes)
         return false;
-    BlockReader reader(this->at<uint8_t>(header().quotesOffset), header().sizeOfBlockOfQuotes, function.quotes);
+    BlockReader reader(this->at<uint8_t>(header().quotesOffset), header().quoteBlockSize, function.quotes);
     for (uint64_t count = reader.varint(); count-- && !reader.failed();) {
         reader.varint();
         reader.varint();
@@ -409,14 +390,13 @@ bool Image::constructsAt(const ImageFunction& function, unsigned bytecodeOffset)
 static std::atomic<uint64_t> s_linkTimeConstantsUsed[4];
 static_assert(numberOfLinkTimeConstants <= 256);
 
-void noteThatLinkTimeConstantIsUsed(unsigned which)
+void didUseLinkTimeConstant(unsigned which)
 {
     s_linkTimeConstantsUsed[which / 64].fetch_or(1ull << which % 64, std::memory_order_relaxed);
 }
 
 void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code, String&& nameForMap)
 {
-    // Clear the branch targets, which depend on the address the code was compiled at, so that the output is deterministic.
     for (auto& call : code.info.stubCalls)
         memset(code.bytes.mutableSpan().data() + call.offset, 0, sizeof(uint32_t));
     Locker locker { m_lock };
@@ -427,11 +407,10 @@ bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flag
 {
     Locker locker { m_lock };
     flags = ImageRegExp::significantFlags(flags);
-    auto asked = m_regExpsAsked.add(makeString(flags.toRaw(), '/', pattern), false);
+    auto asked = m_requestedRegExps.add(makeString(flags.toRaw(), '/', pattern), false);
     if (!asked.isNewEntry)
         return asked.iterator->value;
     RegExpCode result { pattern, flags, { } };
-    // Without a JIT, a pattern that has no code in the image is matched by the Yarr interpreter, which is about ten times slower.
     auto notCompiled = [&](ASCIILiteral reason) {
         ++m_numberOfRegExpsNotCompiled;
         if (Options::verboseAOTCompilation()) [[unlikely]]
@@ -439,12 +418,10 @@ bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flag
         return false;
     };
     for (auto charSize : { Yarr::CharSize::Char8, Yarr::CharSize::Char16 }) {
-        // The same steps as RegExp::compile().
         Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
         Yarr::YarrPattern yarrPattern(pattern, flags, error);
         if (Yarr::hasError(error) || yarrPattern.containsUnsignedLengthPattern() || (yarrPattern.m_containsLookbehinds && !Options::useRegExpLookbehindJIT()))
             return notCompiled("the JIT does not support it either"_s);
-        // (Such a pattern is matched with a plain string search, without running compiled code.)
         if (!yarrPattern.m_atom.isNull())
             return false;
         auto code = Yarr::jitCompileForImage(yarrPattern, pattern, charSize, &vm, Yarr::ExecutionMode::IncludeSubpatterns);
@@ -453,7 +430,7 @@ bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flag
         result.code[charSize == Yarr::CharSize::Char16] = WTF::move(*code);
     }
     m_regExps.append(WTF::move(result));
-    m_regExpsAsked.set(makeString(flags.toRaw(), '/', pattern), true);
+    m_requestedRegExps.set(makeString(flags.toRaw(), '/', pattern), true);
     return true;
 }
 
@@ -466,23 +443,18 @@ Vector<uint8_t> ImageBuilder::finish()
         return a.rank < b.rank;
     });
 
-
     unsigned capacity = 16;
     while (capacity * 3 < m_functions.size() * 4)
         capacity *= 2;
 
-    // The shapes that objects are created with and the names that properties are read by (selectors) are numbered for the whole
-    // program, in order of first use.
-    // If the program's identifiers are numbered, selectors use those numbers instead. A site's identifier is then also its
-    // selector.
-    const NumbersOfIdentifiers* numbersOfIdentifiers = m_numbersOfIdentifiersOfProgram;
+    const IdentifierIndices* identifierIndices = m_programIdentifierIndices;
     Vector<UniquedStringImpl*> selectors { nullptr };
-    if (numbersOfIdentifiers)
-        selectors.fill(nullptr, m_numberOfIdentifiersOfProgram);
+    if (identifierIndices)
+        selectors.fill(nullptr, m_numberOfProgramIdentifiers);
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> numberOfSelector;
     auto selectorFor = [&](UniquedStringImpl* name) {
-        if (numbersOfIdentifiers) {
-            uint32_t number = numbersOfIdentifiers->get(name);
+        if (identifierIndices) {
+            uint32_t number = identifierIndices->get(name);
             RELEASE_ASSERT(number);
             selectors[number] = name;
             return number;
@@ -500,7 +472,6 @@ Vector<uint8_t> ImageBuilder::finish()
         uint16_t reserved { 0 };
         uint16_t inlineSlots { 0 };
     };
-    // The layouts from the type table come first and keep their own numbers, whether or not any object is created with them.
     Vector<Shape> shapes(1 + (TypeTable::shared() ? TypeTable::shared()->numberOfLayouts() : 0));
     UncheckedKeyHashMap<String, uint32_t> numberOfShape;
     BitVector selectorIsRead;
@@ -511,9 +482,8 @@ Vector<uint8_t> ImageBuilder::finish()
             uint32_t& constant = info.siteConstants[slot];
             if (!constant)
                 continue;
-            // A site that creates objects has no identifier, so the field is free to hold the constant.
-            auto keepInSite = makeScopeExit([&] {
-                if (!numbersOfIdentifiers)
+            auto storeInSiteOnExit = makeScopeExit([&] {
+                if (!identifierIndices)
                     return;
                 RELEASE_ASSERT(!info.sites[slot].identifierAndExtra);
                 info.sites[slot].identifierAndExtra = constant;
@@ -525,8 +495,8 @@ Vector<uint8_t> ImageBuilder::finish()
             if (!(constant & CompiledFunctionInfo::siteConstantIsShape)) {
                 constant = selectorFor(info.selectors[constant - 1]);
                 selectorIsRead.set(constant);
-                keepInSite.release();
-                RELEASE_ASSERT(!numbersOfIdentifiers || (info.sites[slot].identifierAndExtra & ((1u << Site::identifierBits) - 1)) == constant);
+                storeInSiteOnExit.release();
+                RELEASE_ASSERT(!identifierIndices || (info.sites[slot].identifierAndExtra & ((1u << Site::identifierBits) - 1)) == constant);
                 continue;
             }
             const KnownShape& known = info.shapes[(constant & ~CompiledFunctionInfo::siteConstantIsShape) - 1];
@@ -558,7 +528,6 @@ Vector<uint8_t> ImageBuilder::finish()
                     words.append(slot);
             }
             String key { std::span { reinterpret_cast<const Latin1Character*>(words.span().data()), words.size() * sizeof(uint32_t) } };
-            // (A Structure has 16 bits for the shape number. Objects with any further shape are created without one.)
             if (auto it = numberOfShape.find(key); it != numberOfShape.end())
                 constant = it->value;
             else if (shapes.size() > std::numeric_limits<uint16_t>::max())
@@ -572,9 +541,8 @@ Vector<uint8_t> ImageBuilder::finish()
     }
     RELEASE_ASSERT(selectors.size() < (1u << (32 - ImageDispatchEntry::locationBits)));
 
-    // Build the dispatch table by row displacement: longest rows first, each at the lowest offset where it fits.
-    Vector<uint32_t> rowOfSelector;
-    rowOfSelector.fill(0, selectors.size());
+    Vector<uint32_t> selectorRow;
+    selectorRow.fill(0, selectors.size());
     Vector<uint32_t> dispatch;
     {
         Vector<Vector<std::pair<uint32_t, int32_t>, 0>> rows(selectors.size());
@@ -596,14 +564,13 @@ Vector<uint8_t> ImageBuilder::finish()
             if (!rows[selector].isEmpty())
                 order.append(selector);
         }
-        // (Rows with one entry are sorted by shape, so that the search for a free offset can continue from the previous one.)
         std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
             if (rows[a].size() != rows[b].size())
                 return rows[a].size() > rows[b].size();
             return rows[a][0].first < rows[b][0].first;
         });
         size_t firstFree = 0;
-        size_t lastForOne = 0;
+        size_t lastSingleEnd = 0;
         auto isFree = [&](size_t index) { return index >= dispatch.size() || !dispatch[index]; };
         auto growWithZeros = [&](size_t size) {
             if (size > dispatch.size())
@@ -614,37 +581,36 @@ Vector<uint8_t> ImageBuilder::finish()
             uint32_t first = row[0].first;
             while (!isFree(firstFree))
                 ++firstFree;
-            size_t at = std::max<size_t>(row.size() == 1 ? std::max(firstFree, lastForOne) : firstFree, first);
+            size_t at = std::max<size_t>(row.size() == 1 ? std::max(firstFree, lastSingleEnd) : firstFree, first);
             for (;; ++at) {
                 if (std::ranges::all_of(row, [&](auto& entry) { return isFree(at - first + entry.first); }))
                     break;
             }
             if (row.size() == 1)
-                lastForOne = at;
+                lastSingleEnd = at;
             size_t start = at - first;
             growWithZeros(start + row.last().first + 1);
             for (auto& [shape, location] : row)
                 dispatch[start + shape] = ImageDispatchEntry::encode(selector, location);
-            rowOfSelector[selector] = safeCast<uint32_t>(start);
+            selectorRow[selector] = safeCast<uint32_t>(start);
         }
-        // Any row can be indexed by any shape, so the table has to extend that far.
         size_t furthest = 0;
-        for (uint32_t row : rowOfSelector)
+        for (uint32_t row : selectorRow)
             furthest = std::max<size_t>(furthest, row);
         growWithZeros(furthest + shapes.size());
     }
     Vector<ImageShape> imageShapes;
-    Vector<uint16_t> slotsOfShapes;
-    size_t numberOfPropertiesOfShapes = 0;
+    Vector<uint16_t> shapeSlots;
+    size_t numberOfShapeProperties = 0;
     for (auto& shape : shapes) {
-        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(slotsOfShapes.size() + 1), shape.layoutID, shape.reserved, shape.inlineSlots, 0 });
-        slotsOfShapes.appendVector(shape.slots);
+        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(shapeSlots.size() + 1), shape.layoutID, shape.reserved, shape.inlineSlots, 0 });
+        shapeSlots.appendVector(shape.slots);
         if (shape.layoutID && !shape.slots.isEmpty() && Options::useAOTTypedFields() && TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(shape.layoutID) && TypeTable::shared()->usesFieldIDs(shape.layoutID)) {
             imageShapes.last().hasIds = 1;
             for (uint32_t name : shape.names)
-                slotsOfShapes.append(TypeTable::shared()->idOfField(shape.layoutID, selectors[name]));
+                shapeSlots.append(TypeTable::shared()->fieldID(shape.layoutID, selectors[name]));
         }
-        numberOfPropertiesOfShapes += shape.names.size();
+        numberOfShapeProperties += shape.names.size();
     }
     Vector<uint32_t> slotRanges;
     Vector<TypedLayoutTable::FieldType> slotTypes;
@@ -652,11 +618,11 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<TypedLayoutTable::Field> fieldRecords;
     Vector<TypedLayoutTable::FieldType> fieldTypes;
     Vector<uint16_t> fieldLayoutIDs;
-    Vector<uint32_t> fieldsOfSlot[Structure::numberOfSlotsWithFieldIDs]; // Indexed by field ID, from one: an index into `named`.
-    Vector<uint16_t> layoutIDsOfSlot[Structure::numberOfSlotsWithFieldIDs]; // Likewise: the typed layout that the field belongs to.
+    Vector<uint32_t> slotFields[Structure::numberOfSlotsWithFieldIDs];
+    Vector<uint16_t> slotLayoutIDs[Structure::numberOfSlotsWithFieldIDs];
     Vector<uint8_t> inlineSlotCounts;
     if (Options::useAOTTypedFields() && TypeTable::hasTypedFields()) {
-        RELEASE_ASSERT(numbersOfIdentifiers); // (The caller has checked: compileImage().)
+        RELEASE_ASSERT(identifierIndices);
         for (uint32_t number = 0; number <= TypeTable::shared()->numberOfTypedLayouts(); ++number) {
             auto layout = TypeTable::shared()->typedLayout(number);
             RELEASE_ASSERT(slotTypes.size() < (1u << 24) && fieldRecords.size() < (1u << 20));
@@ -664,35 +630,31 @@ Vector<uint8_t> ImageBuilder::finish()
             size_t start = slotTypes.size();
             for (unsigned slot = 0; slot < layout.capacity; ++slot)
                 slotTypes.append({ 0, 0, 0, 0 });
-            size_t firstFieldOfLayout = fieldRecords.size();
+            size_t firstLayoutField = fieldRecords.size();
             for (auto& name : layout.fields) {
-                // (With field IDs, the type is looked up by name, and the slot has no type.)
                 if (!layout.usesFieldIDs)
                     slotTypes[start + name.slot] = { name.fieldType.packedKinds(), name.fieldType.first, name.fieldType.last, 0 };
                 if (name.id) {
-                    // (In the order the IDs were assigned. A field whose name the program never uses has no record.)
-                    RELEASE_ASSERT(fieldsOfSlot[name.slot].size() + 1 == name.id);
-                    fieldsOfSlot[name.slot].append(safeCast<uint32_t>(firstFieldOfLayout));
-                    layoutIDsOfSlot[name.slot].append(safeCast<uint16_t>(number));
+                    RELEASE_ASSERT(slotFields[name.slot].size() + 1 == name.id);
+                    slotFields[name.slot].append(safeCast<uint32_t>(firstLayoutField));
+                    slotLayoutIDs[name.slot].append(safeCast<uint16_t>(number));
                 }
             }
-            // Sorted by hash: see TypedLayoutTable::named().
             Vector<const TypeTable::LayoutField*, 16> inOrder;
             for (auto& name : layout.fields) {
-                // (The program cannot add a property by a name that it never uses.)
-                if (numbersOfIdentifiers->contains(name.name))
+                if (identifierIndices->contains(name.name))
                     inOrder.append(&name);
             }
             std::ranges::stable_sort(inOrder, [](auto* a, auto* b) { return a->name->existingHash() < b->name->existingHash(); });
             for (auto* name : inOrder) {
                 if (name->id)
-                    fieldsOfSlot[name->slot][name->id - 1] = safeCast<uint32_t>(fieldRecords.size());
-                fieldRecords.append({ numbersOfIdentifiers->get(name->name), safeCast<uint8_t>(name->slot), name->mayBeAbsent, name->id });
+                    slotFields[name->slot][name->id - 1] = safeCast<uint32_t>(fieldRecords.size());
+                fieldRecords.append({ identifierIndices->get(name->name), safeCast<uint8_t>(name->slot), name->mayBeAbsent, name->id });
                 fieldTypes.append({ name->fieldType.packedKinds(), name->fieldType.first, name->fieldType.last, 0 });
                 fieldLayoutIDs.append(safeCast<uint16_t>(number));
             }
-            RELEASE_ASSERT(fieldRecords.size() - firstFieldOfLayout < (1u << 12));
-            fieldRanges.append(static_cast<uint32_t>(firstFieldOfLayout) << 12 | (fieldRecords.size() - firstFieldOfLayout));
+            RELEASE_ASSERT(fieldRecords.size() - firstLayoutField < (1u << 12));
+            fieldRanges.append(static_cast<uint32_t>(firstLayoutField) << 12 | (fieldRecords.size() - firstLayoutField));
             RELEASE_ASSERT(layout.inlineSlots < TypedLayoutTable::usesFieldIDsBit);
             inlineSlotCounts.append(static_cast<uint8_t>(layout.inlineSlots | (layout.usesFieldIDs ? TypedLayoutTable::usesFieldIDsBit : 0)));
         }
@@ -706,17 +668,17 @@ Vector<uint8_t> ImageBuilder::finish()
         }
     }
     Vector<ImageSelector> imageSelectors;
-    Vector<uint8_t> textOfSelectors;
-    for (uint32_t selector = 0; selector < selectors.size() && !numbersOfIdentifiers; ++selector) {
+    Vector<uint8_t> selectorText;
+    for (uint32_t selector = 0; selector < selectors.size() && !identifierIndices; ++selector) {
         UniquedStringImpl* name = selectors[selector];
         if (!name) {
             imageSelectors.append({ 0, 0, 1 });
             continue;
         }
-        if (!name->is8Bit() && textOfSelectors.size() % 2)
-            textOfSelectors.append(0);
-        imageSelectors.append({ safeCast<uint32_t>(textOfSelectors.size()), name->length(), name->is8Bit() });
-        textOfSelectors.append(name->is8Bit() ? asBytes(name->span8()) : asBytes(name->span16()));
+        if (!name->is8Bit() && selectorText.size() % 2)
+            selectorText.append(0);
+        imageSelectors.append({ safeCast<uint32_t>(selectorText.size()), name->length(), name->is8Bit() });
+        selectorText.append(name->is8Bit() ? asBytes(name->span8()) : asBytes(name->span16()));
     }
     Vector<uint32_t> selectorsInOrder;
     for (uint32_t selector = 1; selector < selectors.size(); ++selector) {
@@ -727,7 +689,6 @@ Vector<uint8_t> ImageBuilder::finish()
         return compareSelectors(*selectors[a], *selectors[b]) < 0;
     });
 
-    // Maps a key to the function that a call refers to: the first function with that key.
     Vector<uint32_t> functionWithKey;
     functionWithKey.fill(std::numeric_limits<uint32_t>::max(), capacity);
     for (size_t index = 0; index < m_functions.size(); ++index) {
@@ -746,14 +707,11 @@ Vector<uint8_t> ImageBuilder::finish()
             if (m_functions[target].key.sameFunction(key))
                 return target;
         }
-        // (The compiler guarantees that every function that is called directly has code.)
         dataLogLn("AOT: there is no code for @", key.module, ":", key.start, ":", key.kind, ", which something calls without asking");
         RELEASE_ASSERT_NOT_REACHED();
         return std::nullopt;
     };
 
-    // A function that is only called directly, and whose every call has been inlined, needs no code. Its metadata is kept, because
-    // stack traces still name it.
     if (Options::useAOTInlining()) {
         BitVector isCalled(m_functions.size());
         Vector<uint32_t> worklist;
@@ -768,17 +726,15 @@ Vector<uint8_t> ImageBuilder::finish()
             }
             return std::nullopt;
         };
-        // The same goes for a function expression, even one that escapes, if no remaining code creates it. For example, a closure
-        // passed to a function that was inlined, where the closure was inlined too.
-        BitVector isOnlyCreatedAtItsExpression(m_functions.size());
+        BitVector isCreatedOnlyAtExpression(m_functions.size());
         for (auto& function : m_functions) {
             for (auto& key : function.code.info.functionExpressionsInCode) {
                 if (auto index = indexOf(key))
-                    isOnlyCreatedAtItsExpression.set(*index);
+                    isCreatedOnlyAtExpression.set(*index);
             }
         }
         for (size_t index = 0; index < m_functions.size(); ++index) {
-            if (!m_functions[index].code.info.isOnlyCalledDirectly && !isOnlyCreatedAtItsExpression.get(index))
+            if (!m_functions[index].code.info.isOnlyCalledDirectly && !isCreatedOnlyAtExpression.get(index))
                 call(index);
         }
         while (!worklist.isEmpty()) {
@@ -788,7 +744,6 @@ Vector<uint8_t> ImageBuilder::finish()
                     call(*target);
             }
             for (auto& key : info.functionsCreated) {
-                // (Creating a function that is only called directly does not make it reachable.)
                 if (auto index = indexOf(key); index && !m_functions[*index].code.info.isOnlyCalledDirectly)
                     call(*index);
             }
@@ -806,16 +761,15 @@ Vector<uint8_t> ImageBuilder::finish()
             memcpy(code.bytes.mutableSpan().data(), &breakpoint, sizeof(breakpoint));
             code.info.stubCalls.clear();
             code.info.indexReferences.clear();
-            code.info.sitesOfSpreads.clear();
+            code.info.spreadSites.clear();
             code.info.inlineFrames.clear();
             code.info.catchEntrypoints.clear();
         }
         dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", functions, " functions that nothing calls any more had ", bytes, " bytes of code");
     }
 
-    // Lay out the code. The stubs come first, and are repeated whenever the previous copy is about to go out of branch range.
     const StubBlob& stubs = stubBlob();
-    size_t reach = reachOfStubCall;
+    size_t reach = stubCallReach;
     if (unsigned copies = Options::numberOfAOTStubCopiesForTesting()) [[unlikely]] {
         size_t sizeOfFunctions = 0;
         for (auto& function : m_functions)
@@ -823,10 +777,7 @@ Vector<uint8_t> ImageBuilder::finish()
         reach = stubs.bytes.size() + imageStubsAlignment + sizeOfFunctions / copies;
     }
     Vector<size_t> stubsAt;
-    Vector<std::pair<size_t, size_t>> placement; // For each function: its offset, and the offset of the copy of the stubs that it calls.
-    // After each function's code there is a veneer for every direct callee that is out of branch range. Which callees those are
-    // depends on the layout, so the layout is first computed without veneers. There are few enough that adding them does not change
-    // the answer.
+    Vector<std::pair<size_t, size_t>> placement;
     Vector<Vector<uint32_t, 0>> farCallees(m_functions.size());
     auto sizeWithVeneers = [&](size_t index) {
         size_t size = m_functions[index].code.bytes.size();
@@ -860,16 +811,16 @@ Vector<uint8_t> ImageBuilder::finish()
                 sizeOfVeneers += sizeOfVeneer + sizeof(uint32_t) + imageStubsAlignment;
             }
         }
-        RELEASE_ASSERT(sizeOfVeneers + stubs.bytes.size() + imageStubsAlignment < roomToSpareInReachOfStubCall);
+        RELEASE_ASSERT(sizeOfVeneers + stubs.bytes.size() + imageStubsAlignment < stubCallReachSlack);
     }
     size_t recordsSize = 0;
     size_t codeSize = 0;
-    for (size_t indexOfFunction = 0; indexOfFunction < m_functions.size(); ++indexOfFunction) {
-        auto& function = m_functions[indexOfFunction];
-        recordsSize += sizeof(ImageFunction) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + (numbersOfIdentifiers ? 0 : sizeof(uint32_t))) + function.code.info.knownCallees.size() * sizeof(uint32_t) + function.code.info.plans.sizeInBytes();
+    for (size_t functionIndex = 0; functionIndex < m_functions.size(); ++functionIndex) {
+        auto& function = m_functions[functionIndex];
+        recordsSize += sizeof(ImageFunction) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + (identifierIndices ? 0 : sizeof(uint32_t))) + function.code.info.knownCallees.size() * sizeof(uint32_t) + function.code.info.plans.sizeInBytes();
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
-        if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(indexOfFunction) - stubsAt.last() > reach)) {
+        if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(functionIndex) - stubsAt.last() > reach)) {
             codeSize = WTF::roundUpToMultipleOf<imageStubsAlignment>(codeSize);
             stubsAt.append(codeSize);
             codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + stubs.bytes.size());
@@ -877,46 +828,35 @@ Vector<uint8_t> ImageBuilder::finish()
         placement.append({ codeSize, stubsAt.isEmpty() ? 0 : stubsAt.last() });
         if (Options::logAOTTypeInference()) [[unlikely]]
             dataLogLn("PLACED @", m_functions[placement.size() - 1].key.module, ":", m_functions[placement.size() - 1].key.start, ":", m_functions[placement.size() - 1].key.kind, " ", codeSize);
-        codeSize += sizeWithVeneers(indexOfFunction);
+        codeSize += sizeWithVeneers(functionIndex);
     }
-    size_t endOfFunctions = codeSize;
-    if (stubsAt.size() > mostCopiesOfStubsInImage) {
-        dataLogLn("AOT: the program has too much machine code for an image: ", codeSize, " bytes need ", stubsAt.size(), " copies of the stubs, and the limit is ", mostCopiesOfStubsInImage);
+    size_t functionsEnd = codeSize;
+    if (stubsAt.size() > maxStubCopiesPerImage) {
+        dataLogLn("AOT: the program has too much machine code for an image: ", codeSize, " bytes need ", stubsAt.size(), " copies of the stubs, and the limit is ", maxStubCopiesPerImage);
         return { };
     }
 
-    // The table that maps an address to its function.
-    Vector<uint32_t> startsOfFunctions;
-    for (auto& [at, stubsForIt] : placement)
-        startsOfFunctions.append(safeCast<uint32_t>(at));
-    startsOfFunctions.append(std::numeric_limits<uint32_t>::max());
-    // Fields are separated by tabs, and the first says what the line is. Offsets are in the code, unless it says otherwise.
+    Vector<uint32_t> functionStarts;
+    for (auto& [at, stubsAtOffset] : placement)
+        functionStarts.append(safeCast<uint32_t>(at));
+    functionStarts.append(std::numeric_limits<uint32_t>::max());
     std::unique_ptr<FilePrintStream> map;
     if (Options::aotMapFilePath()) [[unlikely]] {
         map = FilePrintStream::open(byteCast<char>(Options::aotMapFilePath()), "w");
         RELEASE_ASSERT(map);
         auto& out = map;
-        // F: a function's index, the offset and size of its code, its key (module, start, kind), and its name.
         for (unsigned index = 0; index < m_functions.size(); ++index) {
             auto& function = m_functions[index];
-            out->println("F\t", index, "\t", startsOfFunctions[index], "\t", function.code.bytes.size(), "\t", function.key.module, "\t", function.key.start, "\t", function.key.kind, "\t", function.nameForMap);
+            out->println("F\t", index, "\t", functionStarts[index], "\t", function.code.bytes.size(), "\t", function.key.module, "\t", function.key.start, "\t", function.key.kind, "\t", function.nameForMap);
         }
-        // C: the offset of a copy of the stubs.
-        // T: an offset in the stubs, and the name of what starts there. The last is the end.
-        // R: the offset of the code of regular expressions, which goes on to the end.
         for (size_t at : stubsAt)
             out->println("C\t", at);
         for (auto& [name, offset] : stubs.names)
             out->println("T\t", offset, "\t", name);
-        out->println("R\t", endOfFunctions);
-        // For attributing the time spent in a stub to the property that was accessed.
-        // D: the offset of the first inline cache slot in a function's Data, and the size of a slot.
-        // I: the number of an identifier, and its text.
-        // S: the index of a function, the index of one of its slots, and the number of the identifier in the slot's Site. (The Site of
-        // an allocation holds a shape number instead.)
-        if (numbersOfIdentifiers) {
+        out->println("R\t", functionsEnd);
+        if (identifierIndices) {
             out->println("D\t", sizeof(Data), "\t", sizeof(Slot));
-            for (auto& entry : *numbersOfIdentifiers)
+            for (auto& entry : *identifierIndices)
                 out->println("I\t", entry.value, "\t", static_cast<const StringImpl*>(entry.key));
             for (unsigned index = 0; index < m_functions.size(); ++index) {
                 auto& sites = m_functions[index].code.info.sites;
@@ -927,18 +867,17 @@ Vector<uint8_t> ImageBuilder::finish()
             }
         }
     }
-    Vector<uint32_t> granulesOfCode;
+    Vector<uint32_t> codeGranules;
     {
         uint32_t function = 0;
-        for (size_t start = 0; start < endOfFunctions; start += 1 << shiftOfGranuleOfCode) {
-            while (startsOfFunctions[function + 1] <= start)
+        for (size_t start = 0; start < functionsEnd; start += 1 << codeGranuleShift) {
+            while (functionStarts[function + 1] <= start)
                 ++function;
-            granulesOfCode.append(function);
+            codeGranules.append(function);
         }
     }
-    // The table that maps a return address to a bytecode index: see callSiteAt().
     Vector<uint8_t> callSites { 0 };
-    Vector<uint32_t> callSitesOfFunction;
+    Vector<uint32_t> functionCallSites;
     for (auto& function : m_functions) {
         Vector<std::pair<uint32_t, uint32_t>> all;
         for (auto& call : function.code.info.stubCalls) {
@@ -946,16 +885,15 @@ Vector<uint8_t> ImageBuilder::finish()
                 all.append({ call.offset + static_cast<uint32_t>(sizeof(uint32_t)), call.callSite });
         }
         if (all.isEmpty()) {
-            callSitesOfFunction.append(0);
+            functionCallSites.append(0);
             continue;
         }
         std::ranges::sort(all);
-        callSitesOfFunction.append(safeCast<uint32_t>(callSites.size()));
-        auto& sitesOfSpreads = function.code.info.sitesOfSpreads;
+        functionCallSites.append(safeCast<uint32_t>(callSites.size()));
+        auto& spreadSites = function.code.info.spreadSites;
         auto& inlineFrames = function.code.info.inlineFrames;
-        appendVarint(callSites, all.size() << 2 | !inlineFrames.isEmpty() << 1 | !sitesOfSpreads.isEmpty());
+        appendVarint(callSites, all.size() << 2 | !inlineFrames.isEmpty() << 1 | !spreadSites.isEmpty());
         if (!inlineFrames.isEmpty()) {
-            // (Inline frame zero is the function itself.)
             appendVarint(callSites, inlineFrames.size() - 1);
             for (unsigned frame = 1; frame < inlineFrames.size(); ++frame) {
                 appendVarint(callSites, inlineFrames[frame].parent << 1 | inlineFrames[frame].isTailCall);
@@ -974,9 +912,9 @@ Vector<uint8_t> ImageBuilder::finish()
             previousOffset = offset;
             previousSite = site;
         }
-        if (!sitesOfSpreads.isEmpty()) {
-            appendVarint(callSites, sitesOfSpreads.size());
-            for (auto& entry : sitesOfSpreads) {
+        if (!spreadSites.isEmpty()) {
+            appendVarint(callSites, spreadSites.size());
+            for (auto& entry : spreadSites) {
                 appendVarint(callSites, entry.callSite);
                 appendVarint(callSites, entry.item);
                 appendVarint(callSites, entry.site);
@@ -984,20 +922,19 @@ Vector<uint8_t> ImageBuilder::finish()
         }
     }
 
-    // The code of regular expressions comes last, after a single copy of each table that they share.
     std::ranges::sort(m_regExps, [](const RegExpCode& a, const RegExpCode& b) {
         return ImageRegExp::hashOf(a.pattern, a.flags) < ImageRegExp::hashOf(b.pattern, b.flags);
     });
-    UncheckedKeyHashMap<const uint8_t*, size_t> tablesOfRegExps;
-    Vector<std::array<size_t, 2>> placementOfRegExps;
+    UncheckedKeyHashMap<const uint8_t*, size_t> regExpTables;
+    Vector<std::array<size_t, 2>> regExpPlacement;
     Vector<ImageRegExp> imageRegExps;
-    Vector<uint8_t> textOfRegExps;
+    Vector<uint8_t> regExpText;
     {
         size_t before = codeSize;
         for (auto& regExp : m_regExps) {
             for (auto& code : regExp.code) {
                 for (auto& reference : code.tables) {
-                    tablesOfRegExps.ensure(reference.table.data(), [&] {
+                    regExpTables.ensure(reference.table.data(), [&] {
                         codeSize = WTF::roundUpToMultipleOf<imageStubsAlignment>(codeSize);
                         size_t at = codeSize;
                         codeSize += reference.table.size();
@@ -1014,10 +951,10 @@ Vector<uint8_t> ImageBuilder::finish()
                 at[i] = codeSize;
                 codeSize += regExp.code[i].bytes.size();
             }
-            placementOfRegExps.append(at);
+            regExpPlacement.append(at);
             ImageRegExp record { };
             record.hash = ImageRegExp::hashOf(regExp.pattern, regExp.flags);
-            record.text = safeCast<uint32_t>(textOfRegExps.size());
+            record.text = safeCast<uint32_t>(regExpText.size());
             record.length = regExp.pattern.length();
             record.is8Bit = regExp.pattern.is8Bit();
             record.flags = regExp.flags.toRaw();
@@ -1025,11 +962,11 @@ Vector<uint8_t> ImageBuilder::finish()
             record.codeFor16Bit = safeCast<uint32_t>(at[1]);
             imageRegExps.append(record);
             if (regExp.pattern.is8Bit())
-                textOfRegExps.append(asBytes(regExp.pattern.span8()));
+                regExpText.append(asBytes(regExp.pattern.span8()));
             else {
-                textOfRegExps.grow(WTF::roundUpToMultipleOf<2>(textOfRegExps.size()));
-                imageRegExps.last().text = safeCast<uint32_t>(textOfRegExps.size());
-                textOfRegExps.append(asBytes(regExp.pattern.span16()));
+                regExpText.grow(WTF::roundUpToMultipleOf<2>(regExpText.size()));
+                imageRegExps.last().text = safeCast<uint32_t>(regExpText.size());
+                regExpText.append(asBytes(regExp.pattern.span16()));
             }
         }
     }
@@ -1039,13 +976,12 @@ Vector<uint8_t> ImageBuilder::finish()
     header.magic = imageMagic;
     header.stamp = imageStamp();
     header.tableOffset = sizeof(ImageHeader);
-    // See Image::quoteAt().
     Vector<uint8_t> quotes { 0 };
-    Vector<uint8_t> textOfQuotes;
-    Vector<uint32_t> quotesOfFunction;
-    quotesOfFunction.fill(0, m_functions.size());
+    Vector<uint8_t> quotesText;
+    Vector<uint32_t> functionQuotes;
+    functionQuotes.fill(0, m_functions.size());
     {
-        UncheckedKeyHashMap<CString, uint32_t> whereItIs;
+        UncheckedKeyHashMap<CString, uint32_t> knownLocation;
         size_t numberOfQuotes = 0;
         for (size_t index = 0; index < m_functions.size(); ++index) {
             auto& all = m_functions[index].code.info.quotes;
@@ -1053,8 +989,6 @@ Vector<uint8_t> ImageBuilder::finish()
             if (all.isEmpty() && constructSites.isEmpty())
                 continue;
             numberOfQuotes += all.size();
-            // Expressions nest, so a quote that lies inside another quote that is kept reuses its text.
-            // (The offset within the outer quote can only be derived from source offsets if every character is one byte.)
             struct Within {
                 unsigned quote;
                 uint32_t offset;
@@ -1085,8 +1019,6 @@ Vector<uint8_t> ImageBuilder::finish()
                         outer = i;
                 }
             }
-            // Remove type tags from the text (the lexer's encoding: a byte with the value 1 followed by six characters), which must
-            // not appear in messages. The nesting of quotes was computed above, using offsets in the original text.
             if (Options::useTypeTags()) {
                 auto withoutTypeTags = [](std::span<const char> text) {
                     Vector<char, 64> result;
@@ -1103,16 +1035,16 @@ Vector<uint8_t> ImageBuilder::finish()
                 for (auto& quote : all)
                     quote.text = withoutTypeTags(quote.text.span());
             }
-            quotesOfFunction[index] = safeCast<uint32_t>(quotes.size());
+            functionQuotes[index] = safeCast<uint32_t>(quotes.size());
             appendVarint(quotes, all.size());
             uint32_t previousOffset = 0;
             int64_t previousStart = 0;
             for (unsigned i = 0; i < all.size(); ++i) {
                 auto& quote = all[i];
                 const CString* kept = &all[within[i].quote].text;
-                uint32_t start = within[i].offset + whereItIs.ensure(*kept, [&] {
-                    uint32_t result = safeCast<uint32_t>(textOfQuotes.size());
-                    textOfQuotes.append(kept->span());
+                uint32_t start = within[i].offset + knownLocation.ensure(*kept, [&] {
+                    uint32_t result = safeCast<uint32_t>(quotesText.size());
+                    quotesText.append(kept->span());
                     return result;
                 }).iterator->value;
                 appendVarint(quotes, quote.bytecodeOffset - previousOffset);
@@ -1122,7 +1054,6 @@ Vector<uint8_t> ImageBuilder::finish()
                 previousOffset = quote.bytecodeOffset;
                 previousStart = start;
             }
-            // See Image::constructsAt().
             appendVarint(quotes, constructSites.size());
             uint32_t previous = 0;
             for (uint32_t offset : constructSites) {
@@ -1131,43 +1062,39 @@ Vector<uint8_t> ImageBuilder::finish()
             }
         }
     }
-    // Both are only read to produce an error message, so they are compressed.
     size_t compressionBlockSize = std::max(64u, Options::aotQuoteCompressionBlockSize());
-    uint32_t sizeOfBlockOfTextOfQuotes = 0;
-    if (auto packed = compressInBlocks(textOfQuotes.span(), compressionBlockSize)) {
-        textOfQuotes = WTF::move(*packed);
-        sizeOfBlockOfTextOfQuotes = compressionBlockSize;
+    uint32_t quoteTextBlockSize = 0;
+    if (auto packed = compressInBlocks(quotesText.span(), compressionBlockSize)) {
+        quotesText = WTF::move(*packed);
+        quoteTextBlockSize = compressionBlockSize;
     }
-    uint32_t sizeOfBlockOfQuotes = 0;
+    uint32_t quoteBlockSize = 0;
     if (auto packed = compressInBlocks(quotes.span(), compressionBlockSize)) {
         quotes = WTF::move(*packed);
-        sizeOfBlockOfQuotes = compressionBlockSize;
+        quoteBlockSize = compressionBlockSize;
     }
 
-    // The program data that follows the image already records the function of nearly every executable. So it keeps the keys of the
-    // remaining functions (ProgramData::keysOfImage()), and the key table
-    // is placed after the image.
-    bool keysAreOmitted = !!m_numberOfIdentifiersOfProgram;
+    bool keysAreOmitted = !!m_numberOfProgramIdentifiers;
     header.tableCapacity = keysAreOmitted ? 0 : capacity;
     header.recordsOffset = header.tableOffset + header.tableCapacity * sizeof(ImageKey);
     header.recordsSize = recordsSize;
-    size_t sizeOfAllDatas = 0;
+    size_t totalDataSize = 0;
     for (auto& function : m_functions)
-        sizeOfAllDatas += roundUpToMultipleOf<16>(sizeof(Data) + function.code.info.numSlots * sizeof(Slot));
-    header.sizeOfAllDatasIn16Bytes = safeCast<uint32_t>(sizeOfAllDatas / 16);
+        totalDataSize += roundUpToMultipleOf<16>(sizeof(Data) + function.code.info.numSlots * sizeof(Slot));
+    header.totalDataSizeIn16Bytes = safeCast<uint32_t>(totalDataSize / 16);
     header.environmentsSize = m_environmentsSize;
     header.environmentsOffset = WTF::roundUpToMultipleOf<8>(static_cast<size_t>(header.recordsOffset) + recordsSize);
     header.numberOfEnvironments = m_environments.size();
-    size_t endOfTables = static_cast<size_t>(header.environmentsOffset) + m_environments.size() * sizeof(ImageEnvironment);
+    size_t tablesEnd = static_cast<size_t>(header.environmentsOffset) + m_environments.size() * sizeof(ImageEnvironment);
     auto place = [&](size_t size) {
-        endOfTables = WTF::roundUpToMultipleOf<8>(endOfTables);
-        uint32_t result = safeCast<uint32_t>(endOfTables);
-        endOfTables += size;
+        tablesEnd = WTF::roundUpToMultipleOf<8>(tablesEnd);
+        uint32_t result = safeCast<uint32_t>(tablesEnd);
+        tablesEnd += size;
         return result;
     };
     header.shapesOffset = place(imageShapes.sizeInBytes());
     header.numberOfShapes = imageShapes.size();
-    header.slotsOfShapesOffset = place(slotsOfShapes.sizeInBytes());
+    header.shapeSlotsOffset = place(shapeSlots.sizeInBytes());
     header.slotRangesOffset = place(slotRanges.sizeInBytes());
     header.numberOfSlotRanges = slotRanges.size();
     header.slotTypesOffset = place(slotTypes.sizeInBytes());
@@ -1175,52 +1102,49 @@ Vector<uint8_t> ImageBuilder::finish()
     header.fieldRecordsOffset = place(fieldRecords.sizeInBytes());
     header.fieldTypesOffset = place(fieldTypes.sizeInBytes());
     header.fieldLayoutIDsOffset = place(fieldLayoutIDs.sizeInBytes());
-    Vector<uint32_t> startOfFields;
+    Vector<uint32_t> fieldsStart;
     Vector<uint32_t> fields;
     header.largestFieldID = 0;
-    for (auto& ofSlot : fieldsOfSlot) {
-        // (Field IDs start at one.)
-        startOfFields.append(safeCast<uint32_t>(fields.size()) - 1);
-        fields.appendVector(ofSlot);
-        header.largestFieldID = std::max(header.largestFieldID, safeCast<uint32_t>(ofSlot.size()));
+    for (auto& slotFieldList : slotFields) {
+        fieldsStart.append(safeCast<uint32_t>(fields.size()) - 1);
+        fields.appendVector(slotFieldList);
+        header.largestFieldID = std::max(header.largestFieldID, safeCast<uint32_t>(slotFieldList.size()));
     }
     Vector<uint16_t> layoutIDsByFieldID;
-    for (auto& ofSlot : layoutIDsOfSlot)
-        layoutIDsByFieldID.appendVector(ofSlot);
+    for (auto& slotFieldList : slotLayoutIDs)
+        layoutIDsByFieldID.appendVector(slotFieldList);
     header.layoutIDsByFieldIDOffset = place(layoutIDsByFieldID.sizeInBytes());
-    header.startOfFieldsOffset = place(startOfFields.sizeInBytes());
+    header.fieldsStartOffset = place(fieldsStart.sizeInBytes());
     header.fieldsOffset = place(fields.sizeInBytes());
     header.inlineSlotCountsOffset = place(inlineSlotCounts.sizeInBytes());
     header.auditsTypes = Options::auditAOTTypedFields();
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
     header.numberOfSelectors = selectors.size();
-    header.rowsOfSelectorsOffset = place(rowOfSelector.sizeInBytes());
-    header.textOfSelectorsOffset = place(textOfSelectors.size());
+    header.selectorRowsOffset = place(selectorRow.sizeInBytes());
+    header.selectorTextOffset = place(selectorText.size());
     header.selectorsInOrderOffset = place(selectorsInOrder.sizeInBytes());
     header.numberOfSelectorsInOrder = selectorsInOrder.size();
     header.dispatchOffset = place(dispatch.sizeInBytes());
     header.quotesOffset = place(quotes.size());
-    header.textOfQuotesOffset = place(textOfQuotes.size());
-    header.sizeOfBlockOfTextOfQuotes = sizeOfBlockOfTextOfQuotes;
-    header.sizeOfBlockOfQuotes = sizeOfBlockOfQuotes;
-    header.numberOfIdentifiersOfProgram = m_numberOfIdentifiersOfProgram;
-    header.numberOfConstantsOfProgram = m_numberOfConstantsOfProgram;
+    header.quotesTextOffset = place(quotesText.size());
+    header.quoteTextBlockSize = quoteTextBlockSize;
+    header.quoteBlockSize = quoteBlockSize;
+    header.numberOfProgramIdentifiers = m_numberOfProgramIdentifiers;
+    header.numberOfProgramConstants = m_numberOfProgramConstants;
     header.regExpsOffset = place(imageRegExps.sizeInBytes());
     header.numberOfRegExps = imageRegExps.size();
-    header.textOfRegExpsOffset = place(textOfRegExps.size());
-    Vector<uint32_t> numbersOfFunctions;
+    header.regExpTextOffset = place(regExpText.size());
+    Vector<uint32_t> functionNumbers;
     for (auto& function : m_functions)
-        numbersOfFunctions.append(function.code.info.numberOfFunction);
-    // (Only validation reads them.)
+        functionNumbers.append(function.code.info.numberOfFunction);
     if (!Options::validateAOTInferredTypes())
-        numbersOfFunctions.clear();
-    header.numbersOfFunctionsOffset = place(numbersOfFunctions.sizeInBytes());
-    header.startsOfFunctionsOffset = place(startsOfFunctions.sizeInBytes());
-    header.granulesOfCodeOffset = place(granulesOfCode.sizeInBytes());
+        functionNumbers.clear();
+    header.functionNumbersOffset = place(functionNumbers.sizeInBytes());
+    header.functionStartsOffset = place(functionStarts.sizeInBytes());
+    header.codeGranulesOffset = place(codeGranules.sizeInBytes());
     header.callSitesOffset = place(callSites.size());
-    // The distinct frame layouts, deduplicated.
     Vector<ImageFrame> frames;
-    Vector<uint16_t> frameOfFunction;
+    Vector<uint16_t> functionFrame;
     {
         UncheckedKeyHashMap<uint64_t, uint16_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numbers;
         for (auto& function : m_functions) {
@@ -1236,10 +1160,10 @@ Vector<uint8_t> ImageBuilder::finish()
             if (info.calleeSaveRegisters.registerCount()) {
                 ptrdiff_t offset = info.calleeSaveRegisters.at(0).offset();
                 RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))));
-                frame.whereCalleeSavesStart = safeCast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
+                frame.calleeSavesStart = safeCast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
             }
             frame.calleeSaveRegisters = ImageFunction::packRegisters(calleeSaveRegisters);
-            frameOfFunction.append(numbers.ensure(frame.bits(), [&] {
+            functionFrame.append(numbers.ensure(frame.bits(), [&] {
                 RELEASE_ASSERT(frames.size() < 1u << 15);
                 frames.append(frame);
                 return static_cast<uint16_t>(frames.size() - 1);
@@ -1247,22 +1171,21 @@ Vector<uint8_t> ImageBuilder::finish()
         }
     }
     header.framesOffset = place(frames.sizeInBytes());
-    header.endOfFunctions = safeCast<uint32_t>(endOfFunctions);
-    header.sizeOfStubs = safeCast<uint32_t>(stubs.bytes.size());
+    header.functionsEnd = safeCast<uint32_t>(functionsEnd);
+    header.stubsSize = safeCast<uint32_t>(stubs.bytes.size());
     for (unsigned i = 0; i < 4; ++i)
         header.linkTimeConstantsUsed[i] = s_linkTimeConstantsUsed[i].load();
-    header.numberOfCopiesOfStubs = stubsAt.size();
+    header.numberOfStubCopies = stubsAt.size();
     for (unsigned i = 0; i < stubsAt.size(); ++i)
-        header.copiesOfStubs[i] = safeCast<uint32_t>(stubsAt[i]);
+        header.stubCopies[i] = safeCast<uint32_t>(stubsAt[i]);
     RELEASE_ASSERT(stubs.returnsIntoAdapters.size() == numberOfAdapters);
     for (unsigned i = 0; i < numberOfAdapters; ++i)
         header.returnsIntoAdapters[i] = stubs.returnsIntoAdapters[i];
-    header.hashOfIntrinsics = ImmutableIntrinsics::shared() ? ImmutableIntrinsics::shared()->hash() : 0;
+    header.intrinsicHash = ImmutableIntrinsics::shared() ? ImmutableIntrinsics::shared()->hash() : 0;
     header.dispatchSize = safeCast<uint32_t>(dispatch.size());
-    header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(endOfTables);
+    header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(tablesEnd);
     header.codeSize = codeSize;
     header.size = WTF::roundUpToMultipleOf<imagePageSize>(header.codeOffset + codeSize);
-    // B: the size of the code.
     if (map) [[unlikely]]
         map->println("B\t", codeSize);
     header.numberOfFunctions = m_functions.size();
@@ -1279,7 +1202,7 @@ Vector<uint8_t> ImageBuilder::finish()
 
     memcpy(base + header.environmentsOffset, m_environments.span().data(), m_environments.size() * sizeof(ImageEnvironment));
     memcpy(base + header.shapesOffset, imageShapes.span().data(), imageShapes.sizeInBytes());
-    memcpy(base + header.slotsOfShapesOffset, slotsOfShapes.span().data(), slotsOfShapes.sizeInBytes());
+    memcpy(base + header.shapeSlotsOffset, shapeSlots.span().data(), shapeSlots.sizeInBytes());
     memcpy(base + header.slotRangesOffset, slotRanges.span().data(), slotRanges.sizeInBytes());
     memcpy(base + header.slotTypesOffset, slotTypes.span().data(), slotTypes.sizeInBytes());
     if (header.fieldRangesOffset) {
@@ -1287,26 +1210,26 @@ Vector<uint8_t> ImageBuilder::finish()
         memcpy(base + header.fieldRecordsOffset, fieldRecords.span().data(), fieldRecords.sizeInBytes());
         memcpy(base + header.fieldTypesOffset, fieldTypes.span().data(), fieldTypes.sizeInBytes());
         memcpy(base + header.fieldLayoutIDsOffset, fieldLayoutIDs.span().data(), fieldLayoutIDs.sizeInBytes());
-        memcpy(base + header.startOfFieldsOffset, startOfFields.span().data(), startOfFields.sizeInBytes());
+        memcpy(base + header.fieldsStartOffset, fieldsStart.span().data(), fieldsStart.sizeInBytes());
         memcpy(base + header.fieldsOffset, fields.span().data(), fields.sizeInBytes());
         memcpy(base + header.layoutIDsByFieldIDOffset, layoutIDsByFieldID.span().data(), layoutIDsByFieldID.sizeInBytes());
         memcpy(base + header.inlineSlotCountsOffset, inlineSlotCounts.span().data(), inlineSlotCounts.sizeInBytes());
     }
     memcpy(base + header.selectorsOffset, imageSelectors.span().data(), imageSelectors.sizeInBytes());
-    memcpy(base + header.rowsOfSelectorsOffset, rowOfSelector.span().data(), rowOfSelector.sizeInBytes());
-    memcpy(base + header.textOfSelectorsOffset, textOfSelectors.span().data(), textOfSelectors.size());
+    memcpy(base + header.selectorRowsOffset, selectorRow.span().data(), selectorRow.sizeInBytes());
+    memcpy(base + header.selectorTextOffset, selectorText.span().data(), selectorText.size());
     memcpy(base + header.selectorsInOrderOffset, selectorsInOrder.span().data(), selectorsInOrder.sizeInBytes());
     memcpy(base + header.dispatchOffset, dispatch.span().data(), dispatch.sizeInBytes());
     memcpy(base + header.quotesOffset, quotes.span().data(), quotes.size());
-    memcpy(base + header.textOfQuotesOffset, textOfQuotes.span().data(), textOfQuotes.size());
+    memcpy(base + header.quotesTextOffset, quotesText.span().data(), quotesText.size());
     memcpy(base + header.regExpsOffset, imageRegExps.span().data(), imageRegExps.sizeInBytes());
-    memcpy(base + header.textOfRegExpsOffset, textOfRegExps.span().data(), textOfRegExps.size());
-    memcpy(base + header.numbersOfFunctionsOffset, numbersOfFunctions.span().data(), numbersOfFunctions.sizeInBytes());
-    memcpy(base + header.startsOfFunctionsOffset, startsOfFunctions.span().data(), startsOfFunctions.sizeInBytes());
-    memcpy(base + header.granulesOfCodeOffset, granulesOfCode.span().data(), granulesOfCode.sizeInBytes());
+    memcpy(base + header.regExpTextOffset, regExpText.span().data(), regExpText.size());
+    memcpy(base + header.functionNumbersOffset, functionNumbers.span().data(), functionNumbers.sizeInBytes());
+    memcpy(base + header.functionStartsOffset, functionStarts.span().data(), functionStarts.sizeInBytes());
+    memcpy(base + header.codeGranulesOffset, codeGranules.span().data(), codeGranules.sizeInBytes());
     memcpy(base + header.callSitesOffset, callSites.span().data(), callSites.size());
     memcpy(base + header.framesOffset, frames.span().data(), frames.sizeInBytes());
-    for (auto& [table, at] : tablesOfRegExps) {
+    for (auto& [table, at] : regExpTables) {
         for (auto& regExp : m_regExps) {
             bool copied = false;
             for (auto& regExpCode : regExp.code) {
@@ -1324,12 +1247,11 @@ Vector<uint8_t> ImageBuilder::finish()
     for (size_t index = 0; index < m_regExps.size(); ++index) {
         for (unsigned i = 0; i < 2; ++i) {
             auto& regExpCode = m_regExps[index].code[i];
-            size_t codeAt = placementOfRegExps[index][i];
+            size_t codeAt = regExpPlacement[index][i];
             memcpy(code + codeAt, regExpCode.bytes.span().data(), regExpCode.bytes.size());
-            // The code is page-aligned wherever it is loaded, so page-relative addressing (adrp) works without relocation.
             for (auto& reference : regExpCode.tables) {
                 size_t instructionAt = codeAt + reference.offset;
-                size_t tableAt = tablesOfRegExps.get(reference.table.data());
+                size_t tableAt = regExpTables.get(reference.table.data());
                 int64_t pages = static_cast<int64_t>(tableAt >> 12) - static_cast<int64_t>(instructionAt >> 12);
                 RELEASE_ASSERT(pages >= -(1 << 20) && pages < (1 << 20));
                 uint32_t adrp = 0x90000000u | (static_cast<uint32_t>(pages) & 3u) << 29 | (static_cast<uint32_t>(pages >> 2) & 0x7ffffu) << 5 | reference.reg;
@@ -1348,24 +1270,24 @@ Vector<uint8_t> ImageBuilder::finish()
     for (size_t index = 0; index < m_functions.size(); ++index) {
         auto& function = m_functions[index];
         auto& info = function.code.info;
-        auto [codeAt, stubsForThis] = placement[index];
+        auto [codeAt, stubsForFunction] = placement[index];
 
         ImageFunction record { };
-        RELEASE_ASSERT(startsOfFunctions[index] == codeAt);
+        RELEASE_ASSERT(functionStarts[index] == codeAt);
         record.index = safeCast<uint32_t>(index);
-        record.frame = frameOfFunction[index];
+        record.frame = functionFrame[index];
         record.numberOfParameters = info.convention.numberOfParameters;
         record.takesList = info.convention.signature == Signature::List;
         record.hasInlineFrames = !info.inlineFrames.isEmpty();
-        record.callSites = callSitesOfFunction[index];
+        record.callSites = functionCallSites[index];
         record.numSlots = info.numSlots;
         record.numberOfCatchEntrypoints = safeCast<uint16_t>(info.catchEntrypoints.size());
         RELEASE_ASSERT(info.knownCallees.size() < 1u << 17);
         record.numberOfKnownCallees = info.knownCallees.size();
-        record.hasSiteConstants = !numbersOfIdentifiers;
+        record.hasSiteConstants = !identifierIndices;
         record.usesStaticImports = info.usesStaticImports;
         record.startsCold = info.startsCold;
-        record.quotes = quotesOfFunction[index];
+        record.quotes = functionQuotes[index];
 
         ImageKey key = function.key;
         key.record = recordAt + 1;
@@ -1380,8 +1302,6 @@ Vector<uint8_t> ImageBuilder::finish()
             bucket = (bucket + 1) & mask;
         }
         if (duplicate) {
-            // The same function twice (the same text evaluated twice) is fine. Two different functions with the same key are not:
-            // both are left out of the image, because a lookup could mean either.
             auto& earlier = m_functions[functionInBucket[bucket]].code.bytes;
             if (earlier.size() != function.code.bytes.size() || memcmp(earlier.span().data(), function.code.bytes.span().data(), earlier.size()))
                 table[bucket].kind = std::numeric_limits<uint32_t>::max();
@@ -1394,20 +1314,20 @@ Vector<uint8_t> ImageBuilder::finish()
         recordAt += sizeof(record);
         memcpy(records + recordAt, info.sites.span().data(), info.sites.size() * sizeof(Site));
         recordAt += info.sites.size() * sizeof(Site);
-        if (!numbersOfIdentifiers) {
+        if (!identifierIndices) {
             memcpy(records + recordAt, info.siteConstants.span().data(), info.siteConstants.sizeInBytes());
             recordAt += info.siteConstants.sizeInBytes();
         }
         for (auto& callee : info.knownCallees) {
-            uint32_t indexOfCallee = ImageFunction::noSuchFunction;
+            uint32_t calleeIndex = ImageFunction::noSuchFunction;
             for (unsigned bucket = callee.hash() & (capacity - 1); functionWithKey[bucket] != std::numeric_limits<uint32_t>::max(); bucket = (bucket + 1) & (capacity - 1)) {
                 if (m_functions[functionWithKey[bucket]].key.sameFunction(callee)) {
-                    indexOfCallee = functionWithKey[bucket];
+                    calleeIndex = functionWithKey[bucket];
                     break;
                 }
             }
-            memcpy(records + recordAt, &indexOfCallee, sizeof(indexOfCallee));
-            recordAt += sizeof(indexOfCallee);
+            memcpy(records + recordAt, &calleeIndex, sizeof(calleeIndex));
+            recordAt += sizeof(calleeIndex);
         }
         for (auto& [bytecodeOffset, codeOffset] : info.catchEntrypoints) {
             ImageCatchEntrypoint entrypoint { bytecodeOffset, codeOffset };
@@ -1421,10 +1341,9 @@ Vector<uint8_t> ImageBuilder::finish()
         for (auto& reference : info.indexReferences)
             IndexReferences::fill(code + codeAt, reference, safeCast<uint32_t>(index));
         for (auto& call : info.stubCalls)
-            retargetStubCall(code, codeAt + call.offset, stubsForThis + (call.thunk ? stubs.thunkOffsets[call.thunk - 1] : stubs.offsets[static_cast<unsigned>(call.stub)]), call.isTailCall);
+            retargetStubCall(code, codeAt + call.offset, stubsForFunction + (call.thunk ? stubs.thunkOffsets[call.thunk - 1] : stubs.offsets[static_cast<unsigned>(call.stub)]), call.isTailCall);
     }
 
-    // Now that every function has an address, link the direct calls between functions.
     for (size_t index = 0; index < m_functions.size(); ++index) {
         auto& info = m_functions[index].code.info;
         size_t codeAt = placement[index].first;
@@ -1439,7 +1358,7 @@ Vector<uint8_t> ImageBuilder::finish()
                     writeVeneer(code, veneerAt, targetAt);
                     targetAt = veneerAt;
                 }
-                RELEASE_ASSERT((from > targetAt ? from - targetAt : targetAt - from) <= reachOfStubCall + roomToSpareInReachOfStubCall);
+                RELEASE_ASSERT((from > targetAt ? from - targetAt : targetAt - from) <= stubCallReach + stubCallReachSlack);
                 retargetStubCall(code, from, targetAt, call.isTailCall);
                 continue;
             }
@@ -1449,8 +1368,6 @@ Vector<uint8_t> ImageBuilder::finish()
     m_functions.clear();
     return image;
 }
-
-// ---- Running
 
 namespace {
 
@@ -1484,7 +1401,6 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         || static_cast<uint64_t>(header.environmentsOffset) + static_cast<uint64_t>(header.numberOfEnvironments) * sizeof(ImageEnvironment) > header.codeOffset
         || header.codeOffset + header.codeSize > header.size)
         return nullptr;
-    // What follows it in the file.
     const ProgramData* programData = ProgramData::tryUse(data.subspan(header.size));
     if (!programData)
         return nullptr;
@@ -1493,7 +1409,6 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     Locker locker { all.lock };
     RELEASE_ASSERT(!all.programData);
     all.programData = programData;
-    // Compiled functions embed their own index, and address lookup uses a single table, so only one image may contain code.
     for (Image* other : all.images)
         RELEASE_ASSERT(!header.codeSize || !other->header().codeSize);
     all.images.append(image);
@@ -1502,7 +1417,7 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         TypedLayoutTable::setSlotTypes({ image->at<uint32_t>(header.slotRangesOffset), header.numberOfSlotRanges }, image->at<TypedLayoutTable::FieldType>(header.slotTypesOffset));
     if (header.fieldRangesOffset)
         TypedLayoutTable::setFields(image->at<uint32_t>(header.fieldRangesOffset), image->at<TypedLayoutTable::Field>(header.fieldRecordsOffset), image->at<TypedLayoutTable::FieldType>(header.fieldTypesOffset), image->at<uint16_t>(header.fieldLayoutIDsOffset),
-            image->at<uint8_t>(header.inlineSlotCountsOffset), image->at<uint32_t>(header.startOfFieldsOffset), image->at<uint32_t>(header.fieldsOffset), image->at<uint16_t>(header.layoutIDsByFieldIDOffset), Instance::convertToTypedLayout, header.auditsTypes);
+            image->at<uint8_t>(header.inlineSlotCountsOffset), image->at<uint32_t>(header.fieldsStartOffset), image->at<uint32_t>(header.fieldsOffset), image->at<uint16_t>(header.layoutIDsByFieldIDOffset), Instance::convertToTypedLayout, header.auditsTypes);
     return image;
 }
 
@@ -1544,9 +1459,9 @@ uint32_t Image::selectorNamed(VM& vm, const StringImpl& name) const
 {
     const uint32_t* inOrder = at<uint32_t>(header().selectorsInOrderOffset);
     const ImageSelector* all = at<ImageSelector>(header().selectorsOffset);
-    const uint8_t* text = at<uint8_t>(header().textOfSelectorsOffset);
-    ProgramOfVM* identifiers = header().numberOfIdentifiersOfProgram ? ProgramOfVM::of(vm) : nullptr;
-    if (header().numberOfIdentifiersOfProgram && !identifiers)
+    const uint8_t* text = at<uint8_t>(header().selectorTextOffset);
+    VMProgram* identifiers = header().numberOfProgramIdentifiers ? VMProgram::of(vm) : nullptr;
+    if (header().numberOfProgramIdentifiers && !identifiers)
         return 0;
     size_t low = 0;
     size_t high = header().numberOfSelectorsInOrder;
@@ -1581,18 +1496,18 @@ uint32_t Image::numberOfFunctions()
     return image ? image->header().numberOfFunctions : 0;
 }
 
-size_t Image::sizeOfAllDatas()
+size_t Image::totalDataSize()
 {
     Image* image = withCode();
-    return image ? static_cast<size_t>(image->header().sizeOfAllDatasIn16Bytes) * 16 : 0;
+    return image ? static_cast<size_t>(image->header().totalDataSizeIn16Bytes) * 16 : 0;
 }
 
-ImageEnvironment Image::environmentOf(uint32_t moduleOfGraph)
+ImageEnvironment Image::environmentOf(uint32_t graphModule)
 {
     Image* image = withCode();
-    if (!image || moduleOfGraph >= image->header().numberOfEnvironments)
+    if (!image || graphModule >= image->header().numberOfEnvironments)
         return { };
-    return reinterpret_cast<const ImageEnvironment*>(image->m_data.data() + image->header().environmentsOffset)[moduleOfGraph];
+    return reinterpret_cast<const ImageEnvironment*>(image->m_data.data() + image->header().environmentsOffset)[graphModule];
 }
 
 bool Image::containsCode(const void* pointer)
@@ -1600,7 +1515,6 @@ bool Image::containsCode(const void* pointer)
     auto& all = registry();
     if (!all.hasAny.load(std::memory_order_acquire))
         return false;
-    // (Images are never removed. This runs without the lock, because the thread that holds the lock may be suspended.)
     for (unsigned i = 0; i < all.images.size(); ++i) {
         Image* image = all.images[i];
         if (static_cast<const uint8_t*>(pointer) - static_cast<const uint8_t*>(image->m_code) < static_cast<ptrdiff_t>(image->header().codeSize) && pointer >= image->m_code)
@@ -1614,7 +1528,6 @@ Image* Image::withCode()
     auto& all = registry();
     if (!all.hasAny.load(std::memory_order_acquire))
         return nullptr;
-    // (Images are never removed. This runs without the lock, because the thread that holds the lock may be suspended.)
     for (unsigned i = 0; i < all.images.size(); ++i) {
         if (all.images[i]->header().codeSize)
             return all.images[i];
@@ -1622,31 +1535,30 @@ Image* Image::withCode()
     return nullptr;
 }
 
-// Cached for classifyAddress(), so that it needs no lookup. There is at most one image with code, and it is never unloaded.
-static const ImageHeader* s_headerOfImageWithCode;
-static uintptr_t s_codeOfImageWithCode;
-static const uint32_t* s_startsOfFunctions;
-static const uint32_t* s_granulesOfCode;
+static const ImageHeader* s_imageHeader;
+static uintptr_t s_imageCode;
+static const uint32_t* s_functionStarts;
+static const uint32_t* s_codeGranules;
 
 ImageAddressInfo classifyAddress(const void* address)
 {
-    if (!s_headerOfImageWithCode) [[unlikely]] {
+    if (!s_imageHeader) [[unlikely]] {
         Image* image = Image::withCode();
         if (!image)
             return { };
-        s_codeOfImageWithCode = std::bit_cast<uintptr_t>(image->code());
-        s_startsOfFunctions = image->at<uint32_t>(image->header().startsOfFunctionsOffset);
-        s_granulesOfCode = image->at<uint32_t>(image->header().granulesOfCodeOffset);
+        s_imageCode = std::bit_cast<uintptr_t>(image->code());
+        s_functionStarts = image->at<uint32_t>(image->header().functionStartsOffset);
+        s_codeGranules = image->at<uint32_t>(image->header().codeGranulesOffset);
         WTF::storeStoreFence();
-        s_headerOfImageWithCode = &image->header();
+        s_imageHeader = &image->header();
     }
-    auto& header = *s_headerOfImageWithCode;
-    uintptr_t offset = std::bit_cast<uintptr_t>(address) - s_codeOfImageWithCode;
-    if (offset >= header.endOfFunctions)
+    auto& header = *s_imageHeader;
+    uintptr_t offset = std::bit_cast<uintptr_t>(address) - s_imageCode;
+    if (offset >= header.functionsEnd)
         return { };
-    for (unsigned i = 0; i < header.numberOfCopiesOfStubs; ++i) {
-        uintptr_t inStubs = offset - header.copiesOfStubs[i];
-        if (inStubs >= header.sizeOfStubs)
+    for (unsigned i = 0; i < header.numberOfStubCopies; ++i) {
+        uintptr_t inStubs = offset - header.stubCopies[i];
+        if (inStubs >= header.stubsSize)
             continue;
         for (uint32_t inAdapter : header.returnsIntoAdapters) {
             if (inAdapter == inStubs)
@@ -1654,14 +1566,14 @@ ImageAddressInfo classifyAddress(const void* address)
         }
         return { ImageAddressInfo::Stub, 0, 0 };
     }
-    const uint32_t* starts = s_startsOfFunctions;
-    uint32_t index = s_granulesOfCode[offset >> shiftOfGranuleOfCode];
+    const uint32_t* starts = s_functionStarts;
+    uint32_t index = s_codeGranules[offset >> codeGranuleShift];
     while (starts[index + 1] <= offset)
         ++index;
     return { ImageAddressInfo::Function, index, static_cast<uint32_t>(offset - starts[index]) };
 }
 
-std::optional<uint32_t> offsetInCodeOfImage(const void* address)
+std::optional<uint32_t> imageCodeOffset(const void* address)
 {
     Image* image = Image::withCode();
     if (!image)
@@ -1674,7 +1586,7 @@ std::optional<uint32_t> offsetInCodeOfImage(const void* address)
 
 bool hasCode()
 {
-    return s_headerOfImageWithCode || Image::withCode();
+    return s_imageHeader || Image::withCode();
 }
 
 static void skipInlineFrames(const uint8_t*& at, uint64_t first)
@@ -1728,7 +1640,7 @@ std::optional<uint32_t> tryCallSiteAt(const ImageFunction& function, uint32_t of
     return std::nullopt;
 }
 
-std::optional<uint32_t> siteOfSpread(const ImageFunction& function, uint32_t callSite, unsigned item)
+std::optional<uint32_t> spreadSite(const ImageFunction& function, uint32_t callSite, unsigned item)
 {
     if (!function.callSites)
         return std::nullopt;
@@ -1743,10 +1655,10 @@ std::optional<uint32_t> siteOfSpread(const ImageFunction& function, uint32_t cal
         readVarint(at);
     }
     for (uint64_t count = readVarint(at); count--;) {
-        uint64_t itsCallSite = readVarint(at);
-        uint64_t itsItem = readVarint(at);
+        uint64_t inlineCallSite = readVarint(at);
+        uint64_t itemWord = readVarint(at);
         uint64_t site = readVarint(at);
-        if (itsCallSite == callSite && itsItem == item)
+        if (inlineCallSite == callSite && itemWord == item)
             return static_cast<uint32_t>(site);
     }
     return std::nullopt;
@@ -1755,7 +1667,7 @@ std::optional<uint32_t> siteOfSpread(const ImageFunction& function, uint32_t cal
 uint32_t callSiteAt(const ImageFunction& function, uint32_t offsetOfReturnAddress)
 {
     auto result = tryCallSiteAt(function, offsetOfReturnAddress);
-    RELEASE_ASSERT(result); // The call at that address was not expected to need a call site.
+    RELEASE_ASSERT(result);
     return *result;
 }
 
@@ -1764,7 +1676,7 @@ bool Image::hasAny()
     return registry().hasAny.load(std::memory_order_acquire);
 }
 
-const void* Image::addressOfStub(Stub stub)
+const void* Image::stubAddress(Stub stub)
 {
     if (!usesStubs || !hasAny())
         return nullptr;
@@ -1777,7 +1689,6 @@ const void* Image::addressOfStub(Stub stub)
     return nullptr;
 }
 
-
 auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -> std::optional<CodeForRegExp>
 {
     if (!hasAny())
@@ -1789,14 +1700,13 @@ auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -
     for (Image* image : all.images) {
         auto& header = image->header();
         std::span regExps { image->at<ImageRegExp>(header.regExpsOffset), header.numberOfRegExps };
-        auto* text = image->at<uint8_t>(header.textOfRegExpsOffset);
+        auto* text = image->at<uint8_t>(header.regExpTextOffset);
         for (auto it = std::ranges::lower_bound(regExps, hash, { }, &ImageRegExp::hash); it != regExps.end() && it->hash == hash; ++it) {
             if (it->flags != rawFlags || it->length != pattern.length())
                 continue;
             StringView said = it->is8Bit ? StringView { std::span { reinterpret_cast<const Latin1Character*>(text + it->text), it->length } } : StringView { std::span { reinterpret_cast<const char16_t*>(text + it->text), it->length } };
-            if (said == pattern) {
+            if (said == pattern)
                 return CodeForRegExp { static_cast<const uint8_t*>(image->m_code) + it->codeFor8Bit, static_cast<const uint8_t*>(image->m_code) + it->codeFor16Bit };
-            }
         }
     }
     return std::nullopt;
@@ -1807,7 +1717,7 @@ const ImageFunction* Image::lookup(const ImageKey& key) const
     auto& header = this->header();
     std::span<const ImageKey> table { reinterpret_cast<const ImageKey*>(m_data.data() + header.tableOffset), header.tableCapacity };
     if (table.empty() && ProgramData::get())
-        table = ProgramData::get()->keysOfImage();
+        table = ProgramData::get()->imageKeys();
     if (table.empty())
         return nullptr;
     unsigned mask = table.size() - 1;
@@ -1839,10 +1749,10 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         if (!table[bucket].sameFunction(key))
             continue;
         auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + table[bucket].record - 1);
-        uint64_t start = reinterpret_cast<const uint32_t*>(m_data.data() + header.startsOfFunctionsOffset)[function.index];
-        auto whereItIsGoingToBe = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
+        uint64_t start = reinterpret_cast<const uint32_t*>(m_data.data() + header.functionStartsOffset)[function.index];
+        auto futureLocation = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
         return Function { EntryWord::encode(start, function.convention()), function.index,
-            reinterpret_cast<const Site*>(whereItIsGoingToBe(function.sites())), reinterpret_cast<const ImageFunction*>(whereItIsGoingToBe(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants };
+            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants };
     }
     return std::nullopt;
 }
@@ -1855,14 +1765,14 @@ std::span<const ImageKey> ImageView::keys() const
     return { reinterpret_cast<const ImageKey*>(m_data.data() + header.size), (m_data.size() - header.size) / sizeof(ImageKey) };
 }
 
-uint32_t ImageView::indexOfFunctionWith(const ImageKey& key) const
+uint32_t ImageView::functionIndexWith(const ImageKey& key) const
 {
     auto& header = this->header();
     auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + key.record - 1);
     return function.index;
 }
 
-uint32_t ImageView::offsetInCodeOfStub(Stub stub) const
+uint32_t ImageView::stubCodeOffset(Stub stub) const
 {
     return header().stubOffsets[static_cast<unsigned>(stub)];
 }
@@ -1894,11 +1804,9 @@ ImageKey imageKeyForTopLevelCode(uint32_t module)
 
 std::optional<ImageKey> imageKeyFor(ScriptExecutable* scriptExecutable, CodeSpecializationKind kind)
 {
-    // An executable in the short form refers to its code directly, and has no key.
     if (scriptExecutable->isShortForm())
         return std::nullopt;
     SourceProvider* provider = scriptExecutable->source().provider();
-    // The source of a default class constructor belongs to the engine, so use the provider of the code that contains the class.
     if (auto* function = dynamicDowncast<FunctionExecutable>(scriptExecutable); function && function->unlinkedExecutable()->isBuiltinDefaultClassConstructor() && function->topLevelExecutable())
         provider = function->topLevelExecutable()->source().provider();
     if (!provider)
@@ -1922,14 +1830,13 @@ std::optional<ImageKey> imageKeyFor(ScriptExecutable* scriptExecutable, CodeSpec
     return key;
 }
 
-unsigned hashOfCode(std::span<const uint8_t> code)
+unsigned codeHash(std::span<const uint8_t> code)
 {
     unsigned hash = 2166136261u;
     for (uint8_t byte : code)
         hash = (hash ^ byte) * 16777619u;
     return hash;
 }
-
 
 static String nameForLogging(ScriptExecutable* executable)
 {
@@ -1952,7 +1859,7 @@ bool moduleIsLinkedAsCompiled(JSScope* scope)
     while (scope && scope->type() != ModuleEnvironmentType)
         scope = scope->next();
     auto* record = scope ? dynamicDowncast<JSModuleRecord>(uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord()) : nullptr;
-    return record && record->isLinkedAsInImage(scope->globalObject());
+    return record && record->isLinkedAsCompiled(scope->globalObject());
 }
 
 ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
@@ -1965,17 +1872,17 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     Image* image = nullptr;
     const ImageFunction* function = nullptr;
     ImageKey key;
-    if (auto* ofFunction = dynamicDowncast<FunctionExecutable>(executable); ofFunction && ofFunction->aotEntryFor(kind) && !(kind == CodeSpecializationKind::CodeForConstruct && ofFunction->constructsByCalling())) {
-        function = ProgramData::get()->infos()[ofFunction->aotIndexFor(kind)].function();
+    if (auto* asFunctionExecutable = dynamicDowncast<FunctionExecutable>(executable); asFunctionExecutable && asFunctionExecutable->aotEntryFor(kind) && !(kind == CodeSpecializationKind::CodeForConstruct && asFunctionExecutable->constructsViaCall())) {
+        function = ProgramData::get()->infos()[asFunctionExecutable->aotIndexFor(kind)].function();
         image = &Image::of(*function);
     } else {
-        auto keyOfExecutable = imageKeyFor(executable, kind);
-        if (!keyOfExecutable) {
+        auto executableKey = imageKeyFor(executable, kind);
+        if (!executableKey) {
             if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: no key for ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL());
             return { };
         }
-        key = *keyOfExecutable;
+        key = *executableKey;
         std::tie(image, function) = Image::find(key);
         if (!function) {
             if (Options::verboseAOTCompilation()) [[unlikely]]
@@ -1984,18 +1891,16 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         }
     }
 
-    // Compiled code finds its per-realm data by its function index, so each index belongs to one function per realm. The same text
-    // evaluated a second time is a different function, with its own constants, and cannot share the index.
     {
         Instance* instance = &instanceOf(scope);
         uint32_t index = function->index;
         if (instance->isLinked(index) && FunctionRef { instance, index }.executable() != executable)
             return { };
-        if (const FunctionInfo& info = instance->infos[index]; info.hasExecutable() && instance->program->executable(info.oneMoreThanNumber() - 1) != executable)
+        if (const FunctionInfo& info = instance->infos[index]; info.hasExecutable() && instance->program->executable(info.indexPlusOne() - 1) != executable)
             return { };
     }
 
-    if (image->header().numberOfIdentifiersOfProgram) {
+    if (image->header().numberOfProgramIdentifiers) {
         uint32_t index = function->index;
         if (!instanceOf(scope).infos[index].sites)
             return { };
@@ -2010,7 +1915,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     }
 
     if (Options::verboseAOTCompilation()) [[unlikely]]
-        dataLogLn("AOT: ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") is at ", RawPointer(image->codeFor(*function)), " size ", image->sizeOfCodeOf(*function), " hash ", hashOfCode({ image->codeFor(*function), image->sizeOfCodeOf(*function) }));
+        dataLogLn("AOT: ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") is at ", RawPointer(image->codeFor(*function)), " size ", image->sizeOfCodeOf(*function), " hash ", codeHash({ image->codeFor(*function), image->sizeOfCodeOf(*function) }));
     return { image, function };
 }
 
@@ -2020,7 +1925,7 @@ Ref<JITCode> codeFromImage(ImageCode code, UnlinkedCodeBlock* unlinkedCodeBlock)
     return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, JITCode::entryBlockFor(unlinkedCodeBlock)));
 }
 
-Ref<JITCode> codeOfFunctionFromImage(ImageCode code, CodeSpecializationKind kind)
+Ref<JITCode> jitCodeForImageFunction(ImageCode code, CodeSpecializationKind kind)
 {
     auto [image, function] = code;
     return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, isCall(kind) ? JITCode::Way::Call : JITCode::Way::Construct));
@@ -2028,7 +1933,7 @@ Ref<JITCode> codeOfFunctionFromImage(ImageCode code, CodeSpecializationKind kind
 
 } // namespace AOT
 
-bool isPCOfAOTImage(const void* pc)
+bool isAOTImagePC(const void* pc)
 {
     return AOT::Image::containsCode(pc);
 }
@@ -2038,21 +1943,21 @@ bool registerAOTImage(std::span<const uint8_t> image, const void* code)
     return !!AOT::Image::registerImage(image, code);
 }
 
-UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile)
+AOTFileUse useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile)
 {
-    UseOfAOTFile result;
+    AOTFileUse result;
     auto neither = [&](const char* why) {
-        result.whyNoProgramData = result.whyNoImage = why;
+        result.programDataRejectionReason = result.imageRejectionReason = why;
         return result;
     };
 #if OS(DARWIN) || OS(LINUX)
     if (!Options::useAOT())
         return neither("useAOT is off");
     auto sizeOfImage = aotImageSize(bytes);
-    auto rangeOfCode = aotImageCodeRange(bytes);
-    if (!sizeOfImage || !rangeOfCode)
+    auto codeRange = aotImageCodeRange(bytes);
+    if (!sizeOfImage || !codeRange)
         return neither("not an image");
-    auto [offsetOfCode, sizeOfCode] = *rangeOfCode;
+    auto [offsetOfCode, codeSizeInBytes] = *codeRange;
     size_t pageSize = WTF::pageSize();
     if (offsetInFile % pageSize || offsetOfCode % pageSize || *sizeOfImage % pageSize)
         return neither("it is not on a page boundary of its file");
@@ -2061,34 +1966,33 @@ UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int6
         return neither("it has no program data");
     if (AOT::Image::hasAny())
         return neither("the process has one already");
-    result.sizeOfProgramData = bytes.size() - *sizeOfImage;
+    result.programDataSize = bytes.size() - *sizeOfImage;
 
     void* code = nullptr;
-    if (sizeOfCode) {
+    if (codeSizeInBytes) {
         int64_t at = offsetInFile + offsetOfCode;
-        code = mmap(nullptr, sizeOfCode, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, at);
-        // Darwin refuses an executable mapping of a file that is not signed (EPERM), but allows a mapping of one to be made executable.
+        code = mmap(nullptr, codeSizeInBytes, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, at);
         if (code == MAP_FAILED && errno == EPERM) {
-            code = mmap(nullptr, sizeOfCode, PROT_READ, MAP_PRIVATE, fileDescriptor, at);
-            if (code != MAP_FAILED && mprotect(code, sizeOfCode, PROT_READ | PROT_EXEC)) {
-                munmap(code, sizeOfCode);
+            code = mmap(nullptr, codeSizeInBytes, PROT_READ, MAP_PRIVATE, fileDescriptor, at);
+            if (code != MAP_FAILED && mprotect(code, codeSizeInBytes, PROT_READ | PROT_EXEC)) {
+                munmap(code, codeSizeInBytes);
                 code = MAP_FAILED;
             }
         }
         if (code == MAP_FAILED) {
-            result.whyNoImage = strerror(errno);
+            result.imageRejectionReason = strerror(errno);
             return result;
         }
 #if OS(DARWIN)
-        mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), sizeOfCode, true, VM_PROT_READ | VM_PROT_EXECUTE);
+        mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), codeSizeInBytes, true, VM_PROT_READ | VM_PROT_EXECUTE);
 #endif
     }
     if (!registerAOTImage(bytes, code)) {
         if (code)
-            munmap(code, sizeOfCode);
+            munmap(code, codeSizeInBytes);
         return neither("it was compiled for another build of the engine");
     }
-    result.sizeOfCode = sizeOfCode;
+    result.codeSizeInBytes = codeSizeInBytes;
     result.code = code;
     return result;
 #else
@@ -2105,7 +2009,7 @@ Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule)
     options.resolveAllScopeSlotsStatically = true;
     options.evaluateObjectLiteralValuesFirst = true;
     options.definePlainInstanceFieldsInConstructor = true;
-    options.keepLineStartsOfEverySource = true;
+    options.keepAllSourceLineStarts = true;
     vm.useImmutableIntrinsics = true;
 
     EncoderStringTable strings;
@@ -2126,8 +2030,8 @@ Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule)
     auto sizeOfImage = aotImageSize(linked.aotImage.span());
     if (!linked.payload || !sizeOfImage)
         return { };
-    AOT::ProgramData::PositionsToKeep positions { linked.reportableSites, [](uint32_t, LineColumn, CString&, LineColumn&) { return false; } };
-    Vector<uint8_t> data = AOT::ProgramData::build(vm, strings.serialize().span(), linked.payload->span(), linked.entryOffsetsOfModules.span(), linked.aotImage.span(), positions, linked.reportableSites.span(), linked.variablesExportedByModules.span());
+    AOT::ProgramData::RetainedPositions positions { linked.reportableSites, [](uint32_t, LineColumn, CString&, LineColumn&) { return false; } };
+    Vector<uint8_t> data = AOT::ProgramData::build(vm, strings.serialize().span(), linked.payload->span(), linked.moduleEntryOffsets.span(), linked.aotImage.span(), positions, linked.reportableSites.span(), linked.variablesExportedByModules.span());
     if (data.isEmpty())
         return { };
     Vector<uint8_t> file;
@@ -2146,7 +2050,7 @@ std::optional<size_t> aotImageSize(std::span<const uint8_t> image)
     return static_cast<size_t>(header.size);
 }
 
-std::optional<unsigned> aotImageNumberOfRegExps(std::span<const uint8_t> image)
+std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t> image)
 {
     if (!aotImageSize(image))
         return std::nullopt;
@@ -2167,18 +2071,15 @@ std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8
 
 #elif USE(BUN_JSC_ADDITIONS)
 
-#include "CachedTypes.h"
-#include "CodeCache.h"
 
 namespace JSC {
 
-// What embedders can call whether or not programs can be compiled ahead of time here.
-bool isPCOfAOTImage(const void*) { return false; }
+bool isAOTImagePC(const void*) { return false; }
 bool registerAOTImage(std::span<const uint8_t>, const void*) { return false; }
-UseOfAOTFile useAOTFile(std::span<const uint8_t>, int, int64_t) { return { "not supported on this platform", "not supported on this platform" }; }
+AOTFileUse useAOTFile(std::span<const uint8_t>, int, int64_t) { return { "not supported on this platform", "not supported on this platform" }; }
 Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool) { return { }; }
 std::optional<size_t> aotImageSize(std::span<const uint8_t>) { return std::nullopt; }
-std::optional<unsigned> aotImageNumberOfRegExps(std::span<const uint8_t>) { return std::nullopt; }
+std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t>) { return std::nullopt; }
 std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t>) { return std::nullopt; }
 
 } // namespace JSC

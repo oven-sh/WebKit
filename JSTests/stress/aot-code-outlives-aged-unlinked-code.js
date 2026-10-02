@@ -1,6 +1,4 @@
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// Ahead-of-time compiled code has no CodeBlock, which is what normally keeps a function's UnlinkedCodeBlock alive. The code still refers to
-// its identifiers and constants, on paths that may not run until the collector has aged the unlinked code out.
 
 function shouldBe(actual, expected) {
     if (actual !== expected)
@@ -18,7 +16,6 @@ function callsIt() { try { return usesNamesLate.apply(undefined, arguments); } c
 shouldBe(callsIt(false), "early");
 for (let i = 0; i < 20; ++i)
     fullGC();
-// Something to take the place of what was freed.
 const filler = [];
 for (let i = 0; i < 10000; ++i)
     filler.push({ ["p" + i]: i }, "s" + i);

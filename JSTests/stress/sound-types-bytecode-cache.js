@@ -1,7 +1,5 @@
 //@ runBytecodeCache("--useSoundTypes=1")
 
-// op_check_type survives a round trip through the bytecode cache, in the program and in functions compiled later.
-
 function shouldBe(actual, expected) {
     if (actual !== expected)
         throw new Error(`bad value: ${String(actual)}, expected ${String(expected)}`);

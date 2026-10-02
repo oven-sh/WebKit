@@ -1,4 +1,3 @@
-// The fast copy of a loop leaves for the generic one whenever what it takes for granted does not hold.
 function shouldBe(actual, expected) {
     if (actual !== expected && !(actual !== actual && expected !== expected))
         throw new Error("bad value: " + actual + ", expected " + expected);
@@ -23,7 +22,6 @@ shouldBe(1 / [-0].map(v => { let r; for (let i = 0; i < 2; i++) r = Math.max(v, 
 shouldBe(math(["4"]), 2 + 4 + 4 + 4 + 4 + 4 + 2 + 4 + 12);
 shouldBe(math([{ valueOf() { return 4; } }]), 2 + 4 + 4 + 4 + 4 + 4 + 2 + 4 + 12);
 
-// The function is not the one it was.
 const sqrt = Math.sqrt;
 Math.sqrt = function (v) { return 1000; };
 shouldBe(math([4]), 1000 + 4 + 4 + 4 + 4 + 4 + 2 + 4 + 12);
@@ -32,7 +30,6 @@ shouldBe(math([4]), 4 + 4 + 4 + 4 + 4 + 4 + 2 + 4 + 12);
 Math.sqrt = sqrt;
 shouldBe(math(numbers), expected);
 
-// In the middle of a loop.
 function swapsHalfway(n) {
     let s = 0;
     for (let i = 0; i < n; i++) {
@@ -46,7 +43,6 @@ const floor = Math.floor;
 shouldBe(swapsHalfway(10), 0 + 1 + 2 + 3 + 4 - 5);
 Math.floor = floor;
 
-// Structures, getters, setters, holes, ends of arrays, kinds of array.
 function walk(list) {
     let s = 0;
     for (let i = 0; i < list.length + 1; i++) {
@@ -98,7 +94,6 @@ shouldBe(fill(new Float64Array(5), 10, 1), NaN);
 shouldBe(fill(new Int32Array(10), 10, "7"), 70);
 shouldBe(fill({ length: 0 }, 10, 2), 20);
 
-// Methods of strings and arrays.
 function codes(s, from, to) { let t = 0; for (let i = from; i < to; i++) t += s.charCodeAt(i); return t; }
 shouldBe(codes("abc", 0, 3), 294);
 shouldBe(codes("abc", 0, 3), 294);
@@ -145,7 +140,6 @@ shouldBe(pushes([], 2, 1), "-1:0:undefined");
 Array.prototype.push = push;
 shouldBe(pushes([], 2, 1), "2:2:1");
 
-// A global that comes to be shadowed.
 function usesGlobal(n) {
     let s = 0;
     for (let i = 0; i < n; i++)
@@ -159,7 +153,6 @@ if (typeof $262 !== "undefined" && $262.evalScript) {
     shouldBe(usesGlobal(5), 5);
 }
 
-// The same property read more than once, with and without a write in between, and where it is found changing under the loop.
 function repeats(list) {
     let s = 0;
     for (let i = 0; i < list.length; i++) {

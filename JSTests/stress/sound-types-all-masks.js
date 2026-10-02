@@ -1,9 +1,5 @@
 //@ requireOptions("--useSoundTypes=1")
 
-// Every mask against one value of every kind, checked against a reference classifier written in JS. Each mask gets its own
-// function, which is warmed up on the values it accepts and then fed the values it rejects, so whichever tiers the current
-// options allow are the ones being compared.
-
 const Undefined = 1, Null = 2, Boolean_ = 4, Number_ = 8, String_ = 16, Symbol_ = 32, BigInt_ = 64, Function_ = 128, Array_ = 256, OtherObject = 512;
 
 function referenceTag(value) {
@@ -19,7 +15,6 @@ function referenceTag(value) {
     case "bigint": return BigInt_;
     case "function": return Function_;
     }
-    // A Proxy for an array satisfies Array.isArray but is not an Array here.
     if (Array.isArray(value) && !proxies.has(value))
         return Array_;
     return OtherObject;
@@ -60,11 +55,11 @@ function proxy(target) {
 const values = [
     undefined, null, true, false,
     0, -0, 1, -1, 0x7fffffff, 0x80000000, 4.5, NaN, Infinity, 2 ** 53,
-    "", "a", "a".repeat(3) + String(Math.random()), // The last one is a rope.
+    "", "a", "a".repeat(3) + String(Math.random()),
     Symbol.iterator, Symbol("s"),
     0n, 1n, -1n, 2n ** 31n, 2n ** 70n,
     function () { }, () => { }, class { }, async function () { }, function* () { }, (function () { }).bind(null), new DerivedFunction,
-    Array, Object, Proxy, Math.max, // InternalFunctions and a host function.
+    Array, Object, Proxy, Math.max,
     proxy(function () { }), proxy(class { }), proxy(Array),
     [], [1], [1.5], ["a"], new Array(100), new DerivedArray, [].concat([1]),
     { }, { a: 1 }, Object.create(null), new (class { }), /re/, new Date, new Map, new Set, new WeakMap, new Error, Promise.resolve(),

@@ -1,6 +1,5 @@
 //@ skip if $architecture != "arm64"
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// A function that only a direct eval in a nested function can reach must not be dropped as unreachable.
 
 function shouldBe(actual, expected) {
     if (actual !== expected)

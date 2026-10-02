@@ -76,7 +76,6 @@ templates [
     :WriteBarrierBase,
 ]
 
-
 begin_section :Bytecode,
     emit_in_h_file: true,
     emit_in_structs_file: true,
@@ -521,7 +520,6 @@ op :async_iterator_next,
         callLinkInfo: LazyCallLinkInfo,
         iterationMetadata: IterationModeMetadata,
     }
-
 
 op :resolve_scope,
     args: {
@@ -1214,7 +1212,6 @@ op :put_internal_field,
 
 op :nop
 
-# With Options::useTypeTags(): carries the type tag that the source attached to the next instruction (JSToken::m_typeTag). It does nothing when executed.
 op :type_tag,
     args: {
         tag: unsigned,
@@ -1406,7 +1403,6 @@ op :not,
         dst: VirtualRegister,
         operand: VirtualRegister,
     }
-
 
 op :identity_with_profile,
     args: {

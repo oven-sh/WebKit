@@ -1,5 +1,3 @@
-// A function that finds no room for its frame has not saved any register yet. What is in the registers that a callee saves is its
-// caller's, and has to be what the caller finds there once the exception has been caught: here, in C++ (a getter, a sort, a replace).
 function recurse(n) { return recurse(n + 1) + 1; }
 function manyParameters(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p) { return manyParameters(a) + 1; }
 let object = { get overflow() { return recurse(0); }, get overflowInArityCheck() { return manyParameters(0); } };

@@ -132,7 +132,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
 #endif
 
         bool m_valid { false };
-        bool m_isOfAOT { false }; // The handler is in AOT code.
+        bool m_isAOT { false };
         HandlerType m_type;
 #if ENABLE(JIT)
         CodePtr<ExceptionHandlerPtrTag> m_nativeCode;

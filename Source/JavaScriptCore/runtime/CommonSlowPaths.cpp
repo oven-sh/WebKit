@@ -338,7 +338,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_type)
     if (soundTypeMaskAccepts(bytecode.m_mask, GET_C(bytecode.m_value).jsValue())) [[likely]]
         END();
     if (Options::reportSoundTypeViolations()) [[unlikely]] {
-        // For finding out what a program would have to change: every place once, and on it goes as if types were erased.
         static Lock lock;
         static NeverDestroyed<UncheckedKeyHashSet<std::pair<UnlinkedCodeBlock*, unsigned>>> reported;
         Locker locker { lock };

@@ -103,12 +103,10 @@ public:
         prune();
 
 #if USE(BUN_JSC_ADDITIONS)
-        // The code that a build created for a module belongs to that module alone, because its functions access the module's
-        // variables at fixed locations. This cache would treat two modules with identical source as one.
         if constexpr (std::is_base_of_v<UnlinkedCodeBlock, UnlinkedCodeBlockType>) {
 #if ENABLE(AOT)
             if (key.source().provider().aotModuleID()) [[unlikely]] {
-                auto* program = AOT::ProgramOfVM::of(vm);
+                auto* program = AOT::VMProgram::of(vm);
                 if (UnlinkedCodeBlock* own = program ? program->topLevelCodeFor(key) : nullptr)
                     return uncheckedDowncast<UnlinkedCodeBlockType>(own);
             }

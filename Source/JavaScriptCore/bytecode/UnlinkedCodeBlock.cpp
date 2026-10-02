@@ -106,11 +106,11 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (visitor.isFirstVisit())
         thisObject->m_age = std::min<unsigned>(static_cast<unsigned>(thisObject->m_age) + 1, maxAge);
     for (auto& barrier : thisObject->m_functionDecls) {
-        if (!hasNumberOfExecutable(barrier)) [[likely]]
+        if (!hasExecutableIndex(barrier)) [[likely]]
             visitor.append(barrier);
     }
     for (auto& barrier : thisObject->m_functionExprs) {
-        if (!hasNumberOfExecutable(barrier)) [[likely]]
+        if (!hasExecutableIndex(barrier)) [[likely]]
             visitor.append(barrier);
     }
     visitor.appendValues(thisObject->m_constantRegisters.span());
@@ -186,10 +186,10 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
     return *m_expressionInfo;
 }
 
-FunctionExecutable* UnlinkedCodeBlock::executableWithNumberIn(const WriteBarrier<UnlinkedFunctionExecutable>& entry) const
+FunctionExecutable* UnlinkedCodeBlock::executableAtIndexIn(const WriteBarrier<UnlinkedFunctionExecutable>& entry) const
 {
 #if ENABLE(AOT)
-    return AOT::ProgramOfVM::of(vm())->executable(static_cast<uint32_t>(std::bit_cast<uintptr_t>(entry) >> 1));
+    return AOT::VMProgram::of(vm())->executable(static_cast<uint32_t>(std::bit_cast<uintptr_t>(entry) >> 1));
 #else
     UNUSED_PARAM(entry);
     RELEASE_ASSERT_NOT_REACHED();

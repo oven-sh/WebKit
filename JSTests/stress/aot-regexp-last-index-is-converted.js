@@ -1,7 +1,4 @@
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// Everything that matches a regular expression converts its lastIndex with ToLength(), even if the expression is neither global nor
-// sticky. If lastIndex is an object, that runs the program's code. Each expression is a literal in the function that uses it, so that
-// the compiler knows what it is.
 
 let count = 0;
 const counting = () => ({ valueOf() { count++; return 0; } });
@@ -24,7 +21,6 @@ function execGlobal() { const r = /b/g; r.lastIndex = counting(); return [r.exec
 function replaceSticky() { const r = /a/y; r.lastIndex = counting(); return ["abcb".replace(r, "x"), r.lastIndex]; }
 function testSticky() { const r = /a/y; r.lastIndex = counting(); return [r.test("abcb"), r.lastIndex]; }
 
-// [what it returns, how many times lastIndex was converted]
 const expected = {
     replace: ["axc", 1], split: [["a", "c"], 0], match: ["b", 1], search: [1, 0], test: [true, 1], exec: ["b", 1],
     replaceGlobal: [["axcx", 0], 0], replaceAllGlobal: [["axcx", 0], 0], matchGlobal: [[["b", "b"], 0], 0],

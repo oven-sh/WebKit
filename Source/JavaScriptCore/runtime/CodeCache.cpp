@@ -89,29 +89,21 @@ void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
 
 static void generateUnlinkedCodeBlockForFunctions(VM&, UnlinkedCodeBlock*, const SourceCode& parentSource, OptionSet<CodeGenerationMode>, ParserError&, unsigned depth, OptimizeBytecode);
 
-// depth: counting the function itself.
-static void generateUnlinkedCodeBlocksOfFunction(VM& vm, UnlinkedFunctionExecutable* unlinkedExecutable, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
+static void generateFunctionUnlinkedCodeBlocks(VM& vm, UnlinkedFunctionExecutable* unlinkedExecutable, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
-    // FIXME: We should also generate CodeBlocks for CodeForConstruct of ordinary functions.
-    // https://bugs.webkit.org/show_bug.cgi?id=193823
     CodeSpecializationKind kind = unlinkedExecutable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
     SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
     UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, kind, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize);
     if (unlinkedFunctionCodeBlock)
         generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1, optimize);
-    // When all the code there is going to be is generated now: also what `new` runs, of a function that looks as if it is
-    // for that. (Not of any function that says `this`: some of those have a whole library inside, which would be there twice.)
     if (!vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically || !unlinkedFunctionCodeBlock || kind != CodeSpecializationKind::CodeForCall)
         return;
     if (unlinkedExecutable->constructAbility() != ConstructAbility::CanConstruct)
         return;
-    // Any other can be constructed with by calling it (FunctionExecutable::constructsByCalling()), unless it has a way of telling
-    // that from the real thing: new.target, said by itself, by what it evaluates, or by an arrow function inside it, which gets
-    // it from a variable that this one has stored it in.
-    bool canTellWhetherItIsConstructing = unlinkedExecutable->features() & (NewTargetFeature | EvalFeature);
+    bool canDetectConstructCall = unlinkedExecutable->features() & (NewTargetFeature | EvalFeature);
     for (auto& identifier : unlinkedFunctionCodeBlock->identifiers())
-        canTellWhetherItIsConstructing |= identifier == vm.propertyNames->builtinNames().newTargetLocalPrivateName();
-    if (!canTellWhetherItIsConstructing) {
+        canDetectConstructCall |= identifier == vm.propertyNames->builtinNames().newTargetLocalPrivateName();
+    if (!canDetectConstructCall) {
         if (!(unlinkedExecutable->features() & ThisFeature))
             return;
         if (unlinkedFunctionCodeBlock->instructionsSize() > 2048 || unlinkedFunctionCodeBlock->numberOfFunctionDecls() + unlinkedFunctionCodeBlock->numberOfFunctionExprs() > 4)
@@ -126,9 +118,9 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
     if (!depth)
         return;
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++)
-        generateUnlinkedCodeBlocksOfFunction(vm, unlinkedCodeBlock->functionDecl(i), parentSource, codeGenerationMode, error, depth, optimize);
+        generateFunctionUnlinkedCodeBlocks(vm, unlinkedCodeBlock->functionDecl(i), parentSource, codeGenerationMode, error, depth, optimize);
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++)
-        generateUnlinkedCodeBlocksOfFunction(vm, unlinkedCodeBlock->functionExpr(i), parentSource, codeGenerationMode, error, depth, optimize);
+        generateFunctionUnlinkedCodeBlocks(vm, unlinkedCodeBlock->functionExpr(i), parentSource, codeGenerationMode, error, depth, optimize);
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType = ScriptExecutable>
@@ -160,7 +152,7 @@ UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& s
         unlinkedCodeBlock->setSourceURLDirective(source.provider()->sourceURLDirective());
     if (!source.provider()->sourceMappingURLDirective().isNull())
         unlinkedCodeBlock->setSourceMappingURLDirective(source.provider()->sourceMappingURLDirective());
-    unlinkedCodeBlock->setLineStarts(vm.bytecodeGenerationOptions.keepLineStartsOfEverySource ? source.provider()->lineStarts() : source.provider()->lineStartsIfBuilt());
+    unlinkedCodeBlock->setLineStarts(vm.bytecodeGenerationOptions.keepAllSourceLineStarts ? source.provider()->lineStarts() : source.provider()->lineStartsIfBuilt());
 
     RefPtr<TDZEnvironmentLink> parentVariablesUnderTDZ;
     if (variablesUnderTDZ)
@@ -199,8 +191,7 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
 
 void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
-    // (As for a nested function: the code for construct is generated too, if the function can observe the difference.)
-    generateUnlinkedCodeBlocksOfFunction(vm, executable, parentSource, { }, error, depth == std::numeric_limits<unsigned>::max() ? depth : depth + 1, optimize);
+    generateFunctionUnlinkedCodeBlocks(vm, executable, parentSource, { }, error, depth == std::numeric_limits<unsigned>::max() ? depth : depth + 1, optimize);
 }
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth, OptimizeBytecode optimize)
@@ -240,7 +231,7 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     // the records that share its executable then use.
     bool privateToExecutable = false;
     if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>)
-        privateToExecutable = !executable->resolvesInGlobalScope() && !source.provider()->hasNoText();
+        privateToExecutable = !executable->resolvesInGlobalScope() && !source.provider()->hasNoSourceText();
     // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
     // and provider, which the shared code of the same source may have as well.)
     UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);

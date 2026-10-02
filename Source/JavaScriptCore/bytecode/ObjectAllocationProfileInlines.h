@@ -60,8 +60,6 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
 
         executable = constructor->jsExecutable();
     }
-    // What follows counts, in the executable, the prototypes that its functions create objects with, for the optimizing compilers.
-    // One of a program that was compiled ahead of time is shared by every realm, and may not have the room.
     if (executable && executable->hasAOTEntry())
         executable = nullptr;
     if (executable) {

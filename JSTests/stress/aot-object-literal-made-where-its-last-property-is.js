@@ -1,4 +1,3 @@
-// An object literal whose values take working out is made once they all have been. Nothing must be able to tell.
 function shouldBe(actual, expected) {
     if (actual !== expected)
         throw new Error("bad value: " + actual + ", expected " + expected);

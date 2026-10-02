@@ -617,8 +617,6 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
 
     auto* propertyList = m_list;
     RefPtr<RegisterID> newObject;
-    // (The type tag of the literal is attached to the call that creates the copy, because the copy may need the layout of its type,
-    // whatever it is a copy of.)
     if (propertyList->m_node->m_type & PropertyNode::Spread) {
         // Only one element and it is spread.
         if (!propertyList->m_next) {
@@ -656,8 +654,6 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
     }
 
     if (!newObject && generator.vm().bytecodeGenerationOptions.evaluateObjectLiteralValuesFirst) {
-        // { a: x, b: f() }: nothing can refer to the object until it has all of its properties, so the point at which it is
-        // allocated is not observable.
         constexpr unsigned maximumCount = 64;
         unsigned count = 0;
         bool isSimple = true;
@@ -670,7 +666,6 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
             Vector<RefPtr<RegisterID>, 8> values;
             for (auto* p = propertyList; p; p = p->m_next) {
                 RefPtr<RegisterID> value = generator.emitNode(p->m_node->m_assign);
-                // A variable may be reassigned before its value is stored, so copy it.
                 if (p->m_next && !value->isTemporary() && !value->virtualRegister().isConstant())
                     value = generator.move(generator.newTemporary(), value.get());
                 values.append(WTF::move(value));
@@ -2990,12 +2985,8 @@ RegisterID* TypeOfValueNode::emitBytecode(BytecodeGenerator& generator, Register
     return generator.emitTypeOf(generator.finalDestination(dst), src.get());
 }
 
-// ------------------------------ SoundTypeCheckNode ----------------------------------
-
 RegisterID* SoundTypeCheckNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
-    // op_check_type reads its operand in place. The value only goes straight into dst when dst is a temporary: a failed
-    // check must not have assigned a variable.
     bool canEvaluateIntoDst = dst && dst != generator.ignoredResult() && dst->isTemporary();
     RefPtr<RegisterID> value = generator.emitNode(canEvaluateIntoDst ? dst : nullptr, m_expr);
     generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
@@ -3236,7 +3227,6 @@ void LogicalNotNode::emitBytecodeInConditionContext(BytecodeGenerator& generator
     // Reverse the true and false targets.
     generator.emitNodeInConditionContext(expr(), falseTarget, trueTarget, invert(fallThroughMode));
 }
-
 
 // ------------------------------ Binary Operation Nodes -----------------------------------
 
@@ -3606,7 +3596,6 @@ RegisterID* InNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
     return generator.emitInByVal(generator.finalDestination(dst, key.get()), key.get(), base.get());
 }
-
 
 // ------------------------------ LogicalOpNode ----------------------------
 
@@ -5900,7 +5889,6 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         }
     }
 
-    // It has its methods, and nothing has had the chance to make an instance of it.
     if (uint32_t tag = typeTag()) {
         RefPtr<RegisterID> function = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::noteClass);
         CallArguments args(generator, nullptr, 1);
@@ -6355,7 +6343,6 @@ void ObjectPatternNode::collectBoundIdentifiers(Vector<Identifier>& identifiers)
         m_targetPatterns[i].pattern->collectBoundIdentifiers(identifiers);
 }
 
-
 bool BindingNode::bindValueCanThrow(BytecodeGenerator& generator) const
 {
     Variable var = generator.variable(m_boundProperty);
@@ -6617,7 +6604,6 @@ void RestParameterNode::emit(BytecodeGenerator& generator)
     generator.emitRestParameter(temp.get(), m_numParametersToSkip);
     m_pattern->bindValue(generator, temp.get());
 }
-
 
 RegisterID* SpreadExpressionNode::emitBytecode(BytecodeGenerator&, RegisterID*)
 {

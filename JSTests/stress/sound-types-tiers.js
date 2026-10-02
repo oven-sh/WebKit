@@ -1,8 +1,5 @@
 //@ requireOptions("--useSoundTypes=1")
 
-// Each function is warmed up until the highest enabled tier has compiled it, and only then fails its check. In the DFG and
-// FTL a failure is an OSR exit to op_check_type, which throws from the baseline tier.
-
 function shouldBe(actual, expected) {
     if (!Object.is(actual, expected))
         throw new Error(`bad value: ${String(actual)}, expected ${String(expected)}`);
@@ -19,7 +16,6 @@ function messageOf(func) {
     throw new Error("did not throw");
 }
 
-// Warm up, fail, and keep going: the function must still work after the exit, and after being recompiled.
 function exercise(func, good, bad, message) {
     noInline(func);
     for (let round = 0; round < 3; ++round) {
@@ -32,7 +28,6 @@ function exercise(func, good, bad, message) {
     }
 }
 
-// Masks that Fixup turns into Check(child: SomeUse).
 exercise(function (a, b) { $$t(a, 8); $$t(b, 8); return a + b; },
     [[[1, 2], 3]], [["1", 2], ["", 2]], "Type check failed: expected number, got string");
 exercise(function (a, b) { $$t(a, 8); $$t(b, 8); return a + b; },
@@ -51,7 +46,6 @@ exercise(function (a) { $$t(a, 1008); return typeof a; }, [[[{ }], "object"], [[
 exercise(function (a) { $$t(a, 1011); return typeof a; }, [[[{ }], "object"], [["s"], "string"], [[undefined], "undefined"]], [[1]], "Type check failed: expected string | symbol | bigint | object | null | undefined, got number");
 exercise(function (a) { $$t(a, 991); return typeof a; }, [[[{ }], "object"], [["s"], "string"], [[1], "number"]], [[Symbol()]], "Type check failed: expected boolean | number | string | bigint | object | null | undefined, got symbol");
 
-// Masks that stay CheckSoundType.
 exercise(function (a) { $$t(a, 9); return a === undefined ? 0 : a + 1; }, [[[1], 2], [[undefined], 0], [[1.5], 2.5]], [[null]], "Type check failed: expected number | undefined, got null");
 exercise(function (a) { $$t(a, 1); return a; }, [[[undefined], undefined]], [[null]], "Type check failed: expected undefined, got null");
 exercise(function (a) { $$t(a, 2); return a; }, [[[null], null]], [[undefined]], "Type check failed: expected null, got undefined");
@@ -69,7 +63,6 @@ exercise(function (a) { $$t(a, 384); return typeof a; }, [[[() => 1], "function"
 exercise(function (a) { $$t(a, 514); return a === null ? 0 : a.x; }, [[[{ x: 1 }], 1], [[null], 0]], [[undefined]], "Type check failed: expected object | null, got undefined");
 exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"], "string"], [[null], "object"]], [[{ }]], "Type check failed: expected boolean | number | string | symbol | bigint | null | undefined, got object");
 
-// try / catch in the optimized function itself.
 (function () {
     function f(a) {
         let before = a;
@@ -88,7 +81,6 @@ exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"
     }
 })();
 
-// The failing function is inlined, and the handler is in the caller.
 (function () {
     function callee(a) {
         $$t(a, 8);
@@ -113,7 +105,6 @@ exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"
     }
 })();
 
-// The failure happens in the middle of a hot loop, entered by OSR.
 (function () {
     function f(array) {
         let sum = 0;
@@ -135,7 +126,6 @@ exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"
     shouldBe(messageOf(() => f(array)), "Type check failed: expected number, got string");
 })();
 
-// A loop-invariant check that is not executed on every path must not fail on behalf of the paths that skip it.
 (function () {
     function f(v, n, doCheck) {
         let sum = 0;
@@ -158,7 +148,6 @@ exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"
     shouldBe(messageOf(() => f("s", 10, true)), "Type check failed: expected number, got string");
 })();
 
-// Side effects before the failing check are kept, and are not replayed by the exit.
 (function () {
     let o = { count: 0 };
     function f(o, v) {
@@ -175,7 +164,6 @@ exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"
     shouldBe(o.count, testLoopCount * 11 + 1);
 })();
 
-// Constants, both passing and failing.
 (function () {
     function pass() { return $$t(1, 8) + $$t(undefined, 9) + $$t("s", 16) + $$t(null, 2); }
     function failNumber() { return $$t(1, 16); }
@@ -191,7 +179,6 @@ exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"
     }
 })();
 
-// A function that fails as often as it passes stays correct however often it is recompiled.
 (function () {
     function f(a) {
         $$t(a, 8);
@@ -210,7 +197,6 @@ exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"
     shouldBe(failures, testLoopCount * 2);
 })();
 
-// Values produced in unboxed representations by the DFG and FTL.
 (function () {
     function f(a, b) {
         let d = $$t(a * 1.5, 8);
@@ -225,7 +211,6 @@ exercise(function (a) { $$t(a, 127); return typeof a; }, [[[1], "number"], [["s"
         shouldBe(f(2, 3), 3 + 2 + 8589934595 + 1 + 1);
 })();
 
-// Allocations that the FTL would like to sink.
 (function () {
     function f(x) {
         let o = $$t({ x }, 512);

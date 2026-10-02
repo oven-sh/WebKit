@@ -110,8 +110,6 @@ class CodeBlock : public JSCell {
 public:
 
     enum CopyParsedBlockTag { CopyParsedBlock };
-    // ForCodeFromImage: the block is going to run AOT code (installAOTCode), which does not need what linking the bytecode creates.
-    // There is no metadata table, and there are no profiles.
     enum class LinkMode : uint8_t { Full, ForCodeFromImage };
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
@@ -589,9 +587,8 @@ public:
     StringJumpTable& baselineStringSwitchJumpTable(int tableIndex);
     void setBaselineJITData(std::unique_ptr<BaselineJITData>&&);
 #if ENABLE(AOT)
-    void installAOTCode(Ref<AOT::JITCode>&&); // The code of a program or a module.
-    void adoptAOTCode(AOT::JITCode&, AOT::Data*); // See AOT::Data::ensureCodeBlock().
-    // For code that will not run again: releases the data that is only needed to run it now, instead of waiting for the collector.
+    void installAOTCode(Ref<AOT::JITCode>&&);
+    void adoptAOTCode(AOT::JITCode&, AOT::Data*);
     void releaseAOTData();
     AOT::Data* aotData()
     {
@@ -1146,7 +1143,6 @@ template <typename ExecutableType>
 void ScriptExecutable::prepareForExecution(VM& vm, JSFunction* function, JSScope* scope, CodeSpecializationKind kind, CodeBlock*& resultCodeBlock)
 {
     if constexpr (std::same_as<ExecutableType, FunctionExecutable>) {
-        // There is nothing to prepare, here: see AOT::generateEnterStaticFunction().
         if (uncheckedDowncast<ExecutableType>(this)->aotEntryFor(kind)) {
             resultCodeBlock = nullptr;
             return;
@@ -1174,7 +1170,6 @@ void ScriptExecutable::prepareForExecution(VM& vm, JSFunction* function, JSScope
         if (codeBlock) \
             (codeBlock->vm().logEvent(codeBlock, summary, [&] () { return toUTF8CString details; })); \
     } while (0)
-
 
 void setPrinter(Printer::PrintRecord&, CodeBlock*);
 

@@ -61,7 +61,7 @@ def main():
         head = "\n".join(text.split("\n")[:3])
         if RUNS_ITS_OWN_WAY.search(head) or LOOKS_AT_THE_ENGINE.search(text):
             return "left out", test, ""
-        code, expected = run(jsc, ["--useImmutableIntrinsics=1", "--hideTextOfFunctionsForTesting=1", "--useJIT=0"], test, 40)
+        code, expected = run(jsc, ["--useImmutableIntrinsics=1", "--hideFunctionSourceForTesting=1", "--useJIT=0"], test, 40)
         if code != 0:
             return "fails interpreted", test, ""
         code, actual = run(jsc, ["--compileMainScriptAheadOfTime=1", "--useJIT=0"], test, 80)

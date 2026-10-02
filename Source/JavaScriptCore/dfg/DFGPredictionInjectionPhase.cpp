@@ -48,9 +48,6 @@ public:
         
         ASSERT(codeBlock()->numParameters() >= 1);
 
-        // An argument profile records what callers passed, including the values a sound type check went on to reject.
-        // In the root block a GetLocal of an argument reads the incoming value, so a check on it bounds the values
-        // that get any further. With an empty profile, the bound is the prediction.
         Vector<SpeculatedType, 8> argumentBounds(FillWith { }, codeBlock()->numParameters(), SpecFullTop);
         for (Node* node : *m_graph.block(0)) {
             if (node->op() != CheckSoundType || node->child1()->op() != GetLocal)
@@ -97,7 +94,6 @@ public:
                     continue;
                 ASSERT(node->accessesStack(m_graph));
                 SpeculatedType prediction = speculationFromValue(value.value());
-                // The call that triggered this compilation may be one that is about to fail its check.
                 if (!blockIndex && operand.isArgument())
                     prediction &= argumentBounds[operand.toArgument()];
                 node->variableAccessData()->predict(prediction);
@@ -116,4 +112,3 @@ bool performPredictionInjection(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

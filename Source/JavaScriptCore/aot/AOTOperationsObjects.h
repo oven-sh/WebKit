@@ -22,9 +22,6 @@ namespace AOT {
 
 struct Slot;
 
-// The operations behind every instruction that is not arithmetic, a plain property access or a variable access. Operands and
-// results are arguments and return values, never bytecode registers in the frame, and nothing reads the instruction stream, the
-// interpreter's metadata or a profile. Part of FOR_EACH_AOT_OPERATION (AOTRuntime.h).
 #define FOR_EACH_AOT_OBJECT_OPERATION(v) \
     v(operationAOTNewObject) \
     v(operationAOTNewObjectLiteral) \
@@ -39,7 +36,7 @@ struct Slot;
     v(operationAOTNewRegExp) \
     v(operationAOTNewRegExpForReceiver) \
     v(operationAOTLinkTimeConstant) \
-    v(operationAOTIteratorMethodOfArray) \
+    v(operationAOTArrayIteratorMethod) \
     v(operationAOTValidateNewObject) \
     v(operationAOTNewTypedObject) \
     v(operationAOTCloneObject) \
@@ -73,7 +70,7 @@ struct Slot;
     v(operationAOTInstanceofCustom) \
     v(operationAOTDefaultHasInstance) \
     v(operationAOTThrowTDZError) \
-    v(operationAOTThrowTDZErrorOfThis) \
+    v(operationAOTThrowThisTDZError) \
     v(operationAOTThrowStaticError) \
     v(operationAOTGetByIdWellKnown) \
     v(operationAOTPutByIdReallocating) \
@@ -100,7 +97,7 @@ struct Slot;
     v(operationAOTPutGetterSetterById) \
     v(operationAOTPutAccessorByVal) \
     v(operationAOTDefineDataProperty) \
-    v(operationAOTDefineDataPropertyOfOneOfAKind) \
+    v(operationAOTDefineDataPropertyOnSingleton) \
     v(operationAOTDefineAccessorProperty) \
     v(operationAOTGetPropertyEnumerator) \
     v(operationAOTEnumeratorNext) \
@@ -118,13 +115,12 @@ struct Slot;
     v(operationAOTSizeOfVarargs) \
     v(operationAOTLoadVarargs) \
     v(operationAOTLinkFunction) \
-    v(operationAOTConstructByCalling) \
+    v(operationAOTConstructViaCall) \
     v(operationAOTNoteFilled) \
     v(operationAOTHasOwnProperty) \
     v(operationAOTEnsureData) \
     v(operationAOTCallDirectEval) \
 
-// Property names that instructions imply rather than name, so that they are not among the function's identifiers.
 enum class WellKnownIdentifier : uint32_t {
     Length,
     Next,
@@ -148,26 +144,25 @@ enum class InternalFieldObjectKind : uint32_t {
     AsyncFunctionGenerator,
 };
 
-// Allocation.
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObject, JSObject*, (Instance*, uint32_t inlineCapacity, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewTypedObject, JSObject*, (Instance*, uint32_t layoutID, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (Instance*, EncodedJSValue source, uint32_t layoutID));
 JSC_DECLARE_JIT_OPERATION(operationAOTNoteClass, void, (Instance*, EncodedJSValue constructor, EncodedJSValue prototype, uint32_t layoutID));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue)); // Lowering::toFieldRepresentation()
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Instance*, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance*, JSObject* callee, uint32_t inlineCapacity));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance*, const EncodedJSValue* values, uint32_t count, uint32_t indexingType));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSize, JSObject*, (Instance*, EncodedJSValue size));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayBuffer, JSObject*, (Instance*, JSCell* immutableButterfly));
-JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (Instance*, EncodedJSValue*, uint32_t count, uint32_t yetToBeSpread));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (Instance*, EncodedJSValue*, uint32_t count, uint32_t pendingSpreads));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpecies, JSObject*, (Instance*, EncodedJSValue length, JSObject* array));
 JSC_DECLARE_JIT_OPERATION(operationAOTSpread, JSCell*, (Instance*, EncodedJSValue iterable));
-JSCell* spread(JSGlobalObject*, JSValue iterable); // What op_spread makes.
+JSCell* spread(JSGlobalObject*, JSValue iterable);
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (Instance*, JSCell* regExp));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instance*, JSObject*)); // Lowering::validateNewObject()
-JSC_DECLARE_JIT_OPERATION(operationAOTIteratorMethodOfArray, EncodedJSValue, (Instance*, JSCell*));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance*, uint32_t which)); // NodeKind::LinkTimeConstant
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instance*, JSObject*));
+JSC_DECLARE_JIT_OPERATION(operationAOTArrayIteratorMethod, EncodedJSValue, (Instance*, JSCell*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance*, uint32_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (Instance*, JSCell* regExp, uint32_t forTest, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance*, JSScope*, uint32_t index, uint32_t isExpression, uint32_t functionKind, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance*, JSObject* function, EncodedJSValue name));
@@ -183,7 +178,6 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCreateRest, JSObject*, (Instance*, uint32_
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowNotAFunction, void, (Instance*, EncodedJSValue callee));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowNotAConstructor, void, (Instance*, EncodedJSValue callee));
 
-// Conversions and tests.
 JSC_DECLARE_JIT_OPERATION(operationAOTToThis, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTToObject, JSObject*, (Instance*, EncodedJSValue, uint32_t messageIdentifierIndex));
 JSC_DECLARE_JIT_OPERATION(operationAOTToPrimitive, EncodedJSValue, (Instance*, EncodedJSValue));
@@ -199,10 +193,9 @@ JSC_DECLARE_JIT_OPERATION(operationAOTInstanceof, size_t, (Instance*, EncodedJSV
 JSC_DECLARE_JIT_OPERATION(operationAOTInstanceofCustom, size_t, (Instance*, EncodedJSValue value, JSObject* constructor, EncodedJSValue hasInstance));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (Instance*, EncodedJSValue value, EncodedJSValue prototype));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowTDZError, void, (Instance*));
-JSC_DECLARE_JIT_OPERATION(operationAOTThrowTDZErrorOfThis, void, (Instance*));
+JSC_DECLARE_JIT_OPERATION(operationAOTThrowThisTDZError, void, (Instance*));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowStaticError, void, (Instance*, EncodedJSValue message, uint32_t errorType));
 
-// Properties.
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t wellKnownIdentifier, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdReallocating, void, (VM*, JSObject* base, EncodedJSValue value, const void* megamorphicCacheStoreEntry));
 JSC_DECLARE_JIT_OPERATION(operationAOTWriteBarrierAfterPut, void, (VM*, JSCell*));
@@ -213,14 +206,11 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdWithThis, void, (Instance*, Encoded
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByValWithThis, void, (Instance*, EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByValDirect, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTInById, size_t, (Instance*, EncodedJSValue base, uint32_t identifierIndex))
-// Map.prototype.set and Set.prototype.add of a key that is not there, for a stub that has found that out (StubIntrinsic). The key
-// is one that is its own normal form, and the hash is its hash.
 JSC_DECLARE_JIT_OPERATION(operationAOTMapSet, void, (Instance*, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetAdd, void, (Instance*, JSCell* set, EncodedJSValue key, int32_t hash));
 JSC_DECLARE_JIT_OPERATION(operationAOTInByVal, size_t, (Instance*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTDelById, size_t, (Instance*, EncodedJSValue base, uint32_t identifierIndex, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTDelByVal, size_t, (Instance*, EncodedJSValue base, EncodedJSValue property, uint32_t isStrict));
-// Like every operation that is called for a site, these are passed an identifier, which they ignore.
 JSC_DECLARE_JIT_OPERATION(operationAOTGetPrivateName, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue property, uint32_t, Slot*, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutPrivateName, void, (Instance*, EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, uint32_t, Slot*, uint32_t isDefine));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasPrivateName, size_t, (Instance*, EncodedJSValue base, EncodedJSValue property));
@@ -231,10 +221,9 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutAccessorById, void, (Instance*, JSObjec
 JSC_DECLARE_JIT_OPERATION(operationAOTPutGetterSetterById, void, (Instance*, JSObject* base, uint32_t identifierIndex, uint32_t attributes, EncodedJSValue getter, EncodedJSValue setter));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutAccessorByVal, void, (Instance*, JSObject* base, EncodedJSValue property, uint32_t attributes, JSObject* accessor, uint32_t isSetter));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefineDataProperty, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue value, int32_t attributes));
-JSC_DECLARE_JIT_OPERATION(operationAOTDefineDataPropertyOfOneOfAKind, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue value, int32_t attributes));
+JSC_DECLARE_JIT_OPERATION(operationAOTDefineDataPropertyOnSingleton, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue value, int32_t attributes));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefineAccessorProperty, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue getter, EncodedJSValue setter, int32_t attributes));
 
-// for-in. The mode and the index are passed as the numbers the bytecode has them as. modeAndIndex: in and out.
 JSC_DECLARE_JIT_OPERATION(operationAOTGetPropertyEnumerator, JSCell*, (Instance*, EncodedJSValue base));
 JSC_DECLARE_JIT_OPERATION(operationAOTEnumeratorNext, JSCell*, (Instance*, EncodedJSValue base, JSCell* enumerator, EncodedJSValue* modeAndIndex));
 JSC_DECLARE_JIT_OPERATION(operationAOTEnumeratorGetByVal, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue propertyName, EncodedJSValue index, EncodedJSValue mode, JSCell* enumerator));
@@ -242,7 +231,6 @@ JSC_DECLARE_JIT_OPERATION(operationAOTEnumeratorInByVal, size_t, (Instance*, Enc
 JSC_DECLARE_JIT_OPERATION(operationAOTEnumeratorPutByVal, void, (Instance*, EncodedJSValue base, EncodedJSValue propertyName, EncodedJSValue value, EncodedJSValue index, EncodedJSValue mode, JSCell* enumerator, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTEnumeratorHasOwnProperty, size_t, (Instance*, EncodedJSValue base, EncodedJSValue propertyName, EncodedJSValue index, EncodedJSValue mode, JSCell* enumerator));
 
-// for-of. The operations that try a fast path return the empty value if the generic protocol has to be used.
 JSC_DECLARE_JIT_OPERATION(operationAOTIteratorOpenTryFast, EncodedJSValue, (Instance*, EncodedJSValue iterable, EncodedJSValue symbolIterator, EncodedJSValue* next));
 JSC_DECLARE_JIT_OPERATION(operationAOTAsyncIteratorOpenTryFast, EncodedJSValue, (Instance*, EncodedJSValue iterable, EncodedJSValue symbolIterator, EncodedJSValue* next));
 JSC_DECLARE_JIT_OPERATION(operationAOTIteratorNextTryFast, EncodedJSValue, (Instance*, JSObject* iterator));
@@ -251,12 +239,10 @@ JSC_DECLARE_JIT_OPERATION(operationAOTAsyncIteratorNextWithDriver, EncodedJSValu
 JSC_DECLARE_JIT_OPERATION(operationAOTMaterializeArrayIterator, JSObject*, (Instance*, EncodedJSValue iterable, EncodedJSValue index));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowIteratorResultIsNotObject, void, (Instance*));
 
-// Calls.
 JSC_DECLARE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (Instance*, EncodedJSValue listOrItems, uint32_t descriptor));
 JSC_DECLARE_JIT_OPERATION(operationAOTLoadVarargs, void, (Instance*, EncodedJSValue* where, EncodedJSValue listOrItems, uint32_t descriptor, uint32_t length));
 
-
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (CallFrame*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructViaCall, UGPRPair, (CallFrame*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance*, void* addressInFunction));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (Instance*, JSObject*, EncodedJSValue));

@@ -140,7 +140,6 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
     return true;
 }
 
-
 ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* source)
 {
     static constexpr bool verbose = false;
@@ -159,13 +158,10 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
         return false;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // An object keeps the typed layout that it was allocated with (Structure::typedLayoutID()), so it cannot take the structure of
-    // the object that it copies.
     if (targetStructure->typedLayoutID() && targetStructure->typedLayoutID() != sourceStructure->typedLayoutID())
         return false;
 #endif
 
-    // (Nothing watches the structure of an empty object with a typed layout, because only AOT code creates such objects.)
     if (!targetStructure->typedLayoutID() && targetStructure->transitionWatchpointSetIsStillValid()) {
         dataLogLnIf(verbose, "target transitionWatchpointSetIsStillValid");
         return false;
@@ -349,7 +345,6 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 
     return true;
 }
-
 
 } // namespace JSC
 

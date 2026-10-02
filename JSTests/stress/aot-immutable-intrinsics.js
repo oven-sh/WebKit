@@ -1,12 +1,10 @@
 //@ requireOptions("--useImmutableIntrinsics=1", "--compileMainScriptAheadOfTime=1")
-// Code that is compiled ahead of time takes the built-in objects for what they are. This is about when it may, and when it may not.
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
 function repeat(f, ...args) { let r; for (let i = 0; i < 300; ++i) r = f(...args); return r; }
 
-// ---- What it may.
 function statics(x, y) { return Math.floor(x) + Math.max(x, y) + Math.min(x, y) + Math.abs(-x) + Math.sqrt(16) + Math.ceil(x) + Math.trunc(y) + Math.imul(3, 4) + Math.round(x) + Math.pow(2, 3) + Math.hypot(3, 4) + Math.sign(-y); }
 check(repeat(statics, 1.5, 2.5), 1 + 2.5 + 1.5 + 1.5 + 4 + 2 + 2 + 12 + 2 + 8 + 5 - 1, "Math");
 function constants() { return [Math.PI, Math.E, Number.MAX_SAFE_INTEGER, Number.EPSILON, Number.MIN_VALUE, Number.NaN, Number.POSITIVE_INFINITY, Math.SQRT2].join(); }
@@ -32,7 +30,6 @@ check(repeat(notNumbers, "3.7", { valueOf() { return -2; } }), 3 + 3.7 + 2, "arg
 function thisOfCall() { return [String, Number].map(f => f(1)).join() + (0, Math.floor)(2.5) + Math["floor"](3.5); }
 check(repeat(thisOfCall), "1,123", "however they are got at");
 
-// ---- What it may not: the name is somebody else's.
 function parameter(Math) { return Math.floor(1.5); }
 check(repeat(parameter, { floor: () => "parameter" }), "parameter", "a parameter");
 function local() { let Math = { floor: () => "local" }, Object = { keys: () => "local keys" }; return Math.floor(1.5) + Object.keys({}); }
@@ -56,7 +53,6 @@ check(repeat(destructured, { Math: { floor: () => "destructured" }, Object: 1 })
 function tdz() { try { return Math.floor(1); let Math; } catch (e) { return e.constructor.name; } }
 check(repeat(tdz), "ReferenceError", "before its declaration");
 
-// ---- What is not fixed is looked up like anything else.
 function added() { return Math.added; }
 check(repeat(added), undefined, "not there"); Math.added = 1; check(repeat(added), 1, "added"); Math.added = 2; check(repeat(added), 2, "changed"); delete Math.added; check(repeat(added), undefined, "deleted");
 function addedMethod(a) { return Array.prototype.addedMethod ? a.addedMethod() : "none"; }
@@ -69,7 +65,6 @@ function ownOfFunction() { return Math.floor.extra; }
 check(repeat(ownOfFunction), undefined, "the functions are not fixed"); Math.floor.extra = 5; check(repeat(ownOfFunction), 5, "and can be given properties"); delete Math.floor.extra;
 function otherGlobals() { return typeof print + typeof undefinedGlobal + typeof Intl + typeof Float64Array; }
 check(repeat(otherGlobals), "functionundefinedobjectfunction", "globals that are not fixed");
-// ---- Of some, only the variable is fixed.
 function dates() { let d = new Date(0); return typeof Date.now() + d.getTime() + Date.UTC(1970, 0, 1) + (d instanceof Date) + Date.prototype.getTime.call(d) + typeof Date.parse; }
 check(repeat(dates), "number00true0function", "Date");
 function errors(m) { let all = [new Error(m), new TypeError(m), RangeError(m), new SyntaxError(m), new ReferenceError(m), new EvalError(m), new URIError(m), new AggregateError([], m)]; return all.map(e => e.name + e.message + (e instanceof Error)).join(); }
@@ -86,13 +81,11 @@ function storesToVariables() { Error = 1; Date = 2; parseInt = 3; delete this0.T
 check(repeat(storesToVariables), "functionfunctionfunctionfunction", "their variables stay");
 globalThis.mutableGlobal = 1; function readsMutable() { return mutableGlobal; } check(repeat(readsMutable), 1, "a global"); mutableGlobal = 2; check(repeat(readsMutable), 2, "a global that changed");
 
-// ---- Stores are refused as they would be anyway.
 function stores() { Math = 1; Math.floor = 2; Object.keys = 3; delete Math.floor; return typeof Math + typeof Math.floor + typeof Object.keys; }
 check(repeat(stores), "objectfunctionfunction", "stores, sloppy");
 function strictStores(which) { "use strict"; try { if (which == 0) Math = 1; else if (which == 1) Math.floor = 2; else delete Object.keys; return "no exception"; } catch (e) { return e.constructor.name; } }
 for (let i = 0; i < 3; ++i) check(repeat(strictStores, i), "TypeError", "stores, strict");
 
-// ---- A later script cannot take the name either.
 if (typeof loadString === "function") {
     for (let source of ["let Math = 1;", "const Object = 1;", "class Map { }", "function Array() { }"]) {
         let threw = false; try { loadString(source); } catch (e) { threw = true; } check(threw, true, source + " is refused");
@@ -101,7 +94,6 @@ if (typeof loadString === "function") {
     check(repeat(statics, 1.5, 2.5), 40.5, "and it is all as it was");
 }
 
-// ---- Another realm has its own.
 if (typeof createGlobalObject === "function") {
     let other = createGlobalObject();
     let theirs = other.eval(`(function identity() { return Math === globalThis.Math && Object.prototype === Object.getPrototypeOf({}) && Array.prototype === Object.getPrototypeOf([]) && Array.prototype.constructor === Array && Function.prototype === Object.getPrototypeOf(identity) && Math.floor === globalThis.Math.floor && typeof Math === "object" && typeof Map === "function"; })`), theirArray = other.eval("(function () { return [Array, Math, Object.prototype, Math.floor, new Map().constructor, Symbol.iterator]; })");

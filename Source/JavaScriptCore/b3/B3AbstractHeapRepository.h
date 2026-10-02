@@ -42,7 +42,7 @@ namespace JSC::B3 {
     macro(AOTInstance_globalObject, AOT::Instance::offsetOfGlobalObject(), Mutability::Immutable) \
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
-    macro(AOTInstance_whatIsFixed, 0, Mutability::Immutable) \
+    macro(AOTInstance_fixedFields, 0, Mutability::Immutable) \
     macro(AOTInstance_mutableFields, 0, Mutability::Mutable)
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \

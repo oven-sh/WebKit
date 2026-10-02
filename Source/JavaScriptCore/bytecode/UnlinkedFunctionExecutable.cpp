@@ -78,8 +78,6 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, executable->evalContextType(), executable->isBuiltinDefaultClassConstructor()), codeGenerationMode);
 
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
-    // For ahead-of-time compilation the link is kept: both specializations use it, and so does the compiler.
-    // (BytecodeLinkEncoder takes it from the executable once all code has been generated.)
     RefPtr<DeclaredNamesLink> parentDeclaredNames = vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically ? executable->parentDeclaredNames() : executable->takeParentDeclaredNames();
 #if ENABLE(AOT)
     if (vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
@@ -322,7 +320,7 @@ std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> UnlinkedFuncti
 }
 #endif
 
-void UnlinkedFunctionExecutable::leaveWithoutCode()
+void UnlinkedFunctionExecutable::discardCode()
 {
     RELEASE_ASSERT(!m_isCached);
     m_unlinkedCodeBlockForCall.clear();

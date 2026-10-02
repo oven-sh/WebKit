@@ -639,7 +639,6 @@ namespace JSC {
             m_codeBlock->addExpressionInfo(instructionOffset, divotOffset, startOffset, endOffset);
         }
 
-
         ALWAYS_INLINE bool leftHandSideNeedsCopy(bool rightHasAssignments, bool rightIsPure)
         {
             return (m_codeType != FunctionCode || rightHasAssignments) && !rightIsPure;
@@ -752,7 +751,6 @@ namespace JSC {
         void emitTDZCheckIfNecessary(const Variable&, RegisterID* target, RegisterID* scope);
         void liftTDZCheckIfPossible(const Variable&);
         RegisterID* emitNewObject(RegisterID* dst);
-        // For the instruction that is emitted next. (ExpressionNode::typeTag())
         void emitTypeTag(uint32_t tag)
         {
             if (tag) [[unlikely]]
@@ -886,7 +884,6 @@ namespace JSC {
         void emitCallDefineProperty(RegisterID* newObj, RegisterID* propertyNameRegister,
             RegisterID* valueRegister, RegisterID* getterRegister, RegisterID* setterRegister, unsigned options, const JSTextPosition&);
 
-        // Whether control can reach the end of a try block, and so enter its finally block with a Normal completion.
         enum class MayCompleteNormally : bool { No, Yes };
         void emitTryWithFinallyThatDoesNotShadowException(const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally);
         void emitTryWithFinallyThatDoesNotShadowException(FinallyContext&, const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally, MayCompleteNormally);
@@ -1107,7 +1104,6 @@ namespace JSC {
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
-        // See FunctionAssignment. `right` is what was just put there.
         void recordFunctionAssignment(const Identifier&, const Variable&, ExpressionNode* right);
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
@@ -1345,7 +1341,7 @@ namespace JSC {
     private:
         OptionSet<CodeGenerationMode> m_codeGenerationMode;
         bool m_optimizeBytecode;
-        UncheckedKeyHashMap<FunctionMetadataNode*, unsigned> m_indicesOfFunctionExprs;
+        UncheckedKeyHashMap<FunctionMetadataNode*, unsigned> m_functionExprIndices;
         Vector<FunctionAssignment> m_functionAssignments;
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
         // currentDeclaredNames() state: one shared Frame per m_lexicalScopeStack entry (built lazily, dropped when the

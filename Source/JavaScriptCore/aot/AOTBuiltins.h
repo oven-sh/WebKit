@@ -14,29 +14,21 @@
 
 namespace JSC { namespace AOT {
 
-// What is known about the language's built-in functions, when a program cannot replace them (VM::useImmutableIntrinsics). They are
-// identified by their intrinsic numbers: see ImmutableIntrinsics.
-
 struct BuiltinSignature {
     enum class Condition : uint8_t {
         Always,
-        IfFirstArgumentIsNotObject, // Or there is none.
-        IfThisIsHolder, // It is called on the object that it was found on.
+        IfFirstArgumentIsNotObject,
+        IfThisIsHolder,
     };
-    Type result; // Of a call that comes back.
+    Type result;
     Condition condition;
 };
-std::optional<BuiltinSignature> signatureOfIntrinsic(unsigned number);
+std::optional<BuiltinSignature> intrinsicSignature(unsigned number);
 
-// Of `new` of it.
-std::optional<Type> resultOfConstructingIntrinsic(unsigned number);
+std::optional<Type> constructingIntrinsicResult(unsigned number);
 
-// The intrinsic that a property with that name has on a value of that primitive type. A primitive has no own properties to speak
-// of, and the prototype that it inherits from cannot be changed. Returns zero if it is unknown or not a cell.
 unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name);
 
-// The functions that the compiler does the work of itself, or has done by what the other tiers call for them, if what they are called on and with is what it takes
-// (Lowering::lowerCallOfBuiltin()). Anything else is called as anything is.
 #define FOR_EACH_AOT_BUILTIN(v) \
     v(MathAbs, "Math.abs") v(MathFloor, "Math.floor") v(MathCeil, "Math.ceil") v(MathTrunc, "Math.trunc") v(MathRound, "Math.round") v(MathSqrt, "Math.sqrt") \
     v(MathFround, "Math.fround") v(MathMin, "Math.min") v(MathMax, "Math.max") v(MathClz32, "Math.clz32") v(MathImul, "Math.imul") v(MathSign, "Math.sign") \
@@ -83,21 +75,15 @@ enum class Builtin : uint8_t {
     FOR_EACH_AOT_BUILTIN(AOT_DEFINE_BUILTIN)
 #undef AOT_DEFINE_BUILTIN
 };
-Builtin builtinWithNumber(unsigned intrinsic); // Takes an intrinsic number.
+Builtin builtinAtIndex(unsigned intrinsic);
 
-// The kinds of receiver for which a method is known without a lookup: a string, or an object with the realm's original structure
-// for its class (Instance::structureIDsOfReceivers).
 enum class Receiver : uint8_t { None, String, Array, Map, Set, WeakMap, WeakSet, RegExp, Date, Number };
 Type typeOf(Receiver);
-JSType cellTypeOf(Receiver); // Not valid for Receiver::Number.
-// The intrinsic that a property with that name has on such a receiver. Returns zero if it is unknown or not a cell.
+JSType cellTypeOf(Receiver);
 unsigned intrinsicFoundOn(Receiver, const StringImpl& name);
-// The kind of receiver that a value of that type is, if the type determines it.
-Receiver receiverOfType(Type);
-// The kind of receiver a built-in method operates on: the class whose prototype holds it. None for a function that ignores `this`, such as
-// Math.floor.
+Receiver receiverWithType(Type);
 Receiver requiredReceiver(unsigned intrinsic);
-Receiver receiverLikelyToHave(Type, const StringImpl& name);
+Receiver likelyReceiverWith(Type, const StringImpl& name);
 
 } } // namespace JSC::AOT
 

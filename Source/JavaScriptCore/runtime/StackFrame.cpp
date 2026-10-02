@@ -74,7 +74,7 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 {
 }
 
-StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, ScriptExecutable* executable, CodeSpecializationKind kind, JSCell* tokenOfInstance, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
+StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, ScriptExecutable* executable, CodeSpecializationKind kind, JSCell* instanceToken, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
     : m_frameData(JSFrameData {
         callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>(),
         WriteBarrier<CodeBlock>(),
@@ -82,7 +82,7 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, ScriptExecutable* 
         isAsyncFrame,
         kind,
         WriteBarrier<ScriptExecutable>(vm, owner, executable),
-        WriteBarrier<JSCell>(vm, owner, tokenOfInstance)
+        WriteBarrier<JSCell>(vm, owner, instanceToken)
     })
 {
 }
@@ -131,13 +131,13 @@ bool StackFrame::isBuiltinFunction() const
 {
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
     if (jsFrame.aotExecutable) {
-        auto* ofFunction = dynamicDowncast<FunctionExecutable>(jsFrame.aotExecutable.get());
-        return ofFunction && ofFunction->isBuiltinFunction();
+        auto* asFunctionExecutable = dynamicDowncast<FunctionExecutable>(jsFrame.aotExecutable.get());
+        return asFunctionExecutable && asFunctionExecutable->isBuiltinFunction();
     }
     return jsFrame.codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
 }
 
-JSGlobalObject* StackFrame::globalObjectOfCode() const
+JSGlobalObject* StackFrame::codeGlobalObject() const
 {
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
 #if ENABLE(AOT)
@@ -249,7 +249,7 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
             if (!executable)
                 return "[native code]"_s;
             if (auto position = reportedPosition(); position && position->source)
-                return AOT::ProgramData::get()->nameOfSource(position->source);
+                return AOT::ProgramData::get()->sourceName(position->source);
             return processSourceURL(vm, *this, executable->sourceURL(), allowOverride);
         },
         [](const WasmFrameData& wasmFrame) -> String {
@@ -326,7 +326,7 @@ String StackFrame::functionName(VM& vm) const
     );
 }
 
-std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(AOT::FunctionRef::OfConstruction ofConstruction) const
+std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(AOT::FunctionRef::ConstructPosition constructPosition) const
 {
 #if ENABLE(AOT)
     auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
@@ -338,9 +338,9 @@ std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(A
     else if (jsFrame->codeBlock)
         function = AOT::FunctionRef::of(jsFrame->codeBlock.get());
     if (function)
-        return function.reportedPositionFor(jsFrame->bytecodeIndex, ofConstruction);
+        return function.reportedPositionFor(jsFrame->bytecodeIndex, constructPosition);
 #else
-    UNUSED_PARAM(ofConstruction);
+    UNUSED_PARAM(constructPosition);
 #endif
     return std::nullopt;
 }

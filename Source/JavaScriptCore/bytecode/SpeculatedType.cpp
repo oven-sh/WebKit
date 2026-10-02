@@ -714,12 +714,11 @@ bool soundTypeMaskAccepts(unsigned mask, JSValue value)
     unsigned tag = soundTypeTag(value);
     if (!(tag & mask))
         return false;
-    return tag != SoundTypeOtherObject || !soundTypeMaskNamesTypedArray(mask) || value.asCell()->type() == typedArrayTypeOfSoundTypeMask(mask);
+    return tag != SoundTypeOtherObject || !soundTypeMaskNamesTypedArray(mask) || value.asCell()->type() == typedArrayTypeForSoundTypeMask(mask);
 }
 
 void dumpSoundTypeMask(PrintStream& out, unsigned mask)
 {
-    // undefined and null go last, the way TypeScript prints unions.
     static constexpr std::pair<unsigned, ASCIILiteral> names[] = {
         { SoundTypeBoolean, "boolean"_s },
         { SoundTypeNumber, "number"_s },
@@ -740,7 +739,7 @@ void dumpSoundTypeMask(PrintStream& out, unsigned mask)
             "Float16Array"_s, "Float32Array"_s, "Float64Array"_s, "BigInt64Array"_s, "BigUint64Array"_s,
             "Map"_s, "Set"_s, "WeakMap"_s, "WeakSet"_s, "RegExp"_s, "Promise"_s, "Date"_s, "Error"_s,
         };
-        static_assert(std::size(typedArrays) == NumberOfTypedArrayTypesExcludingDataView + std::size(soundTypeOtherKindsOfObject));
+        static_assert(std::size(typedArrays) == NumberOfTypedArrayTypesExcludingDataView + std::size(soundTypeOtherObjectKinds));
         static_assert(Float64ArrayType - FirstTypedArrayType == 9 && BigUint64ArrayType - FirstTypedArrayType == 11);
         out.print(separator, typedArrays[(mask >> SoundTypeTypedArrayShift) - 1]);
         mask &= SoundTypeAll & ~SoundTypeOtherObject;
@@ -1122,4 +1121,3 @@ SpeculatedType speculationFromString(StringView speculation)
 }
 
 } // namespace JSC
-

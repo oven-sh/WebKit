@@ -89,7 +89,6 @@ public:
             return;
         matches.append(memory);
 
-        // If memory reads is immutable, clobbering never changes the result.
         if (memory->readsMutability() == Mutability::Immutable)
             return;
         Clobberable entry { memory, keyFor(memory->lastChild(), memory->offset()), memory->range() };
@@ -100,8 +99,6 @@ public:
     }
 
     // Bun: removes the values that a write to this range invalidates. It used to look at every value in the map, which is quadratic in
-    // the size of a block: in a long block most values are loads from heaps that the block's stores do not touch. A write to one
-    // abstract heap now looks at the values of that heap. A wider write still looks at them all, and removes most of what it looks at.
     void clobber(HeapRange writes)
     {
         auto remove = [&](const Clobberable& entry) {
@@ -168,8 +165,6 @@ public:
     
 private:
     // Bun: keyed by the offset as well as the pointer. A lookup only accepts a value with the same offset, and code compiled ahead
-    // of time has thousands of accesses to the same pointer in one block (the frame, the Instance), so scanning all of them is
-    // quadratic.
     using Key = std::pair<Value*, int64_t>;
     static Key keyFor(Value* pointer, int64_t offset) { return { pointer, offset }; }
 
@@ -179,13 +174,12 @@ private:
     // - It can't be a MemoryMatches array because the MemoryValue*'s could be turned into Identity's.
     UncheckedKeyHashMap<Key, Matches> m_map;
 
-    // What clobber() needs, recorded when the value was added, because the value may have been replaced by an Identity since.
     struct Clobberable {
         Value* value;
         Key key;
         HeapRange range;
     };
-    UncheckedKeyHashMap<uint64_t, Vector<Clobberable, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_narrow; // Of one abstract heap, by that heap.
+    UncheckedKeyHashMap<uint64_t, Vector<Clobberable, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_narrow;
     Vector<Clobberable> m_wide;
 };
 
@@ -983,7 +977,6 @@ private:
             return true;
         }
 
-
         // addBottom creates a fresh Const; InsertionSet::insertBottom would
         // alias placeholders of the same type within one block.
         SSACalculator::Variable* var = m_ssa->newVariable();
@@ -1672,4 +1665,3 @@ bool eliminateCommonSubexpressions(Procedure& proc)
 } } // namespace JSC::B3
 
 #endif // ENABLE(B3_JIT)
-

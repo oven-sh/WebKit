@@ -7897,7 +7897,6 @@ void SpeculativeJIT::compileGetTypedArrayByteOffset(Node* node)
     GPRReg baseGPR = base.gpr();
     GPRReg resultGPR = result.gpr();
 
-
     if (!m_graph.isNeverResizableOrGrowableSharedTypedArrayIncludingDataView(m_state.forNode(node->child1())))
         speculationCheck(UnexpectedResizableArrayBufferView, JSValueSource(baseGPR), node, branchTest8(NonZero, Address(baseGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
 
@@ -8506,7 +8505,6 @@ void SpeculativeJIT::compileLoadVarargs(Node* node)
         DFG_CRASH(m_graph, node, "Bad use kind");
         break;
     }
-
 
 }
 
@@ -10600,7 +10598,6 @@ void SpeculativeJIT::compileCheckIsConstant(Node* node)
         speculationCheck(BadConstantValue, JSValueSource(valueGPR), node->child1(), branch64(NotEqual, valueGPR, TrustedImm64(JSValue::encode(node->constant()->value()))));
     }
 
-
     noResult(node);
 }
 
@@ -10629,7 +10626,6 @@ void SpeculativeJIT::compileCheckSoundType(Node* node)
         return;
     }
 
-    // There is no need to test for a tag that the value is known not to have.
     SpeculatedType provenType = m_state.forNode(node->child1()).m_type;
     for (unsigned tag = 1; tag < SoundTypeAll; tag <<= 1) {
         if (!(provenType & speculationFromSoundTypeMask(tag)))
@@ -11452,7 +11448,6 @@ void SpeculativeJIT::compileNewSymbol(Node* node)
         cellResult(resultGPR, node);
         return;
     }
-
 
     if (node->child1().useKind() == StringUse) {
         SpeculateCellOperand operand(this, node->child1());
@@ -14737,7 +14732,6 @@ void SpeculativeJIT::compileEnumeratorNextUpdateIndexAndMode(Node* node)
         GPRTemporary newMode(this, Reuse, mode);
         GPRReg baseGPR = base.gpr();
 
-
         // Has the same structure as the enumerator.
         load32(Address(baseGPR, JSCell::structureIDOffset()), newIndex.gpr());
         speculationCheck(BadCache, JSValueSource(), node, branch32(NotEqual, newIndex.gpr(), Address(enumeratorGPR, JSPropertyNameEnumerator::cachedStructureIDOffset())));
@@ -14765,7 +14759,6 @@ void SpeculativeJIT::compileEnumeratorNextUpdateIndexAndMode(Node* node)
     JSValueOperand base(this, baseEdge);
     GPRTemporary newMode(this, Reuse, mode);
     GPRReg baseGPR = base.gpr();
-
 
     flushRegisters();
     GPRFlushedCallResult indexResult(this);
@@ -15895,8 +15888,6 @@ void SpeculativeJIT::compileCreateThis(Node* node)
 
     cellResult(resultGPR, node);
 }
-
-
 
 template<typename JSClass, typename Operation>
 void SpeculativeJIT::compileCreateInternalFieldObject(Node* node, Operation operation)
@@ -18459,7 +18450,6 @@ unsigned SpeculativeJIT::appendOSRExit(OSRExit&& exit, bool isExceptionHandler)
     m_osrExit.append(WTF::move(exit));
     return result;
 }
-
 
 } } // namespace JSC::DFG
 

@@ -111,7 +111,7 @@ size_t JSModuleRecord::estimatedSize(JSCell* cell, VM& vm)
 static bool hasNoCodeBlocks(ModuleProgramExecutable* executable)
 {
 #if ENABLE(AOT)
-    return executable->moduleOfProgram();
+    return executable->programModule();
 #else
     UNUSED_PARAM(executable);
     return false;
@@ -142,19 +142,15 @@ DEFINE_VISIT_CHILDREN(JSModuleRecord);
 
 void JSModuleRecord::setFunctionDeclarationSlots(VM& vm, ModuleProgramExecutable* executable, UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock, bool leftUninstantiated)
 {
-#if ENABLE(AOT)
-    RefPtr slots = unlinkedCodeBlock ? RefPtr { unlinkedCodeBlock->heapAllocatedFunctionDeclSlots() } : executable->functionDeclarationSlotsOfProgram();
-#else
     RefPtr slots = unlinkedCodeBlock->heapAllocatedFunctionDeclSlots();
-#endif
     std::unique_ptr<UninstantiatedFunctionDeclarations> uninstantiated;
     if (leftUninstantiated && slots && slots->size()) {
-        RELEASE_ASSERT(!unlinkedCodeBlock || slots->size() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
+        RELEASE_ASSERT(slots->size() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         uninstantiated = makeUnique<UninstantiatedFunctionDeclarations>();
         uninstantiated->executable.set(vm, this, executable);
         // Code that ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable() lets go of once the module has run is not
         // kept alive from here: its declarations are still in the payload the slots decode from.
-        bool declarationsOutliveTheCodeBlock = slots->entriesOfProgram() || (slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex());
+        bool declarationsOutliveTheCodeBlock = slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex();
         if (!declarationsOutliveTheCodeBlock)
             uninstantiated->unlinkedCodeBlock.set(vm, this, unlinkedCodeBlock);
         uninstantiated->remaining = slots->size();
@@ -164,9 +160,39 @@ void JSModuleRecord::setFunctionDeclarationSlots(VM& vm, ModuleProgramExecutable
     m_uninstantiatedFunctionDeclarations = WTF::move(uninstantiated);
 }
 
+#if ENABLE(AOT)
+void JSModuleRecord::setProgramModule(VM& vm, ModuleProgramExecutable* executable)
+{
+    const AOT::ProgramModule* module = executable->programModule();
+    std::unique_ptr<UninstantiatedFunctionDeclarations> uninstantiated;
+    if (module->numberOfFunctionDeclarationSlots) {
+        uninstantiated = makeUnique<UninstantiatedFunctionDeclarations>();
+        uninstantiated->executable.set(vm, this, executable);
+        uninstantiated->remaining = module->numberOfFunctionDeclarationSlots;
+    }
+    Locker locker { cellLock() };
+    m_programModule = module;
+    m_uninstantiatedFunctionDeclarations = WTF::move(uninstantiated);
+}
+#endif
+
+std::optional<unsigned> JSModuleRecord::functionDeclarationIndex(ScopeOffset offset) const
+{
+#if ENABLE(AOT)
+    if (m_programModule) {
+        auto slots = AOT::ProgramData::get()->functionDeclarationSlots(*m_programModule);
+        auto it = std::ranges::lower_bound(slots, offset.offset());
+        if (it == slots.end() || *it != offset.offset())
+            return std::nullopt;
+        return static_cast<unsigned>(it - slots.begin());
+    }
+#endif
+    return m_functionDeclarationSlots ? m_functionDeclarationSlots->find(offset) : std::nullopt;
+}
+
 bool JSModuleRecord::isFunctionDeclarationSlot(ScopeOffset offset) const
 {
-    return Options::useLazyModuleFunctionDeclarations() && m_functionDeclarationSlots && m_functionDeclarationSlots->find(offset);
+    return Options::useLazyModuleFunctionDeclarations() && functionDeclarationIndex(offset);
 }
 
 JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment* environment, ScopeOffset offset)
@@ -179,7 +205,7 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     auto* uninstantiated = m_uninstantiatedFunctionDeclarations.get();
     if (!uninstantiated)
         return { };
-    std::optional<unsigned> index = m_functionDeclarationSlots->find(offset);
+    std::optional<unsigned> index = functionDeclarationIndex(offset);
     if (!index)
         return { };
     // Records that share the executable share the declarations' executables (and so their code): the first one to read a
@@ -190,9 +216,9 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     RELEASE_ASSERT(environment->symbolTable() == executable->moduleEnvironmentSymbolTable());
     FunctionExecutable* functionExecutable = executable->linkedFunctionDeclaration(*index);
 #if ENABLE(AOT)
-    if (const uint32_t* entries = m_functionDeclarationSlots->entriesOfProgram(); entries && !functionExecutable) {
-        uint32_t entry = entries[*index];
-        auto* program = AOT::ProgramOfVM::of(vm);
+    if (m_programModule && !functionExecutable) {
+        uint32_t entry = AOT::ProgramData::get()->functionDeclarationListEntries(*m_programModule)[*index];
+        auto* program = AOT::VMProgram::of(vm);
         functionExecutable = entry & 1 ? executable->linkFunctionDeclaration(vm, *index, program->unlinkedFunction((entry >> 1) - 1, false)) : program->executable((entry >> 1) - 1);
     }
 #endif
@@ -201,7 +227,7 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
         if (!unlinkedCodeBlock)
             unlinkedCodeBlock = executable->unlinkedCodeBlock();
         if (unlinkedCodeBlock)
-            functionExecutable = unlinkedCodeBlock->executableOfFunctionDecl(*index);
+            functionExecutable = unlinkedCodeBlock->functionDeclExecutable(*index);
         if (!functionExecutable) {
             UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock ? unlinkedCodeBlock->functionDecl(*index) : m_functionDeclarationSlots->decode(vm, *index);
             RELEASE_ASSERT(unlinkedExecutable);
@@ -227,7 +253,6 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
         function = JSFunction::create(vm, globalObject, functionExecutable, environment);
 
     InlineWatchpointSet* watchpointSet = nullptr;
-    // Entries that are still in the bytecode cache are not watched.
     if (SymbolTable* symbolTable = environment->symbolTable(); !symbolTable->hasCachedEntriesPending()) {
         ConcurrentJSLocker locker(symbolTable->m_lock);
         auto iter = symbolTable->find(locker, functionExecutable->name().impl());
@@ -468,7 +493,6 @@ JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Which module has the binding takes no names to say.
     if (isPrelinked()) {
         const auto& import = prelinkedGraph()->imports(prelinkedModule())[index];
         if (import.resolution() == PrelinkedModuleGraph::ResolutionKind::Binding && !import.isNamespace()) {
@@ -490,56 +514,51 @@ JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject
 }
 
 #if ENABLE(AOT)
-bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
+bool JSModuleRecord::isLinkedAsCompiled(JSGlobalObject* globalObject)
 {
-    if (m_isLinkedAsInImage != TriState::Indeterminate)
-        return m_isLinkedAsInImage == TriState::True;
-    // (The code finds the functions it calls in what was made along with it.)
+    if (m_isLinkedAsCompiled != TriState::Indeterminate)
+        return m_isLinkedAsCompiled == TriState::True;
     if (!AOT::ProgramData::get()) {
-        m_isLinkedAsInImage = TriState::False;
+        m_isLinkedAsCompiled = TriState::False;
         return false;
     }
-    // The same must hold for the modules that it imports from, transitively, because its code calls theirs without any check.
     Vector<JSModuleRecord*, 16> records { this };
     UncheckedKeyHashSet<JSModuleRecord*> seen { this };
     bool result = true;
     for (size_t index = 0; result && index < records.size(); ++index) {
-        result = records[index]->isItselfLinkedAsInImage(globalObject, [&](JSModuleRecord* exporter) {
-            if (exporter->m_isLinkedAsInImage != TriState::Indeterminate)
-                return exporter->m_isLinkedAsInImage == TriState::True;
+        result = records[index]->isSelfLinkedAsCompiled(globalObject, [&](JSModuleRecord* exporter) {
+            if (exporter->m_isLinkedAsCompiled != TriState::Indeterminate)
+                return exporter->m_isLinkedAsCompiled == TriState::True;
             if (seen.add(exporter).isNewEntry)
                 records.append(exporter);
             return true;
         });
     }
     if (!result) {
-        m_isLinkedAsInImage = TriState::False;
+        m_isLinkedAsCompiled = TriState::False;
         return false;
     }
     for (JSModuleRecord* record : records)
-        record->m_isLinkedAsInImage = TriState::True;
+        record->m_isLinkedAsCompiled = TriState::True;
     return true;
 }
 
-bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const Function<bool(JSModuleRecord*)>& mayImportFrom)
+bool JSModuleRecord::isSelfLinkedAsCompiled(JSGlobalObject* globalObject, const Function<bool(JSModuleRecord*)>& mayImportFrom)
 {
-    // Its functions are the ones that were created when the program was built, which is what compiled code assumes about its
-    // callees.
     SourceProvider& provider = *sourceCode().provider();
-    bool result = isPrelinked() && provider.aotModuleID() && provider.hasNoText();
+    bool result = isPrelinked() && provider.aotModuleID() && provider.hasNoSourceText();
     if (!result && Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("AOT: ", moduleKey().impl(), isPrelinked() ? " does not have the functions that were made when the program was built" : " was not linked when the program was built");
-    // Whether the environment is at the location that compiled code assumes, if it assumes one.
-    auto environmentIsInItsPlace = [&](AbstractModuleRecord* record) {
+    auto environmentIsInPlace = [&](AbstractModuleRecord* record) {
         AOT::ImageEnvironment environment = AOT::Image::environmentOf(record->prelinkedIndex());
         if (!environment.distance)
             return true;
         AOT::Instance* instance = moduleLoader()->aotInstance();
-        JSCell** slot = instance ? instance->slotOfEnvironment(environment) : nullptr;
+        JSCell** slot = instance ? instance->environmentSlot(environment) : nullptr;
         return slot && *slot && *slot == record->moduleEnvironmentMayBeNull();
     };
     if (result) {
-        result = environmentIsInItsPlace(this);
+        result = environmentIsInPlace(this);
         if (!result && Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: the variables of ", moduleKey().impl(), " are not where its code expects them");
     }
@@ -548,7 +567,7 @@ bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const
             if (import.resolution() != PrelinkedModuleGraph::ResolutionKind::Binding || import.isNamespace())
                 continue;
             AbstractModuleRecord* exporter = prelinkedRecordForResolution(globalObject, import.resolvedModule);
-            if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull() || !environmentIsInItsPlace(exporter) || !mayImportFrom(uncheckedDowncast<JSModuleRecord>(exporter))) {
+            if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull() || !environmentIsInPlace(exporter) || !mayImportFrom(uncheckedDowncast<JSModuleRecord>(exporter))) {
                 if (Options::verboseAOTCompilation()) [[unlikely]]
                     dataLogLn("AOT: ", moduleKey().impl(), " imports from a module that is not linked the way it was compiled for");
                 result = false;

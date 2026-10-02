@@ -325,12 +325,10 @@ struct AbstractValue {
         return !(m_type & ~desiredType);
     }
 
-    // True if every value this describes passes CheckSoundType with the given mask.
     bool provesSoundTypeMask(unsigned mask) const
     {
         if (isType(speculationProvingSoundTypeMask(mask)))
             return true;
-        // SpecOther cannot tell undefined from null, but a constant can.
         return m_value && !m_value.isCell() && soundTypeMaskAccepts(mask, m_value);
     }
 

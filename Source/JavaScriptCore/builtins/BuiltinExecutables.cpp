@@ -337,10 +337,10 @@ std::span<const Latin1Character> BuiltinExecutables::textOf(unsigned index)
     }
 }
 
-FunctionExecutable* BuiltinExecutables::executableOfProgramFor(BuiltinCodeIndex index, const char* text, size_t length)
+FunctionExecutable* BuiltinExecutables::programExecutableFor(BuiltinCodeIndex index, const char* text, size_t length)
 {
 #if ENABLE(AOT)
-    if (auto* program = AOT::ProgramOfVM::of(m_vm)) [[unlikely]]
+    if (auto* program = AOT::VMProgram::of(m_vm)) [[unlikely]]
         return program->engineBuiltinFor(static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });
 #else
     UNUSED_PARAM(index);

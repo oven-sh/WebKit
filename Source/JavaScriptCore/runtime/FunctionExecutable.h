@@ -58,25 +58,18 @@ public:
 
     static void destroy(JSCell*);
         
-    // The short form. A function that was compiled when the program was built, and that has no other code and never will, needs
-    // very little of this class: there is nothing to parse, compile or watch, and nothing changes. Its executable, which
-    // AOT::ProgramOfVM creates, ends where ExecutableBase's m_jitCodeForCallWithArityCheck would be, and is identified by its JSType. Calls only use
-    // the fields before that point, and code that recognizes a FunctionExecutable by FunctionExecutableType in order to reach its
-    // CodeBlock does not match it. Everything else about the function is in a table (AOT::RowOfExecutable), which the accessors here
-    // consult: its name, its parameter count, its module, and an UnlinkedFunctionExecutable for the remaining properties, which it
-    // shares with every function that has the same ones.
     static constexpr size_t sizeOfShortForm = 32;
-    inline static Structure* createStructureOfShortForm(VM&, JSGlobalObject*, JSValue);
+    inline static Structure* createShortFormStructure(VM&, JSGlobalObject*, JSValue);
     static FunctionExecutable* createInShortForm(VM&, const uint64_t (&entry)[2], const uint32_t (&index)[2]);
 
-    const FunctionExecutable* inFull() const { return WTF::opaque(this); }
-    FunctionExecutable* inFull() { return WTF::opaque(this); }
+    const FunctionExecutable* fullForm() const { return WTF::opaque(this); }
+    FunctionExecutable* fullForm() { return WTF::opaque(this); }
 
     UnlinkedFunctionExecutable* unlinkedExecutable() const
     {
         if (isShortForm()) [[unlikely]]
-            return unlinkedExecutableOfShortForm();
-        return inFull()->m_unlinkedExecutable.get();
+            return shortFormUnlinkedExecutable();
+        return fullForm()->m_unlinkedExecutable.get();
     }
 
     // Returns either call or construct bytecode. This can be appropriate
@@ -96,7 +89,7 @@ public:
 
     FunctionCodeBlock* codeBlockForCall() const
     {
-        return isShortForm() ? nullptr : std::bit_cast<FunctionCodeBlock*>(inFull()->m_codeBlockForCall.get());
+        return isShortForm() ? nullptr : std::bit_cast<FunctionCodeBlock*>(fullForm()->m_codeBlockForCall.get());
     }
 
     bool isGeneratedForConstruct() const
@@ -106,7 +99,7 @@ public:
 
     FunctionCodeBlock* codeBlockForConstruct() const
     {
-        return isShortForm() ? nullptr : std::bit_cast<FunctionCodeBlock*>(inFull()->m_codeBlockForConstruct.get());
+        return isShortForm() ? nullptr : std::bit_cast<FunctionCodeBlock*>(fullForm()->m_codeBlockForConstruct.get());
     }
         
     bool isGeneratedFor(CodeSpecializationKind kind)
@@ -173,29 +166,28 @@ public:
     {
         if (isShortForm()) [[unlikely]]
             return unlinkedExecutable()->hasName() ? ecmaName() : unlinkedExecutable()->name();
-        return inFull()->m_unlinkedExecutable->name();
+        return fullForm()->m_unlinkedExecutable->name();
     }
     const Identifier& ecmaName()
     {
         if (isShortForm()) [[unlikely]]
-            return nameOfShortForm();
-        return inFull()->m_unlinkedExecutable->ecmaName();
+            return shortFormName();
+        return fullForm()->m_unlinkedExecutable->ecmaName();
     }
     // Unlike name() / ecmaName(), also callable from the collector's end phase (ErrorInstance::computeErrorInfo's stack traces).
-    String nameWithoutGC() { return isShortForm() ? (unlinkedExecutable()->hasName() ? ecmaNameWithoutGC() : String()) : inFull()->m_unlinkedExecutable->nameWithoutGC(); }
-    String ecmaNameWithoutGC() { return isShortForm() ? ecmaName().string() : inFull()->m_unlinkedExecutable->ecmaNameWithoutGC(); }
-    const Identifier* tryGetEcmaNameConcurrently() { return isShortForm() ? &ecmaName() : inFull()->m_unlinkedExecutable->tryGetEcmaNameConcurrently(); } // null while the name is still only in the bytecode cache; otherwise &ecmaName() (which may itself be a null Identifier)
+    String nameWithoutGC() { return isShortForm() ? (unlinkedExecutable()->hasName() ? ecmaNameWithoutGC() : String()) : fullForm()->m_unlinkedExecutable->nameWithoutGC(); }
+    String ecmaNameWithoutGC() { return isShortForm() ? ecmaName().string() : fullForm()->m_unlinkedExecutable->ecmaNameWithoutGC(); }
+    const Identifier* tryGetEcmaNameConcurrently() { return isShortForm() ? &ecmaName() : fullForm()->m_unlinkedExecutable->tryGetEcmaNameConcurrently(); }
     UTF8CString inferredNameForTools(); // dumps and debug info; callable from compiler / GC threads, where a name still in the bytecode cache prints as a placeholder
-    unsigned parameterCount() const { return isShortForm() ? rowOfShortForm().parameterCount : inFull()->m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!
+    unsigned parameterCount() const { return isShortForm() ? shortFormRow().parameterCount : fullForm()->m_unlinkedExecutable->parameterCount(); }
     SourceParseMode parseMode() const { return unlinkedExecutable()->parseMode(); }
     JSParserScriptMode scriptMode() const { return unlinkedExecutable()->scriptMode(); }
     SourceCode classSource() const
     {
-        // (The source of a default class constructor belongs to the engine. The class is in the module's source.)
         if (isShortForm()) [[unlikely]]
             return unlinkedExecutable()->classSource(*sourceProvider());
-        bool isInTopLevelSource = inFull()->m_unlinkedExecutable->isBuiltinDefaultClassConstructor() && inFull()->m_topLevelExecutable;
-        return inFull()->m_unlinkedExecutable->classSource(*(isInTopLevelSource ? inFull()->m_topLevelExecutable->source() : source()).provider());
+        bool isInTopLevelSource = fullForm()->m_unlinkedExecutable->isBuiltinDefaultClassConstructor() && fullForm()->m_topLevelExecutable;
+        return fullForm()->m_unlinkedExecutable->classSource(*(isInTopLevelSource ? fullForm()->m_topLevelExecutable->source() : source()).provider());
     }
 
     DECLARE_VISIT_CHILDREN;
@@ -222,7 +214,7 @@ public:
 
     LineStartTable::PositionInfo sourceStartInfo() const
     {
-        auto& source = inFull()->m_source; // (Not for the short form.)
+        auto& source = fullForm()->m_source;
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
         return source.provider()->positionInfoForOffset(source.startOffset());
     }
@@ -230,7 +222,7 @@ public:
     // endOffset() is one past the closing brace, but a reported end column names the brace itself.
     LineStartTable::PositionInfo sourceEndInfo() const
     {
-        auto& source = inFull()->m_source; // (Not for the short form.)
+        auto& source = fullForm()->m_source;
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
         return source.provider()->positionInfoForOffset(source.endOffset() - 1);
     }
@@ -241,7 +233,7 @@ public:
     int lineCount() const
     {
         if (isShortForm()) [[unlikely]]
-            return 0; // (Without source text, the end position is meaningless.)
+            return 0;
         return static_cast<int>(sourceEndInfo().line0Based) - static_cast<int>(sourceStartInfo().line0Based);
     }
 
@@ -249,7 +241,7 @@ public:
     {
         if (isShortForm()) [[unlikely]]
             return startColumn();
-        auto& source = inFull()->m_source;
+        auto& source = fullForm()->m_source;
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
         return source.provider()->documentLineColumnForOffset(source.endOffset() - 1).column;
     }
@@ -270,7 +262,7 @@ public:
             return rareData->m_functionEnd;
         if (isShortForm()) [[unlikely]]
             return 0;
-        return inFull()->m_unlinkedExecutable->unlinkedFunctionEnd();
+        return fullForm()->m_unlinkedExecutable->unlinkedFunctionEnd();
     }
 
     unsigned functionStart() const
@@ -279,7 +271,7 @@ public:
             return rareData->m_functionStart;
         if (isShortForm()) [[unlikely]]
             return 0;
-        return inFull()->m_unlinkedExecutable->unlinkedFunctionStart();
+        return fullForm()->m_unlinkedExecutable->unlinkedFunctionStart();
     }
 
     unsigned parametersStartOffset() const
@@ -288,18 +280,18 @@ public:
             return rareData->m_parametersStartOffset;
         if (isShortForm()) [[unlikely]]
             return 0;
-        return inFull()->m_unlinkedExecutable->parametersStartOffset();
+        return fullForm()->m_unlinkedExecutable->parametersStartOffset();
     }
 
     void overrideInfo(const FunctionOverrideInfo&);
 
     DECLARE_EXPORT_INFO;
 
-    bool singletonHasBeenInvalidated() const { return isShortForm() || inFull()->m_singleton.hasBeenInvalidated(); }
+    bool singletonHasBeenInvalidated() const { return isShortForm() || fullForm()->m_singleton.hasBeenInvalidated(); }
     InferredValue<JSFunction>& singleton()
     {
         RELEASE_ASSERT(!isShortForm());
-        return inFull()->m_singleton;
+        return fullForm()->m_singleton;
     }
 
     void notifyCreation(VM&, JSFunction*, const char* reason);
@@ -326,21 +318,14 @@ public:
 
     Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return rareData() ? rareData()->m_polyProtoWatchpoint : nullptr; }
 
-    // Null for one of a program that was compiled ahead of time, which every instance of the program in the VM shares
-    // (AOT::Instance::topLevelExecutableOf()).
-    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND { return isShortForm() ? nullptr : inFull()->m_topLevelExecutable.get(); }
+    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND { return isShortForm() ? nullptr : fullForm()->m_topLevelExecutable.get(); }
 
-    // Of a program that was compiled ahead of time: the entry word of the code that was compiled for it, and the index of that
-    // function (AOT::ImageFunction::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which read these.
-    uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; } // An AOT::EntryWord with an offset.
+    uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; }
     uint32_t aotIndexFor(CodeSpecializationKind kind) const { return m_aotIndex[static_cast<unsigned>(kind)]; }
     void becomeSharedAcrossRealms(VM&);
     JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, uint64_t entry, uint32_t index);
-    // There is code to call it with and none to construct with, and to construct is to make an object, call it, and see what
-    // comes back (AOT::Stub::ConstructByCalling, which is then its entry point). That will do for a function that has no way
-    // of telling: see generateUnlinkedCodeBlockForFunctions().
-    static constexpr uint32_t aotIndexOfWhatConstructsByCalling = std::numeric_limits<uint32_t>::max();
-    bool constructsByCalling() const { return m_aotIndex[static_cast<unsigned>(CodeSpecializationKind::CodeForConstruct)] == aotIndexOfWhatConstructsByCalling; }
+    static constexpr uint32_t aotConstructViaCallIndex = std::numeric_limits<uint32_t>::max();
+    bool constructsViaCall() const { return m_aotIndex[static_cast<unsigned>(CodeSpecializationKind::CodeForConstruct)] == aotConstructViaCallIndex; }
     static constexpr ptrdiff_t offsetOfAOTEntryFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotEntry) + static_cast<unsigned>(kind) * sizeof(void*); }
     static constexpr ptrdiff_t offsetOfAOTIndexFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotIndex) + static_cast<unsigned>(kind) * sizeof(uint32_t); }
 
@@ -396,12 +381,12 @@ private:
 
     friend class ScriptExecutable;
 
-    RareData* rareData() const { return isShortForm() ? nullptr : inFull()->m_rareData.get(); }
+    RareData* rareData() const { return isShortForm() ? nullptr : fullForm()->m_rareData.get(); }
     RareData& ensureRareData()
     {
         RELEASE_ASSERT(!isShortForm());
-        if (inFull()->m_rareData) [[likely]]
-            return *inFull()->m_rareData;
+        if (fullForm()->m_rareData) [[likely]]
+            return *fullForm()->m_rareData;
         return ensureRareDataSlow();
     }
     RareData& ensureRareDataSlow();
@@ -418,8 +403,8 @@ private:
     WriteBarrier<CodeBlock> m_codeBlockForConstruct;
     InferredValue<JSFunction> m_singleton;
 
-    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* unlinkedExecutableOfShortForm() const;
-    JS_EXPORT_PRIVATE const Identifier& nameOfShortForm() const;
+    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* shortFormUnlinkedExecutable() const;
+    JS_EXPORT_PRIVATE const Identifier& shortFormName() const;
 };
 
 } // namespace JSC

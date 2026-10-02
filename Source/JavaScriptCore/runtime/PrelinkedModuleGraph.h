@@ -45,7 +45,6 @@ class VM;
 // initializeEnvironment / getModuleNamespace from these arrays and only build their by-name entry maps when something
 // else asks for them. The graph object itself is plain data and exists whether or not the option is on.
 //
-// Blob layout (version 4; written by Bun's src/bundler/prelinked_module_graph.rs `serialize`, bump both together),
 // little-endian u32 throughout, 4-byte aligned:
 //   Header, then the arrays it points at. Module-relative request indices (< 2^16); graph-wide module indices
 //   (noModule = none); sids < stringCount, or starDefaultSid / starNamespaceSid. Imports are sorted by
@@ -156,27 +155,18 @@ public:
         bool isNamespaceReexport() const { return kind() == ExportKind::Namespace || (kind() == ExportKind::Indirect && localOrImportSid == starNamespaceSid); }
     };
 
-    // What the bundler knows about a top-level variable of a module, having seen every use of it in the program. Nothing uses these
-    // at run time. They are for the ahead-of-time compiler.
     struct Binding {
-        // (There are none for `var` and `let`, nor for variables that the bundler synthesizes, because it does not track every
-        // store to those.)
         enum class Kind : uint8_t { Function = 2, GeneratorOrAsyncFunction, Class, Const };
         enum Flags : uint32_t {
             KindMask = 0xf,
-            IsAssigned = 1 << 4, // Something assigns it other than its own declaration.
-            // The value can flow somewhere other than into a call of it: it is referenced other than as `f` in `f()`, or it is
-            // exported from an entry point.
+            IsAssigned = 1 << 4,
             Escapes = 1 << 5,
             CallIgnoresThis = 1 << 6,
-            // The value can be obtained by something other than a use of the variable in the program's code: through an entry
-            // point's exports, or by evaluated code. (It then escapes, too.)
-            IsVisibleFromOutside = 1 << 7,
+            IsExternallyVisible = 1 << 7,
         };
         uint32_t nameSid;
         uint32_t flags;
         Kind kind() const { return static_cast<Kind>(flags & KindMask); }
-        // From when it is initialized, it holds what its declaration gave it.
         bool keepsDeclaredValue() const
         {
             return !(flags & IsAssigned);

@@ -127,7 +127,6 @@ static JSObject* createGetterTypeError(JSGlobalObject* globalObject, const Strin
 
 class FindFirstCallerFrameWithCodeblockFunctor {
 public:
-    // None: the first that there is.
     FindFirstCallerFrameWithCodeblockFunctor(CallFrame* startCallFrame)
         : m_startCallFrame(startCallFrame)
         , m_foundStartCallFrame(!startCallFrame)
@@ -148,8 +147,7 @@ public:
             return IterationStatus::Continue;
 
 #if ENABLE(AOT)
-        // What such a function's source says is in the image, if anywhere. There is no call for a CodeBlock.
-        if (AOT::FunctionRef function = visitor->aotFunction(); function && function.executable()->source().provider()->hasNoText()) {
+        if (AOT::FunctionRef function = visitor->aotFunction(); function && function.executable()->source().provider()->hasNoSourceText()) {
             m_aotFunction = function;
             m_bytecodeIndex = visitor->bytecodeIndex();
             return IterationStatus::Done;
@@ -198,7 +196,6 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool us
 static FindFirstCallerFrameWithCodeblockFunctor findFirstCallerFrameWithCode(VM& vm, CallFrame* startCallFrame)
 {
 #if ENABLE(AOT)
-    // (The frame belongs to an AOT stub, which stack walks skip.)
     if (startCallFrame && vm.topCallFrame == startCallFrame && AOT::topCallFrameIsAOTFrame(startCallFrame))
         startCallFrame = nullptr;
 #endif

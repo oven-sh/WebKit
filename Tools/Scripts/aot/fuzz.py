@@ -11,7 +11,7 @@ BASE=['--useDollarVM=true','--useFunctionDotArguments=true','--maxPerThreadStack
 REF=BASE+['--useImmutableIntrinsics=true']
 AOT=BASE+['--compileMainScriptAheadOfTime=true']
 EXTRA=[[],['--validateAOTInferredTypes=true'],['--validateAOTInferredTypes=true','--validateGraphAtEachPhase=true'],['--forceAOTVeneers=true'],['--numberOfAOTStubCopiesForTesting=3'],
-       ['--largestAOTFunctionNumberInTypesForTesting=3','--validateAOTInferredTypes=true'],['--useAOTInlineFastPathsInLoops=true'],['--forceGCSlowPaths=true'],['--slowPathAllocsBetweenGCs=13'],
+       ['--maxAOTFunctionNumberInTypesForTesting=3','--validateAOTInferredTypes=true'],['--useAOTInlineFastPathsInLoops=true'],['--forceGCSlowPaths=true'],['--slowPathAllocsBetweenGCs=13'],
        ['--validateAOTInferredTypes=true','--slowPathAllocsBetweenGCs=29']]
 UNSTABLE=re.compile(r'Date\.now|new Date\(\)|Math\.random|performance\.|preciseTime|currentTime|\bload\(|\brun\(|readFile|\$vm\.(value|indexingMode|dfg|ftl|llint|baseline)|describe\(|numberOfDFGCompiles|jscStack|edenGC|fullGC|gcHeapSize|heapSize|memoryUsage|WeakRef|FinalizationRegistry|Atomics\.wait|\bagent\b|\$262|sleepSeconds|setTimeout|drainMicrotasks|generateHeapSnapshot|SamplingProfiler|createGlobalObject|runString|Loader|checkModuleSyntax|import\s*\(|^\s*import\s|^\s*export\s|OSRExit|noFTL|noDFG|neverInlineFunction|optimizeNextInvocation|reoptimizationRetryCount|functionOverrides|\.stack\b|Error\.captureStackTrace|stackTraceLimit|toLocale|Intl\.|Temporal\.|timeZone|hasOwnLengthProperty|isHavingABadTime|haveABadTime',re.M)
 skip=set(l.strip().split('/')[-1] for l in open(ROOT+'/JSTests/bun-tests-that-change-builtins.txt') if l.startswith('stress/'))

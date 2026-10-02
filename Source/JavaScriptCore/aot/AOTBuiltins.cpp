@@ -27,18 +27,14 @@ struct Row {
     Condition condition { Condition::Always };
 };
 
-// The type that the specification guarantees for the result, whatever the arguments, if the call returns at all. Where the result
-// depends on something that a program can hook with its own code, the row has a condition, or there is no row.
 constexpr Type TStringOrUndefined = TString | TUndefined;
 constexpr Type TNumberOrUndefined = TNumber | TUndefined;
 constexpr Type TObjectOrNull = TAnyObject | TNull;
 
 const Row rows[] = {
-    // Functions of the global object.
     { "parseInt"_s, TNumber }, { "parseFloat"_s, TNumber }, { "isNaN"_s, TBoolean }, { "isFinite"_s, TBoolean },
     { "encodeURIComponent"_s, TString }, { "encodeURI"_s, TString }, { "decodeURIComponent"_s, TString }, { "decodeURI"_s, TString },
     { "escape"_s, TString }, { "unescape"_s, TString },
-    // Constructors that are called as functions.
     { "String"_s, TString }, { "Number"_s, TNumber }, { "Boolean"_s, TBoolean }, { "BigInt"_s, TBigInt }, { "Symbol"_s, TSymbol },
     { "Array"_s, TArray }, { "Object"_s, TAnyObject }, { "Date"_s, TString },
 
@@ -51,7 +47,6 @@ const Row rows[] = {
     { "Object.defineProperty"_s, TAnyObject }, { "Object.defineProperties"_s, TAnyObject },
 
     { "Array.isArray"_s, TBoolean },
-    // (What they create depends on their `this` value.)
     { "Array.from"_s, TArray, Condition::IfThisIsHolder }, { "Array.of"_s, TArray, Condition::IfThisIsHolder },
 
     { "Math.abs"_s, TNumber }, { "Math.acos"_s, TNumber }, { "Math.acosh"_s, TNumber }, { "Math.asin"_s, TNumber }, { "Math.asinh"_s, TNumber },
@@ -74,7 +69,6 @@ const Row rows[] = {
     { "Reflect.ownKeys"_s, TArray }, { "Reflect.getPrototypeOf"_s, TObjectOrNull }, { "Reflect.getOwnPropertyDescriptor"_s, TFinalObject | TUndefined },
     { "ArrayBuffer.isView"_s, TBoolean },
 
-    // String methods. (They convert their `this` value to a string.)
     { "String.prototype.at"_s, TStringOrUndefined }, { "String.prototype.charAt"_s, TString }, { "String.prototype.charCodeAt"_s, TNumber },
     { "String.prototype.codePointAt"_s, TNumberOrUndefined }, { "String.prototype.concat"_s, TString }, { "String.prototype.endsWith"_s, TBoolean },
     { "String.prototype.includes"_s, TBoolean }, { "String.prototype.indexOf"_s, TNumber }, { "String.prototype.isWellFormed"_s, TBoolean },
@@ -86,7 +80,6 @@ const Row rows[] = {
     { "String.prototype.toWellFormed"_s, TString }, { "String.prototype.trim"_s, TString }, { "String.prototype.trimEnd"_s, TString },
     { "String.prototype.trimStart"_s, TString }, { "String.prototype.trimLeft"_s, TString }, { "String.prototype.trimRight"_s, TString },
     { "String.prototype.valueOf"_s, TString },
-    // These delegate to the first argument if it is an object with the corresponding method, which can be the program's code.
     { "String.prototype.replace"_s, TString, Condition::IfFirstArgumentIsNotObject }, { "String.prototype.replaceAll"_s, TString, Condition::IfFirstArgumentIsNotObject },
     { "String.prototype.split"_s, TArray, Condition::IfFirstArgumentIsNotObject }, { "String.prototype.search"_s, TNumber, Condition::IfFirstArgumentIsNotObject },
 
@@ -97,7 +90,6 @@ const Row rows[] = {
     { "BigInt.prototype.toString"_s, TString }, { "BigInt.prototype.toLocaleString"_s, TString }, { "BigInt.prototype.valueOf"_s, TBigInt },
 };
 
-// The result of `new` with the constructor itself as new.target.
 const Row constructors[] = {
     { "Object"_s, TAnyObject }, { "Array"_s, TArray }, { "Function"_s, TFunction },
     { "Map"_s, TMap }, { "Set"_s, TSet }, { "WeakMap"_s, TWeakMap }, { "WeakSet"_s, TWeakSet }, { "WeakRef"_s, TObject },
@@ -109,15 +101,15 @@ const Row constructors[] = {
 };
 
 struct Tables {
-    Vector<const Row*> called; // Indexed by intrinsic number.
+    Vector<const Row*> called;
     Vector<const Row*> constructed;
     unsigned stringPrototype { 0 };
     unsigned numberPrototype { 0 };
     unsigned booleanPrototype { 0 };
     unsigned symbolPrototype { 0 };
     unsigned bigIntPrototype { 0 };
-    unsigned prototypesOfReceivers[16] { };
-    Vector<Builtin> builtins; // Indexed by intrinsic number.
+    unsigned receiverPrototypes[16] { };
+    Vector<Builtin> builtins;
 };
 
 const Tables* tables()
@@ -131,8 +123,6 @@ const Tables* tables()
         result.construct();
         result->called.fill(nullptr, intrinsics->count());
         result->constructed.fill(nullptr, intrinsics->count());
-        // Returns the intrinsic number of the object at that path from the global object, or zero if it is not an immutable
-        // intrinsic.
         auto find = [&](ASCIILiteral path) -> unsigned {
             unsigned number = ImmutableIntrinsics::globalObject;
             for (StringView part : StringView(path).split('.')) {
@@ -143,7 +133,6 @@ const Tables* tables()
             }
             return number;
         };
-        // (One object may be reachable by two paths. The rows for both paths then have to be valid for it.)
         for (auto& row : rows) {
             if (unsigned number = find(row.path); number && !result->called[number])
                 result->called[number] = &row;
@@ -157,7 +146,7 @@ const Tables* tables()
         result->booleanPrototype = find("Boolean.prototype"_s);
         result->symbolPrototype = find("Symbol.prototype"_s);
         result->bigIntPrototype = find("BigInt.prototype"_s);
-        auto prototypeOf = [&](Receiver receiver) -> unsigned& { return result->prototypesOfReceivers[static_cast<unsigned>(receiver)]; };
+        auto prototypeOf = [&](Receiver receiver) -> unsigned& { return result->receiverPrototypes[static_cast<unsigned>(receiver)]; };
         prototypeOf(Receiver::String) = result->stringPrototype;
         prototypeOf(Receiver::Number) = result->numberPrototype;
         prototypeOf(Receiver::Array) = find("Array.prototype"_s);
@@ -179,7 +168,7 @@ const Tables* tables()
 
 } // anonymous namespace
 
-std::optional<BuiltinSignature> signatureOfIntrinsic(unsigned number)
+std::optional<BuiltinSignature> intrinsicSignature(unsigned number)
 {
     const Tables* all = tables();
     if (!all || number >= all->called.size() || !all->called[number])
@@ -187,7 +176,7 @@ std::optional<BuiltinSignature> signatureOfIntrinsic(unsigned number)
     return BuiltinSignature { all->called[number]->result, all->called[number]->condition };
 }
 
-std::optional<Type> resultOfConstructingIntrinsic(unsigned number)
+std::optional<Type> constructingIntrinsicResult(unsigned number)
 {
     const Tables* all = tables();
     if (!all || number >= all->constructed.size() || !all->constructed[number])
@@ -220,7 +209,7 @@ unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name)
     return intrinsics->at(number).canonical;
 }
 
-Builtin builtinWithNumber(unsigned number)
+Builtin builtinAtIndex(unsigned number)
 {
     const Tables* all = tables();
     if (!all || number >= all->builtins.size())
@@ -287,7 +276,7 @@ unsigned intrinsicFoundOn(Receiver receiver, const StringImpl& name)
     const Tables* all = tables();
     if (!all)
         return 0;
-    unsigned prototype = all->prototypesOfReceivers[static_cast<unsigned>(receiver)];
+    unsigned prototype = all->receiverPrototypes[static_cast<unsigned>(receiver)];
     if (!prototype)
         return 0;
     const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
@@ -306,13 +295,13 @@ Receiver requiredReceiver(unsigned intrinsic)
         return Receiver::None;
     unsigned holder = ImmutableIntrinsics::shared()->at(intrinsic).holder;
     for (Receiver receiver : allReceivers) {
-        if (all->prototypesOfReceivers[static_cast<unsigned>(receiver)] == holder)
+        if (all->receiverPrototypes[static_cast<unsigned>(receiver)] == holder)
             return receiver;
     }
     return Receiver::None;
 }
 
-Receiver receiverOfType(Type type)
+Receiver receiverWithType(Type type)
 {
     if (!type)
         return Receiver::None;
@@ -323,14 +312,13 @@ Receiver receiverOfType(Type type)
     return Receiver::None;
 }
 
-Receiver receiverLikelyToHave(Type type, const StringImpl& name)
+Receiver likelyReceiverWith(Type type, const StringImpl& name)
 {
-    // Returns the only kind of receiver that the type allows, among those that have a supported method with that name.
     Receiver found = Receiver::None;
     for (Receiver receiver : allReceivers) {
         if (receiver == Receiver::Number || !mayBe(type, typeOf(receiver)))
             continue;
-        if (builtinWithNumber(intrinsicFoundOn(receiver, name)) == Builtin::None)
+        if (builtinAtIndex(intrinsicFoundOn(receiver, name)) == Builtin::None)
             continue;
         if (found != Receiver::None)
             return Receiver::None;

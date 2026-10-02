@@ -37,50 +37,39 @@ class JSGlobalObject;
 class JSObject;
 class VM;
 
-// A numbering of what JSGlobalObject::makeIntrinsicsImmutable() has made immutable: the variables of the global object, the plain
-// properties of the objects that they hold, and so on recursively. The numbers are the same in every realm of every process that
-// runs the same engine, so code that was compiled elsewhere can use them. This class describes each intrinsic without referring to
-// any heap object, so that compiler threads can use it. The values themselves belong to the realm
-// (JSGlobalObject::immutableIntrinsics()).
 class ImmutableIntrinsics {
     WTF_MAKE_TZONE_ALLOCATED(ImmutableIntrinsics);
     WTF_MAKE_NONCOPYABLE(ImmutableIntrinsics);
 public:
     static constexpr unsigned maximumCount = 1024;
-    static constexpr unsigned globalObject = 0; // The first is the global object itself.
+    static constexpr unsigned globalObject = 0;
 
     struct Entry {
         String name;
-        EncodedJSValue primitive { 0 }; // The value, if it is not a cell.
-        uint16_t holder { 0 }; // The number of the object that has this property.
-        uint16_t canonical { 0 }; // The canonical number of the object, which may be reachable through more than one property.
-        JSType type { CellType }; // If it is a cell.
+        EncodedJSValue primitive { 0 };
+        uint16_t holder { 0 };
+        uint16_t canonical { 0 };
+        JSType type { CellType };
         bool isCell { false };
-        // For a builtin that is written in JavaScript: its BuiltinCodeIndex, plus one. Only set if the realm was created in the
-        // ordinary way, as it is in a process that compiles.
         uint16_t builtinCode { 0 };
     };
 
-    // Null until a realm has been made with VM::useImmutableIntrinsics.
     JS_EXPORT_PRIVATE static const ImmutableIntrinsics* NODELETE shared();
 
     unsigned count() const { return m_entries.size(); }
     const Entry& at(unsigned number) const { return m_entries[number]; }
-    // The property, or the variable, of that name of the object that `holder` is. Zero: none that is fixed.
     JS_EXPORT_PRIVATE unsigned find(unsigned holder, const StringImpl& name) const;
     uint32_t hash() const { return m_hash; }
 
-    // For a compiler in a process that has had no use for a realm.
     JS_EXPORT_PRIVATE static void ensureShared(VM&);
 
-    // For the realm, when it has fixed them: the values, by number.
-    static Vector<EncodedJSValue> describe(JSGlobalObject*, std::span<const ASCIILiteral> namesOfVariables);
+    static Vector<EncodedJSValue> describe(JSGlobalObject*, std::span<const ASCIILiteral> variableNames);
 
 private:
     ImmutableIntrinsics() = default;
 
     Vector<Entry> m_entries;
-    UncheckedKeyHashMap<uint64_t, uint16_t> m_numbers; // By holder and the hash of the name.
+    UncheckedKeyHashMap<uint64_t, uint16_t> m_numbers;
     uint32_t m_hash { 0 };
 };
 

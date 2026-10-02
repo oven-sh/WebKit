@@ -16,13 +16,6 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// Determines which numbers are integers, and their ranges (see IntegerRange). JavaScript has one number type, but most numbers in a
-// program are counters or indices. Those are kept in integer registers when that is proven to make no observable difference.
-// Nothing here is speculative.
-//
-// A value that changes in a loop is bounded by the loop's exit test, which is looked for on the edges that lead to a phi. Without
-// such a test, or if the bound is unknown, incrementing still cannot get past 2^53. That is where a double stops counting too (2^53
-// + 1 is 2^53), and the lowering of op_inc saturates in the same way.
 class RangeAnalysis {
 public:
     RangeAnalysis(Graph& graph)
@@ -33,7 +26,6 @@ public:
     void run()
     {
         m_frameRegisters.fill(FrameRegister { }, m_graph.numRegisters());
-        // Ascend from the bottom of the lattice to a fixpoint, widening where a phi keeps growing.
         bool changed = true;
         while (changed) {
             changed = false;
@@ -45,7 +37,6 @@ public:
             }
             changed |= std::exchange(m_elementsChanged, false);
         }
-        // Recomputing from a sound solution gives a sound solution, which is often narrower.
         for (unsigned pass = 0; pass < 2; ++pass) {
             for (BasicBlock* block : m_graph.m_rpo) {
                 for (Node* phi : block->phis)
@@ -54,9 +45,6 @@ public:
                     node->range = compute(node);
             }
         }
-        // So far, the values that re-enter the fast copy of a loop from the generic copy have been ignored. They are only admitted
-        // if they are within the ranges of the loop's own values. Had they been included, a range that had once been widened too
-        // far would justify itself.
         m_reentering = true;
         for (BasicBlock* block : m_graph.m_rpo) {
             if (!block->isReentry)
@@ -84,7 +72,6 @@ private:
 
     static void settle(Node* node)
     {
-        // The node is never reached. It is compiled anyway, according to its type.
         if (node->range.isNone())
             node->range = Range::unknown();
     }
@@ -123,7 +110,6 @@ private:
         return true;
     }
 
-    // The range implied by the type of a value that is known to be a number.
     static Range byType(Node* node)
     {
         if (node->type && !mayBe(node->type, TDouble))
@@ -160,7 +146,6 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // The range of the value on the edge from one block to the other, refined by the branch condition.
     Range onEdge(Node* value, BasicBlock* from, BasicBlock* to)
     {
         Range range = value->range;
@@ -172,14 +157,14 @@ private:
 
         VirtualRegister lhs;
         VirtualRegister rhs;
-        Relation whenTaken;
+        Relation takenRelation;
         switch (branch->opcode) {
 #define AOT_CASE(Struct, opcodeName, relation) \
         case opcodeName: { \
             auto bytecode = branch->as<Struct>(); \
             lhs = bytecode.m_lhs; \
             rhs = bytecode.m_rhs; \
-            whenTaken = relation; \
+            takenRelation = relation; \
             break; \
         }
         AOT_CASE(OpJless, op_jless, Relation::Less)
@@ -198,11 +183,10 @@ private:
         Node* right = branch->use(rhs);
         if (left == right || (value != left && value != right))
             return range;
-        // Both operands are integers, so if a relation does not hold, its negation does.
         Node* other = value == left ? right : left;
         if (!other->range.isKnown() || !isSubtype(other->type, TNumber))
             return range;
-        Relation relation = to == from->successors[0] ? whenTaken : negated(whenTaken);
+        Relation relation = to == from->successors[0] ? takenRelation : negated(takenRelation);
         if (value == right)
             relation = mirrored(relation);
         switch (relation) {
@@ -219,13 +203,11 @@ private:
             range.min = std::max(range.min, other->range.min);
             break;
         }
-        // The edge is never taken.
         if (range.min > range.max)
             return Range::none();
         return range;
     }
 
-    // The range of a value that may not be a number applies in case it is one. A later check establishes that.
     Range compute(Node* node)
     {
         if (node->type && !mayBe(node->type, TNumber))
@@ -246,7 +228,6 @@ private:
             return byType(node);
         }
         case NodeKind::Narrow: {
-            // The reentry test ensures that the value is within the range of the loop's own values.
             if (!m_reentering && node->target)
                 return Range::none();
             Range range = node->uses[0].node->range;
@@ -259,16 +240,12 @@ private:
                 return Range::none();
             return Range::of(std::max(range.min, wanted.min), std::min(range.max, wanted.max));
         }
-        // A register that lives in the frame holds what was last stored to it, as for its type (Graph::frameRegisterTypes). Without
-        // this, a counter that is live into an exception handler would come back from the frame as an arbitrary number, and
-        // would be kept as a double in the whole loop.
         case NodeKind::GetStack:
             return m_frameRegisters[m_graph.registerIndex(node->reg)].range;
         case NodeKind::SetStack: {
             FrameRegister& stored = m_frameRegisters[m_graph.registerIndex(node->reg)];
             Range result = stored.range.unionWith(node->uses[0].node->range);
             if (result != stored.range) {
-                // Widened like a phi: a cycle may go through the frame alone.
                 if (result.isKnown() && stored.range.isKnown() && ++stored.updates > 2) {
                     if (result.max > stored.range.max)
                         result.max = widenUp(result.max);
@@ -289,18 +266,15 @@ private:
 
     Range computeBytecode(Node* node)
     {
-        // Whatever the generic copy of a loop stores, the fast copy stores too, with more precise ranges.
         if (auto [array, element] = m_graph.arrayAndElementStored(node); array && Graph::isLocallyAllocatedArray(array) && !node->block->isGeneric)
             noteElement(array, element);
 
-        // For arithmetic operands. Arithmetic converts a value that is not a number, so its range says nothing.
         auto rangeOf = [&](VirtualRegister reg) {
             Node* operand = node->use(reg);
             if (operand->type && !isSubtype(operand->type, TNumber))
                 return Range::unknown();
             return operand->range;
         };
-        // An unreached operand makes the result unreached, and an unknown operand makes it unknown.
 #define AOT_OPERANDS(a, b) \
         if (a.isNone() || b.isNone()) \
             return Range::none(); \
@@ -327,7 +301,6 @@ private:
             Range a = rangeOf(bytecode.m_lhs);
             Range b = rangeOf(bytecode.m_rhs);
             AOT_OPERANDS(a, b)
-            // Zero times a negative number is negative zero, which is not an integer here.
             if ((a.min < 0 || b.min < 0) && (a.contains(0) || b.contains(0)))
                 return Range::unknown();
             int64_t min = INT64_MAX;
@@ -348,8 +321,6 @@ private:
             Range a = rangeOf(bytecode.m_lhs);
             Range b = rangeOf(bytecode.m_rhs);
             AOT_OPERANDS(a, b)
-            // The result has the sign of the dividend, which may give negative zero, and the remainder of a division by zero is
-            // NaN.
             if (a.min < 0 || b.min <= 0)
                 return Range::unknown();
             return Range::of(0, std::min(a.max, b.max - 1));
@@ -383,7 +354,6 @@ private:
             Range b = rangeOf(bytecode.m_rhs);
             if (a.isNone() || b.isNone())
                 return Range::none();
-            // A bitwise AND with a non-negative mask is at most the mask.
             int64_t max = INT32_MAX;
             bool nonNegative = false;
             for (Range operand : { a, b }) {
@@ -425,8 +395,6 @@ private:
                         break;
                     }
                 }
-                // An array that the function only stores integers in probably has Int32 storage. In the fast copy of a loop, the
-                // guard only passes elements from that kind of storage.
                 Node* array = node->use(node->as<OpGetByVal>().m_base);
                 if (node->guard && isSubtype(node->type, TNumber) && Graph::isLocallyAllocatedArray(array)) {
                     if (array->opcode == op_new_array) {
@@ -440,9 +408,8 @@ private:
         case op_argument_count:
             return Range::of(0, INT32_MAX);
         case op_call: {
-            if (node->guard && m_graph.intrinsicOfCall(node) == CallIntrinsic::StringCharCodeAt)
+            if (node->guard && m_graph.callIntrinsic(node) == CallIntrinsic::StringCharCodeAt)
                 return Range::of(0, UINT16_MAX);
-            // @toLength() of an integer is the integer, or zero if it is negative.
             auto bytecode = node->as<OpCall>();
             if (bytecode.m_argc != 2 || Graph::linkTimeConstantOf(node->use(bytecode.m_callee)) != LinkTimeConstant::toLength)
                 return byType(node);
@@ -454,7 +421,6 @@ private:
             return Range::of(std::max<int64_t>(argument.min, 0), std::max<int64_t>(argument.max, 0));
         }
         case op_get_length: {
-            // In the fast copy of a loop, the guard only passes an int32 length.
             Type base = node->use(node->as<OpGetLength>().m_base)->type;
             if (node->guard || (base && isSubtype(base, TString)))
                 return Range::of(0, INT32_MAX);
@@ -484,10 +450,7 @@ private:
     }
 
     Graph& m_graph;
-    // For each array that the function creates: none if no store to it has been seen, and the whole int32 range if only integers
-    // are stored.
     UncheckedKeyHashMap<Node*, Range> m_elements;
-    // Indexed by Graph::registerIndex(): the union of everything stored to each frame register.
     struct FrameRegister {
         Range range { Range::none() };
         unsigned updates { 0 };

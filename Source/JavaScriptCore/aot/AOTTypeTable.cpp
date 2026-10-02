@@ -24,7 +24,6 @@ const TypeTable* TypeTable::shared()
     return s_shared;
 }
 
-// FIXME: Document the file format here. It is currently defined only by the script that generates the table.
 void TypeTable::load(VM& vm)
 {
     if (s_shared || !Options::aotTypeTablePath())
@@ -52,7 +51,7 @@ void TypeTable::load(VM& vm)
         at += (length + 3) & ~3u;
     }
     for (ASCIILiteral name : { "constructor"_s, "__defineGetter__"_s, "__defineSetter__"_s, "hasOwnProperty"_s, "__lookupGetter__"_s, "__lookupSetter__"_s, "isPrototypeOf"_s, "propertyIsEnumerable"_s, "toString"_s, "valueOf"_s, "__proto__"_s, "toLocaleString"_s })
-        table->m_namesOfObjectPrototype.append(Identifier::fromString(vm, name));
+        table->m_objectPrototypeNames.append(Identifier::fromString(vm, name));
     size_t start = at;
     table->m_words.grow((bytes.size() - start) / 4);
     memcpy(table->m_words.mutableSpan().data(), bytes.data() + start, bytes.size() - start);
@@ -64,14 +63,14 @@ void TypeTable::load(VM& vm)
         uint32_t properties = word();
         if (table->m_hasTypedFields)
             word();
-        at += properties * wordsOfPropertyOfLayout * 4;
+        at += properties * layoutPropertyWords * 4;
     }
     table->m_typedLayouts.append(0);
     if (table->m_hasTypedFields) {
         for (uint32_t count = word(); count--;) {
             table->m_typedLayouts.append(here());
             word();
-            at += word() * wordsOfPropertyOfLayout * 4;
+            at += word() * layoutPropertyWords * 4;
         }
     }
     table->m_types.append(0);
@@ -85,9 +84,8 @@ void TypeTable::load(VM& vm)
             continue;
         auto words = table->m_words.span().subspan(table->m_typedLayouts[number]);
         for (unsigned i = 0; i < words[1]; ++i)
-            table->m_openLayoutsWithField.add(table->m_names[words[2 + i * wordsOfPropertyOfLayout]].impl(), Vector<uint32_t> { }).iterator->value.append(number);
+            table->m_openLayoutsWithField.add(table->m_names[words[2 + i * layoutPropertyWords]].impl(), Vector<uint32_t> { }).iterator->value.append(number);
     }
-    // Assign field IDs: consecutive numbers among the fields that share a slot, across all typed layouts.
     {
         uint32_t last[Structure::numberOfSlotsWithFieldIDs] { };
         for (uint32_t number = 1; number < table->m_typedLayouts.size(); ++number) {
@@ -95,10 +93,10 @@ void TypeTable::load(VM& vm)
                 continue;
             auto words = table->m_words.span().subspan(table->m_typedLayouts[number]);
             for (unsigned i = 0; i < words[1]; ++i) {
-                auto name = words.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+                auto name = words.subspan(2 + i * layoutPropertyWords, layoutPropertyWords);
                 unsigned slot = name[1] & 0xffff;
                 if (slot < Structure::numberOfSlotsWithFieldIDs && last[slot] + 1 < Structure::ambiguousFieldID)
-                    table->m_idsOfFields.add({ number, table->m_names[name[0]].impl() }, static_cast<uint16_t>(++last[slot]));
+                    table->m_fieldIDs.add({ number, table->m_names[name[0]].impl() }, static_cast<uint16_t>(++last[slot]));
             }
         }
     }
@@ -110,7 +108,7 @@ void TypeTable::noteComparedWithString(const Field& field) const
 {
     if (!m_hasTypedFields || field.fieldType.atoms || !(field.fieldType.kinds & SoundTypeString))
         return;
-    Locker locker { m_lockOfFieldsCompared };
+    Locker locker { m_fieldsComparedLock };
     m_fieldsCompared.add(static_cast<uint64_t>(field.first) << 32 | static_cast<uint64_t>(field.slot) << 16 | field.id);
 }
 
@@ -120,27 +118,26 @@ void TypeTable::finalizeAtomizedFields()
     if (!table || !table->m_hasTypedFields || table->m_fieldsCompared.isEmpty())
         return;
     auto words = table->m_words.mutableSpan();
-    UncheckedKeyHashSet<uint64_t> names; // Typed layout << 32 | (index in m_names + 1).
+    UncheckedKeyHashSet<uint64_t> names;
     for (uint32_t number = 1; number < table->m_typedLayouts.size(); ++number) {
         if (!table->isUsable(number))
             continue;
         auto record = words.subspan(table->m_typedLayouts[number]);
         for (unsigned i = 0; i < record[1]; ++i) {
-            auto name = record.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+            auto name = record.subspan(2 + i * layoutPropertyWords, layoutPropertyWords);
             if (!(name[2] & SoundTypeString) || (name[2] & TypedLayoutTable::stringsAreAtoms))
                 continue;
-            uint16_t id = table->m_idsOfFields.get({ number, table->m_names[name[0]].impl() });
+            uint16_t id = table->m_fieldIDs.get({ number, table->m_names[name[0]].impl() });
             if (!table->m_fieldsCompared.contains(static_cast<uint64_t>(number) << 32 | static_cast<uint64_t>(name[1] & 0xffff) << 16 | id))
                 continue;
             name[2] |= TypedLayoutTable::stringsAreAtoms;
             names.add(static_cast<uint64_t>(number) << 32 | (name[0] + 1));
         }
     }
-    // The same information is repeated wherever a layout or a type has the field, so update those copies too.
     for (uint32_t number = 1; number < table->m_layouts.size(); ++number) {
         auto layout = words.subspan(table->m_layouts[number]);
         for (unsigned i = 0; i < layout[1]; ++i) {
-            auto property = layout.subspan(table->wordsBeforePropertiesOfLayout() + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+            auto property = layout.subspan(table->layoutHeaderWords() + i * layoutPropertyWords, layoutPropertyWords);
             if (names.contains(static_cast<uint64_t>(layout[2]) << 32 | (property[0] + 1)))
                 property[2] |= TypedLayoutTable::stringsAreAtoms;
         }
@@ -150,7 +147,7 @@ void TypeTable::finalizeAtomizedFields()
         if (record.size() < 3 || record[0] != Shape)
             continue;
         for (unsigned i = 0; i < record[2]; ++i) {
-            auto field = record.subspan(3 + i * wordsOfField, wordsOfField);
+            auto field = record.subspan(3 + i * fieldWords, fieldWords);
             if (field[2] && names.contains(static_cast<uint64_t>(field[2]) << 32 | (field[0] + 1)))
                 field[7] |= TypedLayoutTable::stringsAreAtoms;
         }
@@ -171,7 +168,7 @@ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringI
     if (words.size() < 3 || words[0] != Shape)
         return std::nullopt;
     for (unsigned i = 0; i < words[2]; ++i) {
-        auto field = words.subspan(3 + i * wordsOfField, wordsOfField);
+        auto field = words.subspan(3 + i * fieldWords, fieldWords);
         if (m_names[field[0]].impl() != name)
             continue;
         uint32_t bits = field[1] >> 16;
@@ -179,11 +176,10 @@ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringI
             return std::nullopt;
         if (m_hasTypedFields && !isUsable(field[2]))
             return std::nullopt;
-        bool isInherited = m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; });
+        bool isInherited = m_objectPrototypeNames.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; });
         uint16_t id = 0;
         if (m_hasTypedFields && usesFieldIDs(field[2])) {
-            id = m_idsOfFields.get({ field[2], name });
-            // (An object without such an own property inherits Object.prototype's, which an empty slot cannot represent.)
+            id = m_fieldIDs.get({ field[2], name });
             if (!id || isInherited)
                 return std::nullopt;
         }
@@ -192,27 +188,24 @@ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringI
     return std::nullopt;
 }
 
-std::optional<TypeTable::Field> TypeTable::fieldOfLayout(uint32_t number, UniquedStringImpl* name) const
+std::optional<TypeTable::Field> TypeTable::layoutField(uint32_t number, UniquedStringImpl* name) const
 {
     if (!m_hasTypedFields || !number || number >= m_typedLayouts.size() || !isUsable(number))
         return std::nullopt;
     auto words = m_words.span().subspan(m_typedLayouts[number]);
     for (unsigned i = 0; i < words[1]; ++i) {
-        auto entry = words.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+        auto entry = words.subspan(2 + i * layoutPropertyWords, layoutPropertyWords);
         if (m_names[entry[0]].impl() != name)
             continue;
         bool mayBeAbsent = !!(entry[1] >> 16);
-        // (An object without such an own property inherits Object.prototype's.)
-        if (mayBeAbsent && m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; }))
+        if (mayBeAbsent && m_objectPrototypeNames.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; }))
             return std::nullopt;
         uint16_t id = 0;
         if (usesFieldIDs(number)) {
-            id = m_idsOfFields.get({ number, name });
+            id = m_fieldIDs.get({ number, name });
             if (!id)
                 return std::nullopt;
         }
-        // (Fields may be empty even if the types say they are present: an object that is only known by its typed layout may still
-        // be under construction.)
         return withId(id, Field { static_cast<uint16_t>(entry[1]), mayBeAbsent, static_cast<uint8_t>(inlineSlotsOf(number)), true, safeCast<uint16_t>(number), safeCast<uint16_t>(number), 0, 0, 0,
             FieldType::from(entry[2], entry[3]) });
     }
@@ -231,13 +224,13 @@ bool TypeTable::isNonEscapingMethod(uint32_t classType, UniquedStringImpl* name)
     return false;
 }
 
-uint32_t TypeTable::classOfMethodReadBy(uint32_t type, UniquedStringImpl* name) const
+uint32_t TypeTable::methodClassReadBy(uint32_t type, UniquedStringImpl* name) const
 {
     auto words = record(type);
     if (words.size() < 3 || words[0] != Shape)
         return 0;
     for (unsigned i = 0; i < words[2]; ++i) {
-        auto field = words.subspan(3 + i * wordsOfField, wordsOfField);
+        auto field = words.subspan(3 + i * fieldWords, fieldWords);
         if (m_names[field[0]].impl() == name)
             return (field[1] >> 16 & 16) && isClass(field[6]) ? field[6] : 0;
     }
@@ -257,11 +250,10 @@ std::optional<TypeTable::Layout> TypeTable::layoutOf(uint32_t type) const
         if (!isUsable(layout[2]))
             return std::nullopt;
         result.layoutID = safeCast<uint16_t>(layout[2]);
-        // (Properties of a literal that the typed layout has no slot for come after the layout's slots, and are inline like them.)
         result.inlineSlots = std::max<unsigned>(inlineSlotsOf(layout[2]), result.capacity);
     }
     for (unsigned i = 0; i < layout[1]; ++i) {
-        auto property = layout.subspan(wordsBeforePropertiesOfLayout() + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+        auto property = layout.subspan(layoutHeaderWords() + i * layoutPropertyWords, layoutPropertyWords);
         result.properties.append({ m_names[property[0]].impl(), safeCast<uint16_t>(property[1]) });
     }
     return result;
@@ -292,7 +284,7 @@ unsigned TypeTable::inlineSlotsNeededFor(std::span<UniquedStringImpl* const> nam
         if (usesFieldIDs(layoutID)) {
             wanted = 0;
             for (UniquedStringImpl* name : names) {
-                if (auto field = fieldOfLayout(layoutID, name))
+                if (auto field = layoutField(layoutID, name))
                     wanted = std::max<unsigned>(wanted, field->slot + 1);
             }
         }
@@ -319,16 +311,16 @@ TypeTable::TypedLayout TypeTable::typedLayout(uint32_t number) const
     result.inlineSlots = words[0] >> 16 & 0xff;
     result.usesFieldIDs = usesFieldIDs(number);
     for (unsigned i = 0; i < words[1]; ++i) {
-        auto name = words.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
-        result.fields.append({ m_names[name[0]].impl(), static_cast<uint16_t>(name[1]), !!(name[1] >> 16), FieldType::from(name[2], name[3]), m_idsOfFields.get({ number, m_names[name[0]].impl() }) });
+        auto name = words.subspan(2 + i * layoutPropertyWords, layoutPropertyWords);
+        result.fields.append({ m_names[name[0]].impl(), static_cast<uint16_t>(name[1]), !!(name[1] >> 16), FieldType::from(name[2], name[3]), m_fieldIDs.get({ number, m_names[name[0]].impl() }) });
     }
     return result;
 }
 
-Vector<TypeTable::FieldType, 8> TypeTable::fieldTypesBySlotOfLayout(uint32_t number, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots) const
+Vector<TypeTable::FieldType, 8> TypeTable::layoutFieldTypesBySlot(uint32_t number, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots) const
 {
     if (!isUsable(number) || !usesFieldIDs(number))
-        return fieldTypesBySlotOfLayout(number);
+        return layoutFieldTypesBySlot(number);
     Vector<FieldType, 8> result;
     auto layout = this->typedLayout(number);
     for (unsigned i = 0; i < names.size() && i < slots.size(); ++i) {
@@ -343,7 +335,7 @@ Vector<TypeTable::FieldType, 8> TypeTable::fieldTypesBySlotOfLayout(uint32_t num
     return result;
 }
 
-Vector<TypeTable::FieldType, 8> TypeTable::fieldTypesBySlotOfLayout(uint32_t number) const
+Vector<TypeTable::FieldType, 8> TypeTable::layoutFieldTypesBySlot(uint32_t number) const
 {
     Vector<FieldType, 8> result;
     auto layout = this->typedLayout(number);
@@ -361,7 +353,7 @@ Vector<TypeTable::FieldType, 8> TypeTable::fieldTypesBySlot(uint32_t number) con
     auto layout = m_words.span().subspan(m_layouts[number]);
     result.grow(layout[0]);
     for (unsigned i = 0; i < layout[1]; ++i) {
-        auto property = layout.subspan(wordsBeforePropertiesOfLayout() + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+        auto property = layout.subspan(layoutHeaderWords() + i * layoutPropertyWords, layoutPropertyWords);
         result[property[1]] = FieldType::from(property[2], property[3]);
     }
     return result;

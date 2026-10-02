@@ -1,5 +1,4 @@
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// Allocation, conversions and the caches behind property access, in code from the static compiler.
 
 function shouldBe(actual, expected) {
     if (JSON.stringify(actual) !== JSON.stringify(expected))
@@ -12,7 +11,6 @@ function shouldThrow(f, type) {
         throw new Error("did not throw " + type.name + ": " + error);
 }
 
-// A property found on the prototype chain, and what can happen to it.
 (function () {
     function getM(o) { return o.m; }
     class Base { m() { return "base"; } }
@@ -42,7 +40,6 @@ function shouldThrow(f, type) {
     shouldBe(getM("string"), undefined);
 })();
 
-// A property that is nowhere, until it is.
 (function () {
     function getMissing(o) { return o.missing; }
     const prototype = { };
@@ -56,7 +53,6 @@ function shouldThrow(f, type) {
     delete prototype.missing;
     for (let i = 0; i < 10; ++i)
         shouldBe(getMissing(object), undefined);
-    // Object.prototype cannot be added to in a program that is compiled ahead of time.
     Object.prototype.missing = 1;
     for (let i = 0; i < 10; ++i)
         shouldBe(getMissing({ a: 1 }), undefined);
@@ -64,7 +60,6 @@ function shouldThrow(f, type) {
     shouldThrow(() => getMissing(null), TypeError);
 })();
 
-// A new property, and a prototype that comes to have a say.
 (function () {
     function Point(x) { this.x = x; this.y = 2; }
     function setZ(o) { o.z = 3; return o; }
@@ -86,7 +81,6 @@ function shouldThrow(f, type) {
     shouldBe(new Point(1), { x: 1, y: 2 });
 })();
 
-// Sites that see many structures, by name and by value, with more properties than fit in an object.
 (function () {
     function get(o) { return o.k; }
     function set(o, v) { o.k = v; }
@@ -126,7 +120,6 @@ function shouldThrow(f, type) {
     shouldBe(150 in array, false);
 })();
 
-// Allocation.
 (function () {
     function literal(a) { return { a, b: [a, a + 1], c: { d: a } }; }
     function closures(a) { let b = a; return [() => b++, function () { return b; }, function* () { yield b; }, async () => b]; }
@@ -147,7 +140,6 @@ function shouldThrow(f, type) {
     shouldBe([/a/g.flags, /b/.test("abc"), new Array(3).length, `x${1}y${{ toString() { return "z"; } }}`], ["g", true, 3, "x1yz"]);
 })();
 
-// Conversions and tests.
 (function () {
     function types(...values) { return values.map(v => typeof v); }
     function sloppyThis() { return typeof this; }

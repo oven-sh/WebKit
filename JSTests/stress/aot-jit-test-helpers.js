@@ -1,6 +1,5 @@
 //@ skip if $architecture != "arm64"
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// noInline() and friends set flags on an executable. A prebuilt executable is read-only, in either form.
 
 function plain() { return 1; }
 class WithConstructor { constructor() { this.x = 2; } method() { return 3; } }

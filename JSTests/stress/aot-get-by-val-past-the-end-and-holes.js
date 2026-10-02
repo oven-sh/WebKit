@@ -1,5 +1,4 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-// Reading past the end of an array or in a hole is undefined only for as long as nothing it inherits from has such a property.
 function at(a, i) { return a[i]; }
 noInline(at);
 function check(actual, expected, what) {
@@ -25,7 +24,6 @@ Array.prototype[5] = "array prototype";
 for (let a of [ints, doubles, objects, empty, sub, sparse])
     check(at(a, 5), "array prototype", "after Array.prototype[5]");
 check(at(ints, 7), undefined, "still nothing at 7");
-// (Unlike Object.prototype, in a program that is compiled ahead of time.)
 Object.prototype[7] = "object prototype";
 for (let a of [ints, doubles, objects, empty, sub, sparse, withProto])
     check(at(a, 7), undefined, "after Object.prototype[7]");

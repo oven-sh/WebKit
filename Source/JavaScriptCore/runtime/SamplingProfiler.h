@@ -75,7 +75,7 @@ public:
         const void* cCodePC { nullptr };
         CalleeBits unverifiedCallee;
         CodeBlock* verifiedCodeBlock { nullptr };
-        AOT::FunctionRef aotFunction; // Set instead for a frame of AOT code, which has no CodeBlock unless one is requested.
+        AOT::FunctionRef aotFunction;
         CallSiteIndex callSiteIndex;
         NativeCallee::Category nativeCalleeCategory { NativeCallee::Category::InlineCache };
 #if ENABLE(WEBASSEMBLY)

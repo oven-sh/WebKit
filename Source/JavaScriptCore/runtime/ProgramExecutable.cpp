@@ -119,7 +119,7 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         RELEASE_AND_RETURN(throwScope, error.toErrorObject(globalObject, source()));
 
 #if ENABLE(AOT)
-    if (unlinkedCodeBlock->isWithoutCode())
+    if (unlinkedCodeBlock->hasNoInstructions())
         AOT::Instance::ensure(globalObject).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
 #endif
 
@@ -135,9 +135,9 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     const VariableEnvironment& variableDeclarations = unlinkedCodeBlock->variableDeclarations();
     const VariableEnvironment& lexicalDeclarations = unlinkedCodeBlock->lexicalDeclarations();
     size_t numberOfFunctions = unlinkedCodeBlock->numberOfFunctionDecls();
-    auto nameOfFunction = [&](size_t i) -> const Identifier& {
+    auto functionName = [&](size_t i) -> const Identifier& {
 #if USE(BUN_JSC_ADDITIONS)
-        if (FunctionExecutable* executable = unlinkedCodeBlock->executableOfFunctionDecl(i))
+        if (FunctionExecutable* executable = unlinkedCodeBlock->functionDeclExecutable(i))
             return executable->name();
 #endif
         return unlinkedCodeBlock->functionDecl(i)->name();
@@ -198,17 +198,17 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         }
 
         for (size_t i = 0; i < numberOfFunctions; ++i) {
-            ASSERT(!nameOfFunction(i).isEmpty());
-            bool canDeclare = globalObject->canDeclareGlobalFunction(nameOfFunction(i));
+            ASSERT(!functionName(i).isEmpty());
+            bool canDeclare = globalObject->canDeclareGlobalFunction(functionName(i));
             RETURN_IF_EXCEPTION(throwScope, nullptr);
             if (!canDeclare) {
                 if (requiresCanDeclareGlobalFunctionQuirk()) {
                     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-                    JSCell::deleteProperty(globalObject, globalObject, nameOfFunction(i));
+                    JSCell::deleteProperty(globalObject, globalObject, functionName(i));
                     RETURN_IF_EXCEPTION(throwScope, nullptr);
                     continue;
                 }
-                return createErrorForInvalidGlobalFunctionDeclaration(globalObject, nameOfFunction(i));
+                return createErrorForInvalidGlobalFunctionDeclaration(globalObject, functionName(i));
             }
         }
 
@@ -256,8 +256,8 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     }
 
     for (size_t i = 0; i < numberOfFunctions; ++i) {
-        ASSERT(!nameOfFunction(i).isEmpty());
-        globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(nameOfFunction(i));
+        ASSERT(!functionName(i).isEmpty());
+        globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(functionName(i));
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         if (vm.typeProfiler() || vm.controlFlowProfiler()) {
             UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);

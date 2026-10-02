@@ -54,7 +54,6 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
 
 void FunctionExecutable::becomeSharedAcrossRealms(VM& vm)
 {
-    // (Which code it belongs to depends on the instance: AOT::Instance::topLevelExecutableOf().)
     m_topLevelExecutable.clear();
     m_singleton.invalidate(vm, StringFireDetail("It is shared by every realm"));
 }
@@ -62,7 +61,6 @@ void FunctionExecutable::becomeSharedAcrossRealms(VM& vm)
 FunctionExecutable* FunctionExecutable::createInShortForm(VM& vm, const uint64_t (&entry)[2], const uint32_t (&index)[2])
 {
     static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_jitCodeForCallWithArityCheck) == sizeOfShortForm);
-    // (Among the cells that have nothing to destroy. There is nothing in it for the collector to visit either.)
     void* cell = vm.cellSpace().allocate(vm, sizeOfShortForm, nullptr, AllocationFailureMode::Assert);
     auto* result = static_cast<FunctionExecutable*>(cell);
     Structure* structure = vm.shortFunctionExecutableStructure.get();
@@ -76,18 +74,16 @@ FunctionExecutable* FunctionExecutable::createInShortForm(VM& vm, const uint64_t
     return result;
 }
 
-// AOT::Stub::EnterStaticFunctionForCall, EnterStaticFunctionForConstruct and ConstructByCalling, once an AOT::RuntimeTable exists.
-// (The interpreter uses these too: virtualThunkFor.)
 extern "C" {
 JS_EXPORT_PRIVATE void* g_aotStaticFunctionEntrypoints[3] { };
 }
 
-CodePtr<JSEntryPtrTag> ExecutableBase::entrypointOfStaticCode(CodeSpecializationKind kind) const
+CodePtr<JSEntryPtrTag> ExecutableBase::staticCodeEntrypoint(CodeSpecializationKind kind) const
 {
     unsigned which = static_cast<unsigned>(kind);
     if (!m_aotEntry[which])
         return nullptr;
-    if (kind == CodeSpecializationKind::CodeForConstruct && m_aotIndex[which] == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
+    if (kind == CodeSpecializationKind::CodeForConstruct && m_aotIndex[which] == FunctionExecutable::aotConstructViaCallIndex)
         which = 2;
     ASSERT(g_aotStaticFunctionEntrypoints[which]);
     return CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_aotStaticFunctionEntrypoints[which]);
@@ -147,7 +143,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     if (thisObject->isShortForm())
         return;
-    thisObject = thisObject->inFull();
+    thisObject = thisObject->fullForm();
 #if USE(BUN_JSC_ADDITIONS)
     thisObject->visitSourceFetcher(visitor);
 #endif
@@ -221,59 +217,56 @@ FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, J
     return executable;
 }
 
-// ---- The short form
-
 #if ENABLE(AOT)
-const AOT::RowOfExecutable& ScriptExecutable::rowOfShortForm() const
+const AOT::ExecutableRow& ScriptExecutable::shortFormRow() const
 {
-    return AOT::ProgramData::get()->rowOfExecutableOfFunction(indexOfShortForm());
+    return AOT::ProgramData::get()->executableRowForFunction(shortFormIndex());
 }
 
-UnlinkedFunctionExecutable* FunctionExecutable::unlinkedExecutableOfShortForm() const
+UnlinkedFunctionExecutable* FunctionExecutable::shortFormUnlinkedExecutable() const
 {
-    return AOT::ProgramOfVM::of(vm())->unlinkedFunction(rowOfShortForm().unlinkedFunction, true);
+    return AOT::VMProgram::of(vm())->unlinkedFunction(shortFormRow().unlinkedFunction, true);
 }
 
-const Identifier& FunctionExecutable::nameOfShortForm() const
+const Identifier& FunctionExecutable::shortFormName() const
 {
-    return AOT::ProgramOfVM::of(vm())->identifierAsIdentifier(rowOfShortForm().name);
+    return AOT::VMProgram::of(vm())->identifierAsIdentifier(shortFormRow().name);
 }
 
-SourceProvider* ScriptExecutable::sourceProviderOfShortForm() const
+SourceProvider* ScriptExecutable::shortFormSourceProvider() const
 {
-    return AOT::ProgramOfVM::of(vm())->providerOfModule(rowOfShortForm().module);
+    return AOT::VMProgram::of(vm())->moduleProvider(shortFormRow().module);
 }
 
-LineColumn ScriptExecutable::whereShortFormStarts() const
+LineColumn ScriptExecutable::shortFormStartPosition() const
 {
-    return AOT::ProgramData::get()->whereFunctionStarts(indexOfShortForm());
+    return AOT::ProgramData::get()->functionStartPosition(shortFormIndex());
 }
 
-// This is rarely called, and callers only want to identify the source. There is no text for the offsets to refer to.
-const SourceCode& ScriptExecutable::sourceOfShortForm() const
+const SourceCode& ScriptExecutable::shortFormSource() const
 {
-    return AOT::ProgramOfVM::of(vm())->sourceOfShortExecutable(AOT::ProgramData::get()->numberOfExecutableOfFunction(indexOfShortForm()));
+    return AOT::VMProgram::of(vm())->shortExecutableSource(AOT::ProgramData::get()->executableIndexForFunction(shortFormIndex()));
 }
 #else
-const AOT::RowOfExecutable& ScriptExecutable::rowOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
-UnlinkedFunctionExecutable* FunctionExecutable::unlinkedExecutableOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
-const Identifier& FunctionExecutable::nameOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
-SourceProvider* ScriptExecutable::sourceProviderOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
-LineColumn ScriptExecutable::whereShortFormStarts() const { RELEASE_ASSERT_NOT_REACHED(); }
-const SourceCode& ScriptExecutable::sourceOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
+const AOT::ExecutableRow& ScriptExecutable::shortFormRow() const { RELEASE_ASSERT_NOT_REACHED(); }
+UnlinkedFunctionExecutable* FunctionExecutable::shortFormUnlinkedExecutable() const { RELEASE_ASSERT_NOT_REACHED(); }
+const Identifier& FunctionExecutable::shortFormName() const { RELEASE_ASSERT_NOT_REACHED(); }
+SourceProvider* ScriptExecutable::shortFormSourceProvider() const { RELEASE_ASSERT_NOT_REACHED(); }
+LineColumn ScriptExecutable::shortFormStartPosition() const { RELEASE_ASSERT_NOT_REACHED(); }
+const SourceCode& ScriptExecutable::shortFormSource() const { RELEASE_ASSERT_NOT_REACHED(); }
 #endif
 
-CodeFeatures ScriptExecutable::featuresOfShortForm() const
+CodeFeatures ScriptExecutable::shortFormFeatures() const
 {
     return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->features();
 }
 
-LexicallyScopedFeatures ScriptExecutable::lexicallyScopedFeaturesOfShortForm() const
+LexicallyScopedFeatures ScriptExecutable::shortFormLexicallyScopedFeatures() const
 {
     return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->lexicallyScopedFeatures();
 }
 
-DerivedContextType ScriptExecutable::derivedContextTypeOfShortForm() const
+DerivedContextType ScriptExecutable::shortFormDerivedContextType() const
 {
     return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->derivedContextType();
 }
@@ -318,9 +311,7 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() { [native code] }"_s));
 
 #if USE(BUN_JSC_ADDITIONS)
-    // The result still starts the way that code which classifies functions by their source text expects.
-    // (The source of a default class constructor belongs to the engine. Its class's source belongs to the program.)
-    if ((isClass() ? classSource().provider() : sourceProvider())->hasNoText() || (Options::hideTextOfFunctionsForTesting() && !isBuiltinFunction())) [[unlikely]] {
+    if ((isClass() ? classSource().provider() : sourceProvider())->hasNoSourceText() || (Options::hideFunctionSourceForTesting() && !isBuiltinFunction())) [[unlikely]] {
         if (isClass())
             return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, ecmaName().string(), " { [native code] }"_s));
         ASCIILiteral before = "function "_s;

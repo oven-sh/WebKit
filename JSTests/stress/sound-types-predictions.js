@@ -1,9 +1,5 @@
 //@ requireOptions("--useSoundTypes=1")
 
-// The checks bound the predictions of arguments, so callers that pass values the checks reject do not cost the code after the
-// checks its types. This only tests that doing so is not observable; JSTests/microbenchmarks/sound-types-add.js and
-// --dumpGraphAtEachPhase show the effect.
-
 function shouldBe(actual, expected) {
     if (!Object.is(actual, expected))
         throw new Error(`bad value: ${String(actual)}, expected ${String(expected)}`);
@@ -16,7 +12,6 @@ function add(a, b) {
 }
 noInline(add);
 
-// Pollute the argument profiles before anything is compiled.
 for (let bad of ["s", null, undefined, { }, [], 1n, true, Symbol()]) {
     for (let args of [[bad, 1], [1, bad]]) {
         let threw = false;
@@ -37,7 +32,6 @@ for (let i = 0; i < testLoopCount; ++i) {
     shouldBe(add(NaN, i), NaN);
 }
 
-// An argument that is reassigned is only bounded until the assignment.
 function reassign(a) {
     $$t(a, 8);
     let n = a;
@@ -48,7 +42,6 @@ noInline(reassign);
 for (let i = 0; i < testLoopCount; ++i)
     shouldBe(reassign(i), String(i) + i);
 
-// Contradictory checks: no value gets past both.
 function contradiction(a) {
     $$t(a, 8);
     $$t(a, 16);
@@ -67,7 +60,6 @@ for (let i = 0; i < testLoopCount; ++i) {
     }
 }
 
-// A check that is not at the top of the function says nothing about the calls that never reach it.
 function conditional(a, check) {
     if (check) {
         $$t(a, 8);
@@ -81,7 +73,6 @@ for (let i = 0; i < testLoopCount; ++i) {
     shouldBe(conditional("s", false), "s!");
 }
 
-// Arguments that are never passed, arguments objects, and this.
 function optional(a, b) {
     $$t(a, 8);
     $$t(b, 9);

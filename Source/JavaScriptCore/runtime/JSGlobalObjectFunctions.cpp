@@ -886,7 +886,6 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     if (callFrame->argumentCount() > 1) {
         int32_t setIndex = callFrame->uncheckedArgument(1).asUInt32AsAnyInt();
 #if ENABLE(AOT)
-        // AOT code has no CodeBlock, and does not need one for this.
         if (AOT::FunctionRef caller = AOT::callerFunction(callFrame))
             excludedSet = &caller.constantIdentifierSet(setIndex);
 #endif
@@ -996,7 +995,6 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     return JSValue::encode(target);
 }
 
-// What a class that the text says something of (ClassExprNode::typeTag()) calls once it is defined. It is for code that is compiled ahead of time, which does not call this.
 JSC_DEFINE_HOST_FUNCTION(globalFuncNoteClass, (JSGlobalObject*, CallFrame*))
 {
     return JSValue::encode(jsUndefined());
@@ -1024,8 +1022,6 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
     }
 
     Structure* sourceStructure = source->structure();
-    // (An object with a typed layout has one of the program's types. The copy's layout depends on how the copy is used, which only
-    // the caller knows: see Structure::typedLayoutID().)
     if (!into && !sourceStructure->typedLayoutID() && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
             return cloned;

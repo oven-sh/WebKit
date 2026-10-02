@@ -1,7 +1,5 @@
 //@ requireOptions("--useSoundTypes=0")
 
-// With the option off (the default), $$t is an identifier like any other.
-
 function shouldBe(actual, expected) {
     if (actual !== expected)
         throw new Error(`bad value: ${String(actual)}, expected ${String(expected)}`);

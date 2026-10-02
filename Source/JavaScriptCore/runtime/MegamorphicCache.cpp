@@ -36,7 +36,7 @@ namespace JSC {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MegamorphicCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MegamorphicCache);
 
-bool MegamorphicCache::noteDependenceOnPrototypes(StructureID structureID, JSCell* upTo)
+bool MegamorphicCache::noteDependenceOnPrototypes(StructureID structureID, JSCell* lastPrototype)
 {
     for (Structure* structure = structureID.decode();;) {
         if (!structure->hasMonoProto())
@@ -46,7 +46,7 @@ bool MegamorphicCache::noteDependenceOnPrototypes(StructureID structureID, JSCel
             return true;
         JSObject* object = asObject(prototype);
         object->setIsPrototypeUsedByMegamorphicCache();
-        if (object == upTo)
+        if (object == lastPrototype)
             return true;
         structure = object->structure();
     }
@@ -85,7 +85,6 @@ void MegamorphicCache::reconcileWeakReferencesAtGCEnd(VM& vm)
     reconcileStores(m_storeCacheSecondaryEntries);
     reconcileHas(m_hasCachePrimaryEntries);
     reconcileHas(m_hasCacheSecondaryEntries);
-    // (These also depend on something that is not a cell, so they are simply invalidated.)
     for (auto& entry : m_constructionEntries)
         entry.m_epoch = invalidEpoch;
     m_hasBeenReconciled = true;

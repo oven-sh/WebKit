@@ -404,7 +404,6 @@ public:
             m_out.jump(firstDFGBasicBlock);
         }
 
-
         m_out.appendTo(m_handleExceptions, firstDFGBasicBlock);
         Box<CCallHelpers::Label> exceptionHandler = state->exceptionHandler;
         m_out.patchpoint(Void)->setGenerator(
@@ -3054,7 +3053,6 @@ private:
             [=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
 
-
                 Box<CCallHelpers::JumpList> exceptions =
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
 
@@ -4365,7 +4363,6 @@ private:
             return;
         }
 
-        // There is no need to test for a tag that the value is known not to have.
         for (unsigned tag = 1; tag < SoundTypeAll; tag <<= 1) {
             if (!(proven & speculationFromSoundTypeMask(tag)))
                 mask &= ~tag;
@@ -4396,7 +4393,7 @@ private:
         immediateMask |= mask & SoundTypeBigInt;
 #endif
 
-        bool immediatesAreLeft = true;
+        bool hasRemainingImmediates = true;
         if (cellMask) {
             LBasicBlock cellCase = m_out.newBlock();
             LBasicBlock notCellCase = immediateMask ? m_out.newBlock() : failCase;
@@ -4416,8 +4413,7 @@ private:
                 auto overridesGetCallData = [&] {
                     return m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(OverridesGetCallData));
                 };
-                // Only soundTypeTag() can tell whether such an object is callable.
-                auto askRuntimeIf = [&](LValue condition, LBasicBlock otherwise) {
+                auto deferToRuntimeIf = [&](LValue condition, LBasicBlock otherwise) {
                     LBasicBlock undecidedCase = m_out.newBlock();
                     m_out.branch(condition, rarely(undecidedCase), usually(otherwise));
                     m_out.appendTo(undecidedCase);
@@ -4454,7 +4450,7 @@ private:
                     if (acceptsArrays)
                         passIf(isArray());
                     failIf(isNotObject());
-                    askRuntimeIf(overridesGetCallData(), failCase);
+                    deferToRuntimeIf(overridesGetCallData(), failCase);
                     break;
                 case SoundTypeOtherObject:
                 case SoundTypeOtherObject | SoundTypeArray:
@@ -4463,7 +4459,7 @@ private:
                     failIf(typeIs(InternalFunctionType));
                     if (!acceptsArrays)
                         failIf(isArray());
-                    askRuntimeIf(overridesGetCallData(), continuation);
+                    deferToRuntimeIf(overridesGetCallData(), continuation);
                     break;
                 }
             }
@@ -4471,10 +4467,10 @@ private:
             if (immediateMask)
                 m_out.appendTo(notCellCase);
             else
-                immediatesAreLeft = false;
+                hasRemainingImmediates = false;
         }
 
-        if (immediatesAreLeft) {
+        if (hasRemainingImmediates) {
             constexpr unsigned otherTags = SoundTypeUndefined | SoundTypeNull;
             if ((immediateMask & otherTags) == otherTags)
                 passIf(isOther(value, proven));
@@ -6384,7 +6380,6 @@ IGNORE_CLANG_WARNINGS_END
 #endif
     }
 
-
     void compileGetArrayLength()
     {
         switch (m_node->arrayMode().type()) {
@@ -7744,7 +7739,6 @@ IGNORE_CLANG_WARNINGS_END
                 Void, slowPathFunction,
                 weakPointer(globalObject), base, index, value);
             m_out.jump(continuation);
-
 
             if (arrayMode.isSlowPut()) {
                 m_out.appendTo(inBoundCase, doStoreCase);
@@ -9207,7 +9201,6 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
-
     void compileArrayPop()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
@@ -9646,7 +9639,6 @@ IGNORE_CLANG_WARNINGS_END
             isAsyncFunction ? allocateObject<JSAsyncFunction>(structure, m_out.intPtrZero, slowPath) :
             isAsyncGeneratorFunction ? allocateObject<JSAsyncGeneratorFunction>(structure, m_out.intPtrZero, slowPath) :
             allocateObject<JSFunction>(structure, m_out.intPtrZero, slowPath);
-
 
         // We don't need memory barriers since we just fast-created the function, so it
         // must be young.
@@ -11647,7 +11639,6 @@ IGNORE_CLANG_WARNINGS_END
         setJSValue(m_out.phi(Int64, fastResult, slowResult));
     }
 
-
     void compileToStringOrCallStringConstructorOrStringValueOf()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
@@ -11832,9 +11823,9 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(testPtr);
 
         m_out.appendTo(functionExecutableCase, testPtr);
-        LBasicBlock isInFull = m_out.newBlock();
-        m_out.branch(isType(executable, ShortFunctionExecutableType), rarely(slowCase), usually(isInFull));
-        m_out.appendTo(isInFull, testPtr);
+        LBasicBlock fullFormCase = m_out.newBlock();
+        m_out.branch(isType(executable, ShortFunctionExecutableType), rarely(slowCase), usually(fullFormCase));
+        m_out.appendTo(fullFormCase, testPtr);
         LValue rareData = m_out.loadPtr(executable, m_heaps.FunctionExecutable_rareData);
         m_out.branch(m_out.notNull(rareData), usually(hasRareData), rarely(slowCase));
 
@@ -14885,7 +14876,6 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
 
-
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
 
         // Append the forms of the arguments that we will use before any clobbering happens.
@@ -16015,7 +16005,6 @@ IGNORE_CLANG_WARNINGS_END
                 knownLength = 0;
             return m_out.constInt32(knownLength);
         }
-
 
         // We need to perform the same logical operation as the code above, but through dynamic operations.
         if (!numberOfArgumentsToSkip)
@@ -19173,7 +19162,6 @@ IGNORE_CLANG_WARNINGS_END
         // If it's an Int32 and we use it as such this boxing will be DCE'd by b3 later anyway.
         lowJSValue(propertyNameEdge, ManualOperandSpeculation);
 
-
         LValue index = lowInt32(indexEdge);
         LValue mode = lowInt32(m_graph.varArgChild(m_node, 4));
         LValue enumerator = lowCell(m_graph.varArgChild(m_node, 5));
@@ -19880,7 +19868,6 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.storePtr(scope, fastObject, m_heaps.JSScope_next);
         m_out.storePtr(weakPointer(table), fastObject, m_heaps.JSSymbolTableObject_symbolTable);
-
 
         ValueFromBlock fastResult = m_out.anchor(fastObject);
         m_out.jump(continuation);
@@ -24300,7 +24287,6 @@ IGNORE_CLANG_WARNINGS_END
             m_out.add(
                 m_out.shl(m_out.zeroExt(preCapacity, pointerType()), m_out.constIntPtr(3)),
                 m_out.constIntPtr(sizeof(IndexingHeader))));
-
 
         m_out.store32(publicLength, butterfly, m_heaps.Butterfly_publicLength);
         m_out.store32(vectorLength, butterfly, m_heaps.Butterfly_vectorLength);

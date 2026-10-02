@@ -67,7 +67,6 @@ enum class TransitionKind : uint8_t {
     SetBrand = 17,
 
 #if USE(BUN_JSC_ADDITIONS)
-    // As Freeze, of what the object has. It can be given more. See Structure::inheritorsMayOverrideReadOnlyProperties().
     MakePropertiesImmutable = 18,
 #endif
 };

@@ -47,7 +47,6 @@ public:
 
     void initializeProfile(VM&, JSGlobalObject*, JSCell* owner, JSObject* prototype, unsigned inferredInlineCapacity, JSFunction* constructor = nullptr, FunctionRareData* = nullptr);
 
-    // Objects allocated from now on get that structure, which must have the same prototype as the one that it replaces.
     void replaceStructure(VM&, JSCell* owner, Structure*);
 
     Structure* structure()
@@ -128,7 +127,5 @@ public:
 private:
     WriteBarrier<JSObject> m_prototype;
 };
-
-
 
 } // namespace JSC

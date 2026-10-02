@@ -98,7 +98,6 @@ public:
 
     const Structure* structure() const { return m_structure; }
 
-
 private:
     JS_EXPORT_PRIVATE void fireAllSlow();
 
@@ -191,7 +190,6 @@ private:
     uint8_t m_attributes { 0 };
 };
 
-
 inline CompactPropertyTableEntry::CompactPropertyTableEntry(const PropertyTableEntry& entry)
     : m_data(entry.key(), ((entry.offset() << 8) | entry.attributes()))
 {
@@ -210,75 +208,46 @@ private:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
-// Runtime description of the program's typed layouts: which fields each layout has, which slot each field uses, and what each field
-// may hold. Objects refer to a layout through Structure::typedLayoutID(). The tables are part of the compiled image, are read-only,
-// and exist only if the program was compiled with typed fields.
 struct TypedLayoutTable {
     struct FieldType {
-        uint16_t kinds; // soundTypeTag() bits. Zero means unconstrained.
-        // If nonzero, the "other object" bit only admits objects whose typed layout ID is in [first, last].
+        uint16_t kinds;
         uint16_t first;
         uint16_t last;
         uint16_t unused;
     };
-    // A bit in FieldType::kinds. Short strings stored in the field are atomized in place (JSString::toAtomString()), so two short
-    // strings in such fields are equal exactly when their StringImpls are identical. Long strings and ropes are stored as they are,
-    // so that repeated concatenation does not resolve the rope each time.
     static constexpr unsigned stringsAreAtoms = 1u << 15;
-    static constexpr unsigned maxLengthOfAtomizedString = 40;
+    static constexpr unsigned maxAtomizedStringLength = 40;
     enum class StoreCheck : uint8_t { Unconstrained, Allowed, Rejected };
-    // A field of a typed layout. There are two kinds of layout.
-    //
-    // Fixed slots: each field has its own slot in every object with the layout, whether or not the object has the property, and
-    // compiled code accesses the slot without a check. To keep that sound:
-    //   - a field that is added later goes into its slot;
-    //   - a store the field type rejects, a delete of a required field, or a redefinition as anything but a plain data property
-    //     fails, like a write to a read-only property.
-    //
-    // Field IDs: fields that never occur together may share a slot, and an object only has room for the fields it has. Every access
-    // first checks Structure::fieldIDInSlot(slot) against the field's ID. IDs are unique per slot across all layouts, so a matching
-    // ID also identifies the layout and the field type.
     struct Field {
-        uint32_t identifier; // AOT::ProgramOfVM::identifier()
+        uint32_t identifier;
         uint8_t slot;
         uint8_t mayBeAbsent;
-        uint16_t id; // Zero if the layout has fixed slots.
+        uint16_t id;
     };
-    // Converts an object with no typed layout to the given layout in place, if its properties allow it. May fail for lack of space.
-    // Does not run JS code.
     using ConvertFunction = bool (*)(VM&, JSObject*, uint16_t layoutID);
 
     JS_EXPORT_PRIVATE static void setSlotTypes(std::span<const uint32_t> index, const FieldType*);
-    // index: by layout ID, the range of that layout's entries in `fields`, encoded as for setSlotTypes(). Call after
-    // setSlotTypes().
-    // fieldTypes, fieldLayoutIDs: parallel to the Field array.
-    // inlineSlots: by layout ID, the number of inline slots, or'ed with usesFieldIDsBit. Remaining slots are out of line, in order.
-    // fields: for each slot with field IDs, the Field index for each ID (IDs start at 1). startOfFields: where each slot's run
-    // starts, minus one.
-    JS_EXPORT_PRIVATE static void setFields(const uint32_t* index, const Field*, const FieldType* fieldTypes, const uint16_t* fieldLayoutIDs, const uint8_t* inlineSlots, const uint32_t* startOfFields, const uint32_t* fields, const uint16_t* layoutIDsByFieldID, ConvertFunction, bool isAuditing);
+    JS_EXPORT_PRIVATE static void setFields(const uint32_t* index, const Field*, const FieldType* fieldTypes, const uint16_t* fieldLayoutIDs, const uint8_t* inlineSlots, const uint32_t* fieldsStart, const uint32_t* fields, const uint16_t* layoutIDsByFieldID, ConvertFunction, bool isAuditing);
     static constexpr uint8_t usesFieldIDsBit = 0x80;
     static unsigned inlineSlots(uint16_t typedLayoutID) { return s_inlineSlots[typedLayoutID] & ~usesFieldIDsBit; }
     static bool usesFieldIDs(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count && (s_inlineSlots[typedLayoutID] & usesFieldIDsBit); }
-    static const Field& fieldWithID(unsigned slot, uint16_t id) { return s_fields[s_fieldIndexByID[s_firstFieldIndexOfSlot[slot] + id]]; }
-    // The layout ID of each field, indexed by field ID. Null if no layout uses field IDs.
-    static const uint16_t* layoutIDsOfFieldsInSlot(unsigned slot) { return s_layoutIDByFieldID ? s_layoutIDByFieldID + static_cast<int32_t>(s_firstFieldIndexOfSlot[slot]) : nullptr; }
-    static uint16_t layoutIDOf(const Field& field) { return s_layoutIDOfField[&field - s_fields]; }
+    static const Field& fieldWithID(unsigned slot, uint16_t id) { return s_fields[s_fieldIndexByID[s_firstSlotFieldIndex[slot] + id]]; }
+    static const uint16_t* fieldLayoutIDsInSlot(unsigned slot) { return s_layoutIDByFieldID ? s_layoutIDByFieldID + static_cast<int32_t>(s_firstSlotFieldIndex[slot]) : nullptr; }
+    static uint16_t layoutIDOf(const Field& field) { return s_fieldLayoutID[&field - s_fields]; }
     static const FieldType* fieldTypeOf(const Field& field)
     {
-        const FieldType& fieldType = s_typeOfField[&field - s_fields];
+        const FieldType& fieldType = s_fieldType[&field - s_fields];
         return fieldType.kinds ? &fieldType : nullptr;
     }
     static PropertyOffset offsetOfSlot(unsigned slot, unsigned inlineSlots) { return slot < inlineSlots ? static_cast<PropertyOffset>(slot) : firstOutOfLineOffset + static_cast<PropertyOffset>(slot - inlineSlots); }
     static PropertyOffset offsetInLayout(uint16_t typedLayoutID, unsigned slot) { return offsetOfSlot(slot, inlineSlots(typedLayoutID)); }
-    // The program was compiled with Options::auditAOTTypedFields(): rejected stores are logged and allowed.
     static bool isAuditing() { return s_isAuditing; }
     JS_EXPORT_PRIVATE static void reportViolation(ASCIILiteral what, uint16_t layoutID, JSValue);
-    JS_EXPORT_PRIVATE static ASCIILiteral s_lastConversionFailure; // Why the most recent conversion failed.
+    JS_EXPORT_PRIVATE static ASCIILiteral s_lastConversionFailure;
     static bool hasTypedFields() { return s_fields; }
     JS_EXPORT_PRIVATE static const Field* findField(VM&, uint16_t typedLayoutID, UniquedStringImpl*);
-    static std::span<const Field> fieldsOf(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count ? std::span { s_fields + (s_fieldRangeOfLayout[typedLayoutID] >> 12), s_fieldRangeOfLayout[typedLayoutID] & 0xfff } : std::span<const Field> { }; }
+    static std::span<const Field> fieldsOf(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count ? std::span { s_fields + (s_layoutFieldRange[typedLayoutID] >> 12), s_layoutFieldRange[typedLayoutID] & 0xfff } : std::span<const Field> { }; }
     static bool hasLayouts() { return s_count; }
-    // `slot` must be inline.
     static const FieldType* fieldTypeInSlot(uint16_t typedLayoutID, unsigned slot)
     {
         if (typedLayoutID >= s_count)
@@ -286,11 +255,10 @@ struct TypedLayoutTable {
         uint32_t word = s_index[typedLayoutID];
         if (slot >= (word & 0xff))
             return nullptr;
-        const FieldType& fieldType = s_typeOfSlot[(word >> 8) + slot];
+        const FieldType& fieldType = s_slotType[(word >> 8) + slot];
         return fieldType.kinds ? &fieldType : nullptr;
     }
     static unsigned numberOfSlots(uint16_t typedLayoutID) { return typedLayoutID < s_count ? s_index[typedLayoutID] & 0xff : 0; }
-    // Typed fields store every number as a double, so that readers do not need to distinguish int32 from double.
     static JSValue toFieldRepresentation(const FieldType* fieldType, JSValue value)
     {
         if (value.isInt32())
@@ -318,16 +286,16 @@ struct TypedLayoutTable {
     }
 
 private:
-    JS_EXPORT_PRIVATE static const uint32_t* s_index; // By layout ID: (index of its first entry in s_typeOfSlot) << 8 | number of slots.
+    JS_EXPORT_PRIVATE static const uint32_t* s_index;
     JS_EXPORT_PRIVATE static uint32_t s_count;
-    JS_EXPORT_PRIVATE static const FieldType* s_typeOfSlot;
-    JS_EXPORT_PRIVATE static const uint32_t* s_fieldRangeOfLayout;
+    JS_EXPORT_PRIVATE static const FieldType* s_slotType;
+    JS_EXPORT_PRIVATE static const uint32_t* s_layoutFieldRange;
     JS_EXPORT_PRIVATE static const Field* s_fields;
-    JS_EXPORT_PRIVATE static const FieldType* s_typeOfField;
-    JS_EXPORT_PRIVATE static const uint16_t* s_layoutIDOfField;
-    JS_EXPORT_PRIVATE static const uint32_t* s_firstFieldIndexOfSlot;
+    JS_EXPORT_PRIVATE static const FieldType* s_fieldType;
+    JS_EXPORT_PRIVATE static const uint16_t* s_fieldLayoutID;
+    JS_EXPORT_PRIVATE static const uint32_t* s_firstSlotFieldIndex;
     JS_EXPORT_PRIVATE static const uint32_t* s_fieldIndexByID;
-    JS_EXPORT_PRIVATE static const uint16_t* s_layoutIDByFieldID; // Parallel to s_fieldIndexByID.
+    JS_EXPORT_PRIVATE static const uint16_t* s_layoutIDByFieldID;
     JS_EXPORT_PRIVATE static const uint8_t* s_inlineSlots;
     static ConvertFunction s_convert;
     JS_EXPORT_PRIVATE static bool s_isAuditing;
@@ -451,67 +419,35 @@ public:
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
-    // Creates a Structure like `empty` (which must have no properties) plus these properties, in this order and with no attributes,
-    // without creating the intermediate transitions. The result is not in any transition table, so callers that want to share it
-    // must cache it. Returns null if a name is repeated.
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
-    // As above, but places each property in the given slot. Unused slots below the last one stay empty.
-    // reserved: number of slots to reserve whether or not they are used.
-    // inlineSlots: slots at or beyond this index are out of line (TypedLayoutTable::offsetOfSlot()).
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
-    // Copies the flags that the caller of an add-property transition normally updates.
     void copyAccessorAndReadOnlyFlagsFrom(const Structure& other)
     {
         setHasAnyKindOfGetterSetterProperties(other.hasAnyKindOfGetterSetterProperties());
         setHasReadOnlyOrGetterSetterPropertiesExcludingProto(other.hasReadOnlyOrGetterSetterPropertiesExcludingProto());
     }
     PropertyOffset nextOffsetFor(PropertyTable*, UniquedStringImpl*);
-    // The number the ahead-of-time compiler assigned to this exact layout (AOT::KnownShape), or zero. Not inherited by transitions.
-    // Compiled code stores to properties of such objects without a check, so their property replacement watchpoints are fired up
-    // front.
     uint16_t knownShape() const { return m_knownShape; }
     JS_EXPORT_PRIVATE void setKnownShape(VM&, uint16_t);
     static constexpr ptrdiff_t offsetOfKnownShape() { return OBJECT_OFFSETOF(Structure, m_knownShape); }
-    // The typed layout that objects with this Structure were allocated with, or zero. Unlike knownShape() it is inherited by every
-    // transition, so it holds for the lifetime of the object. It guarantees that each field is either still in its slot or that the
-    // slot is empty:
-    //   - an inline slot freed by a delete is never reused for another property (PropertyTable::nextOffset());
-    //   - a field that becomes an accessor is moved out of its slot (JSObject::evictTypedField());
-    //   - flattening a dictionary does not move properties.
-    // Compiled code can therefore check the layout of an object once and rely on it afterwards.
-    //
-    // If the program was compiled with typed fields (TypedLayoutTable), it also guarantees that a slot only holds values its field
-    // type accepts:
-    //   - a store of any other value first moves the property out of the slot (JSObject::putDirectInternal());
-    //   - such stores are not cacheable, so no inline cache can bypass the check.
     uint16_t typedLayoutID() const { return m_typedLayoutID; }
-    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layout); // The Structure must already have its initial properties.
-    // The TypedLayoutTable::Field::id of the property at this inline offset. Zero means none of the layout's fields for this slot
-    // is present. ambiguousFieldID means the table cannot tell and the caller must do a full lookup.
-    //
-    // For a Structure with no typed layout, or with one that has fixed slots, the same table holds property name IDs. See
-    // setPropertyNameIDInInlineSlot().
+    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layout);
     bool recordsPropertyNames() const { return !m_typedLayoutID || !TypedLayoutTable::usesFieldIDs(m_typedLayoutID); }
     static constexpr unsigned numberOfSlotsWithFieldIDs = 16;
     static constexpr uint16_t ambiguousFieldID = 0xffff;
     uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
-    // If recordsPropertyNames(). `id` comes from VM::aotPropertyNameIDs. Zero means that the slot has not been looked at.
-    // Property additions copy the table; every other transition starts with an empty one.
-    static constexpr uint16_t noPropertyNameID = 0xfffe; // The slot has been looked at, and holds no property that has a name ID.
-    static constexpr uint16_t firstReservedPropertyNameID = 0xfffd; // Never stored in the table.
+    static constexpr uint16_t noPropertyNameID = 0xfffe;
+    static constexpr uint16_t firstReservedPropertyNameID = 0xfffd;
     void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
     {
         ASSERT(recordsPropertyNames() && ((!isDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID));
         m_fieldIDInSlot[slot] = id;
     }
-    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs>); // For callers that already know the field IDs.
-    // Objects with this Structure (which has no typed layout) can never be converted to one. See
-    // AOT::Instance::convertToTypedLayout().
+    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs>);
     bool cannotConvertToTypedLayout() const { return !m_typedLayoutID && m_fieldIDInSlot[0] == ambiguousFieldID; }
     JS_EXPORT_PRIVATE void setCannotConvertToTypedLayout();
     static constexpr ptrdiff_t offsetOfFieldIDInSlot() { return OBJECT_OFFSETOF(Structure, m_fieldIDInSlot); }
-    // For an uncacheable dictionary. Moves an inline property out of line. `func` is called as for an add, with the new offset.
-    template<typename Func> void movePropertyOutOfObjectWithoutTransition(VM&, PropertyName, const Func&);
+    template<typename Func> void movePropertyOutOfLineWithoutTransition(VM&, PropertyName, const Func&);
     static constexpr ptrdiff_t offsetOfTypedLayoutID() { return OBJECT_OFFSETOF(Structure, m_typedLayoutID); }
 
     // Versions that take a func will call it after making the change but while still holding
@@ -1055,9 +991,6 @@ public:
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
 #if USE(BUN_JSC_ADDITIONS)
-    // Set on objects whose properties were made read-only by JSObject::makePropertiesImmutable(). Per spec, an inherited read-only property
-    // blocks assignment on inheriting objects, so with a read-only Object.prototype.toString, `Foo.prototype.toString = f` would
-    // fail. Properties fixed this way do not block such assignments.
     DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
 #endif
 
@@ -1229,13 +1162,12 @@ private:
     uint16_t m_transitionOffset;
     uint16_t m_maxOffset;
 #if USE(BUN_JSC_ADDITIONS)
-    uint16_t m_knownShape { 0 }; // See knownShape(). Uses former padding.
-    uint16_t m_typedLayoutID { 0 }; // See typedLayoutID(). Uses former padding.
+    uint16_t m_knownShape { 0 };
+    uint16_t m_typedLayoutID { 0 };
 #endif
 
     uint32_t m_propertyHash;
     SeenProperties m_seenProperties;
-
 
     WriteBarrier<JSGlobalObject> m_realm;
 #if ENABLE(AOT)
@@ -1259,9 +1191,7 @@ private:
     mutable InlineWatchpointSet m_transitionWatchpointSet;
 
 #if USE(BUN_JSC_ADDITIONS)
-    uint16_t m_fieldIDInSlot[numberOfSlotsWithFieldIDs] { }; // See fieldIDInSlot().
-    // noteFieldAdded: a property was added at this offset. forgetFieldsInSlots: the properties or the prototype chain changed in
-    // some other way.
+    uint16_t m_fieldIDInSlot[numberOfSlotsWithFieldIDs] { };
     JS_EXPORT_PRIVATE void noteFieldAdded(UniquedStringImpl*, PropertyOffset, unsigned attributes);
     JS_EXPORT_PRIVATE void forgetFieldsInSlots();
 #endif

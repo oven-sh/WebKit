@@ -259,8 +259,6 @@ public:
     JS_EXPORT_PRIVATE void NODELETE setOptLevel(unsigned value);
     unsigned optLevel() const { return m_optLevel; }
 
-    // The code may run at another address than it is generated for, in another process: it must not refer to memory that
-    // belongs to the compilation (data sections).
     void setPositionIndependent(bool value = true) { m_positionIndependent = value; }
     bool positionIndependent() const { return m_positionIndependent; }
     

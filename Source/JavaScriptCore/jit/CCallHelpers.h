@@ -416,7 +416,6 @@ private:
             return;
         }
 
-
         pokeForArgument(arg, numGPRArgs, numFPRArgs, numCrossSources, nonArgGPRs, extraPoke);
         setupArgumentsImpl<OperationType>(argSourceRegs.addGPRArg(), args...);
     }
@@ -578,8 +577,6 @@ public:
         return InvalidGPRReg;
     }
 
-    // numParameters: where the number of parameters of the function whose frame this is has been put, by code whose frames
-    // have no CodeBlock to say (aot/).
     void prepareForTailCallSlow(RegisterSet preserved = { }, GPRReg numParameters = InvalidGPRReg)
     {
         if (numParameters != InvalidGPRReg)

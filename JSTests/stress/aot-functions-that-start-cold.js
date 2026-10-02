@@ -1,12 +1,9 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-// A function from an image has nothing of its own in memory until it has been run a few times. This is about what can happen to it
-// before that, and while that changes. (It takes an image: this is one of the tests that are run from one.)
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
 
-// ---- Run once, each of them.
 function reads(o) { return o.a + o.b + o.c.d + o.missing + o.toString.name + o.length; }
 check(reads({ a: 1, b: 2, c: { d: 3 }, length: "!" }), "NaNtoString!", "reads");
 function stores(o) { o.a = 1; o.b = 2; o.a = 3; o["c"] = 4; return o; }
@@ -44,14 +41,13 @@ check([...generates(1)].join(), "1,2", "generators");
 async function awaits(x) { let y = await x; try { await Promise.reject(new Error("no")); } catch (e) { return y + e.message; } }
 { let r; awaits(1).then(v => { r = v; }); drainMicrotasks(); check(r, "1no", "async functions"); }
 
-// ---- Errors, in functions that have run at most once.
 function throws(o) { return o.a.b; }
 function catches(o) { try { return throws(o); } catch (e) { return e.constructor.name + ":" + (e.stack.split("\n")[0].startsWith("throws@") ? "throws" : e.stack.split("\n")[0]); } finally { finallyRan++; } }
 let finallyRan = 0;
 check(catches({}), "TypeError:throws", "an error, and where it was"); check(finallyRan, 1, "finally");
-var firstLine = 53;
+var firstLine = 49;
 function line1() {
-    return line2(); // 3rd line of these
+    return line2();
 }
 function line2() {
     return new Error("here").stack;
@@ -70,9 +66,7 @@ function throwsInGetter(o) { return o.bad; }
 function catchesFromGetter() { try { throwsInGetter({ get bad() { throw new SyntaxError("getter"); } }); } catch (e) { return e.message; } }
 function nestedTry(x) { try { try { throw x; } finally { x += "f"; } } catch (e) { return e + x; } }
 
-// ---- It gets what it needs while it is at it.
 function recurses(o, depth) {
-    // What is on the stack when the function gets its slots goes on with the ones it started with.
     let before = o.a + o.b;
     let below = depth ? recurses(o, depth - 1) : 0;
     o.count = (o.count || 0) + 1;
@@ -96,7 +90,6 @@ for (let round = 0; round < 3; ++round) {
 }
 for (let i = 0; i < 400; ++i)
     check(polymorphic(i % 4 == 0 ? { k: i } : i % 4 == 1 ? { j: 1, k: i } : i % 4 == 2 ? { i: 1, j: 2, k: i } : { __proto__: { k: i } }), i, "several shapes");
-// Once more, all that ran once: some of it for the second time, none of it often.
 check(reads({ a: 1, b: 2, c: { d: 3 }, length: "!" }), "NaNtoString!", "reads, again");
 check(JSON.stringify(stores({})), '{"a":3,"b":2,"c":4}', "stores, again");
 check(catches({}), "TypeError:throws", "an error, again"); check(catches({ a: { b: 1 } }), 1, "no error");

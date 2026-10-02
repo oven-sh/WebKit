@@ -26,10 +26,6 @@ using FTL::rarely;
 using FTL::unsure;
 using FTL::usually;
 
-// Emits B3 code that operates on the engine's values and objects. It is shared by the code that compiles a program's functions
-// (Lowering) and the code that generates the shared helper stubs (Helpers). The methods have the same names and parameters as their
-// FTL counterparts, with one difference: nothing is referred to by its address. What the FTL would embed as an address is loaded
-// from the Instance.
 class Emitter {
     WTF_MAKE_NONCOPYABLE(Emitter);
 protected:
@@ -39,7 +35,6 @@ protected:
     {
     }
 
-    // Sets up the pinned registers and the values that are derived from them.
     void findPinnedRegisters();
 
     LValue isInt32(LValue v) { return m_out.aboveOrEqual(v, m_numberTag); }
@@ -56,72 +51,62 @@ protected:
     LValue boxDouble(LValue v) { return m_out.sub(m_out.bitCast(v, B3::Int64), m_numberTag); }
     LValue unboxBoolean(LValue v) { return m_out.notZero64(m_out.bitAnd(v, m_out.constInt64(1))); }
     LValue boxBoolean(LValue v) { return m_out.select(v, m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::ValueFalse)); }
-    LValue numberToDouble(LValue jsNumber); // A boxed value known to be a number.
+    LValue numberToDouble(LValue jsNumber);
     LValue cellType(LValue cell) { return m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoType); }
     LValue isCellOfType(LValue cell, JSType type) { return m_out.equal(cellType(cell), m_out.constInt32(type)); }
     LValue isObjectCell(LValue cell) { return m_out.aboveOrEqual(cellType(cell), m_out.constInt32(ObjectType)); }
-    LValue registerOnEntry(Reg); // What was in it when the function was called.
+    LValue registerOnEntry(Reg);
     LValue structureOf(LValue cell);
     LValue structureWithID(LValue structureID);
     LValue entry(Entry);
 
-    // Goes on if the condition holds.
     void orElse(LValue condition, LBasicBlock otherwise);
-    template<typename Functor> void forEachUpTo(LValue count, const Functor&); // count is an Int32. The functor receives a pointer-sized index.
+    template<typename Functor> void forEachUpTo(LValue count, const Functor&);
 
-    // Loads from the Instance: fields that are constant once the Instance has been created, and fields that change.
     LValue fixedPointer(ptrdiff_t offset);
     LValue fixed32(ptrdiff_t offset);
     LValue changing32(ptrdiff_t offset);
 
-    // ---- Allocation. Nothing here calls anything: where there is no room, or nothing to allocate from yet, it goes to slowPath.
     LValue allocateHeapCell(LValue allocator, LBasicBlock slowPath);
     LValue allocatorForSize(LValue subspace, LValue size, LBasicBlock slowPath);
-    LValue allocatorForSize(LValue subspace, size_t size);
-    void storeHeader(LValue cell, LValue structureID, uint32_t typeInfoBlob); // Of a Structure whose type, flags and way of keeping elements are known.
+    LValue allocatorForSize(LValue subspace, size_t);
+    void storeHeader(LValue cell, LValue structureID, uint32_t typeInfoBlob);
     void storeStructure(LValue cell, LValue structure);
-    void splatWords(LValue base, LValue begin, LValue end, LValue value, const B3::AbstractHeap&); // Int32 indices of words.
+    void splatWords(LValue base, LValue begin, LValue end, LValue, const B3::AbstractHeap&);
     void mutatorFence();
-    // An array with contiguous JSValue storage (or Int32 storage, which has the same layout) and capacity vectorLength. The caller
-    // has to fill in the first publicLength elements. The rest are holes.
     struct ArrayValues {
         LValue array;
         LValue butterfly;
     };
     ArrayValues allocateJSArray(LValue publicLength, LValue vectorLength, LValue structureID, uint32_t typeInfoBlob, LBasicBlock slowPath);
-    static uint32_t typeInfoBlobOfArray(IndexingType);
+    static uint32_t arrayTypeInfoBlob(IndexingType);
 
-    // ---- Strings.
     LValue isRopeString(LValue string) { return m_out.testNonZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::isRopeInPointer)); }
-    LValue singleCharacterString(LValue character); // Int32, no more than maxSingleCharacterString.
+    LValue singleCharacterString(LValue character);
     LValue emptyString() { return fixedPointer(Instance::offsetOfEmptyString()); }
 
-    // ---- Code sequences that are long enough to share (Helpers), but short enough to emit inline in loops. Each jumps to giveUp,
-    // without side effects, if it is not the common case.
-    LValue newArrayOfValues(LValue values, LValue count, bool areInt32, LBasicBlock giveUp); // Int32 count.
+    LValue newArrayFromValues(LValue values, LValue count, bool areInt32, LBasicBlock giveUp);
     LValue newArrayFromButterfly(LValue immutableButterfly, LBasicBlock giveUp);
     LValue newActivation(LValue scope, LValue symbolTable, LValue initialValue, LValue count, LBasicBlock giveUp);
     LValue newArrayWithSpread(LValue values, LValue count, LValue spreadMask, LBasicBlock giveUp);
-    LValue newArrayLike(LValue length, LValue array, LBasicBlock giveUp); // The array that map() and similar builtins store their results in. length is a JSValue. The elements are holes.
-    // The location of a string's characters: in the string itself or, for a substring rope, in its base string. Any other rope is
-    // given up on.
+    LValue newArrayLike(LValue length, LValue array, LBasicBlock giveUp);
     struct StringParts {
-        LValue base; // A string that is not a rope.
-        LValue impl; // Its StringImpl.
-        LValue length; // The length of the original string.
-        LValue offset; // Where in the base it starts.
+        LValue base;
+        LValue impl;
+        LValue length;
+        LValue offset;
     };
     StringParts stringParts(LValue string, LBasicBlock giveUp);
     LValue substringOf(LValue string, const StringParts&, LValue from, LValue to, LBasicBlock giveUp);
-    LValue sliceOfString(LValue string, LValue start, LValue end, LBasicBlock giveUp); // As slice() and substring() take them, once they are integers.
-    LValue substringOfString(LValue string, LValue start, LValue end, LBasicBlock giveUp);
+    LValue stringSlice(LValue string, LValue start, LValue end, LBasicBlock giveUp);
+    LValue stringSubstring(LValue string, LValue start, LValue end, LBasicBlock giveUp);
     LValue makeRope(LValue first, LValue second, LValue thirdOrNull, LBasicBlock giveUp);
-    LValue addStrings(LValue first, LValue second, LBasicBlock giveUp); // Of values, that may be anything.
-    LValue keysOfObject(LValue object, LBasicBlock giveUp);
+    LValue addStrings(LValue first, LValue second, LBasicBlock giveUp);
+    LValue keysOfObject(LValue, LBasicBlock giveUp);
     LValue stringIfAlreadyLowerCase(LValue string, LBasicBlock giveUp);
-    void setLengthOfArray(LValue array, LValue length, LBasicBlock giveUp); // Both are values. To no more than it is.
-    void addTypedField(LValue object, LValue storedValue, LValue slot, LBasicBlock giveUp);
-    LValue isOriginalArray(LValue cell); // A boolean: see Instance::structureIDsOfOriginalArrays.
+    void setArrayLength(LValue array, LValue length, LBasicBlock giveUp);
+    void addTypedField(LValue, LValue storedValue, LValue slot, LBasicBlock giveUp);
+    LValue isOriginalArray(LValue cell);
 
     B3::Procedure& m_proc;
     B3::AbstractHeapRepository m_heaps;
@@ -134,9 +119,6 @@ protected:
     LValue m_notCellMask { nullptr };
 };
 
-// Generates the code of one of the Stub::Helper... stubs: an Emitter sequence that is compiled once and shared. It takes its
-// operands in the argument registers and returns its result, or null if it gave up. In that case it has had no side effects, and
-// the caller has to take the slow path. It makes no calls.
 void generateHelper(CCallHelpers&, Stub);
 
 } } // namespace JSC::AOT

@@ -30,7 +30,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 
-
 #define DUMP_PROPERTYMAP_STATS 0
 #define DUMP_PROPERTYMAP_COLLISIONS 0
 
@@ -118,8 +117,6 @@ public:
     // Remove a value from the table.
     std::tuple<PropertyOffset, unsigned> take(VM&, const KeyType&);
     PropertyOffset updateAttributeIfExists(const KeyType&, unsigned attributes);
-    // The property is somewhere else from now on, and is otherwise what it was: where it comes among the others, for one thing. Where it was is
-    // as good as where a property has been taken out of.
     void moveToOffset(VM&, const KeyType&, PropertyOffset);
 
     PropertyOffset renumberPropertyOffsets(JSObject*, unsigned inlineCapacity, Vector<JSValue>&);
@@ -136,7 +133,7 @@ public:
 
     void seal();
     void freeze();
-    void fix(); // As freeze(), for objects that may have properties that native code stands behind: those go on being asked.
+    void fix();
 
     bool isSealed() const;
     bool isFrozen() const;
@@ -156,9 +153,8 @@ public:
     PropertyOffset takeDeletedOffset();
     void addDeletedOffset(PropertyOffset);
     
-    // reusesOffsetsInObject: see Structure::typedLayoutID().
     PropertyOffset nextOffset(PropertyOffset inlineCapacity, bool reusesOffsetsInObject = true, bool reusesOffsetsOutside = true);
-    bool takeDeletedOffset(PropertyOffset wanted); // False: that is not one of them.
+    bool takeDeletedOffset(PropertyOffset wanted);
 
     // Copy this PropertyTable, ensuring the copy has at least the capacity provided.
     PropertyTable* copy(VM&, unsigned newCapacity);
@@ -522,7 +518,6 @@ inline PropertyOffset PropertyTable::nextOffset(PropertyOffset inlineCapacity, b
         }
     }
 
-    // (After everything there is or has been.)
     return offsetForPropertyNumber(propertyStorageSize(), inlineCapacity);
 }
 

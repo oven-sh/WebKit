@@ -1421,7 +1421,6 @@ void AssemblyHelpers::emitSoundTypeCheck(GPRReg valueGPR, GPRReg scratchGPR, uns
     constexpr unsigned cellTags = SoundTypeString | SoundTypeSymbol | SoundTypeBigInt | SoundTypeAnyObject;
     JumpList pass;
 
-    // The tags still to be tested for. The test for the last of them branches to fail instead of to pass.
     unsigned remaining = mask;
     auto isLast = [&](unsigned tags) {
         remaining &= ~tags;
@@ -1441,7 +1440,7 @@ void AssemblyHelpers::emitSoundTypeCheck(GPRReg valueGPR, GPRReg scratchGPR, uns
 
         if (cellMask != cellTags) {
             auto typeIs = [&](JSType type) { return branch32(Equal, scratchGPR, TrustedImm32(type)); };
-            auto typeIsNot = [&](JSType type) { return branch32(NotEqual, scratchGPR, TrustedImm32(type)); };
+            auto branchIfNotType = [&](JSType type) { return branch32(NotEqual, scratchGPR, TrustedImm32(type)); };
             auto notObject = [&] { return branch32(Below, scratchGPR, TrustedImm32(ObjectType)); };
             Address flags(valueGPR, JSCell::typeInfoFlagsOffset());
 
@@ -1455,7 +1454,7 @@ void AssemblyHelpers::emitSoundTypeCheck(GPRReg valueGPR, GPRReg scratchGPR, uns
                 if (remainingCellTags)
                     pass.append(typeIs(type));
                 else
-                    fail.append(typeIsNot(type));
+                    fail.append(branchIfNotType(type));
             };
             testPrimitive(SoundTypeString, StringType);
             testPrimitive(SoundTypeSymbol, SymbolType);
@@ -1518,7 +1517,6 @@ void AssemblyHelpers::emitSoundTypeCheck(GPRReg valueGPR, GPRReg scratchGPR, uns
         notCell.link(this);
     }
 
-    // Only immediates are left. Each of these tests also rejects cells and numbers.
     constexpr unsigned otherTags = SoundTypeUndefined | SoundTypeNull;
     if ((remaining & otherTags) == otherTags) {
         if (isLast(otherTags))
@@ -2192,7 +2190,6 @@ void AssemblyHelpers::loadTypedArrayLength(GPRReg baseGPR, GPRReg valueGPR, GPRR
 {
     loadTypedArrayByteLengthCommonImpl(baseGPR, valueGPR, scratchGPR, scratch2GPR, typedArrayType, TypedArrayField::Length);
 }
-
 
 #if ENABLE(WEBASSEMBLY)
 #if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)

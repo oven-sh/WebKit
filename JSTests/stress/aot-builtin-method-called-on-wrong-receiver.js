@@ -1,6 +1,4 @@
 //@ requireOptions("--compileMainScriptAheadOfTime=1", "--useImmutableIntrinsics=1")
-// Knowing which function is called says nothing about `this`. A built-in method reached by identity, as in
-// Array.prototype.shift.call(x), must behave as the generic call does for every kind of receiver.
 
 function shouldBe(actual, expected) {
     if (actual !== expected)
@@ -19,7 +17,6 @@ function shouldThrowTypeError(func) {
 }
 
 for (let i = 0; i < 100; ++i) {
-    // Generic methods: they work on anything that can be converted.
     shouldBe(String.prototype.trim.call(123), "123");
     shouldBe(String.prototype.toUpperCase.call(true), "TRUE");
     shouldBe(String.prototype.indexOf.call(12345, "34"), 2);
@@ -40,7 +37,6 @@ for (let i = 0; i < 100; ++i) {
     shouldThrowTypeError(() => String.prototype.trim.call(null));
     shouldThrowTypeError(() => String.prototype.trim.call(undefined));
 
-    // Methods that require their own kind of object.
     for (const receiver of [{}, [], "s", 1, null, undefined, new Set, new WeakMap]) {
         shouldThrowTypeError(() => Map.prototype.get.call(receiver, 1));
         shouldThrowTypeError(() => Map.prototype.has.call(receiver, 1));
@@ -57,7 +53,6 @@ for (let i = 0; i < 100; ++i) {
     shouldThrowTypeError(() => Number.prototype.toString.call("1"));
     shouldThrowTypeError(() => Number.prototype.toFixed.call({}, 1));
 
-    // And the right receivers still work.
     shouldBe(Array.prototype.shift.call([5, 6]), 5);
     shouldBe(String.prototype.trim.call(" a "), "a");
     shouldBe(Map.prototype.get.call(new Map([[1, 2]]), 1), 2);

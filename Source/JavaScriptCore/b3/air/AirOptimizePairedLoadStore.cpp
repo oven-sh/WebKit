@@ -289,7 +289,6 @@ bool optimizePairedLoadStore(Code& code)
                 if ((inst.args()[0].isGPTmp() || inst.args()[0].isZeroReg()) && inst.args()[1].isAddr()) {
                     // sp & fp slot usage is, in particular, different for call args and spills.
                     // We would like to do stp merging only for spills.
-                    // (Unless it is code that there is going to be a great deal of, most of which is hardly ever run.)
                     if ((inst.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister) || inst.args()[1].base() == Tmp(CCallHelpers::framePointerRegister)) && !inst.kind.spill && !code.proc().positionIndependent())
                         continue;
                     if (tryStorePair(code, block, index, inst)) {

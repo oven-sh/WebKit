@@ -38,9 +38,6 @@ using CustomAccessorValueFunc = FunctionPtr<CustomAccessorPtrTag, bool(JSGlobalO
 
 class PutPropertySlot {
 public:
-    // ExistingTypedField: like ExistingProperty, but only values that match the field's type may be stored (TypedLayoutTable). Code
-    // that caches the location has to check the values that it stores.
-    // NewTypedField: likewise, like NewProperty.
     enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor, ExistingTypedField, NewTypedField };
     enum Context : uint8_t { UnknownContext, PutById, PutByIdEval };
 
@@ -57,7 +54,6 @@ public:
     {
     }
 
-    // held: TypedLayoutTable::Held::kinds | first << 16.
     void setExistingTypedField(JSObject* base, PropertyOffset offset, uint32_t fieldType)
     {
         m_type = ExistingTypedField;
@@ -72,7 +68,7 @@ public:
         m_offset = offset;
         m_fieldType = fieldType;
     }
-    bool isCacheablePutOfTypedField() const { return isCacheable() && (m_type == ExistingTypedField || m_type == NewTypedField); }
+    bool isTypedFieldCacheablePut() const { return isCacheable() && (m_type == ExistingTypedField || m_type == NewTypedField); }
     uint32_t fieldType() const { return m_fieldType; }
 
     void setExistingProperty(JSObject* base, PropertyOffset offset)

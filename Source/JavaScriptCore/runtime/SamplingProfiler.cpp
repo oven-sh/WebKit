@@ -85,7 +85,6 @@ ALWAYS_INLINE static void reportStats()
 
 class FrameWalker {
 public:
-    // pc: where the thread is, if that is in the frame, or else where the frame is going to be returned to.
     FrameWalker(VM& vm, CallFrame* callFrame, void* pc, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
         : m_vm(vm)
         , m_callFrame(callFrame)
@@ -197,10 +196,10 @@ protected:
             m_pc = pc;
             return;
         }
-        EntryFrame* entryFrameOfCallee = m_entryFrame;
+        EntryFrame* calleeEntryFrame = m_entryFrame;
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
-        if (m_entryFrame != entryFrameOfCallee && m_callFrame && AOT::hasCode())
-            pc = AOT::returnAddressForFrame(m_callFrame, entryFrameOfCallee);
+        if (m_entryFrame != calleeEntryFrame && m_callFrame && AOT::hasCode())
+            pc = AOT::returnAddressForFrame(m_callFrame, calleeEntryFrame);
         m_pc = pc;
 #else
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
@@ -227,7 +226,6 @@ protected:
         }
 
 #if ENABLE(AOT)
-        // The kind of frame determines which of its slots are meaningful.
         m_pcInfo = AOT::classifyAddress(m_pc);
         if (m_pcInfo.kind != AOT::ImageAddressInfo::NotInImage)
             return;
@@ -475,7 +473,6 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 // is in LLInt code.
 #if ENABLE(AOT)
             } else if (AOT::classifyAddress(machinePC).kind != AOT::ImageAddressInfo::NotInImage) {
-                // Likewise. (The frame is that of the caller if the function has none, or has not made it yet: then the caller is left out.)
 #endif
             } else {
                 // RegExp evaluation is leaf. So if RegExp evaluation exists, we can say it is RegExp evaluation is the top user-visible frame.
@@ -487,15 +484,14 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     shouldAppendTopFrameAsCCode = true;
             }
 
-            void* pcOfFrame = machinePC;
+            void* framePC = machinePC;
 #if ENABLE(AOT)
             if (callFrame != machineFrame && AOT::hasCode()) {
-                // (It is VM::topCallFrame.)
                 if (auto innermost = AOT::innermostFrame(machineFrame, machinePC, machineLinkRegister, callFrame, m_jscExecutionThread->stack())) {
                     callFrame = static_cast<CallFrame*>(innermost->frame);
-                    pcOfFrame = innermost->pc;
+                    framePC = innermost->pc;
                 } else if (callFrame)
-                    pcOfFrame = AOT::returnAddressForFrame(callFrame, machineFrame);
+                    framePC = AOT::returnAddressForFrame(callFrame, machineFrame);
             }
 #endif
 
@@ -503,11 +499,11 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             bool wasValidWalk;
             bool didRunOutOfVectorSpace;
             if (Options::sampleCCode()) {
-                CFrameWalker walker(m_vm, machineFrame, callFrame, pcOfFrame, codeBlockSetLocker, machineThreadsLocker);
+                CFrameWalker walker(m_vm, machineFrame, callFrame, framePC, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             } else {
-                FrameWalker walker(m_vm, callFrame, pcOfFrame, codeBlockSetLocker, machineThreadsLocker);
+                FrameWalker walker(m_vm, callFrame, framePC, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             }

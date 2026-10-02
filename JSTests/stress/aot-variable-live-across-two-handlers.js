@@ -1,6 +1,4 @@
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// A variable is live into a handler if the code after the handler can throw into another handler that reads it. When the try block always
-// throws, the exceptional edge is the only path from the definition to the use.
 
 function shouldBe(actual, expected) {
     if (actual !== expected)

@@ -740,7 +740,6 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseSingleFu
     return sourceElements;
 }
 
-    
 template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatementListItem(TreeBuilder& context, const Identifier*& directive, unsigned* directiveLiteralLength)
 {
@@ -1625,7 +1624,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
         failIfFalse(expr, "Expected expression to enumerate");
         recordPauseLocation(context.breakpointLocation(expr));
         JSTextPosition exprEnd = lastTokenEndPosition();
-        
         
         handleProductionOrFail(CLOSEPAREN, ")", "end", (isOfEnumeration ? "for-of header" : "for-in header"));
         
@@ -3110,7 +3108,7 @@ template <class TreeBuilder> TreeClassExpression Parser<LexerType>::parseClass(T
     const ConstructorKind constructorKind = parentClass ? ConstructorKind::Extends : ConstructorKind::Base;
 
     JSTextPosition classHeadEnd = lastTokenEndPosition();
-    uint32_t typeTagOfClass = m_token.m_typeTag;
+    uint32_t classTypeTag = m_token.m_typeTag;
     consumeOrFail(OPENBRACE, "Expected opening '{' at the start of a class body");
 
     AutoPopScope classScope(this, pushScope());
@@ -3388,7 +3386,7 @@ parseMethod:
     ASSERT(functionDeclarations.isEmpty());
     ASSERT(classHeadFunctionDeclarations.isEmpty());
     auto classExpression = context.createClassExpr(location, info, WTF::move(classHeadEnvironment), WTF::move(lexicalEnvironment), constructor, parentClass, classElements, start, divot, classHeadEnd);
-    context.setTypeTagOfClass(classExpression, typeTagOfClass);
+    context.setClassTypeTag(classExpression, classTypeTag);
     return classExpression;
 }
 
@@ -3442,7 +3440,6 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                     loc.endOffset = (*initializerPosition);
                     restoreLexerState(LexerState { initializerPosition->offset, loc, hasLineTerminatorBeforeToken, ERRORTOK });
                 }
-                // What the text says of the first token (Options::useTypeTags()) comes before where the token starts, which is where this reads from.
                 if (Options::useTypeTags() && initializerPosition->offset >= 7) [[unlikely]] {
                     StringView text = m_source->provider()->source();
                     unsigned at = initializerPosition->offset - 7;

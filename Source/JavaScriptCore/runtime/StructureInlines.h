@@ -410,7 +410,7 @@ inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyNa
 
 #if USE(BUN_JSC_ADDITIONS)
 template<typename Func>
-inline void Structure::movePropertyOutOfObjectWithoutTransition(VM& vm, PropertyName propertyName, const Func& func)
+inline void Structure::movePropertyOutOfLineWithoutTransition(VM& vm, PropertyName propertyName, const Func& func)
 {
     RELEASE_ASSERT(isUncacheableDictionary() && isPinnedPropertyTable() && m_typedLayoutID);
     PropertyTable* table = ensurePropertyTable(vm);

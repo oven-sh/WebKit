@@ -135,26 +135,17 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 #if ENABLE(AOT)
 bool ModuleProgramExecutable::useProgramData(VM& vm)
 {
-    auto* program = AOT::ProgramOfVM::of(vm);
-    const AOT::ModuleOfProgram* module = program && m_moduleLoader ? program->moduleFor(*source().provider()) : nullptr;
+    auto* program = AOT::VMProgram::of(vm);
+    const AOT::ProgramModule* module = program && m_moduleLoader ? program->moduleFor(*source().provider()) : nullptr;
     if (!module)
         return false;
-    m_moduleOfProgram = module;
-    m_moduleEnvironmentSymbolTable.set(vm, this, uncheckedDowncast<SymbolTable>(program->constant(module->symbolTableOfEnvironment).asCell()));
-    recordParse(static_cast<CodeFeatures>(module->features), static_cast<LexicallyScopedFeatures>(module->lexicallyScopedFeaturesAndMore & 0xffff), module->lexicallyScopedFeaturesAndMore >> 16);
+    m_programModule = module;
+    m_moduleEnvironmentSymbolTable.set(vm, this, uncheckedDowncast<SymbolTable>(program->constant(module->environmentSymbolTable).asCell()));
+    recordParse(static_cast<CodeFeatures>(module->features), static_cast<LexicallyScopedFeatures>(module->lexicallyScopedFeaturesAndFlags & 0xffff), module->lexicallyScopedFeaturesAndFlags >> 16);
     AOT::Instance::ensure(m_moduleLoader.get()).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
     return true;
 }
 
-RefPtr<ModuleFunctionDeclarationSlots> ModuleProgramExecutable::functionDeclarationSlotsOfProgram() const
-{
-    if (!m_moduleOfProgram->numberOfFunctionDeclarationSlots)
-        return nullptr;
-    const AOT::ProgramData& data = *AOT::ProgramData::get();
-    const uint32_t* list = AOT::FunctionRef { nullptr, m_moduleOfProgram->oneMoreThanIndexOfCode - 1 }.metadata()->find(AOT::FunctionMetadata::FunctionDecls);
-    RELEASE_ASSERT(list && list[1] >= m_moduleOfProgram->numberOfFunctionDeclarationSlots);
-    return ModuleFunctionDeclarationSlots::createOfProgram({ data.at<uint32_t>(m_moduleOfProgram->offsetOfFunctionDeclarationSlots), m_moduleOfProgram->numberOfFunctionDeclarationSlots }, data.at<uint32_t>(list[0]));
-}
 #endif
 
 JSModuleRecord* ModuleProgramExecutable::linker() const
@@ -192,7 +183,7 @@ FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigne
 {
     if (FunctionExecutable* executable = m_functionDeclarations[index].get())
         return executable;
-    if (FunctionExecutable* executable = unlinkedCodeBlock()->executableOfFunctionDecl(index))
+    if (FunctionExecutable* executable = unlinkedCodeBlock()->functionDeclExecutable(index))
         return executable;
     return linkFunctionDeclaration(vm, index, unlinkedCodeBlock()->functionDecl(index));
 }
@@ -251,8 +242,8 @@ void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
     if (m_isShared)
         return;
 #if ENABLE(AOT)
-    if (m_moduleOfProgram) {
-        AOT::Instance::ensure(m_moduleLoader.get()).didFinishWithModuleCode(this);
+    if (m_programModule) {
+        AOT::Instance::ensure(m_moduleLoader.get()).didFinishModuleEvaluation(this);
         return;
     }
 #endif

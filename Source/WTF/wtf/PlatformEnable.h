@@ -752,7 +752,6 @@
 #define ENABLE_DFG_JIT 0
 #endif
 
-/* Compiling programs ahead of time (JavaScriptCore/aot). The back end is only written for ARM64 so far. */
 #if !defined(ENABLE_AOT)
 #if ENABLE(FTL_JIT) && CPU(ARM64) && (OS(DARWIN) || (OS(LINUX) && !OS(ANDROID) && !ASAN_ENABLED))
 #define ENABLE_AOT 1

@@ -798,7 +798,6 @@ void Options::executeDumpOptions()
     dataLog(builder.toString());
 }
 
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 void Options::notifyOptionsChanged()
@@ -891,9 +890,6 @@ void Options::notifyOptionsChanged()
 #if USE(BUN_JSC_ADDITIONS)
     if (!g_compilerHooks.areInstalled())
         Options::useJIT() = false;
-    // A program that was compiled ahead of time runs with the JIT off. But the build has not seen a pattern that is put together at
-    // run time, and the Yarr interpreter is about five times slower, so those are still compiled. That takes executable memory
-    // (VM::canUseAssembler()) and nothing else: to the rest of the engine, the JIT is off.
     bool useRegExpJITWithoutJIT = Options::useAOT() && Options::useRegExpJIT() && g_compilerHooks.compileRegExp;
 #else
     bool useRegExpJITWithoutJIT = false;
@@ -1327,7 +1323,6 @@ static ASCIILiteral invertBoolOptionValue(const char* valueStr)
     return value.value() ? "false"_s : "true"_s;
 }
 
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 bool Options::setAliasedOption(const char* arg, bool verify)
@@ -1376,7 +1371,6 @@ bool Options::setOption(const char* arg, bool verify)
         return true;
     return setAliasedOption(arg, verify);
 }
-
 
 void Options::dumpAllOptions(StringBuilder& builder, DumpLevel level, ASCIILiteral title,
     ASCIILiteral separator, ASCIILiteral optionHeader, ASCIILiteral optionFooter, DumpDefaultsOption dumpDefaultsOption)

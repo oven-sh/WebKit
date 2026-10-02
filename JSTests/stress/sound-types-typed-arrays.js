@@ -1,6 +1,4 @@
 //@ requireOptions("--useSoundTypes=1")
-// A mask may say which type of typed array the objects it lets by are: 512 (other objects) and, above the tags, one more than how far
-// the type is from Int8Array.
 function shouldBe(actual, expected) {
     if (!Object.is(actual, expected))
         throw new Error("bad value: " + actual + ", expected " + expected);
@@ -53,7 +51,6 @@ for (let i = 0; i < 200; i++) {
     shouldBe(float64(sub), sub);
 }
 
-// What the static compiler makes of knowing.
 function sum(a, n) {
     $$t(a, 10752);
     let s = 0;

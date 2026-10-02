@@ -1,6 +1,4 @@
 "use strict";
-// A function that was passed fewer arguments than it has parameters has a bigger frame than the number it was passed says. A tail
-// call out of it has to go by the bigger of the two.
 function callee(a, b, c, d, e, f) { return a + b + c + d + e + f; }
 noInline(callee);
 function fewer(a, b, c, d, e, f, g, h) { return callee(1, 2, 3, 4, 5, 6); }

@@ -228,7 +228,6 @@ namespace JSC {
 
         ResultType resultDescriptor() const { return m_resultType; }
 
-        // JSToken::m_typeTag of the token that made an expression of this: the name of the property, the brace of the literal.
         uint32_t typeTag() const { return m_typeTag; }
         void setTypeTag(uint32_t tag) { m_typeTag = tag; }
 
@@ -253,7 +252,6 @@ namespace JSC {
 
     public:
         virtual void emitBytecode(BytecodeGenerator&, RegisterID* destination = nullptr) = 0;
-
 
         StatementNode* next() const { return m_next; }
         void setNext(StatementNode* next) { m_next = next; }
@@ -785,7 +783,6 @@ namespace JSC {
             return m_node->isInstanceClassField();
         }
         bool NODELETE hasInstanceFields() const;
-        // The names of the instance fields, if each of them is a name and nothing else. Otherwise none.
         Vector<Identifier> plainInstanceFieldNames() const;
 
         bool isStaticClassField() const
@@ -1195,7 +1192,6 @@ namespace JSC {
         ExpressionNode* m_expr;
     };
 
-    // $$t(expr, mask) under Options::useSoundTypes(). See SoundTypeMask in SpeculatedType.h.
     class SoundTypeCheckNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
         SoundTypeCheckNode(const JSTokenLocation&, ExpressionNode*, unsigned mask, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
@@ -1204,7 +1200,6 @@ namespace JSC {
 
     private:
         bool isSoundTypeCheckNode() const final { return true; }
-        // The SyntaxChecker sees a call, and sloppy mode code may have a call where an assignment target goes.
         bool isFunctionCall() const final { return true; }
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
@@ -2295,7 +2290,6 @@ namespace JSC {
             m_needsClassFieldInitializer = value;
         }
 
-        // A constructor: see Options::definePlainInstanceFieldsInConstructor(). Empty if that is not for this class.
         const Vector<Identifier>& plainInstanceFieldNames() const LIFETIME_BOUND { return m_plainInstanceFieldNames; }
         void setPlainInstanceFieldNames(Vector<Identifier>&& names) { m_plainInstanceFieldNames = WTF::move(names); }
 
@@ -2345,7 +2339,6 @@ namespace JSC {
 
         FunctionMode functionMode() const { return m_functionMode; }
 
-        // Information that is only available where the function is created (FunctionMetadataNode::plainInstanceFieldNames()).
         const FixedVector<Identifier>* plainInstanceFieldNames() const { return m_plainInstanceFieldNames; }
         void setPlainInstanceFieldNames(const FixedVector<Identifier>* names) { m_plainInstanceFieldNames = names; }
 
@@ -2369,7 +2362,6 @@ namespace JSC {
 
         FunctionMetadataNode* m_metadata;
     };
-
 
     class FuncExprNode : public BaseFuncExprNode {
     public:
@@ -2561,7 +2553,7 @@ namespace JSC {
             DestructuringPatternNode* pattern;
             ExpressionNode* defaultValue;
             BindingType bindingType;
-            uint32_t typeTag; // JSToken::m_typeTag of the property name: the type tag for a.b also applies to { b } = a.
+            uint32_t typeTag;
         };
         bool m_containsRestElement { false };
         bool m_containsComputedProperty { false };

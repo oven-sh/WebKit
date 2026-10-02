@@ -102,7 +102,6 @@ void generateToAir(Procedure& procedure)
             inferSwitches(procedure);
 
         if (Options::useB3TailDup())
-            // Code that is compiled once for all is compiled for size as much as for speed.
             if (!procedure.positionIndependent())
                 duplicateTails(procedure);
         fixSSA(procedure);

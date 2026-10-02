@@ -87,12 +87,11 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
     if (message.isNull())
         return message;
 #if USE(BUN_JSC_ADDITIONS)
-    bool hasNoText = codeBlock->source().provider()->hasNoText();
+    bool hasNoSourceText = codeBlock->source().provider()->hasNoSourceText();
 #else
-    bool hasNoText = false;
+    bool hasNoSourceText = false;
 #endif
-    // (A program without its source text uses the quotes in the image instead.)
-    if (!codeBlock->hasExpressionInfo() && !hasNoText)
+    if (!codeBlock->hasExpressionInfo() && !hasNoSourceText)
         return message;
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -104,9 +103,8 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (hasNoText) {
+    if (hasNoSourceText) {
 #if ENABLE(AOT)
-        // What it said, as far as that was kept, is with the code.
         if (auto function = AOT::FunctionRef::of(codeBlock)) {
             if (auto quote = function.quoteAt(bytecodeIndex))
                 return appender(message, quote->first, type, quote->second ? ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource : ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource);

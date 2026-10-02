@@ -1,5 +1,4 @@
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// Calls that are not plain ones, for-of and for-in, in code from the static compiler.
 
 function shouldBe(actual, expected) {
     if (JSON.stringify(actual) !== JSON.stringify(expected))
@@ -21,7 +20,7 @@ function shouldThrow(f, type) {
     function loop(n, acc) { if (!n) return acc; return loop(n - 1, acc + 1); }
     function loopVarargs(n, acc) { if (!n) return acc; return loopVarargs(...[n - 1, acc + 1]); }
     function even(n) { return n ? odd(n - 1) : true; }
-    function odd(n) { return n ? even(n - 1, 1, 2, 3, 4, 5) : false; } // More arguments than the caller has room for.
+    function odd(n) { return n ? even(n - 1, 1, 2, 3, 4, 5) : false; }
     function tailToHost(x) { return Math.abs(x); }
     function tailToBound(x) { return boundSum(x); }
     function tailToNothing(f) { return f(); }
@@ -124,7 +123,6 @@ function shouldThrow(f, type) {
         shouldBe(double({ a: 1, 0: 2 }), { 0: 4, a: 2 });
     }
 
-    // Closing an array's iterator becomes observable half way through.
     function breaksOut(array) { for (const value of array) { if (value === 2) { patch(); break; } } }
     let returned = 0;
     let patch = () => { };

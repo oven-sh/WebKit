@@ -1,7 +1,5 @@
 //@ requireOptions("--useSoundTypes=1")
 
-// Which calls are the intrinsic, and what the generated code does with the value.
-
 function shouldBe(actual, expected) {
     if (!Object.is(actual, expected))
         throw new Error(`bad value: ${String(actual)}, expected ${String(expected)}`);
@@ -31,7 +29,6 @@ function shouldThrow(func, constructor) {
         throw new Error(`did not throw a ${constructor.name}: ${error}`);
 }
 
-// There is no binding called $$t at this point, and the intrinsic does not need one.
 shouldBe(typeof $$t, "undefined");
 shouldBe($$t(1, 8), 1);
 shouldBe($$t("a", 16), "a");
@@ -43,7 +40,6 @@ shouldThrowTypeCheck(() => $$t(1, 896), "Type check failed: expected object, got
 shouldThrowTypeCheck(() => $$t({ }, 384), "Type check failed: expected function | array, got object");
 shouldThrowTypeCheck(() => $$t(1n, 1022 & ~64), "Type check failed: expected boolean | number | string | symbol | object | null, got bigint");
 
-// Anything else is an ordinary call, which here fails to resolve $$t.
 shouldThrow(() => $$t(1), ReferenceError);
 shouldThrow(() => $$t(), ReferenceError);
 shouldThrow(() => $$t(1, 8, 0), ReferenceError);
@@ -67,7 +63,6 @@ shouldThrow(() => $$T(1, 8), ReferenceError);
 shouldThrow(() => $t(1, 8), ReferenceError);
 shouldThrow(() => $$tt(1, 8), ReferenceError);
 
-// With a binding in scope, the calls that do not match reach it and the ones that match still do not.
 (function () {
     let calls = [];
     function $$t(...args) {
@@ -98,19 +93,16 @@ shouldThrow(() => $$tt(1, 8), ReferenceError);
     ]));
 })();
 
-// A parameter, a let in its temporal dead zone, or a with scope named $$t make no difference either.
 shouldBe((function ($$t) { return $$t(1, 8); })(null), 1);
 shouldBe((function () { let r = $$t(1, 8); let $$t; return r; })(), 1);
 shouldBe((function () { with ({ $$t() { return "called"; } }) return $$t(1, 8); })(), 1);
 
-// The callee and the mask are matched on the AST, so parentheses and constant folding are looked through.
 shouldBe(($$t)(1, 8), 1);
 shouldBe($$t(1, (8)), 1);
 shouldBe($$t(1, 0x8), 1);
 shouldBe($$t(undefined, 8 | 1), undefined);
 shouldThrowTypeCheck(() => $$t(null, 8 | 1), "Type check failed: expected number | undefined, got null");
 
-// The operand is evaluated exactly once, before the check.
 (function () {
     let count = 0;
     let next = () => ++count;
@@ -123,7 +115,6 @@ shouldThrowTypeCheck(() => $$t(null, 8 | 1), "Type check failed: expected number
     shouldThrow(() => { $$t(tdz, 8); let tdz = 1; }, ReferenceError);
 })();
 
-// Nesting, and use as a subexpression.
 shouldBe($$t($$t(1, 8), 8 | 16), 1);
 shouldBe($$t(1, 8) + $$t(2, 8), 3);
 shouldBe($$t("1", 16) + $$t(2, 8), "12");
@@ -141,7 +132,6 @@ shouldBe(`${$$t(1, 8)}`, "1");
 shouldBe([...$$t([1], 256)][0], 1);
 shouldBe(($$t(1, 8), $$t(2, 8)), 2);
 
-// The result of checking a variable is its value at the time of the check.
 (function () {
     let a = 1;
     shouldBe($$t(a, 8) + (a = 10), 11);
@@ -151,7 +141,6 @@ shouldBe(($$t(1, 8), $$t(2, 8)), 2);
     shouldBe(f($$t(a, 8), a = 2), 1102);
 })();
 
-// A failed check leaves the target of an assignment alone.
 (function (p) {
     let l = 1;
     var v = 2;
@@ -187,7 +176,6 @@ shouldBe(($$t(1, 8), $$t(2, 8)), 2);
     shouldBe(l + v + p, 18);
 })(5);
 
-// A declaration whose initializer fails its check stays uninitialized.
 (function () {
     let read;
     try {
@@ -197,7 +185,6 @@ shouldBe(($$t(1, 8), $$t(2, 8)), 2);
     shouldThrow(read, ReferenceError);
 })();
 
-// try / catch / finally in the function that fails.
 (function () {
     let log = [];
     function f(v) {
@@ -218,7 +205,6 @@ shouldBe(($$t(1, 8), $$t(2, 8)), 2);
     shouldBe(log.join(), "try,passed,finally,try,Type check failed: expected number, got string,finally");
 })();
 
-// The error points at the call.
 (function () {
     let error;
     try {
@@ -230,7 +216,6 @@ shouldBe(($$t(1, 8), $$t(2, 8)), 2);
     shouldBe(error.stack.split("\n").length >= 2, true);
 })();
 
-// this, arguments, new.target, super properties.
 shouldBe((function () { "use strict"; return $$t(this, 8); }).call(1), 1);
 shouldBe(typeof (function () { return $$t(this, 512); }).call(1), "object");
 shouldBe((function () { return $$t(arguments, 512).length; })(1, 2), 2);
@@ -251,7 +236,6 @@ shouldBe((function () { return $$t(new.target, 1); })(), undefined);
     shouldBe(B.s, "s");
 })();
 
-// Parameters: defaults, destructuring, rest.
 (function () {
     function f(a = $$t(1, 8), { b } = { b: $$t(2, 8) }, ...rest) {
         $$t(a, 8);
@@ -268,7 +252,6 @@ shouldBe((function () { return $$t(new.target, 1); })(), undefined);
     shouldThrowTypeCheck(() => g(), "Type check failed: expected number, got string");
 })();
 
-// Inner functions are only syntax-checked when the enclosing function is compiled, and parsed for real when first called.
 (function () {
     function outer() {
         let $$t = () => "called";
@@ -289,8 +272,6 @@ shouldBe((function () { return $$t(new.target, 1); })(), undefined);
     shouldBe(innermost("s").join(), "s,called");
 })();
 
-// In sloppy mode a call is accepted as an assignment target and fails when it is evaluated. The syntax checker, which cannot
-// tell the intrinsic from a call, and the parser have to agree about that.
 (function () {
     function targets() {
         return [
@@ -313,7 +294,6 @@ shouldBe((function () { return $$t(new.target, 1); })(), undefined);
     shouldThrow(() => new Function("function inner() { [$$t(1, 8)] = [1]; }"), SyntaxError);
 })();
 
-// Generators and async functions: the checked value may live in the generator frame.
 (function () {
     function* gen(a) {
         $$t(a, 8);
@@ -334,7 +314,6 @@ shouldBe((function () { return $$t(new.target, 1); })(), undefined);
     shouldBe(g.next(0).value, "Type check failed: expected boolean, got number");
     shouldBe(g.next().value, 1);
 
-    // The parameter check of a generator runs at the first next().
     let h = gen("s");
     shouldThrowTypeCheck(() => h.next(), "Type check failed: expected number, got string");
     shouldBe(h.next().done, true);
@@ -374,7 +353,6 @@ shouldBe((function () { return $$t(new.target, 1); })(), undefined);
     ].join(";"));
 })();
 
-// eval, Function, and program code (where an expression statement is the completion value).
 shouldBe(eval("$$t(1, 8)"), 1);
 shouldBe(eval("$$t(1, 8);"), 1);
 shouldBe(eval("2; if (true) $$t(1, 8);"), 1);
@@ -384,7 +362,6 @@ shouldBe(new Function("a", "return $$t(a, 8)")(1), 1);
 shouldBe(runString("var r = $$t(1, 8);").r, 1);
 shouldBe((function (a) { return eval("$$t(a, 8)"); })(1), 1);
 
-// Loops, switch, labels, conditions.
 (function () {
     let sum = 0;
     for (let i = $$t(0, 8); $$t(i < 3, 4); $$t(i++, 8))

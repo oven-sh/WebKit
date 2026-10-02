@@ -483,7 +483,6 @@ bool Interpreter::isOpcode(Opcode opcode)
 }
 #endif // ASSERT_ENABLED
 
-
 void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* generator, size_t maxStackSize)
 {
     RELEASE_ASSERT(Options::useAsyncStackTrace());
@@ -573,7 +572,6 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
 #if ENABLE(AOT)
                 } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall, AOT::tokenOf(&AOT::instanceOf(asyncFunction->scope())))) {
-                    // AOT code has no CodeBlock, and does not need one for this.
                     JSValue state = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
                     results.append(StackFrame(vm, owner, asyncFunction, executable, CodeSpecializationKind::CodeForCall, AOT::tokenOf(function.instance), function.resumePointOf(state.isInt32() ? state.asInt32() : 0), /* isAsyncFrame */ true));
 #endif
@@ -659,7 +657,6 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
             return IterationStatus::Done;
         if (visitor->isTailDeleted())
             return IterationStatus::Continue;
-        // (A frame like that of a native function, for a function that is not one: see skipFramesOfStubs(). The function's own is below it.)
         if (!visitor->aotFunction() && !visitor->isNativeCalleeFrame() && visitor->callee().isCell() && !*visitor->callFrame()->addressOfCodeBlock()) {
             if (auto* function = dynamicDowncast<JSFunction>(visitor->callee().asCell()); function && !function->isHostOrBuiltinFunction())
                 return IterationStatus::Continue;
@@ -779,7 +776,7 @@ public:
     {
         visitor.unwindToMachineCodeBlockFrame();
 
-        CodeBlock* codeBlock = visitor->codeBlock(); // (Only with a debugger.)
+        CodeBlock* codeBlock = visitor->codeBlock();
         if (!codeBlock)
             return IterationStatus::Continue;
 
@@ -823,8 +820,8 @@ CatchInfo::CatchInfo(const UnlinkedHandlerInfo* handler, const AOT::FunctionRef&
     if (!m_valid)
         return;
     m_type = handler->type();
-    m_isOfAOT = true;
-    m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(tagCodePtr<ExceptionHandlerPtrTag>(function.addressOfCatchEntrypoint(handler->target)));
+    m_isAOT = true;
+    m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(tagCodePtr<ExceptionHandlerPtrTag>(function.catchEntrypointAddress(handler->target)));
     RELEASE_ASSERT(m_nativeCode);
     m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
 }
@@ -891,7 +888,6 @@ public:
 #endif
 
 #if ENABLE(AOT)
-    // See StackVisitor::StackVisitor().
     void didSkipAOTAdapterAtTop(CallFrame* adapter) const
     {
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
@@ -906,17 +902,14 @@ public:
 #if ENABLE(AOT)
         if (AOT::FunctionRef function = visitor->aotFunction()) {
             m_codeBlock = nullptr;
-            // (What has been made part of another function has no handlers. The other's are looked at when it is its turn.)
             if (visitor->isInlinedAOTFrame())
                 return IterationStatus::Continue;
-            // (Every call that can throw has a recorded call site.)
             RELEASE_ASSERT(visitor->bytecodeIndex());
             if (!m_isTermination) {
                 m_handler = { function.handlerFor(visitor->bytecodeIndex().offset()), function };
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
             }
-            // An AOT frame needs no other processing, and no debugger or profiler hook is notified when it is unwound.
             copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
             return visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
         } else
@@ -1408,14 +1401,14 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
             // Compile the callee:
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(function), functionScope, CodeSpecializationKind::CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
-            if (newCodeBlock) // AOT code runs without one (ScriptExecutable::installAOTCode()).
+            if (newCodeBlock)
                 newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSCall)
-                jitCode = functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForCall);
+                jitCode = functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall);
             protoCallFrame.init(newCodeBlock, globalObject, function, thisValue, context, argsCount, args.data());
         }
     }
@@ -1423,7 +1416,7 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     // Execute the code:
     scope.release();
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForCall));
+        ASSERT(jitCode == functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall));
         return JSValue::decode(vmEntryToJavaScript(functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
     }
 
@@ -1511,7 +1504,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSConstruct)
-                jitCode = constructData.js.functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForConstruct);
+                jitCode = constructData.js.functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForConstruct);
             protoCallFrame.init(newCodeBlock, globalObject, constructor, newTarget, nullptr, argsCount, args.data());
         }
     }
@@ -1519,7 +1512,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
     EncodedJSValue result;
     // Execute the code.
     if (isJSConstruct) {
-        ASSERT(jitCode == constructData.js.functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForConstruct));
+        ASSERT(jitCode == constructData.js.functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForConstruct));
         result = vmEntryToJavaScript(constructData.js.functionExecutable->entrypointFor(CodeSpecializationKind::CodeForConstruct, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame);
     } else
         result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
@@ -1542,7 +1535,6 @@ CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction*
     RETURN_IF_EXCEPTION(throwScope, { });
 
     if (!newCodeBlock) {
-        // AOT code, which is never replaced.
         cachedCall.m_addressForCall = cachedCall.functionExecutable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
         return nullptr;
     }
@@ -1821,20 +1813,19 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     };
 
 #if ENABLE(AOT)
-    if (executable->moduleOfProgram()) {
+    if (executable->programModule()) {
         {
             DeferTraps deferTraps(vm);
             AOT::Instance& instance = AOT::Instance::ensure(record->moduleLoader());
             uint64_t entry = instance.prepareModuleCode(executable, scope);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, throwScope.exception());
-            // See AOT::entrypointOfModuleCode().
             args[numberOfArguments] = std::bit_cast<EncodedJSValue>(&instance);
             args[numberOfArguments + 1] = static_cast<EncodedJSValue>(entry);
             protoCallFrame.init(nullptr, globalObject, callee, jsUndefined(), nullptr, numberOfArguments + 3, args);
             record->internalField(JSModuleRecord::Field::State).set(vm, record, jsNumber(static_cast<int>(JSModuleRecord::State::Executing)));
         }
         throwScope.release();
-        return JSValue::decode(vmEntryToJavaScript(AOT::entrypointOfModuleCode().taggedPtr(), &vm, &protoCallFrame));
+        return JSValue::decode(vmEntryToJavaScript(AOT::moduleCodeEntrypoint().taggedPtr(), &vm, &protoCallFrame));
     }
 #endif
 

@@ -1,5 +1,4 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-// What op_get_by_val and a megamorphic op_get_by_id find without asking the runtime, and what they had better still ask it about.
 function at(o, k) { return o[k]; }
 function atInTry(o, k) { try { return o[k]; } catch (e) { return "caught " + e.message; } }
 function value(o) { return o.value; }
@@ -11,7 +10,6 @@ function check(actual, expected, what) {
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
 
-// ---- Indices that are doubles.
 let array = [10, 11, 12, 13];
 let doubles = [0.5, 1.5, 2.5];
 let holey = [1, , 3];
@@ -39,7 +37,6 @@ for (let i = 0; i < 300; ++i) {
 array[1.5] = "named";
 check(at(array, 1.5), "named", "a property whose name is a fraction");
 
-// ---- Names.
 let symbol = Symbol("s");
 let calls = 0;
 let shapes = [];
@@ -72,7 +69,7 @@ function expected(o, i) {
     default: return undefined;
     }
 }
-let key = ["val", "ue"].join(""); // Not an atom to begin with.
+let key = ["val", "ue"].join("");
 for (let round = 0; round < 300; ++round) {
     for (let i = 0; i < shapes.length; ++i) {
         check(atInTry(shapes[i], "value"), expected(shapes[i], i), "by val " + i);
@@ -93,8 +90,7 @@ for (let round = 0; round < 300; ++round) {
     check(at(at, "name"), "at", "name");
 
     if (round == 150) {
-        // Everything changes under the caches.
-        Object.defineProperty(shapes[1], "value", { get() { return "got1true"; }, configurable: true }); // Another getter, same answer.
+        Object.defineProperty(shapes[1], "value", { get() { return "got1true"; }, configurable: true });
         Object.defineProperty(Base.prototype, "value", { get() { return "inherited " + this.tag; }, configurable: true });
         delete shapes[4].pad0;
         Object.prototype.nothing = undefined;
@@ -109,14 +105,12 @@ check(at(shapes[1], "value"), "now a value", "a getter that became a value");
 check(value(shapes[1]), "now a value", "a getter that became a value, by id");
 delete shapes[6].value;
 check(at(shapes[6], "value"), undefined, "a getter that went away");
-// Object.prototype cannot be added to in a program that is compiled ahead of time, so what is absent stays so.
 Object.prototype.value = "from the prototype";
 check(at(shapes[4], "value"), undefined, "what was absent");
 check(value(shapes[9]), undefined, "what was absent, by id");
 if (!calls)
     throw new Error("no getter was called");
 
-// The stack is where it was after a getter that takes more than it is given.
 function manyLocals(o) {
     let a = o.value, b = o["value"], c = o.value, d = o["value"];
     return [a, b, c, d].join("|");
@@ -125,7 +119,6 @@ noInline(manyLocals);
 for (let i = 0; i < 300; ++i)
     check(manyLocals(shapes[2 + 5 * (i % 5)]), Array(4).fill("params" + (2 + 5 * (i % 5)) + ",,0").join("|"), "several in a row");
 
-// ---- Characters of strings.
 {
     let latin1 = "abc\xe9\xff", wide = "aĀ\xe9─b", rope = ["left ", "right"].map(String).reduce((a, b) => a + b + a.length);
     for (let i = 0; i < 300; ++i) {

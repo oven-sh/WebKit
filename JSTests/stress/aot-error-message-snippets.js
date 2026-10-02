@@ -1,7 +1,5 @@
 //@ skip if $architecture != "arm64"
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// Error messages quote source text, which a compiled program does not have: the snippets are stored when it is built. What is expected
-// is what the interpreter says.
 
 function message(f) { try { f(); } catch (e) { return String(e); } return "no error"; }
 function inInForIn(o, o2) { let c = 0; for (let p in o) { if (p in o2) ++c; } return c; }

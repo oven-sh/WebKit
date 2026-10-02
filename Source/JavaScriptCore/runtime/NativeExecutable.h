@@ -50,7 +50,6 @@ public:
     CodeBlockHash NODELETE hashFor(CodeSpecializationKind) const;
 
     TaggedNativeFunction function() const { return m_function; }
-    // Sets an entry point that does what function() does, and that is entered with an ordinary JavaScript call frame.
     void setCallEntrypoint(CodePtr<JSEntryPtrTag> code) { m_jitCodeForCallWithArityCheck = code; }
     TaggedNativeFunction constructor() const { return m_constructor; }
         

@@ -206,7 +206,6 @@ public:
     {
         return m_prologueGenerators[entrypointIndex];
     }
-    // In place of what emitEpilogue() does.
     void setEpilogueGenerator(RefPtr<PrologueGenerator>&& generator) { m_epilogueGenerator = WTF::move(generator); }
 
     void setNumEntrypoints(unsigned);

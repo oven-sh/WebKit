@@ -1558,7 +1558,7 @@ private:
         JSTokenLocation lastTokenLocation;
         bool hasLineTerminatorBeforeToken;
         JSTokenType lastTokenType;
-        uint32_t typeTag; // (It comes before where the token starts, which is where it is read again from.)
+        uint32_t typeTag;
     };
 
     struct SavePoint {
@@ -2267,7 +2267,7 @@ std::unique_ptr<ParsedNode> parse(
     ASSERT(!source.provider()->source().isNull());
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (source.provider()->hasNoText()) [[unlikely]] {
+    if (source.provider()->hasNoSourceText()) [[unlikely]] {
         error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
         return nullptr;
     }

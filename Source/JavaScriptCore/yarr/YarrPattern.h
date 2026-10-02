@@ -733,7 +733,7 @@ struct YarrPattern {
     UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
     Vector<unsigned> m_duplicateNamedGroupForSubpatternId;
     String m_atom;
-    Vector<String> m_anchoredWords; // SpecificPattern::AnchoredWordList
+    Vector<String> m_anchoredWords;
 
 private:
     ErrorCode compile(StringView patternString);

@@ -28,8 +28,6 @@ function shouldBe(actual, expected) {
 if (!isAOTCompiled(outer))
     throw new Error("not compiled");
 
-// Nothing else in the program says the strings of the cases, and the values are ropes.
 shouldBe([outer("Do" + "While"), outer("F" + "or"), outer(""), outer("TEST"), inner("For"), inner("x")], [10, 12, 14, 14, 6, 7]);
-// A 16-bit string whose characters are all Latin-1 equals an 8-bit case.
 const wide = s => (s + "Ā").slice(0, -1);
 shouldBe([outer(wide("DoWhile")), outer(wide("For")), inner(wide("For")), outer(wide("Nope")), outer("FoĀ")], [10, 12, 6, 14, 14]);

@@ -1,4 +1,3 @@
-// Numbers that the static compiler holds as integers have to come out as they would have as doubles.
 function shouldBe(actual, expected) {
     if (!Object.is(actual, expected))
         throw new Error("bad value: " + actual + ", expected " + expected);

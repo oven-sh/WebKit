@@ -1,7 +1,4 @@
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
-// The operands of an array literal with more than 32 elements are kept in the frame, where op_new_array reads them, instead of in values
-// that stay live until the array is made. Each literal here is compared with the same array built by a loop.
-// Generated: the literals have to be written out, because code from eval is not compiled ahead of time.
 
 function shouldBe(actual, expected) {
     if (actual !== expected)
@@ -173,7 +170,6 @@ shouldBeSame("collects34", collects34(3), 34, i => ({ v: 3 + i }));
 shouldBeSame("collects64", collects64(3), 64, i => ({ v: 3 + i }));
 shouldBeSame("collects200", collects200(3), 200, i => ({ v: 3 + i }));
 
-// Functions that nothing refers to but a large literal. A whole-program analysis has to see that they are reachable through it.
 function onlyInTable0(a) { return a + 0; }
 function onlyInTable1(a) { return a + 1; }
 function onlyInTable2(a) { return a + 2; }

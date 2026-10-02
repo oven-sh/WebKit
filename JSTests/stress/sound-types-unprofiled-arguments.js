@@ -1,7 +1,5 @@
 //@ requireOptions("--useSoundTypes=1", "--ignoreArgumentProfilesForTesting=1")
 
-// With no argument profiles at all, the only thing the DFG knows about an argument is what its sound type checks let through.
-
 function shouldBe(actual, expected) {
     if (!Object.is(actual, expected))
         throw new Error(`bad value: ${String(actual)}, expected ${String(expected)}`);
@@ -27,7 +25,6 @@ function call(f, x) { $$t(f, 128); $$t(x, 8); return f(x); }
 function not(b) { $$t(b, 4); return !b; }
 function bigint(a) { $$t(a, 64); return a * 2n; }
 function unchecked(a, b) { return a + b; }
-// The check is not in the root block, so it only seeds the prediction after propagation has found nothing.
 function late(a, flag) {
     if (flag)
         return 0;

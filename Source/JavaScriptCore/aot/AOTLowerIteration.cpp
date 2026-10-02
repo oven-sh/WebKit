@@ -6,7 +6,6 @@
 #include "config.h"
 #include "AOTLowering.h"
 
-// The back end is only written for ARM64 so far.
 #if ENABLE(AOT) && CPU(ARM64)
 
 #include "AOTOperationsObjects.h"
@@ -46,7 +45,7 @@ LValue Lowering::inlineWatchpointSetIsStillValid(LValue set)
     return m_out.phi(Int32, results);
 }
 
-void Lowering::checkIsObjectOrThrowIteratorResultIsNotObject(Node* node, LValue value)
+void Lowering::checkIteratorResultIsObject(Node* node, LValue value)
 {
     LBasicBlock cellCase = m_out.newBlock();
     LBasicBlock notObject = m_out.newBlock();
@@ -60,8 +59,6 @@ void Lowering::checkIsObjectOrThrowIteratorResultIsNotObject(Node* node, LValue 
     m_out.appendTo(continuation);
 }
 
-// iterator = symbolIterator.call(iterable); next = iterator.next. If the runtime has a fast path for the iterable, `next` is
-// instead a sentinel (a sentinel cell, or a number if `iterator` is one) that tells op_iterator_next which fast path to use.
 void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
 {
     VirtualRegister iteratorRegister, nextRegister, symbolIteratorRegister, iterableRegister;
@@ -82,7 +79,6 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     LValue symbolIterator = lowJSValue(node->use(symbolIteratorRegister));
 
     if (usesStubs && !isAsync) {
-        // Every loop has to handle every kind of iterable, and the code is the same for all of them, so it is in a stub.
         PatchpointValue* opened = callStub(Stub::IteratorOpen, m_proc.addTuple({ Int64, Int64 }),
             { { iterable, GPRInfo::argumentGPR0 }, { symbolIterator, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Next))), GPRInfo::argumentGPR2 } },
             { });
@@ -96,19 +92,17 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     LBasicBlock genericCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
 
-    // An array with the realm's original structure is iterated by index, without an iterator object. This is what the runtime would
-    // decide too (IterationMode::FastArray).
     std::optional<ValueFromBlock> iteratorOfArray;
-    std::optional<ValueFromBlock> nextOfArray;
+    std::optional<ValueFromBlock> arrayNextResult;
     if (!isAsync && Options::useUnboxedFastArrayIteration() && mayBe(node->use(iterableRegister)->type, TArray)) {
         LBasicBlock isArray = m_out.newBlock();
-        LBasicBlock isSomethingElse = m_out.newBlock();
-        m_out.branch(isCellAnd(node->use(iterableRegister), iterable, [&](LValue cell) { return isOriginalArray(cell); }), unsure(isArray), unsure(isSomethingElse));
+        LBasicBlock isOtherKind = m_out.newBlock();
+        m_out.branch(isCellAnd(node->use(iterableRegister), iterable, [&](LValue cell) { return isOriginalArray(cell); }), unsure(isArray), unsure(isOtherKind));
         m_out.appendTo(isArray);
-        iteratorOfArray = m_out.anchor(fixedPointer(Instance::offsetOfSentinelOfArrayIteration()));
-        nextOfArray = m_out.anchor(m_out.constInt64(JSValue::encode(jsNumber(0))));
+        iteratorOfArray = m_out.anchor(fixedPointer(Instance::offsetOfArrayIterationSentinel()));
+        arrayNextResult = m_out.anchor(m_out.constInt64(JSValue::encode(jsNumber(0))));
         m_out.jump(continuation);
-        m_out.appendTo(isSomethingElse);
+        m_out.appendTo(isOtherKind);
     }
 
     LValue fastIterator = vmCall(node, Int64, isAsync ? Entry::operationAOTAsyncIteratorOpenTryFast : Entry::operationAOTIteratorOpenTryFast, m_instance, iterable, symbolIterator, scratchAddress());
@@ -121,7 +115,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
 
     m_out.appendTo(genericCase, continuation);
     LValue iterator = emitCall(node, symbolIterator, Arguments { iterable });
-    checkIsObjectOrThrowIteratorResultIsNotObject(node, iterator);
+    checkIteratorResultIsObject(node, iterator);
     LValue next = getByIdCached(node, iterator, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Next));
     ValueFromBlock genericIteratorResult = m_out.anchor(iterator);
     ValueFromBlock genericNextResult = m_out.anchor(next);
@@ -132,14 +126,12 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     Vector<ValueFromBlock, 3> nexts { fastNextResult, genericNextResult };
     if (iteratorOfArray) {
         iterators.append(*iteratorOfArray);
-        nexts.append(*nextOfArray);
+        nexts.append(*arrayNextResult);
     }
     setProj(node, iteratorRegister, m_out.phi(Int64, iterators));
     setProj(node, nextRegister, m_out.phi(Int64, nexts));
 }
 
-// result = next.call(iterator); done = ToBoolean(result.done); value = done ? (unused) : result.value. Or the fast path.
-// (The bytecode only tests `done` for truthiness, so converting it here is not observable.)
 void Lowering::lowerIteratorNext(Node* node)
 {
     auto bytecode = node->as<OpIteratorNext>();
@@ -150,12 +142,10 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue iterable = lowJSValue(node->use(bytecode.m_iterable));
 
     if constexpr (usesStubs) {
-        unsigned slotOfDone = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Done));
-        unsigned slotOfValue = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Value));
-        RELEASE_ASSERT(slotOfValue == slotOfDone + 1);
+        unsigned doneSlot = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Done));
+        unsigned valueSlot = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Value));
+        RELEASE_ASSERT(valueSlot == doneSlot + 1);
 
-        // Only the common case is inline: an element that is present, of an array that op_iterator_open decided to iterate by index.
-        // Everything else, including the end of the array, is in the stub.
         LBasicBlock byIndex = m_out.newBlock();
         LBasicBlock indexIsInt32 = m_out.newBlock();
         LBasicBlock rightShape = m_out.newBlock();
@@ -164,8 +154,7 @@ void Lowering::lowerIteratorNext(Node* node)
         LBasicBlock otherwise = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        // op_iterator_open only returns this sentinel for an array, and `iterable` is the register that it read.
-        m_out.branch(m_out.equal(iterator, fixedPointer(Instance::offsetOfSentinelOfArrayIteration())), usually(byIndex), rarely(otherwise));
+        m_out.branch(m_out.equal(iterator, fixedPointer(Instance::offsetOfArrayIterationSentinel())), usually(byIndex), rarely(otherwise));
 
         m_out.appendTo(byIndex, indexIsInt32);
         m_out.branch(isInt32(next), usually(indexIsInt32), rarely(otherwise));
@@ -175,8 +164,6 @@ void Lowering::lowerIteratorNext(Node* node)
         LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(iterable, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
         m_out.branch(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), usually(rightShape), rarely(otherwise));
 
-        // Compared as unsigned: the index of a finished iteration, -1, is larger than any length. (The length of such storage is far
-        // below 2^31, so the index can be incremented.)
         m_out.appendTo(rightShape, inBounds);
         static_assert(MAX_STORAGE_VECTOR_LENGTH < static_cast<unsigned>(std::numeric_limits<int32_t>::max()));
         LValue butterfly = m_out.loadPtr(iterable, m_heaps.JSObject_butterfly);
@@ -194,7 +181,7 @@ void Lowering::lowerIteratorNext(Node* node)
 
         m_out.appendTo(otherwise, continuation);
         PatchpointValue* result = callStub(Stub::IteratorNext, m_proc.addTuple({ Int64, Int64, Int64 }),
-            { { next, GPRInfo::argumentGPR0 }, { iterator, GPRInfo::argumentGPR1 }, { iterable, GPRInfo::argumentGPR2 }, { slotAddress(slotOfDone), GPRInfo::argumentGPR3 } },
+            { { next, GPRInfo::argumentGPR0 }, { iterator, GPRInfo::argumentGPR1 }, { iterable, GPRInfo::argumentGPR2 }, { slotAddress(doneSlot), GPRInfo::argumentGPR3 } },
             { });
         result->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1), ValueRep::reg(GPRInfo::argumentGPR2) };
         ValueFromBlock stubDone = m_out.anchor(m_out.extract(result, 0));
@@ -232,7 +219,6 @@ void Lowering::lowerIteratorNext(Node* node)
         valueResults.append(m_out.anchor(value));
         nextResults.append(m_out.anchor(newNext));
     };
-    // The operations behind the fast paths return the value, or empty at the end.
     auto doneIfEmpty = [&](LValue value) { return boxBoolean(m_out.isZero64(value)); };
 
     m_out.branch(isCell(next), unsure(nextIsCell), unsure(nextIsNotCell));
@@ -240,8 +226,6 @@ void Lowering::lowerIteratorNext(Node* node)
     m_out.appendTo(nextIsCell, nextIsNotCell);
     m_out.branch(isSentinelCell(next), unsure(markedCase), unsure(genericCase));
 
-    // Only in this case may `iterator` be a sentinel instead of an object: `iterable` is then an array, and `next` is the index to
-    // visit.
     m_out.appendTo(nextIsNotCell, markedCase);
     LValue iteratorIsSentinel = isCellAnd(iteratorNode, iterator, [&](LValue cell) { return isSentinelCell(cell); });
     m_out.branch(iteratorIsSentinel, unsure(indexCase), unsure(genericCase));
@@ -253,8 +237,6 @@ void Lowering::lowerIteratorNext(Node* node)
         m_out.jump(continuation);
     }
 
-    // An element that is present, in storage that holds JSValues. The end of the array, holes and everything else are left to the
-    // runtime.
     m_out.appendTo(indexCase, indexIsInt32);
     m_out.branch(isInt32(next), usually(indexIsInt32), rarely(indexSlow));
 
@@ -269,15 +251,13 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(iterable, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
     m_out.branch(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), usually(rightShape), rarely(indexSlow));
 
-    // Compared as unsigned: the index of a finished iteration, -1, is larger than any length.
     m_out.appendTo(rightShape, inBounds);
     LValue butterfly = m_out.loadPtr(iterable, m_heaps.JSObject_butterfly);
     LValue isInBounds = m_out.bitAnd(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), m_out.notEqual(index, m_out.constInt32(std::numeric_limits<int32_t>::max())));
-    LBasicBlock isAtTheEnd = m_out.newBlock();
-    m_out.branch(isInBounds, usually(inBounds), unsure(isAtTheEnd));
+    LBasicBlock atEndCase = m_out.newBlock();
+    m_out.branch(isInBounds, usually(inBounds), unsure(atEndCase));
 
-    // The end of the array: see JSArrayIterator::nextValueWithIndexInFrame().
-    m_out.appendTo(isAtTheEnd);
+    m_out.appendTo(atEndCase);
     finish(m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt64(JSValue::encode(jsNumber(JSArrayIterator::doneIndex))));
     m_out.jump(continuation);
 
@@ -299,19 +279,18 @@ void Lowering::lowerIteratorNext(Node* node)
 
     m_out.appendTo(genericCase, notDone);
     LValue result = emitCall(node, next, Arguments { iterator });
-    checkIsObjectOrThrowIteratorResultIsNotObject(node, result);
+    checkIteratorResultIsObject(node, result);
     LValue done = getByIdCached(node, result, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Done));
     LValue isDone;
     {
-        // The same as toBoolean(), for a value that is not a node.
         LBasicBlock notBoolean = m_out.newBlock();
-        LBasicBlock haveDone = m_out.newBlock();
+        LBasicBlock doneCase = m_out.newBlock();
         ValueFromBlock booleanResult = m_out.anchor(unboxBoolean(done));
-        m_out.branch(isBoolean(done), usually(haveDone), rarely(notBoolean));
-        m_out.appendTo(notBoolean, haveDone);
+        m_out.branch(isBoolean(done), usually(doneCase), rarely(notBoolean));
+        m_out.appendTo(notBoolean, doneCase);
         ValueFromBlock otherResult = m_out.anchor(m_out.notZero64(plainCall(Int64, Entry::operationAOTToBoolean, m_instance, done)));
-        m_out.jump(haveDone);
-        m_out.appendTo(haveDone);
+        m_out.jump(doneCase);
+        m_out.appendTo(doneCase);
         isDone = m_out.phi(Int32, booleanResult, otherResult);
     }
     finish(m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::encode(jsUndefined())), next);
@@ -327,7 +306,6 @@ void Lowering::lowerIteratorNext(Node* node)
     setProj(node, bytecode.m_next, m_out.phi(Int64, nextResults));
 }
 
-// dst = next.call(iterator [, value]). If `next` is the sentinel, the value is queued on the producer instead.
 void Lowering::lowerAsyncIteratorNext(Node* node)
 {
     auto bytecode = node->as<OpAsyncIteratorNext>();
@@ -359,9 +337,6 @@ void Lowering::lowerAsyncIteratorNext(Node* node)
     setJSValue(node, m_out.phi(Int64, markedResult, genericResult));
 }
 
-// The first half of op_iterator_close_check (see the parser): the iterator to close. If there is no iterator object, and closing
-// one would be observable (because array iterators have been given a `return` method), the iterator is created here. Otherwise the
-// sentinel stays, which tells the second half that there is nothing to do.
 void Lowering::lowerIteratorCloseCheck(Node* node)
 {
     auto bytecode = node->as<OpIteratorCloseCheck>();
@@ -399,7 +374,6 @@ void Lowering::lowerIteratorCloseCheck(Node* node)
     setJSValue(node, m_out.phi(Int64, results));
 }
 
-// The second half: whether to jump over the code that closes the iterator.
 LValue Lowering::iteratorCloseCheckCondition(Node* node)
 {
     Node* iteratorNode = node->use(node->as<OpIteratorCloseCheck>().m_iterator);
@@ -430,8 +404,6 @@ bool Lowering::tryLowerIteration(Node* node)
         return true;
 
     case op_get_property_enumerator: {
-        // The enumerator that the Structure of an object without indexed elements has cached, if it is still valid for the
-        // prototype chain.
         Node* baseNode = node->use(node->as<OpGetPropertyEnumerator>().m_base);
         LValue base = lowJSValue(baseNode);
         LBasicBlock generic = m_out.newBlock();
@@ -462,11 +434,9 @@ bool Lowering::tryLowerIteration(Node* node)
         LValue enumerator = low(bytecode.m_enumerator);
         LValue mode = low(bytecode.m_mode);
         LValue index = low(bytecode.m_index);
-        // The object still has the Structure that the names were collected from, and has no indexed elements, so the next name is
-        // the next in the list. See JSPropertyNameEnumerator::computeNext().
         LBasicBlock generic = m_out.newBlock();
-        LBasicBlock hasOne = m_out.newBlock();
-        LBasicBlock isAtTheEnd = m_out.newBlock();
+        LBasicBlock presentCase = m_out.newBlock();
+        LBasicBlock atEndCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         if (!isSubtype(baseNode->type, TCell))
             orElse(isCell(base), generic);
@@ -476,20 +446,19 @@ bool Lowering::tryLowerIteration(Node* node)
         orElse(m_out.testIsZero32(unboxInt32(mode), m_out.constInt32(~JSPropertyNameEnumerator::OwnStructureMode)), generic);
         LValue next = m_out.select(m_out.isZero32(unboxInt32(mode)), m_out.int32Zero, m_out.add(unboxInt32(index), m_out.int32One));
         LValue end = m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex);
-        m_out.branch(m_out.below(next, end), usually(hasOne), unsure(isAtTheEnd));
+        m_out.branch(m_out.below(next, end), usually(presentCase), unsure(atEndCase));
 
-        m_out.appendTo(hasOne);
+        m_out.appendTo(presentCase);
         Vector<ValueFromBlock, 3> names;
         Vector<ValueFromBlock, 3> modes;
         Vector<ValueFromBlock, 3> indices;
-        // (A B3 value belongs to the block it is created in, even a constant, so each block creates its own.)
         auto ownStructureMode = [&] { return m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(JSPropertyNameEnumerator::OwnStructureMode)))); };
         names.append(m_out.anchor(m_out.loadPtr(m_out.baseIndex(m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, m_out.loadPtr(enumerator, m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVector), m_out.zeroExtPtr(next)))));
         modes.append(m_out.anchor(ownStructureMode()));
         indices.append(m_out.anchor(boxInt32(next)));
         m_out.jump(continuation);
 
-        m_out.appendTo(isAtTheEnd);
+        m_out.appendTo(atEndCase);
         orElse(m_out.equal(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex), end), generic);
         names.append(m_out.anchor(fixedPointer(Instance::offsetOfSentinelString())));
         modes.append(m_out.anchor(ownStructureMode()));
@@ -515,8 +484,6 @@ bool Lowering::tryLowerIteration(Node* node)
         Node* baseNode = node->use(bytecode.m_base);
         LValue base = lowJSValue(baseNode);
         LValue enumerator = low(bytecode.m_enumerator);
-        // The name is an own property and the object's Structure is unchanged, so the position of the name in the list gives the
-        // property's offset.
         LBasicBlock generic = m_out.newBlock();
         LBasicBlock isInObject = m_out.newBlock();
         LBasicBlock isOutside = m_out.newBlock();
@@ -532,8 +499,8 @@ bool Lowering::tryLowerIteration(Node* node)
         ValueFromBlock inObject = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(base, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(3)), m_out.constIntPtr(JSObject::offsetOfInlineStorage()))))));
         m_out.jump(continuation);
         m_out.appendTo(isOutside);
-        LValue howFarOut = m_out.zeroExtPtr(m_out.sub(index, inlineCapacity));
-        ValueFromBlock outside = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(m_out.sub(m_out.loadPtr(base, m_heaps.JSObject_butterfly), m_out.shl(howFarOut, m_out.constInt32(3))), m_out.constIntPtr(static_cast<intptr_t>(offsetInButterfly(firstOutOfLineOffset)) * static_cast<intptr_t>(sizeof(EncodedJSValue)))))));
+        LValue outOfLineIndex = m_out.zeroExtPtr(m_out.sub(index, inlineCapacity));
+        ValueFromBlock outside = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(m_out.sub(m_out.loadPtr(base, m_heaps.JSObject_butterfly), m_out.shl(outOfLineIndex, m_out.constInt32(3))), m_out.constIntPtr(static_cast<intptr_t>(offsetInButterfly(firstOutOfLineOffset)) * static_cast<intptr_t>(sizeof(EncodedJSValue)))))));
         m_out.jump(continuation);
         m_out.appendTo(generic);
         ValueFromBlock found = m_out.anchor(vmCall(node, Int64, Entry::operationAOTEnumeratorGetByVal, m_instance, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator)));

@@ -1372,7 +1372,6 @@ Butterfly* JSObject::tryCreateArrayStorageButterfly(VM& vm, JSObject* intendedOw
     return createArrayStorageButterflyImpl(vm, intendedOwner, structure, length, vectorLength, oldButterfly, AllocationFailureMode::ReturnNull);
 }
 
-
 ArrayStorage* JSObject::createArrayStorage(VM& vm, unsigned length, unsigned vectorLength)
 {
     DeferGC deferGC(vm);
@@ -2440,7 +2439,6 @@ void JSObject::evictTypedField(VM& vm, PropertyName propertyName)
     PropertyOffset offset = structure->get(vm, propertyName, attributes);
     if (!isValidOffset(offset) || !isInlineOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
         return;
-    // It keeps its place among the others, so it is not a matter of taking it out and putting it back. That there is no transition for.
     if (!structure->isUncacheableDictionary()) {
         DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
         structure = Structure::toUncacheableDictionaryTransition(vm, structure, &deferredWatchpointFire);
@@ -2449,7 +2447,7 @@ void JSObject::evictTypedField(VM& vm, PropertyName propertyName)
     JSValue value = getDirect(offset);
     StructureID structureID = this->structureID();
     PropertyOffset movedTo = invalidOffset;
-    structure->movePropertyOutOfObjectWithoutTransition(vm, propertyName, [&](const GCSafeConcurrentJSLocker&, PropertyOffset newOffset, PropertyOffset newMaxOffset) {
+    structure->movePropertyOutOfLineWithoutTransition(vm, propertyName, [&](const GCSafeConcurrentJSLocker&, PropertyOffset newOffset, PropertyOffset newMaxOffset) {
         unsigned oldOutOfLineCapacity = structure->outOfLineCapacity();
         unsigned newOutOfLineCapacity = Structure::outOfLineCapacity(newMaxOffset);
         if (newOutOfLineCapacity != oldOutOfLineCapacity) {
@@ -2964,7 +2962,6 @@ void JSObject::makePropertiesImmutable(JSGlobalObject* globalObject)
     if (hasNonReifiedStaticProperties())
         reifyAllStaticProperties(globalObject);
     materializeLazyOwnProperties(vm);
-    // (That may leave a dictionary, whose Structure does not reliably say which properties are absent.)
     if (structure()->isDictionary())
         flattenDictionaryObject(vm);
     Structure* oldStructure = structure();
@@ -3500,7 +3497,6 @@ bool JSObject::putByIndexBeyondVectorLength(JSGlobalObject* globalObject, unsign
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES: {
         if (indexingShouldBeSparse()) {
-            // Object.prototype must not end up with somewhere to keep elements for having refused one: every array would pay for it.
             if (structure()->inheritorsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !needsSlowPutIndexing()) [[unlikely]]
                 return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
             auto* arrayStorage = ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm);
@@ -4210,7 +4206,6 @@ void JSObject::convertToUncacheableDictionary(VM& vm)
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
 
-
 void JSObject::shiftButterflyAfterFlattening(const ConcurrentJSLocker&, VM& vm, Structure* structure, size_t outOfLineCapacityAfter)
 {
     // This could interleave visitChildren because some old structure could have been a non
@@ -4365,7 +4360,6 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
 {
     unsigned i = 0;
     Structure* structure = this->structure();
-    // (Stores to the slots of an object with a typed layout have to go through putDirectInternal(), which checks the field's type.)
     if (!((structure->typedLayoutID() && TypedLayoutTable::hasLayouts()) || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
         Vector<PropertyOffset, 16> offsets(size, [&](size_t index) -> std::optional<PropertyOffset> {
             PropertyName propertyName(properties[index]);

@@ -2,7 +2,6 @@
 //@ requireOptions("-m", "--compileMainScriptAheadOfTime=1")
 //@ defaultRun
 //@ run("gc-stress", "--slowPathAllocsBetweenGCs=20")
-// An instance lives as long as its module loader, and no longer. A closure keeps the instance that it needs.
 
 let n = 0;
 export const state = { name: "state of an instance" };
@@ -28,7 +27,6 @@ if (!globalThis.isFurther) {
         fullGC();
         fullGC();
         const alive = refs => refs.filter(ref => ref.deref()).length;
-        // (The collector scans the stack conservatively, so a few may stay.)
         if (alive(dropped) > 5)
             throw new Error(`${alive(dropped)} of ${dropped.length} instances that were let go of are still there`);
         if (alive(kept) !== kept.length)

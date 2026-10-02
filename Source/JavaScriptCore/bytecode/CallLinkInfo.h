@@ -567,8 +567,7 @@ inline JSCell* CallLinkInfo::ownerForSlowPath(CallFrame* calleeFrame)
         return m_owner;
 
 #if ENABLE(AOT)
-    // (Between the two there is the frame of a stub, which has nothing to say.)
-    if (CodeBlock* codeBlock = AOT::codeBlockOfCaller(calleeFrame))
+    if (CodeBlock* codeBlock = AOT::callerCodeBlock(calleeFrame))
         return std::bit_cast<JSCell*>(codeBlock);
 #endif
 

@@ -60,7 +60,6 @@ class ASTBuilder {
         bool hasAssignment;
     };
     
-    
     struct AssignmentInfo {
         AssignmentInfo() {}
         AssignmentInfo(ExpressionNode* node, const JSTextPosition& start, const JSTextPosition& divot, int initAssignments, Operator op)
@@ -216,7 +215,7 @@ public:
         return new (m_parserArena) PrivateIdentifierNode(location, ident);
     }
     void setTypeTag(ExpressionNode* node, uint32_t tag) { node->setTypeTag(tag); }
-    void setTypeTagOfClass(ClassExprNode* node, uint32_t tag) { node->setTypeTag(tag); }
+    void setClassTypeTag(ClassExprNode* node, uint32_t tag) { node->setTypeTag(tag); }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location) { return new (m_parserArena) ObjectLiteralNode(location); }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location, PropertyListNode* properties) { return new (m_parserArena) ObjectLiteralNode(location, properties); }
 
@@ -1464,9 +1463,6 @@ ExpressionNode* ASTBuilder::makeStaticBlockFunctionCallNode(const JSTokenLocatio
     return new (m_parserArena) StaticBlockFunctionCallNode(location, func, divot, divotStart, divotEnd);
 }
 
-// The one place that decides whether a call is the sound types intrinsic: $$t(<expr>, <integer in [1, 1022]>), whatever
-// $$t resolves to. The parser still records the use of the identifier $$t, so scope analysis is the same as for a call and
-// the SyntaxChecker (which cannot see this) agrees with the ASTBuilder. The mask is matched after constant folding.
 inline std::optional<unsigned> ASTBuilder::soundTypeCheckMask(const Identifier& callee, ArgumentsNode* args)
 {
     if (!m_vm.bytecodeGenerationOptions.useSoundTypes)

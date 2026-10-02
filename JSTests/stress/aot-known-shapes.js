@@ -1,5 +1,4 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-// Objects made by literals whose properties are all plain from the code, and everything that can become of them afterwards.
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -43,7 +42,6 @@ for (let i = 0; i < 3000; ++i) {
 check(keys(cab(1, 2, 3)), "c,a,b", "order"); check(keys(ba(1, 2)), "b,a", "order");
 check(Object.keys(many(0)).length, 120, "how many"); check(JSON.stringify(abc(1, "x", null)), '{"a":1,"b":"x","c":null}', "JSON");
 
-// ---- What was made that way and is no longer what it was.
 function variants(i) {
     let added = ab(i, 1); added.c = "added";
     let deleted = abc(i, 1, 2); delete deleted.b;
@@ -84,7 +82,6 @@ for (let i = 0; i < 1500; ++i) {
         gc();
 }
 
-// ---- What every one of them inherits from cannot be added to, in a program that is compiled ahead of time.
 Object.prototype.c = "on Object.prototype";
 check(c(ab(1, 2)), undefined, "still absent"); check(c(abc(1, 2, 3)), 3, "own all the same");
 {
@@ -94,7 +91,6 @@ check(c(ab(1, 2)), undefined, "still absent"); check(c(abc(1, 2, 3)), 3, "own al
 }
 check(b(xa(1, 2)), undefined, "still absent"); check(b(ab(1, 2)), 2, "own all the same");
 
-// ---- Another realm, with the same code.
 if (typeof createGlobalObject === "function") {
     let other = createGlobalObject();
     let source = "(function ab(a, b) { return { a, b }; })";
@@ -106,7 +102,6 @@ if (typeof createGlobalObject === "function") {
     }
 }
 
-// ---- Objects made by constructors that start by storing to this.
 {
     function Point(x, y) { this.x = x; this.y = y; }
     function Reversed(x, y) { this.y = y; this.x = x; }
@@ -132,7 +127,6 @@ if (typeof createGlobalObject === "function") {
         if (!(i % 700))
             gc();
     }
-    // Classes that come and go, with the same fields.
     function makeClass(tag) { return class { constructor(a, b) { this.x = a; this.y = b; } tag() { return tag; } }; }
     noInline(makeClass);
     for (let i = 0; i < 400; ++i) {
@@ -142,7 +136,6 @@ if (typeof createGlobalObject === "function") {
         if (!(i % 50))
             gc();
     }
-    // The prototype gets a say.
     Object.defineProperty(Point.prototype, "y", { set(v) { this.hidden = v; }, get() { return "accessor"; }, configurable: true });
     for (let i = 0; i < 300; ++i) {
         let p = new Point(i, 5);
@@ -150,7 +143,6 @@ if (typeof createGlobalObject === "function") {
     }
 }
 
-// ---- Stores to what such objects have, and to what they do not.
 {
     function setA(o, v) { o.a = v; }
     function setC(o, v) { o.c = v; }

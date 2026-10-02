@@ -235,7 +235,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         if (isPrelinked() && AOT::Image::environmentsSize()) {
             AOT::ImageEnvironment environment = AOT::Image::environmentOf(prelinkedIndex());
             if (environment.distance && environment.size == JSModuleEnvironment::allocationSize(symbolTable, jsModule->importSlotCount())) {
-                if (JSCell** slot = AOT::Instance::ensure(moduleLoader()).slotOfEnvironment(environment); slot && !*slot)
+                if (JSCell** slot = AOT::Instance::ensure(moduleLoader()).environmentSlot(environment); slot && !*slot)
                     *slot = env;
             }
         }
@@ -454,27 +454,23 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 18. Let code be module.[[ECMAScriptCode]].
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = moduleProgramExecutable->unlinkedCodeBlock();
 #if ENABLE(AOT)
-    // Steps 19 to 24 for a module that was compiled ahead of time, which has no code block. Where its variables are is in the file. (The
-    // table may not so much as have the names: only those that something can ask for are kept.)
-    const AOT::ModuleOfProgram* moduleOfProgram = moduleProgramExecutable->moduleOfProgram();
-    if (moduleOfProgram) {
-        for (unsigned i = 0; i < moduleOfProgram->numberOfVarScopeOffsets; ++i)
-            env->variableAt(ScopeOffset(moduleOfProgram->firstVarScopeOffset + i)).setUndefined();
-        jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, nullptr, true);
+    const AOT::ProgramModule* programModule = moduleProgramExecutable->programModule();
+    if (programModule) {
+        for (unsigned i = 0; i < programModule->numberOfVarScopeOffsets; ++i)
+            env->variableAt(ScopeOffset(programModule->firstVarScopeOffset + i)).setUndefined();
+        jsModule->setProgramModule(vm, moduleProgramExecutable);
         if (!Options::useLazyModuleFunctionDeclarations()) {
-            for (unsigned i = 0; i < moduleOfProgram->numberOfFunctionDeclarationSlots; ++i)
-                jsModule->readFunctionDeclarationSlot(vm, env, ScopeOffset(AOT::ProgramData::get()->at<uint32_t>(moduleOfProgram->offsetOfFunctionDeclarationSlots)[i]));
+            for (uint32_t slot : AOT::ProgramData::get()->functionDeclarationSlots(*programModule))
+                jsModule->readFunctionDeclarationSlot(vm, env, ScopeOffset(slot));
         }
     }
 #else
-    constexpr bool moduleOfProgram = false;
+    constexpr bool programModule = false;
 #endif
     // 19. Let varDeclarations be the VarScopedDeclarations of code.
     // 20. Let declaredVarNames be a new empty List.
     // 21. For each element d of varDeclarations, do
-    // While the symbol table's entries are still in the bytecode cache nothing watches them, and where the variables are is known
-    // without their names.
-    bool initializeVarsByOffset = !moduleOfProgram && symbolTable->hasCachedEntriesPending();
+    bool initializeVarsByOffset = !programModule && symbolTable->hasCachedEntriesPending();
     if (initializeVarsByOffset) {
         for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)
             env->variableAt(ScopeOffset(unlinkedCodeBlock->firstVarScopeOffset() + i)).setUndefined();
@@ -492,7 +488,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         }
     }
     static NeverDestroyed<const VariableEnvironment> noVariables;
-    for (const auto& variable : moduleOfProgram ? noVariables.get() : unlinkedCodeBlock->variableDeclarations()) {
+    for (const auto& variable : programModule ? noVariables.get() : unlinkedCodeBlock->variableDeclarations()) {
         if (initializeVarsByOffset)
             break;
         // 21.a. For each element dn of the BoundNames of d, do
@@ -518,9 +514,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // The heap-allocated declarations come first (BytecodeGenerator); the stack-allocated rest is the module body's to
     // create, so do not look those up by name (the name may still be in the bytecode cache).
     size_t numberOfFunctions = 0;
-    if (!moduleOfProgram) {
+    if (!programModule) {
         numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
-        // The profilers want every function's range up front.
         bool leaveFunctionDeclarationsUninstantiated = Options::useLazyModuleFunctionDeclarations() && !vm.typeProfiler() && !vm.controlFlowProfiler();
         jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, unlinkedCodeBlock, leaveFunctionDeclarationsUninstantiated);
         if (leaveFunctionDeclarationsUninstantiated && jsModule->numberOfUninstantiatedFunctionDeclarations() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls())

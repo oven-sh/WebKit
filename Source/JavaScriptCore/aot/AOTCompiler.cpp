@@ -12,6 +12,7 @@
 #include "AOTLowering.h"
 #include "AOTProgram.h"
 #include "AOTStubs.h"
+#include "AOTTypeTable.h"
 #include "AirCode.h"
 #include "AirGenerate.h"
 #include "AirInstInlines.h"
@@ -27,7 +28,6 @@
 #include "JSModuleEnvironment.h"
 #include "JSWithScope.h"
 #include "LinkBuffer.h"
-#include "AOTTypeTable.h"
 #include <wtf/Lock.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/StringHash.h>
@@ -43,10 +43,6 @@ static ScopeChain unknownScopeChain()
     return chain;
 }
 
-// Estimates the relative execution frequency of each block. The register allocator uses it to decide what to spill and which moves
-// to coalesce. Without a profile, it has to be derived from the shape of the code. The lowering has already marked the blocks that
-// it created for rare cases.
-// The back end is only written for ARM64 so far.
 #if CPU(ARM64)
 
 static void estimateFrequencies(B3::Procedure& proc)
@@ -54,7 +50,6 @@ static void estimateFrequencies(B3::Procedure& proc)
     proc.resetReachability();
     auto& loops = proc.naturalLoops();
 
-    // The blocks that are reachable without taking a branch that is rarely taken.
     IndexSet<B3::BasicBlock*> likely;
     Vector<B3::BasicBlock*, 32> worklist;
     auto visit = [&](B3::BasicBlock* block) {
@@ -76,10 +71,8 @@ static void estimateFrequencies(B3::Procedure& proc)
     }
 }
 
-// See CompiledFunctionInfo::startsCold.
 static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
 {
-    // (The number of slots is always less than the size of the bytecode.)
     if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
         return false;
     for (const auto& instruction : unlinkedCodeBlock->instructions()) {
@@ -89,8 +82,6 @@ static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
     return true;
 }
 
-// A register that holds the same value throughout the function is used directly. As a B3 value it would be copied to another
-// register on entry, and that register would then have to be saved.
 static void usePinnedRegistersDirectly(B3::Air::Code& code)
 {
     using namespace B3::Air;
@@ -120,16 +111,12 @@ static void usePinnedRegistersDirectly(B3::Air::Code& code)
     }
 }
 
-// A function that calls nothing, keeps nothing on the stack and saves nothing has no frame.
 bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
 {
-    // (An exception handler needs a frame.)
     if (code.frameSize() || code.calleeSaveRegisterAtOffsetList().registerCount() || graph.alwaysEmitsCalls || !graph.catchEntrypoints.isEmpty())
         return false;
     if (!graph.emitsCalls)
         return true;
-    // Code that contained a call may have turned out to be unreachable. Every remaining call declares that it clobbers the link
-    // register, so look for that.
     if (!graph.hasRemainingCalls) {
         bool found = false;
         for (B3::Air::BasicBlock* block : code) {
@@ -161,8 +148,7 @@ void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Co
     jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
 }
 
-// For Options::preferUnsplitAOTLoops(). Takes a graph whose loops have not been split.
-static bool loopsNeedNoSplitting(Graph& graph)
+static bool canSkipLoopSplitting(Graph& graph)
 {
     bool hasLoop = false;
     for (BasicBlock* block : graph.m_rpo) {
@@ -208,11 +194,11 @@ static bool loopsNeedNoSplitting(Graph& graph)
     return hasLoop;
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const CodeOfProgram* program, bool triesUnsplitLoops = true)
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     triesUnsplitLoops &= Options::preferUnsplitAOTLoops() && !Options::useAOTFunctionSplitting();
-    graph.loopsAreNotSplit = triesUnsplitLoops;
+    graph.loopSplittingIsDisabled = triesUnsplitLoops;
     graph.setCalleeHints(hints);
     graph.setSummary(summary);
     graph.setVariableSummaries(variableSummaries);
@@ -235,15 +221,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
     planMultiValueReturns(graph);
-    // (Without loop splitting there is no choice to make: LoopOptimizer::hoistArrayStorageLoads() looks at each loop separately.)
-    if (triesUnsplitLoops && Options::useAOTLoopSplitting() && Options::aotLoopSplittingPolicy() && !loopsNeedNoSplitting(graph))
+    if (triesUnsplitLoops && Options::useAOTLoopSplitting() && Options::aotLoopSplittingPolicy() && !canSkipLoopSplitting(graph))
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false);
     inferRanges(graph);
     optimizeLoops(graph);
-    graph.elideReadsOfCalleesNotPassed();
-    graph.elideReadsOfIteratorMethodsOfArrays();
+    graph.elideUnpassedCalleeReads();
+    graph.elideArrayIteratorMethodReads();
     graph.findBuiltinsCalled();
-    graph.findListsOfArguments();
+    graph.findArgumentLists();
     promoteEnvironments(graph);
     analyzeEscapes(graph);
     if (Options::dumpAOTGraph()) [[unlikely]] {
@@ -265,9 +250,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (Options::dumpAOTB3Graph()) [[unlikely]]
         dataLogLn("AOT B3:\n", proc);
 
-    // The code is going to run in another process, where objects are at other addresses. No lowering should have embedded an
-    // address. Running the code only proves that for the paths that are taken, so check all constants. (No JSValue that is not a
-    // cell falls in this range.)
     for (B3::Value* value : proc.values()) {
         if (!value->hasInt64())
             continue;
@@ -284,8 +266,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
             return;
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.emitFunctionPrologue();
-        // The stack limit leaves room for the runtime to handle a stack overflow, which is far more than this. However deep the
-        // calls go, the function that made the last call has checked the limit.
         constexpr unsigned maxFrameSizeWithoutStackCheck = 256;
         if (graph.makesCalls || code.frameSize() > maxFrameSizeWithoutStackCheck)
             stubCalls.call(jit, Stub::Prologue, code.frameSize(), CallSite { });
@@ -298,8 +278,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         jit.ret();
     }));
     for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i) {
-        // Entered from catchThunk(): the frame pointer is this frame's again, and the registers that this function saved on entry
-        // are still saved.
         proc.code().setPrologueForEntrypoint(i + 1, createSharedTask<B3::Air::PrologueGeneratorFunction>([](CCallHelpers& jit, B3::Air::Code& code) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(code.frameSize())), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
@@ -310,18 +288,16 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     usePinnedRegistersDirectly(proc.code());
     B3::Air::prepareForGeneration(proc.code());
     CCallHelpers jit;
-    // The main entry point has to be at the start of the code.
     CCallHelpers::Jump jumpToMainEntrypoint;
     if (!graph.catchEntrypoints.isEmpty())
         jumpToMainEntrypoint = jit.jump();
-    CCallHelpers::Label startOfCode = jit.label();
-    jit.setOopsIsJustABreakpoint();
+    CCallHelpers::Label codeStart = jit.label();
+    jit.setOopsEmitsBreakpointOnly();
     B3::generate(proc, jit);
     if (jumpToMainEntrypoint.isSet())
         jumpToMainEntrypoint.linkTo(proc.code().entrypointLabel(0), &jit);
     else
-        RELEASE_ASSERT(!CCallHelpers::differenceBetween(startOfCode, proc.code().entrypointLabel(0)));
-    // The code is linked in ordinary memory. It is only copied into the image and never runs from here, so compiling needs no JIT memory.
+        RELEASE_ASSERT(!CCallHelpers::differenceBetween(codeStart, proc.code().entrypointLabel(0)));
     jit.breakpoint();
     jit.padBeforePatch();
     Vector<uint32_t> storage(jit.m_assembler.codeSize() / sizeof(uint32_t));
@@ -332,7 +308,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.indexReferences = graph.indexReferences.link(linkBuffer);
     info.codeSize = linkBuffer.size();
     void* start = linkBuffer.entrypoint<JSEntryPtrTag>().untaggedPtr();
-    // (The main entry point was first after all, so the jump is removed.)
     if (jumpToMainEntrypoint.isSet() && static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(proc.code().entrypointLabel(0)).untaggedPtr()) - static_cast<uint8_t*>(start) == sizeof(uint32_t)) {
         start = static_cast<uint8_t*>(start) + sizeof(uint32_t);
         info.codeSize -= sizeof(uint32_t);
@@ -353,8 +328,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.knownCallees = WTF::move(graph.knownCallees);
     info.siteConstants = WTF::move(graph.siteConstants);
     info.plans = WTF::move(graph.plans);
-    if (program && mayBecomePartOfAnother(unlinkedCodeBlock, summary))
-        noteEverySiteOf(graph);
+    if (program && mayBeAbsorbed(unlinkedCodeBlock, summary))
+        recordAllSitesOf(graph);
     info.quotableSites = WTF::move(graph.quotableSites);
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
@@ -376,7 +351,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.numberOfFunction = summary ? summary->number : 0;
     for (auto& frame : graph.inlineFrames)
         info.inlineFrames.append({ frame.parent, frame.callSite, frame.knownCallee, frame.isTailCall });
-    info.sitesOfSpreads = WTF::move(graph.sitesOfSpreads);
+    info.spreadSites = WTF::move(graph.spreadSites);
     info.callSites = WTF::move(graph.callSites);
     std::ranges::sort(info.callSites);
     info.callSites.shrink(std::ranges::unique(info.callSites).begin() - info.callSites.begin());
@@ -391,21 +366,18 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i)
         info.catchEntrypoints.append({ graph.catchEntrypoints[i]->bytecodeBegin, offsetOf(proc.code().entrypointLabel(i + 1)) });
 
-
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
-    // Branch compaction leaves nops at the end, after the breakpoint emitted above. The breakpoint stays only if it follows a call: the
-    // call's return address identifies the frame, so it must not be the start of the next function.
     {
         constexpr uint32_t breakpoint = 0xd4200000;
         constexpr uint32_t nop = 0xd503201f;
         while (info.codeSize > sizeof(uint32_t) && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == nop)
             info.codeSize -= sizeof(uint32_t);
-        unsigned atLeast = sizeof(uint32_t);
+        unsigned minimumSize = sizeof(uint32_t);
         for (auto& call : info.stubCalls) {
             if (!call.isTailCall)
-                atLeast = std::max<unsigned>(atLeast, call.offset + 2 * sizeof(uint32_t));
+                minimumSize = std::max<unsigned>(minimumSize, call.offset + 2 * sizeof(uint32_t));
         }
-        while (info.codeSize > atLeast && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == breakpoint)
+        while (info.codeSize > minimumSize && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == breakpoint)
             info.codeSize -= sizeof(uint32_t);
     }
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
@@ -415,14 +387,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
 
 #endif // CPU(ARM64)
 
-bool recordUsesOfKnownFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* summary, VariableSummaries* variableSummaries)
+bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* summary, VariableSummaries* variableSummaries)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     if (!parseBytecode(graph))
         return false;
-    graph.recordUsesOfKnownFunctions(summariesByExecutable, summary);
+    graph.recordKnownFunctionUses(summariesByExecutable, summary);
     graph.noteFieldsComparedWithStrings();
     recordReturnedLiterals(graph);
     graph.noteClassesDefined();
@@ -449,7 +421,7 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
     return result;
 }
 
-bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* summary, VariableSummaries* variableSummaries, const CodeOfProgram* program)
+bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program)
 {
 #if CPU(ARM64)
     ASCIILiteral reason;

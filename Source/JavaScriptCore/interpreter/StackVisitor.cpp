@@ -42,32 +42,26 @@
 
 namespace JSC {
 
-// Returns the caller of a frame that uses the engine's standard frame layout, and the address at which the caller will resume.
 static CallFrame* callerOf(CallFrame* callFrame, EntryFrame*& entryFrame, void*& returnPC)
 {
-    EntryFrame* entryFrameOfCallee = entryFrame;
+    EntryFrame* calleeEntryFrame = entryFrame;
     returnPC = callFrame->rawReturnPC();
     CallFrame* caller = callFrame->callerFrame(entryFrame);
 #if ENABLE(AOT)
-    // The frame above a VM entry frame is the one that called out of the VM, some distance up the stack.
-    if (entryFrame != entryFrameOfCallee && caller && AOT::hasCode())
-        returnPC = AOT::returnAddressForFrame(caller, entryFrameOfCallee);
+    if (entryFrame != calleeEntryFrame && caller && AOT::hasCode())
+        returnPC = AOT::returnAddressForFrame(caller, calleeEntryFrame);
 #else
-    UNUSED_VARIABLE(entryFrameOfCallee);
+    UNUSED_VARIABLE(calleeEntryFrame);
 #endif
     return caller;
 }
 
-// Returns the frame, unless it belongs to an AOT stub. Stub frames are skipped, and the first frame above them is returned.
-static CallFrame* skipFramesOfStubs(CallFrame* callFrame, EntryFrame*& entryFrame, void*& returnPC, CallFrame*& adapter)
+static CallFrame* skipStubFrames(CallFrame* callFrame, EntryFrame*& entryFrame, void*& returnPC, CallFrame*& adapter)
 {
 #if ENABLE(AOT)
     while (callFrame) {
         switch (AOT::classifyAddress(removeCodePtrTag(returnPC)).kind) {
         case AOT::ImageAddressInfo::Stub:
-            // A stub that was entered from outside the VM (for example Stub::ConstructByCalling, which Reflect.construct() may
-            // call) has set up its frame the way the engine does for a native function, and has to be treated as one. It is the
-            // only frame between one VM entry and the next, and the unwinder has to stop at each entry.
             if (callFrame->callerFrameOrEntryFrame() == entryFrame) {
                 returnPC = nullptr;
                 return callFrame;
@@ -102,25 +96,21 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
         topFrame = vm.topCallFrame;
         if (topFrame) {
             m_previousReturnPC = vm.maybeReturnPC;
-            bool isTheEnginesOwn = true;
+            bool isEngineFrame = true;
 #if ENABLE(AOT)
-            // What kind of frame it is has to be known before anything is read from it.
             if (AOT::hasCode()) {
                 void* returnPC = AOT::returnAddressForFrame(topFrame, __builtin_frame_address(0));
                 if (returnPC && AOT::classifyAddress(returnPC).kind != AOT::ImageAddressInfo::NotInImage) {
-                    // A function that ran out of stack in its prologue has given up its frame by now (Stub::ThrowStackOverflowAtPrologue). If it was
-                    // called from outside AOT code, what is on top is the adapter's frame, with the registers it saved. If it was
-                    // called from outside the VM, there is no frame of JavaScript code since then.
-                    topFrame = skipFramesOfStubs(topFrame, m_frame.m_entryFrame, returnPC, m_aotAdapterSkippedAtTop);
+                    topFrame = skipStubFrames(topFrame, m_frame.m_entryFrame, returnPC, m_aotAdapterSkippedAtTop);
                     m_topEntryFrameIsEmpty = m_frame.m_entryFrame != vm.topEntryFrame;
                     m_previousReturnPC = returnPC;
-                    isTheEnginesOwn = AOT::classifyAddress(removeCodePtrTag(returnPC)).kind == AOT::ImageAddressInfo::NotInImage;
+                    isEngineFrame = AOT::classifyAddress(removeCodePtrTag(returnPC)).kind == AOT::ImageAddressInfo::NotInImage;
                     if (startFrame == vm.topCallFrame)
                         startFrame = topFrame;
                 }
             }
 #endif
-            if (topFrame && !isTheEnginesOwn && skipFirstFrame) {
+            if (topFrame && !isEngineFrame && skipFirstFrame) {
                 CallFrame* first = topFrame;
                 readFrame(first);
                 gotoNextFrame();
@@ -132,11 +122,11 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
                     gotoNextFrame();
                 return;
             }
-            if (topFrame && isTheEnginesOwn && (skipFirstFrame || topFrame->isZombieFrame())) {
+            if (topFrame && isEngineFrame && (skipFirstFrame || topFrame->isZombieFrame())) {
                 CallFrame* first = topFrame;
                 CallFrame* adapter = nullptr;
                 topFrame = callerOf(first, m_frame.m_entryFrame, m_previousReturnPC);
-                topFrame = skipFramesOfStubs(topFrame, m_frame.m_entryFrame, m_previousReturnPC, adapter);
+                topFrame = skipStubFrames(topFrame, m_frame.m_entryFrame, m_previousReturnPC, adapter);
                 m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
                 if (startFrame == first)
                     startFrame = topFrame;
@@ -155,7 +145,7 @@ void StackVisitor::gotoNextFrame()
     m_frame.m_index++;
 #if ENABLE(AOT)
     if (m_frame.m_aotInlineFrame) {
-        auto location = m_frame.m_aotFunctionOfFrame.inlineCallSiteLocation(m_frame.m_aotInlineFrame);
+        auto location = m_frame.m_frameAOTFunction.inlineCallSiteLocation(m_frame.m_aotInlineFrame);
         m_frame.m_aotFunction = location.function;
         m_frame.m_aotInlineFrame = location.inlineFrame;
         m_frame.m_isTailDeleted = location.isTailDeleted;
@@ -287,7 +277,7 @@ void StackVisitor::findCaller(CallFrame* callFrame)
         caller = callFrame->callerFrame();
     } else
         caller = callerOf(callFrame, entryFrame, returnPC);
-    m_frame.m_callerFrame = skipFramesOfStubs(caller, entryFrame, returnPC, adapter);
+    m_frame.m_callerFrame = skipStubFrames(caller, entryFrame, returnPC, adapter);
     m_frame.m_callerReturnPC = returnPC;
     m_frame.m_callerEntryFrame = entryFrame;
     m_frame.m_callerIsEntryFrame = entryFrame != m_frame.m_entryFrame;
@@ -297,8 +287,6 @@ void StackVisitor::findCaller(CallFrame* callFrame)
 #if ENABLE(AOT)
 void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t index)
 {
-    // Whether the frame above is that of a callee that is actually running. (It is not if there is no frame above, or if that frame
-    // was being set up for a callee that turned out not to be callable.)
     bool calleeRuns = m_frame.m_callFrame && (m_frame.m_aotFunction || m_frame.m_isWasmFrame || (!m_frame.m_callee.isNativeCallee() && m_frame.m_callee.rawPtr() && m_frame.m_callee.asCell()->isCallable()));
     m_frame.m_callFrame = callFrame;
     m_previousReturnPC = returnPC;
@@ -312,15 +300,14 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
     m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
     if (!m_aotInstance)
         m_aotInstance = AOT::instanceForFrame(callFrame);
-    m_frame.m_aotFunctionOfFrame = { m_aotInstance, index };
-    auto location = m_frame.m_aotFunctionOfFrame.locationForReturnAddress(returnPC);
+    m_frame.m_frameAOTFunction = { m_aotInstance, index };
+    auto location = m_frame.m_frameAOTFunction.locationForReturnAddress(returnPC);
     m_frame.m_aotFunction = location.function;
     m_frame.m_aotInlineFrame = location.inlineFrame;
     m_frame.m_isTailDeleted = location.isTailCall && calleeRuns;
     m_frame.m_bytecodeIndex = location.bytecodeIndex;
     m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfExists();
     findCaller(callFrame);
-    // The adapter's caller is not AOT code, so the cached Instance no longer applies.
     if (m_frame.m_aotAdapterFrame)
         m_aotInstance = nullptr;
 }
@@ -571,7 +558,7 @@ const RegisterAtOffsetList* StackVisitor::Frame::calleeSaveRegistersForUnwinding
 
 #if ENABLE(AOT)
     if (m_aotFunction)
-        return AOT::calleeSaveRegistersOf(*m_aotFunctionOfFrame.info().function());
+        return AOT::calleeSaveRegistersOf(*m_frameAOTFunction.info().function());
 #endif
     if (CodeBlock* codeBlock = this->codeBlock())
         return codeBlock->jitCode()->calleeSaveRegisters();
@@ -740,7 +727,6 @@ bool StackVisitor::Frame::isFrameOf(JSCell* function) const
         return false;
     if (JSCell* callee = this->callee().asCell())
         return callee == function;
-    // It was called as no object. That is only done to a function of which the realm has one closure (AOT::KnownFunction::isExact).
     auto* jsFunction = dynamicDowncast<JSFunction>(function);
     return jsFunction && hasCode() && jsFunction->executable() == ownerExecutable();
 }

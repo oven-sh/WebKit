@@ -234,8 +234,6 @@ inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue
         if (baseValue.isCell()) [[likely]] {
             auto* baseCell = baseValue.asCell();
             auto* structure = baseCell->structure();
-            // (Stores to the slots of an object with a typed layout have to go through JSObject::putDirectInternal(), which checks
-            // the field's type.)
             if (structure->id() == enumerator->cachedStructureID() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() && !(structure->typedLayoutID() && TypedLayoutTable::hasLayouts())) {
                 // We'll only match the structure ID if the base is an object.
                 ASSERT(index < enumerator->endStructurePropertyIndex());

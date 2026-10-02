@@ -1624,7 +1624,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     if (featureFlag) \
         putDirectWithoutTransition(vm, vm.propertyNames-> jsName, lowerName ## Constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-
     FOR_EACH_SIMPLE_BUILTIN_TYPE_WITH_CONSTRUCTOR(PUT_CONSTRUCTOR_FOR_SIMPLE_TYPE)
 
 #undef PUT_CONSTRUCTOR_FOR_SIMPLE_TYPE
@@ -2329,7 +2328,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 #endif // ENABLE(WEBASSEMBLY)
 
-    // (This has to come before what follows, which depends on the resulting structures.)
     if (vm.useImmutableIntrinsics) [[unlikely]] {
         makeIntrinsicsImmutable();
         for (JSObject* prototype : { static_cast<JSObject*>(arrayIteratorPrototype), static_cast<JSObject*>(mapIteratorPrototype), static_cast<JSObject*>(setIteratorPrototype), static_cast<JSObject*>(m_stringIteratorPrototype.get()) })
@@ -2450,8 +2448,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         this->haveABadTime(vm);
 
 #if ENABLE(AOT)
-    // Its builtin functions have AOT code (AOT::ProgramOfVM::engineBuiltinFor()), which finds the instance through the VM. Loading a module of
-    // the program would make the instance, but a Worker may run without loading one.
     if (AOT::ProgramData::get() && !BytecodeOrderRecorder::ofVM(vm))
         AOT::Instance::ensure(this);
 #endif
@@ -2909,7 +2905,7 @@ void JSGlobalObject::haveABadTime(VM& vm)
 #if ENABLE(AOT)
     for (AOT::Instance* instance : vm.m_aotInstances) {
         if (instance->globalObject == this)
-            instance->didHaveABadTime();
+            instance->didHaveBadTime();
     }
 #endif
 
@@ -3477,20 +3473,19 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     static constexpr ASCIILiteral names[] = {
         "Object"_s, "Function"_s, "Array"_s, "String"_s, "Number"_s, "Boolean"_s, "Symbol"_s, "RegExp"_s, "Promise"_s, "Map"_s, "Set"_s,
         "Math"_s, "JSON"_s, "Reflect"_s, "Date"_s, "WeakMap"_s, "WeakSet"_s, "ArrayBuffer"_s,
-        // Of these, only the variable. (Programs do assign to Error.stackTraceLimit and Error.prepareStackTrace.)
         "Error"_s, "TypeError"_s, "RangeError"_s, "SyntaxError"_s, "ReferenceError"_s, "EvalError"_s, "URIError"_s, "AggregateError"_s,
         "Uint8Array"_s, "DataView"_s, "Proxy"_s, "WeakRef"_s, "BigInt"_s, "parseInt"_s, "parseFloat"_s, "isNaN"_s, "isFinite"_s,
         "encodeURIComponent"_s, "decodeURIComponent"_s, "encodeURI"_s, "decodeURI"_s,
     };
-    constexpr unsigned numberWhoseObjectsAreFixed = 18;
-    RELEASE_ASSERT(names[numberWhoseObjectsAreFixed - 1] == "ArrayBuffer"_s);
+    constexpr unsigned numberOfFixedIntrinsics = 18;
+    RELEASE_ASSERT(names[numberOfFixedIntrinsics - 1] == "ArrayBuffer"_s);
     for (unsigned i = 0; i < std::size(names); ++i) {
         Identifier identifier = Identifier::fromString(vm, names[i]);
         JSValue value = get(this, identifier);
         scope.assertNoException();
         JSObject* object = value.getObject();
         RELEASE_ASSERT(object);
-        if (i < numberWhoseObjectsAreFixed) {
+        if (i < numberOfFixedIntrinsics) {
             object->makePropertiesImmutable(this);
             JSValue prototype = object->isCallable() ? object->get(this, vm.propertyNames->prototype) : JSValue();
             scope.assertNoException();
@@ -3500,8 +3495,6 @@ void JSGlobalObject::makeIntrinsicsImmutable()
         putDirect(vm, identifier, value, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
     }
     m_iteratorPrototype->makePropertiesImmutable(this);
-    // (Without JSObject::preventExtensions()'s way of seeing to it that no element is added, which every array would pay for. One
-    // that has no elements to begin with asks whether it may have any.)
     JSObject* objectPrototype = this->objectPrototype();
     Structure* oldStructure = objectPrototype->structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);

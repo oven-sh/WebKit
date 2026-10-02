@@ -114,11 +114,11 @@ ALWAYS_INLINE void RegExp::noteUse(VM& vm)
         m_lastUseEpoch = currentUseEpoch(vm);
 }
 
-ALWAYS_INLINE void RegExp::noteWorkInInterpreter(unsigned lengthOfSubject)
+ALWAYS_INLINE void RegExp::noteWorkInInterpreter(unsigned subjectLength)
 {
     if (m_workInInterpreter >= workBeforeJIT)
         return;
-    m_workInInterpreter = std::min<unsigned>(m_workInInterpreter + 1 + lengthOfSubject / 32, workBeforeJIT);
+    m_workInInterpreter = std::min<unsigned>(m_workInInterpreter + 1 + subjectLength / 32, workBeforeJIT);
 }
 
 ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
@@ -273,11 +273,11 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
 ALWAYS_INLINE bool RegExp::isAnchoredWord(StringView string) const
 {
     ASSERT(m_specificPattern == Yarr::SpecificPattern::AnchoredWordList);
-    auto& firstWordOfLength = m_rareData->m_firstWordOfLength;
+    auto& firstLengthWord = m_rareData->m_firstLengthWord;
     unsigned length = string.length();
-    if (length + 1 >= firstWordOfLength.size())
+    if (length + 1 >= firstLengthWord.size())
         return false;
-    for (unsigned i = firstWordOfLength[length]; i < firstWordOfLength[length + 1]; ++i) {
+    for (unsigned i = firstLengthWord[length]; i < firstLengthWord[length + 1]; ++i) {
         if (string == m_rareData->m_anchoredWords[i])
             return true;
     }

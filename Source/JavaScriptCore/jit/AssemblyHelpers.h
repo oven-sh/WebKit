@@ -191,8 +191,6 @@ public:
     void loadProperty(GPRReg objectGPR, GPRReg offsetGPR, GPRReg resultGPR);
     void storeProperty(GPRReg valueGPR, GPRReg objectGPR, GPRReg offsetGPR, GPRReg scratchGPR);
 
-    // Where the VM's MegamorphicCache is: known now, or, for code that does not know which VM it is going to run in, in a register,
-    // which is left as it was.
     struct MegamorphicCacheLocation {
         MegamorphicCacheLocation(VM&);
         explicit MegamorphicCacheLocation(GPRReg gpr)
@@ -1606,10 +1604,6 @@ public:
     }
 
     enum LazyGlobalObjectLoadTag { LazyBaselineGlobalObject };
-    // Falls through when the value has one of the tags in mask (see SoundTypeMask in SpeculatedType.h). Jumps to fail when it
-    // definitely has none of them, and to undecided when only soundTypeTag() can tell: an object that overrides getCallData
-    // and is neither a JSFunction nor an InternalFunction, under a mask that tells functions from other objects.
-    // The value must not be empty.
     void emitSoundTypeCheck(GPRReg valueGPR, GPRReg scratchGPR, unsigned mask, JumpList& fail, JumpList& undecided);
 
     JumpList branchIfValue(VM&, GPRReg, GPRReg scratch, GPRReg scratchIfShouldCheckMasqueradesAsUndefined, FPRReg, FPRReg, bool shouldCheckMasqueradesAsUndefined, Variant<JSGlobalObject*, GPRReg, LazyGlobalObjectLoadTag>, bool negateResult);

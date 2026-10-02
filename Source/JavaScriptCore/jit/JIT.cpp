@@ -1123,7 +1123,6 @@ void JIT::exceptionCheck()
     exceptionCheck(emitExceptionCheck(vm()));
 }
 
-// See CompilerHooks.h. Nothing else is to name any of these.
 void installRegExpCompiler()
 {
 #if ENABLE(YARR_JIT)

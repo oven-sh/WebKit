@@ -185,9 +185,8 @@ public:
     // (a sampling hook inside malloc): unlike expressionInfo() it never decodes. On the result use entryForInstPC(),
     // which does neither; lineColumnInTextForInstPC() fills a cache.
     ExpressionInfo* expressionInfoIfDecoded() const { return m_expressionInfo.get(); }
-    // The top-level code of a program that was compiled ahead of time: there are no instructions to interpret.
-    bool isWithoutCode() const { return m_isWithoutCode; }
-    void setIsWithoutCode() { m_isWithoutCode = true; }
+    bool hasNoInstructions() const { return m_hasNoInstructions; }
+    void setHasNoInstructions() { m_hasNoInstructions = true; }
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
@@ -267,15 +266,12 @@ public:
     size_t numberOfUnlinkedStringSwitchJumpTables() const { return m_rareData ? m_rareData->m_unlinkedStringSwitchJumpTables.size() : 0; }
     const UnlinkedStringJumpTable& unlinkedStringSwitchJumpTable(int tableIndex) const { ASSERT(m_rareData); return m_rareData->m_unlinkedStringSwitchJumpTables[tableIndex]; }
 
-    // In the top-level code of a program that was compiled ahead of time, an entry with this bit set is not an
-    // UnlinkedFunctionExecutable: above the bit is the number of the function's executable (AOT::ProgramOfVM::executable()). Check
-    // this first.
-    static constexpr uintptr_t isNumberOfExecutable = 1;
-    static void setNumberOfExecutableIn(WriteBarrier<UnlinkedFunctionExecutable>& entry, uint32_t number) { reinterpret_cast<uintptr_t&>(entry) = static_cast<uintptr_t>(number) << 1 | isNumberOfExecutable; }
-    static bool hasNumberOfExecutable(const WriteBarrier<UnlinkedFunctionExecutable>& entry) { return std::bit_cast<uintptr_t>(entry) & isNumberOfExecutable; }
-    FunctionExecutable* executableOfFunctionDecl(int index) const { return hasNumberOfExecutable(m_functionDecls[index]) ? executableWithNumberIn(m_functionDecls[index]) : nullptr; }
-    FunctionExecutable* executableOfFunctionExpr(int index) const { return hasNumberOfExecutable(m_functionExprs[index]) ? executableWithNumberIn(m_functionExprs[index]) : nullptr; }
-    JS_EXPORT_PRIVATE FunctionExecutable* executableWithNumberIn(const WriteBarrier<UnlinkedFunctionExecutable>&) const;
+    static constexpr uintptr_t isExecutableIndex = 1;
+    static void setExecutableIndexIn(WriteBarrier<UnlinkedFunctionExecutable>& entry, uint32_t number) { reinterpret_cast<uintptr_t&>(entry) = static_cast<uintptr_t>(number) << 1 | isExecutableIndex; }
+    static bool hasExecutableIndex(const WriteBarrier<UnlinkedFunctionExecutable>& entry) { return std::bit_cast<uintptr_t>(entry) & isExecutableIndex; }
+    FunctionExecutable* functionDeclExecutable(int index) const { return hasExecutableIndex(m_functionDecls[index]) ? executableAtIndexIn(m_functionDecls[index]) : nullptr; }
+    FunctionExecutable* functionExprExecutable(int index) const { return hasExecutableIndex(m_functionExprs[index]) ? executableAtIndexIn(m_functionExprs[index]) : nullptr; }
+    JS_EXPORT_PRIVATE FunctionExecutable* executableAtIndexIn(const WriteBarrier<UnlinkedFunctionExecutable>&) const;
 
     UnlinkedFunctionExecutable* functionDecl(int index)
     {
@@ -465,7 +461,7 @@ private:
     unsigned m_age : 3;
     static_assert(((1U << 3) - 1) >= maxAge);
     bool m_hasCheckpoints : 1;
-    bool m_isWithoutCode : 1 { false };
+    bool m_hasNoInstructions : 1 { false };
     TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
     bool m_quickFTLTierUp : 1 { false };
     unsigned m_numberOfArrayProfiles { 0 };

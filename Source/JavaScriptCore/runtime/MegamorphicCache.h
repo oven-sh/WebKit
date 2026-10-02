@@ -37,7 +37,6 @@ class MegamorphicCache {
     WTF_MAKE_NONCOPYABLE(MegamorphicCache);
 public:
 #if USE(BUN_JSC_ADDITIONS)
-    // A component that takes sixty optional properties out of objects of a hundred shapes wants more than 2560 entries by itself.
     static constexpr uint32_t loadCachePrimarySize = 8192;
     static constexpr uint32_t loadCacheSecondarySize = 2048;
 #else
@@ -153,10 +152,6 @@ public:
 
     using GetterEntry = LoadEntry;
 
-    // For AOT code (aot/). A constructor creates an object and stores the same properties to it, in the same order, every time. So
-    // an object that starts with the first structure ends with the last, with the values in that order from the first slot. The
-    // first structure depends on new.target, and the constructor of a class with subclasses sees many. That the stores add
-    // properties, and do nothing else, depends on the prototype chain, as for a StoreEntry.
     struct ConstructionEntry {
         static constexpr ptrdiff_t offsetOfFirstStructureID() { return OBJECT_OFFSETOF(ConstructionEntry, m_firstStructureID); }
         static constexpr ptrdiff_t offsetOfLastStructureID() { return OBJECT_OFFSETOF(ConstructionEntry, m_lastStructureID); }
@@ -165,7 +160,7 @@ public:
 
         StructureID m_firstStructureID { };
         StructureID m_lastStructureID { };
-        const void* m_site { nullptr }; // Which constructor: anything that is its own for as long as the epoch lasts.
+        const void* m_site { nullptr };
         uint16_t m_epoch { invalidEpoch };
     };
     static constexpr uint32_t constructionCacheSize = 256;
@@ -348,13 +343,8 @@ public:
 
     uint16_t epoch() const { return m_epoch; }
 
-    // An entry that is about to be cached for objects with that structure depends on the objects on their prototype chain, up to
-    // `upTo` if it is given. They are marked (JSObject::isPrototypeUsedByMegamorphicCache()), so that a change to one of them
-    // invalidates the cache, and a change to any other object does not. Returns false if the chain cannot be determined from the
-    // structure, in which case nothing must be cached.
-    JS_EXPORT_PRIVATE static bool NODELETE noteDependenceOnPrototypes(StructureID, JSCell* upTo = nullptr);
+    JS_EXPORT_PRIVATE static bool NODELETE noteDependenceOnPrototypes(StructureID, JSCell* lastPrototype = nullptr);
 
-    // The C++ equivalent of AssemblyHelpers::loadMegamorphicProperty(). Returns null if there is no entry.
     const LoadEntry* findLoad(StructureID structureID, UniquedStringImpl* uid) const
     {
         for (auto* entry : { &m_loadCachePrimaryEntries[primaryHash(structureID, uid) & loadCachePrimaryMask], &m_loadCacheSecondaryEntries[secondaryHash(structureID, uid) & loadCacheSecondaryMask] }) {
@@ -371,9 +361,6 @@ public:
             clearEntries();
     }
 
-    // An alternative to clearing the cache at every collection: once marking is complete, each entry whose referents have died is
-    // removed. This is for a VM that runs AOT code, most of which relies on this cache alone. (Safe on any thread, because nothing
-    // is released.)
     JS_EXPORT_PRIVATE void reconcileWeakReferencesAtGCEnd(VM&);
 
 private:
@@ -389,7 +376,7 @@ private:
     std::array<GetterEntry, getterCacheSecondarySize> m_getterCacheSecondaryEntries { };
     std::array<ConstructionEntry, constructionCacheSize> m_constructionEntries { };
     uint16_t m_epoch { 1 };
-    bool m_hasBeenReconciled { false }; // Since it was last aged.
+    bool m_hasBeenReconciled { false };
 };
 
 } // namespace JSC

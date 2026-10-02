@@ -1,5 +1,4 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-// Names that functions, arrays and strings have a say of their own about, at sites that see many structures.
 function name(o) { return o.name; }
 function length(o) { return o.length; }
 function prototype(o) { return o.prototype; }
@@ -37,7 +36,6 @@ for (let round = 0; round < 200; ++round) {
             throw new Error("other object, round " + round + " " + String(o));
     }
     if (round == 100) {
-        // What was absent is there now, one way and another.
         Object.prototype.name = "inherited";
         objects[0].length = 99;
         delete objects[1].name;

@@ -700,10 +700,6 @@ public:
 
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
-    // Code is linked against clones because of what the optimizing compilers infer about one realm's scopes. Without those
-    // compilers, a table of a program that was compiled ahead of time is used directly: it has what a clone has, and infers nothing.
-    // For a table that is created when a program is built: drops the names that nothing will ever look up. (The code that uses a
-    // scope knows the offsets of its variables.)
     void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
     {
         keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry&) { return names.contains(name); });
@@ -724,8 +720,7 @@ public:
         }
         m_map = WTF::move(kept);
     }
-    // All that one without names says. Nothing if it says more than that.
-    std::optional<uint64_t> whatIsSaidWithoutNames() const
+    std::optional<uint64_t> namelessContentKey() const
     {
         if (!m_map.isEmpty() || m_arguments || m_rareData)
             return std::nullopt;
@@ -735,7 +730,6 @@ public:
     void becomeSharedAcrossRealms(VM& vm)
     {
         m_isSharedAcrossRealms = true;
-        // (Whether it only ever has one scope would be found out by remembering the scope.)
         m_singleton.invalidate(vm, StringFireDetail("It is shared by every realm"));
     }
 

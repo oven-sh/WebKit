@@ -367,7 +367,6 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         m_codeBlock->addExceptionHandler(info);
     }
     
-
     if (shouldRunBytecodeOptimizer()) [[unlikely]]
         BytecodeOptimizer::run(*this);
 
@@ -821,7 +820,6 @@ IGNORE_GCC_WARNINGS_END
             continue;
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), varKind(entry.key.get()), functionSymbolTable, IgnoreExisting);
     }
-
 
     if (functionNode->needsNewTargetRegisterForThisScope() || isNewTargetUsedInInnerArrowFunction() || usesEval())
         m_newTargetRegister = addVar();
@@ -3296,7 +3294,6 @@ RegisterID* BytecodeGenerator::emitInstanceFieldInitializationIfNeeded(RegisterI
 
     if (isConstructor() && m_scopeNode->isFunctionNode()) {
         if (auto* names = static_cast<FunctionNode*>(m_scopeNode)->plainInstanceFieldNames(); names && !names->isEmpty()) {
-            // All that the function does (DefineFieldNode::emitBytecode()).
             RefPtr<RegisterID> value = emitLoad(newTemporary(), jsUndefined());
             for (auto& name : *names)
                 emitDirectPutById(dst, name, value.get());
@@ -3482,7 +3479,6 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
             continue;
         ConcurrentJSLocker locker(entry.m_symbolTable->m_lock);
         unsigned size = entry.m_symbolTable->size(locker);
-        // (What the code that makes the record makes it from, which is a copy of the table.)
         const void* identity = VirtualRegister(entry.m_symbolTableConstantIndex).isConstant() ? m_codeBlock->getConstant(VirtualRegister(entry.m_symbolTableConstantIndex)).asCell() : nullptr;
         if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size || node->identity != identity) {
             DeclaredNamesLink::Frame::Slots slots;
@@ -3694,7 +3690,7 @@ void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, Functio
 {
     unsigned index = m_codeBlock->addFunctionExpr(makeFunction(function));
     if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically) [[unlikely]]
-        m_indicesOfFunctionExprs.set(function, index);
+        m_functionExprIndices.set(function, index);
 
     switch (function->parseMode()) {
     case SourceParseMode::GeneratorWrapperFunctionMode:
@@ -3724,8 +3720,8 @@ void BytecodeGenerator::recordFunctionAssignment(const Identifier& ident, const 
         right = static_cast<ClassExprNode*>(right)->constructorExpression();
     if (!right || !right->isBaseFuncExprNode())
         return;
-    auto it = m_indicesOfFunctionExprs.find(static_cast<BaseFuncExprNode*>(right)->metadata());
-    if (it == m_indicesOfFunctionExprs.end())
+    auto it = m_functionExprIndices.find(static_cast<BaseFuncExprNode*>(right)->metadata());
+    if (it == m_functionExprIndices.end())
         return;
     FunctionAssignment note;
     note.identifier = addConstant(ident);
@@ -4880,9 +4876,6 @@ void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyCont
         Ref<Label> tryInFinallyEndLabel = newEmittedLabel();
         popTry(tryInFinallyData, tryInFinallyEndLabel.get());
 
-        // If the try block always ends in a jump, as the body of a loop does, the finally block is only entered by an exception, a
-        // return, or a jump to an outer label. Without an edge from here to the code that follows, what is live after the loop is
-        // not live into the exception handler, so a compiler does not have to keep it in memory during the loop.
         emitFinallyCompletion(finallyContext, done.get(), mayCompleteNormally);
 
         // Catch block for exceptions that may be thrown while executing the finally block.
@@ -5216,22 +5209,17 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
         return;
     }
 
-    // The subject has been checked to be an array. An array iterator reads the length, and the element at its current index, each
-    // time `next` is called, and this loop does the same. Nothing has to be done when the loop exits early, so no exception handler
-    // is needed. Which iterator the array has, and what its `next` method is, is checked once, before the loop. They are the
-    // defaults unless the array itself or its subclass overrides them, and the defaults cannot be changed
-    // (VM::useImmutableIntrinsics).
     if (forLoopNode && subjectNode->isSoundTypeCheckNode() && static_cast<SoundTypeCheckNode*>(subjectNode)->mask() == SoundTypeArray && m_vm.useImmutableIntrinsics) {
         RefPtr<RegisterID> array = newTemporary();
         emitNode(array.get(), subjectNode);
         {
             emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
             RefPtr<RegisterID> iteratorSymbol = emitGetById(newTemporary(), array.get(), propertyNames().iteratorSymbol);
-            RefPtr<RegisterID> ofAnyArray = moveLinkTimeConstant(nullptr, LinkTimeConstant::arrayProtoValues);
-            Ref<Label> isOfAnyArray = newLabel();
-            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), iteratorSymbol.get(), ofAnyArray.get()), isOfAnyArray.get());
+            RefPtr<RegisterID> forAnyArray = moveLinkTimeConstant(nullptr, LinkTimeConstant::arrayProtoValues);
+            Ref<Label> appliesToAnyArray = newLabel();
+            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), iteratorSymbol.get(), forAnyArray.get()), appliesToAnyArray.get());
             emitThrowTypeError("Type check failed: expected an array that is iterated over like any other"_s);
-            emitLabel(isOfAnyArray.get());
+            emitLabel(appliesToAnyArray.get());
         }
         RefPtr<RegisterID> index = newTemporary();
         emitLoad(index.get(), jsNumber(0));
@@ -5241,7 +5229,6 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
             Ref<LabelScope> scope = newLabelScope(LabelScope::Loop);
             RefPtr<RegisterID> value = newTemporary();
 
-            // (Asked once on the way in, and then at the bottom: one jump each time round, and it is plain from the jump how far the index can have got.)
             {
                 RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
                 emitJumpIfFalse(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopDone.get());
@@ -5605,7 +5592,6 @@ void BytecodeGenerator::emitYieldPoint(RegisterID* argument, JSAsyncGenerator::A
     Vector<TryContext> savedTryContextStack;
     m_tryContextStack.swap(savedTryContextStack);
 
-
     OpYield::emit(this, yieldPointIndex, argument);
 
     // Restore the try contexts, which start offset is updated to the merge point.
@@ -5764,7 +5750,6 @@ void BytecodeGenerator::emitIteratorGenericClose(RegisterID* iterator, const Thr
     emitThrowTypeError("Iterator result interface is not an object."_s);
     emitLabel(done.get());
 }
-
 
 void BytecodeGenerator::emitIteratorCloseAfterIteratorOpen(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node)
 {

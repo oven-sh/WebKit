@@ -86,7 +86,6 @@ static_assert(areCanonicallyEquivalentCharArgReg == GPRInfo::returnValueGPR);
 #endif
 #endif
 
-
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BoyerMooreBitmap);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BoyerMooreFastCandidates);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(YarrBoyerMooreData);
@@ -691,8 +690,7 @@ static void emitVerifySubjectRead(CCallHelpers& jit, AddressType address, unsign
 }
 
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
-// Code for an image cannot call a thunk. It calls its own copy of the slow path instead, which YarrGenerator::compile() emits and links `callsToOwnSlowPath` to.
-static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::RegisterID resultReg, Vector<MacroAssembler::Call>* callsToOwnSlowPath)
+static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::RegisterID resultReg, Vector<MacroAssembler::Call>* ownSlowPathCalls)
 {
     MacroAssembler::JumpList slowCases;
     MacroAssembler::JumpList done;
@@ -733,8 +731,8 @@ static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::Re
     done.append(jit.jump());
 
     slowCases.link(&jit);
-    if (callsToOwnSlowPath)
-        callsToOwnSlowPath->append(jit.nearCall());
+    if (ownSlowPathCalls)
+        ownSlowPathCalls->append(jit.nearCall());
     else
         jit.nearCallThunk(CodeLocationLabel { vm.getCTIStub(tryReadUnicodeCharSlowThunkGenerator).template retaggedCode<NoPtrTag>() });
     done.link(&jit);
@@ -832,7 +830,6 @@ static void tryReadUnicodeCharSlowImpl(CCallHelpers& jit)
 
     haveResult.link(&jit);
 }
-
 
 #endif // ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
 
@@ -1442,31 +1439,30 @@ class YarrGenerator final : public YarrJITInfo {
     void matchCharacterClassTable(MacroAssembler::RegisterID character, MacroAssembler::JumpList& failMatches, const char* table, bool tableInverted = false)
     {
         ASSERT(!m_decodeSurrogatePairs);
-        failMatches.append(branchTestTable(tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, character, table, CharacterClass::tableSize, TableIs::Shared));
+        failMatches.append(branchTestTable(tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, character, table, CharacterClass::tableSize, TableOwnership::Shared));
     }
 
-    // Position-independent code addresses a table relative to the program counter.
-    enum class TableIs : bool { ThePatternsOwn, Shared };
-    void moveAddressOfTable(const void* table, size_t size, TableIs tableIs, MacroAssembler::RegisterID reg)
+    enum class TableOwnership : bool { OwnedByPattern, Shared };
+    void moveTableAddress(const void* table, size_t size, TableOwnership tableOwnership, MacroAssembler::RegisterID reg)
     {
         if (!m_forImage) {
             m_jit.move(MacroAssembler::TrustedImmPtr(table), reg);
             return;
         }
-        m_tableReferences.append({ m_jit.label(), reg, { static_cast<const uint8_t*>(table), size }, tableIs });
-        m_jit.nop(); // adr, or adrp
-        if (tableIs == TableIs::Shared)
-            m_jit.nop(); // add
+        m_tableReferences.append({ m_jit.label(), reg, { static_cast<const uint8_t*>(table), size }, tableOwnership });
+        m_jit.nop();
+        if (tableOwnership == TableOwnership::Shared)
+            m_jit.nop();
     }
 
-    MacroAssembler::Jump branchTestTable(MacroAssembler::ResultCondition condition, MacroAssembler::RegisterID character, const void* table, size_t size, TableIs tableIs)
+    MacroAssembler::Jump branchTestTable(MacroAssembler::ResultCondition condition, MacroAssembler::RegisterID character, const void* table, size_t size, TableOwnership tableOwnership)
     {
         if (!m_forImage)
             return m_jit.branchTest8(condition, MacroAssembler::ExtendedAddress(character, reinterpret_cast<intptr_t>(table)));
 #if CPU(ARM64)
-        moveAddressOfTable(table, size, tableIs, MacroAssembler::dataTempRegister);
+        moveTableAddress(table, size, tableOwnership, MacroAssembler::dataTempRegister);
         m_jit.load8(MacroAssembler::BaseIndex(MacroAssembler::dataTempRegister, character, MacroAssembler::TimesOne), MacroAssembler::dataTempRegister);
-        (void)m_jit.label(); // What the assembler thinks is in its registers is not.
+        (void)m_jit.label();
         return m_jit.branchTest32(condition, MacroAssembler::dataTempRegister);
 #else
         RELEASE_ASSERT_NOT_REACHED();
@@ -1480,9 +1476,9 @@ class YarrGenerator final : public YarrJITInfo {
             return;
         }
 #if CPU(ARM64)
-        moveAddressOfTable(&latin1CanonicalizationTable, sizeof(latin1CanonicalizationTable), TableIs::Shared, MacroAssembler::dataTempRegister);
+        moveTableAddress(&latin1CanonicalizationTable, sizeof(latin1CanonicalizationTable), TableOwnership::Shared, MacroAssembler::dataTempRegister);
         m_jit.load16(MacroAssembler::BaseIndex(MacroAssembler::dataTempRegister, character, MacroAssembler::TimesTwo), character);
-        (void)m_jit.label(); // What the assembler thinks is in its registers is not.
+        (void)m_jit.label();
 #else
         RELEASE_ASSERT_NOT_REACHED();
 #endif
@@ -1492,10 +1488,10 @@ class YarrGenerator final : public YarrJITInfo {
     {
         if (charClass->m_table && !m_decodeSurrogatePairs) {
             if (matchTargets.hasFailedTarget()) {
-                matchTargets.appendFailed(branchTestTable(charClass->m_tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, character, charClass->m_table, CharacterClass::tableSize, TableIs::Shared));
+                matchTargets.appendFailed(branchTestTable(charClass->m_tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, character, charClass->m_table, CharacterClass::tableSize, TableOwnership::Shared));
                 return;
             }
-            matchTargets.appendSucceeded(branchTestTable(charClass->m_tableInverted ? MacroAssembler::Zero : MacroAssembler::NonZero, character, charClass->m_table, CharacterClass::tableSize, TableIs::Shared));
+            matchTargets.appendSucceeded(branchTestTable(charClass->m_tableInverted ? MacroAssembler::Zero : MacroAssembler::NonZero, character, charClass->m_table, CharacterClass::tableSize, TableOwnership::Shared));
             return;
         }
 
@@ -1507,14 +1503,14 @@ class YarrGenerator final : public YarrJITInfo {
                 if (matchTargets.hasFailedTarget()) {
                     if (needsHighGuard)
                         matchTargets.appendFailed(m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(0x100)));
-                    matchTargets.appendFailed(branchTestTable(MacroAssembler::Zero, character, table, CharacterClass::latin1TableSize, TableIs::ThePatternsOwn));
+                    matchTargets.appendFailed(branchTestTable(MacroAssembler::Zero, character, table, CharacterClass::latin1TableSize, TableOwnership::OwnedByPattern));
                     return;
                 }
 
                 MacroAssembler::Jump isHigh;
                 if (needsHighGuard)
                     isHigh = m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(0x100));
-                matchTargets.appendSucceeded(branchTestTable(MacroAssembler::NonZero, character, table, CharacterClass::latin1TableSize, TableIs::ThePatternsOwn));
+                matchTargets.appendSucceeded(branchTestTable(MacroAssembler::NonZero, character, table, CharacterClass::latin1TableSize, TableOwnership::OwnedByPattern));
                 if (isHigh.isSet())
                     isHigh.link(&m_jit);
                 return;
@@ -1813,7 +1809,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         m_jit.getEffectiveAddress(address, m_regs.regUnicodeInputAndTrail);
 
-        tryReadUnicodeCharImpl(*m_vm, m_jit, resultReg, m_forImage ? &m_callsToOwnTryReadUnicodeCharSlowPath : nullptr);
+        tryReadUnicodeCharImpl(*m_vm, m_jit, resultReg, m_forImage ? &m_ownTryReadUnicodeCharSlowPathCalls : nullptr);
     }
 
     void tryReadNonBMPUnicodeChar(Checked<unsigned> negativeCharacterOffset, MacroAssembler::RegisterID resultReg, MacroAssembler::RegisterID indexReg)
@@ -1823,7 +1819,7 @@ class YarrGenerator final : public YarrJITInfo {
         MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, resultReg, indexReg);
 
         m_jit.getEffectiveAddress(address, m_regs.regUnicodeInputAndTrail);
-        tryReadUnicodeCharImpl(*m_vm, m_jit, resultReg, m_forImage ? &m_callsToOwnTryReadUnicodeCharSlowPath : nullptr);
+        tryReadUnicodeCharImpl(*m_vm, m_jit, resultReg, m_forImage ? &m_ownTryReadUnicodeCharSlowPathCalls : nullptr);
     }
 
     // Backward unicode read: decode the code point whose LAST code unit lives at
@@ -2144,9 +2140,9 @@ class YarrGenerator final : public YarrJITInfo {
 #if CPU(ARM64)
         if (m_forImage) {
             MacroAssembler::DataLabelPtr label(&m_jit);
-            m_jit.nop(); // adr
+            m_jit.nop();
             m_jit.storePtr(MacroAssembler::dataTempRegister, frameAddress().withOffset(frameLocation * sizeof(void*)));
-            (void)m_jit.label(); // What the assembler thinks is in its registers is not.
+            (void)m_jit.label();
             return label;
         }
 #endif
@@ -2905,7 +2901,6 @@ class YarrGenerator final : public YarrJITInfo {
         const MacroAssembler::RegisterID character = m_regs.regT0;
         const MacroAssembler::RegisterID scratch = m_regs.regT1;
 
-
         MacroAssembler::Jump atBegin;
         MacroAssembler::JumpList matchDest;
         // Forward: the boundary's real position is index - (checked - pos), so it
@@ -2985,7 +2980,6 @@ class YarrGenerator final : public YarrJITInfo {
         PatternTerm* term = op.m_term;
         unsigned subpatternId = term->backReferenceSubpatternId;
         unsigned duplicateNamedGroupId = m_pattern.hasDuplicateNamedCaptureGroups() ? m_pattern.m_duplicateNamedGroupForSubpatternId[subpatternId] : 0;
-
 
         MacroAssembler::Label loop(&m_jit);
 
@@ -8565,7 +8559,7 @@ class YarrGenerator final : public YarrJITInfo {
         auto span = getBoyerMooreBitmap(map);
         JIT_COMMENT(m_jit, "BMSearch bitmap lookahead");
         ASSERT(span.size());
-        moveAddressOfTable(span.data(), span.size_bytes(), TableIs::ThePatternsOwn, m_regs.regT1);
+        moveTableAddress(span.data(), span.size_bytes(), TableOwnership::OwnedByPattern, m_regs.regT1);
         auto loopHead = m_jit.label();
         readCharacterRaw(checkedOffset - endIndex + 1, m_regs.regT0);
 #if CPU(ARM64) || CPU(RISCV64)
@@ -9453,7 +9447,6 @@ public:
         // are used during generation.
         opCompileBody(m_pattern.m_body);
 
-        // Those call a thunk that calls a C++ function.
         if (m_forImage && m_decode16BitForBackreferencesWithCalls)
             m_failureReason = JITFailureReason::DecodeSurrogatePair;
 
@@ -9604,7 +9597,7 @@ public:
 
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
         MacroAssembler::Label ownTryReadUnicodeCharSlowPath;
-        if (!m_callsToOwnTryReadUnicodeCharSlowPath.isEmpty()) {
+        if (!m_ownTryReadUnicodeCharSlowPathCalls.isEmpty()) {
             ownTryReadUnicodeCharSlowPath = m_jit.label();
             m_jit.tagReturnAddress();
             tryReadUnicodeCharSlowImpl(m_jit);
@@ -9612,7 +9605,6 @@ public:
         }
 #endif
 
-        // Code for an image is only copied, never run from here, so it is linked in ordinary memory. That works in a process without a JIT.
         Vector<uint32_t> storageForImage;
         if (m_forImage) {
             m_jit.padBeforePatch();
@@ -9629,17 +9621,16 @@ public:
 #if CPU(ARM64)
         if (m_forImage) {
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
-            for (auto& call : m_callsToOwnTryReadUnicodeCharSlowPath)
+            for (auto& call : m_ownTryReadUnicodeCharSlowPathCalls)
                 linkBuffer.link(call, linkBuffer.locationOf<NoPtrTag>(ownTryReadUnicodeCharSlowPath));
 #endif
             auto* start = static_cast<const uint8_t*>(linkBuffer.entrypoint<NoPtrTag>().untaggedPtr());
             auto& bytes = m_forImage->bytes;
-            // Branch compaction leaves nops at the end.
-            size_t sizeOfCode = linkBuffer.size();
+            size_t codeSizeInBytes = linkBuffer.size();
             constexpr uint32_t nop = 0xd503201f;
-            while (sizeOfCode > sizeof(uint32_t) && *reinterpret_cast<const uint32_t*>(start + sizeOfCode - sizeof(uint32_t)) == nop)
-                sizeOfCode -= sizeof(uint32_t);
-            bytes.append(std::span { start, sizeOfCode });
+            while (codeSizeInBytes > sizeof(uint32_t) && *reinterpret_cast<const uint32_t*>(start + codeSizeInBytes - sizeof(uint32_t)) == nop)
+                codeSizeInBytes -= sizeof(uint32_t);
+            bytes.append(std::span { start, codeSizeInBytes });
             auto offsetOf = [&](auto label) {
                 return static_cast<uint32_t>(static_cast<const uint8_t*>(linkBuffer.locationOf<NoPtrTag>(label).untaggedPtr()) - start);
             };
@@ -9654,7 +9645,7 @@ public:
                 writeAdr(offsetOf(record.m_dataLabel), MacroAssembler::dataTempRegister, offsetOf(record.m_backtrackLocation));
             UncheckedKeyHashMap<const uint8_t*, uint32_t> placed;
             for (auto& reference : m_tableReferences) {
-                if (reference.tableIs == TableIs::Shared) {
+                if (reference.tableOwnership == TableOwnership::Shared) {
                     m_forImage->tables.append({ offsetOf(reference.instruction), static_cast<uint8_t>(reference.reg), reference.table });
                     continue;
                 }
@@ -10047,13 +10038,13 @@ private:
     VM* m_vm;
 public:
     YarrCodeForImage* m_forImage { nullptr };
-    Vector<MacroAssembler::Call> m_callsToOwnTryReadUnicodeCharSlowPath;
+    Vector<MacroAssembler::Call> m_ownTryReadUnicodeCharSlowPathCalls;
 private:
     struct ReferenceToTable {
         MacroAssembler::Label instruction;
         MacroAssembler::RegisterID reg;
         std::span<const uint8_t> table;
-        TableIs tableIs;
+        TableOwnership tableOwnership;
     };
     Vector<ReferenceToTable> m_tableReferences;
     YarrCodeBlock* const m_codeBlock;

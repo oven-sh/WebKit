@@ -85,8 +85,6 @@ public:
     }
     
 private:
-    // A value that profiling says nothing about, and that flows into a sound type check, is predicted to be what the check
-    // lets through. This runs on a fixpoint so that it never widens a prediction that profiling or propagation can provide.
     bool seedPredictionsFromSoundTypeChecks()
     {
         bool changed = false;
@@ -417,7 +415,6 @@ private:
             }
             break;
         }
-
 
         case ToNumber:
         case ToNumeric: {
@@ -2005,4 +2002,3 @@ bool performPredictionPropagation(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-
