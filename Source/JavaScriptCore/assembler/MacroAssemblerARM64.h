@@ -8287,6 +8287,11 @@ protected:
     }
 
     JS_EXPORT_PRIVATE static void collectCPUFeatures();
+#if USE(BUN_JSC_ADDITIONS)
+public:
+    JS_EXPORT_PRIVATE static void useOnlyFeaturesOfBuildTarget();
+protected:
+#endif
 
     JS_EXPORT_PRIVATE static CPUIDCheckState s_lseCheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_jscvtCheckState;

@@ -48,6 +48,7 @@
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "JSModuleEnvironment.h"
+#include "MacroAssembler.h"
 #include "PrelinkedModuleGraph.h"
 #include <set>
 #include "ScopedArgumentsTable.h"
@@ -6160,6 +6161,7 @@ struct BytecodeLinkEncoder::Impl {
 
     Vector<uint8_t> compileImage()
     {
+        MacroAssembler::useOnlyFeaturesOfBuildTarget();
         ImmutableIntrinsics::ensureShared(vm);
         AOT::TypeTable::load(vm);
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
