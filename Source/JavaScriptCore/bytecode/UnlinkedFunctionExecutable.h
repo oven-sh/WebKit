@@ -244,7 +244,7 @@ public:
     {
         materializeDeferredMembersIfNeeded();
         if (StaticHeap::contains(this)) [[unlikely]]
-            return StaticHeap::parentScopeTDZVariablesOf(*this);
+            return nullptr;
         return m_members.live().parentScopeTDZVariables;
     }
     void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { materializeDeferredMembersIfNeeded(); ensureRareData().m_parentDeclaredNames = WTF::move(names); }
@@ -301,9 +301,7 @@ public:
         RELEASE_ASSERT(m_isCached);
         return { m_cachedCodeBlockForCallOffset, m_cachedCodeBlockForConstructOffset };
     }
-    void leaveCodeInPayload(Decoder&, std::pair<int32_t, int32_t> offsetsOfCachedCodeBlocks);
-    // Decodes the code without changing this object. `owner` keeps the code alive.
-    UnlinkedFunctionCodeBlock* decodeCodeFromKeptPayload(VM&, CodeSpecializationKind, JSCell* owner);
+    void leaveWithoutCode();
     void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
 
     JSC::DerivedContextType derivedContextType() const {return static_cast<JSC::DerivedContextType>(m_derivedContextType); }

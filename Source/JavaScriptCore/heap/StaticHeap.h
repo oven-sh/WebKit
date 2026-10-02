@@ -82,20 +82,15 @@ public:
     //
     // PositionsToKeep replaces per-instruction expression info. For each bytecode offset a frame can report, it stores the position
     // in the original sources. `find` maps a module (by its entry offset in the payload) and a position in the bundled text to a
-    // source name and position. If it returns false, the position in the bundled text is kept. With PositionsToKeep, none of the
-    // payload is retained.
+    // source name and position. If it returns false, the position in the bundled text is kept.
     struct PositionsToKeep {
         const Vector<ReportableSitesOfFunction>& sites; // Indexed by function index in the code image.
         Function<bool(uint32_t entryOffsetOfModule, LineColumn inModule, CString& nameOfSource, LineColumn& inSource)> find;
     };
-    // If keptPayloadStart is nonzero, the payload before it is omitted. It must be the start of
-    // BytecodeLinkRegions::ExpressionInfo. The program can then no longer be interpreted or decoded again.
-    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { }, size_t keptPayloadStart = 0, const PositionsToKeep* = nullptr, std::span<const ReportableSitesOfFunction> reportableSites = { }, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules = { });
+    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, const PositionsToKeep&, std::span<const ReportableSitesOfFunction> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules);
     static bool isBuilding() { return s_isBuilding; }
     static JSString* emptyStringWhileBuilding(VM&); // Distinct from the VM's own empty string.
     static WTF::SymbolRegistry& symbolRegistryWhileBuilding(bool isPrivate); // Distinct from the VM's own registries.
-    // The executable is being decoded from `record`, which has parent scope TDZ variables.
-    static void noteParentScopeTDZVariables(const UnlinkedFunctionExecutable&, const void* record);
 
     // ---- Run time.
 
@@ -103,18 +98,8 @@ public:
     // that thread creates any atom string. Returns false if the image was built by a different engine build or the address range is
     // unavailable.
     JS_EXPORT_PRIVATE static bool map(std::span<const uint8_t> image, int fileDescriptor, int64_t offsetInFile);
-    // The image contains its own copies of the string table and the bytecode payload, which its contents refer to. Reports where
-    // they are, so that a container file does not need to store them twice.
-    struct Copies {
-        size_t offsetOfStrings;
-        size_t sizeOfStrings;
-        size_t offsetOfPayload;
-        size_t sizeOfPayload;
-        bool payloadIsOmitted; // Only part of the payload was kept, so it is not stored at all.
-        uintptr_t addressOfPayload; // omittedPayload().data() at run time.
-        bool hasPositionsOfCallSites; // See PositionsToKeep.
-    };
-    JS_EXPORT_PRIVATE static std::optional<Copies> copiesIn(std::span<const uint8_t> image);
+    // The offset and size of the image's own copy of the string table, so that a container file does not need to store it twice.
+    JS_EXPORT_PRIVATE static std::optional<std::pair<size_t, size_t>> stringTableIn(std::span<const uint8_t> image);
     // Call on a thread that will own a VM other than the first, before it creates any atom string. Does for that thread what map()
     // does for its own.
     JS_EXPORT_PRIVATE static void prepareThread();
@@ -135,21 +120,15 @@ public:
     static ALWAYS_INLINE bool needsNoLocking(const void* lock) { return contains(lock) && isMapped(); }
     // Returns a table in which all strings already exist, if `strings` is what build() was given and the VM uses this heap.
     JS_EXPORT_PRIVATE static std::unique_ptr<DecoderStringTable> tryCreateStringTable(VM&, std::span<const uint8_t> strings);
-    // Returns what decoding would produce, if the bytecode is a module of the payload given to build() and matches the key.
-    static UnlinkedCodeBlock* codeFor(VM&, const SourceCodeKey&, const CachedBytecode&);
+    // The top-level code of the module whose provider this is (takePlaceForSourceProvider()).
+    JS_EXPORT_PRIVATE static UnlinkedCodeBlock* codeFor(VM&, const SourceCodeKey&);
     // True if the provider was created at the address returned by takePlaceForSourceProvider().
     static bool isProviderOfModule(const SourceProvider& provider) { return bmalloc::StaticRegion::contains(&provider); }
-    JS_EXPORT_PRIVATE static bool payloadIsOmitted();
     // See PositionsToKeep and AOT::FunctionRef::reportedPositionFor().
     static bool hasPositionsOfCallSites();
     static bool hasIdentifiersOfProgram();
     static WTF::UniquedStringImpl* const* identifiersOfProgram(); // Indexed by identifier number. Null if there are none.
     JS_EXPORT_PRIVATE static String nameOfSource(uint32_t); // Source numbers start at one.
-    // True if `bytes` claims to be a payload that cannot be read: the omitted payload, or one inside a static heap that was never
-    // mapped.
-    static bool isNoPayloadToRead(std::span<const uint8_t> bytes) { return contains(bytes.data()) && (!isMapped() || payloadIsOmitted()); }
-    // The address range the omitted payload would occupy. It identifies the payload; most of it is not readable. See build().
-    JS_EXPORT_PRIVATE static std::span<const uint8_t> omittedPayload();
     // Returns what linking the result of decodeBuiltinFunction() would produce, for a builtin with this payload entry offset and
     // source text. Its source() equals what makeSource() would have returned. Only valid in the realm that runs the program.
     JS_EXPORT_PRIVATE static FunctionExecutable* builtinFunctionFor(JSGlobalObject*, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
@@ -159,7 +138,6 @@ public:
     // of an executable whose provider has yet to be made. For whoever is about to look at the source of an executable that it
     // found on the stack: makes the provider if it can. False if there is none, and source().provider() is not to be used.
     static bool ensureSourceProviderOf(VM&, ScriptExecutable*);
-    JS_EXPORT_PRIVATE static RefPtr<TDZEnvironmentLink> parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&);
 
     // A cell's header identifies its Structure by StructureID, which is an offset into the structure heap. The first VM of a
     // process creates its initial Structures in a fixed order, in a block at this offset.
@@ -236,10 +214,6 @@ public:
     static const uint32_t* functionMetadataOffsets(VM&);
     template<typename T> static const T* inData(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Data) + offset); }
     template<typename T> static const T* inMalloc(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Malloc) + offset); }
-    // For decoding a function's code from the kept payload. `placed` is the decoder passed to
-    // UnlinkedFunctionExecutable::leaveCodeInPayload().
-    static Ref<Decoder> decoderForKeptPayload(VM&, Decoder& placed);
-    static void ensureDecoder(VM&, size_t indexOfModule, SourceProvider&);
     // An ordinary executable owned by this VM for the same function as a static executable. Used where the static executable's code
     // cannot run and it has no room to hold other code.
     static FunctionExecutable* standInFor(VM&, FunctionExecutable*);

@@ -115,7 +115,6 @@ public:
     void setBoundFunctionStructure(VM& vm, Structure* structure) { m_boundFunctionStructureID.set(vm, this, structure); }
 
     ExecutableBase* executable() const LIFETIME_BOUND { return m_executable.get(); }
-    void replaceExecutable(VM&, ExecutableBase*); // See JSFunction::replaceExecutable().
 
     bool hasReifiedLength() const { return m_hasReifiedLength; }
     void setHasReifiedLength() { m_hasReifiedLength = true; }

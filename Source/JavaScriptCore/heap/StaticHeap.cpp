@@ -63,15 +63,8 @@ struct StaticHeapModule {
     uint64_t isBuiltinFunction;
 };
 
-struct StaticHeapTDZ {
-    uint64_t executable; // The array is sorted by this.
-    uint64_t record;
-    uint64_t moduleIndex;
-};
-static Vector<StaticHeapTDZ>* s_tdzBeingBuilt;
 static JSString* s_emptyStringBeingBuilt;
 static SymbolRegistry* s_symbolRegistriesBeingBuilt[2];
-static size_t s_moduleBeingBuilt;
 static uint32_t s_entryOffsetOfModuleBeingBuilt;
 
 // The layout of the file: this header, then each arena, starting on a page boundary.
@@ -84,10 +77,6 @@ struct StaticHeap::Header {
     uint64_t size; // Of the whole file.
     uint64_t arenaOffset[Region::numberOfArenasInFile];
     uint64_t arenaSize[Region::numberOfArenasInFile];
-    // A range of Arena::Data that is not in the file and is left unmapped: the part of the bytecode payload that nothing needs at
-    // run time. holeInData is its offset in the arena. In the file, the data after the hole directly follows the data before it.
-    uint64_t holeInData;
-    uint64_t sizeOfHoleInData;
 
     // The fields below are addresses, not offsets.
     uint64_t strings;
@@ -96,12 +85,8 @@ struct StaticHeap::Header {
     uint64_t staticAtoms; // uint32_t[]. See AtomStringTable::StaticAtoms.
     uint64_t capacityOfStaticAtoms;
     uint64_t symbolRegistries[2]; // SymbolRegistry*: public, private.
-    uint64_t payload;
-    uint64_t payloadSize;
     uint64_t modules; // StaticHeapModule[]
     uint64_t numberOfModules;
-    uint64_t tdz; // StaticHeapTDZ[]
-    uint64_t numberOfTDZ;
     uint64_t infosOfFunctions; // AOT::FunctionInfo[], indexed by AOT::ImageFunction::index.
     uint64_t functionMetadataOffsets; // uint32_t[], indexed the same way. Zero if the unlinked code of functions is kept instead.
     uint64_t rowsOfFunctions; // RowOfFunction[], indexed the same way. See rowOf().
@@ -137,12 +122,6 @@ static std::span<WriteBarrier<Structure>> structuresOf(VM& vm)
 }
 
 // Arena::Bss has room for one Decoder per module.
-static void* addressOfDecoder(size_t moduleIndex)
-{
-    constexpr size_t stride = roundUpToMultipleOf<64>(sizeof(Decoder));
-    return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + Region::offsetOfDecodersInBss + moduleIndex * stride);
-}
-
 static VM* s_vmOfContainer = nullptr;
 
 void StaticHeap::makeContainer(VM& vm)
@@ -160,7 +139,6 @@ struct StaticHeapOfVM {
     uint64_t number { 0 }; // Unique in the process, and never reused. (A VM's address can be reused by a later VM.)
     PreciseAllocation* container { nullptr };
     Vector<ScriptExecutable*> topLevelExecutables; // Indexed by module.
-    UncheckedKeyHashMap<Decoder*, Ref<Decoder>> decoders;
     UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, std::array<Strong<UnlinkedFunctionCodeBlock>, 2>> code;
     UncheckedKeyHashMap<FunctionExecutable*, Strong<FunctionExecutable>> standIns;
 };
@@ -357,12 +335,6 @@ JSString* StaticHeap::emptyStringWhileBuilding(VM& vm)
 SymbolRegistry& StaticHeap::symbolRegistryWhileBuilding(bool isPrivate)
 {
     return *s_symbolRegistriesBeingBuilt[isPrivate];
-}
-
-void StaticHeap::noteParentScopeTDZVariables(const UnlinkedFunctionExecutable& executable, const void* record)
-{
-    Region::AllocationScope notInRegion(false);
-    s_tdzBeingBuilt->append({ std::bit_cast<uint64_t>(&executable), std::bit_cast<uint64_t>(record), s_moduleBeingBuilt });
 }
 
 namespace {
@@ -944,16 +916,6 @@ const uint32_t* StaticHeap::functionMetadataOffsets(VM& vm)
     return hasExecutablesOfFunctions(vm) ? std::bit_cast<const uint32_t*>(s_header->functionMetadataOffsets) : nullptr;
 }
 
-Ref<Decoder> StaticHeap::decoderForKeptPayload(VM& vm, Decoder& placed)
-{
-    RELEASE_ASSERT(isUsedBy(vm));
-    static NeverDestroyed<UncheckedKeyHashMap<Decoder*, Ref<Decoder>>> decodersOfFirstVM;
-    auto& decoders = ofVM(vm) ? ofVM(vm)->decoders : decodersOfFirstVM.get();
-    return decoders.ensure(&placed, [&] {
-        return Decoder::create(vm, placed.cachedBytecode(), placed.provider(), Decoder::RecoverableCode::No);
-    }).iterator->value;
-}
-
 FunctionExecutable* StaticHeap::standInFor(VM& vm, FunctionExecutable* executable)
 {
     RELEASE_ASSERT(isUsedBy(vm) && contains(executable) && !executable->isShortForm());
@@ -1271,7 +1233,7 @@ static void deduplicateSymbolTables()
     }
 }
 
-Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t keptPayloadStart, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
+Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, const PositionsToKeep& positionsToKeep, std::span<const ReportableSitesOfFunction> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
 {
     s_reportableSites = reportableSites;
     s_identifiersOfProgram = { };
@@ -1286,11 +1248,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         listsOfFunctionsInFunctions() = { };
         s_rowsOfFunctions = nullptr;
     });
-    if (positionsToKeep)
-        keptPayloadStart = payload.size();
     UncheckedKeyHashMap<CString, uint32_t> sources;
     Vector<CString> namesOfSources;
-    s_positionsToKeep = positionsToKeep;
+    s_positionsToKeep = &positionsToKeep;
     s_sourcesBeingBuilt = &sources;
     s_namesOfSourcesBeingBuilt = &namesOfSources;
     s_bytesOfPositions = 0;
@@ -1311,12 +1271,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     header.magic = Header::expectedMagic;
     header.stamp = AOT::imageStamp();
 
-    auto copy = [&](std::span<const uint8_t> bytes) {
-        auto* result = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, bytes.size(), pageSizeOfImage));
+    auto copy = [&](Region::Arena arena, std::span<const uint8_t> bytes) {
+        auto* result = static_cast<uint8_t*>(Region::allocate(arena, bytes.size(), pageSizeOfImage));
         memcpy(result, bytes.data(), bytes.size());
         return std::span<uint8_t> { result, bytes.size() };
     };
-    auto stringsCopy = copy(strings);
+    auto stringsCopy = copy(Region::Arena::Data, strings);
     header.strings = std::bit_cast<uint64_t>(stringsCopy.data());
     header.stringsSize = strings.size();
 
@@ -1343,18 +1303,11 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             Region::AllocationScope allocationScope;
             s_isBuilding = true;
             vm.heap.m_placeOfNextCell = placeOfEveryCellWhileBuilding;
-            for (uint32_t ordinal = 0; ordinal < count; ++ordinal) {
+            for (uint32_t ordinal = 0; ordinal < count; ++ordinal)
                 table.atomFor(vm, ordinal);
-                // Create every JSString now, so that decoding at run time never has to create one, which would write to the slot.
-                // If nothing is decoded at run time, the only JSStrings needed are the ones that decoding here asks for.
-                if (!keptPayloadStart)
-                    table.jsStringFor(vm, ordinal);
-            }
 
             if (!payload.empty() && !entryOffsetsOfModules.empty()) {
-                auto payloadCopy = copy(payload);
-                header.payload = std::bit_cast<uint64_t>(payloadCopy.data());
-                header.payloadSize = payload.size();
+                auto payloadCopy = copy(Region::Arena::Scratch, payload);
                 Vector<uint32_t> sortedOffsets(entryOffsetsOfModules);
                 std::ranges::sort(sortedOffsets);
                 auto* modules = static_cast<StaticHeapModule*>(Region::allocate(Region::Arena::Data, sortedOffsets.size() * sizeof(StaticHeapModule), 16));
@@ -1385,14 +1338,11 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     s_functionMetadataOffsetsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
                     zeroSpan(s_functionMetadataOffsetsBeingBuilt);
                     header.functionMetadataOffsets = std::bit_cast<uint64_t>(s_functionMetadataOffsetsBeingBuilt.data());
-                    s_allocatesFunctionsInScratch = keptPayloadStart && positionsToKeep;
+                    s_allocatesFunctionsInScratch = true;
                     header.numberOfFunctions = infosOfFunctions.size();
                 }
-                Vector<StaticHeapTDZ> tdz;
-                s_tdzBeingBuilt = &tdz;
                 s_emptyStringBeingBuilt = nullptr;
                 for (size_t i = 0; i < sortedOffsets.size(); ++i) {
-                    s_moduleBeingBuilt = i;
                     s_entryOffsetOfModuleBeingBuilt = sortedOffsets[i];
                     RefPtr<CachedBytecode> cachedBytecode;
                     {
@@ -1401,8 +1351,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     }
                     cachedBytecode->setPayloadIsPersistent();
                     cachedBytecode->setEntryOffset(sortedOffsets[i]);
-                    void* address = addressOfDecoder(i);
-                    Decoder& decoder = Decoder::createForStaticHeap(address, vm, *cachedBytecode, nullptr);
+                    RefPtr<Decoder> ownerOfDecoder;
+                    {
+                        Region::AllocationScope notInRegion(false);
+                        ownerOfDecoder = Decoder::createForStaticHeap(vm, cachedBytecode.releaseNonNull());
+                    }
+                    Decoder& decoder = *ownerOfDecoder;
                     decoder.setExternalStrings(table);
                     {
                         SourceCodeKey key;
@@ -1452,19 +1406,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
                                 fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall, lineStarts);
                         }
-                        if (codeBlock) {
-                            // The code block stays, and gives its line starts to the module's provider at run time. They are borrowed
-                            // from the payload, so it gets a copy. Without bytecode, every position comes from makePositions().
-                            auto* global = uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock);
-                            auto bytes = global->lineStarts().bytes;
-                            if (bytes.empty() || Options::omitBytecodeFromStaticHeap())
-                                global->setLineStarts({ });
-                            else
-                                global->setLineStarts({ std::span { deduplicatedCopy(bytes, 1), bytes.size() }, nullptr });
-                        }
-                        // (Code that can still be interpreted has to be linked first, which finds variables by name where running it
-                        // does not: to watch them, and to check what the bytecode optimizer resolved.)
-                        if (decoder.leavesFunctionCodeInPayload() && Options::omitBytecodeFromStaticHeap()) {
+                        if (codeBlock)
+                            uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->setLineStarts({ });
+                        if (decoder.leavesFunctionCodeInPayload()) {
                             DynamicallyResolvedNames lookedUp;
                             if (codeBlock) {
                                 const Vector<uint32_t>* exported = nullptr;
@@ -1494,7 +1438,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                                     if (auto* code = function->codeBlockIfExists(kind))
                                         code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets(), !!s_arrayDeduplicator);
                                 }
-                                function->leaveCodeInPayload(decoder, offsets);
+                                function->leaveWithoutCode();
                             }
                         }
                         if (isBuiltinFunction)
@@ -1502,13 +1446,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         else
                             modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock), false };
                     }
-                    // (The Decoder is not destroyed, because objects refer to it. It holds one reference to the CachedBytecode,
-                    // which is released here.)
                     decoder.clearDecodedObjects();
-                    cachedBytecode->deref();
-                    memset(address, 0, sizeof(Decoder));
+                    {
+                        Region::AllocationScope notInRegion(false);
+                        ownerOfDecoder = nullptr;
+                    }
                 }
-                s_tdzBeingBuilt = nullptr;
                 if (imageView && imageView->keysAreOmitted()) {
                     // An executable created here records the index of its function. The other executables are created at run time
                     // and find their functions by key, so only those keys are kept.
@@ -1534,7 +1477,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     header.keysOfImage = std::bit_cast<uint64_t>(kept.data());
                     header.capacityOfKeysOfImage = capacity;
                 }
-                if (positionsToKeep && !s_functionMetadataOffsetsBeingBuilt.empty()) {
+                if (!s_functionMetadataOffsetsBeingBuilt.empty()) {
                     size_t sizeOfText = 0;
                     for (auto& name : namesOfSources)
                         sizeOfText += name.length();
@@ -1563,18 +1506,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     s_arrayDeduplicator = nullptr;
                 }
                 s_functionMetadataOffsetsBeingBuilt = { };
-                // (See parentScopeTDZVariablesOf().)
-                if (keptPayloadStart) {
-                    Region::AllocationScope notInRegion(false);
-                    tdz = { };
-                }
-                std::ranges::sort(tdz, { }, &StaticHeapTDZ::executable);
-                header.tdz = std::bit_cast<uint64_t>(copy(asByteSpan(tdz.span())).data());
-                header.numberOfTDZ = tdz.size();
-                {
-                    Region::AllocationScope notInRegion(false);
-                    tdz = { };
-                }
             }
             s_isBuilding = false;
             vm.heap.m_placeOfNextCell = nullptr;
@@ -1656,15 +1587,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         });
     }
 
-    if (keptPayloadStart && header.payload && header.functionMetadataOffsets) {
-        uint64_t start = roundUpToMultipleOf<pageSizeOfImage>(header.payload);
-        uint64_t end = (header.payload + keptPayloadStart) & ~static_cast<uint64_t>(pageSizeOfImage - 1);
-        if (end > start) {
-            header.holeInData = start - Region::startOf(Region::Arena::Data);
-            header.sizeOfHoleInData = end - start;
-        }
-    }
-
     // Compute now what a cell would otherwise compute lazily and cache, because these cells are read-only at run time.
     forEachCell(Region::Arena::Cells, [&](void* pointer, size_t) {
         if (auto* bigInt = dynamicDowncast<JSBigInt>(static_cast<JSCell*>(pointer)))
@@ -1679,21 +1601,11 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             header.arenaOffset[i] = size;
             header.arenaSize[i] = roundUpToMultipleOf<pageSizeOfImage>(Region::used(static_cast<Region::Arena>(i)));
             size += header.arenaSize[i];
-            if (static_cast<Region::Arena>(i) == Region::Arena::Data)
-                size -= header.sizeOfHoleInData;
         }
         header.size = size;
         image.fill(0, size);
         memcpy(image.mutableSpan().data(), &header, sizeof(header));
-        if (header.sizeOfHoleInData) {
-            constexpr unsigned data = static_cast<unsigned>(Region::Arena::Data);
-            auto* from = reinterpret_cast<const uint8_t*>(Region::startOf(Region::Arena::Data));
-            uint8_t* to = image.mutableSpan().data() + header.arenaOffset[data];
-            size_t afterHole = header.holeInData + header.sizeOfHoleInData;
-            memcpy(to, from, header.holeInData);
-            memcpy(to + header.holeInData, from + afterHole, Region::used(Region::Arena::Data) - afterHole);
-        }
-        for (unsigned i = header.sizeOfHoleInData ? 1 : 0; i < Region::numberOfArenasInFile; ++i)
+        for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i)
             memcpy(image.mutableSpan().data() + header.arenaOffset[i], reinterpret_cast<void*>(Region::startOf(static_cast<Region::Arena>(i))), Region::used(static_cast<Region::Arena>(i)));
     }
 
@@ -1704,7 +1616,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     return image;
 }
 
-std::optional<StaticHeap::Copies> StaticHeap::copiesIn(std::span<const uint8_t> image)
+std::optional<std::pair<size_t, size_t>> StaticHeap::stringTableIn(std::span<const uint8_t> image)
 {
     if (image.size() < sizeof(Header))
         return std::nullopt;
@@ -1712,21 +1624,10 @@ std::optional<StaticHeap::Copies> StaticHeap::copiesIn(std::span<const uint8_t> 
     if (header.magic != Header::expectedMagic || header.size > image.size())
         return std::nullopt;
     constexpr unsigned data = static_cast<unsigned>(Region::Arena::Data);
-    auto offsetOf = [&](uint64_t address, uint64_t size) -> std::optional<size_t> {
-        uint64_t inArena = address - Region::startOf(Region::Arena::Data);
-        if (!address || inArena > header.arenaSize[data] || size > header.arenaSize[data] - inArena)
-            return std::nullopt;
-        if (inArena + size <= header.holeInData || !header.sizeOfHoleInData)
-            return header.arenaOffset[data] + inArena;
-        if (inArena >= header.holeInData + header.sizeOfHoleInData)
-            return header.arenaOffset[data] + inArena - header.sizeOfHoleInData;
+    uint64_t inArena = header.strings - Region::startOf(Region::Arena::Data);
+    if (!header.strings || inArena > header.arenaSize[data] || header.stringsSize > header.arenaSize[data] - inArena)
         return std::nullopt;
-    };
-    auto strings = offsetOf(header.strings, header.stringsSize);
-    auto payload = offsetOf(header.payload, header.payloadSize);
-    if (!strings || (!payload && !header.sizeOfHoleInData))
-        return std::nullopt;
-    return Copies { *strings, static_cast<size_t>(header.stringsSize), payload.value_or(0), static_cast<size_t>(header.payloadSize), !payload, static_cast<uintptr_t>(header.payload), !!header.hasPositionsOfCallSites };
+    return std::pair { static_cast<size_t>(header.arenaOffset[data] + inArena), static_cast<size_t>(header.stringsSize) };
 }
 
 bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, int64_t offsetInFile)
@@ -1744,28 +1645,15 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, int64_t
     if (!Region::mapRestOfBss())
         return false;
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
-        uint64_t sizeInFile = header.arenaSize[i] - (static_cast<Region::Arena>(i) == Region::Arena::Data ? header.sizeOfHoleInData : 0);
-        if (header.arenaOffset[i] % pageSizeOfImage || header.arenaOffset[i] > header.size || sizeInFile > header.size - header.arenaOffset[i])
+        if (header.arenaOffset[i] % pageSizeOfImage || header.arenaOffset[i] > header.size || header.arenaSize[i] > header.size - header.arenaOffset[i])
             return false;
     }
-    if (header.holeInData % pageSizeOfImage || header.sizeOfHoleInData % pageSizeOfImage || header.holeInData + header.sizeOfHoleInData > header.arenaSize[static_cast<unsigned>(Region::Arena::Data)])
-        return false;
-    // With bytecode, a function that has no code for the way it is called is prepared for the interpreter, which writes to its
-    // executable (ScriptExecutable::recordParse()).
-    bool nothingWritesToTheRest = header.sizeOfHoleInData || Options::mapStaticHeapReadOnly();
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
         auto arena = static_cast<Region::Arena>(i);
         bool isMutable = arena == Region::Arena::MutableCells || arena == Region::Arena::MutableMalloc;
-        auto access = nothingWritesToTheRest && !isMutable ? Region::Access::Read : Region::Access::ReadAndWrite;
+        auto access = isMutable ? Region::Access::ReadAndWrite : Region::Access::Read;
         // (If a later mapping fails, the arenas that are already mapped stay mapped. Nothing uses them, because s_header is not
         // set.)
-        if (arena == Region::Arena::Data && header.sizeOfHoleInData) {
-            uint64_t afterHole = header.holeInData + header.sizeOfHoleInData;
-            if (!Region::map(arena, access, fileDescriptor, offsetInFile + header.arenaOffset[i], header.holeInData)
-                || !Region::map(arena, access, fileDescriptor, offsetInFile + header.arenaOffset[i] + header.holeInData, header.arenaSize[i] - afterHole, afterHole))
-                return false;
-            continue;
-        }
         if (!Region::map(arena, access, fileDescriptor, offsetInFile + header.arenaOffset[i], header.arenaSize[i]))
             return false;
     }
@@ -1839,28 +1727,10 @@ std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM& vm, std
     if (!s_header || !isUsedBy(vm) || strings.size() != s_header->stringsSize)
         return nullptr;
     auto* copy = std::bit_cast<const uint8_t*>(s_header->strings);
-    // Both come from the same file. Comparing a sample guards against mistakes, not against tampering.
     size_t sample = std::min<size_t>(strings.size(), 4 * KB);
     if (memcmp(copy, strings.data(), sample) || memcmp(copy + strings.size() - sample, strings.data() + strings.size() - sample, sample))
         return nullptr;
     return makeUnique<DecoderStringTable>(std::span<const uint8_t> { copy, strings.size() }, std::bit_cast<uintptr_t*>(s_header->stringSlots));
-}
-
-RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable& executable)
-{
-    std::span<const StaticHeapTDZ> all { std::bit_cast<const StaticHeapTDZ*>(s_header->tdz), static_cast<size_t>(s_header->numberOfTDZ) };
-    auto found = std::ranges::lower_bound(all, std::bit_cast<uint64_t>(&executable), { }, &StaticHeapTDZ::executable);
-    if (found == all.end() || found->executable != std::bit_cast<uint64_t>(&executable))
-        return nullptr;
-    // (They are only needed to compile the functions nested in this one, and without the payload there is nothing to compile them
-    // from.)
-    if (payloadIsOmitted())
-        return nullptr;
-    // (The Decoder exists, because the executable came from a code block that codeFor() returned.)
-    // The decoded result belongs to a VM. The Decoder at that address belongs to whichever VM created it first, which may have been
-    // destroyed. It is only used to identify the module.
-    auto& placed = *static_cast<Decoder*>(addressOfDecoder(found->moduleIndex));
-    return decodeParentScopeTDZVariablesForStaticHeap(decoderForKeptPayload(executable.vm(), placed).get(), std::bit_cast<const void*>(found->record));
 }
 
 bool StaticHeap::hasIdentifiersOfProgram()
@@ -1903,66 +1773,19 @@ LineColumn StaticHeap::whereFunctionStarts(uint32_t indexOfFunction)
     return { line, readVarint() };
 }
 
-bool StaticHeap::payloadIsOmitted()
+UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key)
 {
-    return s_header && s_header->sizeOfHoleInData;
-}
-
-std::span<const uint8_t> StaticHeap::omittedPayload()
-{
-    RELEASE_ASSERT(payloadIsOmitted());
-    return { std::bit_cast<const uint8_t*>(s_header->payload), static_cast<size_t>(s_header->payloadSize) };
-}
-
-UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const CachedBytecode& cachedBytecode)
-{
-    ASSERT(isUsedBy(vm));
-    if (!s_header->numberOfModules || !cachedBytecode.payloadIsPersistent() || cachedBytecode.size() < s_header->payloadSize)
+    if (!s_header || !isUsedBy(vm))
         return nullptr;
-    if (payloadIsOmitted() && cachedBytecode.span().data() != omittedPayload().data())
+    uintptr_t place = std::bit_cast<uintptr_t>(&key.source().provider());
+    uintptr_t first = std::bit_cast<uintptr_t>(addressOfSourceProvider(0));
+    size_t index = (place - first) / sizeOfPlaceForSourceProvider;
+    if (place < first || index >= s_header->numberOfModules)
         return nullptr;
-    // A bytecode order recording records what is read from the payload, so the payload has to be decoded.
-    if (BytecodeOrderRecorder::ofVM(vm)) [[unlikely]]
+    auto& module = std::bit_cast<const StaticHeapModule*>(s_header->modules)[index];
+    if (module.isBuiltinFunction || key.flagsBits() != module.keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
         return nullptr;
-    std::span<uint8_t> payload { std::bit_cast<uint8_t*>(s_header->payload), static_cast<size_t>(s_header->payloadSize) };
-    static const uint8_t* s_samePayload = nullptr;
-    if (cachedBytecode.span().data() != s_samePayload && cachedBytecode.span().data() != payload.data()) {
-        size_t sample = std::min<size_t>(payload.size(), 4 * KB);
-        if (memcmp(payload.data(), cachedBytecode.span().data(), sample))
-            return nullptr;
-        s_samePayload = cachedBytecode.span().data();
-    }
-    std::span<const StaticHeapModule> modules { std::bit_cast<const StaticHeapModule*>(s_header->modules), static_cast<size_t>(s_header->numberOfModules) };
-    uint32_t entryOffset = static_cast<uint32_t>(cachedBytecode.entryOffset());
-    size_t index = std::ranges::lower_bound(modules, entryOffset, { }, &StaticHeapModule::entryOffset) - modules.begin();
-    if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock || modules[index].isBuiltinFunction)
-        return nullptr;
-    auto* module = &modules[index];
-    if (key.hash() != module->keyHash || key.length() != module->keyLength || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
-        return nullptr;
-
-    // Objects in the static heap refer to the module's SourceProvider by its fixed address. A module that is loaded with another
-    // provider is treated as a different module, and gets its own code.
-    if (&key.source().provider() != addressOfSourceProvider(index))
-        return nullptr;
-
-    ensureDecoder(vm, index, key.source().provider());
-    return std::bit_cast<UnlinkedCodeBlock*>(module->codeBlock);
-}
-
-// Objects in the static heap refer to the module's Decoder, which identifies the module they belong to.
-void StaticHeap::ensureDecoder(VM& vm, size_t index, SourceProvider& provider)
-{
-    static NeverDestroyed<BitVector> s_hasDecoder;
-    static Lock s_decodersLock;
-    Locker locker { s_decodersLock };
-    if (s_hasDecoder->get(index))
-        return;
-    Ref ownBytecode = CachedBytecode::create(std::span<uint8_t> { std::bit_cast<uint8_t*>(s_header->payload), static_cast<size_t>(s_header->payloadSize) }, [](const void*) { }, { });
-    ownBytecode->setPayloadIsPersistent();
-    ownBytecode->setEntryOffset(std::bit_cast<const StaticHeapModule*>(s_header->modules)[index].entryOffset);
-    Decoder::createForStaticHeap(addressOfDecoder(index), vm, WTF::move(ownBytecode), &provider);
-    s_hasDecoder->set(index);
+    return std::bit_cast<UnlinkedCodeBlock*>(module.codeBlock);
 }
 
 class PlacedStringSourceProvider final : public StringSourceProvider {
@@ -2053,7 +1876,6 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
     }
     if (!provider)
         return nullptr;
-    ensureDecoder(vm, index, *provider);
 
     FunctionExecutable* executable = std::bit_cast<UnlinkedFunctionExecutable*>(modules[index].codeBlock)->staticExecutable();
     // The functions nested in the builtin need a top-level executable, which is written to, so it is a stand-in in the ordinary
@@ -2084,29 +1906,25 @@ VM* StaticHeap::s_vm = nullptr;
 bool StaticHeap::s_isShared = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
 
-Vector<uint8_t> StaticHeap::build(VM&, std::span<const uint8_t>, std::span<const uint8_t>, std::span<const uint32_t>, std::span<const uint8_t>, size_t, const PositionsToKeep*, std::span<const ReportableSitesOfFunction>, std::span<const std::optional<Vector<uint32_t>>>) { return { }; }
+Vector<uint8_t> StaticHeap::build(VM&, std::span<const uint8_t>, std::span<const uint8_t>, std::span<const uint32_t>, std::span<const uint8_t>, const PositionsToKeep&, std::span<const ReportableSitesOfFunction>, std::span<const std::optional<Vector<uint32_t>>>) { return { }; }
 JSString* StaticHeap::emptyStringWhileBuilding(VM&) { RELEASE_ASSERT_NOT_REACHED(); }
 WTF::SymbolRegistry& StaticHeap::symbolRegistryWhileBuilding(bool) { RELEASE_ASSERT_NOT_REACHED(); }
-void StaticHeap::noteParentScopeTDZVariables(const UnlinkedFunctionExecutable&, const void*) { }
 bool StaticHeap::map(std::span<const uint8_t>, int, int64_t) { return false; }
-std::optional<StaticHeap::Copies> StaticHeap::copiesIn(std::span<const uint8_t>) { return std::nullopt; }
+std::optional<std::pair<size_t, size_t>> StaticHeap::stringTableIn(std::span<const uint8_t>) { return std::nullopt; }
 void StaticHeap::prepareThread() { }
 void StaticHeap::install(VM&) { }
 void StaticHeap::willDestroy(VM&) { }
 bool StaticHeap::isUsedBy(VM&) { return false; }
 PreciseAllocation* StaticHeap::containerOfSlow(const void*) { RELEASE_ASSERT_NOT_REACHED(); }
 std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM&, std::span<const uint8_t>) { return nullptr; }
-UnlinkedCodeBlock* StaticHeap::codeFor(VM&, const SourceCodeKey&, const CachedBytecode&) { return nullptr; }
-bool StaticHeap::payloadIsOmitted() { return false; }
+UnlinkedCodeBlock* StaticHeap::codeFor(VM&, const SourceCodeKey&) { return nullptr; }
 bool StaticHeap::hasPositionsOfCallSites() { return false; }
 bool StaticHeap::hasIdentifiersOfProgram() { return false; }
 WTF::UniquedStringImpl* const* StaticHeap::identifiersOfProgram() { return nullptr; }
 String StaticHeap::nameOfSource(uint32_t) { return { }; }
-std::span<const uint8_t> StaticHeap::omittedPayload() { return { }; }
 FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject*, uint32_t, unsigned, const String&, const SourceOrigin&, const String&) { return nullptr; }
 FunctionExecutable* StaticHeap::engineBuiltinFor(JSGlobalObject*, unsigned, std::span<const Latin1Character>) { return nullptr; }
 bool StaticHeap::ensureSourceProviderOf(VM&, ScriptExecutable*) { return true; }
-RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&) { return nullptr; }
 LineColumn StaticHeap::whereFunctionStarts(uint32_t) { return { }; }
 bool StaticHeap::keepsNothingForGeneratingCode() { return false; }
 void* StaticHeap::tryAllocateCellSlow(VM&, size_t) { return nullptr; }
@@ -2120,8 +1938,6 @@ AOT::FunctionInfo* StaticHeap::infosOfFunctions(VM&) { return nullptr; }
 const void* StaticHeap::constantsOfProgram(VM&) { return nullptr; }
 const AOT::ImageFunction* StaticHeap::imageFunctionOfFunction(uint32_t) { return nullptr; }
 const uint32_t* StaticHeap::functionMetadataOffsets(VM&) { return nullptr; }
-Ref<Decoder> StaticHeap::decoderForKeptPayload(VM&, Decoder& placed) { return placed; }
-void StaticHeap::ensureDecoder(VM&, size_t, SourceProvider&) { }
 FunctionExecutable* StaticHeap::standInFor(VM&, FunctionExecutable* executable) { return executable; }
 UnlinkedFunctionCodeBlock* StaticHeap::codeOf(VM&, const UnlinkedFunctionExecutable&, CodeSpecializationKind) { return nullptr; }
 void StaticHeap::setCodeOf(VM&, const UnlinkedFunctionExecutable&, CodeSpecializationKind, UnlinkedFunctionCodeBlock*) { }

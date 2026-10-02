@@ -271,22 +271,17 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
 #if USE(BUN_JSC_ADDITIONS)
     // An executable in the static heap is shared by all VMs and is read-only, so the code that a VM decodes for it is kept by the
     // VM.
-    if (m_isCached && StaticHeap::contains(this) && !StaticHeap::isBuilding()) [[unlikely]] {
+    if (StaticHeap::contains(this) && !StaticHeap::isBuilding()) [[unlikely]] {
         if (UnlinkedFunctionCodeBlock* kept = StaticHeap::codeOf(vm, *this, specializationKind))
             return kept;
-        UnlinkedFunctionCodeBlock* result = nullptr;
-        if (StaticHeap::payloadIsOmitted() && source.provider()->hasNoText()) {
+        if (source.provider()->hasNoText()) {
             dataLogLn("AOT: there is no code to run `", name().string(), "` from (it starts at ", source.startOffset(), ", for ", isCall(specializationKind) ? "a call" : "construction", ")");
             error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
             return nullptr;
         }
-        if (!StaticHeap::payloadIsOmitted() && (isCall(specializationKind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset))
-            result = decodeCodeFromKeptPayload(vm, specializationKind, vm.structureStructure.get());
-        else {
-            result = generateUnlinkedFunctionCodeBlock(vm, this, source, specializationKind, codeGenerationMode, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, error, parseMode, optimize);
-            if (error.isValid())
-                return nullptr;
-        }
+        UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(vm, this, source, specializationKind, codeGenerationMode, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, error, parseMode, optimize);
+        if (error.isValid())
+            return nullptr;
         StaticHeap::setCodeOf(vm, *this, specializationKind, result);
         return result;
     }
@@ -352,30 +347,11 @@ std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> UnlinkedFuncti
 }
 #endif
 
-void UnlinkedFunctionExecutable::leaveCodeInPayload(Decoder& decoder, std::pair<int32_t, int32_t> offsets)
+void UnlinkedFunctionExecutable::leaveWithoutCode()
 {
-    RELEASE_ASSERT(!m_isCached && decoder.isForStaticHeap());
+    RELEASE_ASSERT(!m_isCached);
     m_unlinkedCodeBlockForCall.clear();
     m_unlinkedCodeBlockForConstruct.clear();
-    new (NotNull, &m_decoder) RefPtr<Decoder>(&decoder);
-    m_cachedCodeBlockForCallOffset = offsets.first;
-    m_cachedCodeBlockForConstructOffset = offsets.second;
-    m_isCached = true;
-}
-
-UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::decodeCodeFromKeptPayload(VM& vm, CodeSpecializationKind kind, JSCell* owner)
-{
-    RELEASE_ASSERT(m_isCached && m_decoder->isForStaticHeap() && !StaticHeap::isBuilding());
-    int32_t offset = isCall(kind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset;
-    RELEASE_ASSERT(offset);
-    Ref decoder = StaticHeap::decoderForKeptPayload(vm, *m_decoder);
-    DeferGC deferGC(vm);
-    WriteBarrier<UnlinkedFunctionCodeBlock> result;
-    if (offset > 0)
-        decodeFunctionCodeBlock(decoder.get(), offset, result, owner);
-    else
-        decodeFunctionCodeBlockFromRecord(decoder.get(), -static_cast<int64_t>(offset), result, owner);
-    return result.get();
 }
 
 void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
@@ -385,9 +361,6 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     ASSERT(m_cachedCodeBlockForCallOffset || m_cachedCodeBlockForConstructOffset);
 
     RefPtr<Decoder> decoder = WTF::move(m_decoder);
-    // (What is decoded now does not belong to the static heap.)
-    if (decoder->isForStaticHeap() && !StaticHeap::isBuilding()) [[unlikely]]
-        decoder = StaticHeap::decoderForKeptPayload(vm, *decoder);
     int32_t cachedCodeBlockForCallOffset = m_cachedCodeBlockForCallOffset;
     int32_t cachedCodeBlockForConstructOffset = m_cachedCodeBlockForConstructOffset;
 

@@ -2072,11 +2072,6 @@ Ref<JITCode> codeFromImage(ImageCode code, UnlinkedCodeBlock* unlinkedCodeBlock)
     return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, JITCode::entryBlockFor(unlinkedCodeBlock)));
 }
 
-bool canRunWithoutUnlinkedCode(JSGlobalObject* globalObject, ImageCode code)
-{
-    return !!FunctionRef { &Instance::ensure(globalObject), code.function->index }.metadata();
-}
-
 Ref<JITCode> codeOfFunctionFromImage(ImageCode code, CodeSpecializationKind kind)
 {
     auto [image, function] = code;

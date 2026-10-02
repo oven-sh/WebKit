@@ -105,9 +105,11 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
         // The code that a build created for a module belongs to that module alone, because its functions access the module's
         // variables at fixed locations. This cache would treat two modules with identical source as one.
-        if (StaticHeap::isProviderOfModule(key.source().provider())) {
-            if (UnlinkedCodeBlockType* own = fetchFromDisk<UnlinkedCodeBlockType>(vm, key))
-                return own;
+        if constexpr (std::is_base_of_v<UnlinkedCodeBlock, UnlinkedCodeBlockType>) {
+            if (StaticHeap::isProviderOfModule(key.source().provider())) {
+                if (UnlinkedCodeBlock* own = StaticHeap::codeFor(vm, key))
+                    return uncheckedDowncast<UnlinkedCodeBlockType>(own);
+            }
         }
 #endif
 

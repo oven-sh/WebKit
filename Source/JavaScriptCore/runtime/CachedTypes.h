@@ -299,7 +299,7 @@ public:
     // payload only what a running program rarely needs, and what it leaves there refers to its Decoder. So the Decoder is at an
     // address that is known at build time (`address`, which is zeroed and large enough), and another Decoder is created at the same
     // address before the program needs it. Neither is ever destroyed.
-    static Decoder& createForStaticHeap(void* address, VM&, Ref<CachedBytecode>, RefPtr<SourceProvider>);
+    static Ref<Decoder> createForStaticHeap(VM&, Ref<CachedBytecode>);
     bool isForStaticHeap() const { return m_isForStaticHeap; }
     // While building a static heap: the code of a function is decoded to inspect it, and only part of it is kept
     // (AOT::FunctionMetadata).
@@ -417,7 +417,6 @@ UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM&, const PartsOfFunctionC
 // The same for an entry that encodeBuiltinFunction() or BytecodeLinkEncoder::addBuiltinFunction() wrote.
 bool entryIsOfBuiltinFunction(Decoder&);
 UnlinkedFunctionExecutable* decodeBuiltinForStaticHeap(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, LineStarts&, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
-RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder&, const void* recordOfExecutable);
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);

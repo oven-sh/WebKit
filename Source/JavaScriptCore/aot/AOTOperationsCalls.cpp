@@ -356,15 +356,9 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     calleeFrame->setCodeBlock(nullptr);
     if (executable->aotEntryFor(kind)) {
         DeferGCForAWhile deferGC(vm);
-        // (The executable is shared by every VM and is read-only, so it is the function that is given a different executable.)
         if (!linkStaticFunction(vm, executable, kind, function->scopeUnchecked())) [[unlikely]] {
-            // (That requires other code for the function, and a function in the short form has only its AOT code.)
-            if (executable->isShortForm()) {
-                throwSyntaxError(function->realm(), scope, makeString("The function "_s, executable->ecmaName().string(), " was compiled ahead of time, but its module is linked differently at run time, and the executable has no other code for it"_s));
-                return encodeResult(nullptr, std::bit_cast<void*>(&vm));
-            }
-            executable = StaticHeap::standInFor(vm, executable);
-            function->replaceExecutable(vm, executable);
+            throwSyntaxError(function->realm(), scope, makeString("The function "_s, executable->ecmaName().string(), " was compiled ahead of time, but its module is linked differently at run time, and the executable has no other code for it"_s));
+            return encodeResult(nullptr, std::bit_cast<void*>(&vm));
         }
     }
     executable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *calleeFrame->addressOfCodeBlock());

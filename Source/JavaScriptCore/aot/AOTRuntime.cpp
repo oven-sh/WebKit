@@ -924,8 +924,6 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
     // copy-on-write page.)
     Data* data = ensureData();
     UnlinkedCodeBlock* result = makeUnlinkedCodeBlockFromMetadata();
-    if (!result)
-        result = uncheckedDowncast<FunctionExecutable>(data->executable)->unlinkedExecutable()->decodeCodeFromKeptPayload(vm, info().kind(), instance->globalObject);
     RELEASE_ASSERT(result);
     data->unlinkedCodeBlock = result;
     if (!data->hasBeenFilledSinceLastCollection)

@@ -338,7 +338,6 @@ ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlo
 bool moduleIsLinkedAsCompiled(JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 Ref<JITCode> codeOfFunctionFromImage(ImageCode, CodeSpecializationKind);
-bool canRunWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // True if FunctionMetadata is available.
 
 } } // namespace JSC::AOT
 

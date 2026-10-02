@@ -159,7 +159,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useAOTLoopSplitting, false, Normal, "The AOT compiler emits two copies of each loop: a fast copy with no slow paths, and a generic copy that the fast copy exits to."_s) \
     v(Bool, useGuardPagesForShortFunctionExecutables, false, Normal, "For testing. Place each short-form FunctionExecutable at the end of a page followed by an unmapped page, so that reading past it crashes."_s) \
     v(OptionString, aotTypeTablePath, nullptr, Normal, "When compiling: path to the program's type table (AOT::TypeTable), which the source refers to by index (see useTypeTags)."_s) \
-    v(Bool, mapStaticHeapReadOnly, false, Normal, "Maps the arenas of the static heap that a running program is not meant to write to read-only, even if the program has its bytecode, in which case it does write to them. For finding what does."_s) \
     v(OptionString, aotOverriddenMethodsPath, nullptr, Normal, "When compiling: path to a file that lists the methods that the program's subclasses of built-in classes override, one per line, for example `Map.set`. Without it, any of them may be."_s) \
     v(Unsigned, aotShapeOptimizations, 15, Normal, "Bitmask selecting how shapes from the type table are used. 1: lay out object literals accordingly. 2: optimize reads. 4: optimize writes. 8: a read of a property that a layout is known to lack yields undefined."_s) \
     v(Bool, useAOTFunctionSplitting, false, Normal, "When compiling: emit two copies of a function that accesses properties through static types. The first checks each object's layout once and relies on it afterwards. A failed check transfers to the second, fully generic copy for the rest of the call."_s) \
@@ -187,9 +186,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, aotCacheMissesPerEightSlotsBeforeOwnData, 8, Normal, "A cold-start function gets its own inline cache storage after this many cache misses for every eight slots it has, ..."_s) \
     v(Unsigned, aotExtraCacheMissesBeforeOwnData, 4, Normal, "... plus this many."_s) \
     v(Unsigned, aotQuoteCompressionBlockSize, 65536, Normal, "Source text that error messages may quote is compressed in blocks of this many bytes. Tests use a small value to get more than one block."_s) \
-    v(Bool, useAOTSourceQuotes, false, Normal, "An image stores the source text that error messages may quote, for programs built without source text."_s) \
     v(Bool, hideTextOfFunctionsForTesting, false, Normal, "Function.prototype.toString() says of the program's functions what it says in a program that was built without its source text."_s) \
-    v(Bool, omitBytecodeFromStaticHeap, false, Normal, "When building: the static heap omits the bytecode it was built from and keeps only the source position information."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "Freeze the initial properties of built-in objects such as Object.prototype, Array.prototype and Math when a realm is created. See JSGlobalObject::makeIntrinsicsImmutable()."_s) \
     v(Bool, useTypeTags, false, Normal, "Allow type tags in source text: a 0x01 byte followed by six characters that encode a number (Lexer::readTypeTag()), attached to the next token. The bundler emits them to convey static types."_s) \
     v(Bool, useSoundTypes, false, Normal, "Compile $$t(value, <integer literal mask>) to op_check_type instead of a call."_s) \

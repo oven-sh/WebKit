@@ -109,8 +109,7 @@ public:
     static constexpr size_t offsetOfEmbedderSymbolsInBss = 128 * 1024; // JSC::StaticHeap::embedderSymbols()
     // The rest belongs to JSC::StaticHeap: mapRestOfBss(). Only pages that are touched are committed.
     static constexpr size_t sizeOfBssOfEveryProcess = 256 * 1024;
-    static constexpr size_t offsetOfDecodersInBss = 16 << 20; // One per module, like the next few.
-    static constexpr size_t offsetOfSourceProvidersInBss = 64 << 20;
+    static constexpr size_t offsetOfSourceProvidersInBss = 64 << 20; // One per module, like the next.
     static constexpr size_t offsetOfTopLevelExecutablesInBss = 128 << 20;
     static constexpr size_t offsetOfBlocksInBss = 256 << 20; // JSC::StaticHeap::allocateBlock()
 

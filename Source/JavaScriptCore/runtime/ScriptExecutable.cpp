@@ -355,7 +355,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         }
 #endif
         // Running it in another tier requires the instructions, which are not available.
-        if (StaticHeap::contains(unlinkedCodeBlock) && StaticHeap::payloadIsOmitted()) [[unlikely]] {
+        if (StaticHeap::contains(unlinkedCodeBlock)) [[unlikely]] {
             throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and the executable was built without its bytecode. The compiled code cannot be used in this context, and there is no other code to run."_s));
             return nullptr;
         }
@@ -367,7 +367,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
     // The constructor of a class is compiled ahead of time to construct with. All that its code to be called with does is throw this.
-    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->unlinkedExecutable()) && StaticHeap::payloadIsOmitted()) [[unlikely]] {
+    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->unlinkedExecutable())) [[unlikely]] {
         String name = executable->name().string();
         throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
         return nullptr;
@@ -382,20 +382,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
         pinCodeGenerationModeForResumableBody();
     }
-#if ENABLE(AOT)
-    // What StaticHeap left in the payload stays there, if there is code and enough is known of it to run it.
-    if (executable->m_unlinkedExecutable->isCached() && StaticHeap::contains(executable->m_unlinkedExecutable.get())) {
-        if (auto code = AOT::findInImage(executable, kind, nullptr, scope); code && AOT::canRunWithoutUnlinkedCode(globalObject, code)) {
-            executable->recordParse(
-                executable->m_unlinkedExecutable->features(),
-                executable->m_unlinkedExecutable->lexicallyScopedFeatures(),
-                executable->m_unlinkedExecutable->hasCapturedVariables());
-            throwScope.release();
-            AOT::install(vm, executable, kind, nullptr, globalObject, AOT::codeOfFunctionFromImage(code, kind));
-            return nullptr;
-        }
-    }
-#endif
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = 
         executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
             vm, executable->source(), kind, codeGenerationMode, error, 

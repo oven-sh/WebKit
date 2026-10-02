@@ -1545,14 +1545,12 @@ Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<
     return decoder;
 }
 
-Decoder& Decoder::createForStaticHeap(void* address, VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
+Ref<Decoder> Decoder::createForStaticHeap(VM& vm, Ref<CachedBytecode> cachedBytecode)
 {
-    auto* decoder = new (NotNull, address) Decoder(vm, WTF::move(cachedBytecode), WTF::move(provider));
+    Ref decoder = adoptRef(*new Decoder(vm, WTF::move(cachedBytecode), nullptr));
     RELEASE_ASSERT(decoder->canBorrowPayload());
     decoder->m_isForStaticHeap = true;
-    if (decoder->m_provider)
-        decoder->m_provider->setAOTModuleID(static_cast<uint32_t>(decoder->m_cachedBytecode->entryOffset()) + 1);
-    return *decoder;
+    return decoder;
 }
 
 bool Decoder::leavesFunctionCodeInPayload() const
@@ -5179,9 +5177,6 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         v.rareData = nullptr;
     } else if (decoder.isForStaticHeap()) {
         m_singletonHasBeenInvalidated = true; // Likewise not to be found out by writing to it.
-        // They are for generating the code again, and have things of the VM in them.
-        if (v.tdz)
-            StaticHeap::noteParentScopeTDZVariables(*this, &cachedExecutable);
         v.tdz = nullptr;
     }
     if (v.name)
@@ -5796,8 +5791,6 @@ static const GenericCacheEntry* cacheEntryOf(const CachedBytecode& cachedBytecod
 
 UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp, Decoder::RecoverableCode recoverableCode)
 {
-    if (StaticHeap::isNoPayloadToRead(cachedBytecode->span())) [[unlikely]]
-        return nullptr;
     auto* entry = cacheEntryOf<BuiltinFunctionCacheEntry>(cachedBytecode.get());
     if (!entry)
         return nullptr;
@@ -6217,12 +6210,6 @@ struct BytecodeLinkEncoder::Impl {
         // The whole-program analysis is only sound if it sees every store and every call.
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
             dataLogLn("AOT: the compiler needs all of the program's code: ", omittedFunctions[0], " functions have no bytecode (is the bytecode depth limited?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
-            return { };
-        }
-        // Typed fields are identified by the program-wide numbers of identifiers, which only exist if code does not share its
-        // identifiers with bytecode (see AOT::NumbersOfIdentifiers below).
-        if (Options::useAOTTypedFields() && AOT::TypeTable::hasTypedFields() && !Options::omitBytecodeFromStaticHeap()) {
-            dataLogLn("AOT: typed fields (useAOTTypedFields) require an executable without bytecode (omitBytecodeFromStaticHeap)");
             return { };
         }
         struct Job {
@@ -6775,7 +6762,7 @@ struct BytecodeLinkEncoder::Impl {
                     bool isTopLevel = !(jobs[index].rank & 2);
                     // (An embedder's builtin has its text wherever the embedder has it.)
                     bool isOfProgram = isModuleOfProgram(jobs[index].module);
-                    if (Options::useAOTSourceQuotes() && isOfProgram && (isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody))
+                    if (isOfProgram && (isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody))
                         AOT::collectQuotes(code.info, jobs[index].codeBlock, textOfModule(jobs[index].module), isTopLevel ? 0 : jobs[index].key.start);
                     if (auto* numbers = AOT::numbersOfIdentifiersOfProgram()) {
                         for (auto& identifier : jobs[index].codeBlock->identifiers())
@@ -6796,7 +6783,7 @@ struct BytecodeLinkEncoder::Impl {
         };
         // See AOT::NumbersOfIdentifiers. The ones that most functions have come first, so that theirs are the small numbers.
         AOT::NumbersOfIdentifiers numbersOfIdentifiers;
-        if (Options::omitBytecodeFromStaticHeap()) {
+        {
             uint64_t inAll = 0;
             for (auto& job : jobs) {
                 for (auto& identifier : job.codeBlock->identifiers()) {
@@ -7273,19 +7260,8 @@ UnlinkedFunctionExecutable* decodeBuiltinForStaticHeap(Decoder& decoder, unsigne
     return executable;
 }
 
-RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder& decoder, const void* record)
-{
-    return static_cast<const CachedFunctionExecutable*>(record)->slotsView().tdz->decode(decoder);
-}
-
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode)
 {
-    if (StaticHeap::isUsedBy(vm)) [[unlikely]] {
-        if (UnlinkedCodeBlock* codeBlock = StaticHeap::codeFor(vm, key, cachedBytecode.get()))
-            return codeBlock;
-    }
-    if (StaticHeap::isNoPayloadToRead(cachedBytecode->span())) [[unlikely]]
-        return nullptr;
     MonotonicTime before;
     size_t cachedBytecodeSize = cachedBytecode->size();
     bool payloadIsShared = false;
