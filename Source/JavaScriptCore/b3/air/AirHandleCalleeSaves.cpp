@@ -62,6 +62,9 @@ void handleCalleeSaves(Code& code, RegisterSet usedCalleeSaves)
     usedCalleeSaves.filter(RegisterSet::calleeSaveRegisters());
     usedCalleeSaves.filter(code.mutableRegs());
     usedCalleeSaves.exclude(RegisterSet::stackRegisters()); // We don't need to save FP here.
+#if USE(BUN_JSC_ADDITIONS)
+    usedCalleeSaves.exclude(code.unsavedCalleeSaves());
+#endif
 
     auto calleSavesToSave = usedCalleeSaves;
 

@@ -250,6 +250,9 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     proc.pinRegister(instanceGPR);
     proc.pinRegister(GPRInfo::numberTagRegister);
     proc.pinRegister(GPRInfo::notCellMaskRegister);
+#if CPU(X86_64)
+    proc.code().setUnsavedCalleeSaves(RegisterSet { X86Registers::ebx, X86Registers::r12 });
+#endif
     Lowering lowering(graph, proc);
     if (!lowering.run())
         return declined();

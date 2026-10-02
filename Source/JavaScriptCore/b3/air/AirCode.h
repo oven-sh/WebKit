@@ -358,6 +358,10 @@ public:
 
     RegisterSet mutableGPRs();
     ScalarRegisterSet pinnedRegisters() const { return m_pinnedRegs; }
+#if USE(BUN_JSC_ADDITIONS)
+    void setUnsavedCalleeSaves(const RegisterSet& registers) { m_unsavedCalleeSaves = registers; }
+    const RegisterSet& unsavedCalleeSaves() const { return m_unsavedCalleeSaves; }
+#endif
     
     void emitDefaultPrologue(CCallHelpers&);
     void emitEpilogue(CCallHelpers&);
@@ -391,6 +395,9 @@ private:
     Vector<Reg> m_fpRegsInPriorityOrder;
     ScalarRegisterSet m_mutableRegs;
     ScalarRegisterSet m_pinnedRegs;
+#if USE(BUN_JSC_ADDITIONS)
+    RegisterSet m_unsavedCalleeSaves;
+#endif
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
