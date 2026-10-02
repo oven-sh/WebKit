@@ -1250,7 +1250,12 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
             auto failure = JSModuleLoader::getErrorInfo(globalObject, error);
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
             // Don't register the module unless it's an evaluation error.
+#if USE(BUN_JSC_ADDITIONS)
+            // This load has no entry. One that holds its key is another load's, and is not where this error goes.
+            if (failure.isEvaluationError(specifier, type) && !context->loader()->getRegisteredMayBeNull(specifier, type)) {
+#else
             if (failure.isEvaluationError(specifier, type)) {
+#endif
                 ModuleRegistryEntry* entry = context->loader()->ensureRegistered(globalObject, specifier, type);
                 if (scope.exception()) {
                     intermediatePromise->rejectWithCaughtException(vm, scope);
