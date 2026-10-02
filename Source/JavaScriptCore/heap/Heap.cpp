@@ -325,6 +325,7 @@ private:
     
     WorkResult work() final
     {
+        StaticHeap::ThreadScope worksForVM(m_heap.vm());
         m_heap.collectInCollectorThread();
         return WorkResult::Continue;
     }
@@ -500,6 +501,8 @@ Heap::~Heap()
 {
     // Scribble m_worldState to make it clear that the heap has already been destroyed if we crash in checkConn
     m_worldState.store(0xbadbeeffu);
+
+    StaticHeap::willDestroy(vm());
 
     forEachSlotVisitor(
         [&] (SlotVisitor& visitor) {
@@ -2163,6 +2166,7 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
             }
 
             Thread::registerGCThread(GCThreadType::Helper);
+            StaticHeap::ThreadScope worksForVM(vm());
 
             {
                 ParallelModeEnabler parallelModeEnabler(*visitor);

@@ -226,6 +226,28 @@ PreciseAllocation::PreciseAllocation(JSC::Heap& heap, size_t size, Subspace* sub
 
 PreciseAllocation* PreciseAllocation::s_containerOfStaticCells = nullptr;
 
+PreciseAllocation::PreciseAllocation(OfStaticCellsOfProcessTag)
+    : m_indexInSpace(std::numeric_limits<unsigned>::max())
+    , m_cellSize(0)
+    , m_isNewlyAllocated(true)
+    , m_hasValidCell(false)
+    , m_adjustment(halfAlignment)
+    , m_attributes({ DoesNotNeedDestruction, HeapCell::JSCell })
+    , m_subspace(nullptr)
+    , m_weakSet(WeakSet::WithoutVM)
+{
+    m_isMarked.store(true);
+}
+
+void PreciseAllocation::makeContainerOfStaticCells()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+        void* space = fastAlignedMalloc(alignment, headerSize() + alignment);
+        s_containerOfStaticCells = new (NotNull, static_cast<char*>(space) + halfAlignment) PreciseAllocation(OfStaticCellsOfProcess);
+    });
+}
+
 PreciseAllocation* PreciseAllocation::createForStaticCells(JSC::Heap& heap, Subspace* subspace)
 {
     void* space = fastAlignedMalloc(alignment, headerSize() + alignment);
@@ -233,6 +255,13 @@ PreciseAllocation* PreciseAllocation::createForStaticCells(JSC::Heap& heap, Subs
     result->m_hasValidCell = false;
     result->m_isMarked.store(true);
     return result;
+}
+
+void PreciseAllocation::destroyForStaticCells(PreciseAllocation* container)
+{
+    container->m_weakSet.lastChanceToFinalize();
+    container->~PreciseAllocation();
+    fastFree(reinterpret_cast<char*>(container) - halfAlignment);
 }
 
 PreciseAllocation::~PreciseAllocation()

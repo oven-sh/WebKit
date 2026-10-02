@@ -531,7 +531,7 @@ private:
 JS_EXPORT_PRIVATE bool registerAOTImage(std::span<const uint8_t> image, const void* code);
 // A program that was compiled ahead of time is one range of a file: its code (BytecodeLinkEncoder::Result::aotImage), then what
 // StaticHeap::build() returned. `bytes` is that range, readable for as long as the process lives. Does what registerAOTImage() and
-// StaticHeap::map() do. On the thread that is going to have the first VM, before it has.
+// StaticHeap::map() do, and StaticHeap::prepareThread() for the calling thread.
 struct UseOfAOTFile {
     const char* whyNoStaticHeap { nullptr };
     const char* whyNoImage { nullptr };

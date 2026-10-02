@@ -419,7 +419,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     evalCodeBlockStructure.setWithoutWriteBarrier(EvalCodeBlock::createStructure(*this, nullptr, jsNull()));
     functionCodeBlockStructure.setWithoutWriteBarrier(FunctionCodeBlock::createStructure(*this, nullptr, jsNull()));
     bigIntStructure.setWithoutWriteBarrier(JSBigInt::createStructure(*this, nullptr, jsNull()));
-    StaticHeap::install(*this); // Does nothing but in the first VM of a process that has one mapped.
+    StaticHeap::install(*this);
     m_orderedHashTableDeletedValue.setWithoutWriteBarrier(JSOrderedHashMap::createDeletedValue(*this));
     m_orderedHashTableSentinel.setWithoutWriteBarrier(JSOrderedHashMap::createSentinel(*this));
     m_sortScratchSentinel.setWithoutWriteBarrier(JSCellButterfly::create(*this, CopyOnWriteArrayWithContiguous, 0));
@@ -690,7 +690,6 @@ VM::~VM()
     AOT::Instance::destroyThoseNoLongerNeeded(*this);
 #endif
     heap.lastChanceToFinalize();
-    StaticHeap::willDestroy(*this);
 
     while (!m_microtaskQueues.isEmpty())
         m_microtaskQueues.begin()->remove();

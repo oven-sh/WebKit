@@ -2679,10 +2679,11 @@ static void findCodeOfCallee(CCallHelpers& jit, CodeSpecializationKind kind, CCa
     Jump isNotStatic = jit.branchTest64(CCallHelpers::Zero, T12);
     jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), T13);
     jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T13);
-    jit.loadPtr(Address(T13, Structure::offsetOfAOTInstance()), T13);
-    Jump runsUnderAnyInstance = jit.branchTestPtr(CCallHelpers::Zero, T13);
-    otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, T13, instanceGPR));
-    runsUnderAnyInstance.link(&jit);
+    Jump isOfThisInstance = jit.branchPtr(CCallHelpers::Equal, Address(T13, Structure::offsetOfAOTInstance()), instanceGPR);
+    otherwise.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(T13, Structure::offsetOfAOTInstance())));
+    jit.loadPtr(Address(T13, Structure::realmOffset()), T13);
+    otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, Address(instanceGPR, Instance::offsetOfGlobalObject()), T13));
+    isOfThisInstance.link(&jit);
     jit.load32(Address(T11, FunctionExecutable::offsetOfAOTIndexFor(kind)), T13);
     if (kind == CodeSpecializationKind::CodeForConstruct)
         otherwise.append(jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(static_cast<int32_t>(FunctionExecutable::aotIndexOfWhatConstructsByCalling))));

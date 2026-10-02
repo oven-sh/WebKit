@@ -683,6 +683,7 @@ public:
     bool m_module { false };
     bool m_exitCode { false };
     bool m_destroyVM { false };
+    bool m_destroyAnotherVMFirst { false };
     bool m_treatWatchdogExceptionAsSuccess { false };
     bool m_ignoreUncaughtExceptions { false };
     bool m_alwaysDumpUncaughtException { false };
@@ -4753,6 +4754,7 @@ static void runInteractive(GlobalObject* globalObject)
     fprintf(stderr, "  --crash-vm=<value>         Crash VM on startup due to PGM failure. Options PGMOOBLowerGuardPage, PGMOOBUpperGuardPage, or PGMUAF (For Testing Purposes).\n");
 #endif
     fprintf(stderr, "  --destroy-vm               Destroy VM before exiting\n");
+    fprintf(stderr, "  --destroy-another-vm-first Create a VM with a global object and destroy it, before creating the VM that runs the scripts\n");
     fprintf(stderr, "  --can-block-is-false       Make main thread's Atomics.wait throw\n");
     fprintf(stderr, "  --singleStringSubArgList=<args>   Parse args as a space separated list of arguments. (For VSCode debuggers to pass arguments).\n");
     fprintf(stderr, "  --wasm-debugger[=port]        Enable WebAssembly debugging server (default port 1234)\n");
@@ -4946,6 +4948,10 @@ void CommandLine::parseArguments(int argc, char** argv, int start)
             m_destroyVM = true;
             continue;
         }
+        if (!strcmp(arg, "--destroy-another-vm-first")) {
+            m_destroyAnotherVMFirst = true;
+            continue;
+        }
         if (!strcmp(arg, "--can-block-is-false")) {
             m_canBlockIsFalse = true;
             continue;
@@ -5115,13 +5121,15 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
 {
     Worker worker(Workers::singleton(), !isWorker);
 #if ENABLE(AOT)
-    if (isWorker)
-        StaticHeap::prepareThread();
+    StaticHeap::prepareThread();
 #endif
+    if (!isWorker && options.m_destroyAnotherVMFirst) {
+        VM& another = VM::create(HeapType::Large).leakRef();
+        JSLockHolder locker(another);
+        GlobalObject::create(another, GlobalObject::createStructure(another, jsNull()), options.m_arguments);
+        another.derefSuppressingSaferCPPChecking();
+    }
     VM& vm = VM::create(HeapType::Large).leakRef();
-#if ENABLE(AOT)
-    StaticHeap::install(vm);
-#endif
     if (!isWorker && options.m_canBlockIsFalse)
         vm.m_typedArrayController = adoptRef(new JSC::SimpleTypedArrayController(false));
 

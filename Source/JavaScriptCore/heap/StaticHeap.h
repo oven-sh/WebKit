@@ -66,8 +66,7 @@ struct ReportableSitesOfFunction {
 // To the GC they look like precise allocations (recognized by address) that all share one PreciseAllocation header, which reports
 // them as marked. The GC therefore never visits or writes to them. A static cell only refers to other static cells.
 //
-// Static cells are built for the first VM of the process: their headers carry StructureIDs of that VM's Structures. Since nothing
-// writes to them, other VMs may also refer to them for as long as the first VM is alive.
+// They belong to the process and not to any VM, and so do their Structures.
 class StaticHeap {
 public:
     static ALWAYS_INLINE bool contains(const void* pointer) { return bmalloc::StaticRegion::contains(pointer); }
@@ -92,24 +91,27 @@ public:
 
     // ---- Run time.
 
-    // `image` is the result of build(), located at the page-aligned `offsetInFile`. Call on the thread that will own the VM, before
-    // that thread creates any atom string. Returns false if the image was built by a different engine build or the address range is
-    // unavailable.
+    // `image` is the result of build(), located at the page-aligned `offsetInFile`. Returns false if the image was built by a
+    // different engine build or the address range is unavailable.
     JS_EXPORT_PRIVATE static bool map(std::span<const uint8_t> image, int fileDescriptor, int64_t offsetInFile);
     // The offset and size of the image's own copy of the string table, so that a container file does not need to store it twice.
     JS_EXPORT_PRIVATE static std::optional<std::pair<size_t, size_t>> stringTableIn(std::span<const uint8_t> image);
-    // Call on a thread that will own a VM other than the first, before it creates any atom string. Does for that thread what map()
-    // does for its own.
-    JS_EXPORT_PRIVATE static void prepareThread();
-    // Attaches the static cells to the VM. For the first VM, call on the thread that called map(). For any other VM, call on a
-    // thread that called prepareThread(), which must be the only thread that runs the VM.
-    JS_EXPORT_PRIVATE static void install(VM&);
+    // Call on a thread that will own a VM, before it creates any atom string. False if it has one already. A VM that is then created
+    // on that thread uses the static heap, if the thread has no other VM that does. It must be the only thread that runs the VM.
+    JS_EXPORT_PRIVATE static bool prepareThread();
+    static void install(VM&);
     static void willDestroy(VM&);
     static bool isUsedBy(VM&);
-    // Once more than one VM uses the heap, the PreciseAllocation for a static cell is that of the VM that placed it, or else that
-    // of the calling thread's VM.
-    static ALWAYS_INLINE bool isShared() { return s_isShared; }
-    JS_EXPORT_PRIVATE static PreciseAllocation* containerOfSlow(const void* cell);
+    // What of a static cell's container belongs to a VM is that of the VM that the calling thread runs, or works for.
+    JS_EXPORT_PRIVATE static PreciseAllocation* containerOfThread();
+    class ThreadScope {
+        WTF_MAKE_NONCOPYABLE(ThreadScope);
+    public:
+        JS_EXPORT_PRIVATE ThreadScope(VM&);
+        JS_EXPORT_PRIVATE ~ThreadScope();
+    private:
+        void* m_before;
+    };
     static ALWAYS_INLINE bool needsNoLocking(const void* lock) { return contains(lock) && isMapped(); }
     // Returns a table in which all strings already exist, if `strings` is what build() was given and the VM uses this heap.
     JS_EXPORT_PRIVATE static std::unique_ptr<DecoderStringTable> tryCreateStringTable(VM&, std::span<const uint8_t> strings);
@@ -122,7 +124,7 @@ public:
     static WTF::UniquedStringImpl* const* identifiersOfProgram(); // Indexed by identifier number. Null if there are none.
     JS_EXPORT_PRIVATE static String nameOfSource(uint32_t); // Source numbers start at one.
     // Returns what linking the result of decodeBuiltinFunction() would produce, for a builtin with this payload entry offset and
-    // source text. Its source() equals what makeSource() would have returned. Only valid in the realm that runs the program.
+    // source text. Its source() equals what makeSource() would have returned.
     JS_EXPORT_PRIVATE static FunctionExecutable* builtinFunctionFor(JSGlobalObject*, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
     // The same for one of JSC's own builtins (BuiltinExecutables::stampOf()). May be called while the realm is being initialized.
     static FunctionExecutable* engineBuiltinFor(JSGlobalObject*, unsigned index, std::span<const Latin1Character> text);
@@ -131,9 +133,13 @@ public:
     // found on the stack: makes the provider if it can. False if there is none, and source().provider() is not to be used.
     static bool ensureSourceProviderOf(VM&, ScriptExecutable*);
 
-    // A cell's header identifies its Structure by StructureID, which is an offset into the structure heap. The first VM of a
-    // process creates its initial Structures in a fixed order, in a block at this offset.
-    static constexpr uint32_t offsetOfFirstStructureBlock = std::max(16 * KB, CeilingOnPageSize); // MarkedBlock::blockSize
+    // A cell's header identifies its Structure by StructureID, which is an offset into the structure heap. The Structures of static
+    // cells are copies of those that every VM makes for itself first, in this part of it, which no VM allocates from.
+    static constexpr uint32_t offsetOfStructures = 64 * KB;
+    static constexpr uint32_t endOfStructures = bmalloc::StaticRegion::sizeOfStructuresAfterArenas;
+    static_assert(!(offsetOfStructures % CeilingOnPageSize));
+    // Whether it is that Structure of the VM, or the copy of it.
+    static bool isStructure(VM& vm, const Structure* candidate, const Structure* ofVM) { return candidate == ofVM || (contains(candidate) && isCopyOf(vm, candidate, ofVM)); }
 
     // Per-function data for FunctionExecutables in the short form. Indexed by AOT::CodeHeader::index.
     struct RowOfFunction {
@@ -220,15 +226,13 @@ public:
 
 private:
     struct Header;
-    static void makeContainer(VM&);
+    JS_EXPORT_PRIVATE static bool isCopyOf(VM&, const Structure* copy, const Structure* ofVM);
     static inline void* const placeOfEveryCellWhileBuilding = reinterpret_cast<void*>(1); // Value of Heap::m_placeOfNextCell meaning "allocate anywhere in the region".
 
     JS_EXPORT_PRIVATE static bool s_isBuilding;
     JS_EXPORT_PRIVATE static void willAllocateUnlinkedFunctionSlow();
     static void retainNeededFunctionData(VM&, Header&);
     JS_EXPORT_PRIVATE static const RowOfFunction* s_rowsOfFunctions;
-    JS_EXPORT_PRIVATE static VM* s_vm;
-    JS_EXPORT_PRIVATE static bool s_isShared;
     static const Header* s_header; // Header of the mapped image.
 };
 

@@ -101,7 +101,7 @@ static mi_heap_t* structureHeap { };
 
 #endif
 
-static_assert(StaticHeap::offsetOfFirstStructureBlock == MarkedBlock::blockSize);
+static_assert(!(StaticHeap::endOfStructures % MarkedBlock::blockSize));
 
 class StructureMemoryManager {
 public:
@@ -151,9 +151,8 @@ public:
         m_usedBlocks.set(0);
 #elif USE(MIMALLOC)
         if (!m_useSystemHeap) [[likely]] {
-            // The block after the unused first block is reserved for the first VM (StaticHeap::offsetOfFirstStructureBlock).
-            void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + 2 * MarkedBlock::blockSize);
-            size_t size = g_jscConfig.sizeOfStructureHeap - 2 * MarkedBlock::blockSize;
+            void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + StaticHeap::endOfStructures);
+            size_t size = g_jscConfig.sizeOfStructureHeap - StaticHeap::endOfStructures;
 
             // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
             // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
@@ -172,7 +171,8 @@ public:
 #endif
             return;
         }
-        m_usedBlocks.set(0);
+        for (size_t i = 0; i < StaticHeap::endOfStructures / MarkedBlock::blockSize; ++i)
+            m_usedBlocks.set(i);
 #else
         m_usedBlocks.set(0);
 #endif
@@ -191,11 +191,6 @@ public:
 #endif
             return result;
 #elif USE(MIMALLOC)
-            if (!m_hasGivenFirstBlock.exchange(true)) [[unlikely]] {
-                void* block = reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap + StaticHeap::offsetOfFirstStructureBlock);
-                OSAllocator::commit(block, MarkedBlock::blockSize, true, false);
-                return block;
-            }
             return mi_heap_malloc_aligned(structureHeap, MarkedBlock::blockSize, MarkedBlock::blockSize);
 #endif
         }
@@ -226,9 +221,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             bmalloc_deallocate_inline(blockPtr);
             return;
 #elif USE(MIMALLOC)
-            // That block is never reused. It is released when the first VM is destroyed, which is about when the process exits.
-            if (reinterpret_cast<uintptr_t>(blockPtr) == g_jscConfig.startOfStructureHeap + StaticHeap::offsetOfFirstStructureBlock) [[unlikely]]
-                return;
             mi_free(blockPtr);
             return;
 #endif
@@ -274,7 +266,6 @@ private:
     // This value results in a 512MiB reservation on 3GiB devices, 1GiB on 4GiB
     static constexpr size_t maximumPercentageOfPhysicalMemoryToReserveWhenVAConstrained = 20;
     Lock m_lock;
-    std::atomic<bool> m_hasGivenFirstBlock { false };
     bool m_useSystemHeap { true };
     BitVector m_usedBlocks;
 };

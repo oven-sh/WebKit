@@ -46,8 +46,6 @@ namespace JSC {
 using Region = bmalloc::StaticRegion;
 
 bool StaticHeap::s_isBuilding = false;
-VM* StaticHeap::s_vm = nullptr;
-bool StaticHeap::s_isShared = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
 static constexpr size_t pageSizeOfImage = 16 * KB;
 
@@ -69,8 +67,7 @@ static uint32_t s_entryOffsetOfModuleBeingBuilt;
 
 // The layout of the file: this header, then each arena, starting on a page boundary.
 struct StaticHeap::Header {
-    static constexpr uint64_t expectedMagic = 0x3530504145485442ULL; // "BTHEAP05"
-    static constexpr unsigned maxStructures = 32;
+    static constexpr uint64_t expectedMagic = 0x3630504145485442ULL; // "BTHEAP06"
 
     uint64_t magic;
     uint64_t stamp; // Identifies the build of the engine. The arenas hold its objects, laid out as that build lays them out.
@@ -104,14 +101,6 @@ struct StaticHeap::Header {
     uint64_t constantsOfProgram; // EncodedJSValue[]. See AOT::NumbersOfConstants.
     uint64_t keysOfImage; // AOT::ImageKey[]. See keysOfImage().
     uint64_t capacityOfKeysOfImage;
-
-    // The structures that cells in the heap use. Each is one of the VM's own structures, identified by its index in the VM,
-    // together with the StructureID it must have.
-    uint32_t numberOfStructures;
-    struct {
-        uint32_t indexInVM;
-        uint32_t id;
-    } structures[maxStructures];
 };
 
 // The structures that the VM creates first are consecutive members of VM.
@@ -120,22 +109,50 @@ static std::span<WriteBarrier<Structure>> structuresOf(VM& vm)
     return { &vm.structureStructure, static_cast<size_t>(&vm.bigIntStructure + 1 - &vm.structureStructure) };
 }
 
-// Arena::Bss has room for one Decoder per module.
-static VM* s_vmOfContainer = nullptr;
+static constexpr size_t strideOfStructures = roundUpToMultipleOf<PreciseAllocation::alignment>(sizeof(Structure));
 
-void StaticHeap::makeContainer(VM& vm)
+static constexpr uint32_t idOfStructure(size_t indexInVM)
 {
-    if (s_vmOfContainer == &vm)
-        return;
-    s_vmOfContainer = &vm;
-    PreciseAllocation::setContainerOfStaticCells(PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace));
+    return StaticHeap::offsetOfStructures + StaticHeap::sizeOfCellHeader + indexInVM * strideOfStructures;
 }
 
-// The per-VM state of every VM other than the first. The first VM uses the process-wide state instead.
+static bool structureHeapFollowsRegion()
+{
+    return g_jscConfig.startOfStructureHeap == Region::base + Region::reservation;
+}
+
+bool StaticHeap::isCopyOf(VM& vm, const Structure* copy, const Structure* ofVM)
+{
+    size_t index = (std::bit_cast<uintptr_t>(copy) - g_jscConfig.startOfStructureHeap - idOfStructure(0)) / strideOfStructures;
+    auto structures = structuresOf(vm);
+    return index < structures.size() && structures[index].get() == ofVM;
+}
+
+// (Any VM has the same ones. All that differs from process to process is where the ClassInfo is.)
+static void makeStructuresOnce(VM& vm)
+{
+    static std::once_flag once;
+    std::call_once(once, [&] {
+        auto structures = structuresOf(vm);
+        RELEASE_ASSERT(idOfStructure(structures.size()) <= StaticHeap::endOfStructures);
+        void* start = reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap + StaticHeap::offsetOfStructures);
+        size_t size = roundUpToMultipleOf(pageSize(), idOfStructure(structures.size()) - StaticHeap::offsetOfStructures);
+        OSAllocator::commit(start, size, true, false);
+        for (size_t i = 0; i < structures.size(); ++i) {
+            if (!structures[i])
+                continue;
+            auto* copy = reinterpret_cast<JSCell*>(g_jscConfig.startOfStructureHeap + idOfStructure(i));
+            memcpy(static_cast<void*>(copy), static_cast<const void*>(structures[i].get()), sizeof(Structure));
+            *reinterpret_cast<uint32_t*>(copy) = idOfStructure(0);
+            copy->setCellState(CellState::PossiblyBlack);
+        }
+        RELEASE_ASSERT(!mprotect(start, size, PROT_READ));
+    });
+}
+
 struct StaticHeapOfVM {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StaticHeapOfVM);
 
-    uint64_t number { 0 }; // Unique in the process, and never reused. (A VM's address can be reused by a later VM.)
     PreciseAllocation* container { nullptr };
     UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, std::array<Strong<UnlinkedFunctionCodeBlock>, 2>> code;
     UncheckedKeyHashMap<FunctionExecutable*, Strong<FunctionExecutable>> standIns;
@@ -144,19 +161,37 @@ static thread_local StaticHeapOfVM* t_ofVMOfThread = nullptr;
 static thread_local bool t_threadIsPrepared = false;
 
 static StaticHeapOfVM* ofVM(VM& vm) { return static_cast<StaticHeapOfVM*>(vm.m_staticHeapOfVM); }
-static uint64_t numberOf(VM& vm) { return ofVM(vm) ? ofVM(vm)->number : 1; }
+
+static void attach(VM& vm)
+{
+    makeStructuresOnce(vm);
+    PreciseAllocation::makeContainerOfStaticCells();
+    auto* ofVM = new StaticHeapOfVM;
+    ofVM->container = PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace);
+    vm.m_staticHeapOfVM = ofVM;
+    t_ofVMOfThread = ofVM;
+}
 
 bool StaticHeap::isUsedBy(VM& vm)
 {
-    return s_vm == &vm || vm.m_staticHeapOfVM;
+    return !!vm.m_staticHeapOfVM;
 }
 
-PreciseAllocation* StaticHeap::containerOfSlow(const void*)
+PreciseAllocation* StaticHeap::containerOfThread()
 {
-    // (A GC helper thread has no VM. It only needs to know that the cell is marked, and every container reports that.)
-    if (auto* ofVM = t_ofVMOfThread)
-        return ofVM->container;
-    return PreciseAllocation::containerOfStaticCells();
+    RELEASE_ASSERT(t_ofVMOfThread);
+    return t_ofVMOfThread->container;
+}
+
+StaticHeap::ThreadScope::ThreadScope(VM& vm)
+    : m_before(t_ofVMOfThread)
+{
+    t_ofVMOfThread = ofVM(vm);
+}
+
+StaticHeap::ThreadScope::~ThreadScope()
+{
+    t_ofVMOfThread = static_cast<StaticHeapOfVM*>(m_before);
 }
 
 // See retainNeededFunctionData().
@@ -547,7 +582,6 @@ static const uint8_t* deduplicatedCopy(std::span<const uint8_t> content, size_t 
 
 namespace {
 std::span<const ReportableSitesOfFunction> s_reportableSites;
-static thread_local bool s_realmIsProgramRealm;
 std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdentifiers.
 std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
 }
@@ -814,8 +848,7 @@ const uint32_t* StaticHeap::functionMetadataOffsets(VM& vm)
 
 static decltype(StaticHeapOfVM::standIns)& standInsOf(VM& vm)
 {
-    static NeverDestroyed<decltype(StaticHeapOfVM::standIns)> standInsOfFirstVM;
-    return ofVM(vm) ? ofVM(vm)->standIns : standInsOfFirstVM.get();
+    return ofVM(vm)->standIns;
 }
 
 static FunctionExecutable* standInIfExistsFor(VM& vm, FunctionExecutable* executable)
@@ -839,8 +872,7 @@ FunctionExecutable* StaticHeap::standInFor(VM& vm, FunctionExecutable* executabl
 static decltype(StaticHeapOfVM::code)& retainedCodeOf(VM& vm)
 {
     RELEASE_ASSERT(StaticHeap::isUsedBy(vm));
-    static NeverDestroyed<decltype(StaticHeapOfVM::code)> codeOfFirstVM;
-    return ofVM(vm) ? ofVM(vm)->code : codeOfFirstVM.get();
+    return ofVM(vm)->code;
 }
 
 UnlinkedFunctionCodeBlock* StaticHeap::codeOf(VM& vm, const UnlinkedFunctionExecutable& executable, CodeSpecializationKind kind)
@@ -897,10 +929,8 @@ ScriptExecutable* StaticHeap::topLevelExecutableOfBuiltinWithProvider(VM& vm, co
     return standInIfExistsFor(vm, std::bit_cast<UnlinkedFunctionExecutable*>(module.codeBlock)->staticExecutable());
 }
 
-// The state of each slot for a SourceProvider: free (maker is zero), being constructed by the VM whose number is `maker`, or
-// constructed (isMade).
 struct SourceProviderSlotState {
-    std::atomic<uint64_t> maker { 0 }; // See numberOf().
+    std::atomic<bool> isTaken { false };
     std::atomic<bool> isMade { false };
 };
 static SourceProviderSlotState* sourceProviderSlotStates(size_t numberOfModules)
@@ -943,8 +973,7 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
         return nullptr;
     void* place = addressOfSourceProvider(index);
     SourceProviderSlotState& state = sourceProviderSlotStates(modules.size())[index];
-    uint64_t maker = 0;
-    if (state.maker.compare_exchange_strong(maker, numberOf(vm)))
+    if (!state.isTaken.exchange(true))
         return place;
     while (!state.isMade.load(std::memory_order_acquire))
         Thread::yield();
@@ -1179,11 +1208,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     s_arrayDeduplicator = nullptr;
     if (!Region::beginBuilding())
         return { };
-    PreciseAllocation* containerBefore = PreciseAllocation::containerOfStaticCells();
-    VM* vmOfContainerBefore = s_vmOfContainer;
-    VM* vmBefore = s_vm;
-    makeContainer(vm);
-    s_vm = &vm;
+    RELEASE_ASSERT(structureHeapFollowsRegion() && !vm.m_staticHeapOfVM);
+    ThreadScope restoresThread(vm);
+    attach(vm);
 
     Header header { };
     header.magic = Header::expectedMagic;
@@ -1473,20 +1500,14 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
 
     // Give the cells the state they would have in the VM that is going to use them, after a collection that marked them.
     auto structures = structuresOf(vm);
-    uint32_t blockOfStructures = vm.structureStructure->id().bits() & ~static_cast<uint32_t>(MarkedBlock::blockSize - 1);
-    UncheckedKeyHashMap<uint32_t, uint32_t> idInFirstVM;
-    forEachCell([&](void* pointer, size_t size) {
+    UncheckedKeyHashMap<uint32_t, uint32_t> idsOfCopies;
+    forEachCell([&](void* pointer, size_t) {
         auto* cell = static_cast<JSCell*>(pointer);
         uint32_t id = cell->structureID().bits();
-        uint32_t translated = idInFirstVM.ensure(id, [&]() -> uint32_t {
-            if ((id & ~static_cast<uint32_t>(MarkedBlock::blockSize - 1)) != blockOfStructures || header.numberOfStructures == Header::maxStructures)
-                return 0;
+        uint32_t translated = idsOfCopies.ensure(id, [&]() -> uint32_t {
             for (size_t i = 0; i < structures.size(); ++i) {
-                if (structures[i] && structures[i]->id().bits() == id) {
-                    uint32_t result = offsetOfFirstStructureBlock + (id & (MarkedBlock::blockSize - 1));
-                    header.structures[header.numberOfStructures++] = { static_cast<uint32_t>(i), result };
-                    return result;
-                }
+                if (structures[i] && structures[i]->id().bits() == id)
+                    return idOfStructure(i);
             }
             return 0;
         }).iterator->value;
@@ -1524,9 +1545,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             memcpy(image.mutableSpan().data() + header.arenaOffset[i], reinterpret_cast<void*>(Region::startOf(static_cast<Region::Arena>(i))), Region::used(static_cast<Region::Arena>(i)));
     }
 
-    PreciseAllocation::setContainerOfStaticCells(containerBefore);
-    s_vmOfContainer = vmOfContainerBefore;
-    s_vm = vmBefore;
+    willDestroy(vm);
     Region::endBuilding();
     return image;
 }
@@ -1552,11 +1571,6 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, int64_t
     auto& header = *reinterpret_cast<const Header*>(image.data());
     if (header.magic != Header::expectedMagic || header.stamp != AOT::imageStamp() || header.size > image.size())
         return false;
-    // If the thread already has atoms, one of them could be equal to an atom in the static heap, and equal atoms must be the same
-    // object.
-    AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
-    if (!atoms->table().isEmpty())
-        return false;
     if (!Region::mapRestOfBss())
         return false;
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
@@ -1574,19 +1588,21 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, int64_t
         RELEASE_ASSERT(!mprotect(reinterpret_cast<void*>(Region::startOf(Region::Arena::Cells) + at + pageSizeOfImage), pageSizeOfImage, PROT_NONE));
     s_header = &header;
     s_rowsOfFunctions = std::bit_cast<const RowOfFunction*>(header.rowsOfFunctions);
-    atoms->setStaticAtoms({ std::bit_cast<const uint32_t*>(header.staticAtoms), static_cast<uint32_t>(header.capacityOfStaticAtoms - 1), Region::base });
     return true;
 }
 
-void StaticHeap::prepareThread()
+bool StaticHeap::prepareThread()
 {
-    if (!s_header || !s_vm || t_threadIsPrepared)
-        return;
+    if (!s_header || t_threadIsPrepared)
+        return t_threadIsPrepared;
+    // If the thread already has atoms, one of them could be equal to an atom in the static heap, and equal atoms must be the same
+    // object.
     AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
     if (!atoms->table().isEmpty())
-        return;
+        return false;
     atoms->setStaticAtoms({ std::bit_cast<const uint32_t*>(s_header->staticAtoms), static_cast<uint32_t>(s_header->capacityOfStaticAtoms - 1), Region::base });
     t_threadIsPrepared = true;
+    return true;
 }
 
 void StaticHeap::willDestroy(VM& vm)
@@ -1594,44 +1610,22 @@ void StaticHeap::willDestroy(VM& vm)
     auto* ofVM = JSC::ofVM(vm);
     if (!ofVM)
         return;
+    ofVM->code.clear();
+    ofVM->standIns.clear();
+    PreciseAllocation::destroyForStaticCells(ofVM->container);
     if (t_ofVMOfThread == ofVM)
         t_ofVMOfThread = nullptr;
     vm.m_staticHeapOfVM = nullptr;
-    // (The container is not freed, because a cell may still be asked for its container.)
     delete ofVM;
 }
 
 void StaticHeap::install(VM& vm)
 {
-    if (s_header && s_vm && s_vm != &vm && !vm.m_staticHeapOfVM) {
-        if (!t_threadIsPrepared || t_ofVMOfThread)
-            return;
-        static std::atomic<uint64_t> lastNumber { 1 };
-        auto* ofVM = new StaticHeapOfVM;
-        ofVM->number = ++lastNumber;
-        ofVM->container = PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace);
-        vm.symbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[0]));
-        vm.privateSymbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[1]));
-        vm.m_staticHeapOfVM = ofVM;
-        t_ofVMOfThread = ofVM;
-        WTF::storeStoreFence();
-        s_isShared = true;
+    if (!s_header || !t_threadIsPrepared || t_ofVMOfThread || !structureHeapFollowsRegion())
         return;
-    }
-    if (!s_header || s_vm)
-        return;
-    // The first VM of the process has them in the block that is kept for it (offsetOfFirstStructureBlock).
-    // If a structure does not match, the strings can still be used as strings, but the cells are never used.
-    auto structures = structuresOf(vm);
-    for (unsigned i = 0; i < s_header->numberOfStructures; ++i) {
-        auto& expected = s_header->structures[i];
-        if (expected.indexInVM >= structures.size() || !structures[expected.indexInVM] || structures[expected.indexInVM]->id().bits() != expected.id)
-            return;
-    }
+    attach(vm);
     vm.symbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[0]));
     vm.privateSymbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[1]));
-    makeContainer(vm);
-    s_vm = &vm;
 }
 
 std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM& vm, std::span<const uint8_t> strings)
@@ -1706,8 +1700,7 @@ public:
 FunctionExecutable* StaticHeap::engineBuiltinFor(JSGlobalObject* globalObject, unsigned index, std::span<const Latin1Character> text)
 {
     VM& vm = globalObject->vm();
-    // The program runs in the VM's first realm. (AOT::Instance::ensure() checks that.)
-    if (globalObject != vm.m_firstRealm || !hasExecutablesOfFunctions(vm) || BytecodeOrderRecorder::ofVM(vm))
+    if (!hasExecutablesOfFunctions(vm) || BytecodeOrderRecorder::ofVM(vm))
         return nullptr;
     // For each builtin, one more than its entry offset in the payload. Zero if it is not in the static heap.
     static NeverDestroyed<Vector<uint32_t>> entries;
@@ -1730,11 +1723,7 @@ FunctionExecutable* StaticHeap::engineBuiltinFor(JSGlobalObject* globalObject, u
         vm.m_builtinsOfStaticHeap.fill(nullptr, entries->size());
     if (FunctionExecutable* given = vm.m_builtinsOfStaticHeap[index])
         return given;
-    s_realmIsProgramRealm = true;
     FunctionExecutable* result = builtinFunctionFor(globalObject, entries.get()[index] - 1, BuiltinExecutables::stampOf(index), StringImpl::createWithoutCopying(text), SourceOrigin(), String());
-    s_realmIsProgramRealm = false;
-    if (result)
-        vm.m_firstRealmHasBuiltinsOfStaticHeap = true;
     vm.m_builtinsOfStaticHeap[index] = result;
     return result;
 }
@@ -1771,8 +1760,6 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
         return nullptr;
     if (modules[index].keyHash != embedderStamp || modules[index].keyLength != text.length())
         return nullptr;
-    if (!s_realmIsProgramRealm && globalObject != vm.m_firstRealm)
-        return nullptr;
 
     SourceProvider* provider = nullptr;
     if (void* place = takePlaceForSourceProvider(vm, entryOffset, sizeof(PlacedStringSourceProvider), provider)) {
@@ -1804,8 +1791,6 @@ namespace JSC {
 
 bool StaticHeap::s_isBuilding = false;
 const StaticHeap::RowOfFunction* StaticHeap::s_rowsOfFunctions = nullptr;
-VM* StaticHeap::s_vm = nullptr;
-bool StaticHeap::s_isShared = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
 
 Vector<uint8_t> StaticHeap::build(VM&, std::span<const uint8_t>, std::span<const uint8_t>, std::span<const uint32_t>, std::span<const uint8_t>, const PositionsToKeep&, std::span<const ReportableSitesOfFunction>, std::span<const std::optional<Vector<uint32_t>>>) { return { }; }
@@ -1813,11 +1798,14 @@ JSString* StaticHeap::emptyStringWhileBuilding(VM&) { RELEASE_ASSERT_NOT_REACHED
 WTF::SymbolRegistry& StaticHeap::symbolRegistryWhileBuilding(bool) { RELEASE_ASSERT_NOT_REACHED(); }
 bool StaticHeap::map(std::span<const uint8_t>, int, int64_t) { return false; }
 std::optional<std::pair<size_t, size_t>> StaticHeap::stringTableIn(std::span<const uint8_t>) { return std::nullopt; }
-void StaticHeap::prepareThread() { }
+bool StaticHeap::prepareThread() { return false; }
 void StaticHeap::install(VM&) { }
 void StaticHeap::willDestroy(VM&) { }
 bool StaticHeap::isUsedBy(VM&) { return false; }
-PreciseAllocation* StaticHeap::containerOfSlow(const void*) { RELEASE_ASSERT_NOT_REACHED(); }
+PreciseAllocation* StaticHeap::containerOfThread() { RELEASE_ASSERT_NOT_REACHED(); }
+bool StaticHeap::isCopyOf(VM&, const Structure*, const Structure*) { return false; }
+StaticHeap::ThreadScope::ThreadScope(VM&) { }
+StaticHeap::ThreadScope::~ThreadScope() { }
 std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM&, std::span<const uint8_t>) { return nullptr; }
 UnlinkedCodeBlock* StaticHeap::codeFor(VM&, const SourceCodeKey&) { return nullptr; }
 bool StaticHeap::hasIdentifiersOfProgram() { return false; }

@@ -515,8 +515,6 @@ public:
     void* m_staticHeapOfVM { nullptr }; // See StaticHeap::isUsedBy().
     // The realm that builtins are currently being created for, if known (BuiltinExecutables::staticExecutableFor()).
     JSGlobalObject* m_realmForBuiltins { nullptr };
-    JSGlobalObject* m_firstRealm { nullptr }; // Not kept alive by this, and never dereferenced.
-    bool m_firstRealmHasBuiltinsOfStaticHeap { false };
     Vector<FunctionExecutable*> m_builtinsOfStaticHeap; // What it has been given, by BuiltinCodeIndex. The collector has nothing to do with them.
 
     // How this VM's parser and bytecode generator shape the code they produce. Each starts as the option of the same name. A VM that

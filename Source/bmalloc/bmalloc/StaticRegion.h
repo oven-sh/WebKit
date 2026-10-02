@@ -48,9 +48,11 @@ public:
 #endif
     static constexpr size_t arenaReservation = 4ULL << 30;
     static constexpr size_t reservation = arenaReservation * numberOfArenas;
+    // What follows the arenas: the start of JSC's structure heap, which has the Structures of the cells in Arena::Cells.
+    static constexpr size_t sizeOfStructuresAfterArenas = 128 * 1024;
 
 #if BENABLE(STATIC_REGION)
-    static BINLINE bool contains(const void* pointer) { return reinterpret_cast<uintptr_t>(pointer) - base < reservation; }
+    static BINLINE bool contains(const void* pointer) { return reinterpret_cast<uintptr_t>(pointer) - base < reservation + sizeOfStructuresAfterArenas; }
 #else
     static BINLINE bool contains(const void*) { return false; }
 #endif

@@ -48,6 +48,11 @@ public:
     static void deallocate(WeakImpl*);
 
     WeakSet(VM&);
+    enum WithoutVMTag { WithoutVM };
+    WeakSet(WithoutVMTag)
+        : m_vm(nullptr)
+    {
+    }
     ~WeakSet();
     void lastChanceToFinalize();
     

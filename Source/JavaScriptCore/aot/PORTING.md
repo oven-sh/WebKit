@@ -93,14 +93,16 @@ absolute addresses in it are of data in the static region. An executable of the 
 ### 6. Instances
 
 Everything that a program writes to is reached from the instance register. There is one `AOT::Instance` for each module loader, so a
-realm can run a program several times over, and nothing distinguishes the first.
+realm can run a program several times over. No instance, realm, VM or thread is special: whichever comes first may go first.
 
 - Below the `Instance` is a table of pointers to the module environments, which are ordinary cells. `ImageEnvironment::distance` is the
   distance of the pointer.
 - A function's Structure names its instance (`Structure::m_aotInstance`). None means that it runs under any instance of its realm, which
   is so for builtins.
-- Three stubs depend on that: `findCodeOfCallee()` (none, or the caller's: straight in; otherwise the long way), `generateEnterStaticFunction()`
-  (callee, Structure, instance), and `adapt()`, which saves, switches and restores the register.
+- Three stubs depend on that: `findCodeOfCallee()` (the caller's, or none and of the caller's realm: straight in; otherwise the long way),
+  `generateEnterStaticFunction()` (callee, Structure, instance, or else that of its realm), and `adapt()`, which saves, switches and restores
+  the register.
+- Every realm of a VM that uses the static heap has an instance from the start, because its builtins are compiled code.
 - A function belongs to the instance of the module whose environment it closes over (`instanceOf()`). One that closes over none is
   the realm's.
 - A RegExp of the static heap only says what to make. Each instance makes its own on first use (`Instance::regExpFor()`), through the
@@ -122,8 +124,13 @@ realm can run a program several times over, and nothing distinguishes the first.
 - **The static region** is 24 GB of addresses at a fixed place, chosen per OS in `StaticRegion.h`: beyond ASAN's shadow memory on macOS,
   within a 39-bit address space on Linux. What comes from the file is mapped read-only, all of it (`StaticRegion::map()` cannot do
   otherwise), so a write to it is a crash and not a bug that one thread in a hundred sees. Every process maps 256 KB of
-  `Arena::Bss`, whether or not it was compiled ahead of time, and does not start if the address is taken. Structures follow the
-  region, by a hint.
+  `Arena::Bss`, whether or not it was compiled ahead of time, and does not start if the address is taken.
+- **The structure heap** follows the region, by a hint. No VM allocates from its first 128 KB. A static cell's Structure is there: a
+  copy of one that every VM makes for itself, made once per process (only the address of its `ClassInfo` differs from one process
+  to the next) and then read-only. `StaticHeap::contains()` covers it, so the collector treats it like any static cell.
+- **Threads.** A thread calls `StaticHeap::prepareThread()` before it has atoms, and a VM that it then creates uses the static heap. What
+  of a static cell depends on the VM (`vm()`, `heap()`, its weak references) is found through the thread, so the collector's threads say
+  which VM they work for (`StaticHeap::ThreadScope`).
 - **Page and block sizes.** `MarkedBlock::blockSize` is the larger of 16 KB and `CeilingOnPageSize`, which is 64 KB on Linux arm64 and 4 KB on
   x86-64. A constant of 16 KB where that was meant crashed every process on Linux arm64 and nowhere else; there is a `static_assert`
   now (`StaticHeap::offsetOfFirstStructureBlock`). An image is aligned to 16 KB in its file (`imagePageSize`, `pageSizeOfImage`), so a kernel with

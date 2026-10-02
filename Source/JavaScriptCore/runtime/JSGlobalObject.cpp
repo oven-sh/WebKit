@@ -1101,8 +1101,6 @@ void JSGlobalObject::init(VM& vm)
     ASSERT(vm.traps().isDeferringTermination());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (!vm.m_firstRealm)
-        vm.m_firstRealm = this;
     MakingBuiltinsFor makingBuiltinsFor(vm, this);
 
     convertToDictionary(vm);
@@ -2455,7 +2453,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 #if ENABLE(AOT)
     // Its builtin functions have AOT code (StaticHeap::engineBuiltinFor()), which finds the instance through the VM. Loading a module of
     // the program would make the instance, but a Worker may run without loading one.
-    if (vm.m_firstRealm == this && vm.m_firstRealmHasBuiltinsOfStaticHeap)
+    if (StaticHeap::hasExecutablesOfFunctions(vm) && !BytecodeOrderRecorder::ofVM(vm))
         AOT::Instance::ensure(this);
 #endif
 }

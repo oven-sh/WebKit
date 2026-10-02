@@ -2046,7 +2046,7 @@ UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int6
     std::span<const uint8_t> image = bytes;
     if (*sizeOfImage >= bytes.size())
         result.whyNoStaticHeap = "there is none";
-    else if (!Region::map(Region::Arena::Image, fileDescriptor, offsetInFile, offsetOfCode) || !StaticHeap::map(bytes.subspan(*sizeOfImage), fileDescriptor, offsetInFile + *sizeOfImage))
+    else if (!Region::map(Region::Arena::Image, fileDescriptor, offsetInFile, offsetOfCode) || !StaticHeap::map(bytes.subspan(*sizeOfImage), fileDescriptor, offsetInFile + *sizeOfImage) || !StaticHeap::prepareThread())
         result.whyNoStaticHeap = "it is for another build of the engine, or its place is taken, or the thread has atoms";
     else {
         result.sizeOfStaticHeap = bytes.size() - *sizeOfImage;

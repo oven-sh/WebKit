@@ -127,8 +127,7 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     PropertyOffset offset = slot.cachedOffset();
     if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFieldIDs)
         return 0;
-    // (A cell in the static heap that another VM reads has a Structure that belongs to the first VM.)
-    if (structure->isDictionary() || !structure->recordsPropertyNames() || structure->cannotConvertToTypedLayout() || &structure->vm() != &vm)
+    if (structure->isDictionary() || !structure->recordsPropertyNames() || structure->cannotConvertToTypedLayout() || StaticHeap::contains(structure))
         return 0;
     // The same conditions as in tryCacheGetById().
     if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
@@ -146,8 +145,7 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
 // Returns false if that is not possible.
 static bool fillInTableOfPropertyNames(VM& vm, Structure* structure)
 {
-    // (A cell in the static heap that another VM reads has a Structure that belongs to the first VM.)
-    if (!structure->recordsPropertyNames() || &structure->vm() != &vm)
+    if (!structure->recordsPropertyNames() || StaticHeap::contains(structure))
         return false;
     if (structure->cannotConvertToTypedLayout())
         return true;
