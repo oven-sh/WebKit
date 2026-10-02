@@ -129,7 +129,11 @@ int RegularExpression::match(StringView str, unsigned startFrom, int* matchLengt
         result = offsetNoMatch;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (static_cast<int>(result) < 0) {
+#else
     if (result == offsetNoMatch) {
+#endif
         d->lastMatchLength = -1;
         return -1;
     }
