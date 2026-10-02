@@ -350,9 +350,9 @@ private:
         // The generator returns nullptr when it provided every value.
         using LazySyntheticSourceGenerator = WTF::Function<JSObject*(JSGlobalObject*, Identifier, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)>;
         // A generator that captures nothing. The value it exports is the payload of the JSSourceCode that holds the
-        // provider: JSSourceCode::createWithPayload() makes the two together, and nothing else makes either. That cell
-        // traces the payload, so the generator can run every time a module is made from the source, which the loader
-        // does never, once, or more than once.
+        // provider: JSSourceCode::createWithPayload() makes the two together, and is the only way to make a provider
+        // with this form. That cell traces the payload, so the generator can run every time a module is made from the
+        // source, which the loader does never, once, or more than once.
         using PayloadSyntheticSourceGenerator = void (*)(JSGlobalObject*, Identifier, JSValue payload, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues);
 
         static Ref<SyntheticSourceProvider> create(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
