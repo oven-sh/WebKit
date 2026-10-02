@@ -388,7 +388,7 @@ Convention conventionOf(UnlinkedCodeBlock* codeBlock)
 {
     Convention result;
     unsigned numberOfParameters = codeBlock->numParameters() - 1;
-    bool takesList = numberOfParameters > numberOfArgumentGPRs;
+    bool takesList = false;
     result.usesThis = codeBlock->isConstructor();
     for (const auto& instruction : codeBlock->instructions()) {
         switch (instruction->opcodeID()) {
@@ -400,7 +400,7 @@ Convention conventionOf(UnlinkedCodeBlock* codeBlock)
             takesList = true;
             break;
         case op_get_argument:
-            takesList |= static_cast<unsigned>(instruction->as<OpGetArgument>().m_index) > numberOfParameters;
+            numberOfParameters = std::max<unsigned>(numberOfParameters, instruction->as<OpGetArgument>().m_index);
             break;
         default:
             break;
@@ -411,6 +411,7 @@ Convention conventionOf(UnlinkedCodeBlock* codeBlock)
             });
         }
     }
+    takesList |= numberOfParameters > numberOfArgumentGPRs;
     result.signature = takesList ? Signature::List : Signature::Registers;
     result.numberOfParameters = takesList ? 0 : numberOfParameters;
     return result;

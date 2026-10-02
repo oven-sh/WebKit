@@ -140,6 +140,87 @@ private:
         return node;
     }
 
+    static std::optional<bool> areStrictlyEqual(Node* left, Node* right)
+    {
+        auto isAlwaysCell = [](Node* node) {
+            return node->kind == NodeKind::ConstantCell || node->isBytecode(op_new_object) || node->isBytecode(op_new_array) || node->isBytecode(op_new_array_buffer) || node->isBytecode(op_new_func_exp);
+        };
+        auto isNonCellConstant = [](Node* node) { return node->kind == NodeKind::Constant && node->constant; };
+        if ((isAlwaysCell(left) && isNonCellConstant(right)) || (isNonCellConstant(left) && isAlwaysCell(right)))
+            return false;
+        if (!isNonCellConstant(left) || !isNonCellConstant(right))
+            return std::nullopt;
+        if (left->constant.isNumber() && right->constant.isNumber())
+            return left->constant.asNumber() == right->constant.asNumber();
+        return left->constant == right->constant;
+    }
+
+    static void removeEdge(BasicBlock* from, BasicBlock* to)
+    {
+        size_t index = to->predecessors.find(from);
+        RELEASE_ASSERT(index != notFound);
+        to->predecessors.removeAt(index);
+        for (Node* phi : to->phis)
+            phi->uses.removeAt(index);
+    }
+
+    void foldComparisonsOfKnownValues(Graph& inlinee)
+    {
+        UncheckedKeyHashSet<BasicBlock*> dropped;
+        for (BasicBlock* block : inlinee.m_rpo) {
+            Node* terminal = block->terminal();
+            if (dropped.contains(block) || !terminal || block->successors.size() != 2 || block->successors[0] == block->successors[1])
+                continue;
+            std::optional<bool> isTaken;
+            if (terminal->isBytecode(op_jnstricteq)) {
+                auto bytecode = terminal->as<OpJnstricteq>();
+                if (auto equal = areStrictlyEqual(resolve(terminal->use(bytecode.m_lhs)), resolve(terminal->use(bytecode.m_rhs))))
+                    isTaken = !*equal;
+            } else if (terminal->isBytecode(op_jstricteq)) {
+                auto bytecode = terminal->as<OpJstricteq>();
+                isTaken = areStrictlyEqual(resolve(terminal->use(bytecode.m_lhs)), resolve(terminal->use(bytecode.m_rhs)));
+            }
+            if (!isTaken)
+                continue;
+            BasicBlock* live = block->successors[*isTaken ? 0 : 1];
+            BasicBlock* dead = block->successors[*isTaken ? 1 : 0];
+
+            UncheckedKeyHashSet<BasicBlock*> reached;
+            Vector<BasicBlock*, 16> worklist { inlinee.root };
+            reached.add(inlinee.root);
+            while (!worklist.isEmpty()) {
+                BasicBlock* at = worklist.takeLast();
+                for (BasicBlock* successor : at->successors) {
+                    if ((at == block && successor == dead) || !reached.add(successor).isNewEntry)
+                        continue;
+                    worklist.append(successor);
+                }
+            }
+            Vector<BasicBlock*, 4> unreached;
+            bool dropsReturn = false;
+            for (BasicBlock* other : inlinee.m_rpo) {
+                if (reached.contains(other) || dropped.contains(other))
+                    continue;
+                unreached.append(other);
+                dropsReturn |= other->terminal() && other->terminal()->isBytecode(op_ret);
+            }
+            if (dropsReturn)
+                continue;
+
+            block->nodes.removeLast();
+            block->successors = { live };
+            removeEdge(block, dead);
+            for (BasicBlock* other : unreached) {
+                dropped.add(other);
+                for (BasicBlock* successor : other->successors) {
+                    if (reached.contains(successor) && successor->predecessors.contains(other))
+                        removeEdge(other, successor);
+                }
+            }
+            m_graph.remark("folded-comparison-of-argument"_s);
+        }
+    }
+
     bool elideTypeCheckOfClosure(Node* node)
     {
         if (!node->isBytecode(op_check_type) || node->guard || node->guarded)
@@ -399,6 +480,7 @@ private:
                 return true;
             });
         }
+        foldComparisonsOfKnownValues(*inlinee);
 
         if (closureFunction) {
             inlinee->closureFunction = closureFunction;

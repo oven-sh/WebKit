@@ -403,6 +403,8 @@ void Lowering::lowerEntry()
 {
     if (m_calleeSlot)
         m_out.store64(registerOnEntry(calleeGPR), m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot));
+    if (m_graph.convention().signature == Signature::List)
+        m_graph.remark("takes-argument-list"_s);
     if (m_listSlot) {
         m_out.store64(registerOnEntry(argumentGPR(0)), m_out.address(m_heaps.root, m_listSlot, 0));
         m_out.store64(registerOnEntry(argumentGPR(1)), m_out.address(m_heaps.root, m_listSlot, sizeof(EncodedJSValue)));

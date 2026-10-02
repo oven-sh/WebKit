@@ -406,7 +406,7 @@ private:
             dataLogLn("AOT inference: call of `", known->executable->name().impl(), "` @", known->key.module, ":", known->key.start, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), " passes", out.toString());
         }
         bool widensInputs = false;
-        unsigned count = std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::maxParameters);
+        unsigned count = std::min<unsigned>(std::max<unsigned>(known->forCall->numParameters(), known->conventionForCall.numberOfParameters + 1), FunctionSummary::maxParameters);
         for (unsigned i = 1; i < count; ++i) {
             Type type = i < argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
             Type before = known->summary->parameterTypes[i].join(type);
@@ -1045,6 +1045,12 @@ private:
         }
         case op_resolve_scope_for_hoisting_func_decl_in_eval:
             return TObject | TUndefined;
+        case op_get_argument: {
+            unsigned index = node->as<OpGetArgument>().m_index;
+            if (!node->graph->isOutermost() || node->graph->convention().signature != Signature::Registers || index > node->graph->convention().numberOfParameters)
+                return TTop;
+            return node->graph->argumentTypeOnEntry(index);
+        }
         case op_get_from_scope: {
             bool isExact = false;
             if (const KnownFunction* known = m_graph.knownFunctionReadBy(node, &isExact); known && isExact)

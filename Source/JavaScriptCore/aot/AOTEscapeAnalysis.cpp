@@ -185,7 +185,6 @@ public:
             case op_create_direct_arguments:
             case op_create_scoped_arguments:
             case op_create_cloned_arguments:
-            case op_get_argument:
                 return std::numeric_limits<uint32_t>::max();
             case op_create_rest:
                 result |= FunctionSummary::extraArgumentsEscape;
@@ -196,9 +195,10 @@ public:
         }
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
-                if (node->kind != NodeKind::Argument || node->graph != &m_graph)
+                bool readsArgument = node->isBytecode(op_get_argument);
+                if ((node->kind != NodeKind::Argument && !readsArgument) || node->graph != &m_graph)
                     continue;
-                unsigned index = node->reg.toArgument();
+                unsigned index = readsArgument ? node->as<OpGetArgument>().m_index : node->reg.toArgument();
                 if (index >= FunctionSummary::maxTrackedEscapingParameters) {
                     result |= FunctionSummary::extraArgumentsEscape;
                     continue;
@@ -300,8 +300,9 @@ private:
             if (m_calleesConsulted && !m_calleesConsulted->contains(known))
                 m_calleesConsulted->append(known);
             uint32_t mask = known->summary->escapingParameters.load(std::memory_order_relaxed);
-            unsigned parameters = std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::maxTrackedEscapingParameters);
-            bool leaksValue = static_cast<unsigned>(index) < parameters ? mask >> index & 1 : mask & FunctionSummary::extraArgumentsEscape;
+            bool isTracked = static_cast<unsigned>(index) < FunctionSummary::maxTrackedEscapingParameters;
+            bool isDeclared = static_cast<unsigned>(index) < known->forCall->numParameters();
+            bool leaksValue = (isTracked && (mask >> index & 1)) || ((!isTracked || !isDeclared) && (mask & FunctionSummary::extraArgumentsEscape));
             if (leaksValue)
                 return escapes(Escape::PassedToRetainingCallee);
             return { Verdict::Lent };
