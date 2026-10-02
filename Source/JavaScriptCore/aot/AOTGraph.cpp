@@ -2579,7 +2579,7 @@ private:
 
     bool chooseGuards()
     {
-        if (!Options::useAOTLoopSplitting() || !Options::aotLoopSplittingPolicy() || !usesStubs || m_graph.loopSplittingIsDisabled)
+        if (!Options::useAOTLoopSplitting() || !Options::aotLoopSplittingPolicy() || !usesStubs)
             return false;
         unsigned size = m_instructions.size();
         BitVector fieldAccesses;
@@ -2603,7 +2603,7 @@ private:
             if (count < std::max(1u, Options::minimumTypedAccessesForAOTFunctionSplitting()))
                 fieldAccesses.clearAll();
         }
-        bool isFullyDuplicated = !fieldAccesses.isEmpty();
+        bool isFullyDuplicated = !fieldAccesses.isEmpty() && !m_graph.loopSplittingIsDisabled;
         m_graph.isFullyDuplicated = isFullyDuplicated;
         struct BlockInfo {
             Vector<unsigned, 8> guards;
@@ -2716,6 +2716,10 @@ private:
             if (isProfitable)
                 hasTwoCopies.merge(body);
         }
+        for (BasicBlock* block : m_graph.m_rpo)
+            block->isInProfitableLoop = block->isInLoop && hasTwoCopies.get(block->index);
+        if (m_graph.loopSplittingIsDisabled)
+            return false;
 
         bool found = false;
         for (BasicBlock* block : m_graph.m_rpo) {

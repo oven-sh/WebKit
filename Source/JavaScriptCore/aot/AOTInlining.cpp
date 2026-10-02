@@ -361,6 +361,7 @@ private:
         continuation->bytecodeEnd = block->bytecodeEnd;
         continuation->isReachable = true;
         continuation->isInLoop = block->isInLoop;
+        continuation->isInProfitableLoop = block->isInProfitableLoop;
         continuation->endsWithGuard = std::exchange(block->endsWithGuard, false);
         continuation->valuesAtTail = std::exchange(block->valuesAtTail, { });
         for (unsigned i = index + 1; i < block->nodes.size(); ++i) {
@@ -408,6 +409,7 @@ private:
             otherwise->bytecodeEnd = continuation->bytecodeBegin;
             otherwise->isReachable = true;
             otherwise->isInLoop = block->isInLoop;
+            otherwise->isInProfitableLoop = block->isInProfitableLoop;
             otherwise->isRarelyExecuted = true;
             fallbackCall->block = otherwise;
             otherwise->nodes.append(fallbackCall);
@@ -445,6 +447,7 @@ private:
                 if (isForBuiltin && !inlineeBlock->isInLoop)
                     inlineeBlock->isInBuiltinLoopOnly = true;
                 inlineeBlock->isInLoop = true;
+                inlineeBlock->isInProfitableLoop |= block->isInProfitableLoop;
             }
         }
         inlinee->wasCalledInLoop = block->isInLoop && !block->isInBuiltinLoopOnly;

@@ -289,6 +289,7 @@ struct BasicBlock {
     bool isReachable { false };
     bool isLoopHeader { false };
     bool isInLoop { false };
+    bool isInProfitableLoop { false };
     bool isInBuiltinLoopOnly { false };
     bool isGeneric { false };
     bool endsWithGuard { false };

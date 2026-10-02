@@ -230,7 +230,7 @@ private:
     {
         if (!Options::useAOTInlineFastPathsInLoops() || m_block->isGeneric)
             return true;
-        return (!m_block->isInLoop || m_block->isInBuiltinLoopOnly) && !m_graph.callsItself;
+        return (!m_block->isInProfitableLoop || m_block->isInBuiltinLoopOnly) && !m_graph.callsItself;
     }
     LValue compareWithLiteral(LValue characters, std::span<const Latin1Character> written);
     struct Latin1Characters {
