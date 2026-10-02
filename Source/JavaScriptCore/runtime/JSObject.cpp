@@ -3133,6 +3133,8 @@ bool JSObject::makePropertiesImmutable(VM& vm)
     if (copyOnWriteButterfly)
         nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteButterfly->toButterfly());
     setStructure(vm, newStructure);
+    if (JSGlobalObject* realm = oldStructure->realm())
+        realm->didMakePropertiesImmutable(vm, oldStructure, newStructure);
     if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
     return true;

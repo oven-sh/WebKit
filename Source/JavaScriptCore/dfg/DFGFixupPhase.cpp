@@ -4004,8 +4004,19 @@ private:
     {
         RELEASE_ASSERT(useKind == StringObjectUse || useKind == StringOrStringObjectUse);
 
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
         StructureSet set;
-        set.add(m_graph.globalObjectFor(node->origin.semantic)->stringObjectStructure());
+        set.add(globalObject->stringObjectStructure());
+        // A StringObject with that structure whose properties were made immutable has no more properties of its own, and the same
+        // prototype. While no such structure exists, the check is for the one structure, and this code goes when one appears.
+        InlineWatchpointSet& immutablePropertiesWatchpointSet = globalObject->stringObjectImmutablePropertiesWatchpointSet();
+        if (immutablePropertiesWatchpointSet.isStillValid()) {
+            m_graph.freeze(globalObject);
+            m_graph.watchpoints().addLazily(immutablePropertiesWatchpointSet);
+        } else {
+            WTF::loadLoadFence();
+            set.add(globalObject->stringObjectStructureWithImmutableProperties());
+        }
         if (useKind == StringOrStringObjectUse)
             set.add(vm().stringStructure.get());
 

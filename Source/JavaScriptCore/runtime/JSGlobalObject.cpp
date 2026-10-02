@@ -2879,6 +2879,18 @@ void JSGlobalObject::clearStructureCache(VM& vm)
     m_structureCacheClearedWatchpointSet.fireAll(vm, "Clearing StructureCache");
 }
 
+// Compiled code recognizes an object nobody has touched by one of this realm's original structures. The structure such an object gets
+// when its properties are made immutable says as much about it, so it is kept here, alive, for the compilers to accept as well.
+// Code that was compiled when there was none is thrown away, which, unlike an exit, does not count against the code's site.
+void JSGlobalObject::didMakePropertiesImmutable(VM& vm, Structure* oldStructure, Structure* newStructure)
+{
+    if (oldStructure != stringObjectStructure() || m_stringObjectStructureWithImmutableProperties)
+        return;
+    m_stringObjectStructureWithImmutableProperties.set(vm, this, newStructure);
+    WTF::storeStoreFence();
+    m_stringObjectImmutablePropertiesWatchpointSet.fireAll(vm, "A StringObject's properties were made immutable");
+}
+
 void JSGlobalObject::haveABadTime(VM& vm)
 {
     ASSERT(&vm == &this->vm());
@@ -3203,6 +3215,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_promiseCapabilityObjectStructure.visit(visitor);
     thisObject->m_promiseAllSettledFulfilledResultStructure.visit(visitor);
     thisObject->m_promiseAllSettledRejectedResultStructure.visit(visitor);
+    visitor.append(thisObject->m_stringObjectStructureWithImmutableProperties);
     visitor.append(thisObject->m_regExpMatchesArrayStructure);
     visitor.append(thisObject->m_regExpMatchesArrayWithIndicesStructure);
     visitor.append(thisObject->m_regExpMatchesIndicesArrayStructure);
