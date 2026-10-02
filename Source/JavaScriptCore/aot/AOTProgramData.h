@@ -184,6 +184,7 @@ public:
     JS_EXPORT_PRIVATE UniquedStringImpl* identifier(uint32_t index);
     const Identifier& identifierAsIdentifier(uint32_t index);
     JS_EXPORT_PRIVATE FunctionExecutable* executable(uint32_t index);
+    FunctionExecutable* executableIfExists(uint32_t index) const { return m_executables[index]; }
     FunctionExecutable* executableForFunction(uint32_t functionIndex) { return executable(m_data.executableIndexForFunction(functionIndex)); }
     JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* unlinkedFunction(uint32_t index, bool isShared);
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* topLevelCodeFor(const SourceCodeKey&);

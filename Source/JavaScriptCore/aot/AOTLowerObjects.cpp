@@ -184,7 +184,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
             Vector<ValueFromBlock, 2> results;
-            if (!isCompact() && values.size() <= JSFinalObject::maxInlineCapacity && !hasSlotsOutside) {
+            if (!prefersCalls() && values.size() <= JSFinalObject::maxInlineCapacity && !hasSlotsOutside) {
                 results.append(m_out.anchor(allocateObjectWithProperties(slot, values, slowCase)));
                 m_out.jump(continuation);
             } else

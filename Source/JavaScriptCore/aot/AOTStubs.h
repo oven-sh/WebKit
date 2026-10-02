@@ -58,8 +58,15 @@ StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIn
 static constexpr ptrdiff_t offsetOfInstanceRegisterInAdapter = -24;
 static constexpr ptrdiff_t offsetOfNumberTagRegisterInAdapter = -16;
 static constexpr ptrdiff_t offsetOfNotCellMaskRegisterInAdapter = -8;
+#if CPU(X86_64)
+static constexpr ptrdiff_t offsetOfR12InAdapter = -32;
+static constexpr ptrdiff_t offsetOfRBXInAdapter = -40;
+static constexpr ptrdiff_t offsetOfInstanceInAdapter = -48;
+static constexpr unsigned adapterSaveAreaSize = 48;
+#else
 static constexpr ptrdiff_t offsetOfInstanceInAdapter = -32;
 static constexpr unsigned adapterSaveAreaSize = 32;
+#endif
 
 static constexpr unsigned codeGranuleShift = 10;
 

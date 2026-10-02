@@ -700,8 +700,15 @@ const RegisterAtOffsetList& adapterSavedRegisters()
         registers.add(instanceGPR, IgnoreVectors);
         registers.add(GPRInfo::numberTagRegister, IgnoreVectors);
         registers.add(GPRInfo::notCellMaskRegister, IgnoreVectors);
+#if CPU(X86_64)
+        registers.add(X86Registers::ebx, IgnoreVectors);
+        registers.add(X86Registers::r12, IgnoreVectors);
+#endif
         list.construct(registers);
         list->adjustOffsets(offsetOfInstanceRegisterInAdapter - list->find(instanceGPR)->offset());
+#if CPU(X86_64)
+        RELEASE_ASSERT(list->find(X86Registers::ebx)->offset() == offsetOfRBXInAdapter && list->find(X86Registers::r12)->offset() == offsetOfR12InAdapter);
+#endif
         RELEASE_ASSERT(list->find(GPRInfo::numberTagRegister)->offset() == offsetOfNumberTagRegisterInAdapter && list->find(GPRInfo::notCellMaskRegister)->offset() == offsetOfNotCellMaskRegisterInAdapter);
     });
     return list.get();
@@ -866,6 +873,19 @@ ScriptExecutable* FunctionRef::executable() const
         return data->executable;
     const FunctionInfo& info = this->info();
     return info.hasExecutable() && instance ? instance->program->executable(info.indexPlusOne() - 1) : nullptr;
+}
+
+ScriptExecutable* FunctionRef::executableIfExists() const
+{
+    if (Data* data = dataIfExists())
+        return data->executable;
+    const FunctionInfo& info = this->info();
+    return info.hasExecutable() && instance ? instance->program->executableIfExists(info.indexPlusOne() - 1) : nullptr;
+}
+
+bool FunctionRef::hasExecutable() const
+{
+    return dataIfExists() || (info().hasExecutable() && instance);
 }
 
 CodeBlock* FunctionRef::codeBlockIfExists() const

@@ -70,6 +70,8 @@ struct FunctionRef {
     explicit operator bool() const { return index != none; }
 
     JS_EXPORT_PRIVATE ScriptExecutable* executable() const;
+    JS_EXPORT_PRIVATE ScriptExecutable* executableIfExists() const;
+    JS_EXPORT_PRIVATE bool hasExecutable() const;
 
     const FunctionInfo& info() const;
     const ProgramData& programData() const;

@@ -1276,7 +1276,7 @@ void Lowering::lowerGetFromScope(Node* node)
     unsigned slot = allocateSlot();
     LBasicBlock slowCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
-    Vector<ValueFromBlock, 3> results;
+    Vector<ValueFromBlock, 4> results;
     if (variable.isCachedInSlot()) {
         LBasicBlock hasAddress = m_out.newBlock();
         LBasicBlock noAddress = m_out.newBlock();
@@ -1289,7 +1289,23 @@ void Lowering::lowerGetFromScope(Node* node)
         LValue address = m_out.loadPtr(slotWord(slot, 1));
         m_out.branch(m_out.notNull(address), unsure(hasAddress), unsure(noAddress));
 
-        m_out.appendTo(hasAddress, noAddress);
+        LBasicBlock isAddress = m_out.newBlock();
+        LBasicBlock isSymbolTable = m_out.newBlock();
+        LBasicBlock rightSymbolTable = m_out.newBlock();
+        m_out.appendTo(hasAddress, isSymbolTable);
+        static_assert(Slot::pointerIsCell == 1u << 31);
+        m_out.branch(m_out.lessThan(word, m_out.int64Zero), unsure(isSymbolTable), unsure(isAddress));
+
+        m_out.appendTo(isSymbolTable, rightSymbolTable);
+        m_out.branch(m_out.equal(m_out.loadPtr(m_out.address(m_heaps.root, scope, JSSymbolTableObject::offsetOfSymbolTable())), address), usually(rightSymbolTable), rarely(slowCase));
+
+        m_out.appendTo(rightSymbolTable, isAddress);
+        LValue offsetInEnvironment = m_out.zeroExtPtr(m_out.bitAnd(highHalf(m_out, word), m_out.constInt32(Slot::offsetMask)));
+        LValue variableValue = m_out.load64(TypedPointer(m_heaps.root, m_out.add(scope, m_out.add(m_out.shl(offsetInEnvironment, m_out.constInt32(3)), m_out.constIntPtr(JSLexicalEnvironment::offsetOfVariables())))));
+        results.append(m_out.anchor(variableValue));
+        m_out.branch(m_out.notZero64(variableValue), usually(continuation), rarely(slowCase));
+
+        m_out.appendTo(isAddress, noAddress);
         LValue value = m_out.load64(TypedPointer(m_heaps.root, address));
         results.append(m_out.anchor(value));
         m_out.branch(m_out.notZero64(value), usually(continuation), rarely(slowCase));

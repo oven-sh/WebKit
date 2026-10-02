@@ -250,6 +250,7 @@ private:
             return true;
         return (!m_block->isInProfitableLoop || m_block->isInBuiltinLoopOnly) && !m_graph.callsItself;
     }
+    bool prefersCalls() const { return isCompact() || (m_graph.codeBlock()->codeType() != FunctionCode && !m_block->isInLoop); }
     LValue compareWithLiteral(LValue characters, std::span<const Latin1Character> written);
     struct Latin1Characters {
         LValue characters;
