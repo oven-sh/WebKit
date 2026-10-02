@@ -201,7 +201,8 @@ ALWAYS_INLINE bool JSObject::canPerformFastPutInlineExcludingProto()
     JSObject* obj = this;
     while (true) {
         Structure* structure = obj->structure();
-        if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->typeInfo().overridesGetPrototype())
+        bool mayInterceptPut = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+        if (mayInterceptPut || structure->typeInfo().overridesGetPrototype())
             return false;
         if (obj != this && structure->typeInfo().overridesPut())
             return false;
@@ -377,6 +378,8 @@ inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyNa
     ASSERT(!value.isCustomGetterSetter());
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
+    if (structure->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+        return;
     PropertyOffset offset = prepareToPutDirectWithoutTransition(vm, propertyName, attributes, structureID, structure);
     putDirectOffset(vm, offset, value);
     if (attributes & PropertyAttribute::ReadOnly)
@@ -502,6 +505,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
+    // Refused, unless the engine is materializing a property the object logically already has (AllowLazyMaterializationOfImmutableProperties).
+    if (structure->hasImmutableProperties()) [[unlikely]] {
+        if (mode == PutModePut || !vm.allowLazyMaterializationOfImmutablePropertiesCount)
+            return ReadonlyPropertyChangeError;
+    }
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));
         if constexpr (mode == PutModePut) {
@@ -937,6 +945,14 @@ inline void JSObject::setPrivateField(JSGlobalObject* globalObject, PropertyName
     EXCEPTION_ASSERT(!scope.exception());
 
     scope.release();
+    Structure* structure = this->structure();
+    if (structure->hasImmutableProperties()) [[unlikely]] {
+        // The value of a private field the object already has is its private state, as an internal slot is, and can still change.
+        ASSERT(slot.isCacheableValue());
+        putDirectOffset(vm, slot.cachedOffset(), value);
+        structure->didReplaceProperty(slot.cachedOffset());
+        return;
+    }
     putDirect(vm, propertyName, value, putSlot);
 }
 
@@ -947,6 +963,11 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
 
     if (type() == WebAssemblyGCObjectType) {
         throwTypeError(globalObject, scope, "Cannot define private field on a WebAssembly GC object"_s);
+        return;
+    }
+
+    if (structure()->hasImmutableProperties()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Cannot define private field on object with immutable properties"_s);
         return;
     }
 
@@ -1020,6 +1041,11 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
 
     if (type() == WebAssemblyGCObjectType) {
         throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
+        return;
+    }
+
+    if (structure->hasImmutableProperties()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Cannot add private method to object with immutable properties"_s);
         return;
     }
 
@@ -1619,6 +1645,16 @@ inline void JSObject::ensureWritable(VM& vm)
 {
     if (isCopyOnWrite(indexingMode()))
         convertFromCopyOnWrite(vm);
+}
+
+inline bool JSObject::tryMakeWritable(VM& vm)
+{
+    if (isCopyOnWrite(indexingMode())) {
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return false;
+        convertFromCopyOnWrite(vm);
+    }
+    return true;
 }
 
 } // namespace JSC

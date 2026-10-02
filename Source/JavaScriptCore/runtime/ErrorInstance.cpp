@@ -472,6 +472,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
+        // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
         putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
         if (!m_sourceURL.isEmpty())
@@ -489,10 +491,14 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
     if (!m_stackString.isNull()) {
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
-        putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-        putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
-        if (!m_sourceURL.isEmpty())
-            putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        {
+            // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs inside.
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+            putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
+            putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
+            if (!m_sourceURL.isEmpty())
+                putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        }
 
         if (!m_stackPropertyAlreadyMaterialized) {
             WTF::String stackString;
@@ -500,12 +506,16 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 Locker locker { cellLock() };
                 stackString = WTF::move(m_stackString);
             }
+            // The value is made before the scope opens: stackWithHeader() reads this error's name and message.
+            JSValue stackValue;
 #if USE(BUN_JSC_ADDITIONS)
             if (m_stackStringIsFramesOnly)
-                putDirect(vm, vm.propertyNames->stack, stackWithHeader(vm, WTF::move(stackString)), attributes);
+                stackValue = stackWithHeader(vm, WTF::move(stackString));
             else
 #endif
-                putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
+                stackValue = jsString(vm, WTF::move(stackString));
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+            putDirect(vm, vm.propertyNames->stack, stackValue, attributes);
         }
         m_errorInfoMaterialized = true;
     }

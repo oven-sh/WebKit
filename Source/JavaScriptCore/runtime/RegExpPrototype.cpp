@@ -329,6 +329,9 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncCompile, (JSGlobalObject* globalObject, 
     if (!thisRegExp->areLegacyFeaturesEnabled())
         return throwVMTypeError(globalObject, scope, "|this| RegExp object's legacy features are not enabled"_s);
 
+    if (thisRegExp->structure()->hasImmutableProperties()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "Cannot compile RegExp object with immutable properties"_s);
+
     RegExp* regExp;
     JSValue arg0 = callFrame->argument(0);
     JSValue arg1 = callFrame->argument(1);
@@ -618,7 +621,7 @@ JSValue regExpSearchGeneric(JSGlobalObject* globalObject, JSObject* thisObject, 
             throwTypeError(globalObject, scope, "Builtin RegExp exec can only be called on a RegExp object"_s);
             return { };
         }
-        if (regExp->lastIndexIsWritable() && regExp->getLastIndex().isNumber()) [[likely]]
+        if ((regExp->lastIndexIsWritable() || regExp->canSearchWithoutWritingLastIndex()) && regExp->getLastIndex().isNumber()) [[likely]]
             RELEASE_AND_RETURN(scope, regExpSearchFast(globalObject, regExp, str));
     }
 

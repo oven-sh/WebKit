@@ -2506,6 +2506,10 @@ bool JSGlobalObject::canDeclareGlobalFunction(const Identifier& ident)
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
 
+    // No new top-level function, and no replacement of an existing one.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
+        return false;
+
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
     bool hasProperty = getOwnPropertySlot(this, this, ident, slot);
     RETURN_IF_EXCEPTION(scope, { });

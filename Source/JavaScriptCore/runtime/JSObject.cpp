@@ -26,8 +26,10 @@
 
 #include "AllocationFailureMode.h"
 #include "BlockDirectory.h"
+#include "ClonedArguments.h"
 #include "CompleteSubspace.h"
 #include "CustomGetterSetter.h"
+#include "ErrorInstance.h"
 #include "Exception.h"
 #include "GCDeferralContextInlines.h"
 #include "GetterSetter.h"
@@ -39,12 +41,16 @@
 #include "JSCustomGetterFunction.h"
 #include "JSCustomSetterFunction.h"
 #include "JSFunction.h"
+#include "JSGlobalProxy.h"
 #include "Lookup.h"
 #include "MarkedSpace.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
 #include "ProxyObject.h"
+#include "RegExpObject.h"
 #include "ResourceExhaustion.h"
+#include "StringObject.h"
+#include "SymbolTable.h"
 #include "TopExceptionScope.h"
 #include "TypeError.h"
 #include "VMInlines.h"
@@ -67,6 +73,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSObjectWithButterfly);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
+const ASCIILiteral ImmutablePropertyDefineError { "Attempting to define property on object with immutable properties."_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
@@ -838,6 +845,11 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
+    // canPerformFastPutInlineExcludingProto() says no for such a receiver.
+    if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]]
+        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return false;
@@ -893,8 +905,10 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
                 customSetter(obj->realm(), JSValue::encode(slot.thisValue()), JSValue::encode(value), propertyName);
                 return true;
             }
+            // (The two shortcuts below put on the receiver without asking. A receiver with immutable properties goes on to
+            // definePropertyOnReceiver(), where its [[DefineOwnProperty]] decides.)
             if (attributes & PropertyAttribute::CustomValue) {
-                if (!isThisValueAltered(slot, obj)) {
+                if (!isThisValueAltered(slot, obj) && !obj->structure()->hasImmutableProperties()) {
                     if (customSetter) {
                         // FIXME: We should only be caching these if we're not an uncacheable dictionary:
                         // https://bugs.webkit.org/show_bug.cgi?id=215347
@@ -907,7 +921,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
                 }
             }
             if (attributes & PropertyAttribute::BuiltinOrFunctionOrLazyProperty) {
-                if (!isThisValueAltered(slot, obj)) {
+                if (!isThisValueAltered(slot, obj) && !obj->structure()->hasImmutableProperties()) {
                     // Avoid PutModePut because it fails for non-extensible structures.
                     obj->putDirect(vm, propertyName, value, attributesForStructure(attributes), slot);
                     return true;
@@ -959,8 +973,9 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
         if (slot.attributes() & PropertyAttribute::CustomValue) {
+            // (Not for a receiver with immutable properties: a native setter does not ask, and [[DefineOwnProperty]] below does.)
             PutValueFunc customSetter = slot.customSetter();
-            if (customSetter)
+            if (customSetter && !receiver->structure()->hasImmutableProperties())
                 RELEASE_AND_RETURN(scope, customSetter(receiver->realm(), JSValue::encode(receiver), JSValue::encode(value), propertyName));
         }
 
@@ -984,9 +999,12 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
     // FIXME: For a failure due to primitive receiver, the error message is misleading.
     if (!receiver)
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
-    scope.release();
     if (receiver->type() == GlobalProxyType)
         receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
+    scope.release();
+    // The steps as the specification has them, in which the receiver's [[DefineOwnProperty]] decides: the shortcuts below put.
+    if (receiver->structure()->hasImmutableProperties()) [[unlikely]]
+        return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, slot.isStrictMode());
 
     if (slot.isTaintedByOpaqueObject() || receiver->methodTable()->defineOwnProperty != JSObject::defineOwnProperty) {
         if (mightBeSpecialProperty(vm, receiver->type(), propertyName.uid()))
@@ -1037,6 +1055,11 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
 {
     VM& vm = globalObject->vm();
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
+
+    if (thisObject->structure()->hasImmutableProperties()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
+    }
 
     if (propertyName > MAX_ARRAY_INDEX) {
         PutPropertySlot slot(cell, shouldThrow);
@@ -1822,6 +1845,8 @@ void JSObject::convertInt32ForValue(VM& vm, JSValue value)
 void JSObject::convertFromCopyOnWrite(VM& vm)
 {
     ASSERT(isCopyOnWrite(indexingMode()));
+    // Every caller that reaches this for an object with immutable properties is about to write its elements in place.
+    RELEASE_ASSERT(!structure()->hasImmutableProperties());
     ASSERT(structure()->indexingMode() == indexingMode());
 
     const bool hasIndexingHeader = true;
@@ -1884,6 +1909,9 @@ ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
     ASSERT(inherits(info()));
 
     if (isCopyOnWrite(indexingMode())) {
+        // Compiled code asks for this before it stores in place.
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, Int32Shape) == Int32Shape) {
             ASSERT(hasInt32(indexingMode()));
             convertFromCopyOnWrite(vm);
@@ -1921,6 +1949,9 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
     ASSERT(inherits(info()));
 
     if (isCopyOnWrite(indexingMode())) {
+        // Compiled code asks for this before it stores in place.
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, DoubleShape) == DoubleShape) {
             convertFromCopyOnWrite(vm);
             if (hasDouble(indexingMode()))
@@ -1960,6 +1991,9 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
     ASSERT(inherits(info()));
 
     if (isCopyOnWrite(indexingMode())) {
+        // Compiled code asks for this before it stores in place.
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, ContiguousShape) == ContiguousShape) {
             convertFromCopyOnWrite(vm);
             if (hasContiguous(indexingMode()))
@@ -1998,6 +2032,10 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
 
 ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
 {
+    // Compiled code asks for this before it stores elements in place. An object with immutable properties keeps the storage it has:
+    // none (Object.prototype or Array.prototype with storage would make every array pay for it), or copy-on-write storage.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
+        return nullptr;
     ASSERT(inherits(info()));
 
     if (structure()->hijacksIndexingHeader())
@@ -2072,11 +2110,20 @@ ArrayStorage* JSObject::ensureArrayStorageExistsAndEnterDictionaryIndexingMode(V
 
 void JSObject::switchToSlowPutArrayStorage(VM& vm)
 {
-    ensureWritable(vm);
+    // Slow-put storage makes a store into a hole consult the prototype chain. Nothing is stored into an array with immutable
+    // properties, and its copy-on-write elements stay readable in place.
+    if (!tryMakeWritable(vm)) [[unlikely]]
+        return;
 
     switch (indexingType()) {
     case ArrayClass:
-        ensureArrayStorage(vm);
+        // ensureArrayStorage() gives an object with immutable properties none, because compiled code asks for it before it stores
+        // elements in place. This conversion is the engine's own. The storage it makes here is the kind every other such object
+        // has: no capacity, and a sparse map in sparse mode, which is what makes a put consult extensibility.
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm);
+        else
+            ensureArrayStorage(vm);
         RELEASE_ASSERT(hasAnyArrayStorage(indexingType()));
         if (hasSlowPutArrayStorage(indexingType()))
             return;
@@ -2117,6 +2164,9 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
 void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
 {
     ASSERT(prototype.isObject() || prototype.isNull());
+    // (No result to give. setPrototypeWithCycleCheck() has refused before it comes here; this is for a caller that does not ask.)
+    if (structure()->hasImmutableProperties()) [[unlikely]]
+        return;
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
     else if (!prototype.isNull()) [[unlikely]] // Conservative hardening.
@@ -2160,6 +2210,12 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
             return true;
 
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
+    }
+
+    if (this->structure()->hasImmutableProperties()) [[unlikely]] {
+        if (this->getPrototypeDirect() == prototype)
+            return true;
+        return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
     }
 
     // Default realm global objects should have mutable prototypes despite having
@@ -2262,6 +2318,9 @@ bool JSObject::putDirectCustomAccessor(VM& vm, PropertyName propertyName, JSValu
 
     PutPropertySlot slot(this);
     bool result = putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot).isNull();
+    // (Refused, for an object with immutable properties: nothing was put, so there is nothing to record on the Structure.)
+    if (!result) [[unlikely]]
+        return false;
 
     ASSERT(slot.type() == PutPropertySlot::NewProperty);
 
@@ -2277,6 +2336,9 @@ void JSObject::putDirectCustomGetterSetterWithoutTransition(VM& vm, PropertyName
     ASSERT(!parseIndex(propertyName));
     ASSERT(value.isCustomGetterSetter());
     ASSERT(attributes & PropertyAttribute::CustomAccessorOrValue);
+    // (No result to give: the caller is initializing an object it takes to be new, and the property is not put.)
+    if (structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+        return;
 
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
@@ -2293,6 +2355,9 @@ bool JSObject::putDirectNonIndexAccessor(VM& vm, PropertyName propertyName, Gett
     ASSERT(attributes & PropertyAttribute::Accessor);
     PutPropertySlot slot(this);
     bool result = putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, accessor, attributes, slot).isNull();
+    // (As in putDirectCustomAccessor().)
+    if (!result) [[unlikely]]
+        return false;
 
     Structure* structure = this->structure();
     if (attributes & PropertyAttribute::ReadOnly)
@@ -2305,6 +2370,9 @@ bool JSObject::putDirectNonIndexAccessor(VM& vm, PropertyName propertyName, Gett
 void JSObject::putDirectNonIndexAccessorWithoutTransition(VM& vm, PropertyName propertyName, GetterSetter* accessor, unsigned attributes)
 {
     ASSERT(attributes & PropertyAttribute::Accessor);
+    // (As above.)
+    if (structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+        return;
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     PropertyOffset offset = prepareToPutDirectWithoutTransition(vm, propertyName, attributes, structureID, structure);
@@ -2365,6 +2433,10 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
 {
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
     VM& vm = globalObject->vm();
+
+    // Every property the object has stays. Deleting one it does not have succeeds, as it does for any object.
+    if (thisObject->structure()->hasImmutableProperties()) [[unlikely]]
+        return !thisObject->hasOwnProperty(globalObject, propertyName);
     
     if (std::optional<uint32_t> index = parseIndex(propertyName))
         return thisObject->methodTable()->deletePropertyByIndex(thisObject, globalObject, index.value());
@@ -2421,6 +2493,9 @@ bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject,
 {
     VM& vm = globalObject->vm();
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
+
+    if (thisObject->structure()->hasImmutableProperties()) [[unlikely]]
+        return !thisObject->hasOwnProperty(globalObject, i);
     
     if (i > MAX_ARRAY_INDEX)
         return JSCell::deleteProperty(thisObject, globalObject, Identifier::from(vm, i));
@@ -2876,6 +2951,9 @@ JSString* JSObject::toString(JSGlobalObject* globalObject) const
 
 void JSObject::seal(VM& vm)
 {
+    // The attributes do not change. Object.seal() does not come here for such an object: it takes the generic path, which reports the refusal.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
+        return;
     if (isSealed(vm))
         return;
     materializeLazyOwnProperties(vm);
@@ -2889,6 +2967,9 @@ void JSObject::seal(VM& vm)
 
 void JSObject::freeze(VM& vm)
 {
+    // The attributes do not change. Object.freeze() does not come here for such an object: it takes the generic path, which reports the refusal.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
+        return;
     if (isFrozen(vm))
         return;
     materializeLazyOwnProperties(vm);
@@ -2915,6 +2996,146 @@ void JSObject::materializeLazyOwnProperties(VM& vm)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     methodTable()->getOwnPropertyNames(this, globalObject, propertyNames, DontEnumPropertiesMode::Include);
     scope.releaseAssertNoExceptionExceptTermination();
+}
+
+// A class that overrides a write hook can change the object before, or without, reaching JSObject's checks. The classes listed here
+// do not. ErrorInstance, StringObject, RegExpObject and ClonedArguments only materialize lazy properties or refuse on their own
+// account before they call JSObject's implementation (RegExpObject because makePropertiesImmutable() makes lastIndex non-writable).
+// JSArray and JSFunction test hasImmutableProperties() where they write directly. JSGlobalObject's hooks only add its variables,
+// which makePropertiesImmutable() makes read-only.
+static bool canMakePropertiesImmutable(JSObject* object)
+{
+    // Not DirectArguments or ScopedArguments: a mapped element is a view of the function's parameter variable, which the function
+    // can still assign.
+    const MethodTable* methodTable = object->methodTable();
+    for (const ClassInfo* classInfo : { JSObject::info(), JSArray::info(), JSFunction::info(), ErrorInstance::info(), RegExpObject::info(), StringObject::info(), ClonedArguments::info(), JSGlobalObject::info() }) {
+        // The object's write hooks have to be this class's own: nothing is known about a hook a subclass brings.
+        const MethodTable& classMethodTable = classInfo->methodTable;
+        if (object->inherits(classInfo)
+            && methodTable->put == classMethodTable.put
+            && methodTable->putByIndex == classMethodTable.putByIndex
+            && methodTable->deleteProperty == classMethodTable.deleteProperty
+            && methodTable->deletePropertyByIndex == classMethodTable.deletePropertyByIndex
+            && methodTable->defineOwnProperty == classMethodTable.defineOwnProperty
+            && methodTable->setPrototype == classMethodTable.setPrototype
+            && methodTable->preventExtensions == classMethodTable.preventExtensions)
+            return true;
+    }
+    return false;
+}
+
+bool JSObject::hasImmutableProperties() const
+{
+    if (type() == GlobalProxyType)
+        return uncheckedDowncast<JSGlobalProxy>(this)->target()->hasImmutableProperties();
+    return structure()->hasImmutableProperties();
+}
+
+// Copy-on-write storage is the one kind every tier reads in place and no tier stores into in place. It is a cell of its own with
+// room for elements only, and its users expect no holes. Null: this object's elements cannot go there.
+static JSCellButterfly* tryCreateCopyOnWriteButterfly(VM& vm, JSObject* object)
+{
+    if (!isJSArray(object) || object->structure()->outOfLineCapacity() || object->structure()->hijacksIndexingHeader())
+        return nullptr;
+    IndexingType type = object->indexingType();
+    Butterfly* butterfly = object->butterfly();
+    unsigned length = butterfly->publicLength();
+    IndexingType copyOnWriteType;
+    if (hasInt32(type))
+        copyOnWriteType = CopyOnWriteArrayWithInt32;
+    else if (hasDouble(type))
+        copyOnWriteType = CopyOnWriteArrayWithDouble;
+    else if (hasContiguous(type))
+        copyOnWriteType = CopyOnWriteArrayWithContiguous;
+    else
+        return nullptr;
+    for (unsigned i = 0; i < length; ++i) {
+        if (hasDouble(type)) {
+            double value = butterfly->contiguousDouble().at(object, i);
+            if (value != value)
+                return nullptr;
+        } else if (!butterfly->contiguous().at(object, i).get())
+            return nullptr;
+    }
+    JSCellButterfly* result = JSCellButterfly::tryCreate(vm, copyOnWriteType, length);
+    if (!result)
+        return nullptr;
+    // (Allocating can run the collector, which leaves the object's own storage where it is.)
+    butterfly = object->butterfly();
+    for (unsigned i = 0; i < length; ++i) {
+        if (hasDouble(type))
+            result->setIndex(vm, i, jsDoubleNumber(butterfly->contiguousDouble().at(object, i)));
+        else
+            result->setIndex(vm, i, butterfly->contiguous().at(object, i).get());
+    }
+    return result;
+}
+
+bool JSObject::makePropertiesImmutable(VM& vm)
+{
+    if (structure()->hasImmutableProperties())
+        return true;
+    // `globalThis` may be the proxy in front of the global object: act on the object behind it.
+    if (type() == GlobalProxyType)
+        return uncheckedDowncast<JSGlobalProxy>(this)->target()->makePropertiesImmutable(vm);
+    if (!canMakePropertiesImmutable(this))
+        return false;
+    // The global object keeps top-level `var` and function declarations in its symbol table, and compiled code writes those slots
+    // directly, past every property check. Make each one read-only and fire the watchpoint that makes such code look again: the
+    // same two steps JSGlobalObject::defineOwnProperty takes when a script freezes the global.
+    if (auto* global = dynamicDowncast<JSGlobalObject>(this)) {
+        bool changed = false;
+        {
+            SymbolTable* symbolTable = global->symbolTable();
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            for (auto iter = symbolTable->begin(locker), end = symbolTable->end(locker); iter != end; ++iter) {
+                if (!iter->value.isReadOnly()) {
+                    iter->value.setReadOnly();
+                    changed = true;
+                }
+            }
+        }
+        if (changed)
+            global->varReadOnlyWatchpointSet().fireAll(vm, "The global object's properties were made immutable");
+    }
+    // The JIT and the quick C++ paths write Int32/Double/Contiguous/ArrayStorage elements in place, slow-put storage included
+    // (it only diverts stores to holes). There are two kinds of storage they do not write in place, so that each indexed store,
+    // delete and length change reaches a C++ path, which refuses: copy-on-write storage, which every tier still reads in place,
+    // and the sparse map of dictionary indexing mode. A JSArray's Int32, Double or Contiguous elements go to the first if they have
+    // no holes (an array literal's are there already), elements of any other kind to the second. Objects with no indexed storage (every intrinsic prototype) are
+    // untouched, so Array.prototype keeps its blank indexing.
+    JSCellButterfly* copyOnWriteButterfly = nullptr;
+    if (hasIndexedProperties(indexingType())) {
+        bool willBeCopyOnWrite = false;
+        if (Options::useCopyOnWriteArraysForImmutableProperties()) {
+            if (isCopyOnWrite(indexingMode()))
+                willBeCopyOnWrite = true;
+            else {
+                copyOnWriteButterfly = tryCreateCopyOnWriteButterfly(vm, this);
+                willBeCopyOnWrite = copyOnWriteButterfly;
+            }
+        }
+        if (!willBeCopyOnWrite)
+            enterDictionaryIndexingMode(vm);
+    }
+    // Compiled code tests RegExpObject's own lastIndex-writable flag, not the Structure: make the two agree, and tell the realm, as
+    // RegExpObject::defineOwnProperty() does, so that code which folded a search on a constant RegExp is not relied on.
+    if (auto* regExpObject = dynamicDowncast<RegExpObject>(this)) {
+        regExpObject->setLastIndexIsNotWritable();
+        regExpObject->realm()->regExpLastIndexWritableWatchpointSet().fireAll(vm, "RegExp lastIndex was made non-writable");
+    }
+    StructureID oldStructureID = structureID();
+    Structure* oldStructure = oldStructureID.decode();
+    // Deferred, so adaptive watchpoints on this object see the new structure and re-install instead of firing their sets.
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    Structure* newStructure = Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred);
+    RELEASE_ASSERT(isCopyOnWrite(newStructure->indexingMode()) == (copyOnWriteButterfly || isCopyOnWrite(oldStructure->indexingMode())));
+    if (copyOnWriteButterfly)
+        nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteButterfly->toButterfly());
+    setStructure(vm, newStructure);
+    if (mayBePrototype()) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+    return true;
 }
 
 bool JSObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
@@ -3052,6 +3273,10 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Nothing below applies: the descriptor is validated against the current one, which defineOwnNonIndexProperty() does.
+    if (structure()->hasImmutableProperties()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, defineOwnNonIndexProperty(globalObject, Identifier::from(vm, index), descriptor, throwException));
 
     ASSERT(index <= MAX_ARRAY_INDEX);
 
@@ -3554,7 +3779,8 @@ bool JSObject::putDirectIndexSlowOrBeyondVectorLength(JSGlobalObject* globalObje
     VM& vm = globalObject->vm();
     ASSERT(!value.isCustomGetterSetter());
 
-    if (!canDoFastPutDirectIndex(this)) {
+    // (An object with immutable properties: [[DefineOwnProperty]] succeeds for it if it changes nothing.)
+    if (!canDoFastPutDirectIndex(this) || structure()->hasImmutableProperties()) {
         PropertyDescriptor descriptor;
         descriptor.setDescriptor(value, attributes);
         return methodTable()->defineOwnProperty(this, globalObject, Identifier::from(vm, i), descriptor, mode == PutDirectIndexShouldThrow);
@@ -3969,6 +4195,33 @@ bool JSObject::putDirectMayBeIndex(JSGlobalObject* globalObject, PropertyName pr
     return putDirect(globalObject->vm(), propertyName, value);
 }
 
+// True if every field of the descriptor is already in the current one with the same value.
+static bool isPropertyUnchangedByDescriptor(JSGlobalObject* globalObject, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
+{
+    if (descriptor.enumerablePresent() && descriptor.enumerable() != current.enumerable())
+        return false;
+    if (descriptor.configurablePresent() && descriptor.configurable() != current.configurable())
+        return false;
+    if (descriptor.isAccessorDescriptor()) {
+        if (!current.isAccessorDescriptor())
+            return false;
+        if (descriptor.getterPresent() && descriptor.getter() != current.getter())
+            return false;
+        if (descriptor.setterPresent() && descriptor.setter() != current.setter())
+            return false;
+        return true;
+    }
+    if (descriptor.isDataDescriptor()) {
+        if (!current.isDataDescriptor())
+            return false;
+        if (descriptor.writablePresent() && descriptor.writable() != current.writable())
+            return false;
+        if (descriptor.value() && !sameValue(globalObject, descriptor.value(), current.value()))
+            return false;
+    }
+    return true;
+}
+
 // https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor
 bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, bool isExtensible,
     const PropertyDescriptor& descriptor, bool isCurrentDefined, const PropertyDescriptor& current, bool throwException)
@@ -3983,6 +4236,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // Step 2.a
         if (!isExtensible)
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
+        ASSERT(!object || !object->structure()->hasImmutableProperties());
 
         if (object) {
             if (descriptor.isAccessorDescriptor()) {
@@ -4005,6 +4259,15 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
     RETURN_IF_EXCEPTION(scope, false);
     if (isEqual)
         return true;
+
+    // An object with immutable properties accepts a definition that changes nothing and refuses every other one.
+    if (object && object->structure()->hasImmutableProperties()) [[unlikely]] {
+        bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isUnchanged)
+            return typeError(globalObject, scope, throwException, ImmutablePropertyDefineError);
+        return true;
+    }
 
     // Step 4.
     if (!current.configurable()) {

@@ -2118,7 +2118,8 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
                 else {
                     unsigned attributes;
                     PropertyOffset offset = object->getDirectOffset(vm, prop, attributes);
-                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None)) [[likely]] {
+                    // The reviver was handed this holder and may have made its properties immutable: only the checked path may write then.
+                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None) && !object->structure()->hasImmutableProperties()) [[likely]] {
                         object->putDirectOffset(vm, offset, filteredValue);
                         object->structure()->didReplaceProperty(offset);
                     } else {

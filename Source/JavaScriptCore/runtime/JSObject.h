@@ -74,6 +74,7 @@ struct HashTableValue;
 
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const String&);
 extern JS_EXPORT_PRIVATE const ASCIILiteral NonExtensibleObjectPropertyDefineError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutablePropertyDefineError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
@@ -523,6 +524,14 @@ public:
 
     JS_EXPORT_PRIVATE void seal(VM&);
     JS_EXPORT_PRIVATE void freeze(VM&);
+    // Makes this object non-extensible and stops its own properties and its prototype from changing: from now on a put with it
+    // as the receiver, a define or a delete that would change one of its own properties, and a change of its prototype all fail.
+    // Unlike freeze(), property attributes are left as they are, so an inherited property still reads as writable and assignment
+    // on an object that inherits from this one works as before.
+    // Returns false, and changes nothing, for a class with write hooks of its own that do not check for this: ProxyObject, typed
+    // arrays, DirectArguments and ScopedArguments, and any class outside JavaScriptCore that overrides a write hook.
+    JS_EXPORT_PRIVATE bool makePropertiesImmutable(VM&);
+    JS_EXPORT_PRIVATE bool hasImmutableProperties() const;
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
     JS_EXPORT_PRIVATE static bool NODELETE isExtensible(JSObject*, JSGlobalObject*);
@@ -633,6 +642,9 @@ public:
     }
 
     void ensureWritable(VM& vm); // Defined in JSObjectInlines.h
+    // As ensureWritable(), for a caller that can do without. False: the elements are in copy-on-write storage to keep them from
+    // changing (JSObject::makePropertiesImmutable()), and stay there.
+    [[nodiscard]] bool tryMakeWritable(VM&); // Defined in JSObjectInlines.h
 
     static constexpr size_t offsetOfInlineStorage();
 

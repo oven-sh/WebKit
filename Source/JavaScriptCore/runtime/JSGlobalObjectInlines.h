@@ -272,6 +272,14 @@ inline unsigned JSGlobalObject::WeakCustomGetterOrSetterHash<T>::hash(const Prop
     return WTF::computeHash(functionPointer, classInfo);
 }
 
+inline bool JSGlobalObject::isOriginalArrayStructureWithImmutableProperties(Structure* structure)
+{
+    if (structure->transitionKind() != TransitionKind::MakePropertiesImmutable)
+        return false;
+    Structure* previous = structure->previousID();
+    return previous && isOriginalArrayStructure(previous);
+}
+
 inline JSArray* constructEmptyArray(JSGlobalObject* globalObject, ArrayAllocationProfile* profile, unsigned initialLength = 0, JSValue newTarget = JSValue())
 {
     VM& vm = getVM(globalObject);

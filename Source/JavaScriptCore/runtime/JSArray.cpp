@@ -228,6 +228,14 @@ bool JSArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
             }
         }
 
+        // (Validated against the current descriptor with the converted value, and nothing below applies.)
+        if (array->structure()->hasImmutableProperties()) [[unlikely]] {
+            PropertyDescriptor convertedDescriptor = descriptor;
+            if (descriptor.value())
+                convertedDescriptor.setValue(jsNumber(newLength));
+            RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(array, globalObject, propertyName, convertedDescriptor, throwException));
+        }
+
         // OrdinaryDefineOwnProperty (https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor) at steps 1.a, 11.a, and 15 is now performed:
         // 4. If current.[[Configurable]] is false, then
         // 4.a. If Desc.[[Configurable]] is present and its value is true, return false.
@@ -304,7 +312,10 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSArray* thisObject = uncheckedDowncast<JSArray>(cell);
-    thisObject->ensureWritable(vm);
+    // (An array whose elements stay in copy-on-write storage goes to JSObject's implementation, which refuses for it and serves
+    // another receiver. Not for length, which JSObject's implementation does not know this array has: the branch below does both.)
+    if (!thisObject->tryMakeWritable(vm) && propertyName != vm.propertyNames->length) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSObject::put(cell, globalObject, propertyName, value, slot));
 
     if (propertyName == vm.propertyNames->length) {
         if (!thisObject->isLengthWritable()) {
@@ -315,6 +326,10 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
 
         if (slot.thisValue() != thisObject) [[unlikely]]
             RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
+
+        // (Refused before the value is converted, which can run user code and throw a RangeError.)
+        if (thisObject->structure()->hasImmutableProperties()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, JSObject::put(cell, globalObject, propertyName, value, slot));
 
         unsigned newLength = value.toUInt32(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
@@ -544,8 +559,8 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
 
 bool JSArray::fastFill(VM& vm, unsigned startIndex, unsigned endIndex, JSValue value)
 {
-    if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+    if (!tryMakeWritable(vm)) [[unlikely]]
+        return false;
 
     IndexingType type = indexingType();
     if (!(type & IsArray) || hasAnyArrayStorage(type))
@@ -892,8 +907,8 @@ bool JSArray::fastCopyWithin(JSGlobalObject* globalObject, uint64_t from64, uint
     if (!canDoFastPath)
         return false;
 
-    if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+    if (!tryMakeWritable(vm)) [[unlikely]]
+        return false;
 
     auto type = this->indexingType();
     switch (type) {
@@ -1110,8 +1125,8 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+    if (!tryMakeWritable(vm)) [[unlikely]]
+        return false;
 
     IndexingType type = indexingType();
     bool allowPromotion = false;
@@ -1182,6 +1197,10 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     if (!canFastAppend(otherArray))
         return false;
 
+    // (ensureLength() below converts copy-on-write storage. False: the caller's generic path, whose puts are refused.)
+    if (isCopyOnWrite(indexingMode()) && structure()->hasImmutableProperties()) [[unlikely]]
+        return false;
+
     IndexingType type = indexingType();
     IndexingType otherType = otherArray->indexingType();
     bool allowPromotion = false;
@@ -1249,6 +1268,10 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     Butterfly* butterfly = this->butterfly();
     switch (indexingMode()) {
     case ArrayClass:
+        // (An array with immutable properties has no element storage, copy-on-write storage or array storage: a put of length
+        // fails for it in those three cases, the length it has included.)
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         if (!newLength)
             return true;
         if (newLength >= MIN_SPARSE_ARRAY_INDEX) {
@@ -1262,6 +1285,8 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     case CopyOnWriteArrayWithInt32:
     case CopyOnWriteArrayWithDouble:
     case CopyOnWriteArrayWithContiguous:
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         if (newLength == butterfly->publicLength())
             return true;
         convertFromCopyOnWrite(vm);
@@ -1312,6 +1337,8 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
         
     case ArrayWithArrayStorage:
     case ArrayWithSlowPutArrayStorage:
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         RELEASE_AND_RETURN(scope, setLengthWithArrayStorage(globalObject, newLength, throwException, arrayStorage()));
         
     default:
@@ -1325,12 +1352,18 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ensureWritable(vm);
+    if (!tryMakeWritable(vm)) [[unlikely]] {
+        throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+        return jsUndefined();
+    }
 
     Butterfly* butterfly = this->butterfly();
 
     switch (indexingType()) {
     case ArrayClass:
+        // (pop() ends with a put of length, which fails for such an array even when there is nothing to remove.)
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return jsUndefined();
         
     case ArrayWithUndecided:
@@ -1377,7 +1410,7 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     
         unsigned length = storage->length();
         if (!length) {
-            if (!isLengthWritable())
+            if (!isLengthWritable() || structure()->hasImmutableProperties())
                 throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
             return jsUndefined();
         }
@@ -1423,7 +1456,8 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
 
 JSValue JSArray::fastShift(VM& vm)
 {
-    ensureWritable(vm);
+    if (!tryMakeWritable(vm)) [[unlikely]]
+        return { };
 
     Butterfly* butterfly = this->butterfly();
     auto indexingType = this->indexingType();
@@ -1682,7 +1716,9 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
     VM& vm = globalObject->vm();
     RELEASE_ASSERT(count > 0);
 
-    ensureWritable(vm);
+    // (False: ArrayPrototype's generic path, whose puts and deletes are refused.)
+    if (!tryMakeWritable(vm)) [[unlikely]]
+        return false;
 
     Butterfly* butterfly = this->butterfly();
     
@@ -1857,7 +1893,9 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ensureWritable(vm);
+    // (False: ArrayPrototype's generic path, whose puts and deletes are refused.)
+    if (!tryMakeWritable(vm)) [[unlikely]]
+        return false;
 
     Butterfly* butterfly = this->butterfly();
     
@@ -2168,7 +2206,7 @@ bool JSArray::isToPrimitiveFastAndNonObservable()
         return false;
 
     Structure* structure = this->structure();
-    return globalObject->isOriginalArrayStructure(structure);
+    return globalObject->isOriginalArrayStructure(structure) || globalObject->isOriginalArrayStructureWithImmutableProperties(structure);
 }
 
 template<AllocationFailureMode failureMode>

@@ -253,7 +253,7 @@ inline bool NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
     // This is the fast case. Many arrays will be an original array.
     // We are doing very simple check here. If we do more complicated checks like looking into getDirect "join" of thisObject,
     // it would be possible that just looking into "join" function will show the same performance.
-    return globalObject->isOriginalArrayStructure(structure);
+    return globalObject->isOriginalArrayStructure(structure) || globalObject->isOriginalArrayStructureWithImmutableProperties(structure);
 }
 
 JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncToString, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -623,7 +623,12 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
     uint64_t length = toLength(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    thisObject->ensureWritable(vm);
+    if (!thisObject->tryMakeWritable(vm)) [[unlikely]] {
+        // What the generic path below does for such an array: nothing if there is nothing to exchange, else the first Set fails.
+        if (length > 1)
+            return throwVMTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+        return JSValue::encode(thisObject);
+    }
 
     switch (thisObject->indexingType()) {
     case ALL_CONTIGUOUS_INDEXING_TYPES:

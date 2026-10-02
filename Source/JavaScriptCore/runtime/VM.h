@@ -447,6 +447,10 @@ public:
 
 private:
     bool m_isInService { false };
+public:
+    // See AllowLazyMaterializationOfImmutableProperties. (Declared here because it fills padding: no other field moves.)
+    unsigned allowLazyMaterializationOfImmutablePropertiesCount { 0 };
+private:
     RefPtr<CrossTaskToken> m_crossTaskToken;
     VMIdentifier m_identifier;
     const Ref<JSLock> m_apiLock;
@@ -1150,6 +1154,7 @@ public:
     MicrotaskQueue& defaultMicrotaskQueue();
 
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
+
     JS_EXPORT_PRIVATE void drainMicrotasks();
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
@@ -1556,6 +1561,36 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
+
+// While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(); it changes
+// nothing for any other object. It is for the places where the engine materializes a property the object logically already has: a
+// static property table entry, a function's name, length or prototype, an error's stack, an arguments object's callee. Nothing
+// inside it may run JavaScript: with assertions enabled it counts as a DisallowVMEntry too.
+class AllowLazyMaterializationOfImmutableProperties {
+    WTF_MAKE_NONCOPYABLE(AllowLazyMaterializationOfImmutableProperties);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    explicit AllowLazyMaterializationOfImmutableProperties(VM& vm)
+        : m_vm(vm)
+    {
+        ++m_vm.allowLazyMaterializationOfImmutablePropertiesCount;
+#if ASSERT_ENABLED
+        ++m_vm.disallowVMEntryCount;
+#endif
+    }
+
+    ~AllowLazyMaterializationOfImmutableProperties()
+    {
+#if ASSERT_ENABLED
+        ASSERT(m_vm.disallowVMEntryCount);
+        --m_vm.disallowVMEntryCount;
+#endif
+        --m_vm.allowLazyMaterializationOfImmutablePropertiesCount;
+    }
+
+private:
+    VM& m_vm;
+};
 
 } // namespace JSC
 
