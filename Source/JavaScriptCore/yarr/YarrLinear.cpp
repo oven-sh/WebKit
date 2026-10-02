@@ -90,11 +90,10 @@ public:
     std::unique_ptr<LinearProgram> compile(LinearRefusal& refusal)
     {
         compileBody();
-        if (!failed()) {
+        // compileLinear() adds what the matcher holds before any vector allocates, and refuses
+        // the program when that is too much.
+        if (!failed())
             m_program->m_maximumScratchBytes = workingMemoryBound();
-            if (m_program->m_maximumScratchBytes > Options::maximumRegExpLinearWorkingMemory())
-                refuse(LinearRefusal::WorkingMemoryTooLarge);
-        }
         if (!failed()) {
             // Without a lookaround the bound is under this limit: the program is.
             m_program->m_maximumStepsPerPosition = maximumStepsPerPosition();
@@ -121,10 +120,8 @@ private:
     // The matcher keeps an instruction's index and a bit in one unsigned.
     static constexpr unsigned maximumProgramSizeLimit = 1u << 30;
 
-    // LinearMatcher::Frame, and what the matcher holds for a code before its vectors allocate:
-    // LinearMatcher::Scratch, with their inline capacity, and a pointer to it.
+    // LinearMatcher::Frame.
     static constexpr uint64_t bytesPerFrame = 3 * sizeof(unsigned);
-    static constexpr uint64_t bytesPerScratch = 2304;
 
     static constexpr uint64_t unbounded = std::numeric_limits<uint64_t>::max();
 
@@ -692,11 +689,11 @@ private:
         return child;
     }
 
-    // The most the matcher can hold for this program, whatever the subject is. A position has
-    // at most two states per instruction that waits on a character, in two lists, and every
-    // state of a code that writes slots has a copy of the slots. addThread() keeps a frame for
-    // each instruction it is in the middle of, and one for each slot that instruction wrote. The
-    // vectors that hold all this grow by a quarter at a time, past the capacity they start with.
+    // The most the vectors of the matcher can hold for this program, whatever the subject is. A
+    // position has at most two states per instruction that waits on a character, in two lists,
+    // and every state of a code that writes slots has a copy of the slots. addThread() keeps a
+    // frame for each instruction it is in the middle of, and one for each slot that instruction
+    // wrote. The vectors grow by a quarter at a time.
     uint64_t workingMemoryBound() const
     {
         uint64_t bytes = 0;
@@ -730,7 +727,7 @@ private:
             bytes += frames * bytesPerFrame;
             bytes += 2 * slots * sizeof(unsigned);
         }
-        return bytes + bytes / 4 + m_program->m_codes.size() * bytesPerScratch;
+        return bytes + bytes / 4;
     }
 
     // A step of the matcher is a visit of addThread(), or a state run() takes over a
@@ -964,11 +961,6 @@ private:
     UncheckedKeyHashMap<CharacterClass*, unsigned> m_classIndices;
 };
 
-std::unique_ptr<LinearProgram> compileLinear(YarrPattern& pattern, LinearRefusal& refusal)
-{
-    return LinearCompiler(pattern).compile(refusal);
-}
-
 // ---------------------------------------------------------------------------------------------
 // Matcher
 // ---------------------------------------------------------------------------------------------
@@ -1089,9 +1081,14 @@ private:
         bool isPrepared { false };
         bool isRunning { false };
     };
-    // Seven vectors, each of which can hold one element more than a quarter over what it needs.
-    static_assert(sizeof(Scratch) + 7 * sizeof(Frame) + sizeof(void*) <= 2304, "LinearCompiler::workingMemoryBound() counts a Scratch as this much");
 
+public:
+    // What the matcher holds for one code before any vector allocates: a Scratch, with the
+    // inline capacity of its eight vectors, each of which can then hold one element more than a
+    // quarter over what it needs, and a pointer to the Scratch.
+    static constexpr size_t bytesPerCode = sizeof(Scratch) + 8 * sizeof(Frame) + sizeof(std::unique_ptr<Scratch>);
+
+private:
     Scratch& scratchFor(unsigned codeIndex)
     {
         if (!codeIndex)
@@ -1460,6 +1457,20 @@ private:
     Scratch m_scratch;
     Vector<std::unique_ptr<Scratch>, 4> m_lookaroundScratch;
 };
+
+std::unique_ptr<LinearProgram> compileLinear(YarrPattern& pattern, LinearRefusal& refusal)
+{
+    auto program = LinearCompiler(pattern).compile(refusal);
+    if (!program)
+        return nullptr;
+
+    program->m_maximumScratchBytes += program->m_codes.size() * LinearMatcher<Latin1Character>::bytesPerCode;
+    if (program->m_maximumScratchBytes > Options::maximumRegExpLinearWorkingMemory()) {
+        refusal = LinearRefusal::WorkingMemoryTooLarge;
+        return nullptr;
+    }
+    return program;
+}
 
 unsigned LinearProgram::match(StringView input, unsigned start, unsigned* output, Statistics* statistics) const
 {
