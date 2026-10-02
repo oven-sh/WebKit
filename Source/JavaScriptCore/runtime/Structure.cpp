@@ -976,8 +976,12 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     if (transitionKind == TransitionKind::BecomePrototype)
         transition->setMayBePrototype(true);
 
-    if (transitionKind == TransitionKind::MakePropertiesImmutable)
+    if (transitionKind == TransitionKind::MakePropertiesImmutable) {
         transition->setHasImmutableProperties(true);
+        // A structure is not watched once a watched predecessor of it has transitioned, on the grounds that the object will change
+        // shape again. This object will not: what remains for it is a transition such as BecomePrototype, at most once.
+        transition->setTransitionWatchpointIsLikelyToBeFired(false);
+    }
     
     if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind)) {
         // We pin the property table on transitions that do wholesale editing of the property
