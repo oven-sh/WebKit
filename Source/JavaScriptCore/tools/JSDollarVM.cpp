@@ -90,6 +90,7 @@
 #include "WasmCapabilities.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "BufferAccessorRegistry.h"
+#include "FunctionPrototype.h"
 #include "JSArrayBufferView.h"
 #include "JSBigInt.h"
 #include "MathCommon.h"
@@ -2160,6 +2161,63 @@ JSC_DEFINE_HOST_FUNCTION(functionWasmStreamingCompilerAddBytes, (JSGlobalObject*
 
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(callInternalFunctionWithoutConstructData);
+static JSC_DECLARE_HOST_FUNCTION(constructInternalFunctionWithoutConstructData);
+
+// Both handlers return a string, the way an embedder's function does when `new f()` has to evaluate to a primitive.
+class InternalFunctionWithoutConstructData final : public InternalFunction {
+public:
+    using Base = InternalFunction;
+    using JSCell::getConstructData;
+
+    DECLARE_INFO;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        DollarVMAssertScope assertScope;
+        return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
+    }
+
+    static InternalFunctionWithoutConstructData* create(VM& vm, JSGlobalObject* globalObject)
+    {
+        DollarVMAssertScope assertScope;
+        Structure* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
+        auto* function = new (NotNull, allocateCell<InternalFunctionWithoutConstructData>(vm)) InternalFunctionWithoutConstructData(vm, structure);
+        function->finishCreation(vm, 0, "InternalFunctionWithoutConstructData"_s, PropertyAdditionMode::WithoutStructureTransition);
+        return function;
+    }
+
+private:
+    InternalFunctionWithoutConstructData(VM& vm, Structure* structure)
+        : Base(vm, structure, callInternalFunctionWithoutConstructData, constructInternalFunctionWithoutConstructData)
+    {
+        DollarVMAssertScope assertScope;
+    }
+};
+
+const ClassInfo InternalFunctionWithoutConstructData::s_info = { "InternalFunctionWithoutConstructData"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalFunctionWithoutConstructData) };
+
+JSC_DEFINE_HOST_FUNCTION(callInternalFunctionWithoutConstructData, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsString(globalObject->vm(), makeString("call:"_s, callFrame->argumentCount())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(constructInternalFunctionWithoutConstructData, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // `super()` of a class whose [[Prototype]] was set to this function gets here with the class as new.target.
+    if (callFrame->newTarget() != callFrame->jsCallee()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "InternalFunctionWithoutConstructData is not a constructor"_s);
+
+    return JSValue::encode(jsString(vm, makeString("new:"_s, callFrame->argumentCount())));
+}
+#endif
+
 } // namespace
 
 namespace JSC {
@@ -2357,6 +2415,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionFFIWrite);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICString);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIArenaDepth);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICompileCounts);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateInternalFunctionWithoutConstructData);
 #endif
 
 const ClassInfo JSDollarVM::s_info = { "DollarVM"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDollarVM) };
@@ -5539,6 +5598,12 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject
     return JSValue::encode(counts);
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionCreateInternalFunctionWithoutConstructData, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(InternalFunctionWithoutConstructData::create(globalObject->vm(), globalObject));
+}
+
 #endif // USE(BUN_JSC_ADDITIONS)
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -6136,6 +6201,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "ffiCString"_s, functionFFICString, 1);
     addFunction(vm, allowIfNotFuzz, "ffiArenaDepth"_s, functionFFIArenaDepth, 0);
     addFunction(vm, allowIfNotFuzz, "ffiCompileCounts"_s, functionFFICompileCounts, 0);
+    addFunction(vm, allowIfNotFuzz, "createInternalFunctionWithoutConstructData"_s, functionCreateInternalFunctionWithoutConstructData, 0);
 #endif
 
     if (allowIfNotFuzz) {
