@@ -453,6 +453,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfProgramData() { return OBJECT_OFFSETOF(Instance, programData); }
     static constexpr ptrdiff_t offsetOfStringConstantRecords() { return OBJECT_OFFSETOF(Instance, stringConstantRecords); }
     static constexpr ptrdiff_t offsetOfSharedData() { return OBJECT_OFFSETOF(Instance, sharedData); }
+    static constexpr ptrdiff_t offsetOfMegamorphicProbesForEmptySlots() { return OBJECT_OFFSETOF(Instance, megamorphicProbesForEmptySlots); }
     static constexpr ptrdiff_t offsetOfCode() { return OBJECT_OFFSETOF(Instance, code); }
     static constexpr ptrdiff_t offsetOfCodeGranules() { return OBJECT_OFFSETOF(Instance, codeGranules); }
     static constexpr ptrdiff_t offsetOfSubsequentFunctionStarts() { return OBJECT_OFFSETOF(Instance, subsequentFunctionStarts); }
@@ -640,6 +641,7 @@ struct Instance {
     CachedAddressInfo cachedAddressInfos[numberOfCachedAddressInfos] { };
     CachedAddressInfo& cachedAddressInfo(const void* address) { return cachedAddressInfos[(std::bit_cast<uintptr_t>(address) >> 2) % numberOfCachedAddressInfos]; }
     uint32_t uncountedOperations { 0 };
+    uint32_t megamorphicProbesForEmptySlots { 0 };
     const void* overriddenReturnAddress { nullptr };
     uint32_t overridingSite { 0 };
     uint32_t states[0];
@@ -681,6 +683,7 @@ struct Data {
     unsigned numSlots;
     bool hasBeenFilledSinceLastCollection;
     bool hasSiteConstants;
+    bool hasSitesInMegamorphicCache;
     unsigned indexInAllList;
     unsigned indexInFilledList;
     uint64_t slotEpoch;

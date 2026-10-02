@@ -270,8 +270,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
         OPERATION_RETURN(scope, object);
 
     if (cache->pointer && cache->pointer != constructor && !SharedData::contains(cache)) {
-        if (first->propertyAccessesAreCacheable() && canUseMegamorphicPutFastPath(first))
+        if (first->propertyAccessesAreCacheable() && canUseMegamorphicPutFastPath(first)) {
             vm.ensureMegamorphicCache().initAsConstruction(first->id(), last->id(), cache);
+            callerData(instance, callFrame)->hasSitesInMegamorphicCache = true;
+        }
         OPERATION_RETURN(scope, object);
     }
 

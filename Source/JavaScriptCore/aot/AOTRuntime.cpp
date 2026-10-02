@@ -729,6 +729,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     const FunctionInfo& info = instance.infos[code.index()];
     data->sites = code.sites();
     data->hasSiteConstants = code.imageFunction()->hasSiteConstants;
+    data->hasSitesInMegamorphicCache = false;
     data->numSlots = numSlots;
     data->slotEpoch = 1;
 
@@ -1108,7 +1109,7 @@ static std::span<const uint32_t> functionsIn(const FunctionMetadata& metadata, F
 void Data::destroy(Data* data)
 {
     Instance& instance = *data->instance;
-    if (auto* cache = instance.vm->megamorphicCache())
+    if (auto* cache = instance.vm->megamorphicCache(); cache && data->hasSitesInMegamorphicCache)
         cache->bumpEpoch();
     RELEASE_ASSERT(instance.dataIfExists(data->code->index()) == data);
     instance.setNotLinked(data->code->index());
