@@ -838,6 +838,29 @@ bool JSObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prop
     return putInlineForJSObject(cell, globalObject, propertyName, value, slot);
 }
 
+// SameValue (7.2.10) where there is no JSGlobalObject to throw with: a rope is resolved without throwing, and a string that cannot
+// be resolved counts as different.
+static bool sameValueWithoutThrowing(JSValue a, JSValue b)
+{
+    if (a == b)
+        return true;
+    if (a.isNumber() || b.isNumber()) {
+        if (!a.isNumber() || !b.isNumber())
+            return false;
+        double x = a.asNumber();
+        double y = b.asNumber();
+        if (std::isnan(x) || std::isnan(y))
+            return std::isnan(x) && std::isnan(y);
+        return std::bit_cast<uint64_t>(x) == std::bit_cast<uint64_t>(y);
+    }
+    if (a.isString() && b.isString()) {
+        auto x = asString(a)->tryGetValue();
+        auto y = asString(b)->tryGetValue();
+        return x->impl() && y->impl() && WTF::equal(*x->impl(), *y->impl());
+    }
+    return JSValue::pureStrictEqual(a, b) == TriState::True;
+}
+
 NEVER_INLINE std::optional<ASCIILiteral> JSObject::putDirectWhenPropertiesAreImmutable(VM& vm, PropertyName propertyName, JSValue value, unsigned newAttributes, bool isPut)
 {
     if (isPut)
@@ -847,7 +870,7 @@ NEVER_INLINE std::optional<ASCIILiteral> JSObject::putDirectWhenPropertiesAreImm
     // A direct define that changes nothing succeeds, as it does through validateAndApplyPropertyDescriptor().
     unsigned currentAttributes;
     PropertyOffset currentOffset = structure()->get(vm, propertyName, currentAttributes);
-    if (currentOffset != invalidOffset && currentAttributes == newAttributes && getDirect(currentOffset) == value)
+    if (currentOffset != invalidOffset && currentAttributes == newAttributes && sameValueWithoutThrowing(getDirect(currentOffset), value))
         return ASCIILiteral { };
     return ASCIILiteral { ReadonlyPropertyChangeError };
 }
@@ -3778,8 +3801,10 @@ bool JSObject::putDirectIndexSlowOrBeyondVectorLength(JSGlobalObject* globalObje
 {
     VM& vm = globalObject->vm();
     if (structure()->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, ImmutableObjectPropertyDefineError);
+        // [[DefineOwnProperty]], which succeeds for such an object if it changes nothing.
+        PropertyDescriptor descriptor;
+        descriptor.setDescriptor(value, attributes);
+        return methodTable()->defineOwnProperty(this, globalObject, Identifier::from(vm, i), descriptor, mode == PutDirectIndexShouldThrow);
     }
     ASSERT(!value.isCustomGetterSetter());
 

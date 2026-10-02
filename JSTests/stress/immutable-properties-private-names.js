@@ -85,3 +85,71 @@ class PublicFieldStamper extends ReturnsArgument {
     shouldBe(counter.increment(), 2);
     shouldThrow(() => { "use strict"; counter.extra = 1; }, TypeError);
 }
+
+// A public field is CreateDataPropertyOrThrow, which is [[DefineOwnProperty]]: through a constructor that returns its argument it
+// succeeds when it changes nothing, whatever cell or number representation the equal value arrives in, and throws otherwise. The
+// same holds for an index key, for packed elements and for the others, and it agrees with Object.defineProperty().
+{
+    function outcome(func) {
+        try {
+            func();
+            return "ok";
+        } catch (e) {
+            return e.constructor.name;
+        }
+    }
+    let suffix = "b", ten = 10n, quarter = 0.25;
+    let make = () => ({ text: "ab", number: 1, half: 2.5, big: 10n ** 30n, zero: 0, nan: NaN, symbol: Symbol.for("s"), object: Object.prototype });
+    let packed = () => { let a = []; for (let i = 0; i < 4; ++i) a.push(i + 0.5); return a; };
+    let holey = () => { let a = packed(); a[9] = 9.5; return a; };
+    let target;
+    class Base { constructor() { return target; } }
+    let unchanged = {
+        ropeString: class extends Base { text = "a" + suffix; }, joinedString: class extends Base { text = ["a", "b"].join(""); }, computedNumber: class extends Base { number = quarter * 4; },
+        computedDouble: class extends Base { half = quarter * 10; }, anotherBigIntCell: class extends Base { big = ten ** 30n; }, nan: class extends Base { nan = 0 / 0; }, symbol: class extends Base { symbol = Symbol.for("s"); },
+        object: class extends Base { object = Object.prototype; }, several: class extends Base { text = "a" + suffix; number = 1; nan = NaN; },
+    };
+    let changed = {
+        minusZero: class extends Base { zero = -0; }, longerString: class extends Base { text = "a" + suffix + "c"; }, anotherBigInt: class extends Base { big = ten ** 30n + 1n; }, anotherNumber: class extends Base { number = 2; },
+        newName: class extends Base { added = 1; }, anotherObject: class extends Base { object = Array.prototype; }, secondOfTwo: class extends Base { number = 1; text = "x"; },
+    };
+    for (let name in unchanged) {
+        target = $vm.makePropertiesImmutable(make());
+        let before = JSON.stringify(Object.getOwnPropertyDescriptors(target), (k, v) => typeof v === "bigint" ? String(v) : v);
+        for (let i = 0; i < 3000; ++i)
+            shouldBe(outcome(() => new unchanged[name]), "ok", name);
+        shouldBe(JSON.stringify(Object.getOwnPropertyDescriptors(target), (k, v) => typeof v === "bigint" ? String(v) : v), before, name);
+    }
+    for (let name in changed) {
+        target = $vm.makePropertiesImmutable(make());
+        let before = JSON.stringify(Object.getOwnPropertyDescriptors(target), (k, v) => typeof v === "bigint" ? String(v) : v);
+        for (let i = 0; i < 3000; ++i)
+            shouldBe(outcome(() => new changed[name]), "TypeError", name);
+        shouldBe(JSON.stringify(Object.getOwnPropertyDescriptors(target), (k, v) => typeof v === "bigint" ? String(v) : v), before, name);
+    }
+    // The same answers from Object.defineProperty().
+    target = $vm.makePropertiesImmutable(make());
+    shouldBe(outcome(() => Object.defineProperty(target, "text", { value: "a" + suffix })), "ok");
+    shouldBe(outcome(() => Object.defineProperty(target, "big", { value: ten ** 30n })), "ok");
+    shouldBe(outcome(() => Object.defineProperty(target, "zero", { value: -0 })), "TypeError");
+    // Index keys.
+    for (let makeArray of [packed, holey]) {
+        class SameElement extends Base { 1 = quarter * 6; }
+        class OtherElement extends Base { 1 = 7; }
+        class NewElement extends Base { 20 = 7; }
+        target = $vm.makePropertiesImmutable(makeArray());
+        let before = JSON.stringify(target);
+        for (let i = 0; i < 3000; ++i) {
+            shouldBe(outcome(() => new SameElement), "ok");
+            shouldBe(outcome(() => new OtherElement), "TypeError");
+            shouldBe(outcome(() => new NewElement), "TypeError");
+        }
+        shouldBe(JSON.stringify(target), before);
+    }
+    // A function, whose name is materialized lazily.
+    function named() { }
+    target = $vm.makePropertiesImmutable(named);
+    shouldBe(outcome(() => Object.defineProperty(target, "name", { value: "na" + "med" })), "ok");
+    shouldBe(outcome(() => Object.defineProperty(target, "name", { value: "other" })), "TypeError");
+    shouldBe(named.name, "named");
+}

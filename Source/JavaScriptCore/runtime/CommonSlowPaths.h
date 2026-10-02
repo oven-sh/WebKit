@@ -182,9 +182,15 @@ static ALWAYS_INLINE bool canPutDirectFast(VM& vm, Structure* structure, Propert
 static ALWAYS_INLINE void putDirectWithReify(VM& vm, JSGlobalObject* globalObject, JSObject* baseObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot, Structure** result = nullptr)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Class fields, object literal members and the other direct-define bytecodes fail here, as CreateDataPropertyOrThrow would.
+    // Class fields, object literal members and the other direct-define bytecodes are CreateDataPropertyOrThrow, which is
+    // [[DefineOwnProperty]]: for such an object it succeeds if it changes nothing and throws otherwise.
     if (baseObject->structure()->hasImmutableProperties()) [[unlikely]] {
-        throwTypeError(globalObject, scope, ImmutableObjectPropertyDefineError);
+        slot.disableCaching();
+        if (result)
+            *result = baseObject->structure();
+        scope.release();
+        PropertyDescriptor descriptor(value, 0);
+        baseObject->methodTable()->defineOwnProperty(baseObject, globalObject, propertyName, descriptor, true);
         return;
     }
     bool isJSFunction = baseObject->inherits<JSFunction>();
