@@ -1133,6 +1133,7 @@ void Lowering::checkCallee(Node* guard)
     LBasicBlock hasRareData = m_out.newBlock();
     LBasicBlock executableReady = m_out.newBlock();
     LValue executableOrRareData = m_out.loadPtr(callee, m_heaps.JSFunction_executableOrRareData);
+    exitUnless(m_out.testIsZeroPtr(executableOrRareData, m_out.constIntPtr(JSFunction::aotFunctionTag)));
     ValueFromBlock direct = m_out.anchor(executableOrRareData);
     m_out.branch(m_out.testNonZeroPtr(executableOrRareData, m_out.constIntPtr(JSFunction::rareDataTag)), rarely(hasRareData), usually(executableReady));
     m_out.appendTo(hasRareData, executableReady);

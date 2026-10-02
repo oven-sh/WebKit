@@ -1715,6 +1715,7 @@ ExpressionNode* ASTBuilder::makeAssignNode(const JSTokenLocation& location, Expr
 
     if (op == Operator::CoalesceEq || op == Operator::OrEq || op == Operator::AndEq) {
         auto* node = new (m_parserArena) ShortCircuitReadModifyDotNode(location, dot->base(), dot->identifier(), dot->type(), op, expr, exprHasAssignments, divot, start, end);
+        node->setTypeTag(dot->typeTag());
         node->setSubexpressionInfo(dot->divot(), dot->divotEnd().offset);
         return node;
     }

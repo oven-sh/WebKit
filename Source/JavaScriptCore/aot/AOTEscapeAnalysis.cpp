@@ -10,6 +10,7 @@
 
 #include "AOTTypeTable.h"
 #include "BytecodeStructs.h"
+#include "ImmutableIntrinsics.h"
 #include "JSCInlines.h"
 #include "SymbolTable.h"
 #include "UnlinkedFunctionCodeBlock.h"
@@ -760,7 +761,22 @@ NodeUsers::NodeUsers(Graph& graph)
     }
 }
 
-std::optional<NodeUsers::OnlyRead> NodeUsers::isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t layoutID) const
+static bool isAbsentFromObjectPrototype(UniquedStringImpl* name)
+{
+    if (!ImmutableIntrinsics::shared() || name->isSymbol())
+        return false;
+    static constexpr ASCIILiteral names[] = {
+        "constructor"_s, "toString"_s, "toLocaleString"_s, "valueOf"_s, "hasOwnProperty"_s, "propertyIsEnumerable"_s, "isPrototypeOf"_s,
+        "__defineGetter__"_s, "__defineSetter__"_s, "__lookupGetter__"_s, "__lookupSetter__"_s, "__proto__"_s,
+    };
+    for (auto candidate : names) {
+        if (equal(name, candidate))
+            return false;
+    }
+    return true;
+}
+
+std::optional<NodeUsers::OnlyRead> NodeUsers::isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t layoutID, AbsentReads absentReads) const
 {
     OnlyRead result;
     result.aliasingUsers.append(object);
@@ -799,8 +815,12 @@ std::optional<NodeUsers::OnlyRead> NodeUsers::isOnlyRead(Node* object, std::span
                     if (names[candidate] == name)
                         index = candidate;
                 }
-                if (index == names.size())
-                    return std::nullopt;
+                if (index == names.size()) {
+                    if (absentReads == AbsentReads::Disallow || !isAbsentFromObjectPrototype(name))
+                        return std::nullopt;
+                    result.absentReads.append(user);
+                    break;
+                }
                 result.reads.append({ user, static_cast<unsigned>(index) });
                 break;
             }
@@ -900,6 +920,7 @@ void planMultiValueReturns(Graph& graph)
                 users.emplace(graph);
             auto onlyRead = users->isOnlyRead(node, names->span(), 0);
             RELEASE_ASSERT(onlyRead);
+            graph.remark("reads-returned-object-from-registers"_s, known->executable ? known->executable->ecmaName().string() : String());
             node->numberOfReturnValues = names->size();
             auto& reads = graph.returnValueReads.add(node, Vector<Node*, 8> { }).iterator->value;
             for (auto [read, index] : onlyRead->reads) {
@@ -951,11 +972,17 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
                     continue;
                 if (!users)
                     users.emplace(graph);
-                auto onlyRead = users->isOnlyRead(node, names.span(), Graph::newObjectLayoutID(node));
+                auto onlyRead = users->isOnlyRead(node, names.span(), Graph::newObjectLayoutID(node), NodeUsers::AbsentReads::Allow);
                 if (!onlyRead)
                     continue;
                 for (auto [read, index] : onlyRead->reads) {
                     read->replacement = node->use(NewObjectPlan::registerOf(index));
+                    read->isElided = true;
+                }
+                graph.remark("scalar-replaced-object"_s);
+                for (Node* read : onlyRead->absentReads) {
+                    graph.remark("absent-property-is-undefined"_s, read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).string());
+                    read->replacement = graph.constant(jsUndefined());
                     read->isElided = true;
                 }
                 for (Node* test : onlyRead->tests) {

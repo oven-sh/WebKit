@@ -293,6 +293,7 @@ private:
 
     TypedPointer cachedPropertyAddress(LValue, LValue firstSlotWord, const B3::AbstractHeap* = nullptr);
     LValue getByIdCached(Node*, LValue base, Type baseType, Entry operation, unsigned identifier);
+    LValue getByIdWithThisCached(Node*, LValue base, LValue thisValue, unsigned identifier);
     LValue lowIndex(Node* property, LBasicBlock indexReady, LBasicBlock notIndex);
 
     void lowerGuard(BasicBlock*, Node*);

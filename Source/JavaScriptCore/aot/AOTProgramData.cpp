@@ -538,6 +538,17 @@ public:
                 row.entry[static_cast<unsigned>(kind)] = executable->aotEntryFor(kind);
                 row.index[static_cast<unsigned>(kind)] = executable->aotIndexFor(kind);
             }
+            if (SourceParseMode parseMode = executable->parseMode(); row.isShort && hasCodeToCall && !executable->isBuiltinFunction() && !executable->isClassConstructorFunction()
+                && !isGeneratorWrapperParseMode(parseMode) && !isAsyncFunctionWrapperParseMode(parseMode) && !isAsyncGeneratorWrapperParseMode(parseMode)) {
+                FunctionStructureKind kind;
+                if (executable->isArrowFunction())
+                    kind = FunctionStructureKind::Arrow;
+                else if (executable->isInStrictContext())
+                    kind = executable->hasPrototypeProperty() ? FunctionStructureKind::StrictFunction : FunctionStructureKind::StrictMethod;
+                else
+                    kind = executable->hasPrototypeProperty() ? FunctionStructureKind::SloppyFunction : FunctionStructureKind::SloppyMethod;
+                row.functionStructureKind = static_cast<uint32_t>(kind);
+            }
             row.module = moduleIndex;
             row.isArrowFunctionContext = executable->isArrowFunctionContext();
             row.isInsideOrdinaryFunction = executable->isInsideOrdinaryFunction();

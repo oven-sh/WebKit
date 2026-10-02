@@ -382,6 +382,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     }
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
     result.info = WTF::move(info);
+    result.remarks = WTF::move(graph.remarks);
     return true;
 }
 

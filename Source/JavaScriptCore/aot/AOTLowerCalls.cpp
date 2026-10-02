@@ -124,6 +124,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         }
         return true;
     }
+    m_graph.remark(isConstruct ? "direct-construct"_s : "direct-call"_s, known->executable ? known->executable->ecmaName().string() : String());
     Convention convention = isConstruct ? known->conventionForConstruct : known->conventionForCall;
     unsigned index = m_graph.knownCalleeIndex(known->keyFor(isConstruct));
     bool passesCallee = !m_graph.passesNoFunctionObject(node);

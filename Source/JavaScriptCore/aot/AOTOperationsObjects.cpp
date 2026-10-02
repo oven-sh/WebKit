@@ -246,6 +246,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
 
     Structure* first = object->structure();
     bool matchesPlannedLayout = true;
+    bool hasTypedLayout = first->typedLayoutID() && TypedLayoutTable::hasTypedFields();
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& ident = identifierAt(instance, callFrame, properties[i].identifier);
         PutPropertySlot slot(object, properties[i].isStrict, putByIdContextOf(instance, callFrame));
@@ -254,7 +255,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
         else
             object->methodTable()->put(object, globalObject, ident, JSValue::decode(values[i]), slot);
         OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
-        matchesPlannedLayout &= slot.isCacheablePut() && slot.base() == object && slot.type() == PutPropertySlot::NewProperty && slot.cachedOffset() == static_cast<PropertyOffset>(i);
+        bool isNewProperty = slot.isCacheablePut() && slot.type() == PutPropertySlot::NewProperty;
+        bool isNewTypedField = hasTypedLayout && slot.isTypedFieldCacheablePut() && slot.type() == PutPropertySlot::NewTypedField;
+        matchesPlannedLayout &= (isNewProperty || isNewTypedField) && slot.base() == object && (hasTypedLayout ? isInlineOffset(slot.cachedOffset()) : slot.cachedOffset() == static_cast<PropertyOffset>(i));
     }
     cacheable &= matchesPlannedLayout;
 
@@ -574,6 +577,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance* instance
 {
     AOT_OPERATION_BEGIN(instance);
     FunctionRef function = callerBytecodeOwner(instance, callFrame, isExpressionAndOwner >> 1);
+    if (auto executableIndex = static_cast<FunctionKind>(kind) == FunctionKind::Normal ? function.nestedExecutableIndex(isExpressionAndOwner & 1, index) : std::nullopt) {
+        if (JSFunction* result = instance->tryMakeFunctionWithoutExecutable(*executableIndex, environment)) {
+            fillAllocationCache(vm, callerData(instance, callFrame), cache, result->structure(), subspaceFor<JSFunction>(vm)->allocatorFor(JSFunction::allocationSize(0), AllocatorForMode::EnsureAllocator), 0, nullptr);
+            if (!SharedData::contains(cache) && cache[0].structureID == result->structureID())
+                cache[0].pointer = std::bit_cast<void*>(*JSFunction::tryEncodeAOTFunctionWord(instance->program->data().executableRow(*executableIndex).entry[0], instance->program->data().executableRow(*executableIndex).index[0]));
+            OPERATION_RETURN(scope, result);
+        }
+    }
     FunctionExecutable* executable = isExpressionAndOwner & 1 ? function.functionExpr(index) : function.functionDecl(index);
     JSFunction* result = nullptr;
     switch (static_cast<FunctionKind>(kind)) {
@@ -945,11 +956,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdDirect, EncodedJSValue, (Instance* i
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdWithThis, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue thisValue, uint32_t identifierIndex))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdWithThis, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue thisValue, uint32_t identifierIndex, Slot* cache))
 {
     AOT_OPERATION_BEGIN(instance);
+    JSValue base = JSValue::decode(encodedBase);
+    const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     PropertySlot slot(JSValue::decode(thisValue), PropertySlot::InternalMethodType::Get);
-    OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(base).get(globalObject, identifierAt(instance, callFrame, identifierIndex), slot)));
+    Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;
+    JSValue result = base.get(globalObject, ident, slot);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (slot.isValue())
+        cacheGetById(globalObject, callerData(instance, callFrame), base, structureBefore, ident, slot, cache);
+    OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByValWithThis, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue thisValue, EncodedJSValue encodedProperty))

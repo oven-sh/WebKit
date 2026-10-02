@@ -63,6 +63,7 @@
 #include "VariableEnvironmentInlines.h"
 #include <ranges>
 #include <wtf/FileHandle.h>
+#include <wtf/FilePrintStream.h>
 #include <wtf/InlineMap.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/Packed.h>
@@ -6632,6 +6633,12 @@ struct BytecodeLinkEncoder::Impl {
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
         std::atomic<size_t> next { 0 };
         Lock declinedLock;
+        struct FunctionRemarks {
+            AOT::ImageKey key;
+            String name;
+            Vector<String> remarks;
+        };
+        Vector<FunctionRemarks> allRemarks;
         UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
         class LinkedProgramCode final : public AOT::ProgramCode {
         public:
@@ -6685,6 +6692,10 @@ struct BytecodeLinkEncoder::Impl {
                     }
                     if (auto* numbers = AOT::programConstantIndicesFor(jobs[index].codeBlock))
                         code.info.constantIndices = *numbers;
+                    if (Options::aotRemarksPath()) [[unlikely]] {
+                        Locker locker { declinedLock };
+                        allRemarks.append({ jobs[index].key, jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.remarks) });
+                    }
                     String nameForMap;
                     if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
                         nameForMap = executable->ecmaName().string();
@@ -6820,8 +6831,21 @@ struct BytecodeLinkEncoder::Impl {
                 unreachedFunctions = 0;
                 unreachedBytecodeSize = 0;
                 builder.clear();
+                allRemarks.clear();
                 declined.clear();
                 next = 0;
+            }
+        }
+        if (Options::aotRemarksPath()) [[unlikely]] {
+            std::ranges::sort(allRemarks, [](auto& a, auto& b) {
+                return std::tuple { a.key.module, a.key.start, a.key.kind } < std::tuple { b.key.module, b.key.start, b.key.kind };
+            });
+            if (auto file = FilePrintStream::open(byteCast<char>(Options::aotRemarksPath()), "w")) {
+                for (auto& function : allRemarks) {
+                    file->print(function.name, "\tcompiled\n");
+                    for (auto& remark : function.remarks)
+                        file->print(function.name, "\t", remark, "\n");
+                }
             }
         }
         AOT::forgetDeclaredNames();

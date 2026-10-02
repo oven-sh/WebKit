@@ -1268,7 +1268,13 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
             if (!state.isInt32() || state.asInt32() < static_cast<int32_t>(JSGenerator::State::Init))
                 return;
             auto* function = dynamicDowncast<JSFunction>(next);
-            if (!function || function->isHostOrBuiltinFunction())
+            if (!function)
+                return;
+#if ENABLE(AOT)
+            if (function->hasAOTFunctionWord() || function->executable()->isShortFunctionExecutable())
+                return;
+#endif
+            if (function->isHostOrBuiltinFunction())
                 return;
             suspended.add(function->jsExecutable()->unlinkedExecutable());
         };

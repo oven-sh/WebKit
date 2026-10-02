@@ -200,7 +200,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (Instanc
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdReallocating, void, (VM*, JSObject* base, EncodedJSValue value, const void* megamorphicCacheStoreEntry));
 JSC_DECLARE_JIT_OPERATION(operationAOTWriteBarrierAfterPut, void, (VM*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByIdDirect, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t identifierIndex, Slot*));
-JSC_DECLARE_JIT_OPERATION(operationAOTGetByIdWithThis, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue thisValue, uint32_t identifierIndex));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetByIdWithThis, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue thisValue, uint32_t identifierIndex, Slot* cache));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByValWithThis, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdWithThis, void, (Instance*, EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue value, uint32_t identifierIndex, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByValWithThis, void, (Instance*, EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));

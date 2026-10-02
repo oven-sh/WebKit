@@ -355,6 +355,7 @@ void Lowering::lowerGetById(Node* node)
         return;
     }
     if (auto field = (Options::aotShapeOptimizations() & 2) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
+        m_graph.remark("typed-field-read"_s, code().codeBlock()->identifier(bytecode.m_property).string());
         LValue base = lowJSValue(baseNode);
         if (Options::useAOTTypedFields() && TypeTable::hasTypedFields() && field->id) {
             bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
@@ -578,6 +579,38 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     return m_out.phi(Int64, fastResult, slowResult);
 }
 
+LValue Lowering::getByIdWithThisCached(Node* node, LValue base, LValue thisValue, unsigned identifier)
+{
+    m_graph.remark("cached-read-with-this"_s, code().codeBlock()->identifier(identifier).string());
+    unsigned slot = allocateSlot();
+    LBasicBlock cellCase = m_out.newBlock();
+    LBasicBlock rightStructure = m_out.newBlock();
+    LBasicBlock hit = m_out.newBlock();
+    LBasicBlock slowCase = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(isCell(base), usually(cellCase), rarely(slowCase));
+
+    m_out.appendTo(cellCase, rightStructure);
+    LValue word = m_out.load64(slotWord(slot, 0));
+    m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), lowHalf(m_out, word)), usually(rightStructure), rarely(slowCase));
+
+    m_out.appendTo(rightStructure, hit);
+    m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter) << 32)), usually(hit), rarely(slowCase));
+
+    m_out.appendTo(hit, slowCase);
+    LValue holder = m_out.loadPtr(slotWord(slot, 1));
+    LValue isOnHolder = m_out.bitAnd(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIndirect) << 32)), m_out.notNull(holder));
+    ValueFromBlock fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isOnHolder, holder, base), word)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(slowCase, continuation);
+    ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetByIdWithThis, m_instance, base, thisValue, m_out.constInt32(numberOf(identifier)), slotAddress(slot)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return m_out.phi(Int64, fastResult, slowResult);
+}
+
 void Lowering::lowerPutById(Node* node)
 {
     auto bytecode = node->as<OpPutById>();
@@ -588,6 +621,7 @@ void Lowering::lowerPutById(Node* node)
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
     if (auto field = (Options::aotShapeOptimizations() & 4) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {
+        m_graph.remark("typed-field-write"_s, code().codeBlock()->identifier(bytecode.m_property).string());
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock has = m_out.newBlock();
         LBasicBlock otherwise = Options::useAOTTypedFields() && TypeTable::hasTypedFields() ? newColdBlock() : m_out.newBlock();

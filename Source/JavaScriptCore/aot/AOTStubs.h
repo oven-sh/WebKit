@@ -120,6 +120,10 @@ static constexpr unsigned codeGranuleShift = 10;
     v(TemplateObject) \
     v(TransientConstant) \
     v(IsStringEqualToConstant) \
+    v(IsStringEqualToLiteral1) \
+    v(IsStringEqualToLiteral2To3) \
+    v(IsStringEqualToLiteral4To7) \
+    v(IsStringEqualToLiteral8) \
     v(OperationValue) \
     v(OperationVoid) \
     v(OperationDouble) \
@@ -249,6 +253,9 @@ enum class Stub : uint8_t {
     NumberOfStubs
 };
 static constexpr unsigned numberOfStubs = static_cast<unsigned>(Stub::NumberOfStubs);
+ASCIILiteral nameOf(Stub);
+static constexpr unsigned shortLiteralLengthBits = 4;
+static constexpr unsigned shortLiteralLengthMask = (1u << shortLiteralLengthBits) - 1;
 static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
 
 static constexpr bool usesStubs =

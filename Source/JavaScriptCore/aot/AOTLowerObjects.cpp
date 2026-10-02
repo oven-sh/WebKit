@@ -234,7 +234,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                     }
                 }
                 layout = shape.number;
-                if (std::ranges::none_of(shape.names, [](UniquedStringImpl* name) { return name->isSymbol(); }))
+                if (!node->graph->thisLayoutID() && std::ranges::none_of(shape.names, [](UniquedStringImpl* name) { return name->isSymbol(); }))
                     m_graph.noteSiteShape(slot, WTF::move(shape));
                 Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };
                 for (auto& property : plan.properties)
@@ -254,7 +254,21 @@ bool Lowering::tryLowerAllocation(Node* node)
             LValue structure = m_out.loadPtr(m_out.address(m_heaps.FunctionRareData_structure, rareData, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag));
             orElse(m_out.notNull(structure));
             orElse(m_out.equal(m_out.castToInt32(structure), m_out.castToInt32(m_out.load64(slotWord(slot + 2, 0)))));
-            ValueFromBlock fastResult = m_out.anchor(allocateObjectWithProperties(slot, values, slowCase));
+            Vector<LValue, 8> valuesInSlots = values;
+            m_graph.remark(node->graph->thisLayoutID() ? "typed-planned-construction"_s : "planned-construction"_s);
+            if (uint16_t layoutID = node->graph->thisLayoutID()) {
+                NewObjectPlan plan = NewObjectPlan::forCreateThis(code().codeBlock()->instructions(), node->bytecodeIndex.offset());
+                valuesInSlots.shrink(0);
+                for (unsigned i = 0; i < count; ++i) {
+                    auto field = TypeTable::shared()->layoutField(layoutID, code().codeBlock()->identifier(plan.properties[i].identifier).impl());
+                    RELEASE_ASSERT(field && field->isInObject());
+                    branchUnlessAccepted(layoutSlotNodes[i], values[i], field->fieldType, slowCase);
+                    while (valuesInSlots.size() <= field->slot)
+                        valuesInSlots.append(m_out.int64Zero);
+                    valuesInSlots[field->slot] = toFieldRepresentation(layoutSlotNodes[i], values[i], field->fieldType);
+                }
+            }
+            ValueFromBlock fastResult = m_out.anchor(allocateObjectWithProperties(slot, valuesInSlots, slowCase));
             m_out.jump(continuation);
 
             m_out.appendTo(slowCase, continuation);
@@ -264,7 +278,8 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), fastResult, slowResult);
-            validateNewObject(node, object, layout, layoutSlotNodes, values);
+            if (!node->graph->thisLayoutID())
+                validateNewObject(node, object, layout, layoutSlotNodes, values);
             setJSValue(node, object);
             return true;
         }
@@ -653,9 +668,34 @@ bool Lowering::tryLowerConversion(Node* node)
         setJSValue(node, vmCall(node, Int64, Entry::operationAOTStrcat, m_instance, values, m_out.constInt32(bytecode.m_count)));
         return true;
     }
-    case op_get_prototype_of:
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetPrototypeOf, m_instance, lowJSValue(node->use(node->as<OpGetPrototypeOf>().m_value))));
+    case op_get_prototype_of: {
+        m_graph.remark("inline-get-prototype-of"_s);
+        LValue value = lowJSValue(node->use(node->as<OpGetPrototypeOf>().m_value));
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock objectCase = m_out.newBlock();
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isCell(value), usually(cellCase), rarely(slowCase));
+
+        m_out.appendTo(cellCase, objectCase);
+        LValue isOrdinaryObject = m_out.bitAnd(
+            m_out.aboveOrEqual(cellType(value), m_out.constInt32(ObjectType)),
+            m_out.testIsZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(OverridesGetPrototype)));
+        m_out.branch(isOrdinaryObject, usually(objectCase), rarely(slowCase));
+
+        m_out.appendTo(objectCase, slowCase);
+        LValue prototype = m_out.load64(m_out.address(m_heaps.root, structureOf(value), Structure::prototypeOffset()));
+        ValueFromBlock fastResult = m_out.anchor(prototype);
+        m_out.branch(m_out.notZero64(prototype), usually(continuation), rarely(slowCase));
+
+        m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetPrototypeOf, m_instance, value));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, fastResult, slowResult));
         return true;
+    }
     case op_instanceof: {
         auto bytecode = node->as<OpInstanceof>();
         Node* valueNode = node->use(bytecode.m_value);
@@ -816,7 +856,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_get_by_id_with_this: {
         auto bytecode = node->as<OpGetByIdWithThis>();
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetByIdWithThis, m_instance, low(bytecode.m_base), low(bytecode.m_thisValue), m_out.constInt32(numberOf(bytecode.m_property))));
+        setJSValue(node, getByIdWithThisCached(node, low(bytecode.m_base), low(bytecode.m_thisValue), bytecode.m_property));
         return true;
     }
     case op_get_by_val_with_this: {

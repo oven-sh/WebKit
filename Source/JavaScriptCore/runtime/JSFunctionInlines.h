@@ -87,6 +87,10 @@ inline FunctionExecutable* JSFunction::jsExecutable() const
 
 inline bool JSFunction::isHostFunction() const
 {
+#if ENABLE(AOT)
+    if (hasAOTFunctionWord())
+        return false;
+#endif
     ASSERT(executable());
     return executable()->isHostFunction();
 }
@@ -103,6 +107,10 @@ inline Intrinsic JSFunction::intrinsic() const
 
 inline bool JSFunction::isBuiltinFunction() const
 {
+#if ENABLE(AOT)
+    if (hasAOTFunctionWord())
+        return false;
+#endif
     return !isHostFunction() && jsExecutable()->isBuiltinFunction();
 }
 
@@ -118,6 +126,10 @@ inline bool JSFunction::isHostOrPrivateBuiltinFunction() const
 
 inline bool JSFunction::isClassConstructorFunction() const
 {
+#if ENABLE(AOT)
+    if (hasAOTFunctionWord())
+        return false;
+#endif
     return !isHostFunction() && jsExecutable()->isClassConstructorFunction();
 }
 

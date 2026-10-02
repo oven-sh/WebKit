@@ -93,8 +93,9 @@ struct ExecutableRow {
     uint32_t isShort : 1;
     uint32_t startOffset;
     uint32_t sourceLength;
-    uint32_t unused;
+    uint32_t functionStructureKind;
 };
+enum class FunctionStructureKind : uint32_t { None, Arrow, StrictFunction, StrictMethod, SloppyFunction, SloppyMethod };
 static_assert(sizeof(ExecutableRow) == 48);
 
 struct ProgramData {

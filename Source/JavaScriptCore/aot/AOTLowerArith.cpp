@@ -347,7 +347,14 @@ void Lowering::lowerUnaryArith(Node* node, VirtualRegister operandRegister)
     case op_inc:
     case op_dec: {
         int32_t limit = opcode == op_inc ? INT32_MAX : INT32_MIN;
-        m_out.branch(m_out.bitAnd(isInt32(value), m_out.notEqual(unboxInt32(value), m_out.constInt32(limit))), usually(fastCase), rarely(slowCase));
+        LBasicBlock notInt32Case = m_out.newBlock();
+        LBasicBlock doubleCase = m_out.newBlock();
+        m_out.branch(m_out.bitAnd(isInt32(value), m_out.notEqual(unboxInt32(value), m_out.constInt32(limit))), usually(fastCase), rarely(notInt32Case));
+        m_out.appendTo(notInt32Case, doubleCase);
+        m_out.branch(isNumber(value), usually(doubleCase), rarely(slowCase));
+        m_out.appendTo(doubleCase, fastCase);
+        results.append(m_out.anchor(boxDouble(m_out.doubleAdd(numberToDouble(value), m_out.constDouble(opcode == op_inc ? 1 : -1)))));
+        m_out.jump(continuation);
         m_out.appendTo(fastCase, slowCase);
         results.append(m_out.anchor(boxInt32(m_out.add(unboxInt32(value), m_out.constInt32(opcode == op_inc ? 1 : -1)))));
         break;
@@ -775,6 +782,31 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     if (!bitsDecide && isCompact() && !(m_block->isInLoop && !m_block->isGeneric) && (strict || isSubtype(both, TString))) {
         for (auto [literal, other] : { std::pair { right, left }, std::pair { left, right } }) {
             auto said = constantStringOf(literal);
+            if (said && !said->isEmpty() && said->is8Bit() && said->length() <= 8) {
+                auto characters = said->span8();
+                unsigned length = characters.size();
+                auto chunk = [&](unsigned start, unsigned size) {
+                    uint64_t result = 0;
+                    for (unsigned i = 0; i < size; ++i)
+                        result |= static_cast<uint64_t>(characters[start + i]) << (8 * i);
+                    return result;
+                };
+                m_graph.remark("short-literal-comparison"_s, *said);
+                Stub stub = Stub::IsStringEqualToLiteral8;
+                uint64_t bits = 0;
+                if (length == 1) {
+                    stub = Stub::IsStringEqualToLiteral1;
+                    bits = chunk(0, 1);
+                } else if (length <= 3) {
+                    stub = Stub::IsStringEqualToLiteral2To3;
+                    bits = chunk(0, 2) | chunk(length - 2, 2) << 16;
+                } else if (length <= 7) {
+                    stub = Stub::IsStringEqualToLiteral4To7;
+                    bits = chunk(0, 4) | chunk(length - 4, 4) << 32;
+                } else
+                    bits = chunk(0, 8);
+                return callStub(stub, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 }, { m_out.constInt64(bits), GPRInfo::argumentGPR1 } }, { { GPRInfo::regT9, programConstantIndex(literal) << shortLiteralLengthBits | length } });
+            }
             if (said && !said->isEmpty())
                 return callStub(Stub::IsStringEqualToConstant, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 } }, { { GPRInfo::regT9, programConstantIndex(literal) } });
         }

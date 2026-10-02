@@ -2472,6 +2472,7 @@ namespace JSC {
         virtual ~DestructuringPatternNode() { }
         virtual void collectBoundIdentifiers(Vector<Identifier>&) const = 0;
         virtual void bindValue(BytecodeGenerator&, RegisterID* source) const = 0;
+        virtual bool emitDirectBinding(BytecodeGenerator&, ExpressionNode*) const { return false; }
         virtual void toString(StringBuilder&) const = 0;
 
         virtual bool isBindingNode() const { return false; }
@@ -2509,6 +2510,7 @@ namespace JSC {
         };
         void collectBoundIdentifiers(Vector<Identifier>&) const final;
         void bindValue(BytecodeGenerator&, RegisterID*) const final;
+        bool emitDirectBinding(BytecodeGenerator&, ExpressionNode*) const final;
         void toString(StringBuilder&) const final;
 
         Vector<Entry> m_targetPatterns;

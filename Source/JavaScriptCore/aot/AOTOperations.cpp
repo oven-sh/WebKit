@@ -684,11 +684,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Insta
     if (actual & TFunctionTag) {
         if (auto* function = dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()); function && !function->isHostFunction()) {
             Image* image = Image::withCode();
-            uint32_t index = function->jsExecutable()->aotIndexFor(CodeSpecializationKind::CodeForCall);
-            if (image && function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall) && index < image->header().numberOfFunctions) {
+            bool hasWord = function->hasAOTFunctionWord();
+            uint32_t index = hasWord ? function->aotFunctionIndex() : function->jsExecutable()->aotIndexFor(CodeSpecializationKind::CodeForCall);
+            bool hasEntry = hasWord || function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall);
+            if (image && hasEntry && index < image->header().numberOfFunctions) {
                 if (uint32_t number = image->at<uint32_t>(image->header().functionNumbersOffset)[index])
                     actual = (actual & ~TFunction) | functionType(number);
-            } else if (!function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)) {
+            } else if (!hasEntry) {
                 actual = (actual & ~TAnyFunctionNumber) | (type & TAnyFunctionNumber);
             }
         }

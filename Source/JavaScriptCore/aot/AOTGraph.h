@@ -494,6 +494,13 @@ public:
     UncheckedKeyHashMap<Node*, Vector<Node*, 8>> returnValueReads;
     bool makesCalls { false };
     bool emitsCalls { false };
+    Vector<String> remarks;
+    void remark(ASCIILiteral what, StringView detail = { })
+    {
+        if (Options::aotRemarksPath()) [[unlikely]]
+            addRemark(what, detail);
+    }
+    void addRemark(ASCIILiteral what, StringView detail);
     bool alwaysEmitsCalls { false };
     mutable std::optional<bool> hasRemainingCalls;
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> wideIntegerConstants;
@@ -621,9 +628,11 @@ public:
     struct OnlyRead {
         Vector<Node*, 4> aliasingUsers;
         Vector<std::pair<Node*, unsigned>, 8> reads;
+        Vector<Node*, 2> absentReads;
         Vector<Node*, 2> tests;
     };
-    std::optional<OnlyRead> isOnlyRead(Node*, std::span<UniquedStringImpl* const> names, uint16_t layoutID) const;
+    enum class AbsentReads : bool { Disallow, Allow };
+    std::optional<OnlyRead> isOnlyRead(Node*, std::span<UniquedStringImpl* const> names, uint16_t layoutID, AbsentReads = AbsentReads::Disallow) const;
 
 private:
     UncheckedKeyHashMap<Node*, Vector<Node*, 2>> m_users;

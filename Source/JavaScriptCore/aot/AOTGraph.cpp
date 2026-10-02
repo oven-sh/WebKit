@@ -1639,6 +1639,13 @@ void Graph::noteClassesDefined()
     }
 }
 
+void Graph::addRemark(ASCIILiteral what, StringView detail)
+{
+    String text = detail.isNull() ? String(what) : makeString(what, ':', detail);
+    if (!remarks.contains(text))
+        remarks.append(WTF::move(text));
+}
+
 uint32_t Graph::closedMethodReadBy(const Node* node)
 {
     if (!node->isBytecode(op_get_by_id) || !Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || !programClasses())
@@ -2716,8 +2723,11 @@ private:
             if (isProfitable)
                 hasTwoCopies.merge(body);
         }
-        for (BasicBlock* block : m_graph.m_rpo)
+        for (BasicBlock* block : m_graph.m_rpo) {
             block->isInProfitableLoop = block->isInLoop && hasTwoCopies.get(block->index);
+            if (block->isInProfitableLoop)
+                m_graph.remark("profitable-loop"_s);
+        }
         if (m_graph.loopSplittingIsDisabled)
             return false;
 
@@ -2731,8 +2741,10 @@ private:
                 m_guards.ensureSize(size + 1);
                 m_loopHeaders.ensureSize(size + 1);
             }
-            if (block->isLoopHeader && isInSplitLoop)
+            if (block->isLoopHeader && isInSplitLoop) {
+                m_graph.remark("split-loop"_s);
                 m_loopHeaders.set(block->bytecodeBegin);
+            }
             for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
                 m_inLoop.set(offset);
                 if (fieldAccesses.get(offset)) {
@@ -3258,6 +3270,8 @@ private:
                 if ((!layoutID && !isArray) || !m_graph.isTracked(baseRegister))
                     continue;
                 Node* base = get(block, baseRegister);
+                if (base == m_pendingCreateThis)
+                    continue;
                 Node* node = m_graph.addNode(NodeKind::Bytecode);
                 node->opcode = opcode;
                 node->instruction = instruction;
@@ -3330,11 +3344,20 @@ private:
                 continue;
             }
             case op_create_this: {
-                if (m_graph.hasFrameRegisters() || block->isInLoop || m_graph.thisLayoutID())
+                if (m_graph.hasFrameRegisters() || block->isInLoop)
                     break;
                 m_objectPlan = NewObjectPlan::forCreateThis(m_instructions, offset);
                 if (m_objectPlan.stores.isEmpty() || m_objectPlan.stores.last().offset >= block->bytecodeEnd)
                     break;
+                if (uint16_t layoutID = m_graph.thisLayoutID()) {
+                    bool hasFieldForEachProperty = TypeTable::hasTypedFields() && (Options::aotShapeOptimizations() & 4) && !Options::auditAOTTypedFields();
+                    for (auto& property : m_objectPlan.properties) {
+                        auto field = hasFieldForEachProperty ? TypeTable::shared()->layoutField(layoutID, m_codeBlock->identifier(property.identifier).impl()) : std::nullopt;
+                        hasFieldForEachProperty = field && field->isInObject();
+                    }
+                    if (!hasFieldForEachProperty)
+                        break;
+                }
                 auto bytecode = instruction->as<OpCreateThis>();
                 Node* node = m_graph.addNode(NodeKind::Bytecode);
                 node->opcode = opcode;

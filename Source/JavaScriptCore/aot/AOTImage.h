@@ -137,6 +137,7 @@ struct ImageEnvironment {
 struct CompiledCode {
     Vector<uint8_t> bytes;
     CompiledFunctionInfo info;
+    Vector<String> remarks;
 };
 
 JS_EXPORT_PRIVATE uint64_t imageStamp();

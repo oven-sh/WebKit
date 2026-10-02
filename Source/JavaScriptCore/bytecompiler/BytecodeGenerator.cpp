@@ -5751,12 +5751,20 @@ void BytecodeGenerator::emitIteratorGenericClose(RegisterID* iterator, const Thr
     emitLabel(done.get());
 }
 
+void BytecodeGenerator::emitJumpIfFastArrayIteration(RegisterID* iterator, Label& target)
+{
+    emitJumpIfTrue(emitIsCellWithType(newTemporary(), iterator, SentinelType), target);
+}
+
 void BytecodeGenerator::emitIteratorCloseAfterIteratorOpen(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node)
 {
     // These are read back by op_iterator_next and op_iterator_close_check as the state of the iteration: nothing else may write them.
     ASSERT(iterator->isTemporary() && nextOrIndex->isTemporary() && (iterable->isTemporary() || iterable->virtualRegister().isArgument()));
     Ref<Label> done = newLabel();
-    OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
+    if (m_vm.useImmutableIntrinsics)
+        emitJumpIfFastArrayIteration(iterator, done.get());
+    else
+        OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
     emitIteratorGenericClose(iterator, node);
     emitLabel(done.get());
 }

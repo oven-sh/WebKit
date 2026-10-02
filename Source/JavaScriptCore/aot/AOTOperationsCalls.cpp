@@ -308,6 +308,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTLoadVarargs, void, (Instance* instance, Enc
     OPERATION_RETURN(scope);
 }
 
+extern "C" void* g_aotStaticFunctionEntrypoints[3];
+
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
 {
     JSValue callee = calleeFrame->guaranteedJSValueCallee();
@@ -320,6 +322,10 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     auto* function = dynamicDowncast<JSFunction>(callee.asCell());
     if (!function)
         return LLInt::llint_virtual_call(calleeFrame, callLinkInfo);
+    if (function->hasAOTFunctionWord() && isCall(kind) && linkColdStaticFunction(Instance::of(function), function->aotFunctionIndex(), function->scopeUnchecked())) {
+        calleeFrame->setCodeBlock(nullptr);
+        return encodeResult(g_aotStaticFunctionEntrypoints[0], nullptr);
+    }
     if (function->isHostFunction())
         return encodeResult(function->executable()->entrypointFor(kind, ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
     FunctionExecutable* executable = function->jsExecutable();

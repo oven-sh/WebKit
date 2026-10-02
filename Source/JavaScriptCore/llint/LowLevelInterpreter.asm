@@ -2718,6 +2718,7 @@ macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, i
     btpz t5, (constexpr JSFunction::rareDataTag), .isExecutable
     loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t5], t5
 .isExecutable:
+    btpnz t5, 2, slowCase
     bbeq JSCell::m_type[t5], ShortFunctionExecutableType, .lacksEntrypoint
     loadp offsetOfJITCodeWithArityCheck[t5], t4
     btpz t4, .lacksEntrypoint

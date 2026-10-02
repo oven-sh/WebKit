@@ -35,6 +35,11 @@ public:
             if (!block->isReachable || block->isGeneric || block->isRarelyExecuted)
                 continue;
             for (unsigned index = 0; index < block->nodes.size(); ++index) {
+                if (elideTypeCheckOfClosure(block->nodes[index])) {
+                    block->nodes.removeAt(index--);
+                    m_didInline = true;
+                    continue;
+                }
                 if (tryInline(block, index))
                     break;
             }
@@ -133,6 +138,19 @@ private:
         return node;
     }
 
+    bool elideTypeCheckOfClosure(Node* node)
+    {
+        if (!node->isBytecode(op_check_type) || node->guard || node->guarded)
+            return false;
+        auto bytecode = node->as<OpCheckType>();
+        Node* value = resolve(node->use(bytecode.m_value));
+        if (bytecode.m_mask > SoundTypeAll || !(bytecode.m_mask & SoundTypeFunction) || !value->isBytecode(op_new_func_exp))
+            return false;
+        m_graph.remark("elided-type-check-of-closure"_s);
+        node->replacement = value;
+        return true;
+    }
+
     bool tryInline(BasicBlock* block, unsigned index)
     {
         Node* call = block->nodes[index];
@@ -170,6 +188,7 @@ private:
         Graph& caller = *call->graph;
         Node* calleeNode = resolve(call->use(calleeRegister));
         UnlinkedFunctionCodeBlock* callee = nullptr;
+        UnlinkedFunctionExecutable* calleeExecutable = nullptr;
         Node* closureScope = nullptr;
         unsigned guardedIntrinsic = 0;
         bool calleeIsProvenIntrinsic = false;
@@ -180,7 +199,8 @@ private:
         };
         if (calleeNode->isBytecode(op_new_func_exp)) {
             auto bytecode = calleeNode->as<OpNewFuncExp>();
-            callee = calleeNode->graph->codeBlock()->functionExpr(bytecode.m_functionDecl)->codeBlockIfExists(CodeSpecializationKind::CodeForCall);
+            calleeExecutable = calleeNode->graph->codeBlock()->functionExpr(bytecode.m_functionDecl);
+            callee = calleeExecutable->codeBlockIfExists(CodeSpecializationKind::CodeForCall);
             if (!callee || readsCallee(callee))
                 return false;
             closureScope = resolve(calleeNode->use(bytecode.m_scope));
@@ -202,6 +222,7 @@ private:
             if (!known || !isExact || !known->forCall || !(known->isDeclaration || Graph::closedMethodReadBy(calleeNode)) || !caller.passesNoFunctionObject(call))
                 return false;
             callee = known->forCall;
+            calleeExecutable = known->executable;
         }
         auto about = m_program.about(callee);
         if (guardedIntrinsic && (!about || !canBeInlinedIntoCaller(callee)))
@@ -255,6 +276,10 @@ private:
         }
 
         dataLogLnIf(Options::verboseAOTCompilation() && guardedIntrinsic, "AOT: a builtin is made part of its caller at bc#", call->bytecodeIndex.offset());
+        if (calleeExecutable)
+            m_graph.remark(closureScope ? "inlined-closure"_s : "inlined-call"_s, calleeExecutable->ecmaName().string());
+        else
+            m_graph.remark("inlined-builtin"_s);
         m_didInline = true;
         m_inlinedBytecodeSize += callee->instructionsSize();
         m_parents.add(inlinee.get(), &caller);
@@ -333,6 +358,8 @@ private:
                     node->replacement = m_graph.constant(jsBoolean(true));
                     return true;
                 }
+                if (elideTypeCheckOfClosure(node))
+                    return true;
                 if (node->isBytecode(op_argument_count)) {
                     node->replacement = m_graph.constant(jsNumber(argc - 1));
                     return true;

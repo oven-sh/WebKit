@@ -505,6 +505,7 @@ bool Lowering::isLiveAfterNextNode(Node* node) const
 PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgument, 8>& arguments, const Vector<StubImmediate, 2>& immediates, StubClobbers clobbers, Node* place)
 {
     m_graph.emitsCalls = true;
+    m_graph.remark("calls"_s, nameOf(stub));
     if (!place)
         place = m_node;
     CallSite site;
@@ -683,6 +684,7 @@ LValue Lowering::coldCallForValue(Node* node, Entry function, LValue first, LVal
 
 LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function, const Vector<LValue, 8>& arguments)
 {
+    m_graph.remark("calls"_s, nameOf(function));
     bool throws = !!node;
     bool withGlobalObject = !arguments.isEmpty() && arguments[0] == m_globalObject;
     bool withInstance = !arguments.isEmpty() && arguments[0] == m_instance;

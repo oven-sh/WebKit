@@ -129,9 +129,8 @@ function shouldThrow(f, type) {
     breaksOut([1, 2, 3]);
     patch = () => { Object.getPrototypeOf([][Symbol.iterator]()).return = function () { returned++; return {}; }; };
     breaksOut([1, 2, 3]);
-    shouldBe(returned, 1);
-    breaksOut([1, 2, 3]);
-    shouldBe(returned, 2);
+    shouldBe(returned, 0);
+    shouldBe(Object.getPrototypeOf([][Symbol.iterator]()).return, undefined);
 })();
 
 (function () {

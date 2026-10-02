@@ -650,6 +650,19 @@ static void generateIsStringEqualTo(CCallHelpers& jit)
 }
 static void generateLooseEqual(CCallHelpers& jit) { generateEqual(jit, Entry::operationAOTCompareEq); }
 
+static void compareWithProgramConstant(CCallHelpers& jit)
+{
+    jit.pushPair(A0, CCallHelpers::linkRegister);
+    jit.move(instanceGPR, A0);
+    jit.move(T9, A1);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTProgramConstant) * sizeof(void*)), T11);
+    jit.call(T11, OperationPtrTag);
+    jit.move(GPRInfo::returnValueGPR, A1);
+    jit.popPair(A0, CCallHelpers::linkRegister);
+    generateEqual(jit, Entry::operationAOTCompareStrictEq);
+}
+
 static void generateIsStringEqualToConstant(CCallHelpers& jit)
 {
     CCallHelpers::JumpList isTrue;
@@ -719,16 +732,83 @@ static void generateIsStringEqualToConstant(CCallHelpers& jit)
     jit.ret();
 
     slow.link(&jit);
-    jit.pushPair(A0, CCallHelpers::linkRegister);
-    jit.move(instanceGPR, A0);
-    jit.move(T9, A1);
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTProgramConstant) * sizeof(void*)), T11);
-    jit.call(T11, OperationPtrTag);
-    jit.move(GPRInfo::returnValueGPR, A1);
-    jit.popPair(A0, CCallHelpers::linkRegister);
-    generateEqual(jit, Entry::operationAOTCompareStrictEq);
+    compareWithProgramConstant(jit);
 }
+
+static void generateIsStringEqualToShortLiteral(CCallHelpers& jit, unsigned chunkSize)
+{
+    CCallHelpers::JumpList isFalse;
+    CCallHelpers::JumpList slow;
+    isFalse.append(jit.branchIfNotCell(A0));
+    jit.load8(Address(A0, JSCell::typeInfoTypeOffset()), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(StringType)));
+    jit.and32(TrustedImm32(shortLiteralLengthMask), T9, A4);
+    jit.loadPtr(Address(A0, JSString::offsetOfValue()), A2);
+    Jump isRope = jit.branchIfRopeStringImpl(A2);
+    jit.load32(Address(A2, StringImpl::lengthMemoryOffset()), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T11, A4));
+    slow.append(jit.branchTest32(CCallHelpers::Zero, Address(A2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
+
+    CCallHelpers::Label compare = jit.label();
+    switch (chunkSize) {
+    case 1:
+        jit.load8(Address(A2), T11);
+        break;
+    case 2:
+        jit.load16Unaligned(Address(A2), T11);
+        jit.add64(A4, A2);
+        jit.load16Unaligned(Address(A2, -2), T12);
+        jit.lshift64(TrustedImm32(16), T12);
+        jit.or64(T12, T11);
+        break;
+    case 4:
+        jit.load32(Address(A2), T11);
+        jit.add64(A4, A2);
+        jit.load32(Address(A2, -4), T12);
+        jit.lshift64(TrustedImm32(32), T12);
+        jit.or64(T12, T11);
+        break;
+    case 8:
+        jit.load64(Address(A2), T11);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    jit.compare64(CCallHelpers::Equal, T11, A1, A0);
+    jit.ret();
+
+    isRope.link(&jit);
+    jit.load32(Address(A0, JSRopeString::offsetOfLength()), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T11, A4));
+    constexpr uintptr_t latin1SubstringBits = JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
+    jit.and64(TrustedImm32(latin1SubstringBits), A2, T11);
+    slow.append(jit.branch64(CCallHelpers::NotEqual, T11, TrustedImm32(latin1SubstringBits)));
+    jit.load64(Address(A0, JSRopeString::offsetOfFiber1()), T12);
+    jit.load64(Address(A0, JSRopeString::offsetOfFiber2()), T11);
+    jit.urshift64(TrustedImm32(32), T12);
+    jit.and64(TrustedImm32(0xffff), T11, A2);
+    jit.lshift64(TrustedImm32(32), A2);
+    jit.or64(T12, A2);
+    jit.urshift64(TrustedImm32(16), T11);
+    jit.loadPtr(Address(A2, JSString::offsetOfValue()), A2);
+    jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
+    jit.add64(T11, A2);
+    jit.jump().linkTo(compare, &jit);
+
+    isFalse.link(&jit);
+    jit.move(TrustedImm32(0), A0);
+    jit.ret();
+
+    slow.link(&jit);
+    jit.urshift32(TrustedImm32(shortLiteralLengthBits), T9);
+    compareWithProgramConstant(jit);
+}
+
+static void generateIsStringEqualToLiteral1(CCallHelpers& jit) { generateIsStringEqualToShortLiteral(jit, 1); }
+static void generateIsStringEqualToLiteral2To3(CCallHelpers& jit) { generateIsStringEqualToShortLiteral(jit, 2); }
+static void generateIsStringEqualToLiteral4To7(CCallHelpers& jit) { generateIsStringEqualToShortLiteral(jit, 4); }
+static void generateIsStringEqualToLiteral8(CCallHelpers& jit) { generateIsStringEqualToShortLiteral(jit, 8); }
 
 static void callBinaryOperation(CCallHelpers& jit, Entry operation)
 {
@@ -2315,6 +2395,7 @@ static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const L
     slow.append(jit.branchIfNotCell(BaselineJITRegisters::Call::calleeGPR, DoNotHaveTagRegisters));
     slow.append(jit.branchIfNotFunction(BaselineJITRegisters::Call::calleeGPR));
     jit.loadPtr(Address(BaselineJITRegisters::Call::calleeGPR, JSFunction::offsetOfExecutableOrRareData()), T11);
+    slow.append(jit.branchTestPtr(CCallHelpers::NonZero, T11, TrustedImm32(JSFunction::aotFunctionTag)));
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
     hasExecutable.link(&jit);
@@ -2407,11 +2488,19 @@ static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKin
     hasInstance.link(&jit);
 
     jit.loadPtr(Address(T11, JSFunction::offsetOfExecutableOrRareData()), T11);
+    Jump hasFunctionWord = jit.branchTestPtr(CCallHelpers::NonZero, T11, TrustedImm32(JSFunction::aotFunctionTag));
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
     hasExecutable.link(&jit);
     jit.load32(Address(T11, FunctionExecutable::offsetOfAOTIndexFor(kind)), T13);
     jit.loadPtr(Address(T11, FunctionExecutable::offsetOfAOTEntryFor(kind)), T11);
+    Jump entryReady = jit.jump();
+    hasFunctionWord.link(&jit);
+    jit.extractUnsignedBitfield64(T11, TrustedImm32(JSFunction::aotFunctionIndexShift), TrustedImm32(JSFunction::aotFunctionIndexBits), T13);
+    jit.and64(TrustedImm32(static_cast<int32_t>(JSFunction::aotCodeOffsetMask)), T11, T9);
+    jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(JSFunction::aotEntryFlagsMask)), T11);
+    jit.add64(T9, T11);
+    entryReady.link(&jit);
     jit.addPtr(TrustedImm32(Instance::offsetOfStates()), T12, T9);
     jit.load32(CCallHelpers::BaseIndex(T9, T13, CCallHelpers::TimesFour), T9);
     Jump isStillEmpty = jit.branch32(CCallHelpers::Below, T9, TrustedImm32(Instance::isLinkedWithoutData));
@@ -2497,6 +2586,7 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     jit.loadPtr(Address(bound, JSBoundFunction::offsetOfTargetFunction()), scratch);
     jit.storeValue(scratch, CCallHelpers::calleeFrameSlot(CallFrameSlot::callee));
     jit.loadPtr(Address(scratch, JSFunction::offsetOfExecutableOrRareData()), total);
+    slowCase.append(jit.branchTestPtr(CCallHelpers::NonZero, total, TrustedImm32(JSFunction::aotFunctionTag)));
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, total, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(total, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), total);
     hasExecutable.link(&jit);
@@ -2605,11 +2695,14 @@ static void generateVirtualCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpeci
 static void generateVirtualConstruct(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForConstruct, [] { }); }
 static void generateVirtualTailCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
 
+static_assert(JSFunction::aotEntryFlagsShift == EntryWord::numberOfParametersShift);
+
 static void findCalleeCode(CCallHelpers& jit, CodeSpecializationKind kind, CCallHelpers::JumpList& otherwise)
 {
     otherwise.append(jit.branchIfNotCell(calleeGPR));
     otherwise.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
     jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), T11);
+    Jump hasFunctionWord = jit.branchTestPtr(CCallHelpers::NonZero, T11, TrustedImm32(JSFunction::aotFunctionTag));
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
     hasExecutable.link(&jit);
@@ -2640,6 +2733,30 @@ static void findCalleeCode(CCallHelpers& jit, CodeSpecializationKind kind, CCall
     otherwise.append(jit.branch8(CCallHelpers::NotEqual, Address(T11, JSC::JITCode::offsetOfJITType()), TrustedImm32(static_cast<int32_t>(JITType::AOTJIT))));
     otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, Address(T11, JITCode::offsetOfInstance()), instanceGPR));
     jit.load64(Address(T11, JITCode::offsetOfEntry()), T12);
+    Jump isInstalled = jit.jump();
+
+    hasFunctionWord.link(&jit);
+    if (kind == CodeSpecializationKind::CodeForConstruct)
+        otherwise.append(jit.jump());
+    else {
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), T13);
+        structureWithID(jit, T13);
+        Jump belongsToThisInstance = jit.branchPtr(CCallHelpers::Equal, Address(T13, Structure::offsetOfAOTInstance()), instanceGPR);
+        otherwise.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(T13, Structure::offsetOfAOTInstance())));
+        jit.loadPtr(Address(T13, Structure::realmOffset()), T13);
+        otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, Address(instanceGPR, Instance::offsetOfGlobalObject()), T13));
+        belongsToThisInstance.link(&jit);
+        jit.extractUnsignedBitfield64(T11, TrustedImm32(JSFunction::aotFunctionIndexShift), TrustedImm32(JSFunction::aotFunctionIndexBits), T13);
+        jit.addPtr(TrustedImm32(Instance::offsetOfStates()), instanceGPR, T12);
+        jit.load32(CCallHelpers::BaseIndex(T12, T13, CCallHelpers::TimesFour), T12);
+        otherwise.append(jit.branch32(CCallHelpers::Below, T12, TrustedImm32(Instance::isLinkedWithoutData)));
+        jit.and64(TrustedImm32(static_cast<int32_t>(JSFunction::aotCodeOffsetMask)), T11, T12);
+        jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(JSFunction::aotEntryFlagsMask)), T11);
+        jit.add64(T11, T12);
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfCode()), T11);
+        jit.add64(T11, T12);
+    }
+    isInstalled.link(&jit);
     isLinked.link(&jit);
 }
 
@@ -3099,7 +3216,11 @@ static void generateIteratorOpen(CCallHelpers& jit)
         jit.addPtr(TrustedImm32(Instance::offsetOfOriginalArrayStructureIDs()), T12, T13);
         jit.load32(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesFour), T11);
         jit.load32(Address(A0, JSCell::structureIDOffset()), T13);
-        Jump isOtherKind = jit.branch32(CCallHelpers::NotEqual, T11, T13);
+        Jump isOriginalArray = jit.branch32(CCallHelpers::Equal, T11, T13);
+        Jump isRegExpMatchesArray = jit.branch32(CCallHelpers::Equal, T13, Address(T12, Instance::offsetOfRegExpMatchesArrayStructureIDs()));
+        Jump isOtherKind = jit.branch32(CCallHelpers::NotEqual, T13, Address(T12, Instance::offsetOfRegExpMatchesArrayStructureIDs() + sizeof(uint32_t)));
+        isOriginalArray.link(&jit);
+        isRegExpMatchesArray.link(&jit);
         jit.loadPtr(Address(T12, Instance::offsetOfArrayIterationSentinel()), A0);
         jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNumber(0))), A1);
         jit.ret();
@@ -3296,6 +3417,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
         otherwise.append(jit.branchIfNotCell(A0));
         otherwise.append(jit.branchIfNotType(A0, JSFunctionType));
         jit.loadPtr(Address(A0, JSFunction::offsetOfExecutableOrRareData()), T11);
+        otherwise.append(jit.branchTestPtr(CCallHelpers::NonZero, T11, TrustedImm32(JSFunction::aotFunctionTag)));
         Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
         jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
         hasExecutable.link(&jit);

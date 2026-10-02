@@ -538,6 +538,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionNoOSRExitFuzzing);
 static JSC_DECLARE_HOST_FUNCTION(functionOptimizeNextInvocation);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfDFGCompiles);
 static JSC_DECLARE_HOST_FUNCTION(functionIsAOTCompiled);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTRemarks);
+static JSC_DECLARE_HOST_FUNCTION(functionHasExecutable);
 static JSC_DECLARE_HOST_FUNCTION(functionImportInNewLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled);
 static JSC_DECLARE_HOST_FUNCTION(functionJSCOptions);
@@ -914,6 +916,8 @@ private:
         addFunction(vm, "noOSRExitFuzzing"_s, functionNoOSRExitFuzzing, 1);
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
         addFunction(vm, "isAOTCompiled"_s, functionIsAOTCompiled, 1);
+        addFunction(vm, "aotRemarks"_s, functionAOTRemarks, 1);
+        addFunction(vm, "hasExecutable"_s, functionHasExecutable, 1);
         addFunction(vm, "importInNewLoader"_s, functionImportInNewLoader, 1);
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
         addFunction(vm, "jscOptions"_s, functionJSCOptions, 0);
@@ -3024,6 +3028,49 @@ JSC_DEFINE_HOST_FUNCTION(functionImportInNewLoader, (JSGlobalObject* globalObjec
     Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), Identifier(), nullptr, false);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTRemarks, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    const char* path = byteCast<char>(Options::aotRemarksPath());
+    if (!path || !AOT::ProgramData::get())
+        return JSValue::encode(jsNull());
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    Vector<char> buffer;
+    if (!fetchScriptFromLocalFileSystem(String::fromUTF8(path), buffer))
+        return JSValue::encode(jsNull());
+    String text = String::fromUTF8(buffer.span());
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto line : StringView(text).split('\n')) {
+        size_t tab = line.find('\t');
+        if (tab == notFound || line.left(tab) != name)
+            continue;
+        result->push(globalObject, jsString(vm, line.substring(tab + 1).toString()));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+#else
+    UNUSED_PARAM(callFrame);
+    UNUSED_PARAM(scope);
+    return JSValue::encode(jsNull());
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionHasExecutable, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0));
+    if (!function)
+        return JSValue::encode(jsUndefined());
+#if ENABLE(AOT)
+    return JSValue::encode(jsBoolean(!function->hasAOTFunctionWord()));
+#else
+    return JSValue::encode(jsBoolean(true));
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionIsAOTCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -5281,6 +5328,10 @@ extern char** environ;
     snprintf(path, sizeof(path), "%s/jsc-aot-XXXXXX", directory ? directory : "/tmp");
     int fileDescriptor = mkstemp(path);
     RELEASE_ASSERT(fileDescriptor >= 0);
+    char remarksPath[PATH_MAX];
+    snprintf(remarksPath, sizeof(remarksPath), "%s/jsc-aot-remarks-XXXXXX", directory ? directory : "/tmp");
+    int remarksFileDescriptor = mkstemp(remarksPath);
+    RELEASE_ASSERT(remarksFileDescriptor >= 0);
     unsetenv("JSC_compileMainScriptAheadOfTime");
 
     auto argumentsPlus = [&](std::initializer_list<const char*> added) {
@@ -5297,17 +5348,22 @@ extern char** environ;
 
     char pathBuffer[PATH_MAX + 32];
     snprintf(pathBuffer, sizeof(pathBuffer), "--writeAOTImageTo=%s", path);
+    char remarksPathBuffer[PATH_MAX + 32];
+    snprintf(remarksPathBuffer, sizeof(remarksPathBuffer), "--aotRemarksPath=%s", remarksPath);
     pid_t builder;
-    RELEASE_ASSERT(!posix_spawn(&builder, executable, nullptr, nullptr, argumentsPlus({ pathBuffer }).mutableSpan().data(), environ));
+    RELEASE_ASSERT(!posix_spawn(&builder, executable, nullptr, nullptr, argumentsPlus({ pathBuffer, remarksPathBuffer }).mutableSpan().data(), environ));
     int status = 0;
     while (waitpid(builder, &status, 0) < 0 && errno == EINTR) { }
     unlink(path);
+    unlink(remarksPath);
 
     struct stat written;
     bool isBuilt = WIFEXITED(status) && !WEXITSTATUS(status) && !fstat(fileDescriptor, &written) && written.st_size;
     char optionBuffer[64];
     snprintf(optionBuffer, sizeof(optionBuffer), "--aotImagePath=/dev/fd/%d", fileDescriptor);
-    auto arguments = argumentsPlus({ isBuilt ? optionBuffer : "--useAOT=1" });
+    char remarksOptionBuffer[64];
+    snprintf(remarksOptionBuffer, sizeof(remarksOptionBuffer), "--aotRemarksPath=/dev/fd/%d", remarksFileDescriptor);
+    auto arguments = argumentsPlus({ isBuilt ? optionBuffer : "--useAOT=1", remarksOptionBuffer });
     execv(executable, arguments.mutableSpan().data());
     RELEASE_ASSERT_NOT_REACHED();
 }

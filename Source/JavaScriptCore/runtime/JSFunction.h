@@ -63,6 +63,14 @@ class JSFunction : public JSCallee {
 
 public:
     static constexpr uintptr_t rareDataTag = 0x1;
+#if ENABLE(AOT)
+    static constexpr uintptr_t aotFunctionTag = 0x2;
+    static constexpr unsigned aotFunctionIndexShift = 28;
+    static constexpr unsigned aotFunctionIndexBits = 20;
+    static constexpr unsigned aotEntryFlagsShift = aotFunctionIndexShift + aotFunctionIndexBits;
+    static constexpr uintptr_t aotCodeOffsetMask = ((static_cast<uintptr_t>(1) << aotFunctionIndexShift) - 1) & ~static_cast<uintptr_t>(3);
+    static constexpr uintptr_t aotEntryFlagsMask = ~((static_cast<uintptr_t>(1) << aotEntryFlagsShift) - 1);
+#endif
     
     template<typename CellType, SubspaceAccess>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -103,8 +111,25 @@ public:
         uintptr_t executableOrRareData = m_executableOrRareData;
         if (executableOrRareData & rareDataTag)
             return std::bit_cast<FunctionRareData*>(executableOrRareData & ~rareDataTag)->executable();
+#if ENABLE(AOT)
+        if (executableOrRareData & aotFunctionTag) [[unlikely]]
+            return const_cast<JSFunction*>(this)->materializeAOTExecutable();
+#endif
         return std::bit_cast<ExecutableBase*>(executableOrRareData);
     }
+
+#if ENABLE(AOT)
+    bool hasAOTFunctionWord() const { return (m_executableOrRareData & (rareDataTag | aotFunctionTag)) == aotFunctionTag; }
+    uint32_t aotFunctionIndex() const { return static_cast<uint32_t>(m_executableOrRareData >> aotFunctionIndexShift) & ((1u << aotFunctionIndexBits) - 1); }
+    static std::optional<uintptr_t> tryEncodeAOTFunctionWord(uint64_t entry, uint32_t functionIndex)
+    {
+        uint64_t offset = entry & ~aotEntryFlagsMask;
+        if (!offset || (offset & ~aotCodeOffsetMask) || functionIndex >= (1u << aotFunctionIndexBits))
+            return std::nullopt;
+        return (entry & aotEntryFlagsMask) | static_cast<uintptr_t>(functionIndex) << aotFunctionIndexShift | offset | aotFunctionTag;
+    }
+    JS_EXPORT_PRIVATE static JSFunction* createWithAOTFunctionWord(VM&, JSScope*, Structure*, uintptr_t);
+#endif
 
     // To call any of these methods include JSFunctionInlines.h
     inline bool isHostFunction() const;
@@ -238,6 +263,10 @@ private:
 #endif
 
     friend class LLIntOffsetsExtractor;
+
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE ExecutableBase* materializeAOTExecutable();
+#endif
 
     uintptr_t m_executableOrRareData;
 };

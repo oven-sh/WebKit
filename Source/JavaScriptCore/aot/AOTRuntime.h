@@ -245,6 +245,7 @@ enum class Entry : uint16_t {
 };
 
 static constexpr unsigned numberOfEntries = static_cast<unsigned>(Entry::NumberOfEntries);
+ASCIILiteral nameOf(Entry);
 
 bool takesInstance(Entry);
 bool takesGlobalObject(Entry);
@@ -420,6 +421,8 @@ struct Instance {
     JS_EXPORT_PRIVATE static Instance& ensure(JSGlobalObject*);
     static Instance* of(JSFunction*);
     Structure* functionStructure(Structure* realmStructure, FunctionExecutable*, JSScope*);
+    Structure* functionStructure(Structure* realmStructure);
+    JSFunction* tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope*);
     JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
     StringImpl* retainUntilNextCall(String&&);
     JSArray* templateObjectFor(uint32_t numberOfDescriptor);
@@ -560,6 +563,8 @@ struct Instance {
     static_assert(((IndexingShapeMask | CopyOnWrite) >> arrayKindShift) == numberOfArrayKinds - 1);
     uint32_t originalArrayStructureIDs[numberOfArrayKinds] { };
     static constexpr ptrdiff_t offsetOfOriginalArrayStructureIDs() { return OBJECT_OFFSETOF(Instance, originalArrayStructureIDs); }
+    uint32_t regExpMatchesArrayStructureIDs[2] { };
+    static constexpr ptrdiff_t offsetOfRegExpMatchesArrayStructureIDs() { return OBJECT_OFFSETOF(Instance, regExpMatchesArrayStructureIDs); }
     uint32_t newArrayWithInt32StructureID { 0 };
     uint32_t newArrayWithContiguousStructureID { 0 };
     uint32_t newCopyOnWriteArrayStructureIDs[3] { };
@@ -867,6 +872,7 @@ private:
 Instance& instanceOf(JSScope*);
 bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*, Ref<JITCode>&&);
 bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, JSScope*);
+bool linkColdStaticFunction(Instance*, uint32_t functionIndex, JSScope*);
 
 JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> moduleCodeEntrypoint();
 void* catchThunk();

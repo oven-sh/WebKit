@@ -93,6 +93,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE Data* ensureData() const;
     FunctionExecutable* functionDecl(unsigned) const;
     FunctionExecutable* functionExpr(unsigned) const;
+    std::optional<uint32_t> nestedExecutableIndex(bool isExpression, unsigned index) const;
     uint32_t siteConstantOf(const Slot*) const;
     JS_EXPORT_PRIVATE std::optional<std::pair<String, bool>> quoteAt(BytecodeIndex) const;
     struct ReportedPosition {

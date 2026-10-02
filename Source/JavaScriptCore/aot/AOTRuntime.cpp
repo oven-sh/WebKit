@@ -328,6 +328,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         for (IndexingType type : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
             instance->originalArrayStructureIDs[(type & (IndexingShapeMask | CopyOnWrite)) >> Instance::arrayKindShift] = idOf(globalObject->originalArrayStructureForIndexingType(type));
         if (!globalObject->isHavingABadTime()) {
+            instance->regExpMatchesArrayStructureIDs[0] = idOf(globalObject->regExpMatchesArrayStructure());
+            instance->regExpMatchesArrayStructureIDs[1] = idOf(globalObject->regExpMatchesArrayWithIndicesStructure());
             instance->newArrayWithInt32StructureID = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32));
             instance->newArrayWithContiguousStructureID = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
             instance->newCopyOnWriteArrayStructureIDs[0] = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithInt32));
@@ -400,6 +402,11 @@ Structure* Instance::functionStructure(Structure* realmStructure, FunctionExecut
 {
     if (executable->isBuiltinFunction() && !(executable->unlinkedExecutable()->isBuiltinDefaultClassConstructor() && &instanceOf(scope) == this))
         return realmStructure;
+    return functionStructure(realmStructure);
+}
+
+Structure* Instance::functionStructure(Structure* realmStructure)
+{
     for (auto& [from, to] : collections->functionStructures) {
         if (from == realmStructure)
             return to;
@@ -410,6 +417,35 @@ Structure* Instance::functionStructure(Structure* realmStructure, FunctionExecut
     result->setAOTInstance(this);
     collections->functionStructures.append({ realmStructure, result });
     return result;
+}
+
+JSFunction* Instance::tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope* scope)
+{
+    const ExecutableRow& row = program->data().executableRow(executableIndex);
+    Structure* realmStructure = nullptr;
+    switch (static_cast<FunctionStructureKind>(row.functionStructureKind)) {
+    case FunctionStructureKind::None:
+        return nullptr;
+    case FunctionStructureKind::Arrow:
+        realmStructure = globalObject->arrowFunctionStructure(false);
+        break;
+    case FunctionStructureKind::StrictFunction:
+        realmStructure = globalObject->strictFunctionStructure(false);
+        break;
+    case FunctionStructureKind::StrictMethod:
+        realmStructure = globalObject->strictMethodStructure(false);
+        break;
+    case FunctionStructureKind::SloppyFunction:
+        realmStructure = globalObject->sloppyFunctionStructure(false);
+        break;
+    case FunctionStructureKind::SloppyMethod:
+        realmStructure = globalObject->sloppyMethodStructure(false);
+        break;
+    }
+    auto word = JSFunction::tryEncodeAOTFunctionWord(row.entry[0], row.index[0]);
+    if (!word)
+        return nullptr;
+    return JSFunction::createWithAOTFunctionWord(*vm, scope, functionStructure(realmStructure), *word);
 }
 
 JSFunction* Instance::makeFunction(FunctionExecutable* executable, JSScope* scope)
@@ -1161,6 +1197,14 @@ FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
     return ensureData()->functionDecl(index);
 }
 
+std::optional<uint32_t> FunctionRef::nestedExecutableIndex(bool isExpression, unsigned index) const
+{
+    uint32_t entry = functionsIn(*metadata(), isExpression ? FunctionMetadata::FunctionExprs : FunctionMetadata::FunctionDecls)[index];
+    if (entry & 1)
+        return std::nullopt;
+    return (entry >> 1) - 1;
+}
+
 FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
 {
     if (uint32_t entry = functionsIn(*metadata(), FunctionMetadata::FunctionExprs)[index]; !(entry & 1))
@@ -1178,6 +1222,45 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
     else if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
         return false;
     executable->installAOTCode(vm, kind, WTF::move(code));
+    return true;
+}
+
+ASCIILiteral nameOf(Stub stub)
+{
+    switch (stub) {
+#define AOT_NAME_OF_STUB(name) case Stub::name: return #name ""_s;
+    FOR_EACH_AOT_STUB(AOT_NAME_OF_STUB)
+#undef AOT_NAME_OF_STUB
+    case Stub::NumberOfStubs:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+ASCIILiteral nameOf(Entry entry)
+{
+    switch (entry) {
+#define AOT_NAME_OF_ENTRY(name) case Entry::name: return #name ""_s;
+    FOR_EACH_AOT_OPERATION(AOT_NAME_OF_ENTRY)
+    FOR_EACH_AOT_THUNK(AOT_NAME_OF_ENTRY)
+    FOR_EACH_AOT_POINTER(AOT_NAME_OF_ENTRY)
+#undef AOT_NAME_OF_ENTRY
+    case Entry::NumberOfEntries:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool linkColdStaticFunction(Instance* instance, uint32_t index, JSScope* scope)
+{
+    if (scope->realm() != instance->globalObject)
+        return false;
+    if (instance->isLinked(index))
+        return true;
+    const FunctionInfo& info = instance->infos[index];
+    if (!(info.flags & FunctionInfo::startsCold) || (info.function()->usesStaticImports && !moduleIsLinkedAsCompiled(scope)))
+        return false;
+    instance->setLinkedWithoutData(index);
     return true;
 }
 
@@ -1641,6 +1724,7 @@ void Instance::didHaveBadTime()
     newArrayWithInt32StructureID = 0;
     newArrayWithContiguousStructureID = 0;
     zeroSpan(std::span { newCopyOnWriteArrayStructureIDs });
+    zeroSpan(std::span { regExpMatchesArrayStructureIDs });
 }
 
 void Instance::noteFieldAddition(Structure* before, unsigned slot, Structure* afterwards)

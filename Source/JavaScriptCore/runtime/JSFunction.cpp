@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSFunction.h"
 
+#include "AOTProgramData.h"
 #include "AsyncGeneratorPrototype.h"
 #include "BuiltinNames.h"
 #include "CallFrame.h"
@@ -115,8 +116,28 @@ JSFunction::JSFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* glo
     ASSERT(structure->realm() == globalObject);
 }
 
+#if ENABLE(AOT)
+JSFunction* JSFunction::createWithAOTFunctionWord(VM& vm, JSScope* scope, Structure* structure, uintptr_t word)
+{
+    JSFunction* function = new (NotNull, allocateCell<JSFunction>(vm)) JSFunction(vm, std::bit_cast<FunctionExecutable*>(word), scope, structure);
+    function->finishCreation(vm);
+    return function;
+}
+
+ExecutableBase* JSFunction::materializeAOTExecutable()
+{
+    VM& vm = this->vm();
+    RELEASE_ASSERT(!vm.heap.isShuttingDown() && vm.heap.mutatorState() == MutatorState::Running && !vm.heap.worldIsStopped() && !vm.heap.objectSpace().isIterating());
+    FunctionExecutable* executable = AOT::VMProgram::of(vm)->executableForFunction(aotFunctionIndex());
+    m_executableOrRareData = std::bit_cast<uintptr_t>(executable);
+    vm.writeBarrier(this, executable);
+    return executable;
+}
+#endif
+
 FunctionRareData* JSFunction::allocateRareData(VM& vm)
 {
+    executable();
     uintptr_t executableOrRareData = m_executableOrRareData;
     ASSERT(!(executableOrRareData & rareDataTag));
     FunctionRareData* rareData = FunctionRareData::create(vm, std::bit_cast<ExecutableBase*>(executableOrRareData));
@@ -158,6 +179,7 @@ JSObject* JSFunction::prototypeForConstruction(VM& vm, JSGlobalObject* globalObj
 
 FunctionRareData* JSFunction::allocateAndInitializeRareData(JSGlobalObject* globalObject, size_t inlineCapacity)
 {
+    executable();
     uintptr_t executableOrRareData = m_executableOrRareData;
     ASSERT(!(executableOrRareData & rareDataTag));
     ASSERT(canUseAllocationProfiles());
@@ -278,7 +300,12 @@ void JSFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.appendUnbarriered(std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(thisObject->m_executableOrRareData) & ~rareDataTag));
+    uintptr_t executableOrRareData = thisObject->m_executableOrRareData;
+#if ENABLE(AOT)
+    if ((executableOrRareData & (rareDataTag | aotFunctionTag)) == aotFunctionTag)
+        return;
+#endif
+    visitor.appendUnbarriered(std::bit_cast<JSCell*>(executableOrRareData & ~rareDataTag));
 }
 
 DEFINE_VISIT_CHILDREN(JSFunction);
