@@ -37,4 +37,25 @@ void JSSourceCode::destroy(JSCell* cell)
     static_cast<JSSourceCode*>(cell)->~JSSourceCode();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSSourceCode* JSSourceCode::createWithPayload(VM& vm, SyntheticSourceProvider::PayloadSyntheticSourceGenerator generator, JSValue payload, const SourceOrigin& sourceOrigin, String&& sourceURL)
+{
+    ASSERT(payload);
+    auto* result = create(vm, SourceCode(SyntheticSourceProvider::createWithPayloadGenerator(generator, sourceOrigin, WTF::move(sourceURL))));
+    result->m_payload.set(vm, result, payload);
+    return result;
+}
+
+template<typename Visitor>
+void JSSourceCode::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSSourceCode>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_payload);
+}
+
+DEFINE_VISIT_CHILDREN(JSSourceCode);
+#endif
+
 } // namespace JSC

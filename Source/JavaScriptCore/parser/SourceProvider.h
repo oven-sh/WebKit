@@ -43,6 +43,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCountedFixedVector.h>
+#include <wtf/Variant.h>
 #include <wtf/Vector.h>
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
@@ -348,15 +349,20 @@ private:
         // binds to them; see SyntheticModuleRecord::tryCreateWithExportNamesAndValues(..., JSObject* lazyExportsSource).
         // The generator returns nullptr when it provided every value.
         using LazySyntheticSourceGenerator = WTF::Function<JSObject*(JSGlobalObject*, Identifier, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)>;
+        // A generator that captures nothing. The value it exports is the payload of the JSSourceCode that holds the
+        // provider: JSSourceCode::createWithPayload() makes the two together, and is the only way to make a provider
+        // with this form. That cell traces the payload, so the generator can run every time a module is made from the
+        // source, which the loader does never, once, or more than once.
+        using PayloadSyntheticSourceGenerator = void (*)(JSGlobalObject*, Identifier, JSValue payload, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues);
 
         static Ref<SyntheticSourceProvider> create(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
         {
-            return adoptRef(*new SyntheticSourceProvider(WTF::move(generator), nullptr, sourceOrigin, WTF::move(sourceURL)));
+            return adoptRef(*new SyntheticSourceProvider(Generator(WTF::InPlaceType<SyntheticSourceGenerator>, WTF::move(generator)), sourceOrigin, WTF::move(sourceURL)));
         }
 
         static Ref<SyntheticSourceProvider> createWithLazyExports(LazySyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
         {
-            return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
+            return adoptRef(*new SyntheticSourceProvider(Generator(WTF::InPlaceType<LazySyntheticSourceGenerator>, WTF::move(generator)), sourceOrigin, WTF::move(sourceURL)));
         }
 
         // For a generator that evaluates a module written by the user to find out what it exports (a CommonJS module).
@@ -371,6 +377,7 @@ private:
         }
 
         bool isDeferred() const { return m_isDeferred; }
+        bool takesPayload() const { return std::holds_alternative<PayloadSyntheticSourceGenerator>(m_generator); }
 
         unsigned hash() const final
         {
@@ -383,27 +390,41 @@ private:
         }
 
         // Returns the object that exports declared without a value are read from, or nullptr if there are none.
-        JSObject* generate(JSGlobalObject* globalObject, Identifier moduleKey, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)
+        // `payload` is JSSourceCode::payload() of the cell that holds this provider. Only a
+        // PayloadSyntheticSourceGenerator reads it.
+        JSObject* generate(JSGlobalObject* globalObject, Identifier moduleKey, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues, JSValue payload)
         {
-            if (m_lazyGenerator)
-                return m_lazyGenerator(globalObject, moduleKey, exportNames, exportValues);
-            m_generator(globalObject, moduleKey, exportNames, exportValues);
+            if (auto* generator = std::get_if<PayloadSyntheticSourceGenerator>(&m_generator)) {
+                ASSERT(payload);
+                (*generator)(globalObject, moduleKey, payload, exportNames, exportValues);
+                return nullptr;
+            }
+            if (auto* generator = std::get_if<LazySyntheticSourceGenerator>(&m_generator))
+                return (*generator)(globalObject, moduleKey, exportNames, exportValues);
+            std::get<SyntheticSourceGenerator>(m_generator)(globalObject, moduleKey, exportNames, exportValues);
             return nullptr;
         }
 
-    
     private:
-        JS_EXPORT_PRIVATE SyntheticSourceProvider(SyntheticSourceGenerator&& generator, LazySyntheticSourceGenerator&& lazyGenerator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
+        friend class JSSourceCode;
+
+        // A provider has one of the three generator forms, so they share one slot.
+        using Generator = Variant<SyntheticSourceGenerator, LazySyntheticSourceGenerator, PayloadSyntheticSourceGenerator>;
+
+        static Ref<SyntheticSourceProvider> createWithPayloadGenerator(PayloadSyntheticSourceGenerator generator, const SourceOrigin& sourceOrigin, String&& sourceURL)
+        {
+            return adoptRef(*new SyntheticSourceProvider(Generator(WTF::InPlaceType<PayloadSyntheticSourceGenerator>, generator), sourceOrigin, WTF::move(sourceURL)));
+        }
+
+        JS_EXPORT_PRIVATE SyntheticSourceProvider(Generator&& generator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
             : SourceProvider(sourceOrigin, WTF::move(sourceURL), WTF::move(preRedirectURL), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Synthetic)
             , m_source("[native code]"_s)
             , m_generator(WTF::move(generator))
-            , m_lazyGenerator(WTF::move(lazyGenerator))
         {
         }
 
         String m_source;
-        SyntheticSourceGenerator m_generator;
-        LazySyntheticSourceGenerator m_lazyGenerator;
+        Generator m_generator;
         bool m_isDeferred { false };
     };
 

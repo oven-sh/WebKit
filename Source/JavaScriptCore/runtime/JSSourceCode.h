@@ -39,6 +39,9 @@ public:
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
 
     DECLARE_EXPORT_INFO;
+#if USE(BUN_JSC_ADDITIONS)
+    DECLARE_VISIT_CHILDREN;
+#endif
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -60,6 +63,14 @@ public:
         return create(vm, vm.sourceCodeStructure.get(), WTF::move(sourceCode));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The source of a synthetic module that exports `payload`. JSModuleLoader::makeModule() passes `payload` to
+    // `generator` each time it makes a module from this source, and this cell keeps `payload` alive until then.
+    JS_EXPORT_PRIVATE static JSSourceCode* createWithPayload(VM&, SyntheticSourceProvider::PayloadSyntheticSourceGenerator, JSValue payload, const SourceOrigin&, String&& sourceURL);
+
+    JSValue payload() const { return m_payload.get(); }
+#endif
+
     const SourceCode& sourceCode() const
     {
         return m_sourceCode;
@@ -75,6 +86,15 @@ private:
     }
 
     SourceCode m_sourceCode;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_payload;
+#endif
 };
+
+#if USE(BUN_JSC_ADDITIONS) && CPU(ADDRESS64)
+// The payload takes the bytes that rounding up to the cell size left unused: a JSSourceCode is a 32-byte cell with it
+// and without it.
+static_assert(sizeof(JSSourceCode) <= 32);
+#endif
 
 } // namespace JSC

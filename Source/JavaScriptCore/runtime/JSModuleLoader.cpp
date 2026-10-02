@@ -1507,7 +1507,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 
         MarkedArgumentBuffer args;
         Vector<Identifier, 4> exportNames;
-        JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
+        JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args, jsSourceCode->payload());
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
         auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, this, moduleKey, exportNames, args, lazyExportsSource);
