@@ -1097,7 +1097,7 @@ static void checkTypedArrayAccess(CCallHelpers& jit, CCallHelpers::JumpList& slo
     jit.loadPtr(Address(A0, JSArrayBufferView::offsetOfVector()), T11);
 }
 
-static void getFromMegamorphicCache(CCallHelpers&, GPRReg uid, CCallHelpers::JumpList& notFound);
+static void getFromMegamorphicCache(CCallHelpers&, GPRReg uid, CCallHelpers::JumpList& notFound, GPRReg slotToCountAttemptIn = InvalidGPRReg);
 
 static void fallThroughToNextStub(CCallHelpers& jit)
 {
@@ -1589,20 +1589,31 @@ static void callGetter(CCallHelpers& jit, CCallHelpers::JumpList& cannot)
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::Call)], &jit);
 }
 
-static void getFromMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers::JumpList& notFound)
+static void getFromMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers::JumpList& notFound, GPRReg slotToCountAttemptIn)
 {
     constexpr GPRReg cache = GPRInfo::argumentGPR7;
     constexpr GPRReg result = GPRInfo::argumentGPR6;
     ASSERT(uid != cache && uid != result && uid != A0 && uid != A1);
+    auto countAttempt = [&] {
+        if (slotToCountAttemptIn == InvalidGPRReg)
+            return;
+        Jump isNone = jit.branchTestPtr(CCallHelpers::Zero, slotToCountAttemptIn);
+        jit.load32(Address(slotToCountAttemptIn, OBJECT_OFFSETOF(Slot, offset)), T11);
+        jit.add32(TrustedImm32(1u << Slot::attemptsShift), T11);
+        jit.store32(T11, Address(slotToCountAttemptIn, OBJECT_OFFSETOF(Slot, offset)));
+        isNone.link(&jit);
+    };
     loadInstance(jit, cache);
     jit.loadPtr(Address(cache, Instance::offsetOfRuntimeTable()), cache);
     jit.loadPtr(Address(cache, static_cast<unsigned>(Entry::MegamorphicCache) * sizeof(void*)), cache);
     notFound.append(jit.branchTestPtr(CCallHelpers::Zero, cache));
     CCallHelpers::JumpList notValue = jit.loadMegamorphicProperty(CCallHelpers::MegamorphicCacheLocation(cache), A0, uid, nullptr, result, T11, T12, T13);
+    countAttempt();
     jit.move(result, A0);
     jit.ret();
     notValue.link(&jit);
     notFound.append(jit.loadMegamorphicGetterSetter(CCallHelpers::MegamorphicCacheLocation(cache), A0, uid, nullptr, result, T11, T12, T13));
+    countAttempt();
     jit.move(result, T12);
     callGetter(jit, notFound);
 }
@@ -1936,23 +1947,21 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         notFound.append(jit.branchIfNotObject(A0));
         jit.load32(Address(A1, OBJECT_OFFSETOF(Slot, offset)), T11);
         jit.and32(TrustedImm32(Slot::attemptsMask), T11);
+        constexpr GPRReg untriedSlot = T14;
+        jit.move(CCallHelpers::TrustedImmPtr(nullptr), untriedSlot);
         Jump hasGivenUp = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(Slot::attemptsMask));
         loadInstanceAndDataForSlot(jit, A1, T9, T10);
         Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(A1, OBJECT_OFFSETOF(Slot, structureID)));
-        jit.loadPtr(Address(T9, Instance::offsetOfSharedData()), T11);
-        Jump isUnowned = jit.branchPtr(CCallHelpers::Equal, T10, T11);
-        constexpr uint32_t probesPerFill = 8;
-        static_assert(hasOneBitSet(probesPerFill));
-        jit.load32(Address(T9, Instance::offsetOfMegamorphicProbesForEmptySlots()), T11);
-        jit.add32(TrustedImm32(1), T11);
-        jit.store32(T11, Address(T9, Instance::offsetOfMegamorphicProbesForEmptySlots()));
-        notFound.append(jit.branchTest32(CCallHelpers::Zero, T11, TrustedImm32(probesPerFill - 1)));
-        Jump isEmpty = jit.jump();
+        jit.loadPtr(Address(T9, Instance::offsetOfSharedData()), T12);
+        Jump isUnowned = jit.branchPtr(CCallHelpers::Equal, T10, T12);
+        notFound.append(jit.branchTest32(CCallHelpers::NonZero, T11));
+        jit.move(A1, untriedSlot);
+        Jump isUntried = jit.jump();
         hasGivenUp.link(&jit);
         loadInstanceAndDataForSlot(jit, A1, T9, T10);
         isTaken.link(&jit);
         isUnowned.link(&jit);
-        isEmpty.link(&jit);
+        isUntried.link(&jit);
         slotSite(jit, T10, A1, T13);
         loadInfo(jit, T9, T10);
         loadSites(jit, T10, T11);
@@ -1961,7 +1970,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgramIdentifiers()), T11);
         jit.loadPtr(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), A2);
         notFound.append(jit.branchTestPtr(CCallHelpers::Zero, A2));
-        getFromMegamorphicCache(jit, A2, notFound);
+        getFromMegamorphicCache(jit, A2, notFound, untriedSlot);
         notFound.link(&jit);
     }
     missAtSite(jit, operation, 1, Returns::Value);
