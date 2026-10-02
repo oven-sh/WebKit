@@ -2010,6 +2010,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     yarr/YarrFlags.h
     yarr/YarrInterpreter.h
     yarr/YarrJIT.h
+    yarr/YarrLinear.h
     yarr/YarrMatchingContextHolder.h
     yarr/YarrParser.h
     yarr/YarrPattern.h

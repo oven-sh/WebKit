@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Differential driver: runs regex-fuzz.js under several jsc configurations (and node) per seed,
 // compares outputs line-by-line, records mismatches / crashes / timeouts.
-// Usage: node drive.mjs --seeds 1-200 --count 400 --profile mixed --par 32 --configs jit,interp,gatesoff,node[,asan,asan-interp,base]
+// Usage: node drive.mjs --seeds 1-200 --count 400 --profile mixed --par 32 --configs jit,interp,gatesoff,node[,linear,asan,asan-interp,asan-linear,base]
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus } from "node:os";
@@ -27,6 +27,8 @@ const common = ["--useDollarVM=1", "--validateOptions=1"];
 const CFG = {
     jit:          { bin: REL,  args: [...common] },
     interp:       { bin: REL,  args: [...common, "--useRegExpJIT=0"] },
+    // The non-backtracking matcher runs every pattern it accepts; the JIT runs the rest, as in "jit".
+    linear:       { bin: REL,  args: [...common, "--useRegExpLinearEngine=1"] },
     gatesoff:     { bin: REL,  args: [...common, "--useRegExpLookbehindJIT=0", "--useRegExpAlternationFactoring=0", "--useRegExpAlternationDispatch=0"] },
     nolb:         { bin: REL,  args: [...common, "--useRegExpLookbehindJIT=0"] },
     nofactor:     { bin: REL,  args: [...common, "--useRegExpAlternationFactoring=0"] },
@@ -40,6 +42,7 @@ const CFG = {
     gcstress:     { bin: REL,  args: [...common, "--collectContinuously=1", "--useGenerationalGC=0", "--useConcurrentGC=1"] },
     asan:         { bin: ASAN, args: [...common], env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:allocator_may_return_null=1" } },
     "asan-interp":{ bin: ASAN, args: [...common, "--useRegExpJIT=0"], env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:allocator_may_return_null=1" } },
+    "asan-linear":{ bin: ASAN, args: [...common, "--useRegExpLinearEngine=1"], env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:allocator_may_return_null=1" } },
     base:         { bin: BASE, args: [...common], env: { ASAN_OPTIONS: "detect_leaks=0:allocator_may_return_null=1" } },
     "base-interp":{ bin: BASE, args: [...common, "--useRegExpJIT=0"], env: { ASAN_OPTIONS: "detect_leaks=0:allocator_may_return_null=1" } },
     node:         { bin: process.execPath, args: [], node: true },

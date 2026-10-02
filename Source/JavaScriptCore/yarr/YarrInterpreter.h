@@ -28,6 +28,7 @@
 #include "ConcurrentJSLock.h"
 #include "YarrErrorCode.h"
 #include "YarrFlags.h"
+#include "YarrLinear.h"
 #include "YarrPattern.h"
 #include <wtf/TZoneMalloc.h>
 
@@ -509,7 +510,15 @@ public:
         m_endAnchoredFixedSize = pattern.m_endAnchoredFixedSize;
     }
 
-    size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes(); }
+    size_t estimatedSizeInBytes() const
+    {
+        size_t bytes = m_body->estimatedSizeInBytes();
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_linearProgram)
+            bytes += m_linearProgram->estimatedSizeInBytes();
+#endif
+        return bytes;
+    }
 
     bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
     bool hasEndAnchoredFixedSize() const { return m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet; }
@@ -557,6 +566,13 @@ public:
     CharacterClass* wordcharCharacterClass;
     CharacterClass* ignoreCaseWordcharCharacterClass;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // With Options::useRegExpLinearEngine(): the program interpret() runs in place of m_body.
+    // Null for a pattern the non-backtracking matcher refused, and m_linearRefusal is why.
+    std::unique_ptr<LinearProgram> m_linearProgram;
+    LinearRefusal m_linearRefusal { LinearRefusal::None };
+#endif
+
 private:
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
@@ -564,5 +580,30 @@ private:
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+
+#if USE(BUN_JSC_ADDITIONS)
+// byteCompile() for the non-backtracking matcher: bytecode that has a LinearProgram, which is
+// what interpret() then runs. Null, with the reason, for a pattern the matcher refuses. The
+// pattern is then as it was, and the caller compiles it as it does without the matcher.
+JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern&, BumpPointerAllocator*, ErrorCode&, LinearRefusal&, ConcurrentJSLock* = nullptr);
+
+// What one match ran on and what it cost, for tests.
+struct InterpretStatistics {
+    enum class Engine : uint8_t { Backtracking, Linear };
+    Engine engine { Engine::Backtracking };
+    // Why the engine is not Linear, when Options::useRegExpLinearEngine() asked for it.
+    LinearRefusal refusal { LinearRefusal::None };
+    // Engine::Backtracking, for a RegExp: whether that is the JIT's code and not the bytecode
+    // interpreter.
+    bool usesJIT { false };
+    // The rest is of Engine::Linear only: the backtracking engines do not count.
+    size_t programSize { 0 };
+    uint64_t maximumStepsPerPosition { 0 };
+    uint64_t maximumScratchBytes { 0 };
+    LinearProgram::Statistics linear;
+};
+// interpret(), with the report.
+JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output, InterpretStatistics&);
+#endif
 
 } } // namespace JSC::Yarr

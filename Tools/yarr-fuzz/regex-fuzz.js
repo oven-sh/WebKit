@@ -8,6 +8,7 @@ const OUT = typeof print !== "undefined" ? print : (s) => console.log(s);
 const ARGV = typeof arguments !== "undefined" && Array.isArray(arguments) ? arguments : (typeof process !== "undefined" ? process.argv.slice(2) : []);
 const HAVE_VM = typeof $vm !== "undefined" && typeof $vm.make16BitStringIfPossible === "function";
 const to16 = HAVE_VM ? (s) => $vm.make16BitStringIfPossible(s) : (s) => s;
+const HAVE_STATISTICS = typeof $vm !== "undefined" && typeof $vm.regExpMatchStatistics === "function";
 const IS_NODE = typeof process !== "undefined" && !!(process.versions && process.versions.node);
 
 let SEED = (ARGV[0] | 0) || 1;
@@ -405,6 +406,15 @@ function runCase(idx, pat, subjectRaw, use16, profile) {
         r.li = re.lastIndex;
         re.lastIndex = 0;
         r.t = re.test(subject);
+        // With --useRegExpLinearEngine=1: a match of the non-backtracking matcher stays under the
+        // two bounds its compiler took from the program. A violation is a field that no other
+        // configuration has, so the driver reports it as a mismatch. The empty subject says
+        // which engine the pattern has; a backtracking engine gets no second match here.
+        if (HAVE_STATISTICS && $vm.regExpMatchStatistics(re, "", 0).engine === "linear") {
+            const st = $vm.regExpMatchStatistics(re, subject, 0);
+            if (st.steps > st.maximumStepsPerPosition * (subject.length + 1) || st.scratchBytes > st.maximumScratchBytes)
+                r.bound = st.steps + " steps, bound " + st.maximumStepsPerPosition + " per position; " + st.scratchBytes + " bytes, bound " + st.maximumScratchBytes;
+        }
         // lastIndex sweep (exercises sticky / surrogate-pair start adjustment / BM search restarts)
         if (profile.sweep && subject.length <= 40 && chance(profile.sweep)) {
             const sw = [];
