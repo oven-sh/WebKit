@@ -221,6 +221,8 @@ if (aotRemarks("scaled")) {
     applies("takes-argument-list", "countsArguments", "withRest", "nine", "allOptional");
     doesNotApply("takes-argument-list", "scaled", "large", "inOrder", "four", "keeps", "reads", "sumTo", "Made", "method", "make", "catches", "capturesIt");
     applies("direct-call:large", "sumsLarge", "sumsLargeWith");
+    applies("inlined-call:scaled", "sumsScaled", "sumsScaledWithConstant");
+    applies("folded-comparison-of-argument", "sumsScaled", "sumsScaledWithConstant");
     doesNotApply("folded-comparison-of-argument", "sumsLarge", "callsScaledWith");
     doesNotApply("scalar-replaced-object", "passesLiteralThatIsKept");
 }

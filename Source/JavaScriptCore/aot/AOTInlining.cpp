@@ -323,13 +323,15 @@ private:
         } else {
             bool isExact = false;
             const KnownFunction* known = caller.knownCallee(call, &isExact);
-            if (!known || !isExact || !known->forCall || !(known->isDeclaration || Graph::closedMethodReadBy(calleeNode)))
+            if (!known || !isExact || !known->forCall)
                 return false;
-            if (!caller.passesNoFunctionObject(call)) {
-                if (!Graph::closedMethodReadBy(calleeNode))
+            if (!known->isDeclaration && !Graph::closedMethodReadBy(calleeNode)) {
+                if (!calleeNode->isBytecode(op_get_from_scope) || call->opcode == op_tail_call)
                     return false;
-                closureFunction = calleeNode;
+                checksCalleeIsInitialized = true;
             }
+            if (!caller.passesNoFunctionObject(call))
+                closureFunction = calleeNode;
             callee = known->forCall;
             calleeExecutable = known->executable;
         }
@@ -561,8 +563,18 @@ private:
             otherwise->nodes.append(fallbackCall);
             block->successors.append(otherwise);
             otherwise->predecessors.append(block);
-            otherwise->successors.append(continuation);
-            continuation->predecessors.append(otherwise);
+            if (checksCalleeIsInitialized) {
+                Node* unreachable = m_graph.addNode(NodeKind::Bytecode);
+                unreachable->graph = block->graph;
+                unreachable->opcode = op_unreachable;
+                unreachable->instruction = call->instruction;
+                unreachable->bytecodeIndex = call->bytecodeIndex;
+                unreachable->block = otherwise;
+                otherwise->nodes.append(unreachable);
+            } else {
+                otherwise->successors.append(continuation);
+                continuation->predecessors.append(otherwise);
+            }
             m_fallbackCalls.append(fallbackCall);
         }
 
@@ -573,14 +585,14 @@ private:
             continuation->predecessors.append(inlineeBlock);
         }
         if (call->opcode == op_call_ignore_result) {
-        } else if (returns.size() == 1 && !fallbackCall)
+        } else if (returns.size() == 1 && (!fallbackCall || checksCalleeIsInitialized))
             call->replacement = returns[0].second;
         else {
             Node* phi = m_graph.addNode(NodeKind::Phi);
             phi->graph = block->graph;
             phi->block = continuation;
             phi->range = IntegerRange::unknown();
-            if (fallbackCall)
+            if (fallbackCall && !checksCalleeIsInitialized)
                 phi->uses.append({ VirtualRegister(), fallbackCall });
             for (auto& [inlineeBlock, value] : returns)
                 phi->uses.append({ VirtualRegister(), value });
