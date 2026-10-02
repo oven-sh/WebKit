@@ -77,12 +77,6 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
         return false;
     }
 
-    // Cloning reuses the structure itself: a copy must not be born with immutable properties, and such a target takes no clone.
-    if (structure->hasImmutableProperties()) {
-        dataLogLnIf(verbose, "structure has immutable properties");
-        return false;
-    }
-
     if (structure->isDictionary()) {
         dataLogLnIf(verbose, "target is dictionary");
         return false;
@@ -175,7 +169,7 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
     }
 
     // If the sourceStructure is frozen, we retrieve the last one before freezing.
-    if (sourceStructure->transitionKind() == TransitionKind::Freeze) {
+    if (sourceStructure->transitionKind() == TransitionKind::Freeze || sourceStructure->transitionKind() == TransitionKind::MakePropertiesImmutable) {
         dataLogLnIf(verbose, "source was frozen. Let's look into the previous structure");
         sourceStructure = sourceStructure->previousID();
         if (!sourceStructure)
@@ -242,7 +236,7 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());
 
     // If the sourceStructure is frozen, we retrieve the last one before freezing.
-    if (sourceStructure->transitionKind() == TransitionKind::Freeze) {
+    if (sourceStructure->transitionKind() == TransitionKind::Freeze || sourceStructure->transitionKind() == TransitionKind::MakePropertiesImmutable) {
         dataLogLnIf(verbose, "source was frozen. Let's look into the previous structure");
         sourceStructure = sourceStructure->previousID();
         if (!sourceStructure)

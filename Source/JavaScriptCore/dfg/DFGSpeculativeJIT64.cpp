@@ -8722,7 +8722,7 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
 
             genericOrRecoverCase.append(branch32(NotEqual, scratchGPR, Address(enumeratorGPR, JSPropertyNameEnumerator::cachedStructureIDOffset())));
             emitNonNullDecodeZeroExtendedStructureID(scratchGPR, scratchGPR);
-            genericOrRecoverCase.append(branchTest32(NonZero, Address(scratchGPR, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | Structure::s_isWatchingReplacementBits)));
+            genericOrRecoverCase.append(branchTest32(NonZero, Address(scratchGPR, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | Structure::s_isWatchingReplacementBits | Structure::s_hasImmutablePropertiesBits)));
 
             // Compute the offset
             // If index is less than the enumerator's cached inline storage, then it's an inline access
