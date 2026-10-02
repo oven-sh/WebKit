@@ -725,9 +725,8 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
 
 Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JSValue prototype, DeferredStructureTransitionWatchpointFire& deferred)
 {
-    // A structure with immutable properties has no user-visible successor: a caller that asks for one gets the same structure back.
-    if (structure->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
-        return structure;
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyPropertyMaterializationCount);
     ASSERT(isValidPrototype(prototype));
 
     DeferGC deferGC(vm);
@@ -810,9 +809,8 @@ Structure* Structure::attributeChangeTransitionToExistingStructureConcurrently(S
 
 Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, DeferredStructureTransitionWatchpointFire* deferred)
 {
-    // A structure with immutable properties has no user-visible successor: a caller that asks for one gets the same structure back.
-    if (structure->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
-        return structure;
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyPropertyMaterializationCount);
     if (structure->isUncacheableDictionary()) {
         structure->attributeChangeWithoutTransition(vm, propertyName, attributes, [](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset) { });
         structure->checkOffsetConsistency();
@@ -899,9 +897,8 @@ Structure* Structure::toUncacheableDictionaryTransition(VM& vm, Structure* struc
 
 Structure* Structure::sealTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
-    // A structure with immutable properties has no user-visible successor: a caller that asks for one gets the same structure back.
-    if (structure->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
-        return structure;
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyPropertyMaterializationCount);
     return nonPropertyTransition(vm, structure, TransitionKind::Seal, deferred);
 }
 
@@ -912,17 +909,15 @@ Structure* Structure::makePropertiesImmutableTransition(VM& vm, Structure* struc
 
 Structure* Structure::freezeTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
-    // A structure with immutable properties has no user-visible successor: a caller that asks for one gets the same structure back.
-    if (structure->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
-        return structure;
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyPropertyMaterializationCount);
     return nonPropertyTransition(vm, structure, TransitionKind::Freeze, deferred);
 }
 
 Structure* Structure::preventExtensionsTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
-    // A structure with immutable properties has no user-visible successor: a caller that asks for one gets the same structure back.
-    if (structure->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
-        return structure;
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyPropertyMaterializationCount);
     return nonPropertyTransition(vm, structure, TransitionKind::PreventExtensions, deferred);
 }
 

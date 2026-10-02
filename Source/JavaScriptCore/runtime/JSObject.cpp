@@ -1916,9 +1916,6 @@ void JSObject::convertDoubleToContiguousWhilePerformingSetIndex(VM& vm, unsigned
 ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
 {
     ASSERT(inherits(info()));
-    // Never gains or converts element storage: compiled code asks for this before it writes elements in place.
-    if (structure()->hasImmutableProperties()) [[unlikely]]
-        return {};
 
     if (isCopyOnWrite(indexingMode())) {
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, Int32Shape) == Int32Shape) {
@@ -1954,9 +1951,6 @@ ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
 
 ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
 {
-    // Never gains or converts element storage: compiled code asks for this before it writes elements in place.
-    if (structure()->hasImmutableProperties()) [[unlikely]]
-        return { };
     ASSERT(Options::allowDoubleShape());
     ASSERT(inherits(info()));
 
@@ -1997,9 +1991,6 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
 
 ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
 {
-    // Never gains or converts element storage: compiled code asks for this before it writes elements in place.
-    if (structure()->hasImmutableProperties()) [[unlikely]]
-        return { };
     ASSERT(inherits(info()));
 
     if (isCopyOnWrite(indexingMode())) {
@@ -2041,7 +2032,9 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
 
 ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
 {
-    // Never gains or converts element storage: compiled code asks for this before it writes elements in place.
+    // Compiled code asks for this before it stores elements in place. An object with immutable properties that has no element
+    // storage is given none: Object.prototype or Array.prototype with storage would make every array pay for it. (The engine already
+    // gives a non-extensible object no storage that can be stored into in place, so the other conversions need nothing.)
     if (structure()->hasImmutableProperties()) [[unlikely]]
         return nullptr;
     ASSERT(inherits(info()));
