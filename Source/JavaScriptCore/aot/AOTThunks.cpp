@@ -20,7 +20,7 @@
 
 namespace JSC { namespace AOT {
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(X86_64)
 
 namespace {
 
@@ -38,6 +38,14 @@ constexpr GPRReg argument2 = GPRInfo::argumentGPR2;
 constexpr GPRReg argument3 = GPRInfo::argumentGPR3;
 constexpr GPRReg argument4 = GPRInfo::argumentGPR4;
 constexpr GPRReg argument5 = GPRInfo::argumentGPR5;
+#if CPU(X86_64)
+constexpr GPRReg scratch0 = X86Registers::eax;
+constexpr GPRReg scratch1 = X86Registers::r10;
+constexpr GPRReg scratch2 = X86Registers::ebx;
+constexpr GPRReg scratch3 = X86Registers::r12;
+constexpr GPRReg scratch4 = argument0;
+constexpr GPRReg cacheGPR = argument5;
+#else
 constexpr GPRReg scratch0 = GPRInfo::regT9;
 constexpr GPRReg scratch1 = GPRInfo::regT10;
 constexpr GPRReg scratch2 = GPRInfo::regT11;
@@ -45,6 +53,37 @@ constexpr GPRReg scratch3 = GPRInfo::regT12;
 constexpr GPRReg scratch4 = GPRInfo::regT13;
 
 constexpr GPRReg cacheGPR = GPRInfo::argumentGPR7;
+#endif
+
+enum class Restores : uint8_t { CalleeSaves, CalleeSavesAndArguments };
+
+void enter(CCallHelpers& jit)
+{
+#if CPU(X86_64)
+    jit.push(scratch2);
+    jit.push(scratch3);
+    jit.push(scratch4);
+    jit.push(cacheGPR);
+#else
+    UNUSED_PARAM(jit);
+#endif
+}
+
+void leave(CCallHelpers& jit, Restores restores)
+{
+#if CPU(X86_64)
+    if (restores == Restores::CalleeSavesAndArguments) {
+        jit.pop(cacheGPR);
+        jit.pop(scratch4);
+    } else
+        jit.addPtr(TrustedImm32(2 * sizeof(CPURegister)), CCallHelpers::stackPointerRegister);
+    jit.pop(scratch3);
+    jit.pop(scratch2);
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(restores);
+#endif
+}
 
 void loadInstance(CCallHelpers& jit, GPRReg result)
 {
@@ -64,8 +103,9 @@ void loadEntry(CCallHelpers& jit, Entry entry, GPRReg result)
     jit.loadPtr(Address(result, static_cast<unsigned>(entry) * sizeof(void*)), result);
 }
 
-void tailCall(CCallHelpers& jit, Entry operation)
+void tailCall(CCallHelpers& jit, Entry operation, Restores restores = Restores::CalleeSavesAndArguments)
 {
+    leave(jit, restores);
     loadEntry(jit, operation, GPRInfo::nonArgGPR0);
     jit.farJump(GPRInfo::nonArgGPR0, OperationPtrTag);
 }
@@ -82,6 +122,7 @@ void returnValue(CCallHelpers& jit, GPRReg value)
 {
     jit.move(value, GPRInfo::returnValueGPR);
     jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
+    leave(jit, Restores::CalleeSaves);
     jit.ret();
 }
 
@@ -89,12 +130,14 @@ void returnBoolean(CCallHelpers& jit, bool value)
 {
     jit.move(TrustedImm32(value), GPRInfo::returnValueGPR);
     jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
+    leave(jit, Restores::CalleeSaves);
     jit.ret();
 }
 
 void returnVoid(CCallHelpers& jit)
 {
     jit.move(TrustedImm32(0), GPRInfo::returnValueGPR);
+    leave(jit, Restores::CalleeSaves);
     jit.ret();
 }
 
@@ -138,7 +181,7 @@ void emitMegamorphicStore(CCallHelpers& jit, GPRReg base, GPRReg uid, GPRReg val
     Jump noBarrier = jit.branch32(CCallHelpers::Above, scratch1, Address(scratch2, VM::offsetOfHeapBarrierThreshold()));
     jit.move(base, argument1);
     jit.move(scratch2, argument0);
-    tailCall(jit, Entry::operationAOTWriteBarrierAfterPut);
+    tailCall(jit, Entry::operationAOTWriteBarrierAfterPut, Restores::CalleeSaves);
     noBarrier.link(&jit);
     returnVoid(jit);
 
@@ -148,7 +191,7 @@ void emitMegamorphicStore(CCallHelpers& jit, GPRReg base, GPRReg uid, GPRReg val
     jit.move(scratch1, argument2);
     jit.move(scratch3, argument3);
     loadVM(jit, argument0);
-    tailCall(jit, Entry::operationAOTPutByIdReallocating);
+    tailCall(jit, Entry::operationAOTPutByIdReallocating, Restores::CalleeSaves);
 }
 
 } // anonymous namespace
@@ -169,6 +212,7 @@ static void branchIfSlotIsLive(CCallHelpers& jit, GPRReg slot, JumpList& slowCas
 void generateFrontEndGetById(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     branchIfSlotIsLive(jit, argument3, slowCases);
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadIdentifier(jit, argument2, scratch0);
@@ -181,6 +225,7 @@ void generateFrontEndGetById(CCallHelpers& jit)
 void generateFrontEndGetByVal(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadAtomName(jit, argument2, scratch0, slowCases);
     emitMegamorphicLoad(jit, argument1, scratch0, slowCases);
@@ -191,6 +236,7 @@ void generateFrontEndGetByVal(CCallHelpers& jit)
 void generateFrontEndPutById(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     branchIfSlotIsLive(jit, argument4, slowCases);
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadIdentifier(jit, argument3, scratch0);
@@ -203,6 +249,7 @@ void generateFrontEndPutById(CCallHelpers& jit)
 void generateFrontEndPutByVal(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadAtomName(jit, argument2, scratch0, slowCases);
     emitMegamorphicStore(jit, argument1, scratch0, argument3, slowCases);
@@ -218,6 +265,7 @@ static void generateCompareEq(CCallHelpers& jit, bool strict)
     JumpList isFalse;
     JumpList isTrue;
 
+    enter(jit);
     jit.or64(left, right, scratch0);
     Jump notBothCells = jit.branchIfNotCell(scratch0);
 
@@ -312,6 +360,7 @@ static void emitAllocateFromCache(CCallHelpers& jit, GPRReg cache, GPRReg result
 void generateFrontEndNewObject(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     emitAllocateFromCache(jit, argument2, scratch3, slowCases);
     jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));
     jit.load32(Address(argument2, OBJECT_OFFSETOF(Slot, offset)), scratch0);
@@ -354,6 +403,7 @@ static void emitFillAndReturnObject(CCallHelpers& jit, GPRReg values, GPRReg cou
 void generateFrontEndNewObjectLiteral(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     emitAllocateWithProperties(jit, argument3, argument1, argument2, slowCases);
     slowCases.link(&jit);
     tailCall(jit, Entry::RawNewObjectLiteral);
@@ -362,6 +412,7 @@ void generateFrontEndNewObjectLiteral(CCallHelpers& jit)
 void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     jit.loadPtr(Address(argument4, OBJECT_OFFSETOF(Slot, pointer)), scratch0);
     Jump isDifferentFunction = jit.branchPtr(CCallHelpers::NotEqual, scratch0, argument1);
     jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
@@ -407,6 +458,7 @@ void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
 void generateFrontEndCreateThis(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     slowCases.append(jit.branchIfNotFunction(argument1));
     jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
@@ -427,6 +479,7 @@ void generateFrontEndCreateThis(CCallHelpers& jit)
 void generateFrontEndNewFunction(CCallHelpers& jit)
 {
     JumpList slowCases;
+    enter(jit);
     emitAllocateFromCache(jit, argument5, scratch3, slowCases);
     jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));
     jit.storePtr(argument1, Address(scratch3, JSCallee::offsetOfScopeChain()));
@@ -442,15 +495,27 @@ void generateFrontEndInById(CCallHelpers& jit)
 {
     using HasEntry = MegamorphicCache::HasEntry;
     JumpList slowCases;
+    enter(jit);
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadIdentifier(jit, argument2, scratch0);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
     loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
     jit.load32(Address(argument1, JSCell::structureIDOffset()), scratch1);
+#if CPU(X86_64)
+    jit.move(scratch1, scratch2);
+    jit.urshift32(TrustedImm32(MegamorphicCache::structureIDHashShift1), scratch2);
+    jit.move(scratch1, scratch3);
+    jit.urshift32(TrustedImm32(MegamorphicCache::structureIDHashShift6), scratch3);
+    jit.xor32(scratch2, scratch3);
+    jit.load32(Address(scratch0, UniquedStringImpl::flagsOffset()), scratch2);
+    jit.urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2);
+    jit.add32(scratch2, scratch3);
+#else
     jit.extractUnsignedBitfield32(scratch1, TrustedImm32(MegamorphicCache::structureIDHashShift1), TrustedImm32(32 - MegamorphicCache::structureIDHashShift1), scratch2);
     jit.xorUnsignedRightShift32(scratch2, scratch1, TrustedImm32(MegamorphicCache::structureIDHashShift6), scratch3);
     jit.load32(Address(scratch0, UniquedStringImpl::flagsOffset()), scratch2);
     jit.addUnsignedRightShift32(scratch3, scratch2, TrustedImm32(StringImpl::s_flagCount), scratch3);
+#endif
     jit.and32(TrustedImm32(MegamorphicCache::hasCachePrimaryMask), scratch3);
     static_assert(hasOneBitSet(sizeof(HasEntry)));
     jit.lshift32(TrustedImm32(getLSBSet(sizeof(HasEntry))), scratch3);
@@ -496,7 +561,7 @@ void installOperationFrontEnds(VM& vm, void** entries)
 
 void installOperationFrontEnds(VM&, void**) { }
 
-#endif // CPU(ARM64)
+#endif // CPU(ARM64) || CPU(X86_64)
 
 } } // namespace JSC::AOT
 

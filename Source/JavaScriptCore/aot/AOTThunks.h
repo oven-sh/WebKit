@@ -18,7 +18,7 @@ namespace AOT {
 
 void installOperationFrontEnds(VM&, void** runtimeTableEntries);
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(X86_64)
 #define AOT_DECLARE_FRONT_END(name) void generateFrontEnd##name(CCallHelpers&);
 FOR_EACH_AOT_OPERATION_WITH_FRONT_END(AOT_DECLARE_FRONT_END)
 #undef AOT_DECLARE_FRONT_END

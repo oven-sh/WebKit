@@ -587,10 +587,21 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     case StubClobbers::CallerSavedRegisters:
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+#if CPU(X86_64)
+        patchpoint->clobberLate(registersClobberedByCalls());
+#endif
         break;
     case StubClobbers::Temporaries: {
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobber(stubTemporaries(3));
+#if CPU(X86_64)
+        if (type != Void) {
+            RegisterSet operands;
+            for (auto& argument : arguments)
+                operands.add(argument.reg, IgnoreVectors);
+            patchpoint->clobberLate(operands);
+        }
+#endif
         break;
     }
     case StubClobbers::Nothing:
@@ -784,7 +795,20 @@ LValue Lowering::doubleToInt32(LValue value)
         return patchpoint;
     }
 #endif
+#if CPU(X86_64)
+    LBasicBlock slowPath = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    LValue truncated = m_out.doubleToInt64(value);
+    ValueFromBlock fastResult = m_out.anchor(m_out.castToInt32(truncated));
+    m_out.branch(m_out.equal(truncated, m_out.constInt64(std::numeric_limits<int64_t>::min())), rarely(slowPath), usually(continuation));
+    m_out.appendTo(slowPath, continuation);
+    ValueFromBlock slowResult = m_out.anchor(plainCall(Int32, Entry::operationAOTDoubleToInt32, value));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return m_out.phi(Int32, fastResult, slowResult);
+#else
     return plainCall(Int32, Entry::operationAOTDoubleToInt32, value);
+#endif
 }
 
 LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)

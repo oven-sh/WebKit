@@ -271,7 +271,7 @@ static constexpr bool usesStubs =
 #else
     false;
 #endif
-inline bool usesDataStubs() { return isARM64() && Options::useAOTDataStubs(); }
+inline bool usesDataStubs() { return usesStubs && Options::useAOTDataStubs(); }
 
 struct Site {
     static constexpr unsigned identifierBits = 20;
@@ -416,6 +416,10 @@ struct CallSite {
 
 #if CPU(ARM64)
 static constexpr GPRReg functionIndexGPR = ARM64Registers::x15;
+#elif CPU(X86_64)
+static constexpr GPRReg functionIndexGPR = X86Registers::eax;
+#endif
+#if CPU(ARM64) || CPU(X86_64)
 void loadFunctionIndexAt(CCallHelpers&, GPRReg pc);
 #endif
 
