@@ -1192,6 +1192,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         }
 #if USE(BUN_JSC_ADDITIONS)
         }
+        context->setEntry(vm, context->loader()->getRegisteredMayBeNull(specifier, type));
 #endif
 
         JSPromise* statePromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -1249,7 +1250,12 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
             auto failure = JSModuleLoader::getErrorInfo(globalObject, error);
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
             // Don't register the module unless it's an evaluation error.
+#if USE(BUN_JSC_ADDITIONS)
+            // This load has no entry. One that holds its key is another load's, and is not where this error goes.
+            if (failure.isEvaluationError(specifier, type) && !context->loader()->getRegisteredMayBeNull(specifier, type)) {
+#else
             if (failure.isEvaluationError(specifier, type)) {
+#endif
                 ModuleRegistryEntry* entry = context->loader()->ensureRegistered(globalObject, specifier, type);
                 if (scope.exception()) {
                     intermediatePromise->rejectWithCaughtException(vm, scope);
@@ -1274,11 +1280,17 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
     if (status == JSPromise::Status::Fulfilled)
         resultPromise->fulfill(vm, arguments[1]);
     else {
+#if USE(BUN_JSC_ADDITIONS)
+        // The load's own entry, if it got as far as having one. A load whose fetch failed has none and stores nothing:
+        // the entry the key holds is then another load's.
+        if (ModuleRegistryEntry* entry = context->entry())
+#else
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
         if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type))
+#endif
             entry->setEvaluationError(globalObject, arguments[1]);
         resultPromise->reject(vm, arguments[1]);
     }
@@ -1433,7 +1445,11 @@ static void moduleLoadStoreError(JSGlobalObject* globalObject, std::span<const J
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleRegistryEntry* entry = context->entry();
+#else
         ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type);
+#endif
         if (!entry)
             return;
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
