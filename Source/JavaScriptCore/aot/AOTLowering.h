@@ -228,6 +228,8 @@ private:
     static bool mayBeOverridden(ASCIILiteral className, Node* read);
     bool isCompact() const
     {
+        if (!usesDataStubs())
+            return false;
         if (!Options::useAOTInlineFastPathsInLoops() || m_block->isGeneric)
             return true;
         return (!m_block->isInProfitableLoop || m_block->isInBuiltinLoopOnly) && !m_graph.callsItself;
@@ -401,7 +403,7 @@ LValue Lowering::vmCall(Node* node, LType type, Entry function, Args... args)
 template<typename Slow>
 LValue Lowering::withHelper(Stub stub, const Vector<LValue, 4>& arguments, const Slow& slow)
 {
-    if (isCompact())
+    if (isCompact() || !usesDataStubs())
         return slow();
     LValue helperResult = callHelper(stub, arguments);
     LBasicBlock otherwise = newColdBlock();

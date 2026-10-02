@@ -524,7 +524,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
 {
     unsigned identifier = operation == Entry::operationAOTGetByIdWellKnown ? functionIdentifier : numberOf(functionIdentifier);
     std::optional<Stub> stub;
-    if (usesStubs && Site::fits(identifier, 0)) {
+    if (usesDataStubs() && Site::fits(identifier, 0)) {
         if (operation == Entry::operationAOTGetById)
             stub = Stub::GetById;
         else if (operation == Entry::operationAOTGetByIdWellKnown)
@@ -1004,7 +1004,7 @@ void Lowering::lowerGetByVal(Node* node)
         results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetElementOrEmpty, m_instance, base, lowJSValue(propertyNode))));
     else if (baseIsArray)
         results.append(m_out.anchor(coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode))));
-    else if constexpr (usesStubs)
+    else if (usesDataStubs())
         results.append(m_out.anchor(callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode))));
     else
         results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetByVal, m_instance, base, lowJSValue(propertyNode))));
@@ -1076,7 +1076,7 @@ void Lowering::lowerPutByVal(Node* node)
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
-    if constexpr (usesStubs)
+    if (usesDataStubs())
         throughStub();
     else
         vmCall(node, Void, Entry::operationAOTPutByVal, m_instance, base, lowJSValue(propertyNode), value, m_out.constInt32(bytecode.m_ecmaMode.isStrict()));
@@ -1162,7 +1162,7 @@ void Lowering::lowerResolveScope(Node* node)
     unsigned extra = code().resolveScopeExtra(bytecode);
     if (isFusedWithGetFromScope(node))
         return;
-    if (usesStubs && variable.kind == StaticVariable::Unresolved && Site::fits(numberOf(bytecode.m_var), extra)) {
+    if (usesDataStubs() && variable.kind == StaticVariable::Unresolved && Site::fits(numberOf(bytecode.m_var), extra)) {
         setJSValue(node, callStub(Stub::ResolveScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), extra)), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
@@ -1190,7 +1190,7 @@ void Lowering::lowerResolveScope(Node* node)
 
 bool Lowering::isFusedWithGetFromScope(Node* node)
 {
-    if (!usesStubs || !node->isBytecode(op_resolve_scope) || node->block != m_block || node->useCount != 1)
+    if (!usesDataStubs() || !node->isBytecode(op_resolve_scope) || node->block != m_block || node->useCount != 1)
         return false;
     auto resolve = node->as<OpResolveScope>();
     if (isStaticClosureVarResolveType(resolve.m_resolveType) || !Site::fits(numberOf(resolve.m_var), code().resolveScopeExtra(resolve)))
@@ -1268,7 +1268,7 @@ void Lowering::lowerGetFromScope(Node* node)
     }
 
     unsigned throwIfNotFound = code().getFromScopeExtra(bytecode);
-    if (usesStubs && variable.isCachedInSlot() && Site::fits(numberOf(bytecode.m_var), throwIfNotFound)) {
+    if (usesDataStubs() && variable.isCachedInSlot() && Site::fits(numberOf(bytecode.m_var), throwIfNotFound)) {
         setJSValue(node, callStub(Stub::GetFromScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), throwIfNotFound)), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
@@ -1342,7 +1342,7 @@ void Lowering::lowerPutToScope(Node* node)
     unsigned how = static_cast<unsigned>(info.resolveMode()) | static_cast<unsigned>(info.initializationMode()) << 1 | info.ecmaMode().isStrict() << 3;
     RELEASE_ASSERT(static_cast<unsigned>(info.initializationMode()) <= 3);
 
-    if (usesStubs && Site::fits(numberOf(bytecode.m_var), how)) {
+    if (usesDataStubs() && Site::fits(numberOf(bytecode.m_var), how)) {
         callStub(Stub::PutToScope, Void, { { scope, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, numberOf(bytecode.m_var), how)), GPRInfo::argumentGPR2 } }, { });
         return;
     }

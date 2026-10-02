@@ -259,11 +259,12 @@ static constexpr unsigned shortLiteralLengthMask = (1u << shortLiteralLengthBits
 static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
 
 static constexpr bool usesStubs =
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(X86_64)
     true;
 #else
     false;
 #endif
+inline bool usesDataStubs() { return isARM64() && Options::useAOTDataStubs(); }
 
 struct Site {
     static constexpr unsigned identifierBits = 20;

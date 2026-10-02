@@ -78,7 +78,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     LValue iterable = lowJSValue(node->use(iterableRegister));
     LValue symbolIterator = lowJSValue(node->use(symbolIteratorRegister));
 
-    if (usesStubs && !isAsync) {
+    if (usesDataStubs() && !isAsync) {
         PatchpointValue* opened = callStub(Stub::IteratorOpen, m_proc.addTuple({ Int64, Int64 }),
             { { iterable, GPRInfo::argumentGPR0 }, { symbolIterator, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Next))), GPRInfo::argumentGPR2 } },
             { });
@@ -141,7 +141,7 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue iterator = lowJSValue(iteratorNode);
     LValue iterable = lowJSValue(node->use(bytecode.m_iterable));
 
-    if constexpr (usesStubs) {
+    if (usesDataStubs()) {
         unsigned doneSlot = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Done));
         unsigned valueSlot = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Value));
         RELEASE_ASSERT(valueSlot == doneSlot + 1);
@@ -346,7 +346,7 @@ void Lowering::lowerIteratorCloseCheck(Node* node)
         setJSValue(node, iterator);
         return;
     }
-    if constexpr (usesStubs) {
+    if (usesDataStubs()) {
         setJSValue(node, callStub(Stub::IteratorCloseCheck, Int64,
             { { iterator, GPRInfo::argumentGPR0 }, { lowJSValue(node->use(bytecode.m_iterable)), GPRInfo::argumentGPR1 }, { lowJSValue(node->use(bytecode.m_next)), GPRInfo::argumentGPR2 } }, { }));
         return;

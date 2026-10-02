@@ -884,7 +884,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
         LValue value = lowJSValue(valueNode);
         LBasicBlock slowCase = nullptr;
         LBasicBlock continuation = nullptr;
-        if (usesStubs && mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32)) {
+        if (usesDataStubs() && mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32)) {
             callStub(Stub::PutByValDirect, Void, { { base, GPRInfo::argumentGPR0 }, { property, GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
                 { { GPRInfo::argumentGPR3, bytecode.m_ecmaMode.isStrict() } });
             return true;
@@ -976,7 +976,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_get_private_name: {
         auto bytecode = node->as<OpGetPrivateName>();
-        if constexpr (usesStubs)
+        if (usesDataStubs())
             setJSValue(node, callStub(Stub::GetPrivateName, Int64, { { low(bytecode.m_base), GPRInfo::argumentGPR0 }, { low(bytecode.m_property), GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, 0)), GPRInfo::argumentGPR2 } }, { }));
         else
             setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetPrivateName, m_instance, low(bytecode.m_base), low(bytecode.m_property), m_out.int32Zero, slotAddress(allocateSlot()), m_out.int32Zero));
@@ -984,7 +984,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_put_private_name: {
         auto bytecode = node->as<OpPutPrivateName>();
-        if constexpr (usesStubs) {
+        if (usesDataStubs()) {
             callStub(Stub::PutPrivateName, Void, { { low(bytecode.m_base), GPRInfo::argumentGPR0 }, { low(bytecode.m_property), GPRInfo::argumentGPR1 }, { low(bytecode.m_value), GPRInfo::argumentGPR2 },
                 { slotAddress(allocateSite(node, 0, bytecode.m_putKind.isDefine())), GPRInfo::argumentGPR3 } }, { });
         } else
@@ -1001,7 +1001,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_check_private_brand: {
         auto bytecode = node->as<OpCheckPrivateBrand>();
-        if constexpr (usesStubs)
+        if (usesDataStubs())
             callStub(Stub::CheckPrivateBrand, Void, { { low(bytecode.m_base), GPRInfo::argumentGPR0 }, { low(bytecode.m_brand), GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, 0)), GPRInfo::argumentGPR2 } }, { });
         else
             vmCall(node, Void, Entry::operationAOTCheckPrivateBrand, m_instance, low(bytecode.m_base), low(bytecode.m_brand), m_out.int32Zero, slotAddress(allocateSlot()), m_out.int32Zero);

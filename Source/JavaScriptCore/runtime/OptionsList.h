@@ -150,6 +150,7 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
     v(OptionString, aotRemarksPath, nullptr, Normal, "When compiling: write the optimizations applied to each function to this file, one per line (function name, tab, remark). In the jsc shell, aotRemarks() reads it. For tests."_s) \
     v(Bool, forceAOTVeneers, false, Normal, "For testing. Route every direct call between functions in an image through a veneer, as if the target were out of range."_s) \
+    v(Bool, useAOTDataStubs, true, Normal, "Property access, arithmetic and the like call shared stubs outside hot loops. Only ARM64 has these stubs; turning them off there tests what the other CPUs compile."_s) \
     v(Unsigned, numberOfAOTStubCopiesForTesting, 0, Normal, "For testing. If nonzero: lay out an image as if calls reached only far enough for it to need about this many copies of the stubs, instead of 96 MB. Calls between functions that are then out of range go through veneers."_s) \
     v(Unsigned, maxAOTFunctionNumberInTypesForTesting, 0, Normal, "For testing. If nonzero: the largest function number that a type can hold, instead of 262,143. A small program then has functions beyond it."_s) \
     v(OptionString, aotImagePath, nullptr, Normal, "jsc shell only. Path to the AOT image written by writeAOTImageTo for the first script or module. Implies useAOT."_s) \

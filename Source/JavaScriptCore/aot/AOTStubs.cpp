@@ -3651,7 +3651,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
 StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool usesResult)
 {
     enum { Any, Wanted, ResultUnused };
-    if constexpr (!usesStubs)
+    if (!usesDataStubs())
         return StubIntrinsic::None;
     if (name->length() > 11 || name->isSymbol())
         return StubIntrinsic::None;

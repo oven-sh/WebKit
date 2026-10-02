@@ -225,14 +225,14 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
     if (auto namespaceSlot = slot.moduleNamespaceSlot()) {
         Structure* structure = base.asCell()->structure();
         uint32_t location = JSLexicalEnvironment::offsetOfVariable(ScopeOffset(namespaceSlot->scopeOffset)) / sizeof(EncodedJSValue);
-        if (usesStubs && structure == structureBefore && structure != globalObject->moduleNamespaceObjectStructure() && location < (1u << (Slot::offsetBits - 1)) && mayReplace(cache, structure)) {
+        if (usesDataStubs() && structure == structureBefore && structure != globalObject->moduleNamespaceObjectStructure() && location < (1u << (Slot::offsetBits - 1)) && mayReplace(cache, structure)) {
             if (cache->hasPointer())
                 stopWatching(data, cache);
             fill(globalObject->vm(), data, cache, structure, location | Slot::pointerIsCell, namespaceSlot->environment);
         }
         return;
     }
-    if (mayBePolymorphic && usesStubs && base.isCell() && base.asCell()->structure() == structureBefore) {
+    if (mayBePolymorphic && usesDataStubs() && base.isCell() && base.asCell()->structure() == structureBefore) {
         if (uint16_t id = recordPropertyNameInStructure(globalObject->vm(), base.asCell(), structureBefore, ident, slot)) {
             uint32_t location = *propertyLocation(slot.cachedOffset());
             uint32_t sameAccess = location | static_cast<uint32_t>(id) << Slot::nameIDShift;
@@ -249,7 +249,7 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
             }
         }
     }
-    if (mayBePolymorphic && usesStubs && base.isCell()) {
+    if (mayBePolymorphic && usesDataStubs() && base.isCell()) {
         VM& vm = globalObject->vm();
         Structure* structure = base.asCell()->structure();
         if (PolymorphicSlots* several = siteSlots(vm, data, cache, structure, ident)) {
@@ -264,7 +264,7 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
 
 static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
 {
-    uint32_t getterFlag = usesStubs && slot.isCacheableGetter() ? Slot::isGetter : 0;
+    uint32_t getterFlag = usesDataStubs() && slot.isCacheableGetter() ? Slot::isGetter : 0;
     if (!base.isCell() || (!slot.isCacheableValue() && !slot.isUnset() && !getterFlag))
         return false;
 
@@ -300,7 +300,7 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
             return false;
         if (cache->hasPointer())
             stopWatching(data, cache);
-        uint32_t nameID = usesStubs ? recordPropertyNameInStructure(vm, cell, structure, ident, slot) : 0;
+        uint32_t nameID = usesDataStubs() ? recordPropertyNameInStructure(vm, cell, structure, ident, slot) : 0;
         fill(vm, data, cache, structure, *location | getterFlag | nameID << Slot::nameIDShift, (*location | getterFlag) & (Slot::isIndirect | Slot::isGetter) ? nullptr : ident.impl());
         return true;
     }
@@ -508,7 +508,7 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
             if (cacheable && slot.cachedOffset() <= MegamorphicCache::maxOffset && (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())) {
                 if (slot.isCacheableValue())
                     cache.initAsHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
-                else if (usesStubs && slot.isCacheableGetter())
+                else if (usesDataStubs() && slot.isCacheableGetter())
                     cache.initAsGetterHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
             }
             RELEASE_AND_RETURN(scope, slot.getValue(globalObject, uid));

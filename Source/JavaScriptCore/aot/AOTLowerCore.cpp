@@ -747,7 +747,7 @@ unsigned Lowering::sharedSite(Node* node, unsigned identifier, unsigned extra)
 
 void Lowering::storeBarrier(LValue owner)
 {
-    if constexpr (usesStubs) {
+    if (usesDataStubs()) {
         PatchpointValue* patchpoint = callStub(Stub::WriteBarrier, Void, { { owner, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
         patchpoint->effects = Effects::none();
         patchpoint->effects.controlDependent = true;

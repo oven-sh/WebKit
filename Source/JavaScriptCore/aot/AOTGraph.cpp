@@ -2586,7 +2586,7 @@ private:
 
     bool chooseGuards()
     {
-        if (!Options::useAOTLoopSplitting() || !Options::aotLoopSplittingPolicy() || !usesStubs)
+        if (!Options::useAOTLoopSplitting() || !Options::aotLoopSplittingPolicy() || !usesDataStubs())
             return false;
         unsigned size = m_instructions.size();
         BitVector fieldAccesses;
