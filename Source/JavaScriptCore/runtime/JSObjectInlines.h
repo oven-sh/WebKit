@@ -201,7 +201,8 @@ ALWAYS_INLINE bool JSObject::canPerformFastPutInlineExcludingProto()
     JSObject* obj = this;
     while (true) {
         Structure* structure = obj->structure();
-        if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->typeInfo().overridesGetPrototype())
+        bool sendsPutOffTheFastPath = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrHasImmutableProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+        if (sendsPutOffTheFastPath || structure->typeInfo().overridesGetPrototype())
             return false;
         if (obj != this && structure->typeInfo().overridesPut())
             return false;
@@ -421,12 +422,6 @@ ALWAYS_INLINE bool JSObject::putInlineForJSObject(JSCell* cell, JSGlobalObject* 
     ASSERT(value);
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(thisObject));
 
-    // Every put this object is the receiver of is refused: data properties, setters and custom setters alike.
-    if (thisObject->structure()->hasImmutableProperties() && !isThisValueAltered(slot, thisObject)) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
-    }
-
     // Try indexed put first. This is required for correctness, since loads on property names that appear like
     // valid indices will never look in the named property storage.
     if (std::optional<uint32_t> index = parseIndex(propertyName)) {
@@ -511,16 +506,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     if (structure->hasImmutableProperties()) [[unlikely]] {
-        if constexpr (mode == PutModePut)
-            return ReadonlyPropertyChangeError;
-        else if (!vm.allowLazyPropertyMaterializationCount) {
-            // A direct define that changes nothing succeeds, as it does through validateAndApplyPropertyDescriptor().
-            unsigned currentAttributes;
-            PropertyOffset currentOffset = structure->get(vm, propertyName, currentAttributes);
-            if (currentOffset != invalidOffset && currentAttributes == newAttributes && getDirect(currentOffset) == value)
-                return { };
-            return ReadonlyPropertyChangeError;
-        }
+        if (auto result = putDirectWhenPropertiesAreImmutable(vm, propertyName, value, newAttributes, mode == PutModePut))
+            return *result;
     }
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));

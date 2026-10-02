@@ -838,12 +838,31 @@ bool JSObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prop
     return putInlineForJSObject(cell, globalObject, propertyName, value, slot);
 }
 
+NEVER_INLINE std::optional<ASCIILiteral> JSObject::putDirectWhenPropertiesAreImmutable(VM& vm, PropertyName propertyName, JSValue value, unsigned newAttributes, bool isPut)
+{
+    if (isPut)
+        return ASCIILiteral { ReadonlyPropertyChangeError };
+    if (vm.allowLazyPropertyMaterializationCount)
+        return std::nullopt;
+    // A direct define that changes nothing succeeds, as it does through validateAndApplyPropertyDescriptor().
+    unsigned currentAttributes;
+    PropertyOffset currentOffset = structure()->get(vm, propertyName, currentAttributes);
+    if (currentOffset != invalidOffset && currentAttributes == newAttributes && getDirect(currentOffset) == value)
+        return ASCIILiteral { };
+    return ASCIILiteral { ReadonlyPropertyChangeError };
+}
+
 bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     ASSERT(!parseIndex(propertyName));
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
+    // canPerformFastPutInlineExcludingProto() says no for such a receiver.
+    if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]]
+        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
 
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);

@@ -377,6 +377,12 @@ public:
         return typeInfo().hasStaticPropertyTable() && !staticPropertiesReified();
     }
 
+    // What sends a put off the fast path when the object is its receiver. One test, as both are bits of m_bitField.
+    bool hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrHasImmutableProperties() const
+    {
+        return m_bitField & (s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | s_hasImmutablePropertiesBits);
+    }
+
     bool isNonExtensibleOrHasNonConfigurableProperties() const
     {
         return didPreventExtensions() || hasNonConfigurableProperties();

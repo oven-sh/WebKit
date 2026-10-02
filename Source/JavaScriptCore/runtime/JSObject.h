@@ -844,6 +844,8 @@ private:
     JS_EXPORT_PRIVATE ArrayStorage* ensureArrayStorageSlow(VM&);
 
     PropertyOffset prepareToPutDirectWithoutTransition(VM&, PropertyName, unsigned attributes, StructureID, Structure*);
+    // For putDirectInternal(), out of line. The result to return, or nothing: go on (a lazily materialized property).
+    JS_EXPORT_PRIVATE std::optional<ASCIILiteral> putDirectWhenPropertiesAreImmutable(VM&, PropertyName, JSValue, unsigned newAttributes, bool isPut);
 
     NO_RETURN_DUE_TO_CRASH NEVER_INLINE void crashDueToEmptyValueAtValidOffset(Structure*, PropertyName, PropertyOffset, JSObject* bottomOfChain, JSObject* previousInChain, unsigned attributes, int line, const char* filename, const char* function_name);
 };
