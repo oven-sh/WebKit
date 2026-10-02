@@ -56,7 +56,8 @@ namespace JSC { namespace Yarr {
 // asserts it, so it is accepted only when what it can match has a bounded length, and when the
 // lookarounds of the pattern, inside one another, do not cost a position more steps than the
 // largest program without a lookaround does. The compiler refuses the other patterns and says
-// why.
+// why. A refused pattern is compiled as it is without the option: RegExp::compile() asks this
+// matcher first and turns to the JIT and the bytecode interpreter when it refuses.
 
 enum class LinearRefusal : uint8_t {
     None,

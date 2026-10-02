@@ -99,6 +99,15 @@ for (let subject of [latin1, utf16]) {
 testLinear(/(\p{L}*)*!/u, count => "\u{10400}".repeat(count) + "?", -1);
 testLinear(/(.*)*!/u, count => "\u{1F600}".repeat(count) + "?", -1);
 
+// A counted repeat is a copy of its atom for each count. While the subject is shorter than the
+// count, a longer subject also has more states alive at a position, so the steps grow faster
+// than the subject does. The bound for a position holds all the same, and past the count the
+// steps are on one line.
+for (let length of [50, 100, 200, 300])
+    statisticsOf(/x{0,300}y/, "x".repeat(length) + "!");
+testLinear(/x{0,300}y/, count => "x".repeat(300 + count) + "!", -1);
+testLinear(/(?:\w+\s){1,50}!/, count => "ab ".repeat(50 + count) + "?", -1);
+
 // What lookarounds inside one another cost a position is the product of what each one can
 // read. Six of these, each with four characters to read, are under the limit. Seven are not,
 // and the matcher refuses them.

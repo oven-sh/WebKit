@@ -27,7 +27,7 @@ const common = ["--useDollarVM=1", "--validateOptions=1"];
 const CFG = {
     jit:          { bin: REL,  args: [...common] },
     interp:       { bin: REL,  args: [...common, "--useRegExpJIT=0"] },
-    // The non-backtracking matcher runs every pattern it accepts; the interpreter runs the rest.
+    // The non-backtracking matcher runs every pattern it accepts; the JIT runs the rest, as in "jit".
     linear:       { bin: REL,  args: [...common, "--useRegExpLinearEngine=1"] },
     gatesoff:     { bin: REL,  args: [...common, "--useRegExpLookbehindJIT=0", "--useRegExpAlternationFactoring=0", "--useRegExpAlternationDispatch=0"] },
     nolb:         { bin: REL,  args: [...common, "--useRegExpLookbehindJIT=0"] },
