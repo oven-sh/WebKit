@@ -26,6 +26,7 @@
 #include "config.h"
 #include "MegamorphicCache.h"
 
+#include "JSObjectInlines.h"
 #include "ProgramExecutable.h"
 
 #include <wtf/TZoneMallocInlines.h>

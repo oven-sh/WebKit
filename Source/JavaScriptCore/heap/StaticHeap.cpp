@@ -26,6 +26,7 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include <wtf/BitVector.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/Scope.h>
 #include <sys/mman.h>
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/SymbolRegistry.h>
