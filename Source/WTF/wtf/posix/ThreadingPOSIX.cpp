@@ -45,6 +45,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/ThreadingPrimitives.h>
 #include <wtf/WTFConfig.h>
+#include <wtf/threads/Signals.h>
 
 #if OS(HAIKU)
 #include <OS.h>
@@ -196,21 +197,30 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
     clearSuspendResumeRequest();
 
     void* approximateStackPointer = currentStackPointer();
+    PlatformRegisters* registersOfOwnStack = nullptr;
     if (!thread->m_stack.contains(approximateStackPointer)) {
-        // This happens if we use an alternative signal stack.
-        // 1. A user-defined signal handler is invoked with an alternative signal stack.
-        // 2. In the middle of the execution of the handler, we attempt to suspend the target thread.
-        // 3. A nested signal handler is executed.
-        // 4. The stack pointer saved in the machine context will be pointing to the alternative signal stack.
-        // In this case, we back off the suspension and retry a bit later.
-        thread->m_platformRegisters = nullptr;
-        globalSemaphoreForSuspendResume->post();
-        return;
+#if USE(BUN_JSC_ADDITIONS) && HAVE(MACHINE_CONTEXT)
+        // The signal handler of WTF runs on the alternate signal stack (SA_ONSTACK), and it can wait
+        // there for a lock that the thread that suspends holds (SamplingProfiler::takeSample()): no
+        // retry would succeed. It publishes the registers that it interrupted.
+        registersOfOwnStack = registersInterruptedBySignalHandler(thread->m_stack);
+#endif
+        if (!registersOfOwnStack) {
+            // This happens if we use an alternative signal stack.
+            // 1. A user-defined signal handler is invoked with an alternative signal stack.
+            // 2. In the middle of the execution of the handler, we attempt to suspend the target thread.
+            // 3. A nested signal handler is executed.
+            // 4. The stack pointer saved in the machine context will be pointing to the alternative signal stack.
+            // In this case, we back off the suspension and retry a bit later.
+            thread->m_platformRegisters = nullptr;
+            globalSemaphoreForSuspendResume->post();
+            return;
+        }
     }
 
 #if HAVE(MACHINE_CONTEXT)
     ucontext_t* userContext = static_cast<ucontext_t*>(ucontext);
-    thread->m_platformRegisters = &registersFromUContext(userContext);
+    thread->m_platformRegisters = registersOfOwnStack ? registersOfOwnStack : &registersFromUContext(userContext);
 #else
     UNUSED_PARAM(ucontext);
     PlatformRegisters platformRegisters { approximateStackPointer };
