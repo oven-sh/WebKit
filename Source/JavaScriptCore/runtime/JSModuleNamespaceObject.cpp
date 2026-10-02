@@ -201,7 +201,7 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
         if (!value) [[unlikely]] {
             // Same idea as the *namespace* case above: a lazy export of a SyntheticModuleRecord is materialized on
             // first read, then looked up from the scope again so that the module namespace object IC applies to it.
-            SyntheticModuleRecord::materializeLazyExport(globalObject, exportEntry.moduleRecord.get(), exportEntry.localName);
+            SyntheticModuleRecord::materializeLazyExport(globalObject, exportEntry.moduleRecord.get(), exportEntry.localName, SyntheticModuleRecord::UserDefinedGetter::Call);
             RETURN_IF_EXCEPTION(scope, false);
             value = getValue(environment, exportEntry.localName, scopeOffset);
         }
