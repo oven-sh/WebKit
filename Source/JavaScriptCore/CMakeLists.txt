@@ -662,6 +662,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/BytecodeGeneratorification.h
     bytecode/BytecodeGraph.h
     aot/AOTFunction.h
+    aot/AOTProgramData.h
 
     bytecode/BytecodeIndex.h
     bytecode/BytecodeIntrinsicRegistry.h
@@ -937,7 +938,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/SlotVisitorMacros.h
     heap/SpaceTimeMutatorScheduler.h
     heap/StochasticSpaceTimeMutatorScheduler.h
-    heap/StaticHeap.h
     heap/StopIfNecessaryTimer.h
     heap/Strong.h
     heap/StrongBlock.h

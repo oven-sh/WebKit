@@ -31,7 +31,7 @@
 
 #include "JSCast.h"
 #include "ParserModes.h"
-#include "StaticHeap.h"
+#include "AOTProgramData.h"
 #include "VariableEnvironment.h"
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
@@ -100,6 +100,7 @@ public:
     EncoderStringTable() = default;
     JS_EXPORT_PRIVATE ~EncoderStringTable();
     uint32_t ordinalFor(const StringImpl&);
+    uint32_t count() const { return m_strings.size(); }
     // The 4-byte slot a cached non-symbol string occupies (CachedPtr's encoding): a 1-3 character Latin-1 string inline,
     // else an ordinal into this table, or the empty sentinel. DecoderStringTable::atomForSlot reads it back.
     JS_EXPORT_PRIVATE uint32_t slotFor(const StringImpl&);
@@ -119,10 +120,9 @@ class DecoderStringTable {
     WTF_MAKE_NONCOPYABLE(DecoderStringTable);
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(DecoderStringTable, JS_EXPORT_PRIVATE);
 public:
-    JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>);
-    // Uses caller-provided memory for the slots. It is either zeroed, or holds what another table for the same strings stored
-    // there, all of which is immortal (StaticHeap).
-    JS_EXPORT_PRIVATE DecoderStringTable(std::span<const uint8_t>, uintptr_t* slots);
+    // Slots::No: what is made of a string is not remembered here. Every string that is asked for is made an atom.
+    enum class Slots : bool { No, Yes };
+    JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>, Slots = Slots::Yes);
     uint32_t count() const { return m_count; }
     uint32_t lengthOf(uint32_t ordinal) const { return record(ordinal).length; }
     JS_EXPORT_PRIVATE ~DecoderStringTable();
@@ -198,7 +198,7 @@ private:
     static StringImpl* impl(uintptr_t slot);
 
     std::span<const uint8_t> m_bytes;
-    uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal
+    uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal. None with Slots::No.
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
     // atomFor's outcomes so far (mutator only); expectedAtomTableInserts scales by them.
@@ -295,28 +295,14 @@ public:
     enum class RecoverableCode : bool { No, Yes };
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr, RecoverableCode = RecoverableCode::Yes);
     bool canBorrowPayload() const { return m_canBorrowPayload; } // the embedder promised the payload outlives every use, so decoded objects may alias it
-    // For StaticHeap, which decodes objects when a program is built so that they already exist when it runs. It leaves in the
-    // payload only what a running program rarely needs, and what it leaves there refers to its Decoder. So the Decoder is at an
-    // address that is known at build time (`address`, which is zeroed and large enough), and another Decoder is created at the same
-    // address before the program needs it. Neither is ever destroyed.
-    static Ref<Decoder> createForStaticHeap(VM&, Ref<CachedBytecode>);
-    bool isForStaticHeap() const { return m_isForStaticHeap; }
-    // While building a static heap: the code of a function is decoded to inspect it, and only part of it is kept
-    // (AOT::FunctionMetadata).
-    bool leavesFunctionCodeInPayload() const;
+    // Of a program that is compiled ahead of time (AOT::ProgramData): its code is never generated, interpreted or optimized, and what
+    // is decoded is shared by every realm of the VM. So what is only for those is left out, nothing stays in the payload to be
+    // decoded later, and nothing is inferred by writing to what is decoded.
+    enum class IsBuilding : bool { No, Yes };
+    static Ref<Decoder> createForProgramData(VM&, Ref<CachedBytecode>, IsBuilding);
+    bool isForProgramData() const { return m_isForProgramData; }
+    bool isForBuildingProgramData() const { return m_isForBuildingProgramData; }
     CachedBytecode& cachedBytecode() const { return m_cachedBytecode.get(); }
-    // (Most references to a Decoder for a static heap were created in another process, so they are not counted.)
-    void ref() const
-    {
-        if (!m_isForStaticHeap) [[likely]]
-            RefCounted::ref();
-    }
-    void deref() const
-    {
-        if (!m_isForStaticHeap) [[likely]]
-            RefCounted::deref();
-    }
-    void clearDecodedObjects(); // Its record of decoded objects is in memory that is not kept.
     void setExternalStrings(DecoderStringTable& strings) { m_externalStrings = &strings; }
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
@@ -388,14 +374,14 @@ private:
     RefPtr<SourceProvider> m_provider;
     bool m_canDeferIntoPayload { false };
     bool m_canBorrowPayload { false };
-    bool m_isForStaticHeap { false };
+    bool m_isForProgramData { false };
+    bool m_isForBuildingProgramData { false };
     uint16_t m_persistentPayloadIndex { 0 };
 };
 
-// For StaticHeap. Decodes the code of the module that the Decoder's CachedBytecode is positioned at, and of every function in it,
-// and returns the key that it was cached under. Returns null on failure.
-// functions: each function, with the value that UnlinkedFunctionExecutable::offsetsOfCachedCodeBlocks() had before decoding.
-UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder&, SourceCodeKey&, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
+// For AOT::ProgramData::build(). Decodes the code of the module that the Decoder's CachedBytecode is positioned at, and of every
+// function in it, and returns the key that it was cached under. Returns null on failure.
+UnlinkedCodeBlock* decodeAllForProgramData(Decoder&, SourceCodeKey&, Vector<UnlinkedFunctionExecutable*>& functions);
 // Creates an UnlinkedFunctionCodeBlock that describes a function's code as the original did, except for the instructions
 // themselves. It is for callers that need a code block for code that is never interpreted. The scalars come from
 // scalarsToMakeFunctionCodeFrom().
@@ -416,7 +402,39 @@ UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM&, const PartsOfFunctionC
 
 // The same for an entry that encodeBuiltinFunction() or BytecodeLinkEncoder::addBuiltinFunction() wrote.
 bool entryIsOfBuiltinFunction(Decoder&);
-UnlinkedFunctionExecutable* decodeBuiltinForStaticHeap(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, LineStarts&, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
+UnlinkedFunctionExecutable* decodeBuiltinForProgramData(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, LineStarts&, Vector<UnlinkedFunctionExecutable*>& functions);
+
+// The objects of the engine's that a program compiled ahead of time has, each by its number. AOT::ProgramOfVM decodes one when it is
+// first asked for.
+struct ObjectsOfProgram {
+    std::span<UniquedStringImpl* const> identifiers; // Null: there is none with that number.
+    std::span<const JSValue> constants; // Empty: likewise.
+    std::span<UnlinkedFunctionExecutable* const> unlinkedFunctions; // Without their code.
+    // Of modules and programs, without instructions, positions or identifiers. In place of each function in it is what this says
+    // (AOT::FunctionMetadata::executableInList()).
+    std::span<UnlinkedCodeBlock* const> topLevelCodes;
+    Function<uint32_t(UnlinkedFunctionExecutable*)> entryInListFor;
+};
+// The table has every string already: it was serialized before this.
+Vector<uint8_t> encodeObjectsOfProgram(VM&, EncoderStringTable&, const ObjectsOfProgram&);
+class CachedObjectsOfProgram;
+class ObjectsOfProgramDecoder {
+    WTF_MAKE_NONCOPYABLE(ObjectsOfProgramDecoder);
+    WTF_MAKE_TZONE_ALLOCATED(ObjectsOfProgramDecoder);
+public:
+    ObjectsOfProgramDecoder(VM&, std::span<const uint8_t>, DecoderStringTable&);
+    ~ObjectsOfProgramDecoder();
+    Identifier identifier(uint32_t);
+    JSValue constant(uint32_t);
+    std::optional<uint32_t> constantIsSameAs(uint32_t);
+    UnlinkedFunctionExecutable* unlinkedFunction(uint32_t);
+    UnlinkedCodeBlock* topLevelCode(uint32_t);
+private:
+    const Ref<Decoder> m_decoder;
+    const CachedObjectsOfProgram& m_objects;
+};
+// Of that size, for code whose instructions nothing reads. Reading them is a crash.
+std::span<const uint8_t> absentInstructions(size_t);
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
@@ -489,7 +507,7 @@ public:
     struct Result {
         RefPtr<CachedBytecode> payload;
         Vector<uint32_t> entryOffsets; // per addModule call, in call order
-        Vector<uint32_t> entryOffsetsOfModules; // Of those, what StaticHeap::build() takes.
+        Vector<uint32_t> entryOffsetsOfModules; // Of those, what AOT::ProgramData::build() takes.
         // For each of those, if setPrelinkedModuleGraph() said: where in its environment the variables are that something other than its code asks for by name (ScopeOffset::offset()):
         // what it exports, and the namespaces that it imports.
         Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules;
@@ -530,12 +548,12 @@ private:
 // address at which its code (aotImageCodeRange()) is mapped executable. Returns false if the image was built for another engine.
 JS_EXPORT_PRIVATE bool registerAOTImage(std::span<const uint8_t> image, const void* code);
 // A program that was compiled ahead of time is one range of a file: its code (BytecodeLinkEncoder::Result::aotImage), then what
-// StaticHeap::build() returned. `bytes` is that range, readable for as long as the process lives. Does what registerAOTImage() and
-// StaticHeap::map() do, and StaticHeap::prepareThread() for the calling thread.
+// AOT::ProgramData::build() returned. `bytes` is that range, readable for as long as the process lives. Does what registerAOTImage()
+// and AOT::ProgramData::use() do.
 struct UseOfAOTFile {
-    const char* whyNoStaticHeap { nullptr };
+    const char* whyNoProgramData { nullptr };
     const char* whyNoImage { nullptr };
-    size_t sizeOfStaticHeap { 0 };
+    size_t sizeOfProgramData { 0 };
     size_t sizeOfCode { 0 };
     const void* code { nullptr };
 };

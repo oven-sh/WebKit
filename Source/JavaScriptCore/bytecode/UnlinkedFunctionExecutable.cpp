@@ -71,9 +71,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     function->finishParsing(executable->name(), executable->functionMode());
     function->setPlainInstanceFieldNames(executable->plainInstanceFieldNames());
-    // (An executable in the static heap already has this information, and is read-only.)
-    if (!StaticHeap::contains(executable))
-        executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
+    executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
 
     bool isClassContext = executable->superBinding() == SuperBinding::Needed || executable->parseMode() == SourceParseMode::ClassFieldInitializerMode;
 
@@ -219,9 +217,6 @@ SourceCode UnlinkedFunctionExecutable::linkedSourceCode(const SourceCode& passed
 
 FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* topLevelExecutable, const SourceCode& passedParentSource, std::optional<int> overrideLineNumber, Intrinsic intrinsic, bool isInsideOrdinaryFunction)
 {
-    if (m_staticExecutable && topLevelExecutable && topLevelExecutable->usesStaticExecutables() && !overrideLineNumber) [[likely]]
-        return m_staticExecutable;
-
     SourceCode source = linkedSourceCode(passedParentSource);
     FunctionOverrides::OverrideInfo overrideInfo;
     bool hasFunctionOverride = false;
@@ -268,24 +263,6 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    // An executable in the static heap is shared by all VMs and is read-only, so the code that a VM decodes for it is kept by the
-    // VM.
-    if (StaticHeap::contains(this) && !StaticHeap::isBuilding()) [[unlikely]] {
-        if (UnlinkedFunctionCodeBlock* kept = StaticHeap::codeOf(vm, *this, specializationKind))
-            return kept;
-        if (source.provider()->hasNoText()) {
-            dataLogLn("AOT: there is no code to run `", name().string(), "` from (it starts at ", source.startOffset(), ", for ", isCall(specializationKind) ? "a call" : "construction", ")");
-            error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
-            return nullptr;
-        }
-        UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(vm, this, source, specializationKind, codeGenerationMode, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, error, parseMode, optimize);
-        if (error.isValid())
-            return nullptr;
-        StaticHeap::setCodeOf(vm, *this, specializationKind, result);
-        return result;
-    }
-#endif
     if (m_isCached) {
 #if USE(BUN_JSC_ADDITIONS)
         // Code of a payload that outlives the program, about to be run: what a payload order file is about. (Not what
@@ -332,9 +309,7 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         break;
     }
     // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
-    // (The set is of those whose code may be thrown away. One of StaticHeap keeps what it gets.)
-    if (!StaticHeap::contains(this)) [[likely]]
-        vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
+    vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;
 }
 

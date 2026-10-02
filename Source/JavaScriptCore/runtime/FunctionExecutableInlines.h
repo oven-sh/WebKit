@@ -29,7 +29,6 @@
 #include "InferredValueInlines.h"
 #include "ScriptExecutableInlines.h"
 #include "StructureCreateInlines.h"
-#include "StaticHeap.h"
 
 namespace JSC {
 
@@ -76,8 +75,7 @@ inline FunctionCodeBlock* FunctionExecutable::replaceCodeBlockWith(VM& vm, CodeS
 
 inline JSString* FunctionExecutable::toString(JSGlobalObject* globalObject)
 {
-    // (An executable in the static heap is read-only, so the result is not cached.)
-    if (!rareData() && StaticHeap::contains(this))
+    if (isShortForm())
         return toStringSlow(globalObject);
     RareData& rareData = ensureRareData();
     if (!rareData.m_asString)

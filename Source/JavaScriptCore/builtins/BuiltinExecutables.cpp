@@ -31,7 +31,7 @@
 #include "JSCJSValueInlines.h"
 #include "Parser.h"
 #include "SourceCharacters.h"
-#include "StaticHeap.h"
+#include "AOTProgramData.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -337,12 +337,17 @@ std::span<const Latin1Character> BuiltinExecutables::textOf(unsigned index)
     }
 }
 
-FunctionExecutable* BuiltinExecutables::staticExecutableFor(BuiltinCodeIndex index, const char* text, size_t length)
+FunctionExecutable* BuiltinExecutables::executableOfProgramFor(BuiltinCodeIndex index, const char* text, size_t length)
 {
-    JSGlobalObject* realm = m_vm.m_realmForBuiltins;
-    if (!realm) [[likely]]
-        return nullptr;
-    return StaticHeap::engineBuiltinFor(realm, static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });
+#if ENABLE(AOT)
+    if (auto* program = AOT::ProgramOfVM::of(m_vm)) [[unlikely]]
+        return program->engineBuiltinFor(static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });
+#else
+    UNUSED_PARAM(index);
+    UNUSED_PARAM(text);
+    UNUSED_PARAM(length);
+#endif
+    return nullptr;
 }
 
 }

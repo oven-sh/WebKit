@@ -38,19 +38,8 @@ SymbolRegistry::SymbolRegistry(Type type)
 
 SymbolRegistry::~SymbolRegistry()
 {
-    for (auto& key : m_table) {
-        if (!key->isStatic())
-            SUPPRESS_UNCOUNTED_ARG downcast<SymbolImpl>(key.get())->asRegisteredSymbolImpl()->clearSymbolRegistry();
-    }
-}
-
-void SymbolRegistry::becomeStatic()
-{
-    for (auto& key : m_table) {
-        auto& symbol = downcast<SymbolImpl>(*key);
-        symbol.hash();
-        symbol.becomeStaticWithOwner();
-    }
+    for (auto& key : m_table)
+        SUPPRESS_UNCOUNTED_ARG downcast<SymbolImpl>(key.get())->asRegisteredSymbolImpl()->clearSymbolRegistry();
 }
 
 Ref<RegisteredSymbolImpl> SymbolRegistry::symbolForKey(const String& rep)
@@ -58,14 +47,6 @@ Ref<RegisteredSymbolImpl> SymbolRegistry::symbolForKey(const String& rep)
     auto addResult = m_table.add(rep.impl());
     if (!addResult.isNewEntry)
         return *downcast<SymbolImpl>(addResult.iterator->get())->asRegisteredSymbolImpl();
-
-    if (m_staticRegistry) [[unlikely]] {
-        auto found = m_staticRegistry->m_table.find(rep.impl());
-        if (found != m_staticRegistry->m_table.end()) {
-            *addResult.iterator = *found;
-            return *downcast<SymbolImpl>(found->get())->asRegisteredSymbolImpl();
-        }
-    }
 
     RefPtr<RegisteredSymbolImpl> symbol;
     if (m_symbolType == Type::PrivateSymbol)

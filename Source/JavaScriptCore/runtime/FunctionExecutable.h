@@ -59,14 +59,15 @@ public:
     static void destroy(JSCell*);
         
     // The short form. A function that was compiled when the program was built, and that has no other code and never will, needs
-    // very little of this class: there is nothing to parse, compile or watch, and nothing changes. Its executable, which StaticHeap
-    // creates, ends where ExecutableBase's m_jitCodeForCallWithArityCheck would be, and is identified by its JSType. Calls only use
+    // very little of this class: there is nothing to parse, compile or watch, and nothing changes. Its executable, which
+    // AOT::ProgramOfVM creates, ends where ExecutableBase's m_jitCodeForCallWithArityCheck would be, and is identified by its JSType. Calls only use
     // the fields before that point, and code that recognizes a FunctionExecutable by FunctionExecutableType in order to reach its
-    // CodeBlock does not match it. Everything else about the function is in a table (StaticHeap::rowOf()), which the accessors here
+    // CodeBlock does not match it. Everything else about the function is in a table (AOT::RowOfExecutable), which the accessors here
     // consult: its name, its parameter count, its module, and an UnlinkedFunctionExecutable for the remaining properties, which it
     // shares with every function that has the same ones.
     static constexpr size_t sizeOfShortForm = 32;
     inline static Structure* createStructureOfShortForm(VM&, JSGlobalObject*, JSValue);
+    static FunctionExecutable* createInShortForm(VM&, const uint64_t (&entry)[2], const uint32_t (&index)[2]);
 
     const FunctionExecutable* inFull() const { return WTF::opaque(this); }
     FunctionExecutable* inFull() { return WTF::opaque(this); }
@@ -74,7 +75,7 @@ public:
     UnlinkedFunctionExecutable* unlinkedExecutable() const
     {
         if (isShortForm()) [[unlikely]]
-            return StaticHeap::unlinkedFunctionOf(StaticHeap::rowOf(indexOfShortForm()));
+            return unlinkedExecutableOfShortForm();
         return inFull()->m_unlinkedExecutable.get();
     }
 
@@ -177,7 +178,7 @@ public:
     const Identifier& ecmaName()
     {
         if (isShortForm()) [[unlikely]]
-            return StaticHeap::rowOf(indexOfShortForm()).name();
+            return nameOfShortForm();
         return inFull()->m_unlinkedExecutable->ecmaName();
     }
     // Unlike name() / ecmaName(), also callable from the collector's end phase (ErrorInstance::computeErrorInfo's stack traces).
@@ -185,7 +186,7 @@ public:
     String ecmaNameWithoutGC() { return isShortForm() ? ecmaName().string() : inFull()->m_unlinkedExecutable->ecmaNameWithoutGC(); }
     const Identifier* tryGetEcmaNameConcurrently() { return isShortForm() ? &ecmaName() : inFull()->m_unlinkedExecutable->tryGetEcmaNameConcurrently(); } // null while the name is still only in the bytecode cache; otherwise &ecmaName() (which may itself be a null Identifier)
     UTF8CString inferredNameForTools(); // dumps and debug info; callable from compiler / GC threads, where a name still in the bytecode cache prints as a placeholder
-    unsigned parameterCount() const { return isShortForm() ? StaticHeap::rowOf(indexOfShortForm()).parameterCount : inFull()->m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!
+    unsigned parameterCount() const { return isShortForm() ? rowOfShortForm().parameterCount : inFull()->m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!
     SourceParseMode parseMode() const { return unlinkedExecutable()->parseMode(); }
     JSParserScriptMode scriptMode() const { return unlinkedExecutable()->scriptMode(); }
     SourceCode classSource() const
@@ -325,21 +326,15 @@ public:
 
     Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return rareData() ? rareData()->m_polyProtoWatchpoint : nullptr; }
 
-    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND
-    {
-        if (isShortForm())
-            return topLevelExecutableOfStaticExecutable();
-        if (ScriptExecutable* result = inFull()->m_topLevelExecutable.get()) [[likely]]
-            return result;
-        return topLevelExecutableOfStaticExecutable();
-    }
+    // Null for one of a program that was compiled ahead of time, which every instance of the program in the VM shares
+    // (AOT::Instance::topLevelExecutableOf()).
+    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND { return isShortForm() ? nullptr : inFull()->m_topLevelExecutable.get(); }
 
-    // For an executable in the static heap, which is read-only: the entry word of the code that was compiled for it, and the index
-    // of that function (AOT::ImageFunction::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which read these.
+    // Of a program that was compiled ahead of time: the entry word of the code that was compiled for it, and the index of that
+    // function (AOT::ImageFunction::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which read these.
     uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; } // An AOT::EntryWord with an offset.
     uint32_t aotIndexFor(CodeSpecializationKind kind) const { return m_aotIndex[static_cast<unsigned>(kind)]; }
-    void setUnlinkedExecutableWhileStaticHeapIsBuilt(UnlinkedFunctionExecutable* unlinked) { inFull()->m_unlinkedExecutable.setWithoutWriteBarrier(unlinked); }
-    JS_EXPORT_PRIVATE void becomeStatic(VM&);
+    void becomeSharedAcrossRealms(VM&);
     JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, uint64_t entry, uint32_t index);
     // There is code to call it with and none to construct with, and to construct is to make an object, call it, and see what
     // comes back (AOT::Stub::ConstructByCalling, which is then its entry point). That will do for a function that has no way
@@ -423,7 +418,8 @@ private:
     WriteBarrier<CodeBlock> m_codeBlockForConstruct;
     InferredValue<JSFunction> m_singleton;
 
-    JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOfStaticExecutable() const;
+    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* unlinkedExecutableOfShortForm() const;
+    JS_EXPORT_PRIVATE const Identifier& nameOfShortForm() const;
 };
 
 } // namespace JSC

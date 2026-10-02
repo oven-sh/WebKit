@@ -106,10 +106,13 @@ public:
         // The code that a build created for a module belongs to that module alone, because its functions access the module's
         // variables at fixed locations. This cache would treat two modules with identical source as one.
         if constexpr (std::is_base_of_v<UnlinkedCodeBlock, UnlinkedCodeBlockType>) {
-            if (StaticHeap::isProviderOfModule(key.source().provider())) {
-                if (UnlinkedCodeBlock* own = StaticHeap::codeFor(vm, key))
+#if ENABLE(AOT)
+            if (key.source().provider().aotModuleID()) [[unlikely]] {
+                auto* program = AOT::ProgramOfVM::of(vm);
+                if (UnlinkedCodeBlock* own = program ? program->topLevelCodeFor(key) : nullptr)
                     return uncheckedDowncast<UnlinkedCodeBlockType>(own);
             }
+#endif
         }
 #endif
 

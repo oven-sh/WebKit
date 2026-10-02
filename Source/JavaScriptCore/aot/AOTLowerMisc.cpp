@@ -210,7 +210,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
         proceedIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
 
     // Atoms are unique, and string literals in the program are atoms, so pointers can be compared.
-    if (all.size() <= 8 && isAtomIfShortString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant && one.string->length() <= TypedLayoutTable::maxLengthOfAtomizedString; })) {
+    if (!isCompact() && all.size() <= 8 && isAtomIfShortString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant && one.string->length() <= TypedLayoutTable::maxLengthOfAtomizedString; })) {
         LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
         for (auto& one : all) {
             LBasicBlock next = m_out.newBlock();
@@ -246,9 +246,8 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
             m_out.jump(slowCase);
     }
 
-    // String literals in the program are atoms. So if the value equals any of the cases, an atom with its contents exists.
     m_out.appendTo(slowCase);
-    LValue atom = vmCall(place, pointerType(), Entry::operationAOTFindEqualAtom, m_instance, value);
+    LValue atom = vmCall(place, pointerType(), Entry::operationAOTNarrowStringEqualTo, m_instance, value);
     proceedIf(m_out.notNull(atom), defaultBlock);
     ValueFromBlock charactersOfAtom = m_out.anchor(m_out.loadPtr(atom, m_heaps.StringImpl_data));
     ValueFromBlock lengthOfAtom = m_out.anchor(m_out.load32(atom, m_heaps.StringImpl_length));
@@ -491,11 +490,16 @@ void Lowering::lowerSwitch(Node* node)
     if (node->opcode == op_switch_string) {
         auto bytecode = node->as<OpSwitchString>();
         const auto& table = codeBlock->unlinkedStringSwitchJumpTable(bytecode.m_tableIndex);
+        // (The order in which the table gives them differs from one run to the next.)
+        Vector<std::pair<StringImpl*, int32_t>, 16> entries;
+        for (auto& entry : table.m_offsetTable)
+            entries.append({ entry.key.get(), entry.value.m_branchOffset });
+        std::ranges::sort(entries, [](auto& a, auto& b) { return codePointCompare(StringView { *a.first }, StringView { *b.first }) < 0; });
         Vector<StringCase, 16> all;
         bool allAreNarrow = true;
-        for (auto& entry : table.m_offsetTable) {
-            allAreNarrow &= entry.key->is8Bit();
-            all.append({ entry.key.get(), blockFor(node, entry.value.m_branchOffset), nullptr });
+        for (auto [string, offset] : entries) {
+            allAreNarrow &= string->is8Bit();
+            all.append({ string, blockFor(node, offset), nullptr });
         }
         if (allAreNarrow) {
             Node* scrutinee = node->use(bytecode.m_scrutinee);
@@ -503,8 +507,8 @@ void Lowering::lowerSwitch(Node* node)
             return;
         }
         LValue offset = vmCall(node, Int32, Entry::operationAOTSwitchString, m_instance, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex), m_out.constInt32(whoseBytecode(node)));
-        for (auto& entry : table.m_offsetTable)
-            addCase(entry.value.m_branchOffset, entry.value.m_branchOffset);
+        for (auto [string, offset] : entries)
+            addCase(offset, offset);
         m_out.switchInstruction(offset, cases, blockFor(node, table.m_defaultOffset), FTL::Weight());
         return;
     }

@@ -21,7 +21,6 @@ set(bmalloc_SOURCES
     bmalloc/SystemHeap.cpp
     bmalloc/Environment.cpp
     bmalloc/Gigacage.cpp
-    bmalloc/StaticRegion.cpp
     bmalloc/HeapKind.cpp
     bmalloc/Logging.cpp
     bmalloc/Mutex.cpp
@@ -229,7 +228,6 @@ set(bmalloc_PUBLIC_HEADERS
     bmalloc/Environment.h
     bmalloc/FailureAction.h
     bmalloc/Gigacage.h
-    bmalloc/StaticRegion.h
     bmalloc/GigacageConfig.h
     bmalloc/GigacageKind.h
     bmalloc/HeapKind.h

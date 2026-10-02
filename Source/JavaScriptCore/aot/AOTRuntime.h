@@ -12,6 +12,7 @@
 #include "AOTFunction.h"
 #include "AOTOperationsBuiltins.h"
 #include "AOTOperationsObjects.h"
+#include "AOTProgramData.h"
 #include "IndexingType.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTStubs.h"
@@ -24,7 +25,6 @@
 #include "RegisterAtOffsetList.h"
 #include "StructureID.h"
 #include <wtf/TZoneMalloc.h>
-#include <bmalloc/StaticRegion.h>
 
 namespace JSC {
 
@@ -90,7 +90,7 @@ namespace AOT {
     v(operationAOTCheckType) \
     v(operationAOTCheckTypedLayout) \
     v(operationAOTCoerceToTypedLayout) \
-    v(operationAOTFindEqualAtom) \
+    v(operationAOTNarrowStringEqualTo) \
     v(operationAOTGetFieldSlow) \
     v(operationAOTReadField) \
     v(operationAOTGetLengthSlow) \
@@ -99,6 +99,8 @@ namespace AOT {
     v(operationAOTHandleTraps) \
     v(operationAOTWriteBarrier) \
     v(operationAOTCatch) \
+    v(operationAOTConstantOfProgram) \
+    v(operationAOTTemplateObject) \
     v(operationAOTSwitchString) \
     v(operationAOTSwitchChar) \
     v(operationAOTFMod) \
@@ -302,8 +304,6 @@ RuntimeTable& runtimeTable(VM&);
 // PropertyOffset does not need. The GC ignores a Slot with no structureID.
 // The upper 32 bits of every Structure address. StructureMemoryManager reserves the structure heap directly after the static
 // region. If that address range is unavailable, the program cannot run.
-static constexpr uintptr_t structureIDBaseOfImages = bmalloc::StaticRegion::base + bmalloc::StaticRegion::reservation;
-static_assert(!(structureIDBaseOfImages & 0xffffffff));
 
 struct Slot {
     static constexpr unsigned offsetBits = 24;
@@ -440,41 +440,30 @@ struct FunctionInfo {
     static constexpr uint32_t maxEncodedSlots = (1u << (16 - numberOfFlagBits)) - 1;
     static constexpr uint16_t slotsAmongFlags(uint32_t numSlots) { return static_cast<uint16_t>(std::min(numSlots, maxEncodedSlots) << numberOfFlagBits); }
 
-    static constexpr ptrdiff_t offsetOfConstants() { return OBJECT_OFFSETOF(FunctionInfo, constants); }
-    static constexpr ptrdiff_t offsetOfIdentifiers() { return OBJECT_OFFSETOF(FunctionInfo, identifiers); }
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(FunctionInfo, sites); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(FunctionInfo, flags); }
 
-    // May be null, in which case only the Data knows the executable.
-    void setExecutable(ScriptExecutable* executable, CodeSpecializationKind kind, bool hasOnlyRealmIndependentConstants)
+    void set(uint32_t oneMoreThanNumber, CodeSpecializationKind kind, bool isTopLevelCode)
     {
-        uintptr_t bits = std::bit_cast<uintptr_t>(executable);
-        RELEASE_ASSERT(!(bits >> 48) && !(bits & 7));
-        bits |= (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0) | (hasOnlyRealmIndependentConstants ? 2 : 0);
-        executableAndMoreLow = static_cast<uint32_t>(bits);
-        executableAndMoreHigh = static_cast<uint16_t>(bits >> 32);
+        RELEASE_ASSERT(!(oneMoreThanNumber >> 30));
+        numberAndMore = oneMoreThanNumber << 2 | (isTopLevelCode ? 2 : 0) | (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0);
     }
-    void setTopLevelCode(UnlinkedCodeBlock* code)
-    {
-        setExecutable(std::bit_cast<ScriptExecutable*>(code), CodeSpecializationKind::CodeForCall, hasOnlyRealmIndependentConstants());
-        executableAndMoreLow |= 4;
-    }
-    UnlinkedCodeBlock* topLevelCode() const { return executableAndMoreLow & 4 ? std::bit_cast<UnlinkedCodeBlock*>(cellAndMore() & ~static_cast<uintptr_t>(7)) : nullptr; }
-    uintptr_t cellAndMore() const { return static_cast<uintptr_t>(executableAndMoreHigh) << 32 | executableAndMoreLow; }
-    ScriptExecutable* executable() const { return executableAndMoreLow & 4 ? nullptr : std::bit_cast<ScriptExecutable*>((static_cast<uintptr_t>(executableAndMoreHigh) << 32 | executableAndMoreLow) & ~static_cast<uintptr_t>(7)); }
-    CodeSpecializationKind kind() const { return executableAndMoreLow & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
-    bool hasOnlyRealmIndependentConstants() const { return executableAndMoreLow & 2; } // `constants` is complete; the Data has none of its own.
+    // Of its executable (ProgramOfVM::executable()), or of top-level code (ProgramOfVM::topLevelCode()), whose executable is created at
+    // run time. Zero: only the Data knows the executable.
+    uint32_t oneMoreThanNumber() const { return numberAndMore >> 2; }
+    bool isTopLevelCode() const { return numberAndMore & 2; }
+    bool hasExecutable() const { return oneMoreThanNumber() && !isTopLevelCode(); }
+    CodeSpecializationKind kind() const { return numberAndMore & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
     bool isOfCodeInImage() const { return flags & (hasSiteConstants | sitesHaveTheirConstants); }
-    inline const ImageFunction* function() const; // For code in an image: located directly before the sites.
+    JS_EXPORT_PRIVATE const Site* sitesInImage() const; // One per slot.
+    inline const ImageFunction* function() const; // Located directly before the sites.
 
-    const void* constants; // const WriteBarrier<Unknown>*. Unless hasOnlyRealmIndependentConstants(), the Data holds the constants instead.
-    const void* identifiers; // const Identifier*
-    const Site* sites; // One per slot.
-    uint32_t executableAndMoreLow; // See setExecutable().
-    uint16_t executableAndMoreHigh;
+    uint32_t sites; // Offset in the image.
+    uint32_t numberAndMore;
     uint16_t flags;
+    uint16_t unused[3];
 };
-static_assert(sizeof(FunctionInfo) == 32);
+static_assert(sizeof(FunctionInfo) == 16);
 
 // One per realm that runs ahead-of-time compiled code.
 struct Instance {
@@ -482,10 +471,12 @@ struct Instance {
     JS_EXPORT_PRIVATE static Instance& ensure(JSGlobalObject*); // Of the realm's own loader.
     static Instance* of(JSFunction*);
     Structure* structureOfFunctions(Structure* ofRealm, FunctionExecutable*, JSScope*);
-    RegExp* regExpFor(RegExp*);
     JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
-    JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOf(SourceProvider*);
-    JS_EXPORT_PRIVATE void setTopLevelExecutableOf(SourceProvider*, ScriptExecutable*);
+    StringImpl* keepUntilTheNext(String&&); // For an operation that returns one that nothing else refers to.
+    JSArray* templateObjectFor(uint32_t numberOfDescriptor); // Among the program's constants.
+    // By SourceProvider::aotModuleID().
+    JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOf(uint32_t moduleID);
+    JS_EXPORT_PRIVATE void setTopLevelExecutableOf(uint32_t moduleID, ScriptExecutable*);
     JSModuleLoader* loader() const;
     // Once its loader has been cleared, an instance is only needed while its token is marked: by a Structure of one of its functions, or
     // by the executable of one of its modules.
@@ -506,7 +497,11 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Instance, globalObject); }
     static constexpr ptrdiff_t offsetOfStates() { return OBJECT_OFFSETOF(Instance, states); }
     static constexpr ptrdiff_t offsetOfInfos() { return OBJECT_OFFSETOF(Instance, infos); }
-    static constexpr ptrdiff_t offsetOfConstantsOfProgram() { return OBJECT_OFFSETOF(Instance, constantsOfProgram); }
+    static constexpr ptrdiff_t offsetOfProgram() { return OBJECT_OFFSETOF(Instance, program); }
+    static constexpr ptrdiff_t offsetOfIdentifiersOfProgram() { return OBJECT_OFFSETOF(Instance, identifiersOfProgram); }
+    static constexpr ptrdiff_t offsetOfImage() { return OBJECT_OFFSETOF(Instance, image); }
+    static constexpr ptrdiff_t offsetOfProgramData() { return OBJECT_OFFSETOF(Instance, programData); }
+    static constexpr ptrdiff_t offsetOfRecordsOfStringConstants() { return OBJECT_OFFSETOF(Instance, recordsOfStringConstants); }
     static constexpr ptrdiff_t offsetOfSharedData() { return OBJECT_OFFSETOF(Instance, sharedData); }
     static constexpr ptrdiff_t offsetOfCode() { return OBJECT_OFFSETOF(Instance, code); }
     static constexpr ptrdiff_t offsetOfGranulesOfCode() { return OBJECT_OFFSETOF(Instance, granulesOfCode); }
@@ -600,8 +595,12 @@ struct Instance {
     struct Collections;
     Collections* collections; // Bookkeeping for the Datas.
     const FunctionInfo* infos; // By function index.
+    const uint8_t* image; // What FunctionInfo::sites is an offset from.
+    ProgramOfVM* program;
+    const ProgramData* programData;
+    const uint32_t* recordsOfStringConstants; // ProgramData::offsetOfRecordsOfStringConstants
     Data* sharedData; // SharedData::get()
-    const uint32_t* functionMetadataOffsets; // By function index: the offset of its FunctionMetadata in Arena::Data, or zero. Null if no function has metadata.
+    const uint32_t* functionMetadataOffsets; // By function index: the offset of its FunctionMetadata in ProgramData, or zero.
     // For mapping a code address to a function (loadIndexOfFunctionAt(), Image::classifyAddress()): the start of the image's code;
     // for each granule of code, the last function that starts at or before it; and the start of every function but the first.
     const uint8_t* code;
@@ -613,7 +612,7 @@ struct Instance {
     // alive by the prototype.
     JSCell* getterOfLengthOfTypedArrays { nullptr };
     static constexpr ptrdiff_t offsetOfGetterOfLengthOfTypedArrays() { return OBJECT_OFFSETOF(Instance, getterOfLengthOfTypedArrays); }
-    const void* constantsOfProgram; // EncodedJSValue[]. See NumbersOfConstants. Code that uses it only runs in a realm that has it.
+    UniquedStringImpl* const* identifiersOfProgram; // ProgramOfVM::identifiers(). See NumbersOfIdentifiers.
     uint32_t missesForEightSlots; // Options::aotCacheMissesPerEightSlotsBeforeOwnData()
     uint32_t missesToSpare;
     uintptr_t structureIDBase; // Added to a StructureID to get the Structure's address.
@@ -735,11 +734,6 @@ struct Instance {
     uint32_t states[0];
 };
 
-// Whether an unlinked code block's constants can be shared by all realms. A SymbolTable qualifies only if it was created at build
-// time (SymbolTable::isSharedAcrossRealms()). The compiler runs before that is decided, so the caller says which to assume.
-enum class SymbolTablesAreShared : bool { No, Yes };
-JS_EXPORT_PRIVATE bool hasOnlyRealmIndependentConstants(UnlinkedCodeBlock*, SymbolTablesAreShared = SymbolTablesAreShared::No);
-
 JS_EXPORT_PRIVATE const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction&);
 
 struct Data {
@@ -764,8 +758,6 @@ struct Data {
     void finalizeUnconditionally(VM&);
     void finalizeSlot(VM&, Slot&); // One of this Data's slots, or a slot of one of its PolymorphicSlots.
 
-    static constexpr ptrdiff_t offsetOfConstants() { return OBJECT_OFFSETOF(Data, constants); }
-    static constexpr ptrdiff_t offsetOfIdentifiers() { return OBJECT_OFFSETOF(Data, identifiers); }
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(Data, sites); }
     static constexpr ptrdiff_t offsetOfSlots() { return OBJECT_OFFSETOF(Data, slots); }
     static constexpr ptrdiff_t offsetOfSlotEpoch() { return OBJECT_OFFSETOF(Data, slotEpoch); }
@@ -779,14 +771,10 @@ struct Data {
     UnlinkedCodeBlock* unlinkedCodeBlock;
     JITCode* code; // Owns a reference.
     FunctionExecutable** functions; // Declarations, then expressions. Null until first used.
-    const void* constants; // const WriteBarrier<Unknown>*
-    const void* identifiers; // const Identifier*
     const Site* sites; // One per slot. Owned by the code.
     SlotWatchpointMap* watchpoints; // For slots whose caches depend on watchpoints. Null until needed.
     unsigned numSlots;
     bool hasBeenFilledSinceLastCollection;
-    bool ownsConstants; // Some constants are realm-specific, so `constants` is a private copy with those filled in.
-    uint32_t numberOfOwnConstants;
     bool hasSiteConstants; // ImageFunction::siteConstants() follow the last Site.
     unsigned indexAmongAll; // Index in the Instance's list of all Datas.
     unsigned indexAmongFilled; // Valid if hasBeenFilledSinceLastCollection.
@@ -796,27 +784,31 @@ struct Data {
     Slot slots[0];
 };
 
-// Rarely needed, immutable information about a function. A program built with a static heap has this instead of the function's
-// UnlinkedCodeBlock, which stays undecoded in the payload (FunctionRef::ensureUnlinkedCodeBlock()). The layout is one header word
-// followed by one or two words for each item present, in enum order.
+// Rarely needed, immutable information about a function, which it has instead of an UnlinkedCodeBlock. The layout is one header word
+// followed by one or two words for each item present, in enum order. The offsets are in ProgramData. (An odd entry of
+// ProgramData::functionMetadataOffsets() is one more than the offset of the positions of code that has an UnlinkedCodeBlock.)
 struct FunctionMetadata {
     enum Section : uint32_t {
-        ExpressionInfo = 1 << 0, // Offset of the record to decode (decodeBorrowedExpressionInfo()).
+        ExpressionInfo = 1 << 0, // Offset of its positions (FunctionRef::reportedPositionFor()).
         Handlers = 1 << 1, // UnlinkedHandlerInfo: offset and count.
-        FunctionDecls = 1 << 2, // WriteBarrier<UnlinkedFunctionExecutable>: offset and count.
+        FunctionDecls = 1 << 2, // uint32_t: offset and count. See executableInList().
         FunctionExprs = 1 << 3,
-        StringSwitchJumpTables = 1 << 4, // UnlinkedStringJumpTable: offset of the first.
-        // Present unless FunctionInfo::hasOnlyRealmIndependentConstants(). Offset of: the number of constants, the number that are
-        // SourceCodeRepresentation::LinkTimeConstant, and their indices.
-        RealmConstants = 1 << 5,
+        // Offset of: the number of tables, and for each the number of its entries, its default offset, and for each entry the number
+        // of an identifier and an offset (ProgramOfVM::stringSwitchJumpTable()).
+        StringSwitchJumpTables = 1 << 4,
         // For an async function body: the resume target for each suspended state, taken from its last UnlinkedSimpleJumpTable.
         // Offset of: the lowest state, the number of states, and one bytecode offset per state.
-        ResumePoints = 1 << 6,
-        ConstantIdentifierSets = 1 << 7, // IdentifierSet: offset of the first.
-        Scalars = 1 << 8, // Offset of the result of scalarsToMakeFunctionCodeFrom().
+        ResumePoints = 1 << 5,
+        // Offset of: the number of sets, and for each the number of its names, and their numbers (ProgramOfVM::identifierSet()).
+        ConstantIdentifierSets = 1 << 6,
+        Scalars = 1 << 7, // Offset of the result of scalarsToMakeFunctionCodeFrom().
     };
-    static constexpr uint32_t isBuiltinFunction = 1 << 9; // A flag only. It has no data word.
-    static constexpr unsigned shiftOfInstructionsSize = 10;
+    static constexpr uint32_t isBuiltinFunction = 1 << 8; // A flag only. It has no data word.
+    static constexpr unsigned shiftOfInstructionsSize = 9;
+    // What a list of the functions in a function says of each: the number of its executable, or that of an UnlinkedFunctionExecutable
+    // to link in each instance. Zero: nothing, because nothing can ask.
+    static constexpr uint32_t executableInList(uint32_t number) { return (number + 1) << 1; }
+    static constexpr uint32_t unlinkedFunctionInList(uint32_t number) { return (number + 1) << 1 | 1; }
     static unsigned wordsFor(Section section) { return section == Handlers || section == FunctionDecls || section == FunctionExprs ? 2 : 1; }
 
     const uint32_t* find(Section section) const
@@ -848,7 +840,9 @@ struct SharedData {
     static bool contains(const Slot* slot) { return std::bit_cast<uintptr_t>(slot) - std::bit_cast<uintptr_t>(get()) < size; }
 };
 
-inline const FunctionInfo& FunctionRef::info() const { return instance->infos[index]; }
+inline const FunctionInfo* ProgramData::infos() const { return at<FunctionInfo>(offsetOfInfos); }
+inline const ProgramData& FunctionRef::programData() const { return instance ? instance->program->data() : *ProgramData::get(); }
+inline const FunctionInfo& FunctionRef::info() const { return instance ? instance->infos[index] : ProgramData::get()->infos()[index]; }
 
 // The source text at a bytecode offset, for use in an error message. Long text is truncated.
 struct Quote {
@@ -983,7 +977,7 @@ static_assert(sizeof(ImageFunction) == 24);
 
 inline const ImageFunction* FunctionInfo::function() const
 {
-    return isOfCodeInImage() ? reinterpret_cast<const ImageFunction*>(sites) - 1 : nullptr;
+    return isOfCodeInImage() ? reinterpret_cast<const ImageFunction*>(sitesInImage()) - 1 : nullptr;
 }
 
 class JITCode final : public JSC::JITCode {
@@ -1027,7 +1021,7 @@ private:
 // Installs the code on the function, without creating a CodeBlock. Returns false if an exception was thrown.
 Instance& instanceOf(JSScope*);
 bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*, Ref<JITCode>&&);
-// Called when an executable from the static heap (FunctionExecutable::aotEntryFor()) is about to run for the first time. Links its
+// Called when an executable of the program (FunctionExecutable::aotEntryFor()) is about to run for the first time. Links its
 // code to the realm. Returns false if the code cannot run in the function's realm.
 bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, JSScope*);
 

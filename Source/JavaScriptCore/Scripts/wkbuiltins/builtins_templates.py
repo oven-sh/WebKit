@@ -88,7 +88,7 @@ ${macroPrefix}_FOREACH_${objectMacro}_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \\
 {\\
-    if (auto* executable = vm.builtinExecutables()->staticExecutableFor(JSC::BuiltinCodeIndex::codeName, s_##codeName, s_##codeName##Length)) \\
+    if (auto* executable = vm.builtinExecutables()->executableOfProgramFor(JSC::BuiltinCodeIndex::codeName, s_##codeName, s_##codeName##Length)) \\
         return executable; \\
     return vm.builtinExecutables()->codeName##Executable()->link(vm, nullptr, vm.builtinExecutables()->codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }

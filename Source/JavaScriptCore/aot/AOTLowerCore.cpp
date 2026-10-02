@@ -270,7 +270,6 @@ bool Lowering::run()
             m_dataInLoops = m_proc.addVariable(pointerType());
             m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_dataInLoops, m_data);
         }
-        m_constants = wordByIndex(m_out.loadPtr(m_instance, m_heaps.AOTInstance_infos), FunctionInfo::offsetOfConstants(), sizeof(FunctionInfo), false);
     } else
         m_dataOrNull = own.data;
     m_vm = m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
@@ -494,6 +493,7 @@ static bool mayLookAtStack(Stub stub)
     switch (stub) {
     case Stub::Prologue:
     case Stub::LinkFunction:
+    case Stub::Constant:
     case Stub::PlainOperation:
     case Stub::PlainOperationWithGlobalObject:
     case Stub::PlainOperationWithInstance:
@@ -920,14 +920,49 @@ LValue Lowering::lowRaw(Node* node)
 
 LValue Lowering::lowConstantRegister(Graph& graph, VirtualRegister reg)
 {
-    if (auto* numbers = numbersOfConstantsOfProgramFor(graph.codeBlock())) {
-        uint32_t number = numbers->at(reg.toConstantIndex());
-        RELEASE_ASSERT(number != notAConstantOfProgram);
-        return m_out.load64(m_out.address(m_out.loadPtr(m_instance, m_heaps.AOTInstance_constantsOfProgram), m_heaps.AOTConstants[number]));
-    }
-    RELEASE_ASSERT(graph.isOutermost()); // (An inlined function's constants are among the program's.)
-    LValue constants = m_graph.startsCold ? m_constants : m_out.loadPtr(m_data, m_heaps.AOTData_constants);
-    return m_out.load64(m_out.address(constants, m_heaps.AOTConstants[reg.toConstantIndex()]));
+    uint32_t number = numbersOfConstantsOfProgramFor(graph.codeBlock())->at(reg.toConstantIndex());
+    RELEASE_ASSERT(number != notAConstantOfProgram);
+    // The VM makes it when it is first asked for (ProgramOfVM::constant()). What the code means by a JSTemplateObjectDescriptor is the
+    // instance's template object.
+    bool isTemplate = graph.codeBlock()->getConstant(reg).asCell()->inherits<JSTemplateObjectDescriptor>();
+    return constantThroughStub(number, isTemplate ? Stub::TemplateObject : Stub::Constant);
+}
+
+LValue Lowering::constantThroughStub(uint32_t number, Stub stub)
+{
+    // (It always gives the same, and changes nothing that the code can tell.)
+    PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+    patchpoint->effects = Effects::none();
+    RegisterSet temporaries;
+    temporaries.add(GPRInfo::regT9, IgnoreVectors);
+    temporaries.add(GPRInfo::regT10, IgnoreVectors);
+    temporaries.add(GPRInfo::regT11, IgnoreVectors);
+    temporaries.add(GPRInfo::regT12, IgnoreVectors);
+    temporaries.add(GPRInfo::regT13, IgnoreVectors);
+    temporaries.add(GPRInfo::regT14, IgnoreVectors);
+    temporaries.add(GPRInfo::regT15, IgnoreVectors);
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobber(temporaries);
+    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    patchpoint->setGenerator([graph = &m_graph, number, stub](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        // (It does not make a function need a frame: see hasNoFrame().)
+        bool isLeaf = hasNoFrame(*graph, params.proc().code());
+        if (isLeaf)
+            jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
+        graph->stubCalls.call(jit, stub, number, CallSite { });
+        if (isLeaf)
+            jit.move(GPRInfo::regT10, CCallHelpers::linkRegister);
+    });
+    return patchpoint;
+}
+
+uint32_t Lowering::numberOfConstantOfProgram(Node* node)
+{
+    RELEASE_ASSERT(node->kind == NodeKind::ConstantCell && node->reg.isConstant());
+    uint32_t number = numbersOfConstantsOfProgramFor(node->graph->codeBlock())->at(node->reg.toConstantIndex());
+    RELEASE_ASSERT(number != notAConstantOfProgram);
+    return number;
 }
 
 LValue Lowering::lowJSValue(Node* node)

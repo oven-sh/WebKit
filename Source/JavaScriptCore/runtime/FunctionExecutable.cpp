@@ -36,7 +36,7 @@
 #include "IsoCellSetInlines.h"
 #include "JSArray.h"
 #include "JSCJSValueInlines.h"
-#include "StaticHeap.h"
+#include "AOTProgramData.h"
 #include <wtf/Threading.h>
 
 namespace JSC {
@@ -52,13 +52,28 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
     ASSERT(source.length());
 }
 
-void FunctionExecutable::becomeStatic(VM& vm)
+void FunctionExecutable::becomeSharedAcrossRealms(VM& vm)
+{
+    // (Which code it belongs to depends on the instance: AOT::Instance::topLevelExecutableOf().)
+    m_topLevelExecutable.clear();
+    m_singleton.invalidate(vm, StringFireDetail("It is shared by every realm"));
+}
+
+FunctionExecutable* FunctionExecutable::createInShortForm(VM& vm, const uint64_t (&entry)[2], const uint32_t (&index)[2])
 {
     static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_jitCodeForCallWithArityCheck) == sizeOfShortForm);
-    // Which realm it belongs to is determined later (topLevelExecutable()), and more than one function object may be created from
-    // it, so the singleton watchpoint is invalidated.
-    m_topLevelExecutable.clear();
-    m_singleton.invalidate(vm, StringFireDetail("Created in the static heap"));
+    // (Among the cells that have nothing to destroy. There is nothing in it for the collector to visit either.)
+    void* cell = vm.cellSpace().allocate(vm, sizeOfShortForm, nullptr, AllocationFailureMode::Assert);
+    auto* result = static_cast<FunctionExecutable*>(cell);
+    Structure* structure = vm.shortFunctionExecutableStructure.get();
+    auto* words = static_cast<uint32_t*>(cell);
+    words[JSCell::structureIDOffset() / sizeof(uint32_t)] = structure->id().bits();
+    words[JSCell::indexingTypeAndMiscOffset() / sizeof(uint32_t)] = structure->typeInfoBlob();
+    for (unsigned i = 0; i < 2; ++i) {
+        result->m_aotEntry[i] = entry[i];
+        result->m_aotIndex[i] = index[i];
+    }
+    return result;
 }
 
 // AOT::Stub::EnterStaticFunctionForCall, EnterStaticFunctionForConstruct and ConstructByCalling, once an AOT::RuntimeTable exists.
@@ -82,22 +97,6 @@ void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, uint64_t entry,
 {
     m_aotEntry[static_cast<unsigned>(kind)] = entry;
     m_aotIndex[static_cast<unsigned>(kind)] = index;
-}
-
-ScriptExecutable* FunctionExecutable::topLevelExecutableOfStaticExecutable() const
-{
-    SourceProvider* provider = sourceProvider();
-    RELEASE_ASSERT(StaticHeap::isPlaceOfSourceProvider(provider));
-    VM& vm = this->vm();
-    if (ScriptExecutable* ofBuiltin = StaticHeap::topLevelExecutableOfBuiltinWithProvider(vm, provider))
-        return ofBuiltin;
-#if ENABLE(AOT)
-    for (AOT::Instance* instance : vm.m_aotInstances) {
-        if (ScriptExecutable* result = instance->topLevelExecutableOf(provider))
-            return result;
-    }
-#endif
-    return nullptr;
 }
 
 void FunctionExecutable::destroy(JSCell* cell)
@@ -172,13 +171,6 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (codeBlockForConstruct)
         visitCodeBlockEdge(visitor, codeBlockForConstruct);
 
-    // (One that was made when the program was built is in no set of cells of the collector's. It is looked at every time.)
-    if (StaticHeap::contains(thisObject)) [[unlikely]] {
-        visitor.append(thisObject->m_codeBlockForCall);
-        visitor.append(thisObject->m_codeBlockForConstruct);
-        return;
-    }
-
     if (shouldKeepInConstraintSet(visitor, codeBlockForCall, codeBlockForConstruct))
         vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.add(thisObject);
 }
@@ -231,26 +223,45 @@ FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, J
 
 // ---- The short form
 
+#if ENABLE(AOT)
+const AOT::RowOfExecutable& ScriptExecutable::rowOfShortForm() const
+{
+    return AOT::ProgramData::get()->rowOfExecutableOfFunction(indexOfShortForm());
+}
+
+UnlinkedFunctionExecutable* FunctionExecutable::unlinkedExecutableOfShortForm() const
+{
+    return AOT::ProgramOfVM::of(vm())->unlinkedFunction(rowOfShortForm().unlinkedFunction, true);
+}
+
+const Identifier& FunctionExecutable::nameOfShortForm() const
+{
+    return AOT::ProgramOfVM::of(vm())->identifierAsIdentifier(rowOfShortForm().name);
+}
+
 SourceProvider* ScriptExecutable::sourceProviderOfShortForm() const
 {
-    return StaticHeap::sourceProviderOfModule(StaticHeap::rowOf(indexOfShortForm()).module);
+    return AOT::ProgramOfVM::of(vm())->providerOfModule(rowOfShortForm().module);
 }
 
 LineColumn ScriptExecutable::whereShortFormStarts() const
 {
-    return StaticHeap::whereFunctionStarts(indexOfShortForm());
+    return AOT::ProgramData::get()->whereFunctionStarts(indexOfShortForm());
 }
 
 // This is rarely called, and callers only want to identify the source. There is no text for the offsets to refer to.
 const SourceCode& ScriptExecutable::sourceOfShortForm() const
 {
-    static Lock lock;
-    static NeverDestroyed<UncheckedKeyHashMap<uint32_t, std::unique_ptr<SourceCode>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> sources;
-    Locker locker { lock };
-    return *sources->ensure(indexOfShortForm(), [&] {
-        return makeUniqueWithoutFastMallocCheck<SourceCode>(RefPtr { sourceProviderOfShortForm() }, 0, 0);
-    }).iterator->value;
+    return AOT::ProgramOfVM::of(vm())->sourceOfShortExecutable(AOT::ProgramData::get()->numberOfExecutableOfFunction(indexOfShortForm()));
 }
+#else
+const AOT::RowOfExecutable& ScriptExecutable::rowOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
+UnlinkedFunctionExecutable* FunctionExecutable::unlinkedExecutableOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
+const Identifier& FunctionExecutable::nameOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
+SourceProvider* ScriptExecutable::sourceProviderOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
+LineColumn ScriptExecutable::whereShortFormStarts() const { RELEASE_ASSERT_NOT_REACHED(); }
+const SourceCode& ScriptExecutable::sourceOfShortForm() const { RELEASE_ASSERT_NOT_REACHED(); }
+#endif
 
 CodeFeatures ScriptExecutable::featuresOfShortForm() const
 {

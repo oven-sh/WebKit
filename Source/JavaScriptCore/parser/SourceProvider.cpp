@@ -79,20 +79,6 @@ void SourceProvider::getID()
     }
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-void SourceProvider::becomeShareableBetweenThreads()
-{
-    asID();
-    sourceURLStripped();
-    for (const String* string : std::initializer_list<const String*> { &m_sourceURL, &m_sourceURLStripped, &m_preRedirectURL, &m_sourceURLDirective, &m_sourceMappingURLDirective, &m_sourceOrigin.string() }) {
-        if (StringImpl* impl = string->impl(); impl && !impl->isStatic()) {
-            impl->hash();
-            impl->becomeStatic();
-        }
-    }
-}
-#endif
-
 const String& SourceProvider::sourceURLStripped()
 {
     if (m_sourceURL.isNull()) [[unlikely]]

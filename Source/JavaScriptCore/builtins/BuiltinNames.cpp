@@ -33,21 +33,18 @@
 namespace JSC {
 namespace Symbols {
 
-void initialize()
-{
-#define INITIALIZE_BUILTIN_STATIC_SYMBOLS(name) new (NotNull, &at(Index::name##Symbol)) SymbolImpl::StaticSymbolImpl { "Symbol." #name ""_s };
-    JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_STATIC_SYMBOLS)
+#define INITIALIZE_BUILTIN_STATIC_SYMBOLS(name) SymbolImpl::StaticSymbolImpl name##Symbol { "Symbol." #name };
+JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(INITIALIZE_BUILTIN_STATIC_SYMBOLS)
 #undef INITIALIZE_BUILTIN_STATIC_SYMBOLS
 
-#define INITIALIZE_BUILTIN_PRIVATE_NAMES(name) new (NotNull, &at(Index::name##PrivateName)) SymbolImpl::StaticSymbolImpl { #name ""_s, SymbolImpl::s_flagIsPrivate };
-    JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
-    JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
+#define INITIALIZE_BUILTIN_PRIVATE_NAMES(name) SymbolImpl::StaticSymbolImpl name##PrivateName { #name, SymbolImpl::s_flagIsPrivate };
+JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
+JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_BUILTIN_PRIVATE_NAMES)
 #undef INITIALIZE_BUILTIN_PRIVATE_NAMES
 
-    new (NotNull, &at(Index::dollarVMPrivateName)) SymbolImpl::StaticSymbolImpl { "$vm"_s, SymbolImpl::s_flagIsPrivate };
-    new (NotNull, &at(Index::polyProtoPrivateName)) SymbolImpl::StaticSymbolImpl { "PolyProto"_s, SymbolImpl::s_flagIsPrivate };
-    new (NotNull, &at(Index::stackPrivateName)) SymbolImpl::StaticSymbolImpl { "stack"_s, SymbolImpl::s_flagIsPrivate };
-}
+SymbolImpl::StaticSymbolImpl dollarVMPrivateName { "$vm", SymbolImpl::s_flagIsPrivate };
+SymbolImpl::StaticSymbolImpl polyProtoPrivateName { "PolyProto", SymbolImpl::s_flagIsPrivate };
+SymbolImpl::StaticSymbolImpl stackPrivateName { "stack", SymbolImpl::s_flagIsPrivate };
 
 } // namespace Symbols
 

@@ -33,7 +33,6 @@
 #include "JSCInlines.h"
 #include "JSCast.h"
 #include "PreventCollectionScope.h"
-#include "StaticHeap.h"
 #include "VM.h"
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -531,8 +530,7 @@ void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
             auto fromLookup = allowedNodeIdentifiers.find(edge.from.cell);
             if (fromLookup == allowedNodeIdentifiers.end()) {
                 if (m_snapshotType == SnapshotType::GCDebuggingSnapshot) {
-                    // (The collector does not visit what is in the static heap, so none of it is a node.)
-                    if (Options::verboseHeapSnapshotLogging() && !StaticHeap::contains(edge.from.cell))
+                    if (Options::verboseHeapSnapshotLogging())
                         WTFLogAlways("Failed to find node for from-edge cell %p", edge.from.cell);
                 }
                 return true;
@@ -546,7 +544,7 @@ void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
             auto toLookup = allowedNodeIdentifiers.find(edge.to.cell);
             if (toLookup == allowedNodeIdentifiers.end()) {
                 if (m_snapshotType == SnapshotType::GCDebuggingSnapshot) {
-                    if (Options::verboseHeapSnapshotLogging() && !StaticHeap::contains(edge.to.cell))
+                    if (Options::verboseHeapSnapshotLogging())
                         WTFLogAlways("Failed to find node for to-edge cell %p", edge.to.cell);
                 }
                 return true;
@@ -599,7 +597,7 @@ void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
         for (auto it : m_rootData) {
             auto snapshotNode = snapshot->nodeForCell(it.key);
             if (!snapshotNode) {
-                if (Options::verboseHeapSnapshotLogging() && !StaticHeap::contains(it.key))
+                if (Options::verboseHeapSnapshotLogging())
                     WTFLogAlways("Failed to find snapshot node for cell %p", it.key);
                 continue;
             }

@@ -1532,13 +1532,6 @@ public:
         return adoptRef(*new ShellSourceProvider(source, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
     }
 
-#if ENABLE(AOT)
-    static Ref<ShellSourceProvider> createAt(void* place, const String& source, const SourceOrigin& sourceOrigin, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType)
-    {
-        return adoptRef(*new (NotNull, place) ShellSourceProvider(source, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
-    }
-#endif
-
     ~ShellSourceProvider() final
     {
         commitCachedBytecode();
@@ -1675,23 +1668,22 @@ static SourceCode sourceOfProgram(JSGlobalObject* globalObject, SourceCode&& sou
         bool ok = fileDescriptor >= 0 && write(fileDescriptor, file.span().data(), file.size()) == static_cast<ssize_t>(file.size());
         jscExit(ok ? EXIT_SUCCESS : EXIT_FAILURE);
     }
-    Vector<uint32_t> modules = StaticHeap::entryOffsetsOfModules();
+    const AOT::ProgramData* data = AOT::ProgramData::get();
+    if (!data)
+        return WTF::move(source);
+    Vector<uint32_t> modules = data->entryOffsetsOfModules();
     if (modules.isEmpty())
         return WTF::move(source);
-    SourceProvider& provider = *source.provider();
-    SourceProvider* made = nullptr;
-    void* place = StaticHeap::takePlaceForSourceProvider(vm, modules[0], sizeof(ShellSourceProvider), made);
-    if (made && made->source() == provider.source() && (isModule || !AOT::Instance::ensure(globalObject).topLevelExecutableOf(made)))
-        return SourceCode(Ref { *made });
-    if (!place)
+    const AOT::ModuleOfProgram& module = *data->moduleWithEntryOffset(modules[0]);
+    SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
+    if (key.length() != module.keyLength || key.hash() != module.keyHash || key.flagsBits() != module.keyFlags)
         return WTF::move(source);
-    Ref placed = ShellSourceProvider::createAt(place, provider.source().toString(), provider.sourceOrigin(), String { provider.sourceURL() }, provider.startPosition(), provider.sourceType());
-    placed->setHasNoText();
-    placed->setAOTModuleID(modules[0] + 1);
-    placed->ref();
-    placed->becomeShareableBetweenThreads();
-    StaticHeap::didMakeSourceProvider(place);
-    return SourceCode(WTF::move(placed));
+    // (A script's code is for the first time that it runs in a realm.)
+    if (!isModule && AOT::Instance::ensure(globalObject).topLevelExecutableOf(modules[0] + 1))
+        return WTF::move(source);
+    source.provider()->setHasNoText();
+    source.provider()->setAOTModuleID(modules[0] + 1);
+    return WTF::move(source);
 }
 #endif
 
@@ -3042,7 +3034,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsAOTCompiled, (JSGlobalObject* globalObject, C
 {
 #if ENABLE(AOT)
     if (auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0)); function && !function->isHostFunction())
-        return JSValue::encode(jsBoolean(!!AOT::FunctionRef::of(globalObject->vm(), function->jsExecutable(), CodeSpecializationKind::CodeForCall)));
+        return JSValue::encode(jsBoolean(function->jsExecutable()->hasAOTEntry() || !!AOT::FunctionRef::of(globalObject->vm(), function->jsExecutable(), CodeSpecializationKind::CodeForCall, nullptr)));
 #else
     UNUSED_PARAM(globalObject);
     UNUSED_PARAM(callFrame);
@@ -5120,9 +5112,6 @@ template<typename Func>
 int runJSC(const CommandLine& options, bool isWorker, const Func& func)
 {
     Worker worker(Workers::singleton(), !isWorker);
-#if ENABLE(AOT)
-    StaticHeap::prepareThread();
-#endif
     if (!isWorker && options.m_destroyAnotherVMFirst) {
         VM& another = VM::create(HeapType::Large).leakRef();
         JSLockHolder locker(another);
@@ -5378,8 +5367,8 @@ int jscmain(int argc, char** argv)
         struct stat status;
         void* bytes = fileDescriptor >= 0 && !fstat(fileDescriptor, &status) ? mmap(nullptr, status.st_size, PROT_READ, MAP_PRIVATE, fileDescriptor, 0) : MAP_FAILED;
         UseOfAOTFile use = bytes != MAP_FAILED ? useAOTFile({ static_cast<const uint8_t*>(bytes), static_cast<size_t>(status.st_size) }, fileDescriptor, 0) : UseOfAOTFile { "cannot read it", "cannot read it" };
-        if (use.whyNoStaticHeap || use.whyNoImage) {
-            dataLogLn("Cannot use ", path, ": ", use.whyNoImage ? use.whyNoImage : use.whyNoStaticHeap);
+        if (use.whyNoProgramData || use.whyNoImage) {
+            dataLogLn("Cannot use ", path, ": ", use.whyNoImage ? use.whyNoImage : use.whyNoProgramData);
             jscExit(EXIT_FAILURE);
         }
     }

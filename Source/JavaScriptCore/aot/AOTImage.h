@@ -47,7 +47,7 @@ struct ImageHeader {
     uint64_t codeSize;
     uint64_t linkTimeConstantsUsed[4]; // One bit per LinkTimeConstant the code loads. Each must be present in Instance::linkTimeConstants.
     uint32_t tableOffset;
-    uint32_t tableCapacity; // A power of two, or zero if the table is omitted (StaticHeap::keysOfImage()).
+    uint32_t tableCapacity; // A power of two, or zero if the table is omitted (ProgramData::keysOfImage()).
     uint32_t recordsOffset;
     uint32_t recordsSize;
     uint32_t numberOfFunctions;
@@ -74,7 +74,7 @@ struct ImageHeader {
     uint32_t largestFieldID; // Property name IDs (VM::aotPropertyNameIDs) start above this. Both kinds of ID are stored in Structure::m_fieldIDInSlot.
     uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes; // Options::auditAOTTypedFields()
-    // If numberOfIdentifiersOfProgram is nonzero, a selector number is an identifier number and StaticHeap holds the strings.
+    // If numberOfIdentifiersOfProgram is nonzero, a selector number is an identifier number (ProgramOfVM::identifier()).
     uint32_t selectorsOffset; // ImageSelector[], by selector number.
     uint32_t numberOfSelectors; // Highest selector number plus one.
     uint32_t rowsOfSelectorsOffset; // uint32_t[], by selector number. The dispatch table entry for a shape is at this value plus the shape number.
@@ -251,7 +251,7 @@ public:
     String textOfQuote(uint64_t start, size_t length) const;
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
-    uint32_t selectorNamed(const StringImpl&) const; // Zero if there is none.
+    uint32_t selectorNamed(VM&, const StringImpl&) const; // Zero if there is none.
 
     const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + at<uint32_t>(header().startsOfFunctionsOffset)[function.index]; }
     // Includes any padding before the next function.

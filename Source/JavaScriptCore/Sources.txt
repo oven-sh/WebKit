@@ -68,6 +68,7 @@ aot/AOTOperations.cpp
 aot/AOTOperationsCalls.cpp
 aot/AOTOperationsObjects.cpp
 aot/AOTProgram.cpp
+aot/AOTProgramData.cpp
 aot/AOTRangeAnalysis.cpp
 aot/AOTRuntime.cpp
 aot/AOTStubs.cpp
@@ -598,7 +599,6 @@ heap/SimpleMarkingConstraint.cpp
 heap/SlotVisitor.cpp
 heap/SpaceTimeMutatorScheduler.cpp
 heap/StochasticSpaceTimeMutatorScheduler.cpp
-heap/StaticHeap.cpp
 heap/StopIfNecessaryTimer.cpp
 heap/StrongSet.cpp
 heap/StructureAlignedMemoryAllocator.cpp

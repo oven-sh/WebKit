@@ -43,7 +43,6 @@
 #include "NativeCallee.h"
 #include "NativeCalleeRegistry.h"
 #include "NativeExecutable.h"
-#include "StaticHeap.h"
 #include "TopExceptionScope.h"
 #include "VM.h"
 #include "VMTrapsInlines.h"
@@ -672,7 +671,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 return;
             }
 
-            RELEASE_ASSERT(StaticHeap::contains(executable) || HeapUtil::isPointerGCObjectJSCell(m_vm.heap, filter, executable));
+            RELEASE_ASSERT(HeapUtil::isPointerGCObjectJSCell(m_vm.heap, filter, executable));
             stackFrame.frameType = FrameType::Executable;
             stackFrame.executable = executable;
             m_liveCellPointers.add(executable);
@@ -776,7 +775,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 appendCodeBlockNoInlining();
 #endif
 #if ENABLE(AOT)
-            } else if (AOT::FunctionRef function = unprocessedStackFrame.aotFunction ? AOT::FunctionRef::whereLinked(m_vm, unprocessedStackFrame.aotFunction.index) : AOT::FunctionRef { }; function && StaticHeap::ensureSourceProviderOf(m_vm, function.executable())) {
+            } else if (AOT::FunctionRef function = unprocessedStackFrame.aotFunction; function && m_vm.m_aotInstances.contains(function.instance) && function.executable()) {
                 assertIsHeld(m_lock);
                 stackTrace.frames.append(StackFrame(function.executable()));
                 m_liveCellPointers.add(function.executable());

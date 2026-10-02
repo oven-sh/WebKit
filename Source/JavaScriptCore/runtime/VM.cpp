@@ -372,6 +372,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     evalExecutableStructure.setWithoutWriteBarrier(EvalExecutable::createStructure(*this, nullptr, jsNull()));
     programExecutableStructure.setWithoutWriteBarrier(ProgramExecutable::createStructure(*this, nullptr, jsNull()));
     functionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructure(*this, nullptr, jsNull()));
+    m_structureIDBase = JSC::structureIDBase();
     shortFunctionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructureOfShortForm(*this, nullptr, jsNull()));
 #if ENABLE(WEBASSEMBLY)
     pinballCompletionStructure.setWithoutWriteBarrier(PinballCompletion::createStructure(*this, nullptr, jsNull()));
@@ -419,7 +420,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     evalCodeBlockStructure.setWithoutWriteBarrier(EvalCodeBlock::createStructure(*this, nullptr, jsNull()));
     functionCodeBlockStructure.setWithoutWriteBarrier(FunctionCodeBlock::createStructure(*this, nullptr, jsNull()));
     bigIntStructure.setWithoutWriteBarrier(JSBigInt::createStructure(*this, nullptr, jsNull()));
-    StaticHeap::install(*this);
     m_orderedHashTableDeletedValue.setWithoutWriteBarrier(JSOrderedHashMap::createDeletedValue(*this));
     m_orderedHashTableSentinel.setWithoutWriteBarrier(JSOrderedHashMap::createSentinel(*this));
     m_sortScratchSentinel.setWithoutWriteBarrier(JSCellButterfly::create(*this, CopyOnWriteArrayWithContiguous, 0));

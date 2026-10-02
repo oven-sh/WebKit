@@ -2398,7 +2398,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
         }
 #if USE(BUN_JSC_ADDITIONS)
         if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
-            if (auto* field = TypedLayoutTable::findField(typedLayoutID, propertyName.uid()); field && !field->mayBeAbsent && !TypedLayoutTable::usesFieldIDs(typedLayoutID)) {
+            if (auto* field = TypedLayoutTable::findField(vm, typedLayoutID, propertyName.uid()); field && !field->mayBeAbsent && !TypedLayoutTable::usesFieldIDs(typedLayoutID)) {
                 if (!TypedLayoutTable::isAuditing()) {
                     slot.setNonconfigurable();
                     return false;

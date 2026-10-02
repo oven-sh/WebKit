@@ -568,7 +568,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (Instance* instance, 
 {
     AOT_OPERATION_BEGIN(instance);
     static constexpr bool areLegacyFeaturesEnabled = true;
-    OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), instance->regExpFor(uncheckedDowncast<RegExp>(regExp)), areLegacyFeaturesEnabled));
+    OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), uncheckedDowncast<RegExp>(regExp), areLegacyFeaturesEnabled));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instance* instance, JSObject* object))
@@ -595,7 +595,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (Instance* instance, JSCell* cell, uint32_t forTest, Slot* cache))
 {
     AOT_OPERATION_BEGIN(instance);
-    RegExp* regExp = instance->regExpFor(uncheckedDowncast<RegExp>(cell));
+    RegExp* regExp = uncheckedDowncast<RegExp>(cell);
     // (Compiled code keeps using the cached object, which is only valid if nothing can intercept the call to the builtin.)
     if (!Options::useSharedRegExpLiteralObjects() || !RegExpObject::canShareLiteralAsReceiver(globalObject, forTest))
         OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));

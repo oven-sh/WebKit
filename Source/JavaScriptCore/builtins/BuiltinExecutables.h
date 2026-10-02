@@ -76,7 +76,7 @@ SourceCode name##Source();
     JSC_FOREACH_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    // ---- With a static heap (see BytecodeLinkEncoder::Impl::addEngineBuiltins()).
+    // ---- For programs that are compiled ahead of time (see BytecodeLinkEncoder::Impl::addEngineBuiltins()).
     // Calls the function for each builtin, with its own source text and an executable created from that. These are not the
     // executables above.
     JS_EXPORT_PRIVATE void forEachStandaloneBuiltin(const Function<void(unsigned index, UnlinkedFunctionExecutable*, const SourceCode&)>&);
@@ -86,8 +86,8 @@ SourceCode name##Source();
     static constexpr bool isStamp(unsigned stamp) { return (stamp & 0xffff0000u) == 0xeb170000u; }
     static_assert(numberOfBuiltinCodes < 0x10000);
     static std::span<const Latin1Character> textOf(unsigned index);
-    // What linking it would give, if the static heap has that and it is for the realm the static heap is for. Null if not.
-    JS_EXPORT_PRIVATE FunctionExecutable* staticExecutableFor(BuiltinCodeIndex, const char* text, size_t length);
+    // What linking it would give, with the code that was compiled for it along with the program. Null if there is none.
+    JS_EXPORT_PRIVATE FunctionExecutable* executableOfProgramFor(BuiltinCodeIndex, const char* text, size_t length);
 
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);

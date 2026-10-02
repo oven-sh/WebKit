@@ -36,6 +36,7 @@ namespace AOT {
 struct Data;
 struct FunctionMetadata;
 struct FunctionInfo;
+struct ProgramData;
 struct ImageFunction;
 struct Instance;
 struct Slot;
@@ -76,15 +77,19 @@ struct FunctionRef {
     // The location of the inlined call itself, in its caller.
     JS_EXPORT_PRIVATE Location inlineCallSiteLocation(unsigned inlineFrame) const;
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*); // Empty unless its code is ahead-of-time compiled.
-    // The function that has run as this executable's code of this kind. Empty if its realm is gone.
-    JS_EXPORT_PRIVATE static FunctionRef of(VM&, FunctionExecutable*, CodeSpecializationKind);
-    static FunctionRef whereLinked(VM&, uint32_t index);
-    explicit operator bool() const { return !!instance; }
+    // The function that is this executable's code of this kind, in the instance that has this token (tokenOf()). If that instance is
+    // gone, the result has none, and can only be asked what is the same in every instance.
+    JS_EXPORT_PRIVATE static FunctionRef of(VM&, FunctionExecutable*, CodeSpecializationKind, JSCell* tokenOfInstance);
+    explicit operator bool() const { return index != none; }
+
+    // On the VM's thread, and not while the collector is at work: the executable of a builtin that has only been called by compiled
+    // code is made when it is first asked for.
+    JS_EXPORT_PRIVATE ScriptExecutable* executable() const;
 
     // These allocate nothing, take no locks, and may be called from any thread while the VM's thread is stopped.
     const FunctionInfo& info() const;
+    const ProgramData& programData() const;
     JS_EXPORT_PRIVATE Data* dataIfExists() const;
-    JS_EXPORT_PRIVATE ScriptExecutable* executable() const;
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlockIfExists() const; // Non-null if there is no metadata().
     JS_EXPORT_PRIVATE CodeBlock* codeBlockIfExists() const;
     const FunctionMetadata* metadata() const;
@@ -98,9 +103,6 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
     // For an async function body suspended in `state`: where it resumes. Returns the start of the function for an unknown state.
     JS_EXPORT_PRIVATE BytecodeIndex resumePointOf(int32_t state) const;
-    // Its inner functions. See UnlinkedCodeBlock::executableIn().
-    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls() const;
-    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionExprs() const;
 
     JS_EXPORT_PRIVATE LineColumn lineColumnFor(BytecodeIndex) const; // As CodeBlock::lineColumnForBytecodeIndex().
     // Decodes the unlinked code block if necessary. Rarely needed. Same threading restrictions as ensureData().
@@ -118,7 +120,7 @@ struct FunctionRef {
     // The source text at this location and whether it is exact, for programs built without source text (Image::quoteAt()).
     JS_EXPORT_PRIVATE std::optional<std::pair<String, bool>> quoteAt(BytecodeIndex) const;
     // The position to report for a frame at this location. If `source` is nonzero, the position is in one of the original sources
-    // (StaticHeap::nameOfSource()); otherwise it is in the bundled module text. Returns nullopt if lineColumnFor() should be used.
+    // (ProgramData::nameOfSource()); otherwise it is in the bundled module text. Returns nullopt if lineColumnFor() should be used.
     struct ReportedPosition {
         LineColumn lineColumn;
         uint32_t source { 0 };
@@ -129,8 +131,9 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE bool constructsAt(BytecodeIndex) const;
     AllocationPlan planOf(const Slot* firstOfSite) const; // Empty if the code is not from an image, in which case the bytecode is available.
 
+    static constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
     Instance* instance { nullptr };
-    uint32_t index { 0 };
+    uint32_t index { none };
 };
 
 struct FunctionRef::Location {

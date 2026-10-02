@@ -30,7 +30,6 @@
 #include "LineColumn.h"
 #include "ParserModes.h"
 #include "ProfilerJettisonReason.h"
-#include "StaticHeap.h"
 #include <wtf/Atomics.h>
 
 namespace JSC {
@@ -112,18 +111,18 @@ public:
     unsigned NODELETE typeProfilingEndOffset() const;
 
     bool usesArguments() const { return features() & ArgumentsFeature; }
-    bool isArrowFunctionContext() const { return isShortForm() ? StaticHeap::rowOf(indexOfShortForm()).isArrowFunctionContext : inFull()->m_isArrowFunctionContext; }
+    bool isArrowFunctionContext() const { return isShortForm() ? rowOfShortForm().isArrowFunctionContext : inFull()->m_isArrowFunctionContext; }
     DerivedContextType derivedContextType() const { return isShortForm() ? derivedContextTypeOfShortForm() : static_cast<DerivedContextType>(inFull()->m_derivedContextType); }
     EvalContextType evalContextType() const { return isShortForm() ? EvalContextType::None : static_cast<EvalContextType>(inFull()->m_evalContextType); }
     bool isInStrictContext() const { return lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature; }
     bool usesNonSimpleParameterList() const { return features() & NonSimpleParameterListFeature; }
 
     // (These settings do not apply to an executable in the short form, whose code never changes.)
-    void setNeverInline(bool value) { if (!StaticHeap::contains(this)) inFull()->m_neverInline = value; }
-    void setNeverOptimize(bool value) { if (!StaticHeap::contains(this)) inFull()->m_neverOptimize = value; }
-    void setNeverFTLOptimize(bool value) { if (!StaticHeap::contains(this)) inFull()->m_neverFTLOptimize = value; }
-    void setDidTryToEnterInLoop(bool value) { if (!StaticHeap::contains(this)) inFull()->m_didTryToEnterInLoop = value; }
-    void setCanUseOSRExitFuzzing(bool value) { if (!StaticHeap::contains(this)) inFull()->m_canUseOSRExitFuzzing = value; }
+    void setNeverInline(bool value) { if (!isShortForm()) inFull()->m_neverInline = value; }
+    void setNeverOptimize(bool value) { if (!isShortForm()) inFull()->m_neverOptimize = value; }
+    void setNeverFTLOptimize(bool value) { if (!isShortForm()) inFull()->m_neverFTLOptimize = value; }
+    void setDidTryToEnterInLoop(bool value) { if (!isShortForm()) inFull()->m_didTryToEnterInLoop = value; }
+    void setCanUseOSRExitFuzzing(bool value) { if (!isShortForm()) inFull()->m_canUseOSRExitFuzzing = value; }
     bool neverInline() const { return isShortForm() || inFull()->m_neverInline; }
     bool neverOptimize() const { return isShortForm() || inFull()->m_neverOptimize; }
     bool neverFTLOptimize() const { return isShortForm() || inFull()->m_neverFTLOptimize; }
@@ -131,10 +130,7 @@ public:
     bool isInliningCandidate() const { return !neverInline(); }
     bool isOkToOptimize() const { return !neverOptimize(); }
     bool canUseOSRExitFuzzing() const { return !isShortForm() && inFull()->m_canUseOSRExitFuzzing; }
-    bool isInsideOrdinaryFunction() const { return isShortForm() ? StaticHeap::rowOf(indexOfShortForm()).isInsideOrdinaryFunction : inFull()->m_isInsideOrdinaryFunction; }
-    // For the code of a module: the executables of its functions are the ones that were created when the program was built.
-    bool usesStaticExecutables() const { return !isShortForm() && inFull()->m_usesStaticExecutables; }
-    void setUsesStaticExecutables() { inFull()->m_usesStaticExecutables = true; }
+    bool isInsideOrdinaryFunction() const { return isShortForm() ? rowOfShortForm().isInsideOrdinaryFunction : inFull()->m_isInsideOrdinaryFunction; }
     
     bool* addressOfDidTryToEnterInLoop() LIFETIME_BOUND
     {
@@ -231,6 +227,7 @@ protected:
 
     // Which function one in the short form is (AOT::ImageFunction::index).
     uint32_t indexOfShortForm() const { return m_aotIndex[m_aotEntry[0] ? 0 : 1]; }
+    JS_EXPORT_PRIVATE const AOT::RowOfExecutable& rowOfShortForm() const;
     JS_EXPORT_PRIVATE const SourceCode& sourceOfShortForm() const;
     JS_EXPORT_PRIVATE SourceProvider* sourceProviderOfShortForm() const;
     JS_EXPORT_PRIVATE LineColumn whereShortFormStarts() const;
@@ -252,7 +249,6 @@ protected:
     bool m_canUseOSRExitFuzzing : 1;
     bool m_codeForGeneratorBodyWasGenerated : 1;
     bool m_isInsideOrdinaryFunction : 1;
-    bool m_usesStaticExecutables : 1 { false };
     unsigned m_derivedContextType : 2; // DerivedContextType
     unsigned m_evalContextType : 2; // EvalContextType
 };

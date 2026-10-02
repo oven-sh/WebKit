@@ -44,7 +44,7 @@
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
-#include "StaticHeap.h"
+#include "AOTProgramData.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakGCMapInlines.h"
 #include <wtf/text/MakeString.h>
@@ -140,7 +140,7 @@ void JSModuleRecord::setFunctionDeclarationSlots(VM& vm, ModuleProgramExecutable
         uninstantiated->executable.set(vm, this, executable);
         // Code that ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable() lets go of once the module has run is not
         // kept alive from here: its declarations are still in the payload the slots decode from.
-        bool declarationsOutliveTheCodeBlock = slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex();
+        bool declarationsOutliveTheCodeBlock = (slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex()) || slots->entriesOfProgram();
         if (!declarationsOutliveTheCodeBlock)
             uninstantiated->unlinkedCodeBlock.set(vm, this, unlinkedCodeBlock);
         uninstantiated->remaining = slots->size();
@@ -175,6 +175,13 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     // The declaration's code is every record's, and what it is specialized on is the executable's symbol table.
     RELEASE_ASSERT(environment->symbolTable() == executable->moduleEnvironmentSymbolTable());
     FunctionExecutable* functionExecutable = executable->linkedFunctionDeclaration(*index);
+#if ENABLE(AOT)
+    if (const uint32_t* entries = m_functionDeclarationSlots->entriesOfProgram(); entries && !functionExecutable) {
+        uint32_t entry = entries[*index];
+        auto* program = AOT::ProgramOfVM::of(vm);
+        functionExecutable = entry & 1 ? executable->linkFunctionDeclaration(vm, *index, program->unlinkedFunction((entry >> 1) - 1, false)) : program->executable((entry >> 1) - 1);
+    }
+#endif
     if (!functionExecutable) {
         UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = uninstantiated->unlinkedCodeBlock.get();
         if (!unlinkedCodeBlock)
@@ -192,7 +199,7 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     JSFunction* function = nullptr;
     SourceParseMode parseMode = functionExecutable->parseMode();
 #if ENABLE(AOT)
-    if (StaticHeap::contains(functionExecutable)) [[unlikely]]
+    if (functionExecutable->hasAOTEntry()) [[unlikely]]
         function = AOT::Instance::ensure(moduleLoader()).makeFunction(functionExecutable, environment);
     else
 #endif
@@ -238,7 +245,6 @@ void JSModuleRecord::didFinishWithExecutable(VM& vm)
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
     if (!executable)
         return;
-    m_gaveStaticExecutables = executable && executable->usesStaticExecutables();
     m_moduleProgramExecutable.clear();
     executable->didFinishEvaluation(vm);
 }
@@ -475,7 +481,7 @@ bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
     if (m_isLinkedAsInImage != TriState::Indeterminate)
         return m_isLinkedAsInImage == TriState::True;
     // (The code finds the functions it calls in what was made along with it.)
-    if (!StaticHeap::hasExecutablesOfFunctions(globalObject->vm())) {
+    if (!AOT::ProgramData::get()) {
         m_isLinkedAsInImage = TriState::False;
         return false;
     }
@@ -505,7 +511,8 @@ bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const
 {
     // Its functions are the ones that were created when the program was built, which is what compiled code assumes about its
     // callees.
-    bool result = isPrelinked() && (m_moduleProgramExecutable ? m_moduleProgramExecutable->usesStaticExecutables() : m_gaveStaticExecutables);
+    SourceProvider& provider = *sourceCode().provider();
+    bool result = isPrelinked() && provider.aotModuleID() && provider.hasNoText();
     if (!result && Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("AOT: ", moduleKey().impl(), isPrelinked() ? " does not have the functions that were made when the program was built" : " was not linked when the program was built");
     // Whether the environment is at the location that compiled code assumes, if it assumes one.
@@ -656,7 +663,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         // has to be the one this record would ask for.)
         if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode()) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
             && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
-            && (!StaticHeap::isUsedBy(vm) || shared->moduleLoader() == moduleLoader())
+            && (!AOT::ProgramData::get() || shared->moduleLoader() == moduleLoader())
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             bool alike = resolvesImportsLike(globalObject, shared);
             RETURN_IF_EXCEPTION(scope, nullptr);

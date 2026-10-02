@@ -325,7 +325,6 @@ private:
     
     WorkResult work() final
     {
-        StaticHeap::ThreadScope worksForVM(m_heap.vm());
         m_heap.collectInCollectorThread();
         return WorkResult::Continue;
     }
@@ -501,8 +500,6 @@ Heap::~Heap()
 {
     // Scribble m_worldState to make it clear that the heap has already been destroyed if we crash in checkConn
     m_worldState.store(0xbadbeeffu);
-
-    StaticHeap::willDestroy(vm());
 
     forEachSlotVisitor(
         [&] (SlotVisitor& visitor) {
@@ -823,6 +820,8 @@ void Heap::reconcileWeakReferencesAtGCEnd()
     });
     for (AOT::Instance* instance : vm().m_aotInstances)
         instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
+    if (auto* program = vm().m_aotProgram.get())
+        program->didFinishCollection();
     if (auto* cache = vm().megamorphicCache(); cache && !vm().m_aotInstances.isEmpty())
         cache->reconcileWeakReferencesAtGCEnd(vm());
 #endif
@@ -2166,7 +2165,6 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
             }
 
             Thread::registerGCThread(GCThreadType::Helper);
-            StaticHeap::ThreadScope worksForVM(vm());
 
             {
                 ParallelModeEnabler parallelModeEnabler(*visitor);
@@ -3828,6 +3826,8 @@ void Heap::addCoreConstraints()
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
             bool onlyNew = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
+            if (auto* program = vm().m_aotProgram.get())
+                program->visit(visitor, onlyNew ? CollectionScope::Eden : CollectionScope::Full);
             for (AOT::Instance* instance : vm().m_aotInstances) {
                 if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance))))
                     instance->visit(visitor, onlyNew);

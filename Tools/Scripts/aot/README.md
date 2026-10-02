@@ -1,7 +1,6 @@
 # Tools for working on ahead-of-time compilation
 
-The compiler and its runtime are in `Source/JavaScriptCore/aot/`, the static heap in `Source/JavaScriptCore/heap/StaticHeap.*` and
-`Source/bmalloc/bmalloc/StaticRegion.*`. All of it is behind `ENABLE(AOT)` and `BENABLE(STATIC_REGION)`.
+The compiler and its runtime are in `Source/JavaScriptCore/aot/`. All of it is behind `ENABLE(AOT)`.
 
 Each script says how to use it at the top, and with `--help`.
 
@@ -11,7 +10,7 @@ Each script says how to use it at the top, and with `--help`.
 
 | | |
 | --- | --- |
-| `jsc --writeAOTImageTo=<file> main.js` | compiles it, makes its static heap, writes both to the file, and exits |
+| `jsc --writeAOTImageTo=<file> main.js` | compiles it, writes the code and the program data to the file, and exits |
 | `jsc --aotImagePath=<file> main.js` | maps the file read-only and runs from it |
 | `jsc --compileMainScriptAheadOfTime=1 main.js` | both: writes a temporary file and runs itself again on it. The tests use this. |
 
@@ -35,7 +34,7 @@ function runs compiled code.
    `test/cli/test/test-aot.test.ts`, and the two that share the module graph, `test/bundler/bundler_compile.test.ts` and
    `test/js/bun/module-graph/module-graph-compile.test.ts`.
 4. After changing what `ENABLE(AOT)` guards: a syntax check cannot see a link error. Look at the undefined symbols of the
-   embedder's objects (`nm -u`) for anything of `AOT`, `StaticHeap` or `StaticRegion` that is only defined with the gate on.
+   embedder's objects (`nm -u`) for anything of `AOT` that is only defined with the gate on.
 
 `run-javascriptcore-tests` has the modes `aot` and `aot-validate`. The second checks every type that the compiler inferred against
 the value at run time, and runs the B3 and Air validators after every phase. Built-in objects are immutable in those modes and the

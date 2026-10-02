@@ -140,7 +140,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
     \
-    v(Bool, useAOT, false, Normal, "Use ahead-of-time compiled code: the embedder maps the static heap and registers the AOT image, and functions run the code the image has for them. If false, both are ignored."_s) \
+    v(Bool, useAOT, false, Normal, "Use ahead-of-time compiled code: the embedder maps the AOT image and what follows it, and functions run the code the image has for them. If false, both are ignored."_s) \
     v(Bool, compileMainScriptAheadOfTime, false, Normal, "jsc shell only. Does what writeAOTImageTo does, to a temporary file, and then runs again with that as aotImagePath."_s) \
     v(OptionString, writeAOTImageTo, nullptr, Normal, "jsc shell only. Compiles the first script or module ahead of time, writes the result to this file, and exits without running it."_s) \
     v(Bool, verboseAOTCompilation, false, Normal, "Log which functions the AOT compiler compiles and why it rejects a function."_s) \

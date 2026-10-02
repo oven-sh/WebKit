@@ -10,7 +10,6 @@
 
 #include "AOTBuiltins.h"
 #include "AOTGraph.h"
-#include <bmalloc/StaticRegion.h>
 
 #include "ArrayConstructor.h"
 #include "ArrayPrototype.h"
@@ -31,7 +30,6 @@
 
 #include "AOTProgram.h"
 #include "AOTImage.h"
-#include "StaticHeap.h"
 #include "AOTOperations.h"
 #include "AOTThunks.h"
 #include "CCallHelpers.h"
@@ -115,7 +113,7 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
-    // A FunctionExecutable from the static heap does not have its entry points, so they are read from here:
+    // A FunctionExecutable of the program does not have its entry points, so they are read from here:
     // ExecutableBase::entrypointOfStaticCode().
     set(Entry::EnterStaticFunctionForCall, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterStaticFunctionForCall)));
     set(Entry::EnterStaticFunctionForConstruct, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterStaticFunctionForConstruct)));
@@ -212,8 +210,9 @@ struct Instance::Collections {
     UncheckedKeyHashMap<uint32_t, Structure*> emptyStructures;
     JSModuleLoader* loader { nullptr };
     Vector<std::pair<Structure*, Structure*>, 12> structuresOfFunctions;
-    UncheckedKeyHashMap<SourceProvider*, ScriptExecutable*> topLevelExecutables;
-    UncheckedKeyHashMap<RegExp*, RegExp*> regExps;
+    UncheckedKeyHashMap<uint32_t, ScriptExecutable*> topLevelExecutables;
+    String keptUntilTheNext;
+    UncheckedKeyHashMap<uint32_t, JSArray*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> templateObjects; // By the numbers of their descriptors.
     JSCell* token { nullptr };
     bool loaderWasCleared { false };
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
@@ -291,7 +290,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     auto startOfDatasFor = [](size_t numberOfFunctions) {
         return std::max<size_t>(roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + numberOfFunctions * sizeof(uint32_t)), static_cast<size_t>(leastStateWithData) << shiftOfStateWithData);
     };
-    RELEASE_ASSERT(StaticHeap::isUsedBy(vm) && StaticHeap::infosOfFunctions(vm));
+    ProgramOfVM* program = ProgramOfVM::of(vm);
+    RELEASE_ASSERT(program);
     destroyThoseNoLongerNeeded(vm);
     size_t environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
     size_t numberOfFunctions = Image::numberOfFunctions();
@@ -308,13 +308,17 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections->startOfDatas = startOfDatasFor(numberOfFunctions) >> shiftOfStateWithData;
     instance->collections->endOfDatasUsed = instance->collections->startOfDatas;
     instance->collections->endOfDatas = size >> shiftOfStateWithData;
-    instance->infos = StaticHeap::infosOfFunctions(vm);
-    instance->functionMetadataOffsets = StaticHeap::functionMetadataOffsets(vm);
-    instance->constantsOfProgram = StaticHeap::constantsOfProgram(vm);
+    instance->program = program;
+    instance->programData = &program->data();
+    instance->recordsOfStringConstants = program->data().at<uint32_t>(program->data().offsetOfRecordsOfStringConstants);
+    instance->infos = program->data().infos();
+    instance->functionMetadataOffsets = program->data().functionMetadataOffsets();
+    instance->identifiersOfProgram = program->identifiers();
     instance->sharedData = SharedData::get();
     // (Pages are committed when they are first touched.)
     instance->fieldsWithObservableReads = static_cast<uint8_t*>(OSAllocator::reserveAndCommit(sizeOfFieldsWithObservableReads, OSAllocator::FastMallocPages));
     if (Image* image = Image::withCode()) {
+        instance->image = image->at<uint8_t>(0);
         instance->code = static_cast<const uint8_t*>(image->code());
         instance->granulesOfCode = image->at<uint32_t>(image->header().granulesOfCodeOffset);
         instance->startsOfFunctionsAfterFirst = image->at<uint32_t>(image->header().startsOfFunctionsOffset) + 1;
@@ -322,7 +326,6 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->missesForEightSlots = Options::aotCacheMissesPerEightSlotsBeforeOwnData();
     instance->missesToSpare = Options::aotExtraCacheMissesBeforeOwnData();
     instance->structureIDBase = JSC::structureIDBase();
-    RELEASE_ASSERT_WITH_MESSAGE(!Image::withCode() || instance->structureIDBase == structureIDBaseOfImages, "Structures are not where the program's code takes them to be: the addresses were taken.");
     {
         auto idOf = [](Structure* structure) { return structure->id().bits(); };
         auto ofReceiver = [&](Receiver receiver) -> uint32_t& { return instance->structureIDsOfReceivers[static_cast<unsigned>(receiver)]; };
@@ -396,19 +399,15 @@ Instance& Instance::ensure(JSModuleLoader* loader)
 
 static ScriptExecutable* topLevelExecutableOf(Data& data)
 {
-    if (auto* function = dynamicDowncast<FunctionExecutable>(data.executable); function && StaticHeap::contains(function)) {
-        if (ScriptExecutable* result = data.instance->topLevelExecutableOf(function->sourceProvider()))
+    if (auto* function = dynamicDowncast<FunctionExecutable>(data.executable); function && function->hasAOTEntry()) {
+        uint32_t moduleID = function->sourceProvider()->aotModuleID();
+        if (ScriptExecutable* result = data.instance->topLevelExecutableOf(moduleID))
             return result;
+        const ModuleOfProgram* module = ProgramData::get()->moduleWithEntryOffset(moduleID - 1);
+        RELEASE_ASSERT(module && module->isBuiltinFunction && module->number);
+        return data.instance->program->executable(module->number - 1);
     }
     return data.executable->topLevelExecutable();
-}
-
-RegExp* Instance::regExpFor(RegExp* regExp)
-{
-    if (!StaticHeap::contains(regExp))
-        return regExp;
-    DeferGC deferGC(*vm);
-    return collections->regExps.ensure(regExp, [&] { return RegExp::createLike(*vm, *regExp); }).iterator->value;
 }
 
 Structure* Instance::structureOfFunctions(Structure* ofRealm, FunctionExecutable* executable, JSScope* scope)
@@ -438,14 +437,31 @@ JSFunction* Instance::makeFunction(FunctionExecutable* executable, JSScope* scop
     return JSFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(JSFunction::selectStructureForNewFuncExp(globalObject, executable), executable, scope));
 }
 
-ScriptExecutable* Instance::topLevelExecutableOf(SourceProvider* provider)
+JSArray* Instance::templateObjectFor(uint32_t numberOfDescriptor)
 {
-    return collections->topLevelExecutables.get(provider);
+    if (auto it = collections->templateObjects.find(numberOfDescriptor); it != collections->templateObjects.end())
+        return it->value;
+    JSArray* result = uncheckedDowncast<JSTemplateObjectDescriptor>(program->constant(numberOfDescriptor).asCell())->createTemplateObject(globalObject);
+    RELEASE_ASSERT(result); // (Otherwise there is no memory left.)
+    collections->templateObjects.add(numberOfDescriptor, result);
+    return result;
 }
 
-void Instance::setTopLevelExecutableOf(SourceProvider* provider, ScriptExecutable* executable)
+StringImpl* Instance::keepUntilTheNext(String&& string)
 {
-    collections->topLevelExecutables.set(provider, executable);
+    collections->keptUntilTheNext = WTF::move(string);
+    return collections->keptUntilTheNext.impl();
+}
+
+ScriptExecutable* Instance::topLevelExecutableOf(uint32_t moduleID)
+{
+    return collections->topLevelExecutables.get(moduleID);
+}
+
+void Instance::setTopLevelExecutableOf(uint32_t moduleID, ScriptExecutable* executable)
+{
+    RELEASE_ASSERT(moduleID);
+    collections->topLevelExecutables.set(moduleID, executable);
 }
 
 void* Instance::allocateForData(size_t size)
@@ -629,104 +645,6 @@ const RegisterAtOffsetList& adapterSavedRegisters()
     return list.get();
 }
 
-bool hasOnlyRealmIndependentConstants(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesAreShared symbolTablesAreShared)
-{
-    auto& constants = unlinkedCodeBlock->constantRegisters();
-    auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
-    for (unsigned i = 0; i < constants.size(); ++i) {
-        // (Compiled code reads link-time constants from the Instance: NodeKind::LinkTimeConstant.)
-        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
-            continue;
-        JSValue constant = constants[i].get();
-        if (!constant || !constant.isCell())
-            continue;
-        if (auto* symbolTable = dynamicDowncast<SymbolTable>(constant.asCell())) {
-            if (symbolTablesAreShared == SymbolTablesAreShared::No && !symbolTable->isSharedAcrossRealms())
-                return false;
-        } else if (constant.asCell()->inherits<JSTemplateObjectDescriptor>())
-            return false;
-    }
-    return true;
-}
-
-// The constants of the unlinked code can be used as they are, except for the ones that depend on the realm.
-static bool linkConstants(VM& vm, Data& data)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!data.unlinkedCodeBlock) {
-        // This was determined when the program was built.
-        const FunctionInfo& info = data.function().info();
-        if (info.hasOnlyRealmIndependentConstants()) {
-            data.constants = info.constants;
-            return true;
-        }
-        const uint32_t* list = StaticHeap::inData<uint32_t>(*data.function().metadata()->find(FunctionMetadata::RealmConstants));
-        std::span constants { static_cast<const WriteBarrier<Unknown>*>(info.constants), list[0] };
-        JSGlobalObject* globalObject = data.instance->globalObject;
-        auto* copy = static_cast<WriteBarrier<Unknown>*>(fastZeroedMalloc(constants.size_bytes()));
-        data.constants = copy;
-        data.ownsConstants = true;
-        data.numberOfOwnConstants = constants.size();
-        for (unsigned i = 0; i < constants.size(); ++i) {
-            JSValue constant = constants[i].get();
-            if (constant && constant.isCell()) {
-                if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(constant.asCell())) {
-                    constant = topLevelExecutableOf(data)->createTemplateObject(globalObject, descriptor);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-            }
-            copy[i].setWithoutWriteBarrier(constant);
-        }
-        for (uint32_t i : std::span { list + 2, list[1] })
-            copy[i].setWithoutWriteBarrier(globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constants[i].get().asInt32AsAnyInt())));
-        return true;
-    }
-    UnlinkedCodeBlock* unlinkedCodeBlock = data.unlinkedCodeBlock;
-    auto& constants = unlinkedCodeBlock->constantRegisters();
-    auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
-    bool hasRealmDependentConstants = false;
-    for (unsigned i = 0; i < constants.size(); ++i) {
-        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant) {
-            hasRealmDependentConstants = true;
-            continue;
-        }
-        JSValue constant = constants[i].get();
-        if (!constant || !constant.isCell())
-            continue;
-        if (auto* symbolTable = dynamicDowncast<SymbolTable>(constant.asCell())) {
-            // A SymbolTable that is not shared has to be cloned for the JIT tiers, which CodeBlock::setConstantRegisters() does.
-            if (!symbolTable->isSharedAcrossRealms()) {
-                data.constants = data.ensureCodeBlock()->constantRegisters().span().data();
-                return true;
-            }
-        } else if (constant.asCell()->inherits<JSTemplateObjectDescriptor>())
-            hasRealmDependentConstants = true;
-    }
-    if (!hasRealmDependentConstants) {
-        data.constants = constants.span().data();
-        return true;
-    }
-
-    JSGlobalObject* globalObject = data.instance->globalObject;
-    auto* copy = static_cast<WriteBarrier<Unknown>*>(fastZeroedMalloc(constants.size() * sizeof(WriteBarrier<Unknown>)));
-    data.constants = copy;
-    data.ownsConstants = true;
-    data.numberOfOwnConstants = constants.size();
-    for (unsigned i = 0; i < constants.size(); ++i) {
-        JSValue constant = constants[i].get();
-        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
-            constant = globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant.asInt32AsAnyInt()));
-        else if (constant && constant.isCell()) {
-            if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(constant.asCell())) {
-                constant = topLevelExecutableOf(data)->createTemplateObject(globalObject, descriptor);
-                RETURN_IF_EXCEPTION(scope, false);
-            }
-        }
-        copy[i].setWithoutWriteBarrier(constant);
-    }
-    return true;
-}
-
 Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, CodeBlock* codeBlock)
 {
     VM& vm = *instance.vm;
@@ -739,10 +657,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->unlinkedCodeBlock = unlinkedCodeBlock;
     code.ref();
     data->code = &code;
-    // (With a static heap, use the identifiers from the FunctionInfo. The unlinked code, if it exists, may have been decoded later,
-    // and has its own copy of the same identifiers.)
     const FunctionInfo& info = instance.infos[code.index()];
-    data->identifiers = info.sites ? info.identifiers : unlinkedCodeBlock->identifiers().span().data();
     data->sites = code.sites();
     data->hasSiteConstants = code.imageFunction()->hasSiteConstants;
     data->numSlots = numSlots;
@@ -755,13 +670,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     instance.collections->all.append(data);
     data->noteFilled(); // New, so the next collection has to visit it.
 
-    if (codeBlock)
-        data->constants = codeBlock->constantRegisters().span().data();
-    else if (!linkConstants(vm, *data)) {
-        destroy(data);
-        return nullptr;
-    }
-    RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && (info.flags >> FunctionInfo::numberOfFlagBits) == std::min<uint32_t>(numSlots, FunctionInfo::maxEncodedSlots) && (!info.executable() || info.executable() == executable));
+    RELEASE_ASSERT(info.sitesInImage() == data->sites && (info.flags >> FunctionInfo::numberOfFlagBits) == std::min<uint32_t>(numSlots, FunctionInfo::maxEncodedSlots) && (!info.hasExecutable() || instance.program->executable(info.oneMoreThanNumber() - 1) == executable));
     return data;
 }
 
@@ -772,9 +681,10 @@ Data* Instance::ensureData(uint32_t index)
     if (data)
         return data;
     const FunctionInfo& info = infos[index];
-    auto* executable = uncheckedDowncast<FunctionExecutable>(info.executable());
-    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfExists(info.kind());
-    // (An executable in the static heap is read-only, so it cannot hold a reference to its JITCode.)
+    RELEASE_ASSERT(info.hasExecutable());
+    FunctionExecutable* executable = program->executable(info.oneMoreThanNumber() - 1);
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = nullptr;
+    // (The executable is shared by every instance, so it does not refer to the JITCode, which is of one.)
     Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function()), info.function() }, info.kind());
     RELEASE_ASSERT(code->index() == index);
     code->setInstance(*this);
@@ -853,19 +763,17 @@ BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
     return locationForReturnAddress(returnAddress).bytecodeIndex;
 }
 
-FunctionRef FunctionRef::whereLinked(VM& vm, uint32_t index)
+FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, JSCell* tokenOfInstance)
 {
-    for (Instance* instance : vm.m_aotInstances) {
-        if (instance->isLinked(index))
-            return { instance, index };
+    if (executable->hasAOTEntry()) {
+        if (!executable->aotEntryFor(kind) || executable->aotIndexFor(kind) == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
+            return { };
+        for (Instance* instance : vm.m_aotInstances) {
+            if (tokenOf(instance) == tokenOfInstance)
+                return { instance, executable->aotIndexFor(kind) };
+        }
+        return { nullptr, executable->aotIndexFor(kind) };
     }
-    return { };
-}
-
-FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind)
-{
-    if (StaticHeap::contains(executable) && executable->aotIndexFor(kind) != FunctionExecutable::aotIndexOfWhatConstructsByCalling)
-        return { vm.m_aotInstances[0], executable->aotIndexFor(kind) };
     if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
         return { };
     Ref generated = executable->generatedJITCodeFor(kind);
@@ -880,7 +788,7 @@ CodeBlock* FunctionRef::ensureCodeBlock() const
 
 Data* FunctionRef::dataIfExists() const
 {
-    return instance->dataIfExists(index);
+    return instance ? instance->dataIfExists(index) : nullptr;
 }
 
 Data* FunctionRef::ensureData() const
@@ -890,10 +798,11 @@ Data* FunctionRef::ensureData() const
 
 ScriptExecutable* FunctionRef::executable() const
 {
-    // (The executable of a module's top-level code is created at run time, so the FunctionInfo cannot refer to it.)
+    // (The executable of a module's top-level code is of one instance.)
     if (Data* data = dataIfExists())
         return data->executable;
-    return info().executable();
+    const FunctionInfo& info = this->info();
+    return info.hasExecutable() && instance ? instance->program->executable(info.oneMoreThanNumber() - 1) : nullptr;
 }
 
 CodeBlock* FunctionRef::codeBlockIfExists() const
@@ -907,7 +816,7 @@ uint32_t FunctionRef::siteConstantOf(const Slot* slot) const
     const FunctionInfo& info = this->info();
     size_t which = slot - (SharedData::contains(slot) ? instance->sharedData : instance->dataIfExists(index))->slots;
     if (info.flags & FunctionInfo::sitesHaveTheirConstants)
-        return info.sites[which].identifierAndExtra;
+        return info.sitesInImage()[which].identifierAndExtra;
     if (!(info.flags & FunctionInfo::hasSiteConstants))
         return 0;
     return info.function()->siteConstants()[which];
@@ -949,24 +858,7 @@ UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfExists() const
 {
     if (Data* data = dataIfExists(); data && data->unlinkedCodeBlock)
         return data->unlinkedCodeBlock;
-    if (UnlinkedCodeBlock* code = info().topLevelCode())
-        return code;
-    return uncheckedDowncast<FunctionExecutable>(executable())->unlinkedExecutable()->codeBlockIfExists(info().kind());
-}
-
-// A buffer of zeros as large as any function's instruction stream. Its pages are only committed if they are read.
-static std::span<const uint8_t> zerosForInstructions(size_t size)
-{
-    static constexpr size_t most = static_cast<size_t>(1) << (32 - FunctionMetadata::shiftOfInstructionsSize);
-    static const uint8_t* zeros;
-    static std::once_flag once;
-    std::call_once(once, [] {
-        void* result = mmap(nullptr, most, PROT_READ, MAP_PRIVATE | MAP_ANON, -1, 0);
-        RELEASE_ASSERT(result != MAP_FAILED);
-        zeros = static_cast<const uint8_t*>(result);
-    });
-    RELEASE_ASSERT(size <= most);
-    return { zeros, size };
+    return nullptr;
 }
 
 // The result is never interpreted, and its users do not read the instructions.
@@ -977,19 +869,11 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromMetadata() const
     if (!scalars)
         return nullptr;
     PartsOfFunctionCode parts { };
-    parts.scalars = StaticHeap::inData<uint8_t>(*scalars);
-    parts.instructions = zerosForInstructions(metadata->instructionsSize());
-    // (When the program has one identifier table, compiled code refers to a name by its index in that table, and the function's own
-    // identifier list is not recorded. As with the instructions, users of the result do not read it.)
-    parts.identifiers = StaticHeap::hasIdentifiersOfProgram() ? nullptr : static_cast<const Identifier*>(info().identifiers);
-    parts.constants = static_cast<const WriteBarrier<Unknown>*>(info().constants);
-    if (const uint32_t* word = metadata->find(FunctionMetadata::RealmConstants)) {
-        const uint32_t* list = StaticHeap::inData<uint32_t>(*word);
-        parts.linkTimeConstants = { list + 2, list[1] };
-    }
-    // (The nested functions are not needed either. They are looked up through functionDecl() and functionExpr().)
+    parts.scalars = programData().at<uint8_t>(*scalars);
+    parts.instructions = absentInstructions(metadata->instructionsSize());
+    // (Nor the identifiers, the constants or the nested functions, which are looked up through functionDecl() and functionExpr().)
     if (const uint32_t* words = metadata->find(FunctionMetadata::Handlers))
-        parts.handlers = { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
+        parts.handlers = { programData().at<UnlinkedHandlerInfo>(words[0]), words[1] };
     return makeFunctionCodeFromParts(*instance->vm, parts);
 }
 
@@ -1001,8 +885,6 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
     DeferGCForAWhile deferGC(vm);
     DeferTerminationForAWhile deferTermination(vm);
     SuspendExceptionScope suspendExceptions(vm);
-    // The result is stored in the Data. (The executable is in the static heap. Storing one word to it would dirty a whole
-    // copy-on-write page.)
     Data* data = ensureData();
     UnlinkedCodeBlock* result = makeUnlinkedCodeBlockFromMetadata();
     RELEASE_ASSERT(result);
@@ -1014,11 +896,10 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
 
 const FunctionMetadata* FunctionRef::metadata() const
 {
-    if (!instance->functionMetadataOffsets)
-        return nullptr;
-    uint32_t at = instance->functionMetadataOffsets[index];
+    const ProgramData& data = programData();
+    uint32_t at = data.functionMetadataOffsets()[index];
     // (For odd values, see reportedPositionFor().)
-    return at && !(at & 1) ? StaticHeap::inData<FunctionMetadata>(at) : nullptr;
+    return at && !(at & 1) ? data.at<FunctionMetadata>(at) : nullptr;
 }
 
 static uint64_t readVarint(const uint8_t*& at)
@@ -1032,15 +913,15 @@ static uint64_t readVarint(const uint8_t*& at)
     }
 }
 
-// Decodes what makePositions() in StaticHeap.cpp wrote.
+// Decodes what makePositions() in AOTProgramData.cpp wrote.
 auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstruction ofConstruction) const -> std::optional<ReportedPosition>
 {
     const uint8_t* at = nullptr;
-    if (uint32_t word = instance->functionMetadataOffsets[index]; word & 1)
-        at = StaticHeap::inData<uint8_t>(word - 1);
+    if (uint32_t word = programData().functionMetadataOffsets()[index]; word & 1)
+        at = programData().at<uint8_t>(word - 1);
     else if (auto* metadata = this->metadata()) {
         if (const uint32_t* where = metadata->find(FunctionMetadata::ExpressionInfo))
-            at = StaticHeap::inData<uint8_t>(*where);
+            at = programData().at<uint8_t>(*where);
     }
     if (!at)
         return std::nullopt;
@@ -1121,7 +1002,7 @@ const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) cons
     const uint32_t* words = metadata->find(FunctionMetadata::Handlers);
     if (!words)
         return nullptr;
-    std::span<const UnlinkedHandlerInfo> handlers { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
+    std::span<const UnlinkedHandlerInfo> handlers { programData().at<UnlinkedHandlerInfo>(words[0]), words[1] };
     return UnlinkedHandlerInfo::handlerForIndex<const UnlinkedHandlerInfo>(handlers, bytecodeOffset, RequiredHandler::AnyHandler);
 }
 
@@ -1130,7 +1011,7 @@ const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned table
     auto* metadata = this->metadata();
     if (!metadata)
         return unlinkedCodeBlockIfExists()->unlinkedStringSwitchJumpTable(tableIndex);
-    return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*metadata->find(FunctionMetadata::StringSwitchJumpTables))[tableIndex];
+    return instance->program->stringSwitchJumpTable(*metadata->find(FunctionMetadata::StringSwitchJumpTables), tableIndex);
 }
 
 const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
@@ -1138,7 +1019,7 @@ const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
     auto* metadata = this->metadata();
     if (!metadata)
         return ensureUnlinkedCodeBlock()->constantIdentifierSets()[index];
-    return StaticHeap::inMalloc<IdentifierSet>(*metadata->find(FunctionMetadata::ConstantIdentifierSets))[index];
+    return instance->program->identifierSet(*metadata->find(FunctionMetadata::ConstantIdentifierSets), index);
 }
 
 BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
@@ -1148,7 +1029,7 @@ BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
     int32_t offset = 0;
     if (auto* metadata = this->metadata()) {
         if (const uint32_t* word = metadata->find(FunctionMetadata::ResumePoints)) {
-            const int32_t* table = StaticHeap::inData<int32_t>(*word);
+            const int32_t* table = programData().at<int32_t>(*word);
             if (state >= table[0] && static_cast<uint32_t>(state - table[0]) < static_cast<uint32_t>(table[1]))
                 offset = table[2 + state - table[0]];
         }
@@ -1157,26 +1038,12 @@ BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
     return BytecodeIndex(std::max(offset, 0));
 }
 
-static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(const FunctionMetadata& metadata, FunctionMetadata::Section which)
+static std::span<const uint32_t> functionsIn(const FunctionMetadata& metadata, FunctionMetadata::Section which)
 {
     const uint32_t* words = metadata.find(which);
     if (!words)
         return { };
-    return { StaticHeap::inMalloc<WriteBarrier<UnlinkedFunctionExecutable>>(words[0]), words[1] };
-}
-
-std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionDecls() const
-{
-    if (auto* metadata = this->metadata())
-        return functionsIn(*metadata, FunctionMetadata::FunctionDecls);
-    return unlinkedCodeBlockIfExists()->functionDecls();
-}
-
-std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionExprs() const
-{
-    if (auto* metadata = this->metadata())
-        return functionsIn(*metadata, FunctionMetadata::FunctionExprs);
-    return unlinkedCodeBlockIfExists()->functionExprs();
+    return { ProgramData::get()->at<uint32_t>(words[0]), words[1] };
 }
 
 void Data::destroy(Data* data)
@@ -1208,8 +1075,6 @@ void Data::destroy(Data* data)
         fastFree(several);
         return true;
     });
-    if (data->ownsConstants)
-        fastFree(const_cast<void*>(data->constants));
     if (data->functions)
         fastFree(data->functions);
     data->code->deref();
@@ -1253,27 +1118,26 @@ LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
     SourceProvider& provider = *executable->sourceProvider();
     unsigned sourceOffset = executable->source().startOffset();
     LineColumn inText = provider.lineColumnInTextForOffset(sourceOffset);
-    if (auto* metadata = this->metadata()) {
-        if (const uint32_t* word = metadata->find(FunctionMetadata::ExpressionInfo))
-            inText = decodeBorrowedExpressionInfo(StaticHeap::inData<uint8_t>(*word))->lineColumnInTextForInstPC(bytecodeIndex.offset(), provider, sourceOffset);
-    } else
+    if (!metadata())
         inText = unlinkedCodeBlockIfExists()->lineColumnInTextForBytecodeIndex(bytecodeIndex, provider, sourceOffset);
     return provider.documentLineColumn(inText);
 }
 
-static FunctionExecutable* functionOf(Data& data, unsigned index, const WriteBarrier<UnlinkedFunctionExecutable>& entry)
+// entry: see FunctionMetadata::executableInList().
+static FunctionExecutable* functionOf(Data& data, unsigned index, uint32_t entry)
 {
-    if (FunctionExecutable* result = UnlinkedCodeBlock::executableIn(entry))
-        return result;
-    UnlinkedFunctionExecutable* unlinkedExecutable = entry.get();
-    if (FunctionExecutable* result = unlinkedExecutable->staticExecutable(); result && StaticHeap::contains(data.executable))
-        return result;
-    if (!data.functions)
-        data.functions = static_cast<FunctionExecutable**>(fastZeroedMalloc((data.function().functionDecls().size() + data.function().functionExprs().size()) * sizeof(FunctionExecutable*)));
+    RELEASE_ASSERT(entry);
+    ProgramOfVM& program = *data.instance->program;
+    if (!(entry & 1))
+        return program.executable((entry >> 1) - 1);
+    if (!data.functions) {
+        const FunctionMetadata& metadata = *data.function().metadata();
+        data.functions = static_cast<FunctionExecutable**>(fastZeroedMalloc((functionsIn(metadata, FunctionMetadata::FunctionDecls).size() + functionsIn(metadata, FunctionMetadata::FunctionExprs).size()) * sizeof(FunctionExecutable*)));
+    }
     FunctionExecutable*& function = data.functions[index];
     if (!function) {
         ScriptExecutable* executable = data.executable;
-        function = unlinkedExecutable->link(*data.instance->vm, topLevelExecutableOf(data), executable->source(), std::nullopt, NoIntrinsic, executable->isInsideOrdinaryFunction());
+        function = program.unlinkedFunction((entry >> 1) - 1, false)->link(*data.instance->vm, topLevelExecutableOf(data), executable->source(), std::nullopt, NoIntrinsic, executable->isInsideOrdinaryFunction());
         if (!data.hasBeenFilledSinceLastCollection)
             data.noteFilled();
     }
@@ -1285,36 +1149,31 @@ FunctionExecutable* Data::functionDecl(unsigned index)
     // A module's code shares its nested functions with the other tiers that run it.
     if (function().codeType() != FunctionCode)
         return codeBlock->functionDecl(index);
-    return functionOf(*this, index, function().functionDecls()[index]);
+    return functionOf(*this, index, functionsIn(*function().metadata(), FunctionMetadata::FunctionDecls)[index]);
 }
 
 FunctionExecutable* Data::functionExpr(unsigned index)
 {
     if (function().codeType() != FunctionCode)
         return codeBlock->functionExpr(index);
-    return functionOf(*this, function().functionDecls().size() + index, function().functionExprs()[index]);
+    const FunctionMetadata& metadata = *function().metadata();
+    return functionOf(*this, functionsIn(metadata, FunctionMetadata::FunctionDecls).size() + index, functionsIn(metadata, FunctionMetadata::FunctionExprs)[index]);
 }
 
 FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
 {
-    if (!dataIfExists()) {
-        auto& entry = functionDecls()[index];
-        if (FunctionExecutable* result = UnlinkedCodeBlock::executableIn(entry))
-            return result;
-        if (FunctionExecutable* result = entry->staticExecutable())
-            return result;
+    if (auto* metadata = this->metadata()) {
+        if (uint32_t entry = functionsIn(*metadata, FunctionMetadata::FunctionDecls)[index]; !(entry & 1))
+            return instance->program->executable((entry >> 1) - 1);
     }
     return ensureData()->functionDecl(index);
 }
 
 FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
 {
-    if (!dataIfExists()) {
-        auto& entry = functionExprs()[index];
-        if (FunctionExecutable* result = UnlinkedCodeBlock::executableIn(entry))
-            return result;
-        if (FunctionExecutable* result = entry->staticExecutable())
-            return result;
+    if (auto* metadata = this->metadata()) {
+        if (uint32_t entry = functionsIn(*metadata, FunctionMetadata::FunctionExprs)[index]; !(entry & 1))
+            return instance->program->executable((entry >> 1) - 1);
     }
     return ensureData()->functionExpr(index);
 }
@@ -1342,13 +1201,13 @@ bool linkStaticFunction(Instance* instance, FunctionExecutable* executable, Code
     if (instance->isLinked(index))
         return true;
     if (const FunctionInfo& info = instance->infos[index]; info.flags & FunctionInfo::startsCold) {
-        RELEASE_ASSERT(info.executable() == executable && info.kind() == kind);
+        RELEASE_ASSERT(info.hasExecutable() && info.kind() == kind);
         if (info.function()->usesStaticImports && !moduleIsLinkedAsCompiled(scope))
             return false;
         instance->setLinkedWithoutData(index);
         return true;
     }
-    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfExists(kind);
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = nullptr;
     ImageCode found = findInImage(executable, kind, unlinkedCodeBlock, scope);
     if (!found)
         return false;
@@ -1374,15 +1233,11 @@ void Data::visit(Visitor& visitor)
     if (codeBlock)
         visitor.appendUnbarriered(codeBlock);
     if (functions) {
-        for (unsigned i = function().functionDecls().size() + function().functionExprs().size(); i--;) {
+        const FunctionMetadata& metadata = *function().metadata();
+        for (unsigned i = functionsIn(metadata, FunctionMetadata::FunctionDecls).size() + functionsIn(metadata, FunctionMetadata::FunctionExprs).size(); i--;) {
             if (functions[i])
                 visitor.appendUnbarriered(functions[i]);
         }
-    }
-    if (ownsConstants) {
-        auto* values = static_cast<const WriteBarrier<Unknown>*>(constants);
-        for (unsigned i = numberOfOwnConstants; i--;)
-            visitor.appendUnbarriered(values[i].get());
     }
 }
 
@@ -1455,10 +1310,10 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
     for (auto& [from, to] : collections->structuresOfFunctions)
         visitor.appendUnbarriered(to);
     visitor.appendUnbarriered(collections->token);
-    for (RegExp* regExp : collections->regExps.values())
-        visitor.appendUnbarriered(regExp);
     for (ScriptExecutable* executable : collections->topLevelExecutables.values())
         visitor.appendUnbarriered(executable);
+    for (JSArray* templateObject : collections->templateObjects.values())
+        visitor.appendUnbarriered(templateObject);
 }
 
 Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names)
@@ -1602,7 +1457,7 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
         bool isPlain = true;
         bool hasTwoForOneSlot = false;
         old->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            auto* field = TypedLayoutTable::findField(layoutID, entry.key());
+            auto* field = TypedLayoutTable::findField(vm, layoutID, entry.key());
             if (usesFieldIDs) {
                 if (entry.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue)) {
                     if (field)
@@ -1641,12 +1496,11 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
                     old->setCannotConvertToTypedLayout();
                 return no("its prototype is not supported"_s);
             }
-            UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
             for (JSObject* holder = asObject(prototype); holder && holder != old->globalObject()->objectPrototype();) {
                 if (holder->type() != FinalObjectType && holder->type() != ObjectType)
                     return no("its prototype is not supported"_s);
                 for (auto& field : TypedLayoutTable::fieldsOf(layoutID)) {
-                    if (!taken.get(field.slot) && isValidOffset(holder->structure()->get(vm, PropertyName(Identifier::fromUid(vm, identifiers[field.identifier])))))
+                    if (!taken.get(field.slot) && isValidOffset(holder->structure()->get(vm, PropertyName(Identifier::fromUid(vm, ProgramOfVM::of(vm)->identifier(field.identifier))))))
                         return no("it inherits a property that the type declares"_s);
                 }
                 JSValue next = holder->structure()->storedPrototype(holder);
@@ -1755,7 +1609,7 @@ void Instance::lookAtObjectPrototype()
     Image* image = Image::withShapes();
     memset(selectorsOnObjectPrototype, 0, image->header().numberOfSelectors / 8 + 1);
     structure->forEachProperty(*vm, [&](const PropertyTableEntry& entry) {
-        if (uint32_t selector = image->selectorNamed(*entry.key()))
+        if (uint32_t selector = image->selectorNamed(*vm, *entry.key()))
             selectorsOnObjectPrototype[selector / 8] |= 1 << (selector % 8);
         return true;
     });

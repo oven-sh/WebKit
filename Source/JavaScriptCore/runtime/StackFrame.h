@@ -55,6 +55,7 @@ struct JSFrameData {
     // until StackFrame::codeBlock() is called.
     CodeSpecializationKind aotKind { CodeSpecializationKind::CodeForCall };
     WriteBarrier<FunctionExecutable> aotExecutable { };
+    WriteBarrier<JSCell> aotInstanceToken { }; // AOT::tokenOf() the instance that it ran in: the executable is shared by all of them.
 };
 
 struct WasmFrameData {
@@ -72,7 +73,7 @@ public:
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex);
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex, bool isAsyncFrame);
     StackFrame(VM&, JSCell* owner, CodeBlock*, BytecodeIndex);
-    StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, FunctionExecutable*, CodeSpecializationKind, BytecodeIndex, bool isAsyncFrame = false); // JSFrameData::aotExecutable
+    StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, FunctionExecutable*, CodeSpecializationKind, JSCell* tokenOfInstance, BytecodeIndex, bool isAsyncFrame = false); // JSFrameData::aotExecutable
     StackFrame(VM&, JSCell* owner, JSCell* callee, bool isAsyncFrame);
     StackFrame(Wasm::IndexOrName);
     StackFrame(Wasm::IndexOrName, size_t functionIndex);

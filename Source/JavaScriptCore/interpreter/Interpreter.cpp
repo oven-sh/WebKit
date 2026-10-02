@@ -572,11 +572,10 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                     BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, currentGenerator);
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
 #if ENABLE(AOT)
-                } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall); function && function.info().executable() == executable) {
-                    // AOT code has no CodeBlock, and does not need one for this. (What is known about the function is: from the
-                    // start if it is in the static heap, where a call that goes straight to its code links nothing.)
+                } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall, AOT::tokenOf(&AOT::instanceOf(asyncFunction->scope())))) {
+                    // AOT code has no CodeBlock, and does not need one for this.
                     JSValue state = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
-                    results.append(StackFrame(vm, owner, asyncFunction, executable, CodeSpecializationKind::CodeForCall, function.resumePointOf(state.isInt32() ? state.asInt32() : 0), /* isAsyncFrame */ true));
+                    results.append(StackFrame(vm, owner, asyncFunction, executable, CodeSpecializationKind::CodeForCall, AOT::tokenOf(function.instance), function.resumePointOf(state.isInt32() ? state.asInt32() : 0), /* isAsyncFrame */ true));
 #endif
                 } else
                     results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
@@ -698,7 +697,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 }
 #if ENABLE(AOT)
             } else if (AOT::FunctionRef function = visitor->aotFunction(); function && function.codeType() == FunctionCode && !function.codeBlockIfExists() && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
-                results.append(StackFrame(vm, owner, visitor->callee().asCell(), uncheckedDowncast<FunctionExecutable>(function.executable()), function.info().kind(), visitor->bytecodeIndex()));
+                results.append(StackFrame(vm, owner, visitor->callee().asCell(), uncheckedDowncast<FunctionExecutable>(function.executable()), function.info().kind(), AOT::tokenOf(function.instance), visitor->bytecodeIndex()));
 #endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())

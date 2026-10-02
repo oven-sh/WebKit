@@ -155,10 +155,6 @@ ALWAYS_INLINE void* tryAllocateCellHelper(VM& vm, size_t size, GCDeferralContext
 {
     ASSERT(deferralContext || vm.heap.isDeferred() || !AssertNoGC::isInEffectOnCurrentThread());
     ASSERT(size >= sizeof(T));
-    if (vm.heap.m_placeOfNextCell) [[unlikely]] {
-        if (void* staticCell = StaticHeap::tryAllocateCellSlow(vm, size))
-            return staticCell;
-    }
     JSCell* result = static_cast<JSCell*>(subspaceFor<T>(vm)->allocate(vm, WTF::roundUpToMultipleOf<T::atomSize>(size), deferralContext, failureMode));
     if constexpr (failureMode == AllocationFailureMode::ReturnNull) {
         if (!result)

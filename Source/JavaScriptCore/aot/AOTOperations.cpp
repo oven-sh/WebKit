@@ -103,6 +103,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToBoolean, size_t, (Instance* inst
     return JSValue::decode(encodedOperand).toBoolean(globalObject);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConstantOfProgram, EncodedJSValue, (Instance* instance, uint32_t number))
+{
+    DeferGCForAWhile deferGC(*instance->vm);
+    return JSValue::encode(instance->program->constant(number));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTemplateObject, EncodedJSValue, (Instance* instance, uint32_t number))
+{
+    DeferGCForAWhile deferGC(*instance->vm);
+    return JSValue::encode(instance->templateObjectFor(number));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance);
@@ -608,7 +620,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (Instance* in
     unsigned slot = which >> 48 & 0xff;
     bool allowsUndefined = which >> 56 & 1;
     JSValue base = JSValue::decode(encodedBase);
-    UniquedStringImpl* uid = StaticHeap::identifiersOfProgram()[static_cast<uint32_t>(which)];
+    UniquedStringImpl* uid = instance->program->identifier(static_cast<uint32_t>(which));
     JSValue value;
     MegamorphicCache* cache = vm.megamorphicCache();
     if (auto* known = cache && base.isObject() ? cache->findLoad(asObject(base)->structureID(), uid) : nullptr) {
@@ -652,7 +664,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
                 OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         }
     }
-    UniquedStringImpl* uid = StaticHeap::identifiersOfProgram()[field.identifier];
+    UniquedStringImpl* uid = instance->program->identifier(field.identifier);
     JSValue value;
     MegamorphicCache* cache = vm.megamorphicCache();
     if (auto* known = cache && base.isObject() ? cache->findLoad(asObject(base)->structureID(), uid) : nullptr) {
@@ -683,7 +695,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance* insta
     if (TypedLayoutTable::usesFieldIDs(layoutID)) {
         bool isRejected = false;
         object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            if (auto* field = TypedLayoutTable::findField(layoutID, entry.key()))
+            if (auto* field = TypedLayoutTable::findField(vm, layoutID, entry.key()))
                 isRejected = TypedLayoutTable::checkStore(*field, object->getDirect(entry.offset())) == TypedLayoutTable::StoreCheck::Rejected;
             return !isRejected;
         });
@@ -778,10 +790,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Insta
             dataLog("    its structure ", RawPointer(structure), ":");
             for (unsigned i = 0; i < 6; ++i)
                 dataLog(" ", RawHex(ofStructure[i]));
-            dataLogLn("; blob ", RawHex(structure->typeInfoBlob()), ", type ", static_cast<unsigned>(structure->typeInfo().type()), ", born as ", structure->typedLayoutID(), ", inline capacity ", structure->inlineCapacity(), StaticHeap::contains(structure) ? " (static)" : "",
-                !StaticHeap::contains(structure) ? (structure->markedBlock().handle().isLive(structure) ? ", live" : ", NOT LIVE") : "");
+            dataLogLn("; blob ", RawHex(structure->typeInfoBlob()), ", type ", static_cast<unsigned>(structure->typeInfo().type()), ", born as ", structure->typedLayoutID(), ", inline capacity ", structure->inlineCapacity(),
+                structure->markedBlock().handle().isLive(structure) ? ", live" : ", NOT LIVE");
         }
-        if (!cell->isPreciseAllocation() && !StaticHeap::contains(cell)) {
+        if (!cell->isPreciseAllocation()) {
             MarkedBlock& block = cell->markedBlock();
             dataLogLn("    in a block of cells of ", block.handle().cellSize(), " bytes; marked: ", block.isMarked(cell), ", newly allocated: ", block.isNewlyAllocated(cell), ", live: ", block.handle().isLive(cell), ", free-listed: ", block.handle().isFreeListed());
         }
@@ -825,13 +837,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer)
     return exception;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTFindEqualAtom, StringImpl*, (Instance* instance, JSString* string))
+JSC_DEFINE_JIT_OPERATION(operationAOTNarrowStringEqualTo, StringImpl*, (Instance* instance, JSString* string))
 {
     AOT_OPERATION_BEGIN(instance);
-    auto atom = string->toExistingAtomString(globalObject);
+    auto value = string->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr); // Out of memory resolving a rope.
-    StringImpl* impl = atom.data;
-    OPERATION_RETURN(scope, impl && impl->is8Bit() ? impl : nullptr);
+    StringImpl* impl = value.data.impl();
+    if (impl->is8Bit()) [[likely]]
+        OPERATION_RETURN(scope, impl); // (The JSString keeps it.)
+    if (!WTF::charactersAreAllLatin1(impl->span16()))
+        OPERATION_RETURN(scope, nullptr);
+    OPERATION_RETURN(scope, instance->keepUntilTheNext(String::make8Bit(impl->span16())));
 }
 
 // The jump offset, relative to the switch; 0 for the default.

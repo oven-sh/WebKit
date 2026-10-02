@@ -482,7 +482,6 @@ inline bool getStaticPropertySlotFromTable(VM& vm, const ClassInfo* classInfo, c
 inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObj)
 {
     if (value.attributes() & PropertyAttribute::Builtin) {
-        SUPPRESS_FORWARD_DECL_ARG MakingBuiltinsFor makingBuiltinsFor(vm, thisObj.realm());
         if (value.attributes() & PropertyAttribute::Accessor)
             reifyStaticAccessor(vm, value, thisObj, propertyName);
         else

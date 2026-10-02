@@ -29,7 +29,6 @@
 #include "JSCConfig.h"
 #include "MarkedBlock.h"
 #include "Options.h"
-#include "StaticHeap.h"
 #include "StructureID.h"
 #include <bmalloc/bmalloc.h>
 #include <wtf/BitVector.h>
@@ -101,8 +100,6 @@ static mi_heap_t* structureHeap { };
 
 #endif
 
-static_assert(!(StaticHeap::endOfStructures % MarkedBlock::blockSize));
-
 class StructureMemoryManager {
 public:
     StructureMemoryManager()
@@ -118,13 +115,7 @@ public:
             // across 4GB granules. Otherwise, the top 32 bits of the address may not be constant for all
             // addresses in the range. The top 32 bits being constant is an invariant that we rely on in
             // order to encode StructureIDs.
-            g_jscConfig.startOfStructureHeap = reinterpret_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages
-#if USE(BUN_JSC_ADDITIONS)
-                // Directly after bmalloc::StaticRegion, if that address range is available. AOT code assumes that it is there
-                // (AOT::structureIDBaseOfImages).
-                , reinterpret_cast<void*>(bmalloc::StaticRegion::base + bmalloc::StaticRegion::reservation)
-#endif
-                ));
+            g_jscConfig.startOfStructureHeap = reinterpret_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages));
             if (g_jscConfig.startOfStructureHeap)
                 break;
             mappedHeapSize /= 2;
@@ -151,9 +142,8 @@ public:
         m_usedBlocks.set(0);
 #elif USE(MIMALLOC)
         if (!m_useSystemHeap) [[likely]] {
-            void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + StaticHeap::endOfStructures);
-            size_t size = g_jscConfig.sizeOfStructureHeap - StaticHeap::endOfStructures;
-
+            void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize);
+            size_t size = g_jscConfig.sizeOfStructureHeap - MarkedBlock::blockSize;
             // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
             // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
             // for the 4 GB default is about 40 KB of pages touched before the first Structure exists.
@@ -171,8 +161,7 @@ public:
 #endif
             return;
         }
-        for (size_t i = 0; i < StaticHeap::endOfStructures / MarkedBlock::blockSize; ++i)
-            m_usedBlocks.set(i);
+        m_usedBlocks.set(0);
 #else
         m_usedBlocks.set(0);
 #endif

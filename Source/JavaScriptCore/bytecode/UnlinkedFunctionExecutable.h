@@ -39,7 +39,6 @@
 #include "ParserTokens.h"
 #include "RegExp.h"
 #include "SourceCode.h"
-#include "StaticHeap.h"
 #include "VariableEnvironment.h"
 #include <wtf/FixedVector.h>
 #include <wtf/TZoneMalloc.h>
@@ -120,14 +119,14 @@ public:
     unsigned parameterCount() const { return m_parameterCount; }; // Excluding 'this'!
     SourceParseMode parseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); };
 
-    // (`provider` is the provider of the function's own source. An executable in the static heap does not record it.)
+    // (`provider` is the provider of the function's own source. In a program that was compiled ahead of time it is not recorded.)
     SourceCode classSource(SourceProvider& provider) const
     {
         materializeDeferredMembersIfNeeded();
         if (!m_members.live().rareData)
-            return SourceCode();
+            return m_isClass ? SourceCode(RefPtr<SourceProvider> { &provider }, 0, 0) : SourceCode(); // (dropWhatOnlyGeneratingCodeNeeds())
         const SourceCode& source = m_members.live().rareData->m_classSource;
-        if (StaticHeap::contains(this) && m_isClass) [[unlikely]]
+        if (source.isNull() && m_isClass) [[unlikely]]
             return SourceCode(RefPtr<SourceProvider> { &provider }, source.startOffset(), source.endOffset());
         return source;
     }
@@ -243,8 +242,6 @@ public:
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
     {
         materializeDeferredMembersIfNeeded();
-        if (StaticHeap::contains(this)) [[unlikely]]
-            return nullptr;
         return m_members.live().parentScopeTDZVariables;
     }
     void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { materializeDeferredMembersIfNeeded(); ensureRareData().m_parentDeclaredNames = WTF::move(names); }
@@ -286,20 +283,11 @@ public:
 
     bool singletonHasBeenInvalidated() const { return m_singletonHasBeenInvalidated; }
 
-    // The FunctionExecutable that StaticHeap created for this function at build time. link() returns it where it is applicable.
-    FunctionExecutable* staticExecutable() const { return m_staticExecutable; }
     UnlinkedFunctionCodeBlock* codeBlockIfExists(CodeSpecializationKind kind) const
     {
         if (m_isCached)
             return nullptr;
         return (kind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct).get();
-    }
-    void setStaticExecutable(FunctionExecutable* executable) { m_staticExecutable = executable; }
-    // StaticHeap decodes the code of every function to inspect it, but still leaves it in the payload.
-    std::pair<int32_t, int32_t> offsetsOfCachedCodeBlocks() const
-    {
-        RELEASE_ASSERT(m_isCached);
-        return { m_cachedCodeBlockForCallOffset, m_cachedCodeBlockForConstructOffset };
     }
     void leaveWithoutCode();
     void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
@@ -409,28 +397,35 @@ public:
 
     // See the short form of FunctionExecutable. Functions that only differ in their name, parameter count and source position share
     // one UnlinkedFunctionExecutable. These say whether this one can be shared, and which bytes are shared.
-    bool canBeSharedByStaticExecutables() const
+    bool canBeSharedByShortExecutables() const
     {
         return !m_nameIsDeferred && !m_membersAreDeferred && !m_scalarsAreDeferred && !m_members.live().rareData && !m_members.live().parentScopeTDZVariables
-            && !m_isBuiltinFunction && !m_isBuiltinDefaultClassConstructor;
+            && !m_isBuiltinDefaultClassConstructor;
     }
-    auto whatIsSharedByStaticExecutables() const
+    auto whatIsSharedByShortExecutables() const
     {
-        RELEASE_ASSERT(canBeSharedByStaticExecutables());
-        std::array<uint8_t, sizeof(UnlinkedFunctionExecutable)> bytes;
-        memcpy(bytes.data(), static_cast<const void*>(this), sizeof(UnlinkedFunctionExecutable));
-        auto* copy = reinterpret_cast<UnlinkedFunctionExecutable*>(bytes.data());
-        copy->m_parameterCount = 0;
-        memset(static_cast<void*>(&copy->m_ecmaName), 0, sizeof(m_ecmaName));
-        copy->m_unlinkedFunctionStart = 0;
-        copy->m_startOffset = 0;
-        copy->m_sourceLength = 0;
-        copy->m_parametersStartOffset = 0;
-        copy->m_unlinkedFunctionEnd = 0;
-        memset(static_cast<void*>(&copy->m_staticExecutable), 0, sizeof(m_staticExecutable));
-        memset(static_cast<void*>(&copy->m_unlinkedCodeBlockForCall), 0, sizeof(m_unlinkedCodeBlockForCall));
-        memset(static_cast<void*>(&copy->m_unlinkedCodeBlockForConstruct), 0, sizeof(m_unlinkedCodeBlockForConstruct));
-        return bytes;
+        RELEASE_ASSERT(canBeSharedByShortExecutables());
+        return std::to_array<uint32_t>({ m_isBuiltinFunction, m_hasCapturedVariables, m_constructAbility, m_scriptMode, m_needsClassFieldInitializer, m_superBinding, m_privateBrandRequirement,
+            static_cast<uint32_t>(m_features), m_constructorKind, static_cast<uint32_t>(m_sourceParseMode), m_implementationVisibility, static_cast<uint32_t>(m_lexicallyScopedFeatures),
+            m_functionMode, m_derivedContextType, m_inlineAttribute, m_evalContextType, m_hasName, m_isClass });
+    }
+    // Of a program that was compiled ahead of time and comes without its text.
+    void dropWhatOnlyGeneratingCodeNeeds()
+    {
+        materializeDeferredMembersIfNeeded();
+        m_members.live().parentScopeTDZVariables = nullptr;
+        m_members.live().rareData = nullptr;
+    }
+    void becomeSharedByShortExecutables()
+    {
+        RELEASE_ASSERT(canBeSharedByShortExecutables() && !m_isCached && !m_unlinkedCodeBlockForCall && !m_unlinkedCodeBlockForConstruct);
+        m_parameterCount = 0;
+        m_ecmaName = Identifier();
+        m_unlinkedFunctionStart = 0;
+        m_startOffset = 0;
+        m_sourceLength = 0;
+        m_parametersStartOffset = 0;
+        m_unlinkedFunctionEnd = 0;
     }
 
 private:
@@ -503,7 +498,6 @@ private:
     };
 
     Identifier m_ecmaName;
-    FunctionExecutable* m_staticExecutable { nullptr };
 
     // parentScopeTDZVariables and rareData, or, while m_membersAreDeferred, the cache record they still live in.
     class DeferredMembers {
@@ -580,7 +574,7 @@ inline void UnlinkedFunctionExecutable::DeferredMembers::settle(Live&& live)
 }
 
 #if !ASSERT_ENABLED
-static_assert(sizeof(UnlinkedFunctionExecutable) <= 104, "UnlinkedFunctionExecutable needs to be small");
+static_assert(sizeof(UnlinkedFunctionExecutable) <= 96, "UnlinkedFunctionExecutable needs to be small");
 #endif
 
 } // namespace JSC

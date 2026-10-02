@@ -80,7 +80,7 @@ static void estimateFrequencies(B3::Procedure& proc)
 static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
 {
     // (The number of slots is always less than the size of the bytecode.)
-    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots) || !hasOnlyRealmIndependentConstants(unlinkedCodeBlock, SymbolTablesAreShared::Yes))
+    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
         return false;
     for (const auto& instruction : unlinkedCodeBlock->instructions()) {
         if (instruction->opcodeID() == op_loop_hint)
@@ -272,8 +272,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         if (!value->hasInt64())
             continue;
         uint64_t bits = value->asInt64();
-        // (Except for the base address of structures, which is the same in every process: structureIDBaseOfImages.)
-        if (bits >= 4 * GB && bits < (1ULL << 47) && bits != structureIDBaseOfImages && !graph.wideIntegerConstants.contains(static_cast<int64_t>(bits))) {
+        if (bits >= 4 * GB && bits < (1ULL << 47) && !graph.wideIntegerConstants.contains(static_cast<int64_t>(bits))) {
             graph.fail("an address in the code"_s);
             return declined();
         }

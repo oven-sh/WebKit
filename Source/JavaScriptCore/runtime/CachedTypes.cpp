@@ -49,7 +49,6 @@
 #include "JSTemplateObjectDescriptor.h"
 #include "JSModuleEnvironment.h"
 #include "PrelinkedModuleGraph.h"
-#include "StaticHeap.h"
 #include <set>
 #include "ScopedArgumentsTable.h"
 #include "SourceCodeKey.h"
@@ -339,6 +338,8 @@ Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
 
 JSString* Decoder::jsStringForExternalString(uint32_t ordinal)
 {
+    // (Code that was compiled ahead of time takes a string constant to be an atom, as it was when it was compiled. That is what a
+    // table without slots makes.)
     return externalStrings().jsStringFor(m_vm, ordinal);
 }
 
@@ -448,33 +449,22 @@ Vector<uint8_t> EncoderStringTable::serialize(std::span<const uint64_t> hotStrin
     return out;
 }
 
-DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
+DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes, Slots slots)
     : m_bytes(bytes)
 {
     RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t) && !(std::bit_cast<uintptr_t>(bytes.data()) % alignof(uint32_t)));
     m_count = *std::bit_cast<const uint32_t*>(bytes.data());
     RELEASE_ASSERT(m_count <= (bytes.size() - sizeof(uint32_t)) / sizeof(uint32_t), m_count, bytes.size());
-    if (m_count) {
+    if (m_count && slots == Slots::Yes) {
         m_slotsReservation = roundUpToMultipleOf(WTF::pageSize(), static_cast<size_t>(m_count) * sizeof(uintptr_t));
         m_slots = static_cast<uintptr_t*>(OSAllocator::reserveAndCommit(m_slotsReservation, OSAllocator::FastMallocPages));
     }
 }
 
-DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes, uintptr_t* slots)
-    : m_bytes(bytes)
-    , m_slots(slots)
-{
-    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t) && !(std::bit_cast<uintptr_t>(bytes.data()) % alignof(uint32_t)));
-    m_count = *std::bit_cast<const uint32_t*>(bytes.data());
-    RELEASE_ASSERT(m_count <= (bytes.size() - sizeof(uint32_t)) / sizeof(uint32_t), m_count, bytes.size());
-}
-
 DecoderStringTable::~DecoderStringTable()
 {
-    if (!m_slotsReservation)
-        return;
     // One per VM: a Worker that exits must give back the references it took on its thread's atoms.
-    for (uint32_t i = 0; i < m_count; ++i) {
+    for (uint32_t i = 0; m_slots && i < m_count; ++i) {
         if (m_slots[i] && !isCell(m_slots[i]))
             impl(m_slots[i])->deref();
     }
@@ -537,9 +527,8 @@ static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, ui
         return AtomStringImpl::add(characters).releaseNonNull();
 #endif
     // Same threshold as CachedUniquedStringImplBase::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
-    // (In a static heap all do: the blob is in it, so a copy is the same characters in the same file a second time.)
     WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
-    if (characters.size() >= 48 || StaticHeap::isBuilding()) {
+    if (characters.size() >= 48) {
 #if USE(BUN_JSC_ADDITIONS)
         return AtomStringImpl::addWithoutCopying(hashed); // probes with the stored hash; allocates (a header only) just for a new atom
 #else
@@ -565,7 +554,7 @@ const DecoderStringTable* Decoder::stringsToPrefetch()
 
 ALWAYS_INLINE void DecoderStringTable::prefetchSlot(uint32_t ordinal) const
 {
-    if (ordinal >= m_count)
+    if (ordinal >= m_count || !m_slots)
         return;
     __builtin_prefetch(m_slots + ordinal);
     __builtin_prefetch(offsets() + ordinal); // wasted on a populated slot; for an empty one, a miss taken alongside the slot's instead of after it (unmeasured trade)
@@ -574,7 +563,7 @@ ALWAYS_INLINE void DecoderStringTable::prefetchSlot(uint32_t ordinal) const
 template<DecoderStringTable::PrefetchFor use>
 ALWAYS_INLINE void DecoderStringTable::prefetchTarget(uint32_t ordinal) const
 {
-    if (ordinal >= m_count)
+    if (ordinal >= m_count || !m_slots)
         return;
     if (uintptr_t slot = m_slots[ordinal]) {
         if (!isCell(slot))
@@ -587,7 +576,7 @@ ALWAYS_INLINE void DecoderStringTable::prefetchTarget(uint32_t ordinal) const
 
 ALWAYS_INLINE void DecoderStringTable::prefetchLookup(AtomStringTable& atoms, uint32_t ordinal) const
 {
-    if (ordinal >= m_count)
+    if (ordinal >= m_count || !m_slots)
         return;
     if (uintptr_t slot = m_slots[ordinal]) {
         if (isCell(slot))
@@ -661,6 +650,12 @@ static ALWAYS_INLINE void decodeWithStringPrefetch(VM& vm, const DecoderStringTa
 Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
+    if (!m_slots) [[unlikely]] {
+        Record r = record(ordinal);
+        return r.is8Bit
+            ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, r.hash)
+            : atomize(std::span { std::bit_cast<const char16_t*>(r.characters), r.length }, r.hash);
+    }
     uintptr_t& slot = m_slots[ordinal];
     m_atomForCalls++;
     if (slot) [[likely]] {
@@ -749,7 +744,7 @@ bool DecoderStringTable::slotEquals(uint32_t slot, const StringImpl& string) con
         uint32_t ordinal = slot >> 2;
         if (ordinal >= m_count)
             return false;
-        if (StringImpl* existing = m_slots[ordinal] ? impl(m_slots[ordinal]) : nullptr) {
+        if (StringImpl* existing = m_slots && m_slots[ordinal] ? impl(m_slots[ordinal]) : nullptr) {
             if (existing == &string)
                 return true;
             if (existing->isAtom() && string.isAtom())
@@ -770,30 +765,32 @@ bool DecoderStringTable::slotEquals(uint32_t slot, const StringImpl& string) con
 JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
+    if (!m_slots) [[unlikely]] {
+        Ref atom = atomFor(vm, ordinal);
+        if (atom->length() == 1 && atom.get()[0] <= maxSingleCharacterString)
+            return vm.smallStrings.singleCharacterString(atom.get()[0]);
+        return JSString::createHasOtherOwner(vm, WTF::move(atom));
+    }
     uintptr_t& slot = m_slots[ordinal];
     if (isCell(slot))
         return cell(slot);
     RefPtr<StringImpl> value;
     if (!slot) {
         Record r = record(ordinal);
-        if (r.length == 1 && !StaticHeap::isBuilding()) {
+        if (r.length == 1) {
             char16_t c = r.is8Bit ? *r.characters : *std::bit_cast<const char16_t*>(r.characters);
             if (c <= maxSingleCharacterString)
                 return vm.smallStrings.singleCharacterString(c); // already shared VM-wide; leave the slot empty
         }
         value = createImpl(r);
     } else {
-        // (StaticHeap: not a cell of this VM's.)
-        if (StringImpl* existing = impl(slot); existing->length() == 1 && (*existing)[0] <= maxSingleCharacterString && !StaticHeap::isBuilding())
+        if (StringImpl* existing = impl(slot); existing->length() == 1 && (*existing)[0] <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString((*existing)[0]);
         value = adoptRef(*impl(slot)); // the cell takes over the table's reference
     }
     // The impl's bytes belong to the table (or the executable), not the GC heap.
     JSString* string = JSString::createHasOtherOwner(vm, value.releaseNonNull());
     slot = std::bit_cast<uintptr_t>(string) | cellTag;
-    // (Which are cells is for the collector to know, which has nothing to do with those of a static heap.)
-    if (StaticHeap::isBuilding())
-        return string;
     Locker locker { m_cellsLock };
     m_cellOrdinals.append(ordinal);
     return string;
@@ -929,6 +926,10 @@ public:
     }
 
     bool updatable() const { return m_updatable; }
+    // See ObjectsOfProgram::topLevelCodes.
+    bool leavesOutCode() const { return !!m_entryInListFor; }
+    void leaveOutCode(const Function<uint32_t(UnlinkedFunctionExecutable*)>& entryInListFor) { m_entryInListFor = &entryInListFor; }
+    uint32_t entryInListFor(UnlinkedFunctionExecutable* function) const { return (*m_entryInListFor)(function); }
 
     VM& vm() { return m_vm; }
 
@@ -1492,6 +1493,7 @@ private:
     EncoderStringTable* m_externalStrings;
     bool m_numberStrings;
     bool m_updatable;
+    const Function<uint32_t(UnlinkedFunctionExecutable*)>* m_entryInListFor { nullptr };
     Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
     bool m_arraySharingEnabled { false };
     UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
@@ -1545,47 +1547,18 @@ Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<
     return decoder;
 }
 
-Ref<Decoder> Decoder::createForStaticHeap(VM& vm, Ref<CachedBytecode> cachedBytecode)
+Ref<Decoder> Decoder::createForProgramData(VM& vm, Ref<CachedBytecode> cachedBytecode, IsBuilding isBuilding)
 {
     Ref decoder = adoptRef(*new Decoder(vm, WTF::move(cachedBytecode), nullptr));
     RELEASE_ASSERT(decoder->canBorrowPayload());
-    decoder->m_isForStaticHeap = true;
+    decoder->m_isForProgramData = true;
+    decoder->m_isForBuildingProgramData = isBuilding == IsBuilding::Yes;
     return decoder;
 }
-
-bool Decoder::leavesFunctionCodeInPayload() const
-{
-    return m_isForStaticHeap && StaticHeap::isBuilding();
-}
-
-// Inside CachedFunctionCodeBlock::decode(), which allocates nothing in the static heap that is being built: what does go there.
-class RetainedByStaticHeap {
-public:
-    explicit RetainedByStaticHeap(Decoder& decoder)
-    {
-        if (decoder.leavesFunctionCodeInPayload()) [[unlikely]]
-            m_scope.emplace(true);
-    }
-
-private:
-    std::optional<bmalloc::StaticRegion::AllocationScope> m_scope;
-};
 
 size_t Decoder::entryOffset() const
 {
     return m_cachedBytecode->entryOffset();
-}
-
-void Decoder::clearDecodedObjects()
-{
-    for (auto& finalizer : std::exchange(m_finalizers, { }))
-        finalizer();
-    m_offsetToPtrMap = { };
-    m_environmentToHandleMap = { };
-    for (AtomStringImpl* atom : std::exchange(m_atomsByOrdinal, { })) {
-        if (atom)
-            atom->deref();
-    }
 }
 
 void Decoder::cacheOffset(ptrdiff_t offset, void* ptr)
@@ -2421,9 +2394,7 @@ public:
             VM& vm = decoder.vm();
             if (m_isRegistered) {
                 String str(buffer);
-                if (decoder.isForStaticHeap()) [[unlikely]]
-                    symbol = static_cast<SymbolImpl*>(&StaticHeap::symbolRegistryWhileBuilding(m_isPrivate).symbolForKey(str).leakRef());
-                else if (m_isPrivate)
+                if (m_isPrivate)
                     symbol = static_cast<SymbolImpl*>(&protect(vm.privateSymbolRegistry())->symbolForKey(str).leakRef());
                 else
                     symbol = static_cast<SymbolImpl*>(&protect(vm.symbolRegistry())->symbolForKey(str).leakRef());
@@ -2755,8 +2726,6 @@ public:
         m_privateBrandRequirement = rareData.m_privateBrandRequirement;
     }
 
-    bool hasDataRetainedByStaticHeap() const { return m_unlinkedStringSwitchJumpTables.size() || m_constantIdentifierSets.size(); }
-
     UnlinkedCodeBlock::RareData* decode(Decoder& decoder) const
     {
         UnlinkedCodeBlock::RareData* rareData = new UnlinkedCodeBlock::RareData { };
@@ -3071,19 +3040,13 @@ public:
 
     SymbolTable* decode(Decoder& decoder) const
     {
-#if USE(BUN_JSC_ADDITIONS)
-        // It goes where what may not be kept goes, like a function: most turn out to say what some other says (StaticHeap::deduplicateSymbolTables()).
-        if (decoder.isForStaticHeap()) [[unlikely]]
-            StaticHeap::willAllocateUnlinkedFunction();
-#endif
         SymbolTable* symbolTable = SymbolTable::create(decoder.vm());
 #if USE(BUN_JSC_ADDITIONS)
-        // Whether it only ever has one scope is not to be found out by writing to it.
-        if (decoder.isForStaticHeap()) [[unlikely]]
-            symbolTable->singleton().invalidate(decoder.vm(), StringFireDetail("It is in the static heap"));
-        if (decoder.canDeferIntoPayload() && m_map.entryCount() && !decoder.isForStaticHeap())
+        if (decoder.isForProgramData()) [[unlikely]]
+            symbolTable->becomeSharedAcrossRealms(decoder.vm());
+        if (decoder.canDeferIntoPayload() && m_map.entryCount() && !decoder.isForProgramData())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
-        else if (decoder.isForStaticHeap()) // As a clone has them: see SymbolTable::isSharedAcrossRealms().
+        else if (decoder.isForProgramData()) // As a clone has them: see SymbolTable::isSharedAcrossRealms().
             m_map.decodeIf(decoder, symbolTable->m_map, [](const CachedSymbolTableEntry& entry) { return entry.isScope(); });
         else
 #endif
@@ -3189,13 +3152,6 @@ public:
     RegExp* decode(Decoder& decoder) const
     {
         String pattern { m_patternString.decode(decoder) };
-        if (decoder.isForStaticHeap()) [[unlikely]] {
-            // Not through the VM's cache, which is not the cache of the VM that is going to use it.
-            String atom { m_atom.decode(decoder) };
-            if (!m_parsed)
-                return RegExp::createWithoutCaching(decoder.vm(), pattern, m_flags);
-            return RegExp::createFromCacheWithoutCaching(decoder.vm(), pattern, m_flags, m_numSubpatterns, WTF::move(atom), m_specificPattern);
-        }
         if (!m_parsed)
             return RegExp::create(decoder.vm(), pattern, m_flags);
         return RegExp::createFromCache(decoder.vm(), pattern, m_flags, m_numSubpatterns, String { m_atom.decode(decoder) }, m_specificPattern);
@@ -3252,7 +3208,7 @@ public:
 
     JSBigInt* decode(Decoder& decoder) const
     {
-        if (!m_length && !decoder.isForStaticHeap()) // (Which is to have nothing of this VM's.)
+        if (!m_length)
             return decoder.vm().heapBigIntConstantZero.get();
 
         JSBigInt* bigInt = JSBigInt::tryCreateWithLength(decoder.vm(), m_length);
@@ -3288,7 +3244,15 @@ public:
         RegExp,
         TemplateObjectDescriptor,
         BigInt,
+        SameAsConstant, // Among the constants of a program: the slot holds the number of another.
     };
+
+    Kind encodeSameAs(uint32_t number)
+    {
+        this->setRawSlot(number);
+        return Kind::SameAsConstant;
+    }
+    uint32_t sameAs() const { return this->rawSlot(); }
 
     Kind encode(Encoder& encoder, JSValue v)
     {
@@ -3383,12 +3347,6 @@ public:
         case Kind::SymbolTable:
             return this->buffer<CachedSymbolTable>()->decode(decoder);
         case Kind::String:
-            if (decoder.isForStaticHeap() && !this->hasExternalString()) [[unlikely]] {
-                // (Against a table of strings, as here, it is the only one that is not in the table.)
-                String string = this->hasInlineString() ? String { this->inlineString(decoder) } : this->buffer<CachedUniquedStringImpl>()->decodePlainString(decoder);
-                if (string.isEmpty())
-                    return StaticHeap::emptyStringWhileBuilding(decoder.vm());
-            }
             if (this->hasInlineString())
                 return jsOwnedString(decoder.vm(), String { this->inlineString(decoder) });
             if (this->hasExternalString())
@@ -3403,6 +3361,8 @@ public:
             return this->buffer<CachedTemplateObjectDescriptor>()->decode(decoder);
         case Kind::BigInt:
             return this->buffer<CachedBigInt>()->decode(decoder);
+        case Kind::SameAsConstant:
+            break;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -3992,7 +3952,7 @@ public:
         // from the scopes. How many elements a class has is what its instances are given room by: FunctionRareData::initializeObjectAllocationProfile().)
         bool isForGeneratingCode = true;
 #if USE(BUN_JSC_ADDITIONS)
-        if (decoder.isForStaticHeap() && StaticHeap::keepsNothingForGeneratingCode()) [[unlikely]] {
+        if (decoder.isForProgramData()) [[unlikely]] {
             isForGeneratingCode = false;
             if (!(m_header & (HasClassSource | HasClassElementDefinitions)))
                 return nullptr;
@@ -4249,6 +4209,9 @@ public:
     enum LayoutFlag : uint8_t {
         LayoutHasMetadata = 1 << 0,
         LayoutHasExtras = 1 << 2,
+        // Encoder::leavesOutCode(). There are as many instructions as it says, and none of them. In place of each function is what
+        // ObjectsOfProgram::entryInListFor said.
+        LayoutIsWithoutCode = 1 << 3,
     };
     struct Array {
         unsigned count { 0 };
@@ -4322,6 +4285,8 @@ public:
     {
         Tail storage;
         const Layout& layout = tail(decoder, storage).layout;
+        if (layout.flags & LayoutIsWithoutCode)
+            return new JSInstructionStream(absentInstructions(layout.instructions.count), JSInstructionStream::Borrow);
         std::span<const uint8_t> bytes { at<uint8_t>(layout, layout.instructions), layout.instructions.count };
         if (decoder.canBorrowPayload())
             return new JSInstructionStream(bytes, JSInstructionStream::Borrow);
@@ -4334,7 +4299,7 @@ public:
     {
         Tail storage;
         const Layout& layout = tail(decoder, storage).layout;
-        if (!(layout.flags & LayoutHasMetadata) || decoder.isForStaticHeap())
+        if (!(layout.flags & LayoutHasMetadata) || decoder.isForProgramData())
             return UnlinkedMetadataTable::empty();
         std::span<const uint32_t> steps { at<uint32_t>(layout, layout.steps), layout.steps.count };
         if (decoder.canBorrowPayload())
@@ -4348,10 +4313,6 @@ public:
         auto* e = extras(tail(decoder, storage).layout);
         if (!e)
             return nullptr;
-        // (The tables of switches on strings stay where they are decoded to, and the sets of names.)
-        std::optional<RetainedByStaticHeap> kept;
-        if (decoder.leavesFunctionCodeInPayload() && !e->rareData.isEmpty() && e->rareData->hasDataRetainedByStaticHeap()) [[unlikely]]
-            kept.emplace(decoder);
         return e->rareData.decode(decoder);
     }
 
@@ -4618,6 +4579,8 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_llintExecuteCounter.setNewThreshold(thresholdForJIT(Options::thresholdForJITAfterWarmUp()));
 }
 
+static UnlinkedFunctionExecutable* unlinkedFunctionOfProgram(Decoder&, uint32_t number);
+
 template<typename CodeBlockType>
 ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, UnlinkedCodeBlock& codeBlock, const Tail& tail) const
 {
@@ -4640,7 +4603,6 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (unsigned expected = strings ? strings->expectedAtomTableInserts(layout.identifiers.count) : layout.identifiers.count + layout.constants.count; expected >= 64)
         AtomStringImpl::reserveCapacityForCurrentThread(expected);
     if (layout.constants.count) {
-        RetainedByStaticHeap kept(decoder);
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
         CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock, strings ? HeadPrefetch::All : HeadPrefetch::None);
     }
@@ -4652,14 +4614,29 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
 #if USE(BUN_JSC_ADDITIONS)
     // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
     // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
-    if (decoder.canBorrowPayload() && (!decoder.isForStaticHeap() || (std::is_same_v<CodeBlockType, UnlinkedFunctionCodeBlock> && decoder.leavesFunctionCodeInPayload())))
+    if (decoder.canBorrowPayload())
         codeBlock.m_cachedExpressionInfo = m_expressionInfo.operator->();
     else
 #endif
         codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
-    {
-        RetainedByStaticHeap kept(decoder);
-        decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+    decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+    if (layout.flags & LayoutIsWithoutCode) {
+        codeBlock.setIsWithoutCode();
+        auto decodeNumbers = [&](const Array& array, auto& out) {
+            if (!array.count)
+                return;
+            out = std::remove_reference_t<decltype(out)>(array.count);
+            auto* numbers = at<uint32_t>(layout, array);
+            for (unsigned i = 0; i < array.count; ++i) {
+                if (numbers[i] & 1)
+                    out[i].set(decoder.vm(), &codeBlock, unlinkedFunctionOfProgram(decoder, (numbers[i] >> 1) - 1));
+                else
+                    UnlinkedCodeBlock::setNumberOfExecutableIn(out[i], (numbers[i] >> 1) - 1);
+            }
+        };
+        decodeNumbers(layout.functionDecls, codeBlock.m_functionDecls);
+        decodeNumbers(layout.functionExprs, codeBlock.m_functionExprs);
+        return;
     }
     unsigned firstFunctionDeclToDecode = 0;
     if constexpr (std::is_same_v<CodeBlockType, UnlinkedModuleProgramCodeBlock>) {
@@ -4696,7 +4673,6 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     } else
 #endif
     {
-        RetainedByStaticHeap kept(decoder);
         if (firstFunctionDeclToDecode) {
             unsigned count = layout.functionDecls.count;
             codeBlock.m_functionDecls = UnlinkedCodeBlock::FunctionExpressionVector(count);
@@ -4737,6 +4713,8 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
     decodeOwnMembers(decoder, *codeBlock);
+    if (tail.layout.flags & LayoutIsWithoutCode)
+        codeBlock->m_heapAllocatedFunctionDeclSlots->setEntriesOfProgram(at<uint32_t>(tail.layout, tail.layout.functionDecls));
     if (numberOfFunctionDeclsToLeaveInPayload(decoder, tail))
         codeBlock->m_heapAllocatedFunctionDeclSlots->setDecodeSource(Ref { decoder }, at<CachedWriteBarrier<CachedFunctionExecutable>>(tail.layout, tail.layout.functionDecls));
     return codeBlock;
@@ -4746,7 +4724,7 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
 // are never instantiated, so their UnlinkedFunctionExecutables need not be made either.
 unsigned CachedModuleCodeBlock::numberOfFunctionDeclsToLeaveInPayload(Decoder& decoder, const Tail& tail) const
 {
-    if (!Options::useLazyModuleFunctionDeclarations() || !decoder.canDeferIntoPayload() || decoder.isForStaticHeap())
+    if (!Options::useLazyModuleFunctionDeclarations() || !decoder.canDeferIntoPayload() || decoder.isForProgramData())
         return 0;
     unsigned count = m_numberOfHeapAllocatedFunctionDecls;
     if (count > tail.layout.functionDecls.count || count != m_heapAllocatedFunctionDeclScopeOffsets.size())
@@ -4778,9 +4756,6 @@ UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) con
     Tail tail = readTail();
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
-    std::optional<bmalloc::StaticRegion::AllocationScope> notInStaticHeap;
-    if (decoder.leavesFunctionCodeInPayload()) [[unlikely]]
-        notInStaticHeap.emplace(false);
     UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -4966,8 +4941,8 @@ std::optional<uint32_t> UnlinkedFunctionExecutable::classSourceStartWithoutMater
 {
     if (!m_membersAreDeferred) {
         auto* rareData = m_members.live().rareData.get();
-        // (In StaticHeap it is without its provider.)
-        return rareData && (!rareData->m_classSource.isNull() || (StaticHeap::contains(this) && m_isClass)) ? std::optional<uint32_t>(rareData->m_classSource.startOffset()) : std::nullopt;
+        // (Of a program that was compiled ahead of time it is without its provider.)
+        return rareData && (!rareData->m_classSource.isNull() || m_isClass) ? std::optional<uint32_t>(rareData->m_classSource.startOffset()) : std::nullopt;
     }
     auto* rareData = m_members.pending().record->slotsView().rareData;
     return rareData ? (*rareData)->classSourceStart() : std::nullopt;
@@ -5136,7 +5111,6 @@ bool Encoder::DeferredBody::pointBackAt(Encoder& encoder, ptrdiff_t callRecord, 
 
 ALWAYS_INLINE UnlinkedFunctionExecutable* CachedFunctionExecutable::decode(Decoder& decoder) const
 {
-    StaticHeap::willAllocateUnlinkedFunction();
     UnlinkedFunctionExecutable* executable = new (NotNull, allocateCell<UnlinkedFunctionExecutable>(decoder.vm())) UnlinkedFunctionExecutable(decoder, *this);
     executable->finishCreation(decoder.vm());
     return executable;
@@ -5158,7 +5132,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_unlinkedCodeBlockForConstruct()
     , m_members(nullptr)
 {
-    bool defer = decoder.canDeferIntoPayload() && !decoder.isForStaticHeap();
+    bool defer = decoder.canDeferIntoPayload() && !decoder.isForProgramData();
     CachedFunctionExecutable::View v = cachedExecutable.view(defer ? CachedFunctionExecutable::HotScalarsOnly : CachedFunctionExecutable::AllScalars);
     const auto& scalars = v.scalars;
     m_hasCapturedVariables = scalars.hasCapturedVariables;
@@ -5172,8 +5146,8 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         v.name = nullptr;
         v.tdz = nullptr;
         v.rareData = nullptr;
-    } else if (decoder.isForStaticHeap()) {
-        m_singletonHasBeenInvalidated = true; // Likewise not to be found out by writing to it.
+    } else if (decoder.isForProgramData()) {
+        m_singletonHasBeenInvalidated = true;
         v.tdz = nullptr;
     }
     if (v.name)
@@ -5446,12 +5420,18 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             place(layout.steps, steps.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, steps); });
         }
         const JSInstructionStream& instructions = *codeBlock.m_instructions;
-        RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
-        place(layout.instructions, instructions.m_instructions.size(), [&] { return encodeArrayForTail<uint8_t>(encoder, instructions.m_instructions); });
+        if (encoder.leavesOutCode()) {
+            layout.flags |= LayoutIsWithoutCode;
+            layout.instructions.count = instructions.size();
+        } else {
+            RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
+            place(layout.instructions, instructions.m_instructions.size(), [&] { return encodeArrayForTail<uint8_t>(encoder, instructions.m_instructions); });
+        }
         place(layout.constantsSourceCodeRepresentation, codeBlock.m_constantsSourceCodeRepresentation.size(), [&] { return encodeArrayForTail<SourceCodeRepresentation>(encoder, codeBlock.m_constantsSourceCodeRepresentation); });
     }
     place(layout.constants, codeBlock.m_constantRegisters.size(), [&] { return CachedJSValuePool::encode(encoder, codeBlock.m_constantRegisters.span()); });
-    place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
+    if (!encoder.leavesOutCode())
+        place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
     // The children's slots are part of this block's bytes; the records they point at are written after the region.
     auto allocateSlots = [&](unsigned count) {
         auto result = encoder.malloc(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count, alignof(CachedWriteBarrier<CachedFunctionExecutable>));
@@ -5483,7 +5463,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     writer.copyTo(record->tailBytes());
     encoder.deferCold([record, &encoder, &codeBlock] {
         // Position-independent, so an identical one written earlier is reused.
-        auto bytes = CachedExpressionInfo::pack(codeBlock.expressionInfo());
+        auto bytes = encoder.leavesOutCode() ? CachedExpressionInfo::pack(*ExpressionInfo::Encoder { }.createExpressionInfo()) : CachedExpressionInfo::pack(codeBlock.expressionInfo());
         unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes.span()) ^ static_cast<unsigned>(bytes.size());
         ptrdiff_t at;
         if (auto existing = encoder.existingIdenticalArray(bytes.span(), hash, alignof(CachedExpressionInfo)))
@@ -5502,6 +5482,13 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         if (!slots.count)
             return;
         auto bytes = encoder.mutableBytesAt(regionStart + slots.at, sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * slots.count);
+        if (encoder.leavesOutCode()) {
+            static_assert(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) == sizeof(uint32_t));
+            auto* number = reinterpret_cast<uint32_t*>(bytes.data());
+            for (unsigned i = 0; i < slots.count; ++i)
+                number[i] = encoder.entryInListFor(executables[i].get());
+            return;
+        }
         auto* slot = reinterpret_cast<CachedWriteBarrier<CachedFunctionExecutable>*>(bytes.data());
         for (unsigned i = 0; i < slots.count; ++i)
             slot[i].encode(encoder, executables[i]);
@@ -5736,7 +5723,7 @@ public:
         return m_executable.decode(decoder);
     }
 
-    // For the static heap, which is built before there is a provider.
+    // For AOT::ProgramData, which is built before there is a provider.
     UnlinkedFunctionExecutable* decode(Decoder& decoder, LineStarts& lineStarts) const
     {
         if (tag() != CachedCodeBlockTag::CachedBuiltinFunctionTag || !isUpToDate(decoder))
@@ -5893,7 +5880,7 @@ struct BytecodeLinkEncoder::Impl {
 
 #if ENABLE(AOT)
     // The engine's builtins that are written in JavaScript. Each is added the way an embedder's builtin would be, with its own
-    // source text. At run time they are obtained from StaticHeap (BuiltinExecutables::staticExecutableFor()), so they are neither
+    // source text. At run time they are obtained from AOT::ProgramOfVM (BuiltinExecutables::executableOfProgramFor()), so they are neither
     // parsed nor interpreted.
     Vector<UnlinkedFunctionExecutable*> engineBuiltins; // Indexed by BuiltinCodeIndex. Kept alive by `modules`.
     void addEngineBuiltins()
@@ -6811,15 +6798,9 @@ struct BytecodeLinkEncoder::Impl {
             uint64_t cells = 0;
             UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> others;
             uint32_t next = 0;
-            uint64_t inAll = 0, functions = 0, withOwn = 0;
+            // (One for each place in the text, whichever code of the function gets there.)
+            UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> templates;
             for (auto& job : jobs) {
-                if (job.codeBlock->codeType() != FunctionCode)
-                    continue;
-                if (!AOT::hasOnlyRealmIndependentConstants(job.codeBlock, AOT::SymbolTablesAreShared::Yes)) {
-                    ++withOwn;
-                    continue;
-                }
-                ++functions;
                 Vector<uint32_t> numbers;
                 auto& representations = job.codeBlock->constantsSourceCodeRepresentation();
                 for (auto& constant : job.codeBlock->constantRegisters()) {
@@ -6836,16 +6817,17 @@ struct BytecodeLinkEncoder::Impl {
                         String said;
                         if (value.isString())
                             said = asString(value)->tryGetValue();
-                        // (Any other cell gets a number of its own, even if two functions share it here, because StaticHeap decodes
-                        // each function's constants separately.)
+                        // (Any other cell gets a number of its own, even if two functions share it here, because
+                        // AOT::ProgramData::build() decodes each function's constants separately.)
                         if (!said.isNull())
                             number = strings.ensure(said, take).iterator->value;
+                        else if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(value.asCell()))
+                            number = templates.ensure(static_cast<uint64_t>(job.module) << 32 | static_cast<uint32_t>(descriptor->endOffset()), take).iterator->value;
                         else {
                             number = take();
                             ++cells;
                         }
                     }
-                    inAll += number != AOT::notAConstantOfProgram;
                     numbers.append(number);
                 }
                 numbersOfConstants.add(job.codeBlock, WTF::move(numbers));
@@ -7202,14 +7184,125 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
         return std::nullopt;
     return key;
 }
-static void decodeAllInsideForStaticHeap(VM& vm, UnlinkedCodeBlock* codeBlockOrNull, UnlinkedFunctionExecutable* functionOrNull, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
+class CachedObjectsOfProgram {
+public:
+    void encode(Encoder& encoder, const ObjectsOfProgram& objects)
+    {
+        m_identifiers.encodeRange(encoder, objects.identifiers.size(), objects.identifiers | std::views::transform([&](UniquedStringImpl* impl) {
+            return impl ? Identifier::fromUid(encoder.vm(), impl) : Identifier();
+        }));
+        {
+            auto values = m_constants.allocateElements(encoder, objects.constants);
+            Vector<uint8_t> kinds(objects.constants.size());
+            UncheckedKeyHashMap<JSCell*, uint32_t, DefaultHash<JSCell*>, HashTraits<JSCell*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstThatIs;
+            for (size_t i = 0; i < objects.constants.size(); ++i) {
+                JSValue value = objects.constants[i];
+                if (value && value.isCell() && value.asCell()->inherits<SymbolTable>()) {
+                    auto result = firstThatIs.add(value.asCell(), static_cast<uint32_t>(i));
+                    if (!result.isNewEntry) {
+                        kinds[i] = static_cast<uint8_t>(values[i].encodeSameAs(result.iterator->value));
+                        continue;
+                    }
+                }
+                kinds[i] = static_cast<uint8_t>(values[i].encode(encoder, value));
+            }
+            m_kindsOfConstants.encode(encoder, kinds);
+        }
+        m_unlinkedFunctions.encodeRange(encoder, objects.unlinkedFunctions.size(), objects.unlinkedFunctions | std::views::transform([](UnlinkedFunctionExecutable* function) -> const UnlinkedFunctionExecutable* {
+            return function;
+        }));
+        encoder.leaveOutCode(objects.entryInListFor);
+        auto modules = m_modules.allocateElements(encoder, objects.topLevelCodes);
+        auto programs = m_programs.allocateElements(encoder, objects.topLevelCodes);
+        for (size_t i = 0; i < objects.topLevelCodes.size(); ++i) {
+            if (auto* module = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(objects.topLevelCodes[i]))
+                modules[i].encode(encoder, module);
+            else
+                programs[i].encode(encoder, uncheckedDowncast<UnlinkedProgramCodeBlock>(objects.topLevelCodes[i]));
+        }
+    }
+
+    Identifier identifier(Decoder& decoder, uint32_t number) const { return m_identifiers.elements()[number].decode(decoder); }
+    JSValue constant(Decoder& decoder, uint32_t number) const { return m_constants.elements()[number].decode(decoder, static_cast<CachedJSValue::Kind>(m_kindsOfConstants.elements()[number])); }
+    std::optional<uint32_t> constantIsSameAs(uint32_t number) const
+    {
+        if (static_cast<CachedJSValue::Kind>(m_kindsOfConstants.elements()[number]) != CachedJSValue::Kind::SameAsConstant)
+            return std::nullopt;
+        return m_constants.elements()[number].sameAs();
+    }
+    UnlinkedFunctionExecutable* unlinkedFunction(Decoder& decoder, uint32_t number) const { return m_unlinkedFunctions.elements()[number].decode(decoder); }
+    UnlinkedCodeBlock* topLevelCode(Decoder& decoder, uint32_t number) const
+    {
+        if (UnlinkedCodeBlock* module = m_modules.elements()[number].decode(decoder))
+            return module;
+        return m_programs.elements()[number].decode(decoder);
+    }
+
+private:
+    CachedVector<CachedIdentifier> m_identifiers;
+    CachedVector<CachedJSValue> m_constants;
+    CachedVector<uint8_t> m_kindsOfConstants;
+    CachedVector<CachedPtr<CachedFunctionExecutable>> m_unlinkedFunctions;
+    CachedVector<CachedPtr<CachedModuleCodeBlock>> m_modules;
+    CachedVector<CachedPtr<CachedProgramCodeBlock>> m_programs;
+};
+
+static UnlinkedFunctionExecutable* unlinkedFunctionOfProgram(Decoder& decoder, uint32_t number)
+{
+    return AOT::ProgramOfVM::of(decoder.vm())->unlinkedFunction(number, false);
+}
+
+Vector<uint8_t> encodeObjectsOfProgram(VM& vm, EncoderStringTable& strings, const ObjectsOfProgram& objects)
+{
+    uint32_t numberOfStrings = strings.count();
+    FileSystem::FileHandle invalidFileHandle;
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, &strings, BytecodeCacheUpdatable::No);
+    auto* root = encoder.template malloc<CachedObjectsOfProgram>();
+    RELEASE_ASSERT(!encoder.offsetOf(root));
+    root->encode(encoder, objects);
+    encoder.encodeDeferred();
+    BytecodeCacheError error;
+    RefPtr<CachedBytecode> result = encoder.release(error, nullptr);
+    RELEASE_ASSERT(result && strings.count() == numberOfStrings);
+    return Vector<uint8_t> { result->span() };
+}
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ObjectsOfProgramDecoder);
+
+static Ref<Decoder> decoderOfObjectsOfProgram(VM& vm, std::span<const uint8_t> bytes, DecoderStringTable& strings)
+{
+    Ref cachedBytecode = CachedBytecode::create(std::span { const_cast<uint8_t*>(bytes.data()), bytes.size() }, nullptr, { });
+    cachedBytecode->setPayloadIsPersistent();
+    Ref decoder = Decoder::createForProgramData(vm, WTF::move(cachedBytecode), Decoder::IsBuilding::No);
+    decoder->setExternalStrings(strings);
+    return decoder;
+}
+
+ObjectsOfProgramDecoder::ObjectsOfProgramDecoder(VM& vm, std::span<const uint8_t> bytes, DecoderStringTable& strings)
+    : m_decoder(decoderOfObjectsOfProgram(vm, bytes, strings))
+    , m_objects(*reinterpret_cast<const CachedObjectsOfProgram*>(bytes.data()))
+{
+}
+
+ObjectsOfProgramDecoder::~ObjectsOfProgramDecoder() = default;
+
+Identifier ObjectsOfProgramDecoder::identifier(uint32_t number) { return m_objects.identifier(m_decoder.get(), number); }
+JSValue ObjectsOfProgramDecoder::constant(uint32_t number) { return m_objects.constant(m_decoder.get(), number); }
+std::optional<uint32_t> ObjectsOfProgramDecoder::constantIsSameAs(uint32_t number) { return m_objects.constantIsSameAs(number); }
+UnlinkedFunctionExecutable* ObjectsOfProgramDecoder::unlinkedFunction(uint32_t number) { return m_objects.unlinkedFunction(m_decoder.get(), number); }
+UnlinkedCodeBlock* ObjectsOfProgramDecoder::topLevelCode(uint32_t number) { return m_objects.topLevelCode(m_decoder.get(), number); }
+
+std::span<const uint8_t> absentInstructions(size_t size)
+{
+    return { reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(sizeof(void*))), size };
+}
+
+static void decodeAllInsideForProgramData(VM& vm, UnlinkedCodeBlock* codeBlockOrNull, UnlinkedFunctionExecutable* functionOrNull, Vector<UnlinkedFunctionExecutable*>& functions)
 {
     Vector<UnlinkedCodeBlock*> worklist;
     auto decodeFunction = [&](UnlinkedFunctionExecutable* executable) {
-        if (executable->isCached()) {
-            bmalloc::StaticRegion::AllocationScope notInRegion(false);
-            functions.append({ executable, executable->offsetsOfCachedCodeBlocks() });
-        }
+        if (executable->isCached())
+            functions.append(executable);
         auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
         if (forCall)
             worklist.append(forCall);
@@ -7229,14 +7322,14 @@ static void decodeAllInsideForStaticHeap(VM& vm, UnlinkedCodeBlock* codeBlockOrN
     }
 }
 
-UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
+UnlinkedCodeBlock* decodeAllForProgramData(Decoder& decoder, SourceCodeKey& key, Vector<UnlinkedFunctionExecutable*>& functions)
 {
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
     if (!cachedEntry->decode(decoder, entry) || !entry.second)
         return nullptr;
     key = entry.first;
-    decodeAllInsideForStaticHeap(decoder.vm(), entry.second, nullptr, functions);
+    decodeAllInsideForProgramData(decoder.vm(), entry.second, nullptr, functions);
     return entry.second;
 }
 
@@ -7245,14 +7338,14 @@ bool entryIsOfBuiltinFunction(Decoder& decoder)
     return std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()))->matchesAssumedType();
 }
 
-UnlinkedFunctionExecutable* decodeBuiltinForStaticHeap(Decoder& decoder, unsigned& sourceLength, unsigned& embedderStamp, LineStarts& lineStarts, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
+UnlinkedFunctionExecutable* decodeBuiltinForProgramData(Decoder& decoder, unsigned& sourceLength, unsigned& embedderStamp, LineStarts& lineStarts, Vector<UnlinkedFunctionExecutable*>& functions)
 {
     auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
     sourceLength = entry->sourceLength();
     embedderStamp = entry->embedderStamp();
     UnlinkedFunctionExecutable* executable = entry->decode(decoder, lineStarts);
     if (executable)
-        decodeAllInsideForStaticHeap(decoder.vm(), nullptr, executable, functions);
+        decodeAllInsideForProgramData(decoder.vm(), nullptr, executable, functions);
     return executable;
 }
 

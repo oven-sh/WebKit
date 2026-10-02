@@ -45,7 +45,7 @@
 #include "ModuleProgramCodeBlock.h"
 #include "ParserError.h"
 #include "ProgramCodeBlock.h"
-#include "StaticHeap.h"
+#include "AOTProgramData.h"
 #include "VMInlines.h"
 
 namespace JSC {
@@ -208,14 +208,11 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
         break;
     }
 
-    // (An executable that was made when the program was built is in no set of cells of the collector's: its code stays.)
-    if (!StaticHeap::contains(this)) {
-        auto& clearableCodeSet = Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace());
-        if (hasClearableCode())
-            clearableCodeSet.add(this);
-        else
-            clearableCodeSet.remove(this);
-    }
+    auto& clearableCodeSet = Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace());
+    if (hasClearableCode())
+        clearableCodeSet.add(this);
+    else
+        clearableCodeSet.remove(this);
 
     if (genericCodeBlock) {
         RELEASE_ASSERT(genericCodeBlock->ownerExecutable() == this);
@@ -355,7 +352,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         }
 #endif
         // Running it in another tier requires the instructions, which are not available.
-        if (StaticHeap::contains(unlinkedCodeBlock)) [[unlikely]] {
+        if (unlinkedCodeBlock->isWithoutCode()) [[unlikely]] {
             throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and the executable was built without its bytecode. The compiled code cannot be used in this context, and there is no other code to run."_s));
             return nullptr;
         }
@@ -367,7 +364,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
     // The constructor of a class is compiled ahead of time to construct with. All that its code to be called with does is throw this.
-    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->unlinkedExecutable())) [[unlikely]] {
+    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && executable->hasAOTEntry()) [[unlikely]] {
         String name = executable->name().string();
         throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
         return nullptr;

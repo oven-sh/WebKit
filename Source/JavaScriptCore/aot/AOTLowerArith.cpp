@@ -682,7 +682,7 @@ Lowering::NarrowCharacters Lowering::narrowCharactersOf(LValue string, LBasicBlo
 }
 
 // value === theString, where theString is a constant with the contents `said`.
-LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String& said, LValue theString)
+LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String& said, Node* theString)
 {
     LBasicBlock continuation = m_out.newBlock();
     LBasicBlock slowCase = newColdBlock();
@@ -693,8 +693,6 @@ LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value
         m_out.branch(condition, isLikely ? usually(continuation) : unsure(continuation), unsure(next));
         m_out.appendTo(next);
     };
-    // (Equal string literals in the program share one JSString: see NumbersOfConstants.)
-    resolveIf(m_out.equal(value, theString), true);
     if (!isSubtype(valueNode->type, TCell))
         resolveIf(isNotCell(value), false);
     if (!isSubtype(valueNode->type, TString | ~TCell))
@@ -712,7 +710,7 @@ LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value
     m_out.branch(m_out.notEqual(m_out.phi(Int32, lengthsOtherwise), m_out.constInt32(said.length())), usually(continuation), rarely(slowCase));
 
     m_out.appendTo(slowCase);
-    results.append(m_out.anchor(m_out.notZero64(vmCall(comparison, Int64, Entry::operationAOTCompareStrictEq, m_instance, value, theString))));
+    results.append(m_out.anchor(m_out.notZero64(vmCall(comparison, Int64, Entry::operationAOTCompareStrictEq, m_instance, value, lowJSValue(theString)))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -791,12 +789,33 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     if (strict && !(left->type & right->type) && !(mayBe(left->type, TNumber) && mayBe(right->type, TNumber)))
         return m_out.booleanFalse; // The types are disjoint.
 
-    LValue a = lowJSValue(left);
-    LValue b = lowJSValue(right);
-
     // The cases where comparing the bits is sufficient: neither side can be a number (int32 1 equals double 1, and NaN does not
     // equal itself), a string or a BigInt (which compare by content), and for == neither side can be converted.
     Type byContent = TNumber | TString | TBigInt;
+    bool areAtomStrings = (strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt)
+        && ((isAtomIfString(left) && isAtomIfString(right))
+            || (constantStringOf(right) && isAtomIfString(right) && isAtomIfShortString(left))
+            || (constantStringOf(left) && isAtomIfString(left) && isAtomIfShortString(right)));
+    bool bitsDecide = strict ? !mayBe(left->type, byContent) || !mayBe(right->type, byContent) : isSubtype(both, TAnyObject | TSymbol) || isSubtype(both, TBoolean);
+    // (Before the literal is asked for: the comparison is with what it says.)
+    if (!bitsDecide && !areAtomStrings && !isCompact() && (strict || isSubtype(both, TString))) {
+        if (auto said = constantStringOf(right))
+            return isStringEqualTo(node, left, lowJSValue(left), *said, right);
+        if (auto said = constantStringOf(left))
+            return isStringEqualTo(node, right, lowJSValue(right), *said, left);
+    }
+
+    if (!bitsDecide && isCompact() && !(m_block->isInLoop && !m_block->isGeneric) && (strict || isSubtype(both, TString))) {
+        for (auto [literal, other] : { std::pair { right, left }, std::pair { left, right } }) {
+            auto said = constantStringOf(literal);
+            if (said && !said->isEmpty())
+                return callStub(Stub::IsStringEqualToConstant, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 } }, { { GPRInfo::regT9, numberOfConstantOfProgram(literal) } });
+        }
+    }
+
+    LValue a = lowJSValue(left);
+    LValue b = lowJSValue(right);
+
     if (strict) {
         if (!mayBe(left->type, byContent) || !mayBe(right->type, byContent))
             return m_out.equal(a, b);
@@ -807,16 +826,8 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     if ((strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt)) {
         // A string literal in the program is a short atom. An equal string is just as short, so where short strings are known to be
         // atoms, it is either the same atom or not equal.
-        if ((isAtomIfString(left) && isAtomIfString(right))
-            || (constantStringOf(right) && isAtomIfString(right) && isAtomIfShortString(left))
-            || (constantStringOf(left) && isAtomIfString(left) && isAtomIfShortString(right)))
+        if (areAtomStrings)
             return areEqualAssumingAtomStrings(left, a, right, b);
-    }
-    if (!isCompact() && (strict || isSubtype(both, TString))) {
-        if (auto said = constantStringOf(right))
-            return isStringEqualTo(node, left, a, *said, b);
-        if (auto said = constantStringOf(left))
-            return isStringEqualTo(node, right, b, *said, a);
     }
 
     if (isCompact()) {

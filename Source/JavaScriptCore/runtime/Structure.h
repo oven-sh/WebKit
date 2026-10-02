@@ -239,7 +239,7 @@ struct TypedLayoutTable {
     // first checks Structure::fieldIDInSlot(slot) against the field's ID. IDs are unique per slot across all layouts, so a matching
     // ID also identifies the layout and the field type.
     struct Field {
-        uint32_t identifier; // Index into StaticHeap::identifiersOfProgram().
+        uint32_t identifier; // AOT::ProgramOfVM::identifier()
         uint8_t slot;
         uint8_t mayBeAbsent;
         uint16_t id; // Zero if the layout has fixed slots.
@@ -275,7 +275,7 @@ struct TypedLayoutTable {
     JS_EXPORT_PRIVATE static void reportViolation(ASCIILiteral what, uint16_t layoutID, JSValue);
     JS_EXPORT_PRIVATE static ASCIILiteral s_lastConversionFailure; // Why the most recent conversion failed.
     static bool hasTypedFields() { return s_fields; }
-    JS_EXPORT_PRIVATE static const Field* findField(uint16_t typedLayoutID, UniquedStringImpl*);
+    JS_EXPORT_PRIVATE static const Field* findField(VM&, uint16_t typedLayoutID, UniquedStringImpl*);
     static std::span<const Field> fieldsOf(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count ? std::span { s_fields + (s_fieldRangeOfLayout[typedLayoutID] >> 12), s_fieldRangeOfLayout[typedLayoutID] & 0xfff } : std::span<const Field> { }; }
     static bool hasLayouts() { return s_count; }
     // `slot` must be inline.

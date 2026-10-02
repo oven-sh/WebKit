@@ -505,7 +505,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 #if USE(BUN_JSC_ADDITIONS)
     if (uint16_t typedLayoutID = this->structure()->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
         // (Where the slots are verified it is looked into once it is known where the property is: isRejectedAtOffset.)
-        if (auto* field = TypedLayoutTable::usesFieldIDs(typedLayoutID) ? nullptr : TypedLayoutTable::findField(typedLayoutID, propertyName.uid())) {
+        if (auto* field = TypedLayoutTable::usesFieldIDs(typedLayoutID) ? nullptr : TypedLayoutTable::findField(vm, typedLayoutID, propertyName.uid())) {
             if (mode == PutModeDefineOwnProperty && newAttributes) {
                 if (!TypedLayoutTable::isAuditing())
                     return TypedFieldError;

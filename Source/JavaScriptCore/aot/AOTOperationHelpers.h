@@ -87,7 +87,7 @@ ALWAYS_INLINE void didFillSlot(VM&, Data* data)
     if (!data->hasBeenFilledSinceLastCollection)
         data->noteFilled();
 }
-ALWAYS_INLINE const Identifier& identifierAt(Instance* instance, CallFrame* callFrame, unsigned index) { return static_cast<const Identifier*>(caller(instance, callFrame).info().identifiers)[index]; }
+ALWAYS_INLINE const Identifier& identifierAt(Instance* instance, CallFrame* callFrame, unsigned index) { UNUSED_PARAM(callFrame); return instance->program->identifierAsIdentifier(index); }
 // The same, for an operation that is called often enough to be passed the answer. whose: the index of one of the caller's known
 // callees, plus one, or zero for the caller itself (Lowering::whoseBytecode()). Looking it up would mean searching the caller's
 // call sites.

@@ -27,7 +27,7 @@
 #include "StackFrame.h"
 
 #include "AOTRuntime.h"
-#include "StaticHeap.h"
+#include "AOTProgramData.h"
 #include "CodeBlock.h"
 #include "DebuggerPrimitives.h"
 #include "FunctionExecutable.h"
@@ -74,14 +74,15 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 {
 }
 
-StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, FunctionExecutable* executable, CodeSpecializationKind kind, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
+StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, FunctionExecutable* executable, CodeSpecializationKind kind, JSCell* tokenOfInstance, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
     : m_frameData(JSFrameData {
         callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>(),
         WriteBarrier<CodeBlock>(),
         bytecodeIndex,
         isAsyncFrame,
         kind,
-        WriteBarrier<FunctionExecutable>(vm, owner, executable)
+        WriteBarrier<FunctionExecutable>(vm, owner, executable),
+        WriteBarrier<JSCell>(vm, owner, tokenOfInstance)
     })
 {
 }
@@ -91,9 +92,9 @@ CodeBlock* StackFrame::makeCodeBlock() const
 #if ENABLE(AOT)
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
     VM& vm = jsFrame.aotExecutable->vm();
-    if (vm.heap.mutatorState() != MutatorState::Running || !StaticHeap::ensureSourceProviderOf(vm, jsFrame.aotExecutable.get()))
+    if (vm.heap.mutatorState() != MutatorState::Running)
         return nullptr;
-    if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, jsFrame.aotExecutable.get(), jsFrame.aotKind))
+    if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, jsFrame.aotExecutable.get(), jsFrame.aotKind, jsFrame.aotInstanceToken.get()); function && function.instance)
         return function.ensureCodeBlock();
 #endif
     return nullptr;
@@ -135,8 +136,8 @@ JSGlobalObject* StackFrame::globalObjectOfCode() const
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
 #if ENABLE(AOT)
     if (jsFrame.aotExecutable) {
-        AOT::FunctionRef function = AOT::FunctionRef::of(jsFrame.aotExecutable->vm(), jsFrame.aotExecutable.get(), jsFrame.aotKind);
-        return function ? function.instance->globalObject : nullptr;
+        AOT::FunctionRef function = AOT::FunctionRef::of(jsFrame.aotExecutable->vm(), jsFrame.aotExecutable.get(), jsFrame.aotKind, jsFrame.aotInstanceToken.get());
+        return function.instance ? function.instance->globalObject : nullptr;
     }
 #endif
     return jsFrame.codeBlock->globalObject();
@@ -186,6 +187,8 @@ void StackFrame::visitAggregate(Visitor& visitor)
                 visitor.append(jsFrame.codeBlock);
             if (jsFrame.aotExecutable)
                 visitor.append(jsFrame.aotExecutable);
+            if (jsFrame.aotInstanceToken)
+                visitor.append(jsFrame.aotInstanceToken);
         },
         [](const WasmFrameData&) { }
     );
@@ -197,7 +200,7 @@ bool StackFrame::isMarked(VM& vm) const
 {
     return WTF::switchOn(m_frameData,
         [&vm](const JSFrameData& jsFrame) {
-            return (!jsFrame.callee || vm.heap.isMarked(jsFrame.callee.get())) && (!jsFrame.codeBlock || vm.heap.isMarked(jsFrame.codeBlock.get())) && (!jsFrame.aotExecutable || vm.heap.isMarked(jsFrame.aotExecutable.get()));
+            return (!jsFrame.callee || vm.heap.isMarked(jsFrame.callee.get())) && (!jsFrame.codeBlock || vm.heap.isMarked(jsFrame.codeBlock.get())) && (!jsFrame.aotExecutable || vm.heap.isMarked(jsFrame.aotExecutable.get())) && (!jsFrame.aotInstanceToken || vm.heap.isMarked(jsFrame.aotInstanceToken.get()));
         },
         [](const WasmFrameData&) { return true; }
     );
@@ -240,7 +243,7 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
             if (!executable)
                 return "[native code]"_s;
             if (auto position = reportedPosition(); position && position->source)
-                return StaticHeap::nameOfSource(position->source);
+                return AOT::ProgramData::get()->nameOfSource(position->source);
             return processSourceURL(vm, *this, executable->sourceURL(), allowOverride);
         },
         [](const WasmFrameData& wasmFrame) -> String {
@@ -321,11 +324,11 @@ std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(A
 {
 #if ENABLE(AOT)
     auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
-    if (!jsFrame || !StaticHeap::isMapped())
+    if (!jsFrame || !AOT::ProgramData::get())
         return std::nullopt;
     AOT::FunctionRef function;
     if (jsFrame->aotExecutable)
-        function = AOT::FunctionRef::of(jsFrame->aotExecutable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind);
+        function = AOT::FunctionRef::of(jsFrame->aotExecutable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind, jsFrame->aotInstanceToken.get());
     else if (jsFrame->codeBlock)
         function = AOT::FunctionRef::of(jsFrame->codeBlock.get());
     if (function)
@@ -345,7 +348,7 @@ LineColumn StackFrame::computeLineAndColumn() const
         LineColumn lineColumn;
 #if ENABLE(AOT)
         if (jsFrame->aotExecutable) {
-            if (AOT::FunctionRef function = AOT::FunctionRef::of(executable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind))
+            if (AOT::FunctionRef function = AOT::FunctionRef::of(executable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind, jsFrame->aotInstanceToken.get()))
                 lineColumn = function.lineColumnFor(jsFrame->bytecodeIndex);
         } else
 #endif

@@ -30,7 +30,6 @@
 #include "JSStringIteratorInlines.h"
 #include "LLIntSlowPaths.h"
 #include "ScriptExecutableInlines.h"
-#include "StaticHeap.h"
 
 namespace JSC { namespace AOT {
 
@@ -376,12 +375,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* ins
     DeferTraps deferTraps(vm);
     uint32_t index = FunctionRef::at(instance, addressInFunction).index;
     RELEASE_ASSERT(!instance->isLinked(index));
-    auto [executable, kind] = StaticHeap::executableOfFunction(index);
+    CodeSpecializationKind kind = instance->infos[index].kind();
+    FunctionExecutable* executable = instance->program->executableOfFunction(index);
     RELEASE_ASSERT(executable->aotIndexFor(kind) == index);
     const ImageFunction* function = instance->infos[index].function();
     Ref<JITCode> code = codeOfFunctionFromImage({ &Image::of(*function), function }, kind);
     code->setInstance(*instance);
-    RELEASE_ASSERT(Data::create(*instance, executable, executable->unlinkedExecutable()->codeBlockIfExists(kind), code.get()));
+    RELEASE_ASSERT(Data::create(*instance, executable, nullptr, code.get()));
 }
 
 // For a stub that is about to fill a slot. The same as didFillSlot(), except that it does not change the epoch.

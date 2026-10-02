@@ -160,7 +160,7 @@ public:
     static JSCellButterfly* fromButterfly(Butterfly* butterfly) { return std::bit_cast<JSCellButterfly*>(std::bit_cast<char*>(butterfly) - offsetOfData()); }
     static bool isOnlyAtomStringsStructure(VM& vm, Butterfly* butterfly)
     {
-        return StaticHeap::isStructure(vm, fromButterfly(butterfly)->structure(), vm.cellButterflyOnlyAtomStringsStructure.get());
+        return fromButterfly(butterfly)->structure() == vm.cellButterflyOnlyAtomStringsStructure.get();
     }
 
     JSValue get(unsigned index) const

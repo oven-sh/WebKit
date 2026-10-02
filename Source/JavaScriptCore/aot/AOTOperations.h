@@ -39,6 +39,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTToNumber, EncodedJSValue, (Instance*, Enco
 JSC_DECLARE_JIT_OPERATION(operationAOTToNumeric, EncodedJSValue, (Instance*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTToString, EncodedJSValue, (Instance*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTToBoolean, size_t, (Instance*, EncodedJSValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstantOfProgram, EncodedJSValue, (Instance*, uint32_t number));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTemplateObject, EncodedJSValue, (Instance*, uint32_t number));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareGreater, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
@@ -70,7 +72,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM*));
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo*);
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*));
-JSC_DECLARE_JIT_OPERATION(operationAOTFindEqualAtom, StringImpl*, (Instance*, JSString*)); // Null: there is none.
+JSC_DECLARE_JIT_OPERATION(operationAOTNarrowStringEqualTo, StringImpl*, (Instance*, JSString*)); // Null: there is none.
 JSC_DECLARE_JIT_OPERATION(operationAOTSwitchString, int32_t, (Instance*, EncodedJSValue, uint32_t tableIndex, uint32_t whose));
 JSC_DECLARE_JIT_OPERATION(operationAOTSwitchChar, int32_t, (Instance*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFMod, double, (double, double));

@@ -28,7 +28,6 @@
 #include "ObjectAllocationProfile.h"
 
 #include "JSFunctionInlines.h"
-#include "StaticHeap.h"
 
 namespace JSC {
 
@@ -61,9 +60,9 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
 
         executable = constructor->jsExecutable();
     }
-    // What follows counts, in the executable, the prototypes that its functions create objects with. An executable in the static
-    // heap is read-only.
-    if (executable && StaticHeap::contains(executable))
+    // What follows counts, in the executable, the prototypes that its functions create objects with, for the optimizing compilers.
+    // One of a program that was compiled ahead of time is shared by every realm, and may not have the room.
+    if (executable && executable->hasAOTEntry())
         executable = nullptr;
     if (executable) {
         if (Structure* structure = executable->cachedPolyProtoStructure()) {

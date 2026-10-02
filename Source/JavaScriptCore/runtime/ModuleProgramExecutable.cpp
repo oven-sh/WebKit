@@ -33,7 +33,7 @@
 #include "FunctionExecutable.h"
 #include "JSModuleRecord.h"
 #include "ModuleProgramCodeBlock.h"
-#include "StaticHeap.h"
+#include "AOTProgramData.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakInlines.h"
@@ -95,21 +95,17 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 
     // After releaseUnlinkedCodeIfRecoverable() this has to be the very same code again, decoded from the same payload:
     // the module's environment and the symbol table kept for it were made for that code's layout.
-    if (m_hasReleasedUnlinkedCode && !unlinkedModuleProgramCode->cachedPayloadIndex()) [[unlikely]] {
+    if (m_hasReleasedUnlinkedCode && !unlinkedModuleProgramCode->cachedPayloadIndex() && !unlinkedModuleProgramCode->isWithoutCode()) [[unlikely]] {
         throwVMError(globalObject, throwScope, createError(globalObject, "The module's code is no longer available from its bytecode cache"_s));
         return nullptr;
     }
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
 #if ENABLE(AOT)
-    if (SourceProvider* provider = source().provider(); m_moduleLoader && StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables()) {
-        AOT::Instance::ensure(m_moduleLoader.get()).setTopLevelExecutableOf(provider, this);
-        setUsesStaticExecutables();
-    }
-    if (Options::verboseAOTCompilation() && StaticHeap::isUsedBy(vm) && !usesStaticExecutables()) [[unlikely]] {
-        SourceProvider* provider = source().provider();
-        dataLogLn("AOT: ", provider->sourceURL(), " does not get the functions that were made when the program was built: its provider is ", StaticHeap::isPlaceOfSourceProvider(provider) ? "" : "not ", "in its place, its code is ", StaticHeap::contains(unlinkedModuleProgramCode) ? "" : "not ", "in the static heap");
-    }
+    if (m_moduleLoader && unlinkedModuleProgramCode->isWithoutCode())
+        AOT::Instance::ensure(m_moduleLoader.get()).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
+    else if (Options::verboseAOTCompilation() && AOT::ProgramData::get()) [[unlikely]]
+        dataLogLn("AOT: ", source().provider()->sourceURL(), " was not compiled ahead of time");
 #endif
     // The symbol table and the function declarations' executables are made once and stay for as long as the executable
     // does, whatever happens to its code (ScriptExecutable::clearCode, releaseUnlinkedCodeIfRecoverable). The
@@ -241,7 +237,15 @@ void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
     // The environment's symbol table stays: environments already made from it and any code linked later must agree on
     // the one table.
     UnlinkedModuleProgramCodeBlock* unlinkedCode = unlinkedCodeBlock();
-    if (!hasFinishedEvaluation() || !unlinkedCode || !unlinkedCode->cachedPayloadIndex())
+    if (!hasFinishedEvaluation() || !unlinkedCode)
+        return;
+    // (Of a program that was compiled ahead of time: it can be made of the program's data again.)
+    if (unlinkedCode->isWithoutCode()) {
+        m_hasReleasedUnlinkedCode = true;
+        m_unlinkedCodeBlock.clear();
+        return;
+    }
+    if (!unlinkedCode->cachedPayloadIndex())
         return;
     vm.codeCache()->forgetUnlinkedModuleProgramCodeBlock(this, source(), unlinkedCode);
     m_hasReleasedUnlinkedCode = true;

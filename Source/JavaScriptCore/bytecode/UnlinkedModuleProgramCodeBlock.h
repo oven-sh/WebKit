@@ -26,7 +26,6 @@
 #pragma once
 
 #include "ScopeOffset.h"
-#include "StaticHeap.h"
 #include "UnlinkedGlobalCodeBlock.h"
 #include <wtf/FixedVector.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -44,18 +43,6 @@ class ModuleFunctionDeclarationSlots final : public ThreadSafeRefCounted<ModuleF
 public:
     static Ref<ModuleFunctionDeclarationSlots> create(FixedVector<uint32_t>&& offsets) { return adoptRef(*new ModuleFunctionDeclarationSlots(WTF::move(offsets))); }
 
-    // (One in the static heap is immortal and read-only.)
-    void ref() const
-    {
-        if (!StaticHeap::contains(this)) [[likely]]
-            ThreadSafeRefCounted::ref();
-    }
-    void deref() const
-    {
-        if (!StaticHeap::contains(this)) [[likely]]
-            ThreadSafeRefCounted::deref();
-    }
-
     unsigned size() const { return m_offsets.size(); }
     ScopeOffset at(unsigned index) const { return ScopeOffset(m_offsets[index]); }
     const FixedVector<uint32_t>& offsets() const LIFETIME_BOUND { return m_offsets; }
@@ -66,6 +53,10 @@ public:
     bool hasDecodeSource() const { return !!m_cachedFunctionDecls; }
     void setDecodeSource(Ref<Decoder>&&, const void* cachedFunctionDecls);
     UnlinkedFunctionExecutable* decode(VM&, unsigned index) const;
+
+    // Of a program that was compiled ahead of time: for each, what AOT::FunctionMetadata::executableInList() says, where it is in the file.
+    const uint32_t* entriesOfProgram() const { return m_entriesOfProgram; }
+    void setEntriesOfProgram(const uint32_t* entries) { m_entriesOfProgram = entries; }
 
     JS_EXPORT_PRIVATE ~ModuleFunctionDeclarationSlots();
 
@@ -87,6 +78,7 @@ private:
     FixedVector<uint32_t> m_offsets;
     RefPtr<Decoder> m_decoder;
     const void* m_cachedFunctionDecls { nullptr }; // CachedWriteBarrier<CachedFunctionExecutable>[size()] in m_decoder's payload
+    const uint32_t* m_entriesOfProgram { nullptr };
 };
 
 class UnlinkedModuleProgramCodeBlock final : public UnlinkedGlobalCodeBlock {

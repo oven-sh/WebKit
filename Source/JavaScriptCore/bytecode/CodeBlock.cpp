@@ -737,7 +737,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                     const Identifier& ident = identifier(bytecode.m_var);
                     {
                         ConcurrentJSLocker locker(symbolTable->m_lock);
-                        // A table in the static heap is not written to. Nothing is inferred about its variables.
+                        // Nothing is inferred about the variables of a table that every realm shares.
                         if (symbolTable->isSharedAcrossRealms()) [[unlikely]]
                             metadata.m_watchpointSet = nullptr;
                         else {

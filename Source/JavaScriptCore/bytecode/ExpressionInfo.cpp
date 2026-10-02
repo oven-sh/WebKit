@@ -27,7 +27,6 @@
 #include "ExpressionInfo.h"
 
 #include "SourceProvider.h"
-#include "StaticHeap.h"
 #include "VM.h"
 #include <numeric>
 #include <wtf/DataLog.h>
@@ -898,10 +897,6 @@ auto ExpressionInfo::entryForInstPC(InstPC instPC) -> Entry
 
 LineColumn ExpressionInfo::lineColumnInTextForInstPC(InstPC instPC, SourceProvider& provider, unsigned sourceOffset)
 {
-    // Remembering would be writing to it.
-    if (StaticHeap::contains(this)) [[unlikely]]
-        return provider.lineColumnInTextForOffset(sourceOffset + entryForInstPC(instPC).divot);
-
     return m_cachedLineColumns.ensure(instPC, [&] {
         return provider.lineColumnInTextForOffset(sourceOffset + entryForInstPC(instPC).divot);
     }).iterator->value;

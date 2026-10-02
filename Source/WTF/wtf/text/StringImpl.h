@@ -24,8 +24,6 @@
 
 #include <wtf/Compiler.h>
 
-#include <bmalloc/StaticRegion.h>
-
 #include <limits.h>
 #include <unicode/uchar.h>
 #include <unicode/ustring.h>
@@ -393,14 +391,6 @@ public:
     void ref();
     void deref();
 
-    // Of a string in memory that is never freed: from now on it is as a StaticStringImpl is. It has its hash.
-    void becomeStatic()
-    {
-        ASSERT(hasHash());
-        m_hashAndFlags |= s_hashFlagDidReportCost;
-        m_refCount.store(s_refCountFlagIsStaticString, std::memory_order_relaxed);
-    }
-
     class StaticStringImpl : private StringImplShape {
         WTF_MAKE_NONCOPYABLE(StaticStringImpl);
     public:
@@ -438,13 +428,8 @@ public:
         ASCIILiteral literal() const { return ASCIILiteral::fromLiteralUnsafe(m_data8Char); }
     };
 
-    // At the same address in every process, unlike data in the executable, because objects that are created when a program is built
-    // (bmalloc::StaticRegion) refer to it. It exists once constructEmpty() has run, which is the first thing for a process to do,
-    // on its first thread: WTF::initialize() does, but an embedder that uses strings before that has to call it itself. (Not a
-    // static initializer: those run in every process that contains this code, whether or not it goes on to use it.)
-    WTF_EXPORT_PRIVATE static void constructEmpty();
-    ALWAYS_INLINE static StaticStringImpl* emptyAsStaticStringImpl() { return reinterpret_cast<StaticStringImpl*>(bmalloc::StaticRegion::addressInBss(bmalloc::StaticRegion::offsetOfEmptyStringInBss)); }
-    ALWAYS_INLINE static StringImpl* empty() { SUPPRESS_MEMORY_UNSAFE_CAST return reinterpret_cast<StringImpl*>(emptyAsStaticStringImpl()); }
+    WTF_EXPORT_PRIVATE static StaticStringImpl s_emptyAtomString;
+    ALWAYS_INLINE static StringImpl* empty() { SUPPRESS_MEMORY_UNSAFE_CAST return reinterpret_cast<StringImpl*>(&s_emptyAtomString); }
 
 
     template<typename SourceCharacterType> static void iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters);
@@ -1204,9 +1189,10 @@ inline void StringImpl::ref()
 {
     STRING_STATS_REF_STRING(*this);
 
-    // Counting references to an immortal string would only dirty a page that is otherwise file-backed (StaticRegion).
+#if TSAN_ENABLED
     if (isStatic())
         return;
+#endif
 
     m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed);
 }
@@ -1215,10 +1201,13 @@ inline void StringImpl::deref()
 {
     STRING_STATS_DEREF_STRING(*this);
 
+#if TSAN_ENABLED
+    if (isStatic())
+        return;
+#endif
+
     // When this is the only reference nobody else can be racing to add one, so skip the atomic read-modify-write.
     auto refCount = m_refCount.load(std::memory_order_relaxed);
-    if (refCount & s_refCountFlagIsStaticString)
-        return;
     if (refCount != s_refCountIncrement) {
         if (m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed) != s_refCountIncrement) [[likely]]
             return;

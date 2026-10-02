@@ -26,7 +26,6 @@
 #pragma once
 
 #include "DeferGC.h"
-#include "StaticHeap.h"
 #include <wtf/Lock.h>
 #include <wtf/Locker.h>
 
@@ -42,12 +41,11 @@ class ConcurrentJSLockerBase : public AbstractLocker {
 public:
     explicit ConcurrentJSLockerBase(ConcurrentJSLock& lockable)
     {
-        if (!StaticHeap::needsNoLocking(&lockable)) [[likely]]
-            m_locker.emplace(lockable);
+        m_locker.emplace(lockable);
     }
     explicit ConcurrentJSLockerBase(ConcurrentJSLock* lockable)
     {
-        if (lockable && !StaticHeap::needsNoLocking(lockable)) [[likely]]
+        if (lockable)
             m_locker.emplace(*lockable);
     }
 

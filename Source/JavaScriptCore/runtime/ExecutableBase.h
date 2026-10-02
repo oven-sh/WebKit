@@ -88,6 +88,7 @@ public:
     {
         return type() == FunctionExecutableType || type() == ShortFunctionExecutableType;
     }
+    bool hasAOTEntry() const { return m_aotEntry[0] || m_aotEntry[1]; } // It is AOT::ProgramOfVM's.
     bool isShortFunctionExecutable() const // See FunctionExecutable.
     {
         return type() == ShortFunctionExecutableType;
@@ -270,7 +271,7 @@ public:
     void dump(PrintStream&) const;
         
 protected:
-    // What m_jitCodeFor*WithArityCheck would be, of a FunctionExecutable from the static heap. It does not say so itself: in the
+    // What m_jitCodeFor*WithArityCheck would be, of a FunctionExecutable of a program that was compiled ahead of time. It does not say so itself: in the
     // short form it has no room to, and in full it could only do so with an address, and the code is wherever it was mapped.
     JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> entrypointOfStaticCode(CodeSpecializationKind) const;
 

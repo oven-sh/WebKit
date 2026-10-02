@@ -240,7 +240,7 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     // the records that share its executable then use.
     bool privateToExecutable = false;
     if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>)
-        privateToExecutable = !executable->resolvesInGlobalScope() && !StaticHeap::isProviderOfModule(*source.provider());
+        privateToExecutable = !executable->resolvesInGlobalScope() && !source.provider()->hasNoText();
     // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
     // and provider, which the shared code of the same source may have as well.)
     UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);

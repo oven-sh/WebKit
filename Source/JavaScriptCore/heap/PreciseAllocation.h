@@ -26,7 +26,6 @@
 #pragma once
 
 #include "MarkedBlock.h"
-#include "StaticHeap.h"
 #include "WeakSet.h"
 #include <wtf/StdLibExtras.h>
 
@@ -52,20 +51,12 @@ public:
 
     PreciseAllocation* reuseForLowerTierPrecise();
 
-    // See StaticHeap. It has no cell of its own, is on no list, and always reports that it is marked. There is one for the process,
-    // which is what a static cell says its container is, and one for each VM, which has what belongs to a VM.
-    static void makeContainerOfStaticCells();
-    static PreciseAllocation* createForStaticCells(Heap&, Subspace*);
-    static void destroyForStaticCells(PreciseAllocation*);
-
     PreciseAllocation* tryReallocate(size_t, Subspace*);
     
     ~PreciseAllocation();
     
     static PreciseAllocation* fromCell(const void* cell)
     {
-        if (StaticHeap::contains(cell)) [[unlikely]]
-            return s_containerOfStaticCells;
         return std::bit_cast<PreciseAllocation*>(std::bit_cast<char*>(cell) - headerSize());
     }
     
@@ -79,13 +70,13 @@ public:
         return std::bit_cast<uintptr_t>(cell) & halfAlignment;
     }
     
-    Subspace* subspace() const { return ofVM().m_subspace; }
+    Subspace* subspace() const { return m_subspace; }
     
     void lastChanceToFinalize();
     
-    JSC::Heap* heap() const LIFETIME_BOUND { return ofVM().m_weakSet.heap(); }
-    VM& vm() const { return ofVM().m_weakSet.vm(); }
-    WeakSet& weakSet() LIFETIME_BOUND { return const_cast<PreciseAllocation&>(ofVM()).m_weakSet; }
+    JSC::Heap* heap() const LIFETIME_BOUND { return m_weakSet.heap(); }
+    VM& vm() const { return m_weakSet.vm(); }
+    WeakSet& weakSet() LIFETIME_BOUND { return m_weakSet; }
 
     static constexpr ptrdiff_t offsetOfWeakSet() { return OBJECT_OFFSETOF(PreciseAllocation, m_weakSet); }
 
@@ -175,20 +166,9 @@ public:
 
 private:
     PreciseAllocation(Heap&, size_t, Subspace*, unsigned indexInSpace, unsigned adjustment);
-    enum OfStaticCellsOfProcessTag { OfStaticCellsOfProcess };
-    PreciseAllocation(OfStaticCellsOfProcessTag);
-
-    ALWAYS_INLINE const PreciseAllocation& ofVM() const
-    {
-        if (!m_subspace) [[unlikely]]
-            return *StaticHeap::containerOfThread();
-        return *this;
-    }
     
     void* basePointer() const;
     
-    JS_EXPORT_PRIVATE static PreciseAllocation* s_containerOfStaticCells;
-
     unsigned m_indexInSpace { 0 };
     size_t m_cellSize;
     bool m_isNewlyAllocated : 1;

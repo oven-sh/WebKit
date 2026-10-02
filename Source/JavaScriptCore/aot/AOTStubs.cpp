@@ -107,6 +107,18 @@ static void loadInstance(CCallHelpers& jit, GPRReg result)
     jit.move(instanceGPR, result);
 }
 
+static void loadSites(CCallHelpers& jit, GPRReg info, GPRReg result)
+{
+    jit.load32(Address(info, FunctionInfo::offsetOfSites()), result);
+    jit.add64(Address(instanceGPR, Instance::offsetOfImage()), result);
+}
+
+// From a StructureID, with nothing above it, to the address of the Structure.
+static void structureWithID(CCallHelpers& jit, GPRReg idAndResult)
+{
+    jit.add64(Address(instanceGPR, Instance::offsetOfStructureIDBase()), idAndResult);
+}
+
 // Loads into T15 the index of the function that contains `pc`. A stub identifies its caller from its return address. Only reads two
 // of the image's tables, at entries adjacent to those for neighboring code. Clobbers T14.
 void loadIndexOfFunctionAt(CCallHelpers& jit, GPRReg pc)
@@ -138,8 +150,8 @@ static void loadIndexOfCaller(CCallHelpers& jit)
 static void loadInfo(CCallHelpers& jit, GPRReg instance, GPRReg result)
 {
     ASSERT(result != instance && result != T15);
-    static_assert(sizeof(FunctionInfo) == 32);
-    jit.lshiftPtr(T15, TrustedImm32(5), result);
+    static_assert(sizeof(FunctionInfo) == 16);
+    jit.lshiftPtr(T15, TrustedImm32(4), result);
     jit.loadPtr(Address(instance, Instance::offsetOfInfos()), CCallHelpers::memoryTempRegister);
     jit.addPtr(CCallHelpers::memoryTempRegister, result);
 }
@@ -179,8 +191,8 @@ static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
     // The count is in the low 16 bits.
     jit.store16(T13, CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesFour));
     jit.zeroExtend16To32(T13, T13);
-    static_assert(sizeof(FunctionInfo) == 32);
-    jit.lshiftPtr(T11, TrustedImm32(5), T12);
+    static_assert(sizeof(FunctionInfo) == 16);
+    jit.lshiftPtr(T11, TrustedImm32(4), T12);
     jit.loadPtr(Address(instance, Instance::offsetOfInfos()), CCallHelpers::memoryTempRegister);
     jit.addPtr(CCallHelpers::memoryTempRegister, T12);
     // Inline version of Instance::missesToPutUpWithFor(). The saturated case cannot occur, because a function with that many slots
@@ -533,7 +545,7 @@ static void generateInstanceOf(CCallHelpers& jit)
     // AssemblyHelpers::emitLoadPrototype(), with the StructureID decoded position-independently.
     slowPath.append(jit.branchTest8(CCallHelpers::NonZero, Address(T11, JSObject::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
     jit.load32(Address(T11, JSCell::structureIDOffset()), T12);
-    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T12);
+    structureWithID(jit, T12);
     jit.load64(Address(T12, Structure::prototypeOffset()), T12);
     Jump hasMonoProto = jit.branchTest64(CCallHelpers::NonZero, T12);
     jit.load64(Address(T11, offsetRelativeToBase(knownPolyProtoOffset)), T12);
@@ -687,6 +699,92 @@ static void generateIsStringEqualTo(CCallHelpers& jit)
     generateEqual(jit, Entry::operationAOTCompareStrictEq);
 }
 static void generateLooseEqual(CCallHelpers& jit) { generateEqual(jit, Entry::operationAOTCompareEq); }
+
+// What the literal says is read where it is in the file, so nothing has to have made a string of it.
+static void generateIsStringEqualToConstant(CCallHelpers& jit)
+{
+    CCallHelpers::JumpList isTrue;
+    CCallHelpers::JumpList isFalse;
+    CCallHelpers::JumpList slow;
+    isFalse.append(jit.branchIfNotCell(A0));
+    jit.load8(Address(A0, JSCell::typeInfoTypeOffset()), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(StringType)));
+    // A3 = its record, A4 = its length.
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRecordsOfStringConstants()), A3);
+    jit.load32(CCallHelpers::BaseIndex(A3, T9, CCallHelpers::TimesFour), A3);
+    jit.add64(Address(instanceGPR, Instance::offsetOfProgramData()), A3);
+    jit.load32(Address(A3), A4);
+    jit.and32(TrustedImm32(0x7fffffff), A4);
+    jit.loadPtr(Address(A0, JSString::offsetOfValue()), A2);
+    Jump isRope = jit.branchIfRopeStringImpl(A2);
+    jit.load32(Address(A2, StringImpl::lengthMemoryOffset()), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T11, A4));
+    slow.append(jit.branchTest32(CCallHelpers::Zero, Address(A2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
+
+    // Compare A4 characters at A2 with those of the record. A string that was made of the table has its characters there, so one
+    // that was made of this literal is told by their address.
+    CCallHelpers::Label compare = jit.label();
+    jit.add64(TrustedImm32(2 * sizeof(uint32_t)), A3);
+    isTrue.append(jit.branch64(CCallHelpers::Equal, A2, A3));
+    CCallHelpers::Label eightAtATime = jit.label();
+    Jump fewerThanEight = jit.branch32(CCallHelpers::Below, A4, TrustedImm32(8));
+    jit.load64(Address(A2), A1);
+    jit.load64(Address(A3), T11);
+    isFalse.append(jit.branch64(CCallHelpers::NotEqual, A1, T11));
+    jit.add64(TrustedImm32(8), A2);
+    jit.add64(TrustedImm32(8), A3);
+    jit.sub32(TrustedImm32(8), A4);
+    jit.jump().linkTo(eightAtATime, &jit);
+    fewerThanEight.link(&jit);
+    CCallHelpers::Label oneAtATime = jit.label();
+    isTrue.append(jit.branchTest32(CCallHelpers::Zero, A4));
+    jit.load8(Address(A2), A1);
+    jit.load8(Address(A3), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, A1, T11));
+    jit.add64(TrustedImm32(1), A2);
+    jit.add64(TrustedImm32(1), A3);
+    jit.sub32(TrustedImm32(1), A4);
+    jit.jump().linkTo(oneAtATime, &jit);
+
+    isRope.link(&jit);
+    jit.load32(Address(A0, JSRopeString::offsetOfLength()), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T11, A4));
+    // (As in generateIsStringEqualTo().)
+    constexpr uintptr_t narrowSlice = JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
+    jit.and64(TrustedImm32(narrowSlice), A2, T11);
+    slow.append(jit.branch64(CCallHelpers::NotEqual, T11, TrustedImm32(narrowSlice)));
+    jit.load64(Address(A0, JSRopeString::offsetOfFiber1()), A1);
+    jit.load64(Address(A0, JSRopeString::offsetOfFiber2()), T11);
+    jit.urshift64(TrustedImm32(32), A1);
+    jit.and64(TrustedImm32(0xffff), T11, A2);
+    jit.lshift64(TrustedImm32(32), A2);
+    jit.or64(A1, A2);
+    jit.urshift64(TrustedImm32(16), T11);
+    jit.loadPtr(Address(A2, JSString::offsetOfValue()), A2);
+    jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
+    jit.add64(T11, A2);
+    jit.jump().linkTo(compare, &jit);
+
+    isTrue.link(&jit);
+    jit.move(TrustedImm32(1), A0);
+    jit.ret();
+    isFalse.link(&jit);
+    jit.move(TrustedImm32(0), A0);
+    jit.ret();
+
+    // A rope, or a 16-bit string, of the same length. A0 and T9 are unchanged.
+    slow.link(&jit);
+    jit.pushPair(A0, CCallHelpers::linkRegister);
+    jit.move(instanceGPR, A0);
+    jit.move(T9, A1);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTConstantOfProgram) * sizeof(void*)), T11);
+    jit.call(T11, OperationPtrTag);
+    jit.move(GPRInfo::returnValueGPR, A1);
+    jit.popPair(A0, CCallHelpers::linkRegister);
+    generateEqual(jit, Entry::operationAOTCompareStrictEq);
+}
 
 // Calls operation(globalObject, A0, A1) for the call site in T10.
 static void callBinaryOperation(CCallHelpers& jit, Entry operation)
@@ -1238,7 +1336,7 @@ static void prepareMissAtSite(CCallHelpers& jit, Entry operation, unsigned numbe
     loadInstanceAndDataOfSlot(jit, site, T9, T10);
     siteOfSlot(jit, T10, site, T13);
     loadInfo(jit, T9, T11);
-    jit.loadPtr(Address(T11, FunctionInfo::offsetOfSites()), T11);
+    loadSites(jit, T11, T11);
     static_assert(sizeof(Site) == 4);
     jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T12);
     jit.move(site, T11);
@@ -1284,7 +1382,7 @@ static Address slotOfFrameBeingMade(CallFrameSlot slot, ptrdiff_t offset = 0)
 static void findInDispatchTable(CCallHelpers& jit, GPRReg slot, GPRReg selector, CCallHelpers::JumpList& notOfKnownShape, CCallHelpers::JumpList& notOwn)
 {
     jit.load32(Address(A0, JSCell::structureIDOffset()), T11);
-    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T11);
+    structureWithID(jit, T11);
     jit.load16(Address(T11, Structure::offsetOfKnownShape()), T11);
     notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, T11));
     loadInfo(jit, T9, T12);
@@ -1293,13 +1391,13 @@ static void findInDispatchTable(CCallHelpers& jit, GPRReg slot, GPRReg selector,
     static_assert(sizeof(Site) == 4);
     Jump isWhatTheSiteReads = jit.branchTest32(CCallHelpers::NonZero, selector, TrustedImm32(FunctionInfo::sitesHaveTheirConstants));
     notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, selector, TrustedImm32(FunctionInfo::hasSiteConstants)));
-    jit.loadPtr(Address(T12, FunctionInfo::offsetOfSites()), T12);
+    loadSites(jit, T12, T12);
     jit.load32(Address(T12, static_cast<ptrdiff_t>(OBJECT_OFFSETOF(ImageFunction, numSlots)) - static_cast<ptrdiff_t>(sizeof(ImageFunction))), selector);
     jit.getEffectiveAddress(CCallHelpers::BaseIndex(T12, selector, CCallHelpers::TimesFour), T12);
     jit.load32(CCallHelpers::BaseIndex(T12, T13, CCallHelpers::TimesFour), selector);
     Jump haveSelector = jit.jump();
     isWhatTheSiteReads.link(&jit);
-    jit.loadPtr(Address(T12, FunctionInfo::offsetOfSites()), T12);
+    loadSites(jit, T12, T12);
     jit.load32(CCallHelpers::BaseIndex(T12, T13, CCallHelpers::TimesFour), selector);
     jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), selector);
     haveSelector.link(&jit);
@@ -1441,9 +1539,8 @@ static void readByName(CCallHelpers& jit, GPRReg base, CCallHelpers::JumpList& i
     jit.urshift64(T11, TrustedImm32(32 + Slot::nameIDShift), T13);
     isNotByName.append(jit.branchTest64(CCallHelpers::Zero, T13));
     jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T14);
-    jit.move(T12, T9);
-    static_assert(!(structureIDBaseOfImages & ~(0xffffull << 32)));
-    jit.m_assembler.movk<64>(T9, static_cast<uint16_t>(structureIDBaseOfImages >> 32), 32);
+    jit.zeroExtend32ToWord(T12, T9);
+    structureWithID(jit, T9);
     constexpr ptrdiff_t wordsBeforeInlineStorage = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue);
     jit.load16(CCallHelpers::BaseIndex(T9, T14, CCallHelpers::TimesTwo, Structure::offsetOfFieldIDInSlot() - wordsBeforeInlineStorage * sizeof(uint16_t)), T9);
     isNotByName.append(jit.branch32(CCallHelpers::NotEqual, T9, T13));
@@ -1509,12 +1606,7 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool allowsUndefi
     ASSERT(base != A1 && base != T11 && base != T12 && base != T13);
     Jump isNotCell = jit.branchIfNotCell(base);
     jit.load32(Address(base, JSCell::structureIDOffset()), T13);
-#if CPU(ARM64)
-    static_assert(!(structureIDBaseOfImages & ~(0xffffull << 32)));
-    jit.m_assembler.movk<64>(T13, static_cast<uint16_t>(structureIDBaseOfImages >> 32), 32);
-#else
-    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T13);
-#endif
+    structureWithID(jit, T13);
     jit.load16(Address(T13, Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t)), T11);
     Jump isNotThere = jit.branch32(CCallHelpers::NotEqual, T11, A1);
     jit.load64(Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)), A0);
@@ -1661,9 +1753,8 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
             jit.extractUnsignedBitfield64(byName, TrustedImm32(PolymorphicSlots::shiftOfInlineSlotsByName + i * 8), TrustedImm32(8), result);
         };
         jit.load64(Address(several, PolymorphicSlots::offsetOfByName()), byName);
-        jit.move(T12, table);
-        static_assert(!(structureIDBaseOfImages & ~(0xffffull << 32)));
-        jit.m_assembler.movk<64>(table, static_cast<uint16_t>(structureIDBaseOfImages >> 32), 32);
+        jit.zeroExtend32ToWord(T12, table);
+        structureWithID(jit, table);
         jit.addPtr(TrustedImm32(Structure::offsetOfFieldIDInSlot()), table);
         jit.and32(TrustedImm32(0xffff), byName, nameID);
         // (Whether a site has any depends on the site alone, so this branch can be predicted.)
@@ -1763,7 +1854,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         // No own property with that name. See Instance::lookAtObjectPrototype().
         notOwn.link(&jit);
         jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
-        jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T12);
+        structureWithID(jit, T12);
         jit.loadPtr(Address(T12, Structure::prototypeOffset()), T12);
         jit.loadPtr(Address(T9, Instance::offsetOfObjectPrototype()), T13);
         notInTable.append(jit.branchPtr(CCallHelpers::NotEqual, T12, T13));
@@ -1797,11 +1888,12 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         isNobodys.link(&jit);
         siteOfSlot(jit, T10, A1, T13);
         loadInfo(jit, T9, T10);
-        jit.loadPtr(Address(T10, FunctionInfo::offsetOfSites()), T11);
+        loadSites(jit, T10, T11);
         jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T12);
         jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), T12);
-        jit.loadPtr(Address(T10, FunctionInfo::offsetOfIdentifiers()), T11);
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfIdentifiersOfProgram()), T11);
         jit.loadPtr(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), A2);
+        notFound.append(jit.branchTestPtr(CCallHelpers::Zero, A2)); // (Nothing has asked for it yet, so it is in no cache.)
         getFromMegamorphicCache(jit, A2, notFound);
         notFound.link(&jit);
     }
@@ -1910,7 +2002,7 @@ static void generatePutById(CCallHelpers& jit)
         jit.branchTest32(CCallHelpers::Zero, T12).linkTo(isHeld, &jit);
         loadInstance(jit, T9);
         jit.load32(Address(A1, JSCell::structureIDOffset()), T10);
-        jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T10);
+        structureWithID(jit, T10);
         jit.load16(Address(T10, Structure::offsetOfTypedLayoutID()), T10);
         jit.branch32(CCallHelpers::Equal, T10, T12).linkTo(isHeld, &jit);
         miss.append(jit.jump());
@@ -1946,13 +2038,14 @@ static void generatePutById(CCallHelpers& jit)
         loadInstanceAndDataOfSlot(jit, A2, T9, T10);
         siteOfSlot(jit, T10, A2, T13);
         loadInfo(jit, T9, T10);
-        jit.loadPtr(Address(T10, FunctionInfo::offsetOfSites()), T11);
+        loadSites(jit, T10, T11);
         jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T12);
         // A store that defines the property regardless of the prototype chain is not what the cache holds.
         notFound.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(1u << Site::identifierBits)));
         jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), T12);
-        jit.loadPtr(Address(T10, FunctionInfo::offsetOfIdentifiers()), T11);
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfIdentifiersOfProgram()), T11);
         jit.loadPtr(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), A3);
+        notFound.append(jit.branchTestPtr(CCallHelpers::Zero, A3)); // (Nothing has asked for it yet, so it is in no cache.)
         jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), cache);
         jit.loadPtr(Address(cache, static_cast<unsigned>(Entry::MegamorphicCache) * sizeof(void*)), cache);
         notFound.append(jit.branchTestPtr(CCallHelpers::Zero, cache));
@@ -2402,7 +2495,7 @@ static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const L
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
     hasExecutable.link(&jit);
-    // An executable from the static heap does not say how to get in. See ExecutableBase::entrypointOfStaticCode().
+    // An executable of the program does not say how to get in. See ExecutableBase::entrypointOfStaticCode().
     Jump isShortForm = jit.branchIfType(T11, ShortFunctionExecutableType);
     jit.loadPtr(Address(T11, ExecutableBase::offsetOfJITCodeWithArityCheckFor(kind)), T12);
     Jump saysHowToGetIn = jit.branchTestPtr(CCallHelpers::NonZero, T12);
@@ -2490,9 +2583,9 @@ static void loadCalleeOfFrameBeingMadeAndItsVM(CCallHelpers& jit, GPRReg callee,
 
 static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKind kind, Entry callLinkInfo)
 {
-    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::callee), T11);
+    loadCalleeOfFrameBeingMadeAndItsVM(jit, T11, T12);
     jit.load32(Address(T11, JSCell::structureIDOffset()), T9);
-    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T9);
+    jit.add64(Address(T12, VM::offsetOfStructureIDBase()), T9);
     jit.loadPtr(Address(T9, Structure::offsetOfAOTInstance()), T12);
     Jump hasInstance = jit.branchTestPtr(CCallHelpers::NonZero, T12);
     jit.loadPtr(Address(T9, Structure::realmOffset()), T12);
@@ -2598,7 +2691,7 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, total, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(total, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), total);
     hasExecutable.link(&jit);
-    // An executable from the static heap does not say how to get in. See ExecutableBase::entrypointOfStaticCode().
+    // An executable of the program does not say how to get in. See ExecutableBase::entrypointOfStaticCode().
     Jump isShortForm = jit.branchIfType(total, ShortFunctionExecutableType);
     jit.loadPtr(Address(total, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), scratch);
     Jump saysHowToGetIn = jit.branchTestPtr(CCallHelpers::NonZero, scratch);
@@ -2660,6 +2753,43 @@ static void generateLinkFunction(CCallHelpers& jit)
     });
 }
 
+static void generateConstant(CCallHelpers& jit)
+{
+    // ProgramOfVM::constant()
+    constexpr GPRReg place = GPRInfo::returnValueGPR;
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgram()), T11);
+    jit.loadPtr(Address(T11, ProgramOfVM::offsetOfValuesOfConstants()), T12);
+    jit.loadPtr(Address(T11, ProgramOfVM::offsetOfKeysOfConstants()), T13);
+    jit.load32(Address(T11, ProgramOfVM::offsetOfMaskOfConstants()), T14);
+    jit.move(TrustedImm32(static_cast<int32_t>(ProgramOfVM::multiplierOfHashOfConstant)), T15);
+    jit.mul32(T9, T15, place);
+    jit.xorUnsignedRightShift32(place, place, TrustedImm32(ProgramOfVM::shiftOfHashOfConstant), place);
+    jit.add32(TrustedImm32(1), T9, T11);
+    CCallHelpers::Label next = jit.label();
+    jit.and32(T14, place);
+    jit.load32(CCallHelpers::BaseIndex(T13, place, CCallHelpers::TimesFour), T15);
+    Jump isThere = jit.branch32(CCallHelpers::Equal, T15, T11);
+    Jump isNotMade = jit.branchTest32(CCallHelpers::Zero, T15);
+    jit.add32(TrustedImm32(1), place);
+    jit.jump().linkTo(next, &jit);
+    isThere.link(&jit);
+    jit.load64(CCallHelpers::BaseIndex(T12, place, CCallHelpers::TimesEight), GPRInfo::returnValueGPR);
+    jit.ret();
+    isNotMade.link(&jit);
+    callPreservingRegistersAndReturn(jit, Entry::operationAOTConstantOfProgram, true, [&] {
+        jit.move(T9, A1);
+        jit.move(T10, A0);
+    });
+}
+
+static void generateTemplateObject(CCallHelpers& jit)
+{
+    callPreservingRegistersAndReturn(jit, Entry::operationAOTTemplateObject, true, [&] {
+        jit.move(T9, A1);
+        jit.move(T10, A0);
+    });
+}
+
 static void generateVirtualCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
 static void generateVirtualConstruct(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForConstruct, [] { }); }
 static void generateVirtualTailCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
@@ -2678,7 +2808,7 @@ static void findCodeOfCallee(CCallHelpers& jit, CodeSpecializationKind kind, CCa
     jit.load64(Address(T11, FunctionExecutable::offsetOfAOTEntryFor(kind)), T12);
     Jump isNotStatic = jit.branchTest64(CCallHelpers::Zero, T12);
     jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), T13);
-    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T13);
+    structureWithID(jit, T13);
     Jump isOfThisInstance = jit.branchPtr(CCallHelpers::Equal, Address(T13, Structure::offsetOfAOTInstance()), instanceGPR);
     otherwise.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(T13, Structure::offsetOfAOTInstance())));
     jit.loadPtr(Address(T13, Structure::realmOffset()), T13);
@@ -2694,7 +2824,7 @@ static void findCodeOfCallee(CCallHelpers& jit, CodeSpecializationKind kind, CCa
     jit.add64(T11, T12);
     Jump isLinked = jit.jump();
 
-    // The executable is not from the static heap, so its code was installed at run time (AOT::install()), which also linked it. The
+    // The executable is not one of ProgramOfVM's, so its code was installed at run time (AOT::install()), which also linked it. The
     // callee runs with the caller's Instance, so it must belong to the same realm: another realm may have linked the same function.
     isNotStatic.link(&jit);
     otherwise.append(jit.branchIfNotType(T11, FunctionExecutableType));

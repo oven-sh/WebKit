@@ -44,38 +44,8 @@ public:
 
     StringTableImpl& table() LIFETIME_BOUND { return m_table; }
 
-    // Atoms that exist before the thread does, are immortal, and are not in table() until they are first requested: strings that
-    // are static (StringImpl::becomeStatic()) and flagged as atoms. This table is read-only, and is consulted when table() has no
-    // match. It has to be set before the thread has an atom that could equal one of them.
-    // All of the atoms are within range of one base address, and none are ever added. So this is an open-addressing hash table of
-    // offsets from that base, in units of 8 bytes, where zero means an empty bucket.
-    struct StaticAtoms {
-        static constexpr unsigned shift = 3;
-        const uint32_t* entries { nullptr };
-        uint32_t mask { 0 }; // One less than how many places there are, which is a power of two.
-        uintptr_t base { 0 };
-
-        explicit operator bool() const { return !!entries; }
-        static unsigned next(unsigned place, unsigned& probes, unsigned mask) { return (place + ++probes) & mask; }
-        template<typename HashTranslator, typename T> StringImpl* find(const T& value) const
-        {
-            unsigned probes = 0;
-            for (unsigned place = HashTranslator::hash(value) & mask;; place = next(place, probes, mask)) {
-                uint32_t entry = entries[place];
-                if (!entry)
-                    return nullptr;
-                auto* string = reinterpret_cast<StringImpl*>(base + (static_cast<uintptr_t>(entry) << shift));
-                if (HashTranslator::equal(StringEntry { string }, value))
-                    return string;
-            }
-        }
-    };
-    const StaticAtoms& staticAtoms() const LIFETIME_BOUND { return m_staticAtoms; }
-    void setStaticAtoms(const StaticAtoms& atoms) { m_staticAtoms = atoms; }
-
 private:
     StringTableImpl m_table;
-    StaticAtoms m_staticAtoms;
 };
 
 }

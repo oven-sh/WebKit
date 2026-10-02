@@ -11,7 +11,7 @@ Every .cpp outside aot/ that differs from <base commit> is checked for syntax on
 <build directory> (which needs a compile_commands.json) minus the precompiled header.
 
 --headers   instead, every changed header outside aot/ is included on its own after config.h: is it self-contained?
---gate-off  with ENABLE(AOT) and BENABLE(STATIC_REGION) forced off, as on the platforms without a back end. (Forcing them on the
+--gate-off  with ENABLE(AOT) forced off, as on the platforms without a back end. (Forcing them on the
             command line means something here because no precompiled header was built with the other value.)
 
 Run all four combinations before pushing. Errors on lines that the branch adds are the branch's. The rest are shown apart: some
@@ -81,7 +81,7 @@ def main():
     # (Without -fno-color-diagnostics the errors below would not be recognized, and the check would always pass.)
     extra = ["-fsyntax-only", "-ferror-limit=8", "-fno-color-diagnostics"]
     if arguments.gate_off:
-        extra += ["-DENABLE_AOT=0", "-DBENABLE_STATIC_REGION=0"]
+        extra += ["-DENABLE_AOT=0"]
 
     suffix = ".h" if arguments.headers else ".cpp"
     changed = git("diff", "--name-only", arguments.base, "HEAD", "--", *(f"Source/{library}" for library in LIBRARIES)).split()

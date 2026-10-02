@@ -524,7 +524,6 @@ void initialize()
 {
     static std::once_flag onceKey;
     std::call_once(onceKey, [] {
-        StringImpl::constructEmpty();
 #if ENABLE(CONJECTURE_ASSERT)
         wtfConjectureAssertIsEnabled = !!getenv("ENABLE_WEBKIT_CONJECTURE_ASSERT");
 #endif

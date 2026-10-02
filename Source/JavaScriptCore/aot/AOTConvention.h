@@ -65,7 +65,7 @@ struct Convention {
 JS_EXPORT_PRIVATE Convention conventionOf(UnlinkedCodeBlock*);
 
 // The address of a function's code and, in the bits above the address, what is needed to call it without knowing anything else
-// about it. In an executable of the static heap, which is made before anyone knows where the code will be mapped, the offset of
+// about it. In an executable, as in the file, which is written before anyone knows where the code will be mapped, the offset of
 // the function in the image's code takes the place of the address. Adding Instance::code to such a word makes it one with an address.
 struct EntryWord {
     static constexpr unsigned shiftOfNumberOfParameters = 48;

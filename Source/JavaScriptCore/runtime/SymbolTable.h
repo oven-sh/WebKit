@@ -701,7 +701,7 @@ public:
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
     // Code is linked against clones because of what the optimizing compilers infer about one realm's scopes. Without those
-    // compilers, a table in the static heap can be used directly: it has what a clone has, infers nothing, and costs nothing.
+    // compilers, a table of a program that was compiled ahead of time is used directly: it has what a clone has, and infers nothing.
     // For a table that is created when a program is built: drops the names that nothing will ever look up. (The code that uses a
     // scope knows the offsets of its variables.)
     void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
@@ -724,7 +724,20 @@ public:
         }
         m_map = WTF::move(kept);
     }
-    bool isSharedAcrossRealms() const { return StaticHeap::needsNoLocking(this); }
+    // All that one without names says. Nothing if it says more than that.
+    std::optional<uint64_t> whatIsSaidWithoutNames() const
+    {
+        if (!m_map.isEmpty() || m_arguments || m_rareData)
+            return std::nullopt;
+        return static_cast<uint64_t>(m_maxScopeOffset.offsetUnchecked()) << 8 | m_usesSloppyEval << 4 | m_nestedLexicalScope << 3 | m_scopeType;
+    }
+    bool isSharedAcrossRealms() const { return m_isSharedAcrossRealms; }
+    void becomeSharedAcrossRealms(VM& vm)
+    {
+        m_isSharedAcrossRealms = true;
+        // (Whether it only ever has one scope would be found out by remembering the scope.)
+        m_singleton.invalidate(vm, StringFireDetail("It is shared by every realm"));
+    }
 
     // For a clone, when the code it was made for has been generated or decoded again (CodeBlock::setConstantRegisters):
     // true if cloneScopePart() of `original` would describe the same scope, so environments made by the new code can go
@@ -795,6 +808,7 @@ private:
     unsigned m_usesSloppyEval : 1;
     unsigned m_nestedLexicalScope : 1; // Non-function LexicalScope.
     unsigned m_scopeType : 3; // ScopeType
+    unsigned m_isSharedAcrossRealms : 1 { 0 };
     PropagateCloneInvalidationToOriginal m_propagateCloneInvalidationToOriginal : 1 { PropagateCloneInvalidationToOriginal::No };
     unsigned m_cachedEntriesScopePartOnly : 1 { 0 };
 

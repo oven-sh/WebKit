@@ -119,10 +119,8 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         RELEASE_AND_RETURN(throwScope, error.toErrorObject(globalObject, source()));
 
 #if ENABLE(AOT)
-    if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedCodeBlock) && !usesStaticExecutables()) {
-        AOT::Instance::ensure(globalObject).setTopLevelExecutableOf(provider, this);
-        setUsesStaticExecutables();
-    }
+    if (unlinkedCodeBlock->isWithoutCode())
+        AOT::Instance::ensure(globalObject).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
 #endif
 
     JSValue nextPrototype = globalObject->getPrototypeDirect();

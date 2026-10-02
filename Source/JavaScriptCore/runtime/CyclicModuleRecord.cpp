@@ -28,7 +28,6 @@
 
 #include "AOTImage.h"
 #include "AOTRuntime.h"
-#include "StaticHeap.h"
 
 #include "BuiltinNames.h"
 #include "Interpreter.h"
@@ -459,14 +458,14 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 21. For each element d of varDeclarations, do
     // While the symbol table's entries are still in the bytecode cache nothing watches them, and where the variables are is known
     // without their names.
-    // (Likewise with a table that was made when the program was built. That may not so much as have the names: StaticHeap keeps those that something can ask for.
-    // With compiler threads about, the environment's table is a clone of it in the ordinary heap, with the same layout: SymbolTable::isSharedAcrossRealms().)
-    bool isTableOfStaticHeap = StaticHeap::contains(unlinkedCodeBlock);
-    bool initializeVarsByOffset = symbolTable->hasCachedEntriesPending() || isTableOfStaticHeap;
+    // (Likewise in a program that was compiled ahead of time. The table may not so much as have the names: only those that something
+    // can ask for are kept.)
+    bool isCompiledAheadOfTime = unlinkedCodeBlock->isWithoutCode();
+    bool initializeVarsByOffset = symbolTable->hasCachedEntriesPending() || isCompiledAheadOfTime;
     if (initializeVarsByOffset) {
         for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)
             env->variableAt(ScopeOffset(unlinkedCodeBlock->firstVarScopeOffset() + i)).setUndefined();
-        if (Options::validatePrelinkedModuleInfo() && !isTableOfStaticHeap) [[unlikely]] {
+        if (Options::validatePrelinkedModuleInfo() && !isCompiledAheadOfTime) [[unlikely]] {
             unsigned found = 0;
             for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
                 SymbolTableEntry::Fast entry = symbolTable->get(variable.key.get());
@@ -520,7 +519,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         UnlinkedFunctionExecutable* unlinkedFunctionExecutable = staticExecutable ? nullptr : unlinkedCodeBlock->functionDecl(i);
         const Identifier& name = staticExecutable ? staticExecutable->name() : unlinkedFunctionExecutable->name();
         std::optional<ScopeOffset> whereItIs;
-        if (auto* slots = isTableOfStaticHeap ? unlinkedCodeBlock->heapAllocatedFunctionDeclSlots() : nullptr; slots && i < slots->size())
+        if (auto* slots = isCompiledAheadOfTime ? unlinkedCodeBlock->heapAllocatedFunctionDeclSlots() : nullptr; slots && i < slots->size())
             whereItIs = slots->at(i);
         VarOffset offset = whereItIs ? VarOffset(*whereItIs) : symbolTable->get(name.impl()).varOffset();
         ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
@@ -537,7 +536,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             SourceParseMode parseMode = executable->parseMode();
             JSFunction* function = nullptr;
 #if ENABLE(AOT)
-            if (StaticHeap::contains(executable)) [[unlikely]]
+            if (executable->hasAOTEntry()) [[unlikely]]
                 function = AOT::Instance::ensure(moduleLoader()).makeFunction(executable, env);
             else
 #endif

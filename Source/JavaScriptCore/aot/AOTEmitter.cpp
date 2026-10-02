@@ -58,10 +58,7 @@ LValue Emitter::changing32(ptrdiff_t offset)
 
 LValue Emitter::structureWithID(LValue structureID)
 {
-    // (In an image the base is the constant structureIDBaseOfImages. Code that is compiled at run time loads the actual base.)
-    if (usesStubs)
-        return m_out.bitOr(m_out.zeroExtPtr(structureID), m_out.constIntPtr(structureIDBaseOfImages));
-    return m_out.bitOr(m_out.zeroExtPtr(structureID), entry(Entry::StructureIDBase));
+    return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedPointer(Instance::offsetOfStructureIDBase()));
 }
 
 template<typename Functor>
@@ -735,7 +732,7 @@ void generateHelper(CCallHelpers& jit, Stub stub)
     helpers.build(stub);
     for (Value* value : proc.values()) {
         if (value->hasInt64())
-            RELEASE_ASSERT_WITH_MESSAGE(static_cast<uint64_t>(value->asInt64()) == structureIDBaseOfImages || static_cast<uint64_t>(value->asInt64()) < 4 * GB || static_cast<uint64_t>(value->asInt64()) >= (1ULL << 47), "An address in the code of a helper");
+            RELEASE_ASSERT_WITH_MESSAGE(static_cast<uint64_t>(value->asInt64()) < 4 * GB || static_cast<uint64_t>(value->asInt64()) >= (1ULL << 47), "An address in the code of a helper");
     }
     prepareForGeneration(proc);
     jit.setOopsIsJustABreakpoint();

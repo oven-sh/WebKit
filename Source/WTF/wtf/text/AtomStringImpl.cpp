@@ -77,39 +77,10 @@ static ALWAYS_INLINE StringTableImpl& stringTable()
     return Thread::currentSingleton().atomStringTable()->table();
 }
 
-static ALWAYS_INLINE const AtomStringTable::StaticAtoms& staticAtoms()
-{
-    return Thread::currentSingleton().atomStringTable()->staticAtoms();
-}
-
-// What the table does not have may be in the table of static atoms (AtomStringTable::staticAtoms()), and then that is what goes
-// into the table. So that one is looked in once for each atom that is new to the thread, and never for one that is not.
-template<typename T, typename HashTranslator>
-struct WithStaticAtoms {
-    static unsigned hash(const T& value) { return HashTranslator::hash(value); }
-    static bool equal(AtomStringTable::StringEntry const& entry, const T& value) { return HashTranslator::equal(entry, value); }
-    static void translate(AtomStringTable::StringEntry& location, const T& value, unsigned hash)
-    {
-        if (auto& atoms = staticAtoms()) [[unlikely]] {
-            if (StringImpl* atom = atoms.template find<HashTranslator>(value)) {
-                location = atom;
-                return;
-            }
-        }
-        HashTranslator::translate(location, value, hash);
-    }
-};
-
-struct ExistingStringTranslator {
-    static unsigned hash(StringImpl* string) { return string->hash(); }
-    static bool equal(AtomStringTable::StringEntry const& entry, StringImpl* string) { return WTF::equal(entry.get(), string); }
-    static void translate(AtomStringTable::StringEntry& location, StringImpl* string, unsigned) { location = string; }
-};
-
 template<typename T, typename HashTranslator>
 static inline Ref<AtomStringImpl> addToStringTable(AtomStringTableLocker&, StringTableImpl& atomStringTable, const T& value)
 {
-    auto addResult = atomStringTable.add<WithStaticAtoms<T, HashTranslator>>(value);
+    auto addResult = atomStringTable.add<HashTranslator>(value);
 
     // If the string is newly-translated, then we need to adopt it.
     // The boolean in the pair tells us if that is so.
@@ -426,10 +397,12 @@ Ref<AtomStringImpl> AtomStringImpl::addSlowCase(StringImpl& string)
     ASSERT_WITH_MESSAGE(!string.isAtom(), "AtomStringImpl should not hit the slow case if the string is already an atom.");
 
     AtomStringTableLocker locker;
-    auto addResult = stringTable().add<WithStaticAtoms<StringImpl*, ExistingStringTranslator>>(&string);
+    auto addResult = stringTable().add(&string);
 
-    if (addResult.isNewEntry && addResult.iterator->get() == &string)
+    if (addResult.isNewEntry) {
+        ASSERT(addResult.iterator->get() == &string);
         string.setIsAtom(true);
+    }
 
     return *uncheckedDowncast<AtomStringImpl>(addResult.iterator->get());
 }
@@ -450,9 +423,10 @@ Ref<AtomStringImpl> AtomStringImpl::addSlowCase(Ref<StringImpl>&& string)
     ASSERT_WITH_MESSAGE(!string->isAtom(), "AtomStringImpl should not hit the slow case if the string is already an atom.");
 
     AtomStringTableLocker locker;
-    auto addResult = stringTable().add<WithStaticAtoms<StringImpl*, ExistingStringTranslator>>(string.ptr());
+    auto addResult = stringTable().add(string.ptr());
 
-    if (addResult.isNewEntry && addResult.iterator->get() == string.ptr()) {
+    if (addResult.isNewEntry) {
+        ASSERT(addResult.iterator->get() == string.ptr());
         string->setIsAtom(true);
         return uncheckedDowncast<AtomStringImpl>(WTF::move(string));
     }
@@ -480,11 +454,12 @@ Ref<AtomStringImpl> AtomStringImpl::addSlowCase(AtomStringTable& stringTable, St
     ASSERT_WITH_MESSAGE(!string.isAtom(), "AtomStringImpl should not hit the slow case if the string is already an atom.");
 
     AtomStringTableLocker locker;
-    // (The table is the thread's: JSC gives its VM's, which it makes the thread's while the VM is entered.)
-    auto addResult = stringTable.table().add<WithStaticAtoms<StringImpl*, ExistingStringTranslator>>(&string);
+    auto addResult = stringTable.table().add(&string);
 
-    if (addResult.isNewEntry && addResult.iterator->get() == &string)
+    if (addResult.isNewEntry) {
+        ASSERT(addResult.iterator->get() == &string);
         string.setIsAtom(true);
+    }
 
     return *uncheckedDowncast<AtomStringImpl>(addResult.iterator->get());
 }
@@ -524,10 +499,6 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUpSlowCase(StringImpl& string)
     auto iterator = atomStringTable.find(&string);
     if (iterator != atomStringTable.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
-    if (auto& atoms = staticAtoms()) [[unlikely]] {
-        if (StringImpl* atom = atoms.find<ExistingStringTranslator>(&string))
-            return uncheckedDowncast<AtomStringImpl>(atom);
-    }
     return nullptr;
 }
 
@@ -550,10 +521,6 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUp(std::span<const Latin1Character> c
     auto iterator = table.find<Latin1BufferTranslator>(buffer);
     if (iterator != table.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
-    if (auto& atoms = staticAtoms()) [[unlikely]] {
-        if (StringImpl* atom = atoms.find<Latin1BufferTranslator>(buffer))
-            return uncheckedDowncast<AtomStringImpl>(atom);
-    }
     return nullptr;
 }
 
@@ -566,10 +533,6 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUp(std::span<const char16_t> characte
     auto iterator = table.find<UTF16BufferTranslator>(buffer);
     if (iterator != table.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
-    if (auto& atoms = staticAtoms()) [[unlikely]] {
-        if (StringImpl* atom = atoms.find<UTF16BufferTranslator>(buffer))
-            return uncheckedDowncast<AtomStringImpl>(atom);
-    }
     return nullptr;
 }
 

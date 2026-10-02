@@ -1146,9 +1146,6 @@ private:
     Seconds m_totalGCTime;
     
     uintptr_t m_barriersExecuted { 0 };
-public:
-    void* m_placeOfNextCell { nullptr }; // See StaticHeap::tryAllocateCellSlow().
-private:
     
     CurrentThreadState* m_currentThreadState { nullptr };
     Thread* m_currentThread { nullptr }; // It's OK if this becomes a dangling pointer.

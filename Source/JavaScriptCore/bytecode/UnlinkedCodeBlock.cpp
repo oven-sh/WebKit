@@ -105,10 +105,14 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Locker locker { thisObject->cellLock() };
     if (visitor.isFirstVisit())
         thisObject->m_age = std::min<unsigned>(static_cast<unsigned>(thisObject->m_age) + 1, maxAge);
-    for (auto& barrier : thisObject->m_functionDecls)
-        visitor.append(barrier);
-    for (auto& barrier : thisObject->m_functionExprs)
-        visitor.append(barrier);
+    for (auto& barrier : thisObject->m_functionDecls) {
+        if (!hasNumberOfExecutable(barrier)) [[likely]]
+            visitor.append(barrier);
+    }
+    for (auto& barrier : thisObject->m_functionExprs) {
+        if (!hasNumberOfExecutable(barrier)) [[likely]]
+            visitor.append(barrier);
+    }
     visitor.appendValues(thisObject->m_constantRegisters.span());
     // Borrowed (cache-backed) instruction streams and expression info count here as if generated, so the collector
     // paces a program the same whether or not its bytecode came from a cache; estimatedSize() below reports what is owned.
@@ -182,28 +186,14 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
     return *m_expressionInfo;
 }
 
-void UnlinkedCodeBlock::leaveToStaticHeap(bool rareDataToo, bool identifiersAndConstantsAreCopied)
+FunctionExecutable* UnlinkedCodeBlock::executableWithNumberIn(const WriteBarrier<UnlinkedFunctionExecutable>& entry) const
 {
-    auto forget = [](auto& vector) {
-        new (NotNull, &vector) std::remove_reference_t<decltype(vector)>();
-    };
-    // Frees the memory without destroying the elements, which the copy now owns.
-    auto free = [&](auto& vector) {
-        static_assert(sizeof(vector) == sizeof(void*));
-        void* storage = *std::bit_cast<void**>(&vector);
-        forget(vector);
-        if (storage && identifiersAndConstantsAreCopied)
-            fastFree(storage);
-    };
-    free(m_identifiers);
-    free(m_constantRegisters);
-    forget(m_functionDecls);
-    forget(m_functionExprs);
-    // (Or it goes now: it may refer to strings of the static heap, which is not going to be there when this is collected.)
-    if (rareDataToo)
-        (void)m_rareData.release();
-    else
-        m_rareData = nullptr;
+#if ENABLE(AOT)
+    return AOT::ProgramOfVM::of(vm())->executable(static_cast<uint32_t>(std::bit_cast<uintptr_t>(entry) >> 1));
+#else
+    UNUSED_PARAM(entry);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)

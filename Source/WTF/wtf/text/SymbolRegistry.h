@@ -47,15 +47,7 @@ public:
 
     void remove(RegisteredSymbolImpl&);
 
-    // Symbols that exist before this registry does, are immortal, and do not belong to it until they are first requested: those of
-    // another registry, all static (becomeStatic()). That registry is only read. It has to be set before this registry has a
-    // symbol.
-    void setStaticRegistry(const SymbolRegistry* registry) { m_staticRegistry = registry; }
-    WTF_EXPORT_PRIVATE void becomeStatic(); // The registry must be in memory that is never freed. It is immutable from now on.
-    unsigned size() const { return m_table.size(); }
-
 private:
-    const SymbolRegistry* m_staticRegistry { nullptr };
     UncheckedKeyHashSet<RefPtr<StringImpl>> m_table;
     Type m_symbolType;
 };

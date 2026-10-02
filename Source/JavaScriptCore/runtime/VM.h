@@ -183,6 +183,7 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 
 #if ENABLE(FTL_JIT)
 namespace AOT {
+class ProgramOfVM;
 class RuntimeTable;
 struct Instance;
 }
@@ -256,17 +257,6 @@ private:
 
 enum VMIdentifierType { };
 using VMIdentifier = AtomicObjectIdentifier<VMIdentifierType>;
-
-class VM;
-class MakingBuiltinsFor {
-    WTF_MAKE_NONCOPYABLE(MakingBuiltinsFor);
-public:
-    inline MakingBuiltinsFor(VM&, JSGlobalObject*);
-    inline ~MakingBuiltinsFor();
-private:
-    VM& m_vm;
-    JSGlobalObject* m_before;
-};
 
 class VM : public ThreadSafeRefCountedWithSuppressingSaferCPPChecking<VM> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VM, VM);
@@ -511,11 +501,10 @@ public:
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
 #endif
     Vector<AOT::Instance*, 1> m_aotInstances;
+    uintptr_t m_structureIDBase { 0 }; // JSC::structureIDBase(), where code that was compiled ahead of time can find it from a cell.
+    static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VM, m_structureIDBase); }
     Vector<AOT::Instance*> m_aotInstancesToDestroy;
-    void* m_staticHeapOfVM { nullptr }; // See StaticHeap::isUsedBy().
-    // The realm that builtins are currently being created for, if known (BuiltinExecutables::staticExecutableFor()).
-    JSGlobalObject* m_realmForBuiltins { nullptr };
-    Vector<FunctionExecutable*> m_builtinsOfStaticHeap; // What it has been given, by BuiltinCodeIndex. The collector has nothing to do with them.
+    std::unique_ptr<AOT::ProgramOfVM> m_aotProgram;
 
     // How this VM's parser and bytecode generator shape the code they produce. Each starts as the option of the same name. A VM that
     // generates bytecode to be compiled ahead of time sets them for itself, so that a build does not change how the rest of its process
@@ -1619,18 +1608,6 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
-
-inline MakingBuiltinsFor::MakingBuiltinsFor(VM& vm, JSGlobalObject* realm)
-    : m_vm(vm)
-    , m_before(vm.m_realmForBuiltins)
-{
-    vm.m_realmForBuiltins = realm;
-}
-
-inline MakingBuiltinsFor::~MakingBuiltinsFor()
-{
-    m_vm.m_realmForBuiltins = m_before;
-}
 
 } // namespace JSC
 

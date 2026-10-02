@@ -459,16 +459,6 @@
 #define BUSE_PRECOMPUTED_CONSTANTS_VMPAGE64K 1
 #endif
 
-/* BENABLE(STATIC_REGION): memory at the same addresses in every process (StaticRegion), for programs that are compiled ahead of
-   time. Where ENABLE(AOT) of wtf/PlatformEnable.h may be on. (Under ASAN on Linux those addresses are its shadow memory's.) */
-#if !defined(BENABLE_STATIC_REGION)
-#if BCPU(ARM64) && (BOS(DARWIN) || (BOS(LINUX) && !defined(__ANDROID__) && !BASAN_ENABLED))
-#define BENABLE_STATIC_REGION 1
-#else
-#define BENABLE_STATIC_REGION 0
-#endif
-#endif
-
 /* We only export the mallocSize and mallocGoodSize APIs if they're supported by the SystemHeap allocator (currently only Darwin) and the current bmalloc allocator (currently only libpas). */
 #if BUSE(LIBPAS) && BOS(DARWIN)
 #define BENABLE_MALLOC_SIZE 1

@@ -157,6 +157,13 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(CallBoundFunction) \
     /* Called by a function that finds it has not been linked to the realm yet. Preserves every register. */ \
     v(LinkFunction) \
+    /* T9 = the number of one of the program's constants, which it returns. Preserves every other register but T11 to T15 and */ \
+    /* the assembler's scratch registers. */ \
+    v(Constant) \
+    /* The same, for the number of a JSTemplateObjectDescriptor: returns the instance's template object. */ \
+    v(TemplateObject) \
+    /* A0 === the program's constant whose number is in T9, which is a string literal that is 8-bit and not empty. */ \
+    v(IsStringEqualToConstant) \
     /* Calls to C++. T9 = Entry * 8, with arguments where the C++ ABI expects them. The Plain variants are for operations that */ \
     /* neither throw nor walk the stack. In the With variants the stub supplies the first argument. */ \
     v(OperationValue) \

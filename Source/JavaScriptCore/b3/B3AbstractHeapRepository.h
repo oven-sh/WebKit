@@ -36,11 +36,8 @@ namespace JSC::B3 {
 
 #if ENABLE(AOT)
 #define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro) \
-    macro(AOTData_constants, AOT::Data::offsetOfConstants(), Mutability::Immutable) \
-    macro(AOTData_identifiers, AOT::Data::offsetOfIdentifiers(), Mutability::Immutable) \
     macro(AOTData_slotEpoch, AOT::Data::offsetOfSlotEpoch(), Mutability::Mutable) \
     macro(AOTInstance_infos, AOT::Instance::offsetOfInfos(), Mutability::Immutable) \
-    macro(AOTInstance_constantsOfProgram, AOT::Instance::offsetOfConstantsOfProgram(), Mutability::Immutable) \
     macro(AOTInstance_sharedData, AOT::Instance::offsetOfSharedData(), Mutability::Immutable) \
     macro(AOTInstance_globalObject, AOT::Instance::offsetOfGlobalObject(), Mutability::Immutable) \
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
@@ -50,7 +47,6 @@ namespace JSC::B3 {
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
     macro(AOTInstance_states, AOT::Instance::offsetOfStates(), sizeof(uint32_t)) \
-    macro(AOTConstants, 0, sizeof(EncodedJSValue)) \
     macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
     macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
     macro(AOTIdentifiers, 0, sizeof(void*)) \

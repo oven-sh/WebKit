@@ -469,8 +469,7 @@ const DeclaredNamesLink* declaredNamesFor(UnlinkedCodeBlock*); // Any thread. Va
 void forgetDeclaredNames();
 
 // Bytecode refers to an identifier by index. Normally that is an index into the function's own identifier table. If the whole
-// program's identifiers have been numbered, all functions share one table. The shared table is built by StaticHeap, so such code
-// can only run with a static heap.
+// program's identifiers have been numbered, all functions share one table (ProgramOfVM::identifiers()).
 using NumbersOfIdentifiers = UncheckedKeyHashMap<UniquedStringImpl*, uint32_t>;
 JS_EXPORT_PRIVATE void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers*); // Not during compilation.
 const NumbersOfIdentifiers* numbersOfIdentifiersOfProgram();

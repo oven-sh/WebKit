@@ -191,8 +191,6 @@ public:
     // The ID that an AOT::Image uses for this source. Zero: none.
     uint32_t aotModuleID() const { return m_aotModuleID; }
     void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
-    // Makes the provider immutable and immortal, and its strings static, so that it can be shared between threads.
-    JS_EXPORT_PRIVATE void becomeShareableBetweenThreads();
     // A program that was compiled ahead of time can be built without its source text. source() then has the length of the original
     // text, so that offsets into it stay valid, but its contents must not be read.
     bool hasNoText() const { return m_hasNoText; }

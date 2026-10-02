@@ -27,7 +27,7 @@
 #include "config.h"
 #include "Structure.h"
 
-#include "StaticHeap.h"
+#include "AOTProgramData.h"
 
 #include "BrandedStructure.h"
 #include "BuiltinNames.h"
@@ -1331,15 +1331,20 @@ void TypedLayoutTable::setFields(const uint32_t* index, const Field* field, cons
     s_fields = field;
 }
 
-const TypedLayoutTable::Field* TypedLayoutTable::findField(uint16_t typedLayoutID, UniquedStringImpl* name)
+const TypedLayoutTable::Field* TypedLayoutTable::findField(VM& vm, uint16_t typedLayoutID, UniquedStringImpl* name)
 {
     auto names = fieldsOf(typedLayoutID);
     if (names.empty())
         return nullptr;
-    // (Every name of the program is an atom that every thread has.)
-    UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
-    if (!identifiers)
+#if ENABLE(AOT)
+    auto* program = AOT::ProgramOfVM::of(vm);
+    if (!program)
         return nullptr;
+    auto identifier = [&](uint32_t number) { return program->identifier(number); };
+#else
+    UNUSED_PARAM(vm);
+    auto identifier = [](uint32_t) -> UniquedStringImpl* { return nullptr; };
+#endif
     // (Code that knows the slot of a property does not need this: see Structure::fieldIDInSlot() and fieldWithID(). This is for
     // when a property is added to a Structure, or an object is converted to the typed layout.)
     // The fields are sorted by hash (ImageBuilder::finish()).
@@ -1351,14 +1356,14 @@ const TypedLayoutTable::Field* TypedLayoutTable::findField(uint16_t typedLayoutI
         size_t high = names.size();
         while (low < high) {
             size_t middle = low + (high - low) / 2;
-            if (identifiers[names[middle].identifier]->existingHash() < hash)
+            if (identifier(names[middle].identifier)->existingHash() < hash)
                 low = middle + 1;
             else
                 high = middle;
         }
         names = names.subspan(low);
         for (auto& entry : names) {
-            UniquedStringImpl* candidate = identifiers[entry.identifier];
+            UniquedStringImpl* candidate = identifier(entry.identifier);
             if (candidate == name)
                 return &entry;
             if (candidate->existingHash() != hash)
@@ -1367,7 +1372,7 @@ const TypedLayoutTable::Field* TypedLayoutTable::findField(uint16_t typedLayoutI
         return nullptr;
     }
     for (auto& entry : names) {
-        if (identifiers[entry.identifier] == name)
+        if (identifier(entry.identifier) == name)
             return &entry;
     }
     return nullptr;
@@ -1439,7 +1444,7 @@ void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, u
             m_fieldIDInSlot[offset] = 0;
         return;
     }
-    auto* field = TypedLayoutTable::findField(m_typedLayoutID, name);
+    auto* field = TypedLayoutTable::findField(vm(), m_typedLayoutID, name);
     if (!field || field->slot >= numberOfSlotsWithFieldIDs)
         return;
     // (If the property is anywhere else, an empty slot does not mean that the object lacks it. And a slot that has held another

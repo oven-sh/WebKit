@@ -1101,7 +1101,6 @@ void JSGlobalObject::init(VM& vm)
     ASSERT(vm.traps().isDeferringTermination());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    MakingBuiltinsFor makingBuiltinsFor(vm, this);
 
     convertToDictionary(vm);
 
@@ -2451,9 +2450,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         this->haveABadTime(vm);
 
 #if ENABLE(AOT)
-    // Its builtin functions have AOT code (StaticHeap::engineBuiltinFor()), which finds the instance through the VM. Loading a module of
+    // Its builtin functions have AOT code (AOT::ProgramOfVM::engineBuiltinFor()), which finds the instance through the VM. Loading a module of
     // the program would make the instance, but a Worker may run without loading one.
-    if (StaticHeap::hasExecutablesOfFunctions(vm) && !BytecodeOrderRecorder::ofVM(vm))
+    if (AOT::ProgramData::get() && !BytecodeOrderRecorder::ofVM(vm))
         AOT::Instance::ensure(this);
 #endif
 }

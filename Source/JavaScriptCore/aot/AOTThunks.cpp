@@ -108,17 +108,10 @@ void branchIfNotObjectValue(CCallHelpers& jit, GPRReg value, JumpList& slowCases
     slowCases.append(jit.branchIfNotObject(value));
 }
 
-// Loads one of the calling function's identifiers.
+// Loads one of the program's identifiers. Null: nothing has asked for it yet (ProgramOfVM::identifier()).
 void loadIdentifier(CCallHelpers& jit, GPRReg index, GPRReg result)
 {
-    // The calling function is identified by the stub's return address.
-    jit.loadPtr(Address(GPRInfo::callFrameRegister, CallFrame::returnPCOffset()), scratch4);
-    loadIndexOfFunctionAt(jit, scratch4);
-    static_assert(sizeof(FunctionInfo) == 32);
-    jit.lshiftPtr(indexOfFunctionGPR, TrustedImm32(5), scratch4);
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfInfos()), result);
-    jit.addPtr(scratch4, result);
-    jit.loadPtr(Address(result, FunctionInfo::offsetOfIdentifiers()), result);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfIdentifiersOfProgram()), result);
     jit.zeroExtend32ToWord(index, scratch4);
     jit.loadPtr(BaseIndex(result, scratch4, CCallHelpers::TimesEight), result);
 }
@@ -197,6 +190,7 @@ void generateFrontEndGetById(CCallHelpers& jit)
     branchIfSlotIsStillOfUse(jit, argument3, slowCases);
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadIdentifier(jit, argument2, scratch0);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
     emitMegamorphicLoad(jit, argument1, scratch0, slowCases);
     slowCases.link(&jit);
     tailCall(jit, Entry::RawGetById);
@@ -220,6 +214,7 @@ void generateFrontEndPutById(CCallHelpers& jit)
     branchIfSlotIsStillOfUse(jit, argument4, slowCases);
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadIdentifier(jit, argument3, scratch0);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
     emitMegamorphicStore(jit, argument1, scratch0, argument2, slowCases);
     slowCases.link(&jit);
     tailCall(jit, Entry::RawPutById);
@@ -496,6 +491,7 @@ void generateFrontEndInById(CCallHelpers& jit)
     JumpList slowCases;
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadIdentifier(jit, argument2, scratch0);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
     loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
     jit.load32(Address(argument1, JSCell::structureIDOffset()), scratch1);
     jit.extractUnsignedBitfield32(scratch1, TrustedImm32(MegamorphicCache::structureIDHashShift1), TrustedImm32(32 - MegamorphicCache::structureIDHashShift1), scratch2);

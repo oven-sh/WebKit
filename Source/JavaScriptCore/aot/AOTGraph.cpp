@@ -2983,9 +2983,15 @@ private:
             auto instruction = m_instructions.at(lastOffset);
             OpcodeID opcode = instruction->opcodeID();
             if (isBranch(opcode)) {
+                // (The table of a switch on strings gives them in an order that differs from one run to the next.)
+                Vector<int32_t, 8> relativeOffsets;
                 extractStoredJumpTargetsForInstruction(m_codeBlock, instruction, [&](int32_t relativeOffset) {
-                    link(block, m_graph.targetFrom(block, lastOffset + relativeOffset));
+                    relativeOffsets.append(relativeOffset);
                 });
+                if (opcode == op_switch_string)
+                    std::ranges::sort(relativeOffsets);
+                for (int32_t relativeOffset : relativeOffsets)
+                    link(block, m_graph.targetFrom(block, lastOffset + relativeOffset));
                 if (!isUnconditionalBranch(opcode) && opcode != op_switch_imm && opcode != op_switch_char && opcode != op_switch_string)
                     link(block, m_graph.targetFrom(block, block->bytecodeEnd));
             } else if (!isTerminal(opcode) && !isThrow(opcode)) {

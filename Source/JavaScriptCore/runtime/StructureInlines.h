@@ -234,7 +234,7 @@ inline void Structure::cacheSpecialProperty(JSGlobalObject* globalObject, VM& vm
 inline PropertyOffset Structure::nextOffsetFor(PropertyTable* table, UniquedStringImpl* name)
 {
     if (m_typedLayoutID) [[unlikely]] {
-        if (auto* field = TypedLayoutTable::findField(m_typedLayoutID, name); field && table->takeDeletedOffset(TypedLayoutTable::offsetInLayout(m_typedLayoutID, field->slot)))
+        if (auto* field = TypedLayoutTable::findField(vm(), m_typedLayoutID, name); field && table->takeDeletedOffset(TypedLayoutTable::offsetInLayout(m_typedLayoutID, field->slot)))
             return TypedLayoutTable::offsetInLayout(m_typedLayoutID, field->slot);
         if (TypedLayoutTable::hasTypedFields())
             return table->nextOffset(m_inlineCapacity, false, false);

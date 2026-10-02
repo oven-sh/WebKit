@@ -15,7 +15,6 @@
 #include "CodeBlock.h"
 #include "CodeCache.h"
 #include "ExecutableAllocator.h"
-#include "StaticHeap.h"
 #include "FunctionExecutable.h"
 #include "JSCBytecodeCacheVersion.h"
 #include "JSCInlines.h"
@@ -1145,8 +1144,8 @@ Vector<uint8_t> ImageBuilder::finish()
         sizeOfBlockOfQuotes = compressionBlockSize;
     }
 
-    // Code that uses the tables of a static heap cannot run without one, and the static heap already records the function of nearly
-    // every executable. So the static heap keeps the keys of the remaining functions (StaticHeap::keysOfImage()), and the key table
+    // The program data that follows the image already records the function of nearly every executable. So it keeps the keys of the
+    // remaining functions (ProgramData::keysOfImage()), and the key table
     // is placed after the image.
     bool keysAreOmitted = !!m_numberOfIdentifiersOfProgram;
     header.tableCapacity = keysAreOmitted ? 0 : capacity;
@@ -1459,6 +1458,7 @@ struct Registry {
     Lock lock;
     Vector<Image*, 2> images;
     std::atomic<bool> hasAny { false };
+    const ProgramData* programData { nullptr };
 };
 
 Registry& registry()
@@ -1484,9 +1484,15 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         || static_cast<uint64_t>(header.environmentsOffset) + static_cast<uint64_t>(header.numberOfEnvironments) * sizeof(ImageEnvironment) > header.codeOffset
         || header.codeOffset + header.codeSize > header.size)
         return nullptr;
+    // What follows it in the file.
+    const ProgramData* programData = ProgramData::tryUse(data.subspan(header.size));
+    if (!programData)
+        return nullptr;
     auto* image = new Image(data, code);
     auto& all = registry();
     Locker locker { all.lock };
+    RELEASE_ASSERT(!all.programData);
+    all.programData = programData;
     // Compiled functions embed their own index, and address lookup uses a single table, so only one image may contain code.
     for (Image* other : all.images)
         RELEASE_ASSERT(!header.codeSize || !other->header().codeSize);
@@ -1498,6 +1504,12 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         TypedLayoutTable::setFields(image->at<uint32_t>(header.fieldRangesOffset), image->at<TypedLayoutTable::Field>(header.fieldRecordsOffset), image->at<TypedLayoutTable::FieldType>(header.fieldTypesOffset), image->at<uint16_t>(header.fieldLayoutIDsOffset),
             image->at<uint8_t>(header.inlineSlotCountsOffset), image->at<uint32_t>(header.startOfFieldsOffset), image->at<uint32_t>(header.fieldsOffset), image->at<uint16_t>(header.layoutIDsByFieldIDOffset), Instance::convertToTypedLayout, header.auditsTypes);
     return image;
+}
+
+const ProgramData* ProgramData::get()
+{
+    auto& all = registry();
+    return all.hasAny.load(std::memory_order_acquire) ? all.programData : nullptr;
 }
 
 Image& Image::of(const ImageFunction& function)
@@ -1523,12 +1535,17 @@ Image* Image::withShapes()
     return nullptr;
 }
 
-uint32_t Image::selectorNamed(const StringImpl& name) const
+const Site* FunctionInfo::sitesInImage() const
+{
+    return Image::withCode()->at<Site>(sites);
+}
+
+uint32_t Image::selectorNamed(VM& vm, const StringImpl& name) const
 {
     const uint32_t* inOrder = at<uint32_t>(header().selectorsInOrderOffset);
     const ImageSelector* all = at<ImageSelector>(header().selectorsOffset);
     const uint8_t* text = at<uint8_t>(header().textOfSelectorsOffset);
-    UniquedStringImpl* const* identifiers = header().numberOfIdentifiersOfProgram ? StaticHeap::identifiersOfProgram() : nullptr;
+    ProgramOfVM* identifiers = header().numberOfIdentifiersOfProgram ? ProgramOfVM::of(vm) : nullptr;
     if (header().numberOfIdentifiersOfProgram && !identifiers)
         return 0;
     size_t low = 0;
@@ -1537,7 +1554,7 @@ uint32_t Image::selectorNamed(const StringImpl& name) const
         size_t middle = low + (high - low) / 2;
         int order;
         if (identifiers)
-            order = compareSelectors(*identifiers[inOrder[middle]], name);
+            order = compareSelectors(*identifiers->identifier(inOrder[middle]), name);
         else {
             const ImageSelector& entry = all[inOrder[middle]];
             order = compareSelectors(entry.is8Bit, { text + entry.text, static_cast<size_t>(entry.length) * (entry.is8Bit ? 1 : 2) }, name.is8Bit(), bytesOf(name));
@@ -1789,8 +1806,8 @@ const ImageFunction* Image::lookup(const ImageKey& key) const
 {
     auto& header = this->header();
     std::span<const ImageKey> table { reinterpret_cast<const ImageKey*>(m_data.data() + header.tableOffset), header.tableCapacity };
-    if (table.empty())
-        table = StaticHeap::keysOfImage();
+    if (table.empty() && ProgramData::get())
+        table = ProgramData::get()->keysOfImage();
     if (table.empty())
         return nullptr;
     unsigned mask = table.size() - 1;
@@ -1949,8 +1966,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     const ImageFunction* function = nullptr;
     ImageKey key;
     if (auto* ofFunction = dynamicDowncast<FunctionExecutable>(executable); ofFunction && ofFunction->aotEntryFor(kind) && !(kind == CodeSpecializationKind::CodeForConstruct && ofFunction->constructsByCalling())) {
-        // An executable in the static heap records the index of its function.
-        function = StaticHeap::imageFunctionOfFunction(ofFunction->aotIndexFor(kind));
+        function = ProgramData::get()->infos()[ofFunction->aotIndexFor(kind)].function();
         image = &Image::of(*function);
     } else {
         auto keyOfExecutable = imageKeyFor(executable, kind);
@@ -1975,11 +1991,10 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         uint32_t index = function->index;
         if (instance->isLinked(index) && FunctionRef { instance, index }.executable() != executable)
             return { };
-        if (const FunctionInfo& info = instance->infos[index]; info.executable() && info.executable() != executable)
+        if (const FunctionInfo& info = instance->infos[index]; info.hasExecutable() && instance->program->executable(info.oneMoreThanNumber() - 1) != executable)
             return { };
     }
 
-    // The code uses a table that only StaticHeap creates, and only for the realm that the program runs in.
     if (image->header().numberOfIdentifiersOfProgram) {
         uint32_t index = function->index;
         if (!instanceOf(scope).infos[index].sites)
@@ -2027,11 +2042,10 @@ UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int6
 {
     UseOfAOTFile result;
     auto neither = [&](const char* why) {
-        result.whyNoStaticHeap = result.whyNoImage = why;
+        result.whyNoProgramData = result.whyNoImage = why;
         return result;
     };
 #if OS(DARWIN) || OS(LINUX)
-    using Region = bmalloc::StaticRegion;
     if (!Options::useAOT())
         return neither("useAOT is off");
     auto sizeOfImage = aotImageSize(bytes);
@@ -2043,15 +2057,11 @@ UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int6
     if (offsetInFile % pageSize || offsetOfCode % pageSize || *sizeOfImage % pageSize)
         return neither("it is not on a page boundary of its file");
 
-    std::span<const uint8_t> image = bytes;
     if (*sizeOfImage >= bytes.size())
-        result.whyNoStaticHeap = "there is none";
-    else if (!Region::map(Region::Arena::Image, fileDescriptor, offsetInFile, offsetOfCode) || !StaticHeap::map(bytes.subspan(*sizeOfImage), fileDescriptor, offsetInFile + *sizeOfImage) || !StaticHeap::prepareThread())
-        result.whyNoStaticHeap = "it is for another build of the engine, or its place is taken, or the thread has atoms";
-    else {
-        result.sizeOfStaticHeap = bytes.size() - *sizeOfImage;
-        image = { reinterpret_cast<const uint8_t*>(Region::startOf(Region::Arena::Image)), bytes.size() };
-    }
+        return neither("it has no program data");
+    if (AOT::Image::hasAny())
+        return neither("the process has one already");
+    result.sizeOfProgramData = bytes.size() - *sizeOfImage;
 
     void* code = nullptr;
     if (sizeOfCode) {
@@ -2073,11 +2083,10 @@ UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int6
         mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), sizeOfCode, true, VM_PROT_READ | VM_PROT_EXECUTE);
 #endif
     }
-    if (!registerAOTImage(image, code)) {
+    if (!registerAOTImage(bytes, code)) {
         if (code)
             munmap(code, sizeOfCode);
-        result.whyNoImage = "it was compiled for another build of the engine";
-        return result;
+        return neither("it was compiled for another build of the engine");
     }
     result.sizeOfCode = sizeOfCode;
     result.code = code;
@@ -2117,13 +2126,13 @@ Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule)
     auto sizeOfImage = aotImageSize(linked.aotImage.span());
     if (!linked.payload || !sizeOfImage)
         return { };
-    StaticHeap::PositionsToKeep positions { linked.reportableSites, [](uint32_t, LineColumn, CString&, LineColumn&) { return false; } };
-    Vector<uint8_t> heap = StaticHeap::build(vm, strings.serialize().span(), linked.payload->span(), linked.entryOffsetsOfModules.span(), linked.aotImage.span(), positions, linked.reportableSites.span(), linked.variablesExportedByModules.span());
-    if (heap.isEmpty())
+    AOT::ProgramData::PositionsToKeep positions { linked.reportableSites, [](uint32_t, LineColumn, CString&, LineColumn&) { return false; } };
+    Vector<uint8_t> data = AOT::ProgramData::build(vm, strings.serialize().span(), linked.payload->span(), linked.entryOffsetsOfModules.span(), linked.aotImage.span(), positions, linked.reportableSites.span(), linked.variablesExportedByModules.span());
+    if (data.isEmpty())
         return { };
     Vector<uint8_t> file;
     file.append(linked.aotImage.span().first(*sizeOfImage));
-    file.appendVector(heap);
+    file.appendVector(data);
     return file;
 }
 

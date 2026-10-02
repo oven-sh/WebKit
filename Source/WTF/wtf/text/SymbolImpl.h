@@ -52,16 +52,6 @@ public:
 
     RegisteredSymbolImpl* asRegisteredSymbolImpl();
 
-    // StringImpl::becomeStatic(), of this and of the string whose characters these are.
-    void becomeStaticWithOwner()
-    {
-        if (m_owner && !m_owner->isStatic()) {
-            m_owner->hash();
-            m_owner->becomeStatic();
-        }
-        becomeStatic();
-    }
-
     WTF_EXPORT_PRIVATE static Ref<SymbolImpl> createNullSymbol();
     WTF_EXPORT_PRIVATE static Ref<SymbolImpl> create(StringImpl& rep);
 

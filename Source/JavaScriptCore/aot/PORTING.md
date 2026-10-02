@@ -15,14 +15,14 @@ The counts are from reading the source, not from compiling it for another CPU. E
 | Code shared by all functions: calls to unknown callees, property access, entry and exit | `AOTStubs.*`, `AOTThunks.*` | **Yes, nearly all of it** |
 | Laying the code out and resolving references | `AOTImage.cpp`, with helpers at the end of `AOTStubs.cpp` | The helpers |
 | At run time: instances, linking, caches, operations | `AOTRuntime.*`, `AOTOperations*.cpp`, `AOTInlineCaches.cpp` | No |
-| Objects made when the program is built | `heap/StaticHeap.*`, `bmalloc/StaticRegion.*` | No; see "The platform" below |
+| What a program consists of besides its code, and the engine's objects for it | `AOTProgramData.*`, `runtime/CachedTypes.*` | No |
 | The interpreter's side | `llint/LowLevelInterpreter.asm` (`virtualThunkFor`) | No: offlineasm, and it already builds everywhere |
 
 ## What assumes ARM64
 
 ### 1. The gates
 
-- `ENABLE_AOT` in `wtf/PlatformEnable.h`, and `BENABLE_STATIC_REGION` in `bmalloc/BPlatform.h`. They must agree.
+- `ENABLE_AOT` in `wtf/PlatformEnable.h`.
 - The nine `AOTLower*.cpp` are gated as whole files on `ENABLE(AOT) && CPU(ARM64)`, as are most of `AOTCompiler.cpp`, `AOTStubs.cpp` and
   `AOTThunks.cpp`. **None of that has ever been compiled for another CPU.**
 - `compileForImage()` declines everything where there is no back end. With the gates on and the back end missing, the shell runs its
@@ -86,9 +86,9 @@ A branch reaches 128 MB, which is why an image has up to 8 copies of the stubs (
 functions. A 32-bit displacement reaches 2 GB, so on x86-64 there should be one copy and no veneers: see `reach` in `AOTImage.cpp`. The
 copies are identical byte for byte, so a stub cannot know which copy it is.
 
-**The code must stay position-independent.** No PC-relative reference leaves it, the image has no absolute pointer to it, and the
-absolute addresses in it are of data in the static region. An executable of the static heap refers to its code by offset
-(`EntryWord`).
+**Nothing is at a known address.** No PC-relative reference leaves the code, and there is no absolute address in it or in the file:
+`compileForImage()` and `generateHelper()` check every constant. What the code needs it reaches from the instance register. An
+executable refers to its code by offset (`EntryWord`).
 
 ### 6. Instances
 
@@ -102,17 +102,32 @@ realm can run a program several times over. No instance, realm, VM or thread is 
 - Three stubs depend on that: `findCodeOfCallee()` (the caller's, or none and of the caller's realm: straight in; otherwise the long way),
   `generateEnterStaticFunction()` (callee, Structure, instance, or else that of its realm), and `adapt()`, which saves, switches and restores
   the register.
-- Every realm of a VM that uses the static heap has an instance from the start, because its builtins are compiled code.
+- Every realm has an instance from the start, because its builtins are compiled code.
 - A function belongs to the instance of the module whose environment it closes over (`instanceOf()`). One that closes over none is
   the realm's.
-- A RegExp of the static heap only says what to make. Each instance makes its own on first use (`Instance::regExpFor()`), through the
-  VM's cache.
 - An instance lives as long as its loader. Code that runs was entered through a frame with its callee in it, which is what keeps the
   loader alive, so **the entry adapter's frame must have the callee where the collector's scan of the stack sees it.**
 
-### 7. Odds and ends
+### 7. What belongs to whom
 
-- A StructureID becomes an address with one `movk` of the upper half of `structureIDBaseOfImages` (three places in `AOTStubs.cpp`).
+| Level | What | Where |
+| --- | --- | --- |
+| The process | The file: code, tables, `ProgramData`. Derived from the program alone, read-only, offsets and numbers only | `Image`, `ProgramData` |
+| The VM | The engine's objects for what the file describes, each made in the ordinary heap when it is first asked for: atoms, string and BigInt constants, executables, symbol tables, storage of array literals, regular expressions, source providers | `ProgramOfVM` |
+| The realm | Anything about objects: Structures of literals and known shapes, link-time constants, what is assumed of the built-in prototypes | the realm's `Instance` |
+| The instance | Module environments and records, functions, classes, template objects, inline caches | `Instance`, `Data` |
+
+**An object of the VM's refers only to primitives and to others of the VM's, never to a JSObject** (`ProgramOfVM::constant()` asserts
+it), because every realm and instance of the VM shares it.
+
+Compiled code reads two of the VM's tables itself, the constants and the identifiers. An entry is zero until it has been asked for,
+so a load of a constant is followed by a check (`Lowering::lowConstantRegister()`), and a stub that finds no identifier takes its slow
+path. It cannot be done when a function is linked: a function that is called directly, or starts cold, never is.
+
+### 8. Odds and ends
+
+- A StructureID becomes an address by adding `Instance::structureIDBase` (`structureWithID()` in `AOTStubs.cpp`). The stub that enters a function
+  from outside has no instance yet, and finds the same in the VM, through the callee's block.
 - Of the 133 methods of the macro assembler that `aot/` uses (1,941 uses), four have no definition for x86-64 or in the shared
   helpers: `extractUnsignedBitfield64` (6 uses), `div32`, `multiplySub32`, all in `AOTStubs.cpp`, and
   `convertDoubleToInt32UsingJavaScriptSemantics` in `AOTLowerCore.cpp`, which is behind a check of the CPU's features already.
@@ -121,26 +136,15 @@ realm can run a program several times over. No instance, realm, VM or thread is 
 
 ## The platform, as opposed to the CPU
 
-- **The static region** is 24 GB of addresses at a fixed place, chosen per OS in `StaticRegion.h`: beyond ASAN's shadow memory on macOS,
-  within a 39-bit address space on Linux. What comes from the file is mapped read-only, all of it (`StaticRegion::map()` cannot do
-  otherwise), so a write to it is a crash and not a bug that one thread in a hundred sees. Every process maps 256 KB of
-  `Arena::Bss`, whether or not it was compiled ahead of time, and does not start if the address is taken.
-- **The structure heap** follows the region, by a hint. No VM allocates from its first 128 KB. A static cell's Structure is there: a
-  copy of one that every VM makes for itself, made once per process (only the address of its `ClassInfo` differs from one process
-  to the next) and then read-only. `StaticHeap::contains()` covers it, so the collector treats it like any static cell.
-- **Threads.** A thread calls `StaticHeap::prepareThread()` before it has atoms, and a VM that it then creates uses the static heap. What
-  of a static cell depends on the VM (`vm()`, `heap()`, its weak references) is found through the thread, so the collector's threads say
-  which VM they work for (`StaticHeap::ThreadScope`).
-- **Page and block sizes.** `MarkedBlock::blockSize` is the larger of 16 KB and `CeilingOnPageSize`, which is 64 KB on Linux arm64 and 4 KB on
-  x86-64. A constant of 16 KB where that was meant crashed every process on Linux arm64 and nowhere else; there is a `static_assert`
-  now (`StaticHeap::offsetOfFirstStructureBlock`). An image is aligned to 16 KB in its file (`imagePageSize`, `pageSizeOfImage`), so a kernel with
-  larger pages cannot map it.
-- **Mapping** is `useAOTFile()`, for the shell and for embedders alike: the tables and the static heap at their addresses, the code
-  wherever the system puts it. An embedder says which file, and where in it.
+- **Mapping** is `useAOTFile()`, for the shell and for embedders alike. An embedder maps the file read-only wherever the system puts it and
+  says which file, and where in it. Only the code is mapped again, to be executable. Nothing else is asked of the platform: no
+  address is reserved, the allocators and WTF are as upstream has them, and a thread or a VM needs no preparation.
+- **Page sizes.** An image is aligned to 16 KB in its file (`imagePageSize`, `pageSizeOfImage`), so a kernel with larger pages cannot map its
+  code.
 
 ## An order to do it in
 
-1. Both gates on for the new CPU, the back end still missing. Everything compiles and links, in the engine and in the embedder.
+1. The gate on for the new CPU, the back end still missing. Everything compiles and links, in the engine and in the embedder.
    `compileForImage()` declines everything, so `run-tests.py` runs the tests interpreted: all pass but those that call `isAOTCompiled()`.
 2. Decide the registers (2 above).
 3. Lift the whole-file gates of `AOTLower*.cpp` and `AOTCompiler.cpp`, and make them compile.

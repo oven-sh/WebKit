@@ -70,13 +70,6 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
     }
 }
 
-RegExp* RegExp::createFromCacheWithoutCaching(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern specificPattern)
-{
-    RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, patternString, flags);
-    regExp->finishCreationFromCache(vm, numSubpatterns, WTF::move(atom), specificPattern);
-    return regExp;
-}
-
 RegExp* RegExp::createFromCache(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern specificPattern)
 {
     return vm.regExpCache()->lookupOrCreate(vm, patternString, flags, [&] {
@@ -84,13 +77,6 @@ RegExp* RegExp::createFromCache(VM& vm, const String& patternString, OptionSet<Y
         regExp->finishCreationFromCache(vm, numSubpatterns, WTF::move(atom), specificPattern);
         return regExp;
     });
-}
-
-RegExp* RegExp::createLike(VM& vm, const RegExp& other)
-{
-    if (!other.isValid() || other.m_rareData)
-        return create(vm, other.m_patternString, other.m_flags);
-    return createFromCache(vm, other.m_patternString, other.m_flags, other.m_numSubpatterns, String { other.m_atom }, other.m_specificPattern);
 }
 
 RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)

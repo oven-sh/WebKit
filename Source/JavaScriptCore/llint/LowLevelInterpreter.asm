@@ -2778,7 +2778,7 @@ macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, i
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
 .doesNotSayHowToGetIn:
-    # If it is from the static heap, the way in is the same for all of them: ExecutableBase::entrypointOfStaticCode().
+    # If it was compiled ahead of time, the way in is the same for all of them: ExecutableBase::entrypointOfStaticCode().
     loadp (ExecutableBase::m_aotEntry + which * 8)[t5], t4
     btpz t4, slowCase # When jumping to slowCase, t0, t1, t2, needs to be unmodified.
     move 0, t0

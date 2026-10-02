@@ -125,6 +125,8 @@ private:
     }
     LValue lowConstantRegister(VirtualRegister reg) { return lowConstantRegister(code(), reg); } // For an operand that BytecodeUseDef does not report as a use.
     LValue lowConstantRegister(Graph&, VirtualRegister);
+    LValue constantThroughStub(uint32_t number, Stub);
+    uint32_t numberOfConstantOfProgram(Node*); // Of a NodeKind::ConstantCell.
     // The graph that the node being lowered came from (Node::graph), which differs from m_graph for inlined code. Output always
     // goes to m_graph.
     Graph& code() { return m_code ? *m_code : m_graph; }
@@ -198,7 +200,7 @@ private:
     void atomizeIfString(Node*, LValue);
     // `this` in a function that may escape.
     static bool isThisOfEscapingFunction(Node*);
-    LValue isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
+    LValue isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String&, Node* theString);
     LValue isStringEqualToAtom(Node* valueNode, LValue value, LValue theString);
     // With Options::useAOTTypedFields(): checks a newly allocated object with this layout and these initial slot values (null for
     // empty), and leaves no slot holding a value that its field type rejects.
@@ -439,7 +441,6 @@ private:
     LValue m_callFrame { nullptr };
     LValue m_data { nullptr };
     LValue m_dataOrNull { nullptr };
-    LValue m_constants { nullptr }; // For a cold-start function: FunctionInfo::constants.
     LValue m_calleeSlot { nullptr };
     LValue m_listSlot { nullptr }; // Signature::List: the argument count and address.
     LValue m_frameRegisterStorage { nullptr };

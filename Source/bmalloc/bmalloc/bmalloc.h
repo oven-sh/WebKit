@@ -43,7 +43,6 @@ BALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #endif
 
 #if BUSE(MIMALLOC)
-#include "StaticRegion.h"
 #include "mimalloc.h"
 #endif
 
@@ -70,8 +69,6 @@ BINLINE void* tryMalloc(size_t size, CompactAllocationMode mode, HeapKind kind =
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (void* memory = StaticRegion::tryMalloc(size)) [[unlikely]]
-        return memory;
     return mi_malloc(size);
 #else
     BUNUSED(mode);
@@ -90,8 +87,6 @@ BINLINE void* malloc(size_t size, CompactAllocationMode mode, HeapKind kind = He
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (void* memory = StaticRegion::tryMalloc(size)) [[unlikely]]
-        return memory;
     void* memory = mi_malloc(size);
     RELEASE_BASSERT(memory);
     return memory;
@@ -113,8 +108,6 @@ BINLINE void* tryZeroedMalloc(size_t size, CompactAllocationMode mode, HeapKind 
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (void* memory = StaticRegion::tryMalloc(size)) [[unlikely]]
-        return memory;
     return mi_zalloc(size);
 #else
     BUNUSED(mode);
@@ -133,8 +126,6 @@ BINLINE void* zeroedMalloc(size_t size, CompactAllocationMode mode, HeapKind kin
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (void* memory = StaticRegion::tryMalloc(size)) [[unlikely]]
-        return memory;
     void* memory = mi_zalloc(size);
     RELEASE_BASSERT(memory);
     return memory;
@@ -160,8 +151,6 @@ BINLINE void* tryMemalign(size_t alignment, size_t size, CompactAllocationMode m
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (void* memory = StaticRegion::tryMalloc(size, alignment)) [[unlikely]]
-        return memory;
     return mi_malloc_aligned(size, alignment);
 #else
     BUNUSED(mode);
@@ -181,8 +170,6 @@ BINLINE void* memalign(size_t alignment, size_t size, CompactAllocationMode mode
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (void* memory = StaticRegion::tryMalloc(size, alignment)) [[unlikely]]
-        return memory;
     void* memory = mi_malloc_aligned(size, alignment);
     RELEASE_BASSERT(memory);
     return memory;
@@ -206,8 +193,6 @@ BINLINE void* tryZeroedMemalign(size_t alignment, size_t size, CompactAllocation
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (void* memory = StaticRegion::tryMalloc(size, alignment)) [[unlikely]]
-        return memory;
     return mi_zalloc_aligned(size, alignment);
 #else
     BUNUSED(mode);
@@ -230,8 +215,6 @@ BINLINE void* zeroedMemalign(size_t alignment, size_t size, CompactAllocationMod
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (void* memory = StaticRegion::tryMalloc(size, alignment)) [[unlikely]]
-        return memory;
     void* memory = mi_zalloc_aligned(size, alignment);
     RELEASE_BASSERT(memory);
     return memory;
@@ -258,12 +241,6 @@ BINLINE void* tryRealloc(void* object, size_t newSize, CompactAllocationMode mod
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (StaticRegion::contains(object)) [[unlikely]]
-        return StaticRegion::reallocate(object, newSize);
-    if (!object) {
-        if (void* memory = StaticRegion::tryMalloc(newSize)) [[unlikely]]
-            return memory;
-    }
     return mi_realloc(object, newSize);
 #else
     BUNUSED(mode);
@@ -283,15 +260,6 @@ BINLINE void* realloc(void* object, size_t newSize, CompactAllocationMode mode, 
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
     BUNUSED(kind);
-    if (StaticRegion::contains(object)) [[unlikely]] {
-        void* memory = StaticRegion::reallocate(object, newSize);
-        RELEASE_BASSERT(memory);
-        return memory;
-    }
-    if (!object) {
-        if (void* memory = StaticRegion::tryMalloc(newSize)) [[unlikely]]
-            return memory;
-    }
     void* memory = mi_realloc(object, newSize);
     RELEASE_BASSERT(memory);
     return memory;
@@ -317,8 +285,6 @@ BINLINE void free(void* object, HeapKind kind = HeapKind::Primary)
     bmalloc_deallocate_inline(object);
 #elif BUSE(MIMALLOC)
     BUNUSED(kind);
-    if (StaticRegion::contains(object)) [[unlikely]]
-        return StaticRegion::didFree(object);
     mi_free(object);
 #else
     BUNUSED(kind);

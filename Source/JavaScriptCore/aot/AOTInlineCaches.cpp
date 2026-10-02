@@ -16,7 +16,6 @@
 #include "JSCInlines.h"
 #include "MegamorphicCache.h"
 #include "ObjectPropertyConditionSet.h"
-#include "StaticHeap.h"
 #include "JSTypedArrayViewPrototype.h"
 
 namespace JSC { namespace AOT {
@@ -69,7 +68,7 @@ void makePrototypeChainWatchable(VM& vm, JSCell* base)
         Structure* structure = prototype->structure();
         if (!structure->hasMonoProto())
             return;
-        if (!structure->transitionWatchpointSetHasBeenInvalidated() || structure->isDictionary() || !structure->propertyAccessesAreCacheable() || StaticHeap::contains(prototype))
+        if (!structure->transitionWatchpointSetHasBeenInvalidated() || structure->isDictionary() || !structure->propertyAccessesAreCacheable())
             continue;
         prototype->convertToDictionary(vm);
         prototype->flattenDictionaryObject(vm);
@@ -127,7 +126,7 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     PropertyOffset offset = slot.cachedOffset();
     if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFieldIDs)
         return 0;
-    if (structure->isDictionary() || !structure->recordsPropertyNames() || structure->cannotConvertToTypedLayout() || StaticHeap::contains(structure))
+    if (structure->isDictionary() || !structure->recordsPropertyNames() || structure->cannotConvertToTypedLayout())
         return 0;
     // The same conditions as in tryCacheGetById().
     if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
@@ -145,7 +144,7 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
 // Returns false if that is not possible.
 static bool fillInTableOfPropertyNames(VM& vm, Structure* structure)
 {
-    if (!structure->recordsPropertyNames() || StaticHeap::contains(structure))
+    if (!structure->recordsPropertyNames())
         return false;
     if (structure->cannotConvertToTypedLayout())
         return true;
