@@ -1,87 +1,106 @@
 # Porting the AOT compiler to another CPU
 
-The back end targets ARM64 and runs on macOS and Linux. On every other target `ENABLE(AOT)` is off and `aot/` compiles to nothing.
-This document lists the ARM64 assumptions, where they live, and a suggested order for an x86-64 port.
+There are two back ends, ARM64 and x86-64. ARM64 runs on macOS and Linux. x86-64 has only been run on macOS under Rosetta. On every
+other target `ENABLE(AOT)` is off and `aot/` compiles to nothing.
 
-The counts below come from reading the source, not from building for another CPU. Treat them as lower bounds.
+This document says what depends on the CPU, how the two back ends differ, and how to add a third.
 
 ## Architecture
 
 | Stage | Files | CPU-dependent? |
 | --- | --- | --- |
 | Bytecode to graph, whole-program analysis | `AOTGraph.*`, `AOTProgram.*`, `AOTEscapeAnalysis.*`, `AOTTypeInference.cpp` | No |
-| Graph to B3 | `AOTLower*.cpp` | Patchpoints only |
-| B3 to machine code | `AOTCompiler.cpp`, then stock B3 and Air | Slightly |
-| Shared code: virtual calls, property access, entry and exit | `AOTStubs.*`, `AOTThunks.*` | **Almost entirely** |
+| Graph to B3 | `AOTLower*.cpp` | Which registers patchpoints name |
+| B3 to machine code | `AOTCompiler.cpp`, then stock B3 and Air | The prologue |
+| Structural stubs: calls, entries, exceptions, constants, adapters around operations | `AOTStubs.*` | Shared generators with a few conditionals |
+| Data stubs: property access, arithmetic, comparison, iteration, allocation | `AOTStubs.*`, `AOTThunks.*` | **ARM64 only, and optional** |
 | Image layout and relocation | `AOTImage.cpp`, helpers at the end of `AOTStubs.cpp` | The helpers |
 | Runtime: instances, linking, inline caches, operations | `AOTRuntime.*`, `AOTOperations*.cpp`, `AOTInlineCaches.cpp` | No |
 | Program data and the engine objects created from it | `AOTProgramData.*`, `runtime/CachedTypes.*` | No |
-| Interpreter support | `llint/LowLevelInterpreter.asm` (`virtualThunkFor`) | No (offlineasm, already builds everywhere) |
+| Interpreter support | `llint/LowLevelInterpreter.asm` (`virtualThunkFor`) | No (offlineasm) |
 
-## ARM64 assumptions
+## What depends on the CPU
 
-### 1. Build gates
+### 1. Data stubs are optional
 
-- `ENABLE_AOT` in `wtf/PlatformEnable.h`.
-- All nine `AOTLower*.cpp` files, and most of `AOTCompiler.cpp`, `AOTStubs.cpp` and `AOTThunks.cpp`, are wrapped in
-  `ENABLE(AOT) && CPU(ARM64)`. **None of that code has been compiled for another CPU.**
-- Without a back end, `compileForImage()` rejects every function. The shell then falls back to the interpreter, but an embedder's
-  build fails because the executable contains no bytecode. This is the first milestone for a port.
+`usesStubs` says whether an image contains shared stubs at all. `usesDataStubs()` says whether property access, arithmetic and the like
+go through them. Without data stubs `Lowering::isCompact()` is false everywhere: those operations are lowered to inline fast paths in B3
+with plain calls of the operations as slow paths, which is portable. Allocation helpers, stub intrinsics, per-register and per-immediate
+entry points (`thunkFor()`) and the front ends in `AOTThunks.cpp` are all off.
 
-### 2. Registers (the hard part)
+About 100 of the 150 stubs are data stubs. **A port does not need them.** x86-64 has none: `FOR_EACH_AOT_STUB_WITHOUT_DATA_STUBS` in
+`AOTStubs.cpp` lists the 42 stubs it generates, and every other stub is a breakpoint there.
 
-`AOTConvention.h` defines the calling convention. Its x86-64 branch has never been used.
+`--useAOTDataStubs=0` selects the same lowering on ARM64, and `run-tests.py` runs every test in that mode too. So most of what another
+CPU compiles is tested on ARM64, and a failure that also happens there is not in the port. The mode is part of `imageStamp()`, because
+the formats of the inline caches depend on it.
 
-The stubs (top of `AOTStubs.cpp`) use 8 argument registers, `this`, the argument count, the callee, 5 scratch registers (`T11`-`T15`)
-and 3 pinned registers (the instance and the two tag registers). That is 19 registers, not counting the frame pointer, stack pointer
-and link register.
+What this costs is code size, and speed outside loops where a data stub has a fast path that the inline lowering lacks (comparison with
+short string literals, allocation helpers, calls of common builtin methods).
 
-x86-64 has 16 registers. Excluding the stack pointer, frame pointer and the 3 pinned registers leaves 11. Using `GPRInfo`'s 6
-argument registers plus `this`, count and callee leaves **2 scratch registers where the stubs need 5.**
+### 2. Registers
 
-Settle this first. `numberOfArgumentGPRs` does not have to equal `GPRInfo::numberOfArgumentRegisters`: with 4 argument registers
-there are 4 scratch registers, and functions with more parameters use the existing `Signature::List` convention. (`EntryWord` has 4
-bits for the count.) Callers and callees both derive the convention from bytecode via `conventionOf()`, so there is one place to change.
+`AOTConvention.h` defines the calling convention and the registers that stubs may use.
 
-C++ operations take the instance as their first argument (a move from the pinned register). Operations shared with the JIT tiers
-take the global object, loaded from the instance. `takesInstance(Entry)` derives which from the signature, and the compiler asserts
-it at every call.
+| Role | ARM64 | x86-64 |
+| --- | --- | --- |
+| Arguments | `x0`-`x7` | `rdi`, `rsi`, `rdx`, `rcx` |
+| `this` | `x8` | `rax` |
+| Argument count, and the immediate of a stub (`T9`) | `x9` | `r10` |
+| Callee (`T10`) | `x10` | `r8` |
+| `T11` | `x11` | `r9` |
+| `T12`, `T13` | `x12`, `x13` | `rbx`, `r12` |
+| `T14`, `T15` | `x14`, `x15` | none (only data stubs use them) |
+| Instance, number tag, not-cell mask | as the JIT tiers | `r13`, `r14`, `r15` |
 
-Also register-specific: `functionIndexGPR` in `AOTStubs.h`; the save/restore sequences around C++ calls (`AOTStubs.cpp`, around line
-290: `x0`-`x15` in pairs, `d0`-`d7`, `d16`-`d31`); the stubs generated once per result register (`x19` and up); stores of the zero
-register.
+`numberOfArgumentGPRs` need not equal `GPRInfo::numberOfArgumentRegisters`. Functions with more parameters use `Signature::List`.
+Callers and callees both derive the convention from bytecode via `conventionOf()`.
 
-### 3. The return address is in a register
+Where a temporary is callee-saved in the C ABI, as `rbx` and `r12` are:
 
-- A leaf function with no spills has no frame. `hasNoFrame()` in `AOTCompiler.cpp` detects calls by looking for patchpoints that
-  clobber `lr`, which every call declares (`AOTLowerCalls.cpp`, `AOTLowerCore.cpp`).
-- **Stubs do not push a frame.** A stub identifies its caller from `lr`: the function and the position within it are derived from the
-  return address (`FunctionRef::at()`, `classifyAddress()`). On x86-64 `call` pushes the return address instead, so it is at the top of
-  the stack and the stack is misaligned by 8 bytes inside a stub.
-- Two sites materialize a return address that is not the next instruction (`adr lr, label` followed by a jump), and two compare return
-  addresses against that label to decide whether to pop a frame. Search for `returnFromCallWithList()` and `s_labelAddresses`.
+- Calls clobber it (`Lowering::registersClobberedByCalls()`).
+- **A function that ends in a tail call has restored it before the call stub uses it.** So compiled code as a whole does not preserve
+  it, and `adapt()`, through which the engine enters compiled code, saves and restores it. `adapterSavedRegisters()` tells the unwinder.
+- **A stub that the engine enters must not use it before `adapt()` has saved it.** Those stubs use `entryT12` and `entryT13`, which on
+  x86-64 are argument registers: at such an entry the arguments are on the stack.
 
-### 4. Fixed four-byte instructions
+The adapters around operations must not use a C argument register as a temporary (`operationGPR`). Operations take up to eight integer
+arguments; where the C ABI has fewer registers, `operationArgumentGPR()` names registers for the rest and `callAndCheckException()` pushes
+them.
 
-- Code is linked into a `Vector<uint32_t>` (`AOTCompiler.cpp`, `AOTStubs.cpp`).
-- Removing a redundant leading jump shifts every offset by `sizeof(uint32_t)`.
-- A near call is located as "end of instruction minus four bytes" (`StubCalls::link()`).
-- Padding loops and veneer sizes are counted in instructions.
+### 3. Where the return address is
+
+On ARM64 it is in `lr`; on x86-64 `call` pushes it.
+
+- Wherever a stub begins with `emitFunctionPrologue()` the two are the same.
+- `outgoingFrameSlot()` addresses a slot of the frame being made before the call, `incomingFrameSlot()` at the entry of the callee. They
+  differ on x86-64.
+- `callPreservingRegistersAndReturn()` gives the return address to its callback in `T11`.
+- The stack check of a prologue is a stub on ARM64. On x86-64 it is inline (`AOTCompiler.cpp`): a stub that moves the stack pointer
+  has to return with a jump, which unbalances the CPU's prediction of returns.
+- A leaf function with no spills has no frame on ARM64 (`hasNoFrame()`, which detects calls by patchpoints that clobber `lr`). Every
+  function has a frame on x86-64.
+- Frames made for calls with an argument list are recognized by their return address, `returnFromCallWithList()`, so that tail calls can
+  reuse them. ARM64 sets `lr` to it and jumps. x86-64 makes all such calls with one call instruction (`callTargetWithList()`), or
+  pushes the address. `loadLabelAddress()` is `adr`, or `lea` relative to `rip`.
+
+### 4. Instruction size
+
+`sizeOfNearCall` and `codeOffsetUnit` in `AOTStubs.h`. `StubCall::offset` is where the call instruction starts. Trailing padding is only
+trimmed on ARM64, where it cannot be mistaken for the end of an instruction.
 
 ### 5. Relocations applied at image layout
 
-Each is a small function at the end of `AOTStubs.cpp` that hits `RELEASE_ASSERT_NOT_REACHED()` on other CPUs, so together they form the
-list of what to implement:
+Each is a small function at the end of `AOTStubs.cpp` that hits `RELEASE_ASSERT_NOT_REACHED()` on other CPUs:
 
-| Function | ARM64 encoding |
-| --- | --- |
-| `retargetStubCall()` | `bl` or `b` with a 26-bit offset |
-| `writeVeneer()` | `adrp`, `add`, `br`, for direct calls whose target is out of range |
-| `IndexReferences::load()` and `fill()` | `add` and `ldr` with 12-bit immediates, addressing a table entry by function index |
-| `s_labelAddresses` fix-ups | `adr` |
+| Function | ARM64 | x86-64 |
+| --- | --- | --- |
+| `retargetStubCall()` | `bl` or `b` with a 26-bit offset | `call` or `jmp` with a 32-bit offset |
+| `writeVeneer()` | `adrp`, `add`, `br` | `jmp` |
+| `IndexReferences::load()` and `fill()` | `add` and `ldr` with 12-bit immediates | a load with a 32-bit displacement |
 
 An ARM64 branch reaches 128 MB, so an image holds up to 8 copies of the stubs (`maxStubCopiesPerImage`) and uses veneers between
-functions. A 32-bit displacement reaches 2 GB, so x86-64 should need one copy and no veneers (see `reach` in `AOTImage.cpp`). The copies
+functions (`stubCallReach`). x86-64 needs one copy and no veneers, but the options that force them in tests work there too. The copies
 are byte-identical, so a stub cannot tell which copy it is.
 
 **Nothing is at a fixed address.** No PC-relative reference leaves the code, and neither the code nor the file contains an absolute
@@ -131,10 +150,8 @@ on demand for direct `eval`.
 
 - A StructureID is converted to an address by adding `Instance::structureIDBase` (`structureWithID()` in `AOTStubs.cpp`). The stub that enters
   compiled code from outside has no instance yet and reads the same value from the VM, found through the callee's `MarkedBlock`.
-- `aot/` uses 133 macro assembler methods (1,941 call sites). Four have no x86-64 or shared implementation:
-  `extractUnsignedBitfield64` (6 uses), `div32` and `multiplySub32`, all in `AOTStubs.cpp`, and
-  `convertDoubleToInt32UsingJavaScriptSemantics` in `AOTLowerCore.cpp`, which is already behind a CPU feature check.
-- `imageStamp()` includes the CPU and already has an x86-64 case.
+- NaNs differ. Arithmetic on x86-64 makes NaNs with the sign bit set, so nothing may compare NaNs by their bits.
+- `imageStamp()` includes the CPU.
 - Compiled code requires the JIT to be off (`Options::notifyOptionsChanged()`); an image is rejected otherwise.
 
 ## Platform (as opposed to CPU)
@@ -147,23 +164,28 @@ on demand for direct `eval`.
 
 ## Suggested order
 
-1. Enable the gate for the new CPU with no back end. Everything should compile and link, in the engine and the embedder.
-   `compileForImage()` rejects every function, so `run-tests.py` runs interpreted and only the tests that call `isAOTCompiled()` fail.
-2. Decide the register assignment (section 2).
-3. Remove the file-level gates from `AOTLower*.cpp` and `AOTCompiler.cpp` and fix the build.
-4. Entry adapter, prologue and epilogue. Target: a function that returns a constant, called from the interpreter.
-5. Relocations (section 5), then direct calls between functions.
-6. Stubs, in the order `JSTests/stress/aot-*.js` needs them. There are about 150 (`AOTStubs.h`); most are small and many share a generator.
-7. Exceptions and stack walking: the `aot-*` tests that use `catch`, stack overflow and `Error.stack`.
-8. `compare-with-interpreter.py` over `JSTests/stress`, then the `aot` and `aot-validate` modes of `run-javascriptcore-tests`, then `fuzz.py`.
-9. The embedder's tests.
+The x86-64 port took these steps, and about 520 lines.
 
-Steps 1-8 only need `jsc`, which builds an image and runs from it the same way an embedder does. The tools are in
+1. Enable the gate for the new CPU with no back end. Everything should compile and link. `compileForImage()` rejects every function, so
+   `run-tests.py` runs interpreted and only the tests that require compiled code fail.
+2. Decide the register assignment (section 2).
+3. Open the gates of `AOTLower*.cpp`, `AOTCompiler.cpp`, the structural part of `AOTStubs.cpp` and `installImageCompiler()`, and fix the build.
+4. Relocations (section 5).
+5. `run-tests.py`.
+6. `JSTests/stress` compiled ahead of time. Run what fails on ARM64 as well, with and without data stubs. What fails there too is not in
+   the port: much of it is a difference that compiled code has on purpose.
+7. The `aot` and `aot-validate` modes of `run-javascriptcore-tests`, then `fuzz.py`.
+8. The embedder's tests. An image is built by the CPU it is for: B3 targets its host.
+9. Data stubs, by what a profile says.
+
+Steps 1-7 only need `jsc`, which builds an image and runs from it the same way an embedder does. The tools are in
 `Tools/Scripts/aot/`; see the README there.
 
 ## Pitfalls
 
 - In the shell, a function the compiler rejects is interpreted and the test still passes. Check that it was actually compiled.
+- A path that only one configuration takes rots. The lowering without data stubs had an inline cache that did not know a format added
+  later for the stubs. Every configuration needs a mode of the tests.
 - Be wary of anything that only usually holds, such as a mapping that tends to land nearby or a page size that happens to match. Make
   the rare case the common one in tests.
 - A syntax-only check cannot catch link errors, and a build with a precompiled header cannot catch missing includes.
