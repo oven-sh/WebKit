@@ -58,6 +58,9 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
     if (ffiFunction->isHostPathOnly())
         return false;
 
+    if (ffiFunction->isClosed())
+        return false;
+
     Signature& signature = ffiFunction->signature();
 
     if (node->numChildren() - 2 != signature.argumentCount())
@@ -139,6 +142,9 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
     }
 
     graph.varArgChild(node, 0) = DFG::Edge(graph.varArgChild(node, 0).node(), DFG::KnownCellUse);
+
+    // CallFFI bakes the target in. JSFFIFunction::close() fires this set, which jettisons the code.
+    graph.watchpoints().addLazily(ffiFunction->closedWatchpointSet());
 
     node->convertToCallFFI(graph.freeze(ffiFunction));
     return true;

@@ -38,6 +38,7 @@
 
 namespace JSC {
 
+class JSFFIFunction;
 class JSGlobalObject;
 
 namespace FFI {
@@ -56,7 +57,9 @@ JS_EXPORT_PRIVATE int64_t doubleToInt64(double);
 } // namespace FFI
 
 JSC_DECLARE_JIT_OPERATION(operationFFIBoxSlot, EncodedJSValue, (JSGlobalObject*, uint32_t typeTag, uint64_t slot, int32_t exitArena));
-JSC_DECLARE_JIT_OPERATION(operationFFIWriteSlot, void, (JSGlobalObject*, FFI::FFIContext*, uint32_t typeTag, EncodedJSValue value, uint64_t* slot));
+// The DFG and FTL slow path for one CallFFI argument. Throws if the conversion closed the function
+// (converting can run JS), because the code that called this goes on to call the target it baked in.
+JSC_DECLARE_JIT_OPERATION(operationFFIWriteSlot, void, (JSGlobalObject*, JSFFIFunction*, uint32_t typeTag, EncodedJSValue value, uint64_t* slot));
 JSC_DECLARE_JIT_OPERATION(operationFFIArenaEnter, void, (JSGlobalObject*));
 JSC_DECLARE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject*));
 

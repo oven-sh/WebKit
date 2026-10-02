@@ -28,6 +28,8 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+#include "CodeBlock.h"
+#include "DFGCommonData.h"
 #include "Error.h"
 #include "FFICallHost.h"
 #include "FFIConversions.h"
@@ -37,6 +39,7 @@
 #include "JSObjectInlines.h"
 #include "NativeExecutable.h"
 #include "SlotVisitorInlines.h"
+#include "StackVisitor.h"
 #include "StructureInlines.h"
 #include <wtf/DataLog.h>
 #include <wtf/RawPointer.h>
@@ -76,6 +79,59 @@ DEFINE_VISIT_CHILDREN(JSFFIFunction);
 void JSFFIFunction::destroy(JSCell* cell)
 {
     static_cast<JSFFIFunction*>(cell)->JSFFIFunction::~JSFFIFunction();
+}
+
+void JSFFIFunction::close(VM& vm)
+{
+    if (isClosed())
+        return;
+
+    dataLogLnIf(Options::verboseFFI(), "FFI: closing JSFFIFunction '", name(vm), "' target=", RawPointer(m_target));
+
+#if ENABLE(JIT)
+    if (m_icCode)
+        static_cast<FFI::ICStubCode*>(m_icCode.get())->close(); // m_icCode only ever comes from generateICStubCode().
+#endif
+    m_closedWatchpointSet.fireAll(vm, "bun:ffi function was closed");
+    ASSERT(isClosed());
+}
+
+bool JSFFIFunction::isRunning(VM& vm)
+{
+    bool isRunning = false;
+#if ENABLE(DFG_JIT)
+    EntryFrame* entryFrameOfFrameAbove = vm.topEntryFrame;
+#endif
+    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
+        // The host path and the IC stub: the call has a frame of its own.
+        CalleeBits callee = visitor->callee();
+        if (callee.isCell() && callee.asCell() == this) {
+            isRunning = true;
+            return IterationStatus::Done;
+        }
+
+#if ENABLE(DFG_JIT)
+        // A CallFFI has no frame. The native call is made by the frame that was on top when the VM was entered
+        // again, which is the first frame of another entry frame. The frame that the entry called cannot say so:
+        // the walk does not visit it when optimized code inlined a tail call in its place.
+        bool wasOnTopAtVMEntry = visitor->entryFrame() != entryFrameOfFrameAbove;
+        entryFrameOfFrameAbove = visitor->entryFrame();
+        if (wasOnTopAtVMEntry) {
+            CodeBlock* codeBlock = visitor->isInlinedDFGFrame() ? visitor->callFrame()->codeBlock() : visitor->codeBlock();
+            if (codeBlock && JITCode::isOptimizingJIT(codeBlock->jitType())) {
+                // Optimized code refers to a cell weakly, or as a constant when something froze the cell strongly.
+                for (auto& reference : codeBlock->jitCode()->dfgCommon()->m_weakReferences)
+                    isRunning |= reference.get() == this;
+                for (auto& constant : codeBlock->constants())
+                    isRunning |= constant.get() == JSValue(this);
+                if (isRunning)
+                    return IterationStatus::Done;
+            }
+        }
+#endif
+        return IterationStatus::Continue;
+    });
+    return isRunning;
 }
 
 static constexpr unsigned ffiIntrinsicAttributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
