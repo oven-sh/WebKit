@@ -23,6 +23,8 @@ static constexpr unsigned numberOfArgumentGPRs = GPRInfo::numberOfArgumentRegist
 static constexpr GPRReg thisGPR = ARM64Registers::x8;
 static constexpr GPRReg countGPR = ARM64Registers::x9;
 static constexpr GPRReg calleeGPR = ARM64Registers::x10;
+static constexpr GPRReg callMarkerGPR = ARM64Registers::lr;
+static constexpr bool hasStubsForFunctionsWithoutFrame = true;
 static constexpr GPRReg stubTemporaryGPRs[] = { ARM64Registers::x9, ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x12, ARM64Registers::x13, ARM64Registers::x14, ARM64Registers::x15 };
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
@@ -31,6 +33,8 @@ static constexpr unsigned numberOfArgumentGPRs = 4;
 static constexpr GPRReg thisGPR = X86Registers::eax;
 static constexpr GPRReg countGPR = X86Registers::r10;
 static constexpr GPRReg calleeGPR = X86Registers::r8;
+static constexpr GPRReg callMarkerGPR = X86Registers::ebp;
+static constexpr bool hasStubsForFunctionsWithoutFrame = false;
 static constexpr GPRReg stubTemporaryGPRs[] = { X86Registers::r10, X86Registers::r8, X86Registers::r9, X86Registers::ebx, X86Registers::r12 };
 static constexpr GPRReg seventhOperationArgumentGPR = X86Registers::ebx;
 static constexpr GPRReg eighthOperationArgumentGPR = X86Registers::r12;
@@ -46,6 +50,8 @@ static constexpr unsigned numberOfArgumentGPRs = GPRInfo::numberOfArgumentRegist
 static constexpr GPRReg thisGPR = InvalidGPRReg;
 static constexpr GPRReg countGPR = InvalidGPRReg;
 static constexpr GPRReg calleeGPR = InvalidGPRReg;
+static constexpr GPRReg callMarkerGPR = InvalidGPRReg;
+static constexpr bool hasStubsForFunctionsWithoutFrame = false;
 static constexpr GPRReg stubTemporaryGPRs[] = { InvalidGPRReg };
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }

@@ -113,11 +113,6 @@ static void usePinnedRegistersDirectly(B3::Air::Code& code)
 
 bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
 {
-#if CPU(X86_64)
-    UNUSED_PARAM(graph);
-    UNUSED_PARAM(code);
-    return false;
-#else
     if (code.frameSize() || code.calleeSaveRegisterAtOffsetList().registerCount() || graph.alwaysEmitsCalls || !graph.catchEntrypoints.isEmpty())
         return false;
     if (!graph.emitsCalls)
@@ -127,7 +122,7 @@ bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
         for (B3::Air::BasicBlock* block : code) {
             for (B3::Air::Inst& inst : *block) {
                 if (inst.kind.opcode == B3::Air::Patch)
-                    found |= !inst.origin || inst.origin->opcode() != B3::Patchpoint || inst.origin->as<B3::PatchpointValue>()->lateClobbered().contains(ARM64Registers::lr, IgnoreVectors);
+                    found |= !inst.origin || inst.origin->opcode() != B3::Patchpoint || inst.origin->as<B3::PatchpointValue>()->lateClobbered().contains(callMarkerGPR, IgnoreVectors);
                 else
                     found |= inst.kind.opcode == B3::Air::ColdCCall;
             }
@@ -135,7 +130,6 @@ bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
         graph.hasRemainingCalls = found;
     }
     return !*graph.hasRemainingCalls;
-#endif
 }
 
 void emitEpilogueBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Code& code)

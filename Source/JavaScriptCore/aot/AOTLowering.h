@@ -237,9 +237,11 @@ private:
     static RegisterSet registersClobberedByCalls()
     {
 #if CPU(ARM64)
-        return RegisterSet { ARM64Registers::lr };
+        return RegisterSet { callMarkerGPR };
 #else
-        return stubTemporaries(std::size(stubTemporaryGPRs));
+        RegisterSet result = stubTemporaries(std::size(stubTemporaryGPRs));
+        result.add(callMarkerGPR, IgnoreVectors);
+        return result;
 #endif
     }
     bool isCompact() const

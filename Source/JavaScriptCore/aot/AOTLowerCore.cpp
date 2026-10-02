@@ -582,9 +582,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         if (!preservesOperandRegister(stub))
             patchpoint->clobberLate(RegisterSet { defaultOperandRegister(stub) });
     }
-#if CPU(ARM64)
-    patchpoint->clobberLate(RegisterSet { ARM64Registers::lr });
-#endif
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
     switch (clobbers) {
     case StubClobbers::CallerSavedRegisters:
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
@@ -661,6 +659,10 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
         patchpoint->append(ConstrainedValue(second, ValueRep::reg(GPRInfo::argumentGPR2)));
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobber(stubTemporaries(2));
+    if (!hasStubsForFunctionsWithoutFrame) {
+        m_graph.emitsCalls = true;
+        patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    }
     if (returnsValue)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { callSiteBitsOf(node) };
@@ -920,6 +922,10 @@ LValue Lowering::constantThroughStub(uint32_t number, Stub stub)
     patchpoint->effects = Effects::none();
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobber(stubTemporaries(isARM64() ? 7 : 3));
+    if (!hasStubsForFunctionsWithoutFrame) {
+        m_graph.emitsCalls = true;
+        patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    }
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     patchpoint->setGenerator([graph = &m_graph, number, stub](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);

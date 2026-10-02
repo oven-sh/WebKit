@@ -1442,6 +1442,18 @@ class YarrGenerator final : public YarrJITInfo {
         failMatches.append(branchTestTable(tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, character, table, CharacterClass::tableSize, TableOwnership::Shared));
     }
 
+#if CPU(X86_64)
+    static constexpr unsigned sizeOfAddressForImage = 7;
+    void moveAddressForImage(MacroAssembler::RegisterID reg)
+    {
+        auto& buffer = m_jit.m_assembler.buffer();
+        buffer.putByte(static_cast<int8_t>(0x48 | (static_cast<unsigned>(reg) >> 3) << 2));
+        buffer.putByte(static_cast<int8_t>(0x8d));
+        buffer.putByte(static_cast<int8_t>((static_cast<unsigned>(reg) & 7) << 3 | 5));
+        buffer.putInt(0);
+    }
+#endif
+
     enum class TableOwnership : bool { OwnedByPattern, Shared };
     void moveTableAddress(const void* table, size_t size, TableOwnership tableOwnership, MacroAssembler::RegisterID reg)
     {
@@ -1450,9 +1462,13 @@ class YarrGenerator final : public YarrJITInfo {
             return;
         }
         m_tableReferences.append({ m_jit.label(), reg, { static_cast<const uint8_t*>(table), size }, tableOwnership });
+#if CPU(X86_64)
+        moveAddressForImage(reg);
+#else
         m_jit.nop();
         if (tableOwnership == TableOwnership::Shared)
             m_jit.nop();
+#endif
     }
 
     MacroAssembler::Jump branchTestTable(MacroAssembler::ResultCondition condition, MacroAssembler::RegisterID character, const void* table, size_t size, TableOwnership tableOwnership)
@@ -1464,6 +1480,9 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.load8(MacroAssembler::BaseIndex(MacroAssembler::dataTempRegister, character, MacroAssembler::TimesOne), MacroAssembler::dataTempRegister);
         (void)m_jit.label();
         return m_jit.branchTest32(condition, MacroAssembler::dataTempRegister);
+#elif CPU(X86_64)
+        moveTableAddress(table, size, tableOwnership, MacroAssembler::s_scratchRegister);
+        return m_jit.branchTest8(condition, MacroAssembler::BaseIndex(MacroAssembler::s_scratchRegister, character, MacroAssembler::TimesOne));
 #else
         RELEASE_ASSERT_NOT_REACHED();
 #endif
@@ -1479,6 +1498,9 @@ class YarrGenerator final : public YarrJITInfo {
         moveTableAddress(&latin1CanonicalizationTable, sizeof(latin1CanonicalizationTable), TableOwnership::Shared, MacroAssembler::dataTempRegister);
         m_jit.load16(MacroAssembler::BaseIndex(MacroAssembler::dataTempRegister, character, MacroAssembler::TimesTwo), character);
         (void)m_jit.label();
+#elif CPU(X86_64)
+        moveTableAddress(&latin1CanonicalizationTable, sizeof(latin1CanonicalizationTable), TableOwnership::Shared, MacroAssembler::s_scratchRegister);
+        m_jit.load16(MacroAssembler::BaseIndex(MacroAssembler::s_scratchRegister, character, MacroAssembler::TimesTwo), character);
 #else
         RELEASE_ASSERT_NOT_REACHED();
 #endif
@@ -2143,6 +2165,13 @@ class YarrGenerator final : public YarrJITInfo {
             m_jit.nop();
             m_jit.storePtr(MacroAssembler::dataTempRegister, frameAddress().withOffset(frameLocation * sizeof(void*)));
             (void)m_jit.label();
+            return label;
+        }
+#elif CPU(X86_64)
+        if (m_forImage) {
+            MacroAssembler::DataLabelPtr label(&m_jit);
+            moveAddressForImage(MacroAssembler::s_scratchRegister);
+            m_jit.storePtr(MacroAssembler::s_scratchRegister, frameAddress().withOffset(frameLocation * sizeof(void*)));
             return label;
         }
 #endif
@@ -9608,7 +9637,7 @@ public:
         Vector<uint32_t> storageForImage;
         if (m_forImage) {
             m_jit.padBeforePatch();
-            storageForImage.grow(m_jit.m_assembler.codeSize() / sizeof(uint32_t));
+            storageForImage.grow(WTF::roundUpToMultipleOf<sizeof(uint32_t)>(m_jit.m_assembler.codeSize()) / sizeof(uint32_t));
         }
         LinkBuffer linkBuffer = m_forImage
             ? LinkBuffer(m_jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(storageForImage.mutableSpan().data()), storageForImage.sizeInBytes(), LinkBuffer::Profile::YarrJIT)
@@ -9618,7 +9647,7 @@ public:
             return;
         }
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(X86_64)
         if (m_forImage) {
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
             for (auto& call : m_ownTryReadUnicodeCharSlowPathCalls)
@@ -9627,22 +9656,33 @@ public:
             auto* start = static_cast<const uint8_t*>(linkBuffer.entrypoint<NoPtrTag>().untaggedPtr());
             auto& bytes = m_forImage->bytes;
             size_t codeSizeInBytes = linkBuffer.size();
+#if CPU(ARM64)
             constexpr uint32_t nop = 0xd503201f;
             while (codeSizeInBytes > sizeof(uint32_t) && *reinterpret_cast<const uint32_t*>(start + codeSizeInBytes - sizeof(uint32_t)) == nop)
                 codeSizeInBytes -= sizeof(uint32_t);
+#endif
             bytes.append(std::span { start, codeSizeInBytes });
             auto offsetOf = [&](auto label) {
                 return static_cast<uint32_t>(static_cast<const uint8_t*>(linkBuffer.locationOf<NoPtrTag>(label).untaggedPtr()) - start);
             };
             bool isInReach = true;
+#if CPU(ARM64)
+            constexpr MacroAssembler::RegisterID backtrackLocationRegister = MacroAssembler::dataTempRegister;
             auto writeAdr = [&](uint32_t at, MacroAssembler::RegisterID reg, uint32_t target) {
                 int64_t delta = static_cast<int64_t>(target) - at;
                 isInReach &= delta >= -(1 << 20) && delta < (1 << 20);
                 uint32_t encoded = 0x10000000u | (static_cast<uint32_t>(delta) & 3u) << 29 | (static_cast<uint32_t>(delta >> 2) & 0x7ffffu) << 5 | static_cast<uint32_t>(reg);
                 memcpySpan(bytes.mutableSpan().subspan(at, sizeof(encoded)), asByteSpan(encoded));
             };
+#else
+            constexpr MacroAssembler::RegisterID backtrackLocationRegister = MacroAssembler::s_scratchRegister;
+            auto writeAdr = [&](uint32_t at, MacroAssembler::RegisterID, uint32_t target) {
+                int32_t encoded = static_cast<int32_t>(static_cast<int64_t>(target) - (at + sizeOfAddressForImage));
+                memcpySpan(bytes.mutableSpan().subspan(at + sizeOfAddressForImage - sizeof(encoded), sizeof(encoded)), asByteSpan(encoded));
+            };
+#endif
             for (auto& record : backtrackRecords)
-                writeAdr(offsetOf(record.m_dataLabel), MacroAssembler::dataTempRegister, offsetOf(record.m_backtrackLocation));
+                writeAdr(offsetOf(record.m_dataLabel), backtrackLocationRegister, offsetOf(record.m_backtrackLocation));
             UncheckedKeyHashMap<const uint8_t*, uint32_t> placed;
             for (auto& reference : m_tableReferences) {
                 if (reference.tableOwnership == TableOwnership::Shared) {
@@ -10272,7 +10312,7 @@ void jitCompile(YarrPattern& pattern, StringView patternString, CharSize charSiz
 
 std::optional<YarrCodeForImage> jitCompileForImage(YarrPattern& pattern, StringView patternString, CharSize charSize, VM* vm, ExecutionMode mode)
 {
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(X86_64)
     CCallHelpers masm;
     YarrCodeForImage result;
     YarrCodeBlock codeBlock(nullptr);

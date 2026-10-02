@@ -1,7 +1,8 @@
 # Porting the AOT compiler to another CPU
 
-There are two back ends, ARM64 and x86-64. ARM64 runs on macOS and Linux. x86-64 has only been run on macOS under Rosetta. On every
-other target `ENABLE(AOT)` is off and `aot/` compiles to nothing.
+There are two back ends, ARM64 and x86-64. ARM64 runs on macOS and Linux. x86-64 has only been run on macOS under Rosetta; it is also
+enabled on Linux and on Windows, where it has not been compiled yet. On every other target `ENABLE(AOT)` is off and `aot/` compiles to
+nothing.
 
 This document says what depends on the CPU, how the two back ends differ, and how to add a third.
 
@@ -13,7 +14,7 @@ This document says what depends on the CPU, how the two back ends differ, and ho
 | Graph to B3 | `AOTLower*.cpp` | Which registers patchpoints name |
 | B3 to machine code | `AOTCompiler.cpp`, then stock B3 and Air | The prologue |
 | Structural stubs: calls, entries, exceptions, constants, adapters around operations | `AOTStubs.*` | Shared generators with a few conditionals |
-| Data stubs: property access, arithmetic, comparison, iteration, allocation | `AOTStubs.*`, `AOTThunks.*` | **ARM64 only, and optional** |
+| Data stubs: property access, arithmetic, comparison, iteration, allocation | `AOTStubs.*`, `AOTThunks.*` | Shared generators with a few conditionals. **Optional** |
 | Image layout and relocation | `AOTImage.cpp`, helpers at the end of `AOTStubs.cpp` | The helpers |
 | Runtime: instances, linking, inline caches, operations | `AOTRuntime.*`, `AOTOperations*.cpp`, `AOTInlineCaches.cpp` | No |
 | Program data and the engine objects created from it | `AOTProgramData.*`, `runtime/CachedTypes.*` | No |
@@ -28,15 +29,15 @@ go through them. Without data stubs `Lowering::isCompact()` is false everywhere:
 with plain calls of the operations as slow paths, which is portable. Allocation helpers, stub intrinsics, per-register and per-immediate
 entry points (`thunkFor()`) and the front ends in `AOTThunks.cpp` are all off.
 
-About 100 of the 150 stubs are data stubs. **A port does not need them.** x86-64 has none: `FOR_EACH_AOT_STUB_WITHOUT_DATA_STUBS` in
-`AOTStubs.cpp` lists the 42 stubs it generates, and every other stub is a breakpoint there.
+About 100 of the 150 stubs are data stubs. **A port does not need them to run**, and x86-64 ran without them at first. It needs them to
+be worth using: on a large application, compiling without them costs about 50% more instructions and a 56% larger executable.
 
-`--useAOTDataStubs=0` selects the same lowering on ARM64, and `run-tests.py` runs every test in that mode too. So most of what another
-CPU compiles is tested on ARM64, and a failure that also happens there is not in the port. The mode is part of `imageStamp()`, because
-the formats of the inline caches depend on it.
+`--useAOTDataStubs=0` selects the lowering without them on either CPU, and `run-tests.py` runs every test in that mode too. So what a
+new CPU compiles at first is tested on the existing ones, and a failure that also happens there is not in the port. The mode is part of
+`imageStamp()`, because the formats of the inline caches depend on it.
 
-What this costs is code size, and speed outside loops where a data stub has a fast path that the inline lowering lacks (comparison with
-short string literals, allocation helpers, calls of common builtin methods).
+The generators are shared. Of the 98 functions that were written for ARM64, 87 needed no change of registers for x86-64. Sections 2 and
+3 say what the others needed.
 
 ### 2. Registers
 
@@ -44,21 +45,40 @@ short string literals, allocation helpers, calls of common builtin methods).
 
 | Role | ARM64 | x86-64 |
 | --- | --- | --- |
-| Arguments | `x0`-`x7` | `rdi`, `rsi`, `rdx`, `rcx` |
+| Arguments of a function, and of a stub after the first (`A1`-`A3`) | `x0`-`x7` | `rdi`, `rsi`, `rdx`, `rcx` |
+| First operand and result of a data stub (`R0`) | `x0` | `rax` |
 | `this` | `x8` | `rax` |
 | Argument count, and the immediate of a stub (`T9`) | `x9` | `r10` |
 | Callee (`T10`) | `x10` | `r8` |
 | `T11` | `x11` | `r9` |
 | `T12`, `T13` | `x12`, `x13` | `rbx`, `r12` |
-| `T14`, `T15` | `x14`, `x15` | none (only data stubs use them) |
+| `T14` (data stubs only) | `x14` | `rcx`, which is also `A3` |
+| `T15`, the index of the calling function on a miss (data stubs only) | `x15` | `rdi` |
 | Instance, number tag, not-cell mask | as the JIT tiers | `r13`, `r14`, `r15` |
 
 `numberOfArgumentGPRs` need not equal `GPRInfo::numberOfArgumentRegisters`. Functions with more parameters use `Signature::List`.
 Callers and callees both derive the convention from bytecode via `conventionOf()`.
 
+**A data stub takes its first operand where it returns its result** (`firstStubOperandGPR`). The result of one stub is then where the
+next one wants it, so `a.b.c` needs no move between its stubs, and a stub returns what it computed in place. It has to return in the
+return register of calls, because `GetById` leaves through a call to a getter. On ARM64 that is also the first C argument register. On
+x86-64 it is not, so in the generators `R0` names the operand and `A0` only the first argument of a C++ call. The lowering places the
+first operand last on x86-64, so that a result still in `rax` can be moved out of it first.
+
+Where there are few registers, names overlap. On x86-64 `A4` and `A5` are `T10` and `T11`, and `T14` is `A3`. A function may use both
+names of a pair only one after the other: `prepareMissAtSite()` orders its last moves for this. The functions that need more registers
+than there are give some of them another meaning per CPU at their top (`generateGetByIdWith()`), or keep what does not change in a loop
+on the stack and compare with memory (`MapOrSetLookup`).
+
+Front ends (`AOTThunks.cpp`) run in place of a C++ operation, under the C convention. Only `rax` and `r10` are free there, so on x86-64
+they save four registers on entry (`enter()`, `leave()`).
+
 Where a temporary is callee-saved in the C ABI, as `rbx` and `r12` are:
 
-- Calls clobber it (`Lowering::registersClobberedByCalls()`).
+- Calls and data stubs clobber it (`Lowering::registersClobberedByCalls()`).
+- **B3 counts a callee save that a patchpoint clobbers as used**, and would save it in every prologue for no one.
+  `Air::Code::setUnsavedCalleeSaves()` says not to. The helpers that B3 compiles do save it, because cold calls save only what the C ABI
+  lets an operation clobber.
 - **A function that ends in a tail call has restored it before the call stub uses it.** So compiled code as a whole does not preserve
   it, and `adapt()`, through which the engine enters compiled code, saves and restores it. `adapterSavedRegisters()` tells the unwinder.
 - **A stub that the engine enters must not use it before `adapt()` has saved it.** Those stubs use `entryT12` and `entryT13`, which on
@@ -76,20 +96,38 @@ On ARM64 it is in `lr`; on x86-64 `call` pushes it.
 - `outgoingFrameSlot()` addresses a slot of the frame being made before the call, `incomingFrameSlot()` at the entry of the callee. They
   differ on x86-64.
 - `callPreservingRegistersAndReturn()` gives the return address to its callback in `T11`.
+- A miss finds the calling function from the return address (`loadCallerIndex()`). On x86-64 it has to be told how much the stub has
+  pushed since it was entered.
+- At the entry of a stub the stack pointer of x86-64 is 8 bytes past a 16-byte boundary. `pushWithReturnAddress()` saves one register and
+  realigns; `preservingRegisters()` saves several around a call to C++.
 - The stack check of a prologue is a stub on ARM64. On x86-64 it is inline (`AOTCompiler.cpp`): a stub that moves the stack pointer
   has to return with a jump, which unbalances the CPU's prediction of returns.
-- A leaf function with no spills has no frame on ARM64 (`hasNoFrame()`, which detects calls by patchpoints that clobber `lr`). Every
-  function has a frame on x86-64.
+- A leaf function with no spills has no frame (`hasNoFrame()`). A call is detected by a patchpoint that clobbers `callMarkerGPR`, a
+  register that is never allocated: `lr`, or `rbp`. On ARM64 such a function may still make cold calls and fetch constants, through stubs
+  that make its frame for it. x86-64 has no such stubs (`hasStubsForFunctionsWithoutFrame`), and without a frame its stack would be
+  misaligned at a call, so there those count as calls. Few functions are affected: 0.4% of those of a large typed program.
 - Frames made for calls with an argument list are recognized by their return address, `returnFromCallWithList()`, so that tail calls can
   reuse them. ARM64 sets `lr` to it and jumps. x86-64 makes all such calls with one call instruction (`callTargetWithList()`), or
   pushes the address. `loadLabelAddress()` is `adr`, or `lea` relative to `rip`.
 
-### 4. Instruction size
+### 4. What x86-64 leaves out
+
+- **Entry points for an operand in any register** (`acceptsOperandInAnyRegister()` and the like). Most are a move and a jump: they trade
+  an instruction at each call site for two executed, to make ARM64's code smaller. On x86-64 every stub clobbers every register, so an
+  operand usually comes from the frame, and a load can target any register.
+- **Entry points that return in a callee save** (`returnsResultInAnyRegister()`). No register survives a call.
+- **The prologue stub**, see section 3.
+
+How many registers survive a call matters less than it seems. With ARM64's allocator restricted to 4, 2 and 1 callee saves instead of 7,
+a large application executed the same number of instructions to within 1%, in code 3%, 7% and 12% larger: a value that is kept in a
+callee save costs a save, a restore and a move, where a spilled one costs a store and a load.
+
+### 5. Instruction size
 
 `sizeOfNearCall` and `codeOffsetUnit` in `AOTStubs.h`. `StubCall::offset` is where the call instruction starts. Trailing padding is only
 trimmed on ARM64, where it cannot be mistaken for the end of an instruction.
 
-### 5. Relocations applied at image layout
+### 6. Relocations applied at image layout
 
 Each is a small function at the end of `AOTStubs.cpp` that hits `RELEASE_ASSERT_NOT_REACHED()` on other CPUs:
 
@@ -107,7 +145,7 @@ are byte-identical, so a stub cannot tell which copy it is.
 address; `compileForImage()` and `generateHelper()` check every constant. Compiled code reaches everything through the instance
 register. Executables refer to their code by offset (`EntryWord`).
 
-### 6. Instances
+### 7. Instances
 
 All mutable program state is reached through the instance register. There is one `AOT::Instance` per module loader, so a realm can run
 the same program several times. No instance, realm, VM or thread is special, and they can be destroyed in any order.
@@ -125,7 +163,7 @@ the same program several times. No instance, realm, VM or thread is special, and
 - An instance lives as long as its loader. Running code was entered through a frame that holds its callee, which keeps the loader alive,
   so **the entry adapter's frame must keep the callee where conservative stack scanning can find it.**
 
-### 7. Ownership levels
+### 8. Ownership levels
 
 | Level | Contents | Where |
 | --- | --- | --- |
@@ -146,7 +184,21 @@ A module has no `CodeBlock` or `UnlinkedCodeBlock`. `ProgramModule` holds what t
 `FunctionMetadata` as a function, and `Interpreter::executeModuleProgram()` enters it through `Stub::EnterModule`. A `CodeBlock` is created
 on demand for direct `eval`.
 
-### 8. Miscellaneous
+### 9. CPU features
+
+The JIT tiers ask the CPU they run on what it supports. An image runs elsewhere, so `compileImage()` first calls
+`MacroAssembler::useOnlyFeaturesOfBuildTarget()`, which forgets every feature that the engine itself was not compiled to require. An image
+belongs to one build of the engine, so the two cannot disagree. Built for Nehalem, x86-64 uses up to SSE4.2 and `popcnt`, and no AVX, BMI or
+`lzcnt`. On Linux, ARM64 may lose `fjcvtzs`; `Lowering::doubleToInt32()` then truncates inline and calls only when that saturates, as on
+x86-64.
+
+### 10. Regular expressions
+
+`Yarr::jitCompileForImage()` makes position-independent code. It differs from the JIT's in three places: the address of a table, the address
+to backtrack to that is stored in the frame, and the call of a slow path that the JIT shares. The first two are a placeholder that is filled
+in after linking, `adr` (or `adrp` and `add` for a table that regular expressions share) or `lea` relative to `rip`.
+
+### 11. Miscellaneous
 
 - A StructureID is converted to an address by adding `Instance::structureIDBase` (`structureWithID()` in `AOTStubs.cpp`). The stub that enters
   compiled code from outside has no instance yet and reads the same value from the VM, found through the callee's `MarkedBlock`.
@@ -159,29 +211,43 @@ on demand for direct `eval`.
 - **Mapping.** Both the shell and embedders use `useAOTFile()`. The embedder maps the file read-only at any address and passes the file and
   offset. Only the code is mapped a second time, as executable. There are no other platform requirements: no reserved address ranges, no
   allocator or WTF changes, and no per-thread or per-VM setup.
+- **Windows.** JIT operations, host functions and the entry points from C++ use the System V convention there (`SYSV_ABI`), so compiled
+  code and stubs are the same as on other systems. `useAOTFile()` takes a `HANDLE` that was opened for execution. A view of a file starts
+  on the allocation granularity, 64 KB, so the view starts before the code. For an image in a section of the executable, which the loader
+  has mapped, `useAOTFileInLoadedSection()` makes the code executable in place.
+- **An image belongs to one build of the engine** (`imageStamp()`), and layouts differ between systems. So an image for a system is built
+  on that system, even where the CPU is the same.
 - **Page size.** An image is aligned to 16 KB within its file (`imagePageSize`, `pageSizeOfImage`), so kernels with larger pages cannot map
   the code.
 
 ## Suggested order
 
-The x86-64 port took these steps, and about 520 lines.
+The x86-64 port took these steps: about 520 lines up to step 8, and about 700 for step 9.
 
 1. Enable the gate for the new CPU with no back end. Everything should compile and link. `compileForImage()` rejects every function, so
    `run-tests.py` runs interpreted and only the tests that require compiled code fail.
 2. Decide the register assignment (section 2).
 3. Open the gates of `AOTLower*.cpp`, `AOTCompiler.cpp`, the structural part of `AOTStubs.cpp` and `installImageCompiler()`, and fix the build.
-4. Relocations (section 5).
+4. Relocations (section 6).
 5. `run-tests.py`.
 6. `JSTests/stress` compiled ahead of time. Run what fails on ARM64 as well, with and without data stubs. What fails there too is not in
    the port: much of it is a difference that compiled code has on purpose.
 7. The `aot` and `aot-validate` modes of `run-javascriptcore-tests`, then `fuzz.py`.
 8. The embedder's tests. An image is built by the CPU it is for: B3 targets its host.
-9. Data stubs, by what a profile says.
+9. Data stubs. Remove the conditionals around the generators and let the compiler find what the CPU lacks, then read every generator for
+   what it cannot find (see the pitfalls). The verbose log lists the offset of every stub, so comparing it before and after a change shows
+   that the existing back ends generate what they did.
 
 Steps 1-7 only need `jsc`, which builds an image and runs from it the same way an embedder does. The tools are in
 `Tools/Scripts/aot/`; see the README there.
 
 ## Pitfalls
+
+- Registers that are distinct on one CPU may not be on another. On x86-64 the second return register is the third argument register, so a
+  stub that reloads `A2` before it tests for an exception has lost the exception. The receiver of a call is the first operand of a stub.
+- The macro assembler uses its scratch register silently for a 64-bit immediate on x86-64, including in comparisons with a pointer. Where a
+  stub keeps a value there, it compares with 32-bit immediates.
+- Division and multiplication to 128 bits have fixed registers on x86-64.
 
 - In the shell, a function the compiler rejects is interpreted and the test still passes. Check that it was actually compiled.
 - A path that only one configuration takes rots. The lowering without data stubs had an inline cache that did not know a format added

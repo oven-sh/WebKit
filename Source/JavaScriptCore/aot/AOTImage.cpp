@@ -1255,12 +1255,20 @@ Vector<uint8_t> ImageBuilder::finish()
             for (auto& reference : regExpCode.tables) {
                 size_t instructionAt = codeAt + reference.offset;
                 size_t tableAt = regExpTables.get(reference.table.data());
+#if CPU(X86_64)
+                constexpr size_t sizeOfInstruction = 7;
+                int64_t distance = static_cast<int64_t>(tableAt) - static_cast<int64_t>(instructionAt + sizeOfInstruction);
+                RELEASE_ASSERT(distance == static_cast<int32_t>(distance));
+                int32_t displacement = static_cast<int32_t>(distance);
+                memcpy(code + instructionAt + sizeOfInstruction - sizeof(displacement), &displacement, sizeof(displacement));
+#else
                 int64_t pages = static_cast<int64_t>(tableAt >> 12) - static_cast<int64_t>(instructionAt >> 12);
                 RELEASE_ASSERT(pages >= -(1 << 20) && pages < (1 << 20));
                 uint32_t adrp = 0x90000000u | (static_cast<uint32_t>(pages) & 3u) << 29 | (static_cast<uint32_t>(pages >> 2) & 0x7ffffu) << 5 | reference.reg;
                 uint32_t add = 0x91000000u | static_cast<uint32_t>(tableAt & 0xfff) << 10 | static_cast<uint32_t>(reference.reg) << 5 | reference.reg;
                 memcpy(code + instructionAt, &adrp, sizeof(adrp));
                 memcpy(code + instructionAt + sizeof(adrp), &add, sizeof(add));
+#endif
             }
         }
     }
