@@ -253,7 +253,7 @@ inline bool NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
     // This is the fast case. Many arrays will be an original array.
     // We are doing very simple check here. If we do more complicated checks like looking into getDirect "join" of thisObject,
     // it would be possible that just looking into "join" function will show the same performance.
-    return globalObject->isOriginalArrayStructure(structure);
+    return globalObject->isOriginalArrayStructure(structure) || globalObject->isImmutablePropertiesVariantOfOriginalArrayStructure(structure);
 }
 
 JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncToString, (JSGlobalObject* globalObject, CallFrame* callFrame))

@@ -103,6 +103,10 @@ public:
         return m_lastIndex.get();
     }
 
+    // RegExp.prototype[@@search] writes lastIndex only to make it 0 and to put it back, and exec writes it only for a global or
+    // sticky expression.
+    bool searchNeverWritesLastIndex() const { return !regExp()->globalOrSticky() && getLastIndex() == jsNumber(0); }
+
     bool lastIndexIsWritable() const
     {
         return !(m_regExpAndFlags & lastIndexIsNotWritableFlag);

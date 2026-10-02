@@ -621,7 +621,7 @@ JSValue regExpSearchGeneric(JSGlobalObject* globalObject, JSObject* thisObject, 
             throwTypeError(globalObject, scope, "Builtin RegExp exec can only be called on a RegExp object"_s);
             return { };
         }
-        if (regExp->lastIndexIsWritable() && regExp->getLastIndex().isNumber()) [[likely]]
+        if ((regExp->lastIndexIsWritable() || regExp->searchNeverWritesLastIndex()) && regExp->getLastIndex().isNumber()) [[likely]]
             RELEASE_AND_RETURN(scope, regExpSearchFast(globalObject, regExp, str));
     }
 

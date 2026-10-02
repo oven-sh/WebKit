@@ -2189,7 +2189,7 @@ bool JSArray::isToPrimitiveFastAndNonObservable()
         return false;
 
     Structure* structure = this->structure();
-    return globalObject->isOriginalArrayStructure(structure);
+    return globalObject->isOriginalArrayStructure(structure) || globalObject->isImmutablePropertiesVariantOfOriginalArrayStructure(structure);
 }
 
 template<AllocationFailureMode failureMode>

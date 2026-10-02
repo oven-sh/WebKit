@@ -976,6 +976,9 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         // A structure is not watched once a watched predecessor of it has transitioned, on the grounds that the object will change
         // shape again. This object will not: what remains for it is a transition such as BecomePrototype, at most once.
         transition->setTransitionWatchpointIsLikelyToBeFired(false);
+        // didTransition() is how built-ins ask whether an object still has only the properties its class gave it (JSObject::
+        // hasCustomProperties()). This transition adds and changes none, so the answer is the one the object had.
+        transition->setDidTransition(structure->didTransition());
     }
     
     if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind)) {
