@@ -1752,17 +1752,23 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, int64_t
     }
     if (header.holeInData % pageSizeOfImage || header.sizeOfHoleInData % pageSizeOfImage || header.holeInData + header.sizeOfHoleInData > header.arenaSize[static_cast<unsigned>(Region::Arena::Data)])
         return false;
+    // With bytecode, a function that has no code for the way it is called is prepared for the interpreter, which writes to its
+    // executable (ScriptExecutable::recordParse()).
+    bool nothingWritesToTheRest = header.sizeOfHoleInData || Options::mapStaticHeapReadOnly();
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
+        auto arena = static_cast<Region::Arena>(i);
+        bool isMutable = arena == Region::Arena::MutableCells || arena == Region::Arena::MutableMalloc;
+        auto access = nothingWritesToTheRest && !isMutable ? Region::Access::Read : Region::Access::ReadAndWrite;
         // (If a later mapping fails, the arenas that are already mapped stay mapped. Nothing uses them, because s_header is not
         // set.)
-        if (static_cast<Region::Arena>(i) == Region::Arena::Data && header.sizeOfHoleInData) {
+        if (arena == Region::Arena::Data && header.sizeOfHoleInData) {
             uint64_t afterHole = header.holeInData + header.sizeOfHoleInData;
-            if (!Region::map(Region::Arena::Data, fileDescriptor, offsetInFile + header.arenaOffset[i], header.holeInData)
-                || !Region::map(Region::Arena::Data, fileDescriptor, offsetInFile + header.arenaOffset[i] + header.holeInData, header.arenaSize[i] - afterHole, afterHole))
+            if (!Region::map(arena, access, fileDescriptor, offsetInFile + header.arenaOffset[i], header.holeInData)
+                || !Region::map(arena, access, fileDescriptor, offsetInFile + header.arenaOffset[i] + header.holeInData, header.arenaSize[i] - afterHole, afterHole))
                 return false;
             continue;
         }
-        if (!Region::map(static_cast<Region::Arena>(i), fileDescriptor, offsetInFile + header.arenaOffset[i], header.arenaSize[i]))
+        if (!Region::map(arena, access, fileDescriptor, offsetInFile + header.arenaOffset[i], header.arenaSize[i]))
             return false;
     }
     for (uint64_t at = header.guardedFrom; at < header.guardedTo; at += 2 * pageSizeOfImage)
@@ -1815,8 +1821,9 @@ void StaticHeap::install(VM& vm)
         s_isShared = true;
         return;
     }
-    if (!s_header || s_vm || &vm != addressOfVM())
+    if (!s_header || s_vm)
         return;
+    // The first VM of the process has them in the block that is kept for it (offsetOfFirstStructureBlock).
     // If a structure does not match, the strings can still be used as strings, but the cells are never used.
     auto structures = structuresOf(vm);
     for (unsigned i = 0; i < s_header->numberOfStructures; ++i) {

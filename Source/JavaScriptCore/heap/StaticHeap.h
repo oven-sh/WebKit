@@ -204,12 +204,10 @@ public:
 
     // ---- Objects created at run time, at fixed addresses so that build-time objects can refer to them.
 
-    static VM* addressOfVM() { return reinterpret_cast<VM*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfVMInBss); }
-    static void* addressOfGlobalObject() { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfGlobalObjectInBss + sizeOfCellHeader); }
     // Space for embedder symbols that are identical in every VM, like JSC::Symbols. They are created here in a fixed order so that
     // build-time objects can refer to them.
     static void* addressOfEmbedderSymbols() { return reinterpret_cast<void*>(bmalloc::StaticRegion::addressInBss(bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss)); }
-    static constexpr size_t sizeForEmbedderSymbols = bmalloc::StaticRegion::offsetOfVTablesInBss - bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss;
+    static constexpr size_t sizeForEmbedderSymbols = bmalloc::StaticRegion::sizeOfBssOfEveryProcess - bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss;
     static bool isMapped() { return !!s_header; }
     // The next cell allocated in the VM is placed at `address`. It is never collected or destroyed. After didPlaceCell(), every GC
     // visits it.

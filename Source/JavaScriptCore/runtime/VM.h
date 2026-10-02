@@ -269,10 +269,7 @@ private:
 };
 
 class VM : public ThreadSafeRefCountedWithSuppressingSaferCPPChecking<VM> {
-public:
-    // The first of a process that has a StaticHeap mapped is where that says.
-    JS_EXPORT_PRIVATE void* operator new(size_t);
-    JS_EXPORT_PRIVATE void operator delete(void*);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VM, VM);
 public:
     // WebCore has a one-to-one mapping of threads to VMs;
     // create() should only be called once

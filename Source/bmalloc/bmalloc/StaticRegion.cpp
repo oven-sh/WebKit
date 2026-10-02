@@ -18,6 +18,11 @@
 #include <utility>
 #include <sys/mman.h>
 
+#if BOS(DARWIN)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
+
 #if BUSE(MIMALLOC)
 #include "mimalloc.h"
 #endif
@@ -125,7 +130,7 @@ void StaticRegion::mapBss()
         return;
     isMapped = true;
     void* wanted = reinterpret_cast<void*>(startOf(Arena::Bss));
-    void* result = mmap(wanted, offsetOfVTablesInBss, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    void* result = mmap(wanted, sizeOfBssOfEveryProcess, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (result != wanted) {
         fprintf(stderr, "fatal: cannot map memory at %p: %s\n", wanted, result == MAP_FAILED ? strerror(errno) : "the address is taken");
         BCRASH();
@@ -137,8 +142,8 @@ bool StaticRegion::mapRestOfBss()
     static std::once_flag once;
     static bool isMapped = false;
     std::call_once(once, [] {
-        void* wanted = reinterpret_cast<void*>(startOf(Arena::Bss) + offsetOfVTablesInBss);
-        constexpr size_t size = arenaReservation - offsetOfVTablesInBss;
+        void* wanted = reinterpret_cast<void*>(startOf(Arena::Bss) + sizeOfBssOfEveryProcess);
+        constexpr size_t size = arenaReservation - sizeOfBssOfEveryProcess;
         void* result = mmap(wanted, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
         isMapped = result == wanted;
         if (!isMapped && result != MAP_FAILED)
@@ -147,41 +152,31 @@ bool StaticRegion::mapRestOfBss()
     return isMapped;
 }
 
-bool StaticRegion::map(Arena arena, int fileDescriptor, int64_t offsetInFile, size_t size, size_t offsetInArena, bool isCode)
+bool StaticRegion::map(Arena arena, Access access, int fileDescriptor, int64_t offsetInFile, size_t size, size_t offsetInArena)
 {
     RELEASE_BASSERT(offsetInArena <= arenaReservation && size <= arenaReservation - offsetInArena);
     if (!size)
         return true;
     void* wanted = reinterpret_cast<void*>(startOf(arena) + offsetInArena);
-    if (arena == Arena::Image) {
-        void* result = mmap(wanted, size, isCode ? PROT_READ | PROT_EXEC : PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
-        // Darwin refuses an executable mapping of a file that is not signed (EPERM), but allows a mapping of one to be made executable.
-        bool needsExecutePermission = false;
-        if (result == MAP_FAILED && isCode && errno == EPERM) {
-            result = mmap(wanted, size, PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
-            needsExecutePermission = true;
-        }
-        if (result == MAP_FAILED)
-            return false;
-        if (result != wanted || (needsExecutePermission && mprotect(result, size, PROT_READ | PROT_EXEC))) {
-            munmap(result, size);
-            return false;
-        }
-        return true;
+    int protection = access == Access::ReadAndWrite ? PROT_READ | PROT_WRITE : access == Access::ReadAndExecute ? PROT_READ | PROT_EXEC : PROT_READ;
+    void* result = mmap(wanted, size, protection, MAP_PRIVATE, fileDescriptor, offsetInFile);
+    // Darwin refuses an executable mapping of a file that is not signed (EPERM), but allows a mapping of one to be made executable.
+    bool needsExecutePermission = false;
+    if (result == MAP_FAILED && access == Access::ReadAndExecute && errno == EPERM) {
+        result = mmap(wanted, size, PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
+        needsExecutePermission = true;
     }
-    // A debugging aid for finding code that writes to the region. Writing is allowed, but each first write to a page makes a
-    // private copy of it.
-    static const bool findWriters = !!getenv("BUN_STATIC_HEAP_READONLY");
-    // (=logall: also protects the arenas that are expected to be written to.)
-    static const bool ofAll = findWriters && !strcmp(getenv("BUN_STATIC_HEAP_READONLY"), "logall");
-    bool isReadOnly = findWriters && (ofAll || (arena != Arena::MutableCells && arena != Arena::MutableMalloc));
-    void* result = mmap(wanted, size, isReadOnly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_PRIVATE, fileDescriptor, offsetInFile);
     if (result == MAP_FAILED)
         return false;
-    if (result != wanted) {
+    if (result != wanted || (needsExecutePermission && mprotect(result, size, protection))) {
         munmap(result, size);
         return false;
     }
+#if BOS(DARWIN)
+    // It cannot be made writable again either.
+    if (access == Access::Read)
+        mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(result), size, true, VM_PROT_READ);
+#endif
     return true;
 }
 
@@ -438,7 +433,7 @@ void StaticRegion::didFreeSlow(void* pointer)
 namespace bmalloc {
 
 bool StaticRegion::s_isBuilding = false;
-alignas(16) char StaticRegion::s_bss[offsetOfVTablesInBss];
+alignas(16) char StaticRegion::s_bss[sizeOfBssOfEveryProcess];
 
 bool StaticRegion::beginBuilding() { return false; }
 void StaticRegion::endBuilding() { }
@@ -452,7 +447,7 @@ StaticRegion::MutableScope::~MutableScope() { static_cast<void>(m_previous); }
 bool StaticRegion::isAllocatingMutable() { return false; }
 void StaticRegion::mapBss() { }
 bool StaticRegion::mapRestOfBss() { return false; }
-bool StaticRegion::map(Arena, int, int64_t, size_t, size_t, bool) { return false; }
+bool StaticRegion::map(Arena, Access, int, int64_t, size_t, size_t) { return false; }
 size_t StaticRegion::mallocSize(const void*) { return 0; }
 void* StaticRegion::reallocate(void*, size_t) { return nullptr; }
 void StaticRegion::didFreeSlow(void*) { }

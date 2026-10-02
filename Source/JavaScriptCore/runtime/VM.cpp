@@ -777,21 +777,6 @@ void VM::setLastStackTop(const Thread& thread)
     RELEASE_ASSERT(stack.contains(m_lastStackTop), 0x5510, m_lastStackTop, stack.origin(), stack.end());
 }
 
-void* VM::operator new(size_t size)
-{
-    static std::atomic<bool> isTaken { false };
-    static_assert(sizeof(VM) <= bmalloc::StaticRegion::offsetOfGlobalObjectInBss - bmalloc::StaticRegion::offsetOfVMInBss);
-    if (StaticHeap::isMapped() && !isTaken.exchange(true))
-        return StaticHeap::addressOfVM();
-    return fastMalloc(size);
-}
-
-void VM::operator delete(void* pointer)
-{
-    if (!StaticHeap::contains(pointer))
-        fastFree(pointer);
-}
-
 Ref<VM> VM::createContextGroup(HeapType heapType)
 {
     return adoptRef(*new VM(VMType::APIContextGroup, heapType));

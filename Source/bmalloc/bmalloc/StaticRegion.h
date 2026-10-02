@@ -93,7 +93,7 @@ public:
 
     // ---- When it runs.
 
-    // What every process has, whether or not it uses the other arenas: the part of Arena::Bss before offsetOfVTablesInBss.
+    // What every process has, whether or not it uses the other arenas: the part of Arena::Bss before sizeOfBssOfEveryProcess.
     BEXPORT static void mapBss(); // Before anything else here. The process does not start if the addresses are taken.
     // The rest of Arena::Bss, for a process that builds the other arenas or runs with them. False if the addresses are taken.
     BEXPORT static bool mapRestOfBss();
@@ -108,16 +108,15 @@ public:
     static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
     static constexpr size_t offsetOfEmbedderSymbolsInBss = 128 * 1024; // JSC::StaticHeap::embedderSymbols()
     // The rest belongs to JSC::StaticHeap: mapRestOfBss(). Only pages that are touched are committed.
-    static constexpr size_t offsetOfVTablesInBss = 256 * 1024;
-    static constexpr size_t offsetOfVMInBss = 1 << 20;
-    static constexpr size_t offsetOfGlobalObjectInBss = 2 << 20;
+    static constexpr size_t sizeOfBssOfEveryProcess = 256 * 1024;
     static constexpr size_t offsetOfDecodersInBss = 16 << 20; // One per module, like the next few.
     static constexpr size_t offsetOfSourceProvidersInBss = 64 << 20;
     static constexpr size_t offsetOfTopLevelExecutablesInBss = 128 << 20;
     static constexpr size_t offsetOfBlocksInBss = 256 << 20; // JSC::StaticHeap::allocateBlock()
 
+    enum class Access : uint8_t { Read, ReadAndWrite, ReadAndExecute };
     // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
-    BEXPORT static bool map(Arena, int fileDescriptor, int64_t offsetInFile, size_t, size_t offsetInArena = 0, bool isCode = false);
+    BEXPORT static bool map(Arena, Access, int fileDescriptor, int64_t offsetInFile, size_t, size_t offsetInArena = 0);
 
     // ---- For malloc.
 
@@ -154,7 +153,7 @@ private:
 
     BEXPORT static bool s_isBuilding;
 #if !BENABLE(STATIC_REGION)
-    alignas(16) BEXPORT static char s_bss[offsetOfVTablesInBss];
+    alignas(16) BEXPORT static char s_bss[sizeOfBssOfEveryProcess];
 #endif
 };
 
