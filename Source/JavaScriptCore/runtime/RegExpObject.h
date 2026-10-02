@@ -104,8 +104,8 @@ public:
     }
 
     // RegExp.prototype[@@search] writes lastIndex only to make it 0 and to put it back, and exec writes it only for a global or
-    // sticky expression.
-    bool searchNeverWritesLastIndex() const { return !regExp()->globalOrSticky() && getLastIndex() == jsNumber(0); }
+    // sticky expression. (Asked for a RegExp with immutable properties only, so that any other RegExp takes the path it took.)
+    bool searchNeverWritesLastIndex() const { return structure()->hasImmutableProperties() && !regExp()->globalOrSticky() && getLastIndex() == jsNumber(0); }
 
     bool lastIndexIsWritable() const
     {

@@ -168,7 +168,7 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
         return false;
     }
 
-    // If the sourceStructure is frozen, we retrieve the last one before freezing.
+    // If the sourceStructure is frozen, or has immutable properties, we retrieve the last one before that transition.
     if (sourceStructure->transitionKind() == TransitionKind::Freeze || sourceStructure->transitionKind() == TransitionKind::MakePropertiesImmutable) {
         dataLogLnIf(verbose, "source was frozen. Let's look into the previous structure");
         sourceStructure = sourceStructure->previousID();
@@ -235,7 +235,7 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
 
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());
 
-    // If the sourceStructure is frozen, we retrieve the last one before freezing.
+    // If the sourceStructure is frozen, or has immutable properties, we retrieve the last one before that transition.
     if (sourceStructure->transitionKind() == TransitionKind::Freeze || sourceStructure->transitionKind() == TransitionKind::MakePropertiesImmutable) {
         dataLogLnIf(verbose, "source was frozen. Let's look into the previous structure");
         sourceStructure = sourceStructure->previousID();
@@ -295,9 +295,6 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 
     // FIXME: This fast path is very similar to ObjectConstructor' one. But extracting it to a function caused performance
     // regression in object-assign-replace. Since the code is small and fast path, we keep both.
-
-    if (target->structure()->hasImmutableProperties()) [[unlikely]]
-        return false;
 
     // Do not clear since Vector::clear shrinks the backing store.
     VM& vm = globalObject->vm();

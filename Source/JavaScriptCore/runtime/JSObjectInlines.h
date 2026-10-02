@@ -505,9 +505,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
+    // Refused, unless the engine is materializing a property the object logically already has (AllowLazyPropertyMaterialization).
     if (structure->hasImmutableProperties()) [[unlikely]] {
-        if (auto result = putDirectWhenPropertiesAreImmutable(vm, propertyName, value, newAttributes, mode == PutModePut))
-            return *result;
+        if (mode == PutModePut || !vm.allowLazyPropertyMaterializationCount)
+            return ReadonlyPropertyChangeError;
     }
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));
@@ -1584,7 +1585,7 @@ inline void JSObject::setIndexQuickly(VM& vm, unsigned i, JSValue v)
 ALWAYS_INLINE bool JSObject::putByIndexInline(JSGlobalObject* globalObject, unsigned propertyName, JSValue value, bool shouldThrow)
 {
     VM& vm = getVM(globalObject);
-    if (!structure()->hasImmutableProperties() && trySetIndexQuickly(vm, propertyName, value))
+    if (trySetIndexQuickly(vm, propertyName, value))
         return true;
     return methodTable()->putByIndex(this, globalObject, propertyName, value, shouldThrow);
 }
@@ -1621,7 +1622,7 @@ inline bool JSObject::putDirectIndex(JSGlobalObject* globalObject, unsigned prop
         }
     };
 
-    if (!attributes && canSetIndexQuicklyForPutDirect() && !structure()->hasImmutableProperties()) {
+    if (!attributes && canSetIndexQuicklyForPutDirect()) {
         setIndexQuickly(getVM(globalObject), propertyName, value);
         return true;
     }

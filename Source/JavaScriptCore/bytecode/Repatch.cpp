@@ -1515,9 +1515,6 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
     VM& vm = globalObject->vm();
     AccessGenerationResult result;
 
-    if (oldStructure->hasImmutableProperties())
-        return GiveUpOnCache;
-
     {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
 

@@ -236,17 +236,20 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (structure()->hasImmutableProperties()) [[unlikely]] {
+    if (!tryEnsureWritable(vm)) [[unlikely]] {
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return;
     }
-
-    ensureWritable(vm);
 
     Butterfly* butterfly = this->butterfly();
 
     switch (indexingMode()) {
     case ArrayClass: {
+        // (Elsewhere such an array has copy-on-write storage, refused above, or dictionary indexing, which putByIndex() refuses.)
+        if (structure()->hasImmutableProperties()) [[unlikely]] {
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+            return;
+        }
         createInitialUndecided(vm, 0);
         [[fallthrough]];
     }
@@ -345,6 +348,11 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     }
 
     case ArrayWithSlowPutArrayStorage: {
+        // (A put with such an array as its own receiver fails before the prototype chain is asked for a setter.)
+        if (structure()->hasImmutableProperties()) [[unlikely]] {
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+            return;
+        }
         unsigned oldLength = length();
         bool putResult = false;
         bool result = attemptToInterceptPutByIndexOnHole(globalObject, oldLength, value, true, putResult);

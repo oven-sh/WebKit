@@ -980,7 +980,7 @@ public:
     inline Structure* arrayStructureForProfileDuringAllocation(JSGlobalObject*, ArrayAllocationProfile*, JSValue newTarget) const;
         
     // What JSObject::makePropertiesImmutable() turns an original array structure into: the same (no) properties, the same prototype.
-    bool isImmutablePropertiesVariantOfOriginalArrayStructure(Structure*);
+    inline bool isImmutablePropertiesVariantOfOriginalArrayStructure(Structure*); // Defined in JSGlobalObjectInlines.h
 
     bool isOriginalArrayStructure(Structure* structure)
     {

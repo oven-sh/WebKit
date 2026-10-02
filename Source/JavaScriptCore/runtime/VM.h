@@ -447,6 +447,10 @@ public:
 
 private:
     bool m_isInService { false };
+public:
+    // See AllowLazyPropertyMaterialization. (Declared here because it fills padding: no other field moves.)
+    unsigned allowLazyPropertyMaterializationCount { 0 };
+private:
     RefPtr<CrossTaskToken> m_crossTaskToken;
     VMIdentifier m_identifier;
     const Ref<JSLock> m_apiLock;
@@ -1150,7 +1154,6 @@ public:
     MicrotaskQueue& defaultMicrotaskQueue();
 
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
-    unsigned allowLazyPropertyMaterializationCount { 0 };
 
     JS_EXPORT_PRIVATE void drainMicrotasks();
 #if USE(BUN_JSC_ADDITIONS)
@@ -1561,13 +1564,30 @@ JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 // While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(). It is for the
 // places where the engine materializes a property the object logically already has: a static property table entry, a function's
-// name, length or prototype, an error's stack, an arguments object's callee. Keep it around the write alone: nothing inside it
-// may run JavaScript.
+// name, length or prototype, an error's stack, an arguments object's callee. Nothing inside it may run JavaScript: with
+// assertions enabled it counts as a DisallowVMEntry too.
 class AllowLazyPropertyMaterialization {
     WTF_MAKE_NONCOPYABLE(AllowLazyPropertyMaterialization);
+    WTF_FORBID_HEAP_ALLOCATION;
 public:
-    explicit AllowLazyPropertyMaterialization(VM& vm) : m_vm(vm) { ++m_vm.allowLazyPropertyMaterializationCount; }
-    ~AllowLazyPropertyMaterialization() { --m_vm.allowLazyPropertyMaterializationCount; }
+    explicit AllowLazyPropertyMaterialization(VM& vm)
+        : m_vm(vm)
+    {
+        ++m_vm.allowLazyPropertyMaterializationCount;
+#if ASSERT_ENABLED
+        ++m_vm.disallowVMEntryCount;
+#endif
+    }
+
+    ~AllowLazyPropertyMaterialization()
+    {
+#if ASSERT_ENABLED
+        ASSERT(m_vm.disallowVMEntryCount);
+        --m_vm.disallowVMEntryCount;
+#endif
+        --m_vm.allowLazyPropertyMaterializationCount;
+    }
+
 private:
     VM& m_vm;
 };

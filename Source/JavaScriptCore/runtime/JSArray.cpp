@@ -212,9 +212,6 @@ bool JSArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
 
     JSArray* array = uncheckedDowncast<JSArray>(object);
 
-    if (array->structure()->hasImmutableProperties()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(array, globalObject, propertyName, descriptor, throwException));
-
     // 2. If P is "length", then
     // https://tc39.es/ecma262/#sec-arraysetlength
     if (propertyName == vm.propertyNames->length) {
@@ -229,6 +226,14 @@ bool JSArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
                 throwRangeError(globalObject, scope, "Invalid array length"_s);
                 return false;
             }
+        }
+
+        // (Validated against the current descriptor with the converted value, and nothing below applies.)
+        if (array->structure()->hasImmutableProperties()) [[unlikely]] {
+            PropertyDescriptor converted = descriptor;
+            if (descriptor.value())
+                converted.setValue(jsNumber(newLength));
+            RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(array, globalObject, propertyName, converted, throwException));
         }
 
         // OrdinaryDefineOwnProperty (https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor) at steps 1.a, 11.a, and 15 is now performed:
@@ -321,6 +326,10 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
 
         if (slot.thisValue() != thisObject) [[unlikely]]
             RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
+
+        // (Refused before the value is converted, which can run user code and throw a RangeError.)
+        if (thisObject->structure()->hasImmutableProperties()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, JSObject::put(cell, globalObject, propertyName, value, slot));
 
         unsigned newLength = value.toUInt32(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1188,6 +1197,10 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     if (!canFastAppend(otherArray))
         return false;
 
+    // (ensureLength() below converts copy-on-write storage. False: the caller's generic path, whose puts are refused.)
+    if (isCopyOnWrite(indexingMode()) && structure()->hasImmutableProperties()) [[unlikely]]
+        return false;
+
     IndexingType type = indexingType();
     IndexingType otherType = otherArray->indexingType();
     bool allowPromotion = false;
@@ -1252,12 +1265,13 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (structure()->hasImmutableProperties()) [[unlikely]]
-        return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
-
     Butterfly* butterfly = this->butterfly();
     switch (indexingMode()) {
     case ArrayClass:
+        // (An array with immutable properties has no element storage, copy-on-write storage or array storage: a put of length
+        // fails for it in those three cases, the length it has included.)
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         if (!newLength)
             return true;
         if (newLength >= MIN_SPARSE_ARRAY_INDEX) {
@@ -1271,6 +1285,8 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     case CopyOnWriteArrayWithInt32:
     case CopyOnWriteArrayWithDouble:
     case CopyOnWriteArrayWithContiguous:
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         if (newLength == butterfly->publicLength())
             return true;
         convertFromCopyOnWrite(vm);
@@ -1321,6 +1337,8 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
         
     case ArrayWithArrayStorage:
     case ArrayWithSlowPutArrayStorage:
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         RELEASE_AND_RETURN(scope, setLengthWithArrayStorage(globalObject, newLength, throwException, arrayStorage()));
         
     default:
@@ -1334,15 +1352,18 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (structure()->hasImmutableProperties()) [[unlikely]]
-        return throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
-
-    ensureWritable(vm);
+    if (!tryEnsureWritable(vm)) [[unlikely]] {
+        throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+        return jsUndefined();
+    }
 
     Butterfly* butterfly = this->butterfly();
 
     switch (indexingType()) {
     case ArrayClass:
+        // (pop() ends with a put of length, which fails for such an array even when there is nothing to remove.)
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return jsUndefined();
         
     case ArrayWithUndecided:
@@ -1389,7 +1410,7 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     
         unsigned length = storage->length();
         if (!length) {
-            if (!isLengthWritable())
+            if (!isLengthWritable() || structure()->hasImmutableProperties())
                 throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
             return jsUndefined();
         }
@@ -1695,11 +1716,9 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
     VM& vm = globalObject->vm();
     RELEASE_ASSERT(count > 0);
 
-    // Take ArrayPrototype's generic path, whose puts and deletes are refused.
-    if (structure()->hasImmutableProperties()) [[unlikely]]
+    // (False: ArrayPrototype's generic path, whose puts and deletes are refused.)
+    if (!tryEnsureWritable(vm)) [[unlikely]]
         return false;
-
-    ensureWritable(vm);
 
     Butterfly* butterfly = this->butterfly();
     
@@ -1874,11 +1893,9 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Take ArrayPrototype's generic path, whose puts and deletes are refused.
-    if (structure()->hasImmutableProperties()) [[unlikely]]
+    // (False: ArrayPrototype's generic path, whose puts and deletes are refused.)
+    if (!tryEnsureWritable(vm)) [[unlikely]]
         return false;
-
-    ensureWritable(vm);
 
     Butterfly* butterfly = this->butterfly();
     

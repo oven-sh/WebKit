@@ -274,7 +274,7 @@ inline unsigned JSGlobalObject::WeakCustomGetterOrSetterHash<T>::hash(const Prop
 
 inline bool JSGlobalObject::isImmutablePropertiesVariantOfOriginalArrayStructure(Structure* structure)
 {
-    if (!structure->hasImmutableProperties() || structure->transitionKind() != TransitionKind::MakePropertiesImmutable)
+    if (structure->transitionKind() != TransitionKind::MakePropertiesImmutable)
         return false;
     Structure* previous = structure->previousID();
     return previous && isOriginalArrayStructure(previous);
