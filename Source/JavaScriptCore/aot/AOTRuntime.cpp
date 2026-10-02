@@ -30,7 +30,6 @@
 
 #if ENABLE(AOT)
 
-#include <sys/mman.h>
 
 #include "AOTImage.h"
 #include "AOTOperations.h"

@@ -37,6 +37,8 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #endif
+#elif OS(WINDOWS)
+#include <windows.h>
 #endif
 
 namespace JSC { namespace AOT {
@@ -1944,14 +1946,77 @@ bool registerAOTImage(std::span<const uint8_t> image, const void* code)
     return !!AOT::Image::registerImage(image, code);
 }
 
-AOTFileUse useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile)
+#if OS(DARWIN) || OS(LINUX)
+
+static void* mapCode(int fileDescriptor, int64_t at, size_t size, const char*& failureReason)
+{
+    void* code = mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, at);
+    if (code == MAP_FAILED && errno == EPERM) {
+        code = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fileDescriptor, at);
+        if (code != MAP_FAILED && mprotect(code, size, PROT_READ | PROT_EXEC)) {
+            munmap(code, size);
+            code = MAP_FAILED;
+        }
+    }
+    if (code == MAP_FAILED) {
+        failureReason = strerror(errno);
+        return nullptr;
+    }
+#if OS(DARWIN)
+    mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), size, true, VM_PROT_READ | VM_PROT_EXECUTE);
+#endif
+    return code;
+}
+
+static void unmapCode(void* code, size_t size)
+{
+    munmap(code, size);
+}
+
+#elif OS(WINDOWS)
+
+static size_t allocationGranularity()
+{
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwAllocationGranularity;
+}
+
+static void* mapCode(void* file, int64_t at, size_t size, const char*& failureReason)
+{
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_EXECUTE_READ, 0, 0, nullptr);
+    if (!mapping) {
+        failureReason = "its file cannot be mapped for execution";
+        return nullptr;
+    }
+    uint64_t start = static_cast<uint64_t>(at) & ~static_cast<uint64_t>(allocationGranularity() - 1);
+    size_t skipped = static_cast<uint64_t>(at) - start;
+    void* view = MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_EXECUTE, static_cast<DWORD>(start >> 32), static_cast<DWORD>(start), size + skipped);
+    CloseHandle(mapping);
+    if (!view) {
+        failureReason = "its code cannot be mapped for execution";
+        return nullptr;
+    }
+    return static_cast<uint8_t*>(view) + skipped;
+}
+
+static void unmapCode(void* code, size_t)
+{
+    UnmapViewOfFile(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(code) & ~static_cast<uintptr_t>(allocationGranularity() - 1)));
+}
+
+#endif
+
+#if OS(DARWIN) || OS(LINUX) || OS(WINDOWS)
+
+template<typename MapCode, typename UnmapCode>
+static AOTFileUse useAOTFile(std::span<const uint8_t> bytes, uint64_t position, const MapCode& mapCode, const UnmapCode& unmapCode)
 {
     AOTFileUse result;
     auto neither = [&](const char* why) {
         result.programDataRejectionReason = result.imageRejectionReason = why;
         return result;
     };
-#if OS(DARWIN) || OS(LINUX)
     if (!Options::useAOT())
         return neither("useAOT is off");
     auto sizeOfImage = aotImageSize(bytes);
@@ -1960,8 +2025,8 @@ AOTFileUse useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_
         return neither("not an image");
     auto [offsetOfCode, codeSizeInBytes] = *codeRange;
     size_t pageSize = WTF::pageSize();
-    if (offsetInFile % pageSize || offsetOfCode % pageSize || *sizeOfImage % pageSize)
-        return neither("it is not on a page boundary of its file");
+    if (position % pageSize || offsetOfCode % pageSize || *sizeOfImage % pageSize)
+        return neither("it is not on a page boundary");
 
     if (*sizeOfImage >= bytes.size())
         return neither("it has no program data");
@@ -1971,38 +2036,57 @@ AOTFileUse useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_
 
     void* code = nullptr;
     if (codeSizeInBytes) {
-        int64_t at = offsetInFile + offsetOfCode;
-        code = mmap(nullptr, codeSizeInBytes, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, at);
-        if (code == MAP_FAILED && errno == EPERM) {
-            code = mmap(nullptr, codeSizeInBytes, PROT_READ, MAP_PRIVATE, fileDescriptor, at);
-            if (code != MAP_FAILED && mprotect(code, codeSizeInBytes, PROT_READ | PROT_EXEC)) {
-                munmap(code, codeSizeInBytes);
-                code = MAP_FAILED;
-            }
-        }
-        if (code == MAP_FAILED) {
-            result.imageRejectionReason = strerror(errno);
+        code = mapCode(offsetOfCode, codeSizeInBytes, result.imageRejectionReason);
+        if (!code)
             return result;
-        }
-#if OS(DARWIN)
-        mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), codeSizeInBytes, true, VM_PROT_READ | VM_PROT_EXECUTE);
-#endif
     }
     if (!registerAOTImage(bytes, code)) {
         if (code)
-            munmap(code, codeSizeInBytes);
+            unmapCode(code, codeSizeInBytes);
         return neither("it was compiled for another build of the engine");
     }
     result.codeSizeInBytes = codeSizeInBytes;
     result.code = code;
     return result;
-#else
-    UNUSED_PARAM(bytes);
-    UNUSED_PARAM(fileDescriptor);
-    UNUSED_PARAM(offsetInFile);
-    return neither("not supported on this platform");
-#endif
 }
+
+AOTFileUse useAOTFile(std::span<const uint8_t> bytes, AOTFileHandle file, int64_t offsetInFile)
+{
+    return useAOTFile(bytes, offsetInFile, [&](size_t offsetOfCode, size_t size, const char*& failureReason) {
+        return mapCode(file, offsetInFile + offsetOfCode, size, failureReason);
+    }, unmapCode);
+}
+
+#else
+
+AOTFileUse useAOTFile(std::span<const uint8_t>, AOTFileHandle, int64_t)
+{
+    constexpr const char* reason = "not supported on this platform";
+    return { reason, reason };
+}
+
+#endif
+
+#if OS(WINDOWS)
+
+AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes)
+{
+    return useAOTFile(bytes, reinterpret_cast<uintptr_t>(bytes.data()), [&](size_t offsetOfCode, size_t size, const char*& failureReason) -> void* {
+        void* code = const_cast<uint8_t*>(bytes.data()) + offsetOfCode;
+        DWORD previousProtection;
+        if (!VirtualProtect(code, size, PAGE_EXECUTE_READ, &previousProtection)) {
+            failureReason = "its code cannot be made executable";
+            return nullptr;
+        }
+        FlushInstructionCache(GetCurrentProcess(), code, size);
+        return code;
+    }, [](void* code, size_t size) {
+        DWORD previousProtection;
+        VirtualProtect(code, size, PAGE_READONLY, &previousProtection);
+    });
+}
+
+#endif
 
 Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule)
 {

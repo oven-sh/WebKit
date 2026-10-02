@@ -101,9 +101,13 @@
 #include <string.h>
 #include <sys/stat.h>
 #if ENABLE(AOT)
+#if OS(WINDOWS)
+#include <process.h>
+#else
 #include <spawn.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#endif
 #if OS(DARWIN)
 #include <mach-o/dyld.h>
 #endif
@@ -1667,8 +1671,8 @@ static SourceCode programSource(JSGlobalObject* globalObject, SourceCode&& sourc
     VM& vm = globalObject->vm();
     if (const char* path = byteCast<char>(Options::writeAOTImageTo())) {
         Vector<uint8_t> file = buildAOTFile(vm, source, isModule);
-        int fileDescriptor = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-        bool ok = fileDescriptor >= 0 && write(fileDescriptor, file.span().data(), file.size()) == static_cast<ssize_t>(file.size());
+        FILE* output = fopen(path, "wb");
+        bool ok = output && fwrite(file.span().data(), 1, file.size(), output) == file.size() && !fclose(output);
         jscExit(ok ? EXIT_SUCCESS : EXIT_FAILURE);
     }
     const AOT::ProgramData* data = AOT::ProgramData::get();
@@ -5311,7 +5315,47 @@ extern const JITOperationAnnotation startOfJITOperationsInShell __asm__("section
 extern const JITOperationAnnotation endOfJITOperationsInShell __asm__("section$end$__DATA_CONST$__jsc_ops");
 #endif
 
-#if ENABLE(AOT)
+#if ENABLE(AOT) && OS(WINDOWS)
+[[noreturn]] static void compileAOTAndRerun(int argc, char** argv)
+{
+    char executable[MAX_PATH];
+    RELEASE_ASSERT(GetModuleFileNameA(nullptr, executable, sizeof(executable)));
+    char directory[MAX_PATH];
+    RELEASE_ASSERT(GetTempPathA(sizeof(directory), directory));
+    char path[MAX_PATH];
+    RELEASE_ASSERT(GetTempFileNameA(directory, "aot", 0, path));
+    char remarksPath[MAX_PATH];
+    RELEASE_ASSERT(GetTempFileNameA(directory, "aot", 0, remarksPath));
+    _putenv_s("JSC_compileMainScriptAheadOfTime", "");
+
+    auto run = [&](std::initializer_list<const char*> added) {
+        Vector<const char*> arguments { argv[0] };
+        for (const char* argument : added)
+            arguments.append(argument);
+        for (int i = 1; i < argc; ++i) {
+            if (strncmp(argv[i], "--compileMainScriptAheadOfTime", strlen("--compileMainScriptAheadOfTime")))
+                arguments.append(argv[i]);
+        }
+        arguments.append(nullptr);
+        return _spawnv(_P_WAIT, executable, arguments.span().data());
+    };
+
+    char remarksOption[MAX_PATH + 32];
+    snprintf(remarksOption, sizeof(remarksOption), "--aotRemarksPath=%s", remarksPath);
+    char buildOption[MAX_PATH + 32];
+    snprintf(buildOption, sizeof(buildOption), "--writeAOTImageTo=%s", path);
+    bool isBuilt = !run({ buildOption, remarksOption });
+    struct _stat64 written;
+    isBuilt = isBuilt && !_stat64(path, &written) && written.st_size;
+
+    char useOption[MAX_PATH + 32];
+    snprintf(useOption, sizeof(useOption), "--aotImagePath=%s", path);
+    intptr_t status = run({ isBuilt ? useOption : "--useAOT=1", remarksOption });
+    DeleteFileA(path);
+    DeleteFileA(remarksPath);
+    exit(static_cast<int>(status));
+}
+#elif ENABLE(AOT)
 extern char** environ;
 
 [[noreturn]] static void compileAOTAndRerun(int argc, char** argv)
@@ -5409,6 +5453,23 @@ int jscmain(int argc, char** argv)
 #if ENABLE(AOT)
     if (Options::compileMainScriptAheadOfTime())
         compileAOTAndRerun(argc, argv);
+#if OS(WINDOWS)
+    if (const char* path = byteCast<char>(Options::aotImagePath())) {
+        AOTFileUse use { "cannot read it", "cannot read it" };
+        HANDLE file = CreateFileA(path, GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        LARGE_INTEGER size;
+        if (file != INVALID_HANDLE_VALUE && GetFileSizeEx(file, &size)) {
+            HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+            void* bytes = mapping ? MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0) : nullptr;
+            if (bytes)
+                use = useAOTFile({ static_cast<const uint8_t*>(bytes), static_cast<size_t>(size.QuadPart) }, file, 0);
+        }
+        if (use.programDataRejectionReason || use.imageRejectionReason) {
+            dataLogLn("Cannot use ", path, ": ", use.imageRejectionReason ? use.imageRejectionReason : use.programDataRejectionReason);
+            jscExit(EXIT_FAILURE);
+        }
+    }
+#else
     if (const char* path = byteCast<char>(Options::aotImagePath())) {
         int fileDescriptor = open(path, O_RDONLY);
         struct stat status;
@@ -5419,6 +5480,7 @@ int jscmain(int argc, char** argv)
             jscExit(EXIT_FAILURE);
         }
     }
+#endif
 #endif
 
     if (!Options::maxHeapSizeAsRAMSizeMultiple())

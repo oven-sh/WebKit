@@ -6851,7 +6851,7 @@ struct BytecodeLinkEncoder::Impl {
             std::ranges::sort(allRemarks, [](auto& a, auto& b) {
                 return std::tuple { a.key.module, a.key.start, a.key.kind } < std::tuple { b.key.module, b.key.start, b.key.kind };
             });
-            if (auto file = FilePrintStream::open(byteCast<char>(Options::aotRemarksPath()), "w")) {
+            if (auto file = FilePrintStream::open(byteCast<char>(Options::aotRemarksPath()), "wb")) {
                 for (auto& function : allRemarks) {
                     file->print(function.name, "\tcompiled\n");
                     for (auto& remark : function.remarks)

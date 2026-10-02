@@ -532,7 +532,13 @@ struct AOTFileUse {
     size_t codeSizeInBytes { 0 };
     const void* code { nullptr };
 };
-JS_EXPORT_PRIVATE AOTFileUse useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile);
+#if OS(WINDOWS)
+using AOTFileHandle = void*;
+JS_EXPORT_PRIVATE AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes);
+#else
+using AOTFileHandle = int;
+#endif
+JS_EXPORT_PRIVATE AOTFileUse useAOTFile(std::span<const uint8_t> bytes, AOTFileHandle, int64_t offsetInFile);
 JS_EXPORT_PRIVATE Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool isModule);
 JS_EXPORT_PRIVATE bool isAOTImagePC(const void*);
 JS_EXPORT_PRIVATE std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image);
