@@ -810,7 +810,13 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 
 #if ENABLE(AOT)
     vm().m_aotInstances.removeAllMatching([&](AOT::Instance* instance) {
-        return !isMarked(instance->loader());
+        if (!isMarked(instance->loader()))
+            return true;
+        if (!instance->loaderWasCleared() || isMarked(AOT::tokenOf(instance)))
+            return false;
+        instance->loader()->setAOTInstance(nullptr);
+        vm().m_aotInstancesToDestroy.append(instance);
+        return true;
     });
     for (AOT::Instance* instance : vm().m_aotInstances)
         instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
@@ -3819,7 +3825,7 @@ void Heap::addCoreConstraints()
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
             bool onlyNew = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
             for (AOT::Instance* instance : vm().m_aotInstances) {
-                if (visitor.isMarked(instance->loader()))
+                if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance))))
                     instance->visit(visitor, onlyNew);
             }
         })),

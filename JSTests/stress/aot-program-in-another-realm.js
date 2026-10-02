@@ -1,5 +1,7 @@
 //@ skip if $architecture != "arm64"
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
+//@ defaultRun
+//@ run("gc-stress", "--slowPathAllocsBetweenGCs=20")
 // A realm that runs the program has its own variables, and the same code.
 
 var counter = 0;

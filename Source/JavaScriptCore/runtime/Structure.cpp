@@ -1742,8 +1742,10 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     
     visitor.append(thisObject->m_realm);
 #if ENABLE(AOT)
-    if (thisObject->m_aotInstance) [[unlikely]]
+    if (thisObject->m_aotInstance) [[unlikely]] {
         visitor.appendUnbarriered(AOT::ownerOf(thisObject->m_aotInstance));
+        visitor.appendUnbarriered(AOT::tokenOf(thisObject->m_aotInstance));
+    }
 #endif
     if (!thisObject->isObject()) {
         // We do not need to clear JSPropertyNameEnumerator since it is never cached for non-object Structure.

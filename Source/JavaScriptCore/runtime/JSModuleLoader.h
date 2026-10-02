@@ -239,6 +239,10 @@ public:
         m_moduleMap.clear();
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
+#if ENABLE(AOT)
+        if (m_aotInstance)
+            AOT::didClearLoaderOf(m_aotInstance);
+#endif
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);

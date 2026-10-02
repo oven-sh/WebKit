@@ -4,7 +4,8 @@
     run-tests.py <jsc>
 
 The tests are JSTests/stress/aot-*.js and sound-types-*.js. Each runs with the options of its header, twice: as it says, and with
-every inferred type checked against the value and the B3 and Air validators on, as in the mode `aot-validate`.
+every inferred type checked against the value and the B3 and Air validators on, as in the mode `aot-validate`. A `//@ run("name", ...)` in the
+header is one more run.
 
 A test fails if it prints anything or exits with anything but 0. run-javascriptcore-tests runs all of this and much more, in
 the modes `aot` and `aot-validate` among the rest. This is what is quick enough to run after every change.
@@ -21,7 +22,7 @@ STRESS = os.path.realpath(os.path.join(HERE, "..", "..", "..", "JSTests", "stres
 
 def header_of(path):
     with open(path, errors="replace") as file:
-        return [line for line in file.read().split("\n")[:4] if line.startswith("//@ ")]
+        return [line for line in file.read().split("\n")[:6] if line.startswith("//@ ")]
 
 
 def run(jsc, options, test):
@@ -44,7 +45,10 @@ def main():
     runs = []
     for test in tests:
         header = header_of(os.path.join(STRESS, test))
-        options = re.findall(r'"(--?[^"]*)"', " ".join(header))
+        options = re.findall(r'"(--?[^"]*)"', " ".join(line for line in header if not line.startswith("//@ run(")))
+        for line in header:
+            if also := re.match(r'//@ run\("([^"]+)"(.*)\)', line):
+                runs.append((test, options + re.findall(r'"(--?[^"]*)"', also.group(2)), also.group(1)))
         for extra in ([], ["--validateAOTInferredTypes=true", "--validateGraphAtEachPhase=true"]):
             if extra and any("$skipModes << :aot_validate" in line for line in header):
                 continue

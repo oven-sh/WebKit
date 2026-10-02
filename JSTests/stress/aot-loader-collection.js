@@ -1,5 +1,7 @@
 //@ skip if $architecture != "arm64"
 //@ requireOptions("-m", "--compileMainScriptAheadOfTime=1")
+//@ defaultRun
+//@ run("gc-stress", "--slowPathAllocsBetweenGCs=20")
 // An instance lives as long as its module loader, and no longer. A closure keeps the instance that it needs.
 
 let n = 0;

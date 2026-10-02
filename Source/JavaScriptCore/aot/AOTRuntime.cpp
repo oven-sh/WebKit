@@ -214,6 +214,8 @@ struct Instance::Collections {
     Vector<std::pair<Structure*, Structure*>, 12> structuresOfFunctions;
     UncheckedKeyHashMap<SourceProvider*, ScriptExecutable*> topLevelExecutables;
     UncheckedKeyHashMap<RegExp*, RegExp*> regExps;
+    JSCell* token { nullptr };
+    bool loaderWasCleared { false };
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
     size_t numberOfFunctions { 0 };
@@ -241,6 +243,22 @@ Data* SharedData::get()
 }
 
 JSCell* ownerOf(Instance* instance) { return instance->loader(); }
+JSCell* tokenOf(Instance* instance) { return instance->collections->token; }
+
+void didClearLoaderOf(Instance* instance)
+{
+    // (Builtins run under the instance of the realm's own loader when nothing else says which.)
+    if (instance->globalObject->aotInstance() != instance)
+        instance->collections->loaderWasCleared = true;
+}
+
+bool Instance::loaderWasCleared() const { return collections->loaderWasCleared; }
+
+void Instance::destroyThoseNoLongerNeeded(VM& vm)
+{
+    while (!vm.m_aotInstancesToDestroy.isEmpty())
+        destroy(vm.m_aotInstancesToDestroy.last());
+}
 JSModuleLoader* Instance::loader() const { return collections->loader; }
 
 Instance& Instance::ensure(JSGlobalObject* globalObject)
@@ -274,6 +292,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         return std::max<size_t>(roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + numberOfFunctions * sizeof(uint32_t)), static_cast<size_t>(leastStateWithData) << shiftOfStateWithData);
     };
     RELEASE_ASSERT(StaticHeap::isUsedBy(vm) && StaticHeap::infosOfFunctions(vm));
+    destroyThoseNoLongerNeeded(vm);
     size_t environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
     size_t numberOfFunctions = Image::numberOfFunctions();
     size_t size = startOfDatasFor(numberOfFunctions) + roundUpToMultipleOf(WTF::pageSize(), Image::sizeOfAllDatas());
@@ -368,6 +387,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         }
         instance->selectorsOnObjectPrototype = static_cast<uint8_t*>(fastZeroedMalloc(image->header().numberOfSelectors / 8 + 1));
     }
+    // (Last: until the instance is on the list, nothing marks it.)
+    instance->collections->token = Symbol::create(vm);
     loader->setAOTInstance(instance);
     vm.m_aotInstances.append(instance);
     return *instance;
@@ -473,6 +494,7 @@ void Instance::freeOfData(void* pointer, size_t size)
 void Instance::destroy(Instance* instance)
 {
     instance->vm->m_aotInstances.removeFirst(instance);
+    instance->vm->m_aotInstancesToDestroy.removeFirst(instance);
     while (!instance->collections->all.isEmpty())
         Data::destroy(instance->collections->all.last());
     size_t environmentsSize = instance->collections->environmentsSize;
@@ -1432,6 +1454,7 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
     }
     for (auto& [from, to] : collections->structuresOfFunctions)
         visitor.appendUnbarriered(to);
+    visitor.appendUnbarriered(collections->token);
     for (RegExp* regExp : collections->regExps.values())
         visitor.appendUnbarriered(regExp);
     for (ScriptExecutable* executable : collections->topLevelExecutables.values())
@@ -1440,6 +1463,8 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
 
 Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names)
 {
+    if (Instance& ofRealm = ensure(globalObject); &ofRealm != this)
+        return ofRealm.structureOfKnownShape(shape, names);
     if (auto it = collections->knownShapes.find(shape); it != collections->knownShapes.end())
         return it->value;
     Image* image = Image::withShapes();
@@ -1469,6 +1494,8 @@ Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStri
 
 Structure* Instance::emptyStructureForLayout(uint16_t layoutID)
 {
+    if (Instance& ofRealm = ensure(globalObject); &ofRealm != this)
+        return ofRealm.emptyStructureForLayout(layoutID);
     if (auto it = collections->emptyStructures.find(layoutID); it != collections->emptyStructures.end())
         return it->value;
     unsigned capacity = TypedLayoutTable::numberOfSlots(layoutID);
@@ -1737,6 +1764,8 @@ void Instance::lookAtObjectPrototype()
 
 Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStringImpl* const> names)
 {
+    if (Instance& ofRealm = ensure(globalObject); &ofRealm != this)
+        return ofRealm.structureOfLiteral(empty, names);
     ASSERT(empty->storedPrototype() == globalObject->objectPrototype());
     Vector<uintptr_t, 32> words;
     words.append(empty->inlineCapacity());
@@ -1754,6 +1783,8 @@ template void Instance::visit(SlotVisitor&, bool);
 
 JSObject* Instance::tryCopySlotsForSpread(JSObject* source)
 {
+    if (Instance& ofRealm = ensure(globalObject); &ofRealm != this)
+        return ofRealm.tryCopySlotsForSpread(source);
     Structure* ofSource = source->structure();
     Structure* ofCopy = nullptr;
     if (auto it = collections->structuresOfCopies.find(ofSource); it != collections->structuresOfCopies.end())

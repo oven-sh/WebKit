@@ -487,6 +487,10 @@ struct Instance {
     JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOf(SourceProvider*);
     JS_EXPORT_PRIVATE void setTopLevelExecutableOf(SourceProvider*, ScriptExecutable*);
     JSModuleLoader* loader() const;
+    // Once its loader has been cleared, an instance is only needed while its token is marked: by a Structure of one of its functions, or
+    // by the executable of one of its modules.
+    bool loaderWasCleared() const;
+    JS_EXPORT_PRIVATE static void destroyThoseNoLongerNeeded(VM&);
     static bool convertToTypedLayout(VM&, JSObject*, uint16_t layoutID); // TypedLayoutTable::ConvertFunction
     Structure* emptyStructureForLayout(uint16_t layoutID);
     Structure* emptyStructureForLayout(uint16_t layoutID, JSObject* prototype); // Creates a new Structure. The caller must keep it alive.

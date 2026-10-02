@@ -511,6 +511,7 @@ public:
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
 #endif
     Vector<AOT::Instance*, 1> m_aotInstances;
+    Vector<AOT::Instance*> m_aotInstancesToDestroy;
     void* m_staticHeapOfVM { nullptr }; // See StaticHeap::isUsedBy().
     // The realm that builtins are currently being created for, if known (BuiltinExecutables::staticExecutableFor()).
     JSGlobalObject* m_realmForBuiltins { nullptr };

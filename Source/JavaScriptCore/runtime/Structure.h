@@ -58,6 +58,8 @@ namespace JSC {
 namespace AOT {
 struct Instance;
 JS_EXPORT_PRIVATE JSCell* ownerOf(Instance*);
+JS_EXPORT_PRIVATE JSCell* tokenOf(Instance*);
+JS_EXPORT_PRIVATE void didClearLoaderOf(Instance*);
 }
 #endif
 

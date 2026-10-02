@@ -1,5 +1,7 @@
 //@ skip if $architecture != "arm64"
 //@ requireOptions("--compileMainScriptAheadOfTime=1")
+//@ defaultRun
+//@ run("gc-stress", "--slowPathAllocsBetweenGCs=20")
 // What was made when the program was built is shared by every thread, and the first to use a part of it need not be the main one.
 
 var sticky = /a+/y;

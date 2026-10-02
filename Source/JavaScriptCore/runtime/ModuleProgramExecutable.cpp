@@ -266,6 +266,10 @@ void ModuleProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleEnvironmentSymbolTable);
     visitor.append(thisObject->m_moduleLoader);
+#if ENABLE(AOT)
+    if (JSModuleLoader* loader = thisObject->m_moduleLoader.get(); loader && loader->aotInstance())
+        visitor.appendUnbarriered(AOT::tokenOf(loader->aotInstance()));
+#endif
     visitor.append(thisObject->m_moduleScopeSymbolTables.begin(), thisObject->m_moduleScopeSymbolTables.end());
     {
         Locker locker { thisObject->cellLock() };

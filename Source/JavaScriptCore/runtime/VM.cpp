@@ -686,6 +686,9 @@ VM::~VM()
     smallStrings.setIsInitialized(false);
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
+#if ENABLE(AOT)
+    AOT::Instance::destroyThoseNoLongerNeeded(*this);
+#endif
     heap.lastChanceToFinalize();
     StaticHeap::willDestroy(*this);
 
