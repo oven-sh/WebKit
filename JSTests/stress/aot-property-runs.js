@@ -45,6 +45,11 @@ function sameName(o) { o.a = 1; o.b = 2; o.a = 3; o.c = 4; o.d = 5; return o; }
 function setsProto(o, p) { o.a = 1; o.b = 2; o.__proto__ = p; o.c = 3; o.d = 4; return o; }
 function inLoop(o) { for (let i = 0; i < 2; ++i) { o.a = i; o.b = i; o.c = i; o.d = i; } return o; }
 function inTry(o) { try { o.a = 1; o.b = 2; o.c = 3; o.d = 4; } catch { } return o; }
+function straddles(o) { let where = "before"; o.a = 1; o.b = 2; try { where = "inside"; o.c = 3; o.d = 4; o.e = 5; o.f = 6; } catch (e) { return where + " caught " + e.constructor.name + " " + describe(o); } return describe(o); }
+function assignsBetween(o) { let x = "old"; try { o.a = 1; x = "new"; o.b = 2; o.c = 3; o.d = 4; } catch { return x + " " + Object.keys(o).join(""); } return x; }
+function fromVariables(o) { let v = 1, w = 2; let keep = () => v + w + o.a; o.a = v; o.b = w; o.c = v; o.d = w; return keep() + describe(o); }
+function tooEarly(o) { let keep = () => late; o.a = 1; o.b = 2; o.c = late; o.d = 4; o.e = 5; let late = 3; return keep; }
+function reassigned(o, p) { let keep = () => o; o.a = 1; o.b = 2; o = p; o.c = 3; o.d = 4; return keep; }
 function computed(o, k) { o.a = 1; o.b = 2; o[k] = 3; o.c = 4; o.d = 5; return o; }
 
 for (let round = 0; round < 3; ++round) {
@@ -135,6 +140,20 @@ for (let round = 0; round < 3; ++round) {
     check(describe(inLoop({})), "a=1,b=1,c=1,d=1", "in a loop");
     check(describe(inTry({})), "a=1,b=2,c=3,d=4", "in a try block");
     check(describe(computed({}, "k")), "a=1,b=2,k=3,c=4,d=5", "a computed name in between");
+    check(straddles({}), "a=1,b=2,c=3,d=4,e=5,f=6", "a try block begins half way");
+    check(straddles(Object.create({ set d(v) { throw new RangeError; } })), "inside caught RangeError a=1,b=2,c=3", "a store inside the try block throws");
+    let outside = "not thrown";
+    try { straddles(Object.create({ set b(v) { throw new RangeError; } })); } catch (e) { outside = e.constructor.name; }
+    check(outside, "RangeError", "a store before the try block throws");
+    check(assignsBetween({}), "new", "an assignment in between");
+    check(assignsBetween(Object.create({ set a(v) { throw 1; } })), "old ", "the first store throws before the assignment");
+    check(assignsBetween(Object.create({ set b(v) { throw 1; } })), "new a", "the second store throws after it");
+    check(fromVariables({}), "4a=1,b=2,c=1,d=2", "values from captured variables");
+    let early = {};
+    check(outcome(tooEarly, early) + describe(early), "ReferenceErrora=1,b=2", "a variable that is not initialized yet");
+    let first = {}, second = {};
+    reassigned(first, second);
+    check(describe(first) + ";" + describe(second), "a=1,b=2;c=3,d=4", "the variable that holds the object is assigned to");
 }
 let kept = [];
 for (let i = 0; i < 3000; ++i) {
@@ -156,7 +175,12 @@ applies(literals, "property-run:5");
 applies(fresh, "property-run:5");
 applies(many, "property-run:20");
 applies(twoRuns, "property-run:4");
+applies(captured, "property-run:4");
+applies(inTry, "property-run:4");
+applies(straddles, "property-run:4");
+applies(fromVariables, "property-run:4");
 for (let f of [four, fourStrict, closures, fresh, many, twoRuns])
     doesNotApply(f, "calls:PutById");
-for (let f of [three, callBetween, readBetween, interleaved, sameName, setsProto, inLoop, inTry, computed])
+doesNotApply(straddles, "property-run:6");
+for (let f of [three, callBetween, readBetween, interleaved, sameName, setsProto, inLoop, computed, assignsBetween, tooEarly, reassigned])
     doesNotApply(f, "property-run");

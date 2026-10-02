@@ -615,9 +615,40 @@ void Lowering::findPropertyRuns(BasicBlock* block)
 {
     constexpr unsigned minimumLength = 4;
     constexpr unsigned maximumLength = 64;
-    if (block->isInLoop || block->isGeneric || m_graph.hasFrameRegisters())
+    if (block->isInLoop || block->isGeneric)
         return;
-    Node* base = nullptr;
+    struct Base {
+        bool operator==(const Base&) const = default;
+        explicit operator bool() const { return node || variable; }
+        Node* node { nullptr };
+        Node* scope { nullptr };
+        UniquedStringImpl* variable { nullptr };
+    };
+    auto isPureScopeRead = [&](Node* node) {
+        auto bytecode = node->as<OpGetFromScope>();
+        if (node->promotedEnvironment)
+            return true;
+        if (isFusedWithGetFromScope(node->use(bytecode.m_scope)))
+            return false;
+        ResolveType type = bytecode.m_getPutInfo.resolveType();
+        if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar)
+            return true;
+        SetForScope code(m_code, node->graph);
+        return resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type).kind == StaticVariable::Closure;
+    };
+    auto baseOf = [&](Node* target) -> Base {
+        if (!target->isBytecode(op_get_from_scope) || !isPureScopeRead(target))
+            return { target };
+        auto bytecode = target->as<OpGetFromScope>();
+        Node* scope = target->use(bytecode.m_scope);
+        if (scope->isBytecode(op_resolve_scope))
+            scope = scope->use(scope->as<OpResolveScope>().m_scope);
+        return { nullptr, scope, target->graph->codeBlock()->identifier(bytecode.m_var).impl() };
+    };
+    auto handlerOf = [&](Node* node) {
+        return std::pair { node->graph, node->graph->codeBlock()->handlerForBytecodeIndex(node->bytecodeIndex) };
+    };
+    Base base;
     PropertyRun stores;
     Vector<UniquedStringImpl*, 16> names;
     UncheckedKeyHashSet<Node*> createdSinceLastEffect;
@@ -629,7 +660,7 @@ void Lowering::findPropertyRuns(BasicBlock* block)
         }
         stores.shrink(0);
         names.shrink(0);
-        base = nullptr;
+        base = { };
     };
     auto end = [&] {
         endRun();
@@ -638,7 +669,7 @@ void Lowering::findPropertyRuns(BasicBlock* block)
     for (Node* node : block->nodes) {
         if (node->isElided)
             continue;
-        if (node->kind == NodeKind::Constant || node->kind == NodeKind::ConstantCell || node->kind == NodeKind::LinkTimeConstant)
+        if (node->kind == NodeKind::Constant || node->kind == NodeKind::ConstantCell || node->kind == NodeKind::LinkTimeConstant || node->kind == NodeKind::GetStack)
             continue;
         if (node->kind != NodeKind::Bytecode || node->guard || node->guarded) {
             end();
@@ -652,6 +683,22 @@ void Lowering::findPropertyRuns(BasicBlock* block)
         case op_new_object:
             createdSinceLastEffect.add(node);
             continue;
+        case op_get_scope:
+            continue;
+        case op_resolve_scope: {
+            ResolveType type = node->as<OpResolveScope>().m_resolveType;
+            if (type == Dynamic || type == UnresolvedProperty || type == UnresolvedPropertyWithVarInjectionChecks)
+                end();
+            continue;
+        }
+        case op_get_from_scope:
+            if (!isPureScopeRead(node))
+                end();
+            continue;
+        case op_check_tdz:
+            if (!base || baseOf(node->use(node->as<OpCheckTdz>().m_targetVirtualRegister)) != base)
+                end();
+            continue;
         case op_put_by_id: {
             auto bytecode = node->as<OpPutById>();
             Node* target = node->use(bytecode.m_base);
@@ -662,12 +709,12 @@ void Lowering::findPropertyRuns(BasicBlock* block)
                 end();
                 continue;
             }
-            if (target != base || names.contains(name) || stores.size() == maximumLength) {
-                if (target != base)
+            if (Base targetBase = baseOf(target); targetBase != base || names.contains(name) || stores.size() == maximumLength || handlerOf(node) != handlerOf(stores[0])) {
+                if (targetBase != base)
                     end();
                 else
                     endRun();
-                base = target;
+                base = targetBase;
             }
             stores.append(node);
             names.append(name);
