@@ -187,6 +187,13 @@ public:
     void setSourceMappingURLDirective(const String& sourceMappingURLDirective) { m_sourceMappingURLDirective = sourceMappingURLDirective; }
     void setSourceTaintedOrigin(SourceTaintedOrigin taintedness) { m_taintedness = taintedness; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t aotModuleID() const { return m_aotModuleID; }
+    void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
+    bool hasNoSourceText() const { return m_hasNoSourceText; }
+    void setHasNoSourceText() { m_hasNoSourceText = true; }
+#endif
+
     SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedness; }
     bool couldBeTainted() const { return m_taintedness != SourceTaintedOrigin::Untainted; }
 
@@ -253,6 +260,7 @@ public:
             && !m_lineStartTable.isBuilt();
     }
     LineStarts lineStartsIfBuilt() const { return m_lineStartTable.lineStartsIfBuilt(); }
+    LineStarts lineStarts() { return m_lineStartTable.lineStarts(source()); }
     // A builtin with a source of its own is parsed as a function, which is not all of the source.
     LineStarts lineStartsForBytecode()
     {
@@ -280,6 +288,10 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_aotModuleID { 0 };
+    bool m_hasNoSourceText { false };
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;
@@ -391,7 +403,6 @@ private:
             return nullptr;
         }
 
-    
     private:
         JS_EXPORT_PRIVATE SyntheticSourceProvider(SyntheticSourceGenerator&& generator, LazySyntheticSourceGenerator&& lazyGenerator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
             : SourceProvider(sourceOrigin, WTF::move(sourceURL), WTF::move(preRedirectURL), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Synthetic)

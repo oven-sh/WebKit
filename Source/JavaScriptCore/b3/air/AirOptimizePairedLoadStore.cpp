@@ -272,6 +272,8 @@ bool optimizePairedLoadStore(Code& code)
 
     bool changed = false;
     for (BasicBlock* block : code) {
+        // Bun: removed all at once below. Removing each where it is found is quadratic in the size of the block.
+        bool removedAny = false;
         unsigned index = block->size();
         while (index--) {
             Inst& inst = block->at(index);
@@ -287,10 +289,11 @@ bool optimizePairedLoadStore(Code& code)
                 if ((inst.args()[0].isGPTmp() || inst.args()[0].isZeroReg()) && inst.args()[1].isAddr()) {
                     // sp & fp slot usage is, in particular, different for call args and spills.
                     // We would like to do stp merging only for spills.
-                    if ((inst.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister) || inst.args()[1].base() == Tmp(CCallHelpers::framePointerRegister)) && !inst.kind.spill)
+                    if ((inst.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister) || inst.args()[1].base() == Tmp(CCallHelpers::framePointerRegister)) && !inst.kind.spill && !code.proc().positionIndependent())
                         continue;
                     if (tryStorePair(code, block, index, inst)) {
-                        block->insts().removeAt(index);
+                        block->at(index) = Inst();
+                        removedAny = true;
                         changed = true;
                     }
                     continue;
@@ -301,6 +304,11 @@ bool optimizePairedLoadStore(Code& code)
             default:
                 continue;
             }
+        }
+        if (removedAny) {
+            block->insts().removeAllMatching([](const Inst& inst) {
+                return !inst;
+            });
         }
     }
 

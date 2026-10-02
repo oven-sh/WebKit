@@ -26,11 +26,14 @@
 #include "config.h"
 #include "ModuleProgramExecutable.h"
 
+#include "AOTImage.h"
 #include "CodeCache.h"
 #include "Debugger.h"
 #include "Error.h"
 #include "FunctionExecutable.h"
 #include "JSModuleRecord.h"
+#include "ModuleProgramCodeBlock.h"
+#include "AOTProgramData.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakInlines.h"
@@ -46,6 +49,8 @@ ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, c
 {
     for (unsigned i = 0; i < moduleScopeSymbolTables.size(); ++i)
         m_moduleScopeSymbolTables[i].setWithoutWriteBarrier(moduleScopeSymbolTables[i]);
+    if (linker)
+        m_moduleLoader.setWithoutWriteBarrier(linker->moduleLoader());
 #if USE(BUN_JSC_ADDITIONS)
     if (linker && linker->isPrelinked()) {
         m_linkerPrelinkedGraph = linker->prelinkedGraph();
@@ -96,6 +101,10 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     }
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
+#if ENABLE(AOT)
+    if (Options::verboseAOTCompilation() && AOT::ProgramData::get()) [[unlikely]]
+        dataLogLn("AOT: ", source().provider()->sourceURL(), " was not compiled ahead of time");
+#endif
     // The symbol table and the function declarations' executables are made once and stay for as long as the executable
     // does, whatever happens to its code (ScriptExecutable::clearCode, releaseUnlinkedCodeIfRecoverable). The
     // declarations' code is shared by every record of the executable and the optimizing tiers treat the scope of a symbol
@@ -107,14 +116,14 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     if (SymbolTable* clone = m_moduleEnvironmentSymbolTable.get()) {
         // It is the clone of the constant of the code that was fetched again from now on (as for the other scopes of a
         // body that can be suspended, CodeBlock::setConstantRegisters). The environment is laid out by it either way.
-        if (clone->clonedFrom() != symbolTable) {
+        if (clone != symbolTable && clone->clonedFrom() != symbolTable) {
             if (clone->isCloneOfScopePartOf(*symbolTable))
                 clone->adoptOriginal(vm, *symbolTable);
             else
                 clone->invalidateInferencesOfAbandonedClone(vm);
         }
     } else {
-        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->isSharedAcrossRealms() ? symbolTable : symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
         m_codeGenerationMode = codeGenerationMode;
         Locker locker { cellLock() };
         m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
@@ -122,6 +131,22 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     ASSERT(m_functionDeclarations.size() == unlinkedModuleProgramCode->numberOfFunctionDecls());
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 }
+
+#if ENABLE(AOT)
+bool ModuleProgramExecutable::useProgramData(VM& vm)
+{
+    auto* program = AOT::VMProgram::of(vm);
+    const AOT::ProgramModule* module = program && m_moduleLoader ? program->moduleFor(*source().provider()) : nullptr;
+    if (!module)
+        return false;
+    m_programModule = module;
+    m_moduleEnvironmentSymbolTable.set(vm, this, uncheckedDowncast<SymbolTable>(program->constant(module->environmentSymbolTable).asCell()));
+    recordParse(static_cast<CodeFeatures>(module->features), static_cast<LexicallyScopedFeatures>(module->lexicallyScopedFeaturesAndFlags & 0xffff), module->lexicallyScopedFeaturesAndFlags >> 16);
+    AOT::Instance::ensure(m_moduleLoader.get()).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
+    return true;
+}
+
+#endif
 
 JSModuleRecord* ModuleProgramExecutable::linker() const
 {
@@ -158,6 +183,8 @@ FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigne
 {
     if (FunctionExecutable* executable = m_functionDeclarations[index].get())
         return executable;
+    if (FunctionExecutable* executable = unlinkedCodeBlock()->functionDeclExecutable(index))
+        return executable;
     return linkFunctionDeclaration(vm, index, unlinkedCodeBlock()->functionDecl(index));
 }
 
@@ -179,6 +206,10 @@ ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* glob
 
     ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables);
     executable->finishCreation(vm);
+#if ENABLE(AOT)
+    if (executable->useProgramData(vm))
+        return executable;
+#endif
     executable->getUnlinkedCodeBlock(globalObject); // This generates and binds unlinked code block. Null: it has thrown.
     RETURN_IF_EXCEPTION(scope, nullptr);
     return executable;
@@ -210,6 +241,12 @@ void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
     // executables (and so their CodeBlocks and JIT code) only as long as the linked code they belong to does.
     if (m_isShared)
         return;
+#if ENABLE(AOT)
+    if (m_programModule) {
+        AOT::Instance::ensure(m_moduleLoader.get()).didFinishModuleEvaluation(this);
+        return;
+    }
+#endif
     if (!Options::useRunOnceCodeRelease() || !canReleaseLinkedCodeNow(vm))
         return;
     clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()), ClearCode::KeepWhatNeedsParsing);
@@ -244,6 +281,11 @@ void ModuleProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleEnvironmentSymbolTable);
+    visitor.append(thisObject->m_moduleLoader);
+#if ENABLE(AOT)
+    if (JSModuleLoader* loader = thisObject->m_moduleLoader.get(); loader && loader->aotInstance())
+        visitor.appendUnbarriered(AOT::tokenOf(loader->aotInstance()));
+#endif
     visitor.append(thisObject->m_moduleScopeSymbolTables.begin(), thisObject->m_moduleScopeSymbolTables.end());
     {
         Locker locker { thisObject->cellLock() };

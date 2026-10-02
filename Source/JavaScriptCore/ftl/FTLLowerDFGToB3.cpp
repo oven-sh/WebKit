@@ -404,7 +404,6 @@ public:
             m_out.jump(firstDFGBasicBlock);
         }
 
-
         m_out.appendTo(m_handleExceptions, firstDFGBasicBlock);
         Box<CCallHelpers::Label> exceptionHandler = state->exceptionHandler;
         m_out.patchpoint(Void)->setGenerator(
@@ -971,6 +970,9 @@ private:
             break;
         case CheckNotEmpty:
             compileCheckNotEmpty();
+            break;
+        case CheckSoundType:
+            compileCheckSoundType();
             break;
         case AssertNotEmpty:
             compileAssertNotEmpty();
@@ -3053,7 +3055,6 @@ private:
             [=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
 
-
                 Box<CCallHelpers::JumpList> exceptions =
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
 
@@ -4349,6 +4350,150 @@ private:
     void compileCheckNotEmpty()
     {
         speculate(TDZFailure, noValue(), nullptr, m_out.isZero64(lowJSValue(m_node->child1())));
+    }
+
+    void compileCheckSoundType()
+    {
+        Edge child = m_node->child1();
+        LValue value = lowJSValue(child);
+        SpeculatedType proven = provenType(child);
+
+        unsigned mask = m_node->soundTypeMask();
+        if (soundTypeMaskNamesTypedArray(mask)) {
+            LValue accepts = m_out.callWithoutSideEffects(pointerType(), operationSoundTypeMaskAccepts, value, m_out.constInt32(mask));
+            speculate(BadType, jsValueValue(value), child.node(), m_out.isZero64(accepts));
+            return;
+        }
+
+        for (unsigned tag = 1; tag < SoundTypeAll; tag <<= 1) {
+            if (!(proven & speculationFromSoundTypeMask(tag)))
+                mask &= ~tag;
+        }
+
+        LBasicBlock failCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(failCase);
+
+        auto passIf = [&](LValue condition) {
+            LBasicBlock next = m_out.newBlock();
+            m_out.branch(condition, unsure(continuation), unsure(next));
+            m_out.appendTo(next);
+        };
+        auto failIf = [&](LValue condition) {
+            LBasicBlock next = m_out.newBlock();
+            m_out.branch(condition, rarely(failCase), usually(next));
+            m_out.appendTo(next);
+        };
+
+        if (mask & SoundTypeNumber)
+            passIf(isNumber(value, proven));
+
+        constexpr unsigned cellTags = SoundTypeString | SoundTypeSymbol | SoundTypeBigInt | SoundTypeAnyObject;
+        unsigned cellMask = mask & cellTags;
+        unsigned immediateMask = mask & (SoundTypeUndefined | SoundTypeNull | SoundTypeBoolean);
+#if USE(BIGINT32)
+        immediateMask |= mask & SoundTypeBigInt;
+#endif
+
+        bool hasRemainingImmediates = true;
+        if (cellMask) {
+            LBasicBlock cellCase = m_out.newBlock();
+            LBasicBlock notCellCase = immediateMask ? m_out.newBlock() : failCase;
+            m_out.branch(isCell(value, proven), unsure(cellCase), unsure(notCellCase));
+            m_out.appendTo(cellCase);
+
+            if (cellMask == cellTags)
+                m_out.jump(continuation);
+            else {
+                LValue type = m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoType);
+                auto typeIs = [&](JSType jsType) { return m_out.equal(type, m_out.constInt32(jsType)); };
+                auto isNotObject = [&] { return m_out.below(type, m_out.constInt32(ObjectType)); };
+                auto isArray = [&] {
+                    static_assert(DerivedArrayType == ArrayType + 1);
+                    return m_out.belowOrEqual(m_out.sub(type, m_out.constInt32(ArrayType)), m_out.constInt32(DerivedArrayType - ArrayType));
+                };
+                auto overridesGetCallData = [&] {
+                    return m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(OverridesGetCallData));
+                };
+                auto deferToRuntimeIf = [&](LValue condition, LBasicBlock otherwise) {
+                    LBasicBlock undecidedCase = m_out.newBlock();
+                    m_out.branch(condition, rarely(undecidedCase), usually(otherwise));
+                    m_out.appendTo(undecidedCase);
+                    LValue tag = m_out.callWithoutSideEffects(pointerType(), operationSoundTypeTag, value);
+                    m_out.branch(m_out.testNonZeroPtr(tag, m_out.constIntPtr(mask)), unsure(continuation), unsure(failCase));
+                };
+
+                if (cellMask & SoundTypeString)
+                    passIf(typeIs(StringType));
+                if (cellMask & SoundTypeSymbol)
+                    passIf(typeIs(SymbolType));
+                if (cellMask & SoundTypeBigInt)
+                    passIf(typeIs(HeapBigIntType));
+
+                bool acceptsArrays = cellMask & SoundTypeArray;
+                switch (cellMask & SoundTypeAnyObject) {
+                case 0:
+                    m_out.jump(failCase);
+                    break;
+                case SoundTypeAnyObject:
+                    m_out.branch(isNotObject(), rarely(failCase), usually(continuation));
+                    break;
+                case SoundTypeArray:
+                    m_out.branch(isArray(), usually(continuation), rarely(failCase));
+                    break;
+                case SoundTypeFunction | SoundTypeOtherObject:
+                    failIf(isNotObject());
+                    m_out.branch(isArray(), rarely(failCase), usually(continuation));
+                    break;
+                case SoundTypeFunction:
+                case SoundTypeFunction | SoundTypeArray:
+                    passIf(typeIs(JSFunctionType));
+                    passIf(typeIs(InternalFunctionType));
+                    if (acceptsArrays)
+                        passIf(isArray());
+                    failIf(isNotObject());
+                    deferToRuntimeIf(overridesGetCallData(), failCase);
+                    break;
+                case SoundTypeOtherObject:
+                case SoundTypeOtherObject | SoundTypeArray:
+                    failIf(isNotObject());
+                    failIf(typeIs(JSFunctionType));
+                    failIf(typeIs(InternalFunctionType));
+                    if (!acceptsArrays)
+                        failIf(isArray());
+                    deferToRuntimeIf(overridesGetCallData(), continuation);
+                    break;
+                }
+            }
+
+            if (immediateMask)
+                m_out.appendTo(notCellCase);
+            else
+                hasRemainingImmediates = false;
+        }
+
+        if (hasRemainingImmediates) {
+            constexpr unsigned otherTags = SoundTypeUndefined | SoundTypeNull;
+            if ((immediateMask & otherTags) == otherTags)
+                passIf(isOther(value, proven));
+            else if (immediateMask & SoundTypeUndefined)
+                passIf(m_out.equal(value, m_out.constInt64(JSValue::encode(jsUndefined()))));
+            else if (immediateMask & SoundTypeNull)
+                passIf(m_out.equal(value, m_out.constInt64(JSValue::encode(jsNull()))));
+            if (immediateMask & SoundTypeBoolean)
+                passIf(isBoolean(value, proven));
+#if USE(BIGINT32)
+            if (immediateMask & SoundTypeBigInt)
+                passIf(isBigInt32(value, proven));
+#endif
+            m_out.jump(failCase);
+        }
+
+        m_out.appendTo(failCase, continuation);
+        speculate(BadType, jsValueValue(value), child.node(), m_out.booleanTrue);
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
     }
 
     void compileAssertNotEmpty()
@@ -6251,7 +6396,6 @@ IGNORE_CLANG_WARNINGS_END
 #endif
     }
 
-
     void compileGetArrayLength()
     {
         switch (m_node->arrayMode().type()) {
@@ -7613,7 +7757,6 @@ IGNORE_CLANG_WARNINGS_END
                 Void, slowPathFunction,
                 weakPointer(globalObject), base, index, value);
             m_out.jump(continuation);
-
 
             if (arrayMode.isSlowPut()) {
                 m_out.appendTo(inBoundCase, doStoreCase);
@@ -9077,7 +9220,6 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
-
     void compileArrayPop()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
@@ -9516,7 +9658,6 @@ IGNORE_CLANG_WARNINGS_END
             isAsyncFunction ? allocateObject<JSAsyncFunction>(structure, m_out.intPtrZero, slowPath) :
             isAsyncGeneratorFunction ? allocateObject<JSAsyncGeneratorFunction>(structure, m_out.intPtrZero, slowPath) :
             allocateObject<JSFunction>(structure, m_out.intPtrZero, slowPath);
-
 
         // We don't need memory barriers since we just fast-created the function, so it
         // must be young.
@@ -11517,7 +11658,6 @@ IGNORE_CLANG_WARNINGS_END
         setJSValue(m_out.phi(Int64, fastResult, slowResult));
     }
 
-
     void compileToStringOrCallStringConstructorOrStringValueOf()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
@@ -11702,6 +11842,9 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(testPtr);
 
         m_out.appendTo(functionExecutableCase, testPtr);
+        LBasicBlock fullFormCase = m_out.newBlock();
+        m_out.branch(isType(executable, ShortFunctionExecutableType), rarely(slowCase), usually(fullFormCase));
+        m_out.appendTo(fullFormCase, testPtr);
         LValue rareData = m_out.loadPtr(executable, m_heaps.FunctionExecutable_rareData);
         m_out.branch(m_out.notNull(rareData), usually(hasRareData), rarely(slowCase));
 
@@ -14755,7 +14898,6 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
 
-
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
 
         // Append the forms of the arguments that we will use before any clobbering happens.
@@ -15888,7 +16030,6 @@ IGNORE_CLANG_WARNINGS_END
                 knownLength = 0;
             return m_out.constInt32(knownLength);
         }
-
 
         // We need to perform the same logical operation as the code above, but through dynamic operations.
         if (!numberOfArgumentsToSkip)
@@ -19050,7 +19191,6 @@ IGNORE_CLANG_WARNINGS_END
         // If it's an Int32 and we use it as such this boxing will be DCE'd by b3 later anyway.
         lowJSValue(propertyNameEdge, ManualOperandSpeculation);
 
-
         LValue index = lowInt32(indexEdge);
         LValue mode = lowInt32(m_graph.varArgChild(m_node, 4));
         LValue enumerator = lowCell(m_graph.varArgChild(m_node, 5));
@@ -19758,7 +19898,6 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.storePtr(scope, fastObject, m_heaps.JSScope_next);
         m_out.storePtr(weakPointer(table), fastObject, m_heaps.JSSymbolTableObject_symbolTable);
-
 
         ValueFromBlock fastResult = m_out.anchor(fastObject);
         m_out.jump(continuation);
@@ -24186,7 +24325,6 @@ IGNORE_CLANG_WARNINGS_END
             m_out.add(
                 m_out.shl(m_out.zeroExt(preCapacity, pointerType()), m_out.constIntPtr(3)),
                 m_out.constIntPtr(sizeof(IndexingHeader))));
-
 
         m_out.store32(publicLength, butterfly, m_heaps.Butterfly_publicLength);
         m_out.store32(vectorLength, butterfly, m_heaps.Butterfly_vectorLength);

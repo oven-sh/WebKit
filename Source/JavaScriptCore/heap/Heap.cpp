@@ -22,6 +22,8 @@
 #include "config.h"
 #include "Heap.h"
 
+#include "AOTRuntime.h"
+
 #include "JSCJSValueInlines.h"
 
 #include "BaselineJITCode.h"
@@ -805,6 +807,24 @@ void Heap::reconcileWeakReferencesInMarkedCells(CellSet& cellSet, CollectionScop
 void Heap::reconcileWeakReferencesAtGCEnd()
 {
     CollectionScope collectionScope = this->collectionScope().value_or(CollectionScope::Full);
+
+#if ENABLE(AOT)
+    vm().m_aotInstances.removeAllMatching([&](AOT::Instance* instance) {
+        if (!isMarked(instance->loader()))
+            return true;
+        if (!instance->loaderWasCleared() || isMarked(AOT::tokenOf(instance)))
+            return false;
+        instance->loader()->setAOTInstance(nullptr);
+        vm().m_aotInstancesToDestroy.append(instance);
+        return true;
+    });
+    for (AOT::Instance* instance : vm().m_aotInstances)
+        instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
+    if (auto* program = vm().m_aotProgram.get())
+        program->didFinishCollection();
+    if (auto* cache = vm().megamorphicCache(); cache && !vm().m_aotInstances.isEmpty())
+        cache->reconcileWeakReferencesAtGCEnd(vm());
+#endif
 
     {
         // Executables go before CodeBlock, since CodeBlock::reconcileWeakReferencesAtGCEnd looks at the owner executable's installed CodeBlock.
@@ -3365,6 +3385,13 @@ void Heap::setInitialAllocationBudget(size_t bytes)
         m_reenableFullActivityCallback = true;
     }
 }
+
+bool Heap::isPastTypicalFirstCollection()
+{
+    if (m_sizeAfterLastCollect || m_lastCollectionScope || m_collectionScope || m_maxEdenSize <= m_minBytesPerCycle)
+        return false;
+    return totalBytesAllocatedThisCycle() > m_minBytesPerCycle;
+}
 #endif
 
 bool Heap::shouldDoFullCollection()
@@ -3793,6 +3820,22 @@ void Heap::addCoreConstraints()
         })),
         ConstraintVolatility::GreyedByExecution);
     
+#if ENABLE(AOT)
+    m_constraintSet->add(
+        "Ao"_s, "Instances of Statically Compiled Code"_s,
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+            bool newOnly = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
+            if (auto* program = vm().m_aotProgram.get())
+                program->visit(visitor, newOnly ? CollectionScope::Eden : CollectionScope::Full);
+            for (AOT::Instance* instance : vm().m_aotInstances) {
+                if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance))))
+                    instance->visit(visitor, newOnly);
+            }
+        })),
+        ConstraintVolatility::GreyedByMarking);
+#endif
+
     m_constraintSet->add(
         "D"_s, "Debugger"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {

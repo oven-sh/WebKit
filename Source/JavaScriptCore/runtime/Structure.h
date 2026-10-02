@@ -54,6 +54,15 @@ class UniquedStringImpl;
 
 namespace JSC {
 
+#if ENABLE(AOT)
+namespace AOT {
+struct Instance;
+JS_EXPORT_PRIVATE JSCell* ownerOf(Instance*);
+JS_EXPORT_PRIVATE JSCell* tokenOf(Instance*);
+JS_EXPORT_PRIVATE void didClearLoaderOf(Instance*);
+}
+#endif
+
 class DeferGC;
 class DeferredStructureTransitionWatchpointFire;
 class LLIntOffsetsExtractor;
@@ -88,7 +97,6 @@ public:
     }
 
     const Structure* structure() const { return m_structure; }
-
 
 private:
     JS_EXPORT_PRIVATE void fireAllSlow();
@@ -182,7 +190,6 @@ private:
     uint8_t m_attributes { 0 };
 };
 
-
 inline CompactPropertyTableEntry::CompactPropertyTableEntry(const PropertyTableEntry& entry)
     : m_data(entry.key(), ((entry.offset() << 8) | entry.attributes()))
 {
@@ -199,6 +206,101 @@ private:
 
     const Structure* m_structure;
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+struct TypedLayoutTable {
+    struct FieldType {
+        uint16_t kinds;
+        uint16_t first;
+        uint16_t last;
+        uint16_t unused;
+    };
+    static constexpr unsigned stringsAreAtoms = 1u << 15;
+    static constexpr unsigned maxAtomizedStringLength = 40;
+    enum class StoreCheck : uint8_t { Unconstrained, Allowed, Rejected };
+    struct Field {
+        uint32_t identifier;
+        uint8_t slot;
+        uint8_t mayBeAbsent;
+        uint16_t id;
+    };
+    using ConvertFunction = bool (*)(VM&, JSObject*, uint16_t layoutID);
+
+    JS_EXPORT_PRIVATE static void setSlotTypes(std::span<const uint32_t> index, const FieldType*);
+    JS_EXPORT_PRIVATE static void setFields(const uint32_t* index, const Field*, const FieldType* fieldTypes, const uint16_t* fieldLayoutIDs, const uint8_t* inlineSlots, const uint32_t* fieldsStart, const uint32_t* fields, const uint16_t* layoutIDsByFieldID, ConvertFunction, bool isAuditing);
+    static constexpr uint8_t usesFieldIDsBit = 0x80;
+    static unsigned inlineSlots(uint16_t typedLayoutID) { return s_inlineSlots[typedLayoutID] & ~usesFieldIDsBit; }
+    static bool usesFieldIDs(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count && (s_inlineSlots[typedLayoutID] & usesFieldIDsBit); }
+    static const Field& fieldWithID(unsigned slot, uint16_t id) { return s_fields[s_fieldIndexByID[s_firstSlotFieldIndex[slot] + id]]; }
+    static const uint16_t* fieldLayoutIDsInSlot(unsigned slot) { return s_layoutIDByFieldID ? s_layoutIDByFieldID + static_cast<int32_t>(s_firstSlotFieldIndex[slot]) : nullptr; }
+    static uint16_t layoutIDOf(const Field& field) { return s_fieldLayoutID[&field - s_fields]; }
+    static const FieldType* fieldTypeOf(const Field& field)
+    {
+        const FieldType& fieldType = s_fieldType[&field - s_fields];
+        return fieldType.kinds ? &fieldType : nullptr;
+    }
+    static PropertyOffset offsetOfSlot(unsigned slot, unsigned inlineSlots) { return slot < inlineSlots ? static_cast<PropertyOffset>(slot) : firstOutOfLineOffset + static_cast<PropertyOffset>(slot - inlineSlots); }
+    static PropertyOffset offsetInLayout(uint16_t typedLayoutID, unsigned slot) { return offsetOfSlot(slot, inlineSlots(typedLayoutID)); }
+    static bool isAuditing() { return s_isAuditing; }
+    JS_EXPORT_PRIVATE static void reportViolation(ASCIILiteral what, uint16_t layoutID, JSValue);
+    JS_EXPORT_PRIVATE static ASCIILiteral s_lastConversionFailure;
+    static bool hasTypedFields() { return s_fields; }
+    JS_EXPORT_PRIVATE static const Field* findField(VM&, uint16_t typedLayoutID, UniquedStringImpl*);
+    static std::span<const Field> fieldsOf(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count ? std::span { s_fields + (s_layoutFieldRange[typedLayoutID] >> 12), s_layoutFieldRange[typedLayoutID] & 0xfff } : std::span<const Field> { }; }
+    static bool hasLayouts() { return s_count; }
+    static const FieldType* fieldTypeInSlot(uint16_t typedLayoutID, unsigned slot)
+    {
+        if (typedLayoutID >= s_count)
+            return nullptr;
+        uint32_t word = s_index[typedLayoutID];
+        if (slot >= (word & 0xff))
+            return nullptr;
+        const FieldType& fieldType = s_slotType[(word >> 8) + slot];
+        return fieldType.kinds ? &fieldType : nullptr;
+    }
+    static unsigned numberOfSlots(uint16_t typedLayoutID) { return typedLayoutID < s_count ? s_index[typedLayoutID] & 0xff : 0; }
+    static JSValue toFieldRepresentation(const FieldType* fieldType, JSValue value)
+    {
+        if (value.isInt32())
+            return fieldType ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value;
+        if (value.isCell() && fieldType && (fieldType->kinds & stringsAreAtoms)) [[unlikely]]
+            atomizeIfString(value);
+        return value;
+    }
+    static JSValue toFieldRepresentation(uint16_t typedLayoutID, unsigned slot, JSValue value) { return toFieldRepresentation(fieldTypeInSlot(typedLayoutID, slot), value); }
+    static JSValue toFieldRepresentation(const Field& field, JSValue value) { return toFieldRepresentation(fieldTypeOf(field), value); }
+    JS_EXPORT_PRIVATE static void atomizeIfString(JSValue);
+    JS_EXPORT_PRIVATE static bool accepts(const FieldType&, JSValue);
+    static StoreCheck checkStore(uint16_t typedLayoutID, unsigned slot, JSValue value) { return checkStore(typedLayoutID, fieldTypeInSlot(typedLayoutID, slot), value); }
+    static StoreCheck checkStore(const Field& field, JSValue value) { return checkStore(layoutIDOf(field), fieldTypeOf(field), value); }
+    static StoreCheck checkStore(uint16_t typedLayoutID, const FieldType* fieldType, JSValue value)
+    {
+        if (!fieldType)
+            return StoreCheck::Unconstrained;
+        bool isAccepted = accepts(*fieldType, value);
+        if (!isAccepted && s_isAuditing) [[unlikely]] {
+            reportViolation("a slot is given what it does not hold"_s, typedLayoutID, value);
+            return StoreCheck::Unconstrained;
+        }
+        return isAccepted ? StoreCheck::Allowed : StoreCheck::Rejected;
+    }
+
+private:
+    JS_EXPORT_PRIVATE static const uint32_t* s_index;
+    JS_EXPORT_PRIVATE static uint32_t s_count;
+    JS_EXPORT_PRIVATE static const FieldType* s_slotType;
+    JS_EXPORT_PRIVATE static const uint32_t* s_layoutFieldRange;
+    JS_EXPORT_PRIVATE static const Field* s_fields;
+    JS_EXPORT_PRIVATE static const FieldType* s_fieldType;
+    JS_EXPORT_PRIVATE static const uint16_t* s_fieldLayoutID;
+    JS_EXPORT_PRIVATE static const uint32_t* s_firstSlotFieldIndex;
+    JS_EXPORT_PRIVATE static const uint32_t* s_fieldIndexByID;
+    JS_EXPORT_PRIVATE static const uint16_t* s_layoutIDByFieldID;
+    JS_EXPORT_PRIVATE static const uint8_t* s_inlineSlots;
+    static ConvertFunction s_convert;
+    JS_EXPORT_PRIVATE static bool s_isAuditing;
+};
+#endif
 
 class Structure : public JSCell {
     static constexpr uint16_t shortInvalidOffset = std::numeric_limits<uint16_t>::max() - 1;
@@ -301,6 +403,7 @@ public:
     static Structure* toUncacheableDictionaryTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -315,6 +418,37 @@ public:
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
+
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
+    void copyAccessorAndReadOnlyFlagsFrom(const Structure& other)
+    {
+        setHasAnyKindOfGetterSetterProperties(other.hasAnyKindOfGetterSetterProperties());
+        setHasReadOnlyOrGetterSetterPropertiesExcludingProto(other.hasReadOnlyOrGetterSetterPropertiesExcludingProto());
+    }
+    PropertyOffset nextOffsetFor(PropertyTable*, UniquedStringImpl*);
+    uint16_t knownShape() const { return m_knownShape; }
+    JS_EXPORT_PRIVATE void setKnownShape(VM&, uint16_t);
+    static constexpr ptrdiff_t offsetOfKnownShape() { return OBJECT_OFFSETOF(Structure, m_knownShape); }
+    uint16_t typedLayoutID() const { return m_typedLayoutID; }
+    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layout);
+    bool recordsPropertyNames() const { return !m_typedLayoutID || !TypedLayoutTable::usesFieldIDs(m_typedLayoutID); }
+    static constexpr unsigned numberOfSlotsWithFieldIDs = 16;
+    static constexpr uint16_t ambiguousFieldID = 0xffff;
+    uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
+    static constexpr uint16_t noPropertyNameID = 0xfffe;
+    static constexpr uint16_t firstReservedPropertyNameID = 0xfffd;
+    void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
+    {
+        ASSERT(recordsPropertyNames() && ((!isDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID));
+        m_fieldIDInSlot[slot] = id;
+    }
+    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs>);
+    bool cannotConvertToTypedLayout() const { return !m_typedLayoutID && m_fieldIDInSlot[0] == ambiguousFieldID; }
+    JS_EXPORT_PRIVATE void setCannotConvertToTypedLayout();
+    static constexpr ptrdiff_t offsetOfFieldIDInSlot() { return OBJECT_OFFSETOF(Structure, m_fieldIDInSlot); }
+    template<typename Func> void movePropertyOutOfLineWithoutTransition(VM&, PropertyName, const Func&);
+    static constexpr ptrdiff_t offsetOfTypedLayoutID() { return OBJECT_OFFSETOF(Structure, m_typedLayoutID); }
 
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
@@ -660,6 +794,12 @@ public:
         return OBJECT_OFFSETOF(Structure, m_realm);
     }
 
+#if ENABLE(AOT)
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(Structure, m_aotInstance); }
+#endif
+
     static constexpr ptrdiff_t classInfoOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_classInfo);
@@ -850,6 +990,9 @@ public:
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 28);
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
+#if USE(BUN_JSC_ADDITIONS)
+    DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
+#endif
 
     enum class StructureVariant : uint8_t {
         Normal,
@@ -1018,12 +1161,18 @@ private:
 
     uint16_t m_transitionOffset;
     uint16_t m_maxOffset;
+#if USE(BUN_JSC_ADDITIONS)
+    uint16_t m_knownShape { 0 };
+    uint16_t m_typedLayoutID { 0 };
+#endif
 
     uint32_t m_propertyHash;
     SeenProperties m_seenProperties;
 
-
     WriteBarrier<JSGlobalObject> m_realm;
+#if ENABLE(AOT)
+    AOT::Instance* m_aotInstance { nullptr };
+#endif
     WriteBarrier<Unknown> m_prototype;
     mutable WriteBarrier<StructureChain> m_cachedPrototypeChain;
 
@@ -1040,6 +1189,12 @@ private:
     WriteBarrier<PropertyTable> m_propertyTableUnsafe;
 
     mutable InlineWatchpointSet m_transitionWatchpointSet;
+
+#if USE(BUN_JSC_ADDITIONS)
+    uint16_t m_fieldIDInSlot[numberOfSlotsWithFieldIDs] { };
+    JS_EXPORT_PRIVATE void noteFieldAdded(UniquedStringImpl*, PropertyOffset, unsigned attributes);
+    JS_EXPORT_PRIVATE void forgetFieldsInSlots();
+#endif
 
     static_assert(firstOutOfLineOffset < 256);
 

@@ -50,6 +50,12 @@ using Opcode = OpcodeID;
 
 class CallLinkInfo;
 #if ENABLE(WEBASSEMBLY)
+namespace AOT {
+struct FunctionRef;
+}
+
+struct UnlinkedHandlerInfo;
+
 namespace Wasm {
 class Callee;
 struct HandlerInfo;
@@ -79,6 +85,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ProgramExecutable;
     class ModuleProgramExecutable;
     class Register;
+    class RegisterAtOffsetList;
     class JSAsyncFunctionGenerator;
     class JSGenerator;
     class JSObject;
@@ -117,11 +124,15 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         CatchInfo() = default;
 
         CatchInfo(const HandlerInfo*, CodeBlock*);
+#if ENABLE(AOT)
+        CatchInfo(const UnlinkedHandlerInfo*, const AOT::FunctionRef&);
+#endif
 #if ENABLE(WEBASSEMBLY)
         CatchInfo(const Wasm::HandlerInfo*, const Wasm::Callee*);
 #endif
 
         bool m_valid { false };
+        bool m_isAOT { false };
         HandlerType m_type;
 #if ENABLE(JIT)
         CodePtr<ExceptionHandlerPtrTag> m_nativeCode;
@@ -219,6 +230,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         inline UnwindFunctorBase(VM&);
 
         void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&) const;
+        void copyCalleeSavesToEntryFrameCalleeSavesBuffer(CallFrame*, const RegisterAtOffsetList*) const;
         void notifyDebuggerOfUnwinding(JSGlobalObject*, CallFrame*) const;
 
         VM& m_vm;

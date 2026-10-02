@@ -700,6 +700,38 @@ public:
 
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
+    void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
+    {
+        keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry&) { return names.contains(name); });
+    }
+    void keepOnly(const Invocable<bool(UniquedStringImpl*, const SymbolTableEntry&)> auto& isKept)
+    {
+        Map kept;
+        unsigned count = 0;
+        for (auto& entry : m_map)
+            count += isKept(entry.key.get(), entry.value);
+        if (count == m_map.size())
+            return;
+        if (count)
+            kept.reserveInitialCapacity(count);
+        for (auto& entry : m_map) {
+            if (isKept(entry.key.get(), entry.value))
+                kept.add(entry.key, WTF::move(entry.value));
+        }
+        m_map = WTF::move(kept);
+    }
+    std::optional<uint64_t> namelessContentKey() const
+    {
+        if (!m_map.isEmpty() || m_arguments || m_rareData)
+            return std::nullopt;
+        return static_cast<uint64_t>(m_maxScopeOffset.offsetUnchecked()) << 8 | m_usesSloppyEval << 4 | m_nestedLexicalScope << 3 | m_scopeType;
+    }
+    bool isSharedAcrossRealms() const { return m_isSharedAcrossRealms; }
+    void becomeSharedAcrossRealms(VM& vm)
+    {
+        m_isSharedAcrossRealms = true;
+        m_singleton.invalidate(vm, StringFireDetail("It is shared by every realm"));
+    }
 
     // For a clone, when the code it was made for has been generated or decoded again (CodeBlock::setConstantRegisters):
     // true if cloneScopePart() of `original` would describe the same scope, so environments made by the new code can go
@@ -770,6 +802,7 @@ private:
     unsigned m_usesSloppyEval : 1;
     unsigned m_nestedLexicalScope : 1; // Non-function LexicalScope.
     unsigned m_scopeType : 3; // ScopeType
+    unsigned m_isSharedAcrossRealms : 1 { 0 };
     PropagateCloneInvalidationToOriginal m_propagateCloneInvalidationToOriginal : 1 { PropagateCloneInvalidationToOriginal::No };
     unsigned m_cachedEntriesScopePartOnly : 1 { 0 };
 

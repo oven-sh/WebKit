@@ -72,6 +72,7 @@ private:
         Dominators& dominators = m_proc.dominators();
         UncheckedKeyHashMap<ValueKey, Value*> valueForConstant;
         IndexMap<BasicBlock*, Vector<Value*>> materializations(m_proc.size());
+        UncheckedKeyHashMap<Value*, BasicBlock*> materializationBlocks;
 
         // We determine where things get materialized based on where they are used.
         for (BasicBlock* block : m_proc) {
@@ -111,6 +112,7 @@ private:
                     value->owner = block;
             }
             materializations[value->owner].append(value);
+            materializationBlocks.add(value, value->owner);
         }
 
         // Get rid of Value's that are fast constants but aren't canonical. Also remove the canonical
@@ -219,16 +221,15 @@ private:
                         int64_t addendConst = addend->asInt();
                         if (Air::Arg::isValidImmForm(addendConst))
                             break;
-                        Value* bestAddend = findBestConstant(
-                            [&] (Value* candidateAddend) -> bool {
-                                if (candidateAddend->type() != addend->type())
-                                    return false;
-                                if (!candidateAddend->hasInt())
-                                    return false;
-                                return candidateAddend == addend
-                                    || candidateAddend->asInt() == -addendConst;
-                            });
-                        if (!bestAddend || bestAddend == addend)
+                        // Bun: only the constant's negation can take its place, so look that up. findBestConstant() would go through
+                        Value* bestAddend = valueForConstant.get(ValueKey(addend->kind(), addend->type(), static_cast<int64_t>(-static_cast<uint64_t>(addendConst))));
+                        if (!bestAddend || bestAddend == addend || bestAddend->asInt() != -addendConst)
+                            break;
+                        BasicBlock* bestBlock = materializationBlocks.get(bestAddend);
+                        BasicBlock* addendBlock = materializationBlocks.get(addend);
+                        if (!dominators.dominates(bestBlock, block))
+                            break;
+                        if (bestBlock == addendBlock ? addendConst > 0 : dominators.dominates(addendBlock, bestBlock))
                             break;
                         materialize(value->child(0));
                         materialize(bestAddend);
@@ -263,6 +264,20 @@ private:
 
     void lowerMaterializationCostHeavyConstants()
     {
+        if (m_proc.positionIndependent()) {
+            for (BasicBlock* block : m_proc) {
+                for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
+                    Value* value = block->at(valueIndex);
+                    if (value->opcode() != ConstDouble || !goesInTable(value))
+                        continue;
+                    Value* bits = m_insertionSet.insertIntConstant(valueIndex, value->origin(), Int64, std::bit_cast<int64_t>(value->asDouble()));
+                    value->replaceWithIdentity(m_insertionSet.insert<Value>(valueIndex, BitwiseCast, value->origin(), bits));
+                }
+                m_insertionSet.execute(block);
+            }
+            return;
+        }
+
         unsigned doubleSize = 0;
         unsigned v128Size = 0;
         UncheckedKeyHashMap<ValueKey, unsigned> constTable;

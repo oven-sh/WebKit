@@ -119,12 +119,15 @@ public:
     unsigned parameterCount() const { return m_parameterCount; }; // Excluding 'this'!
     SourceParseMode parseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); };
 
-    SourceCode classSource() const
+    SourceCode classSource(SourceProvider& provider) const
     {
         materializeDeferredMembersIfNeeded();
-        if (m_members.live().rareData)
-            return m_members.live().rareData->m_classSource;
-        return SourceCode();
+        if (!m_members.live().rareData)
+            return m_isClass ? SourceCode(RefPtr<SourceProvider> { &provider }, 0, 0) : SourceCode();
+        const SourceCode& source = m_members.live().rareData->m_classSource;
+        if (source.isNull() && m_isClass) [[unlikely]]
+            return SourceCode(RefPtr<SourceProvider> { &provider }, source.startOffset(), source.endOffset());
+        return source;
     }
     void setClassSource(const SourceCode& source)
     {
@@ -241,6 +244,11 @@ public:
         return m_members.live().parentScopeTDZVariables;
     }
     void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { materializeDeferredMembersIfNeeded(); ensureRareData().m_parentDeclaredNames = WTF::move(names); }
+    RefPtr<DeclaredNamesLink> parentDeclaredNames()
+    {
+        materializeDeferredMembersIfNeeded();
+        return m_members.live().rareData ? m_members.live().rareData->m_parentDeclaredNames : nullptr;
+    }
     // Taken by the first code block generated for this executable (call or construct); a second specialization of
     // the same function is generated without static scope information.
     RefPtr<DeclaredNamesLink> takeParentDeclaredNames()
@@ -273,6 +281,14 @@ public:
     bool isArrowFunction() const { return isArrowFunctionParseMode(parseMode()); }
 
     bool singletonHasBeenInvalidated() const { return m_singletonHasBeenInvalidated; }
+
+    UnlinkedFunctionCodeBlock* codeBlockIfExists(CodeSpecializationKind kind) const
+    {
+        if (m_isCached)
+            return nullptr;
+        return (kind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct).get();
+    }
+    void discardCode();
     void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
 
     JSC::DerivedContextType derivedContextType() const {return static_cast<JSC::DerivedContextType>(m_derivedContextType); }
@@ -333,12 +349,13 @@ public:
         // Only while generating with OptimizeBytecode::Yes and only until this executable's code is generated: the
         // enclosing scopes at the creation site. Never encoded into a bytecode cache.
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
+        FixedVector<Identifier> m_plainInstanceFieldNames;
 
         bool isEmpty() const
         {
             return m_classSource.isNull() && m_sourceURLDirective.isNull() && m_sourceMappingURLDirective.isNull()
                 && m_generatorOrAsyncWrapperFunctionParameterNames.isEmpty() && m_classElementDefinitions.isEmpty()
-                && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames;
+                && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames && m_plainInstanceFieldNames.isEmpty();
         }
     };
 
@@ -352,11 +369,58 @@ public:
         return nullptr;
     }
 
+    const FixedVector<Identifier>* plainInstanceFieldNames() const
+    {
+        materializeDeferredMembersIfNeeded();
+        if (m_members.live().rareData)
+            return &m_members.live().rareData->m_plainInstanceFieldNames;
+        return nullptr;
+    }
+
+    void setPlainInstanceFieldNames(const Vector<Identifier>& names)
+    {
+        if (names.isEmpty())
+            return;
+        ensureRareData().m_plainInstanceFieldNames = FixedVector<Identifier>(names);
+    }
+
     void setClassElementDefinitions(Vector<ClassElementDefinition>&& classElementDefinitions)
     {
         if (classElementDefinitions.isEmpty())
             return;
         ensureRareData().m_classElementDefinitions = FixedVector<ClassElementDefinition>(WTF::move(classElementDefinitions));
+    }
+
+    bool hasName() const { return m_hasName; }
+
+    bool canUseSharedTemplate() const
+    {
+        return !m_nameIsDeferred && !m_membersAreDeferred && !m_scalarsAreDeferred && !m_members.live().rareData && !m_members.live().parentScopeTDZVariables
+            && !m_isBuiltinDefaultClassConstructor;
+    }
+    auto sharedTemplateKey() const
+    {
+        RELEASE_ASSERT(canUseSharedTemplate());
+        return std::to_array<uint32_t>({ m_isBuiltinFunction, m_hasCapturedVariables, m_constructAbility, m_scriptMode, m_needsClassFieldInitializer, m_superBinding, m_privateBrandRequirement,
+            static_cast<uint32_t>(m_features), m_constructorKind, static_cast<uint32_t>(m_sourceParseMode), m_implementationVisibility, static_cast<uint32_t>(m_lexicallyScopedFeatures),
+            m_functionMode, m_derivedContextType, m_inlineAttribute, m_evalContextType, m_hasName, m_isClass });
+    }
+    void clearCodegenOnlyData()
+    {
+        materializeDeferredMembersIfNeeded();
+        m_members.live().parentScopeTDZVariables = nullptr;
+        m_members.live().rareData = nullptr;
+    }
+    void convertToSharedTemplate()
+    {
+        RELEASE_ASSERT(canUseSharedTemplate() && !m_isCached && !m_unlinkedCodeBlockForCall && !m_unlinkedCodeBlockForConstruct);
+        m_parameterCount = 0;
+        m_ecmaName = Identifier();
+        m_unlinkedFunctionStart = 0;
+        m_startOffset = 0;
+        m_sourceLength = 0;
+        m_parametersStartOffset = 0;
+        m_unlinkedFunctionEnd = 0;
     }
 
 private:

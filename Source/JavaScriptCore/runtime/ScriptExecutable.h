@@ -27,8 +27,10 @@
 
 #include "ExecutableBase.h"
 #include "Intrinsic.h"
+#include "LineColumn.h"
 #include "ParserModes.h"
 #include "ProfilerJettisonReason.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -47,58 +49,97 @@ public:
         
     CodeBlockHash hashFor(CodeSpecializationKind) const;
 
-    const SourceCode& source() const LIFETIME_BOUND { return m_source; }
+    bool isShortForm() const { return isShortFunctionExecutable(); }
+    const ScriptExecutable* fullForm() const { return WTF::opaque(this); }
+    ScriptExecutable* fullForm() { return WTF::opaque(this); }
 
+    const SourceCode& source() const LIFETIME_BOUND
+    {
+        if (isShortForm()) [[unlikely]]
+            return shortFormSource();
+        return fullForm()->m_source;
+    }
     // Must not build the provider's line-start table so it can be called by assertions.
     bool hasSourceText() const
     {
-        return !m_source.isNull() && m_source.provider() && !m_source.provider()->source().isNull();
+        if (isShortForm()) [[unlikely]]
+            return false;
+        auto& source = fullForm()->m_source;
+        return !source.isNull() && source.provider() && !source.provider()->source().isNull();
     }
-    SourceID sourceID() const { return m_source.providerID(); }
-    const SourceOrigin& sourceOrigin() const LIFETIME_BOUND { return m_source.provider()->sourceOrigin(); }
+    SourceProvider* sourceProvider() const
+    {
+        if (isShortForm()) [[unlikely]]
+            return shortFormSourceProvider();
+        return fullForm()->m_source.provider();
+    }
+    SourceID sourceID() const
+    {
+        SourceProvider* provider = sourceProvider();
+        return provider ? provider->asID() : SourceID();
+    }
+    const SourceOrigin& sourceOrigin() const LIFETIME_BOUND { return sourceProvider()->sourceOrigin(); }
 #if USE(BUN_JSC_ADDITIONS)
     // A ScriptFetcher's Weak handles can ask containsOpaqueRoot(fetcher) to live as long as its code.
     template<typename Visitor> void visitSourceFetcher(Visitor& visitor) const { visitor.addOpaqueRoot(sourceOrigin().fetcher()); }
 #endif
     // This is NOT the path that should be used for computing relative paths from a script. Use SourceOrigin's URL for that, the values may or may not be the same... This should only be used for `error.sourceURL` and stack traces.
-    const String& sourceURL() const LIFETIME_BOUND { return m_source.provider()->sourceURL(); }
-    const String& sourceURLStripped() const LIFETIME_BOUND { return m_source.provider()->sourceURLStripped(); }
-    const String& preRedirectURL() const LIFETIME_BOUND { return m_source.provider()->preRedirectURL(); }
-    int firstLine() const { return m_source.firstLine().oneBasedInt(); }
+    const String& sourceURL() const LIFETIME_BOUND { return sourceProvider()->sourceURL(); }
+    const String& sourceURLStripped() const LIFETIME_BOUND { return sourceProvider()->sourceURLStripped(); }
+    const String& preRedirectURL() const LIFETIME_BOUND { return sourceProvider()->preRedirectURL(); }
+    int firstLine() const
+    {
+        if (isShortForm()) [[unlikely]]
+            return shortFormStartPosition().line;
+        return fullForm()->m_source.firstLine().oneBasedInt();
+    }
     JS_EXPORT_PRIVATE int lastLine() const;
-    unsigned startColumn() const { return m_source.startColumn().oneBasedInt(); }
+    unsigned startColumn() const
+    {
+        if (isShortForm()) [[unlikely]]
+            return shortFormStartPosition().column;
+        return fullForm()->m_source.startColumn().oneBasedInt();
+    }
     JS_EXPORT_PRIVATE unsigned endColumn() const;
 
     std::optional<int> NODELETE overrideLineNumber(VM&) const;
     unsigned NODELETE typeProfilingStartOffset() const;
     unsigned NODELETE typeProfilingEndOffset() const;
 
-    bool usesArguments() const { return m_features & ArgumentsFeature; }
-    bool isArrowFunctionContext() const { return m_isArrowFunctionContext; }
-    DerivedContextType derivedContextType() const { return static_cast<DerivedContextType>(m_derivedContextType); }
-    EvalContextType evalContextType() const { return static_cast<EvalContextType>(m_evalContextType); }
-    bool isInStrictContext() const { return m_lexicallyScopedFeatures & StrictModeLexicallyScopedFeature; }
-    bool usesNonSimpleParameterList() const { return m_features & NonSimpleParameterListFeature; }
+    bool usesArguments() const { return features() & ArgumentsFeature; }
+    bool isArrowFunctionContext() const { return isShortForm() ? shortFormRow().isArrowFunctionContext : fullForm()->m_isArrowFunctionContext; }
+    DerivedContextType derivedContextType() const { return isShortForm() ? shortFormDerivedContextType() : static_cast<DerivedContextType>(fullForm()->m_derivedContextType); }
+    EvalContextType evalContextType() const { return isShortForm() ? EvalContextType::None : static_cast<EvalContextType>(fullForm()->m_evalContextType); }
+    bool isInStrictContext() const { return lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature; }
+    bool usesNonSimpleParameterList() const { return features() & NonSimpleParameterListFeature; }
 
-    void setNeverInline(bool value) { m_neverInline = value; }
-    void setNeverOptimize(bool value) { m_neverOptimize = value; }
-    void setNeverFTLOptimize(bool value) { m_neverFTLOptimize = value; }
-    void setDidTryToEnterInLoop(bool value) { m_didTryToEnterInLoop = value; }
-    void setCanUseOSRExitFuzzing(bool value) { m_canUseOSRExitFuzzing = value; }
-    bool neverInline() const { return m_neverInline; }
-    bool neverOptimize() const { return m_neverOptimize; }
-    bool neverFTLOptimize() const { return m_neverFTLOptimize; }
-    bool didTryToEnterInLoop() const { return m_didTryToEnterInLoop; }
+    void setNeverInline(bool value) { if (!isShortForm()) fullForm()->m_neverInline = value; }
+    void setNeverOptimize(bool value) { if (!isShortForm()) fullForm()->m_neverOptimize = value; }
+    void setNeverFTLOptimize(bool value) { if (!isShortForm()) fullForm()->m_neverFTLOptimize = value; }
+    void setDidTryToEnterInLoop(bool value) { if (!isShortForm()) fullForm()->m_didTryToEnterInLoop = value; }
+    void setCanUseOSRExitFuzzing(bool value) { if (!isShortForm()) fullForm()->m_canUseOSRExitFuzzing = value; }
+    bool neverInline() const { return isShortForm() || fullForm()->m_neverInline; }
+    bool neverOptimize() const { return isShortForm() || fullForm()->m_neverOptimize; }
+    bool neverFTLOptimize() const { return isShortForm() || fullForm()->m_neverFTLOptimize; }
+    bool didTryToEnterInLoop() const { return !isShortForm() && fullForm()->m_didTryToEnterInLoop; }
     bool isInliningCandidate() const { return !neverInline(); }
     bool isOkToOptimize() const { return !neverOptimize(); }
-    bool canUseOSRExitFuzzing() const { return m_canUseOSRExitFuzzing; }
-    bool isInsideOrdinaryFunction() const { return m_isInsideOrdinaryFunction; }
+    bool canUseOSRExitFuzzing() const { return !isShortForm() && fullForm()->m_canUseOSRExitFuzzing; }
+    bool isInsideOrdinaryFunction() const { return isShortForm() ? shortFormRow().isInsideOrdinaryFunction : fullForm()->m_isInsideOrdinaryFunction; }
     
-    bool* addressOfDidTryToEnterInLoop() LIFETIME_BOUND { return &m_didTryToEnterInLoop; }
+    bool* addressOfDidTryToEnterInLoop() LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(!isShortForm());
+        return &fullForm()->m_didTryToEnterInLoop;
+    }
 
-    CodeFeatures features() const { return m_features; }
-    LexicallyScopedFeatures lexicallyScopedFeatures() { return static_cast<LexicallyScopedFeatures>(m_lexicallyScopedFeatures); }
-    void setTaintedByWithScope() { m_lexicallyScopedFeatures |= TaintedByWithScopeLexicallyScopedFeature; }
+    CodeFeatures features() const { return isShortForm() ? shortFormFeatures() : fullForm()->m_features; }
+    LexicallyScopedFeatures lexicallyScopedFeatures() const { return isShortForm() ? shortFormLexicallyScopedFeatures() : static_cast<LexicallyScopedFeatures>(fullForm()->m_lexicallyScopedFeatures); }
+    void setTaintedByWithScope()
+    {
+        RELEASE_ASSERT(!isShortForm());
+        fullForm()->m_lexicallyScopedFeatures |= TaintedByWithScopeLexicallyScopedFeature;
+    }
         
     DECLARE_EXPORT_INFO;
 
@@ -111,6 +152,7 @@ public:
 
     void installCode(CodeBlock*);
     void installCode(VM&, CodeBlock*, CodeType, CodeSpecializationKind, Profiler::JettisonReason);
+    void installAOTCode(VM&, CodeSpecializationKind, Ref<JITCode>&&);
     CodeBlock* newCodeBlockFor(CodeSpecializationKind, JSFunction*, JSScope*);
     CodeBlock* newReplacementCodeBlockFor(CodeSpecializationKind);
 
@@ -121,16 +163,16 @@ public:
 
     Intrinsic intrinsic() const
     {
-        return m_intrinsic;
+        return isShortForm() ? NoIntrinsic : fullForm()->m_intrinsic;
     }
 
     bool hasJITCodeForCall() const
     {
-        return m_jitCodeForCall;
+        return !isShortForm() && fullForm()->m_jitCodeForCall;
     }
     bool hasJITCodeForConstruct() const
     {
-        return m_jitCodeForConstruct;
+        return !isShortForm() && fullForm()->m_jitCodeForConstruct;
     }
 
     // This function has an interesting GC story. Callers of this function are asking us to create a CodeBlock
@@ -176,6 +218,15 @@ protected:
         return current;
     }
     void pinCodeGenerationModeForResumableBody() { m_codeForGeneratorBodyWasGenerated = true; }
+
+    uint32_t shortFormIndex() const { return m_aotIndex[m_aotEntry[0] ? 0 : 1]; }
+    JS_EXPORT_PRIVATE const AOT::ExecutableRow& shortFormRow() const;
+    JS_EXPORT_PRIVATE const SourceCode& shortFormSource() const;
+    JS_EXPORT_PRIVATE SourceProvider* shortFormSourceProvider() const;
+    JS_EXPORT_PRIVATE LineColumn shortFormStartPosition() const;
+    JS_EXPORT_PRIVATE CodeFeatures shortFormFeatures() const;
+    JS_EXPORT_PRIVATE LexicallyScopedFeatures shortFormLexicallyScopedFeatures() const;
+    JS_EXPORT_PRIVATE DerivedContextType shortFormDerivedContextType() const;
 
     SourceCode m_source;
     Intrinsic m_intrinsic { NoIntrinsic };

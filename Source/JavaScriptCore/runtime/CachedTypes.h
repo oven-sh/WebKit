@@ -26,10 +26,12 @@
 #pragma once
 
 #include "CollectionScope.h"
+#include "HandlerInfo.h"
 #include <wtf/Lock.h>
 
 #include "JSCast.h"
 #include "ParserModes.h"
+#include "AOTProgramData.h"
 #include "VariableEnvironment.h"
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
@@ -58,7 +60,9 @@ class ExpressionInfo;
 class SymbolTable;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
+class UnlinkedModuleProgramCodeBlock;
 class UnlinkedFunctionExecutable;
+struct LineStarts;
 
 enum class SourceCodeType;
 
@@ -97,9 +101,11 @@ public:
     EncoderStringTable() = default;
     JS_EXPORT_PRIVATE ~EncoderStringTable();
     uint32_t ordinalFor(const StringImpl&);
+    uint32_t count() const { return m_strings.size(); }
     // The 4-byte slot a cached non-symbol string occupies (CachedPtr's encoding): a 1-3 character Latin-1 string inline,
     // else an ordinal into this table, or the empty sentinel. DecoderStringTable::atomForSlot reads it back.
     JS_EXPORT_PRIVATE uint32_t slotFor(const StringImpl&);
+    String stringForSlot(uint32_t slot) const;
     // `hotStringHashes` (bytecodeOrderStringHash values, hottest first; from a payload order file) moves those strings'
     // records to the front, in that order; the rest follow in ordinal order. The offsets array stays indexed by ordinal.
     JS_EXPORT_PRIVATE Vector<uint8_t> serialize(std::span<const uint64_t> hotStringHashes = { }) const;
@@ -114,7 +120,10 @@ class DecoderStringTable {
     WTF_MAKE_NONCOPYABLE(DecoderStringTable);
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(DecoderStringTable, JS_EXPORT_PRIVATE);
 public:
-    JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>);
+    enum class Slots : bool { No, Yes };
+    JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>, Slots = Slots::Yes);
+    uint32_t count() const { return m_count; }
+    uint32_t lengthOf(uint32_t ordinal) const { return record(ordinal).length; }
     JS_EXPORT_PRIVATE ~DecoderStringTable();
     Ref<AtomStringImpl> atomFor(VM&, uint32_t ordinal);
     // How many of `lookups` coming atomFor calls to expect to insert into the thread's atom table, going by the calls so
@@ -188,7 +197,7 @@ private:
     static StringImpl* impl(uintptr_t slot);
 
     std::span<const uint8_t> m_bytes;
-    uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal
+    uintptr_t* m_slots { nullptr };
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
     // atomFor's outcomes so far (mutator only); expectedAtomTableInserts scales by them.
@@ -285,6 +294,12 @@ public:
     enum class RecoverableCode : bool { No, Yes };
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr, RecoverableCode = RecoverableCode::Yes);
     bool canBorrowPayload() const { return m_canBorrowPayload; } // the embedder promised the payload outlives every use, so decoded objects may alias it
+    enum class IsBuilding : bool { No, Yes };
+    static Ref<Decoder> createForProgramData(VM&, Ref<CachedBytecode>, IsBuilding);
+    bool isForProgramData() const { return m_isForProgramData; }
+    bool isForBuildingProgramData() const { return m_isForBuildingProgramData; }
+    CachedBytecode& cachedBytecode() const { return m_cachedBytecode.get(); }
+    void setExternalStrings(DecoderStringTable& strings) { m_externalStrings = &strings; }
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
@@ -309,6 +324,7 @@ public:
 
     VM& NODELETE vm() { return m_vm; }
     size_t size() const { return m_payloadSize; }
+    size_t entryOffset() const;
 
     ptrdiff_t offsetOf(const void* ptr) const { return static_cast<const uint8_t*>(ptr) - m_payload; }
     void cacheOffset(ptrdiff_t, void*);
@@ -354,8 +370,56 @@ private:
     RefPtr<SourceProvider> m_provider;
     bool m_canDeferIntoPayload { false };
     bool m_canBorrowPayload { false };
+    bool m_isForProgramData { false };
+    bool m_isForBuildingProgramData { false };
     uint16_t m_persistentPayloadIndex { 0 };
 };
+
+UnlinkedCodeBlock* decodeModuleForProgramData(Decoder&, SourceCodeKey&, Vector<UnlinkedFunctionExecutable*>& functions);
+struct UnlinkedHandlerInfo;
+struct CodeBlockParts {
+    const uint8_t* scalars;
+    std::span<const uint8_t> instructions;
+    const Identifier* identifiers;
+    const WriteBarrier<Unknown>* constants;
+    std::span<const uint32_t> linkTimeConstants;
+    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls;
+    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionExprs;
+    std::span<const UnlinkedHandlerInfo> handlers;
+    const void* expressionInfo;
+};
+Vector<uint8_t> encodeCodeBlockScalars(const UnlinkedCodeBlock&);
+UnlinkedFunctionCodeBlock* createFunctionCodeBlockFromParts(VM&, const CodeBlockParts&);
+UnlinkedModuleProgramCodeBlock* createModuleCodeBlockFromParts(VM&, const CodeBlockParts&);
+
+bool entryIsBuiltinFunction(Decoder&);
+UnlinkedFunctionExecutable* decodeBuiltinForProgramData(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, LineStarts&, Vector<UnlinkedFunctionExecutable*>& functions);
+
+struct ProgramObjects {
+    std::span<UniquedStringImpl* const> identifiers;
+    std::span<const JSValue> constants;
+    std::span<UnlinkedFunctionExecutable* const> unlinkedFunctions;
+    std::span<UnlinkedCodeBlock* const> topLevelCodes;
+    Function<uint32_t(UnlinkedFunctionExecutable*)> functionListEntryFor;
+};
+Vector<uint8_t> encodeProgramObjects(VM&, EncoderStringTable&, const ProgramObjects&);
+class CachedProgramObjects;
+class ProgramObjectsDecoder {
+    WTF_MAKE_NONCOPYABLE(ProgramObjectsDecoder);
+    WTF_MAKE_TZONE_ALLOCATED(ProgramObjectsDecoder);
+public:
+    ProgramObjectsDecoder(VM&, std::span<const uint8_t>, DecoderStringTable&);
+    ~ProgramObjectsDecoder();
+    Identifier identifier(uint32_t);
+    JSValue constant(uint32_t);
+    std::optional<uint32_t> constantAliasTarget(uint32_t);
+    UnlinkedFunctionExecutable* unlinkedFunction(uint32_t);
+    UnlinkedCodeBlock* topLevelCode(uint32_t);
+private:
+    const Ref<Decoder> m_decoder;
+    const CachedProgramObjects& m_objects;
+};
+std::span<const uint8_t> absentInstructions(size_t);
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
@@ -411,6 +475,7 @@ JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(V
 // So every offset is final when it is written: a reference to something earlier is a plain delta, and a function
 // record's body slots and a code block's expression-info slot are filled in when their target is written, as in a
 // single-module payload. Every module's unlinked code stays alive until finish().
+void installImageCompiler();
 class BytecodeLinkEncoder {
     WTF_MAKE_NONCOPYABLE(BytecodeLinkEncoder);
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(BytecodeLinkEncoder, JS_EXPORT_PRIVATE);
@@ -421,15 +486,20 @@ public:
         Vector<uint64_t> knownFunctions; // the other functions the recorded build had; empty = not recorded
         Vector<uint64_t> evaluatedModules;
         Vector<uint64_t> notEvaluatedModules;
+        bool compileAheadOfTime { false };
     };
     static constexpr unsigned numberOfRegions = 6; // BytecodeLinkRegions::Count
     struct Result {
         RefPtr<CachedBytecode> payload;
         Vector<uint32_t> entryOffsets; // per addModule call, in call order
+        Vector<uint32_t> moduleEntryOffsets;
+        Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules;
+        Vector<FunctionReportableSites> reportableSites;
         unsigned namedHotFunctions { 0 }; // of Hints::hotFunctions, how many name a function of this link
         unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT
         unsigned functionsWithoutName { 0 }; // functions with code that the names of their module, which has some, do not cover
         std::array<uint32_t, numberOfRegions> regionEnds { };
+        Vector<uint8_t> aotImage;
     };
 
     // The shared string table is required. Destroy it, as it is used, on its VM's thread with the VM's lock held.
@@ -440,13 +510,32 @@ public:
     // An embedder's builtin (what encodeBuiltinFunction takes), `source` being all of its source: decodeBuiltinFunction
     // reads it back given the payload and the entry's offset. The builtin is a module, and a function of it.
     JS_EXPORT_PRIVATE void addBuiltinFunction(UnlinkedFunctionExecutable*, const SourceCode& source, unsigned embedderStamp, const BytecodeOrderNames&);
+    JS_EXPORT_PRIVATE void setPrelinkedModuleGraph(std::span<const uint8_t> blob, std::span<const uint32_t> stringSlots, Vector<uint32_t>&& graphModuleIndices);
     JS_EXPORT_PRIVATE Result finish();
     JS_EXPORT_PRIVATE VM& vm() const;
 
 private:
+    friend void installImageCompiler();
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+JS_EXPORT_PRIVATE bool registerAOTImage(std::span<const uint8_t> image, const void* code);
+struct AOTFileUse {
+    const char* programDataRejectionReason { nullptr };
+    const char* imageRejectionReason { nullptr };
+    size_t programDataSize { 0 };
+    size_t codeSizeInBytes { 0 };
+    const void* code { nullptr };
+};
+JS_EXPORT_PRIVATE AOTFileUse useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile);
+JS_EXPORT_PRIVATE Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool isModule);
+JS_EXPORT_PRIVATE bool isAOTImagePC(const void*);
+JS_EXPORT_PRIVATE std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image);
+JS_EXPORT_PRIVATE std::optional<size_t> aotImageSize(std::span<const uint8_t> image);
+JS_EXPORT_PRIVATE std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t> image);
 #endif
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);

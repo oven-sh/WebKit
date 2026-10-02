@@ -1034,7 +1034,6 @@ private:
                 }
             }
 
-
             break;
 
         case Mul:
@@ -4688,10 +4687,16 @@ private:
                 }
             }
 
+        }
+
+        // Bun: merging is a loop of its own, in pre-order, in which the head of a chain of blocks absorbs all of it. In the post-order loop
+        for (BasicBlock* block : m_proc.blocksInPreOrder()) {
             // Finally handle jumps to a block with one predecessor.
-            if (block->numSuccessors() == 1) {
+            while (block->numSuccessors() == 1) {
                 BasicBlock* successor = block->successorBlock(0);
-                if (successor != block && successor->numPredecessors() == 1) {
+                if (successor == block || successor->numPredecessors() != 1)
+                    break;
+                {
                     RELEASE_ASSERT(successor->predecessor(0) == block);
                     
                     // We can merge the two blocks, because the predecessor only jumps to the successor
@@ -4709,7 +4714,7 @@ private:
                     
                     // Make sure that the successor has nothing left in it. Make sure that the block
                     // has a terminal so that nobody chokes when they look at it.
-                    successor->values().shrink(0);
+                    successor->values().clear();
                     successor->appendNew<Value>(m_proc, Oops, jumpOrigin);
                     successor->clearSuccessors();
                     

@@ -29,6 +29,7 @@
 #include "config.h"
 #include "VM.h"
 
+#include "AOTRuntime.h"
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"
@@ -210,7 +211,7 @@ JSLock& VM::apiLock() { return m_apiLock.get(); }
 #if ENABLE(ASSEMBLER)
 static bool enableAssembler()
 {
-    if (!Options::useJIT())
+    if (!Options::useJIT() && !Options::useRegExpJIT())
         return false;
 
     auto canUseJITString = unsafeSpan(getenv("JavaScriptCoreUseJIT"));
@@ -371,6 +372,8 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     evalExecutableStructure.setWithoutWriteBarrier(EvalExecutable::createStructure(*this, nullptr, jsNull()));
     programExecutableStructure.setWithoutWriteBarrier(ProgramExecutable::createStructure(*this, nullptr, jsNull()));
     functionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructure(*this, nullptr, jsNull()));
+    m_structureIDBase = JSC::structureIDBase();
+    shortFunctionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createShortFormStructure(*this, nullptr, jsNull()));
 #if ENABLE(WEBASSEMBLY)
     pinballCompletionStructure.setWithoutWriteBarrier(PinballCompletion::createStructure(*this, nullptr, jsNull()));
     webAssemblyStreamingContextStructure.setWithoutWriteBarrier(JSWebAssemblyStreamingContext::createStructure(*this, nullptr, jsNull()));
@@ -571,6 +574,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // ENABLE(FTL_JIT)
         m_sharedJITStubs = makeUnique<SharedJITStubSet>();
         getBoundFunction(/* isJSFunction */ true, SourceTaintedOrigin::Untainted);
+    } else if (Options::useRegExpJIT()) {
+        jitStubs = makeUnique<JITThunks>();
     }
 #endif // ENABLE(JIT)
 
@@ -679,6 +684,9 @@ VM::~VM()
     smallStrings.setIsInitialized(false);
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
+#if ENABLE(AOT)
+    AOT::Instance::destroyUnneededInstances(*this);
+#endif
     heap.lastChanceToFinalize();
 
     while (!m_microtaskQueues.isEmpty())
@@ -2096,6 +2104,18 @@ void VM::executeEntryScopeServicesOnExit()
     clearScratchBuffers();
 }
 
+JSGlobalObject* VM::topFrameGlobalObject()
+{
+    JSGlobalObject* globalObject = nullptr;
+    StackVisitor::visit(topCallFrame, *this, [&](StackVisitor& visitor) {
+        globalObject = visitor->lexicalGlobalObject(*this);
+        return IterationStatus::Done;
+    });
+    if (!globalObject && entryScope)
+        globalObject = entryScope->globalObject();
+    return globalObject;
+}
+
 JSGlobalObject* VM::deprecatedVMEntryGlobalObject(JSGlobalObject* globalObject) const
 {
     if (entryScope)
@@ -2194,6 +2214,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(evalExecutableStructure);
     visitor.append(programExecutableStructure);
     visitor.append(functionExecutableStructure);
+    visitor.append(shortFunctionExecutableStructure);
 #if ENABLE(WEBASSEMBLY)
     visitor.append(pinballCompletionStructure);
     visitor.append(webAssemblyCalleeGroupStructure);

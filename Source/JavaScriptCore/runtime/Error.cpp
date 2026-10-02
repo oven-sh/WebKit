@@ -24,6 +24,7 @@
 #include "config.h"
 #include "Error.h"
 
+#include "AOTFunction.h"
 #include "ErrorInstanceInlines.h"
 #include "ExecutableBaseInlines.h"
 #include "Interpreter.h"
@@ -128,6 +129,7 @@ class FindFirstCallerFrameWithCodeblockFunctor {
 public:
     FindFirstCallerFrameWithCodeblockFunctor(CallFrame* startCallFrame)
         : m_startCallFrame(startCallFrame)
+        , m_foundStartCallFrame(!startCallFrame)
     { }
 
     IterationStatus operator()(StackVisitor& visitor) const
@@ -144,6 +146,14 @@ public:
         if (visitor->isImplementationVisibilityPrivate())
             return IterationStatus::Continue;
 
+#if ENABLE(AOT)
+        if (AOT::FunctionRef function = visitor->aotFunction(); function && function.executable()->source().provider()->hasNoSourceText()) {
+            m_aotFunction = function;
+            m_bytecodeIndex = visitor->bytecodeIndex();
+            return IterationStatus::Done;
+        }
+#endif
+
         auto* codeBlock = visitor->codeBlock();
         if (!codeBlock)
             return IterationStatus::Continue;
@@ -157,11 +167,17 @@ public:
 
     CodeBlock* NODELETE codeBlock() const { return m_codeBlock; }
     BytecodeIndex NODELETE bytecodeIndex() const { return m_bytecodeIndex; }
+#if ENABLE(AOT)
+    AOT::FunctionRef aotFunction() const { return m_aotFunction; }
+#endif
 
 private:
     CallFrame* m_startCallFrame;
     mutable CodeBlock* m_codeBlock { nullptr };
-    mutable bool m_foundStartCallFrame { false };
+#if ENABLE(AOT)
+    mutable AOT::FunctionRef m_aotFunction;
+#endif
+    mutable bool m_foundStartCallFrame;
     mutable BytecodeIndex m_bytecodeIndex { 0 };
 };
 
@@ -177,8 +193,12 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool us
     return stackTrace;
 }
 
-std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
+static FindFirstCallerFrameWithCodeblockFunctor findFirstCallerFrameWithCode(VM& vm, CallFrame* startCallFrame)
 {
+#if ENABLE(AOT)
+    if (startCallFrame && vm.topCallFrame == startCallFrame && AOT::topCallFrameIsAOTFrame(startCallFrame))
+        startCallFrame = nullptr;
+#endif
     if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
         auto* entryFrame = vm.topEntryFrame;
         auto* callerFrame = startCallFrame->callerFrame(entryFrame);
@@ -187,7 +207,36 @@ std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startC
     }
     FindFirstCallerFrameWithCodeblockFunctor functor(startCallFrame);
     StackVisitor::visit(vm.topCallFrame, vm, functor);
+    return functor;
+}
+
+std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
+{
+    auto functor = findFirstCallerFrameWithCode(vm, startCallFrame);
+#if ENABLE(AOT)
+    if (functor.aotFunction())
+        return { functor.aotFunction().ensureCodeBlock(), functor.bytecodeIndex() };
+#endif
     return { functor.codeBlock(), functor.bytecodeIndex() };
+}
+
+std::optional<SourceQuote> quoteSourceWithoutText(VM& vm, CallFrame* startCallFrame)
+{
+#if ENABLE(AOT)
+    auto functor = findFirstCallerFrameWithCode(vm, startCallFrame);
+    if (!functor.aotFunction())
+        return std::nullopt;
+    SourceQuote result;
+    if (auto quote = functor.aotFunction().quoteAt(functor.bytecodeIndex())) {
+        result.text = WTF::move(quote->first);
+        result.isExact = quote->second;
+    }
+    return result;
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(startCallFrame);
+    return std::nullopt;
+#endif
 }
 
 bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& lineColumn, String& sourceURL)

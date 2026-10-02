@@ -752,6 +752,14 @@
 #define ENABLE_DFG_JIT 0
 #endif
 
+#if !defined(ENABLE_AOT)
+#if ENABLE(FTL_JIT) && CPU(ARM64) && (OS(DARWIN) || (OS(LINUX) && !OS(ANDROID) && !ASAN_ENABLED))
+#define ENABLE_AOT 1
+#else
+#define ENABLE_AOT 0
+#endif
+#endif
+
 /* The JIT disassembler is a debugging-only facility: it is reached solely by
    diagnostic options such as dumpDisassembly, dumpDFGDisassembly,
    dumpFTLDisassembly and logJIT. Its instruction tables are large - the

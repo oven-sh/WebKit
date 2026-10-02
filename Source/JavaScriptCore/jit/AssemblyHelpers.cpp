@@ -420,8 +420,13 @@ void AssemblyHelpers::storeProperty(GPRReg value, GPRReg object, GPRReg offset, 
     storeValue(value, BaseIndex(scratch, offset, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
 }
 
+AssemblyHelpers::MegamorphicCacheLocation::MegamorphicCacheLocation(VM& vm)
+    : cache(&vm.ensureMegamorphicCache())
+{
+}
+
 template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
-AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
+AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(MegamorphicCacheLocation location, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     using Entry = MegamorphicCache::LoadEntry;
 
@@ -459,8 +464,10 @@ AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPR
         lshift32(TrustedImm32(getLSBSet(sizeof(Entry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(Entry)), scratch3GPR, scratch3GPR);
-    auto& cache = vm.ensureMegamorphicCache();
-    move(TrustedImmPtr(&cache), scratch2GPR);
+    if (location.cache)
+        move(TrustedImmPtr(location.cache), scratch2GPR);
+    else
+        move(location.gpr, scratch2GPR);
     addPtr(scratch2GPR, scratch3GPR);
     if constexpr (primaryEntriesOffset)
         addPtr(TrustedImm32(primaryEntriesOffset), scratch3GPR);
@@ -493,7 +500,12 @@ AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPR
         lshift32(TrustedImm32(getLSBSet(sizeof(Entry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(Entry)), scratch3GPR, scratch3GPR);
-    addPtr(TrustedImmPtr(std::bit_cast<uint8_t*>(&cache) + secondaryEntriesOffset), scratch3GPR);
+    if (location.cache)
+        addPtr(TrustedImmPtr(std::bit_cast<uint8_t*>(location.cache) + secondaryEntriesOffset), scratch3GPR);
+    else {
+        addPtr(location.gpr, scratch3GPR);
+        addPtr(TrustedImm32(secondaryEntriesOffset), scratch3GPR);
+    }
 
     slowCases.append(branch32(NotEqual, scratch1GPR, Address(scratch3GPR, Entry::offsetOfStructureID())));
     if (uid)
@@ -508,13 +520,13 @@ AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPR
     return slowCases;
 }
 
-AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
+AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(MegamorphicCacheLocation location, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     using Entry = MegamorphicCache::LoadEntry;
     JumpList slowCases = findMegamorphicCacheEntry<
         MegamorphicCache::loadCachePrimaryMask, MegamorphicCache::offsetOfLoadCachePrimaryEntries(),
         MegamorphicCache::loadCacheSecondaryMask, MegamorphicCache::offsetOfLoadCacheSecondaryEntries()>(
-            vm, baseGPR, uidGPR, uid, scratch1GPR, scratch2GPR, scratch3GPR);
+            location, baseGPR, uidGPR, uid, scratch1GPR, scratch2GPR, scratch3GPR);
 
     loadPtr(Address(scratch3GPR, Entry::offsetOfHolder()), scratch2GPR);
     auto missed = branchTestPtr(Zero, scratch2GPR);
@@ -531,13 +543,13 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
     return slowCases;
 }
 
-AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicGetterSetter(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
+AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicGetterSetter(MegamorphicCacheLocation location, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     using Entry = MegamorphicCache::GetterEntry;
     JumpList slowCases = findMegamorphicCacheEntry<
         MegamorphicCache::getterCachePrimaryMask, MegamorphicCache::offsetOfGetterCachePrimaryEntries(),
         MegamorphicCache::getterCacheSecondaryMask, MegamorphicCache::offsetOfGetterCacheSecondaryEntries()>(
-            vm, baseGPR, uidGPR, uid, scratch1GPR, scratch2GPR, scratch3GPR);
+            location, baseGPR, uidGPR, uid, scratch1GPR, scratch2GPR, scratch3GPR);
 
     loadPtr(Address(scratch3GPR, Entry::offsetOfHolder()), scratch1GPR);
     moveConditionally64(Equal, scratch1GPR, TrustedImm32(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects())), baseGPR, scratch1GPR, scratch1GPR);
@@ -547,7 +559,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicGetterSetter(VM& vm, G
     return slowCases;
 }
 
-std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers::storeMegamorphicProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
+std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers::storeMegamorphicProperty(MegamorphicCacheLocation location, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     // uidGPR can be InvalidGPRReg if uid is non-nullptr.
 
@@ -586,8 +598,10 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         lshift32(TrustedImm32(getLSBSet(sizeof(MegamorphicCache::StoreEntry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(MegamorphicCache::StoreEntry)), scratch3GPR, scratch3GPR);
-    auto& cache = vm.ensureMegamorphicCache();
-    move(TrustedImmPtr(&cache), scratch2GPR);
+    if (location.cache)
+        move(TrustedImmPtr(location.cache), scratch2GPR);
+    else
+        move(location.gpr, scratch2GPR);
     addPtr(scratch2GPR, scratch3GPR);
     addPtr(TrustedImmPtr(MegamorphicCache::offsetOfStoreCachePrimaryEntries()), scratch3GPR);
 
@@ -628,7 +642,12 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         lshift32(TrustedImm32(getLSBSet(sizeof(MegamorphicCache::StoreEntry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(MegamorphicCache::StoreEntry)), scratch3GPR, scratch3GPR);
-    addPtr(TrustedImmPtr(std::bit_cast<uint8_t*>(&cache) + MegamorphicCache::offsetOfStoreCacheSecondaryEntries()), scratch3GPR);
+    if (location.cache)
+        addPtr(TrustedImmPtr(std::bit_cast<uint8_t*>(location.cache) + MegamorphicCache::offsetOfStoreCacheSecondaryEntries()), scratch3GPR);
+    else {
+        addPtr(location.gpr, scratch3GPR);
+        addPtr(TrustedImm32(MegamorphicCache::offsetOfStoreCacheSecondaryEntries()), scratch3GPR);
+    }
 
     slowCases.append(branch32(NotEqual, scratch1GPR, Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOldStructureID())));
     if (uid)
@@ -916,6 +935,9 @@ void AssemblyHelpers::emitRandomThunk(VM& vm, GPRReg scratch0, GPRReg scratch1, 
 void AssemblyHelpers::emitAllocateWithNonNullAllocator(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult)
 {
     if (Options::forceGCSlowPaths()) {
+        // Bun: the first invariant below holds here too. Code compiled ahead of time tests the result instead of having a slow path to jump to.
+        if (slowAllocationResult == SlowAllocationResult::ClearToNull)
+            move(TrustedImmPtr(nullptr), resultGPR);
         slowPath.append(jump());
         return;
     }
@@ -1389,6 +1411,143 @@ void AssemblyHelpers::emitConvertValueToBoolean(VM& vm, GPRReg value, GPRReg res
     compare64(invert ? NotEqual : Equal, value, TrustedImm32(JSValue::ValueTrue), result);
 
     done.link(this);
+}
+
+void AssemblyHelpers::emitSoundTypeCheck(GPRReg valueGPR, GPRReg scratchGPR, unsigned mask, JumpList& fail, JumpList& undecided)
+{
+    ASSERT(mask && mask < SoundTypeAll);
+    ASSERT(noOverlap(valueGPR, scratchGPR));
+
+    constexpr unsigned cellTags = SoundTypeString | SoundTypeSymbol | SoundTypeBigInt | SoundTypeAnyObject;
+    JumpList pass;
+
+    unsigned remaining = mask;
+    auto isLast = [&](unsigned tags) {
+        remaining &= ~tags;
+        return !remaining;
+    };
+
+    if (mask & SoundTypeNumber) {
+        if (isLast(SoundTypeNumber)) {
+            fail.append(branchIfNotNumber(valueGPR));
+            return;
+        }
+        pass.append(branchIfNumber(valueGPR));
+    }
+
+    if (unsigned cellMask = mask & cellTags) {
+        Jump notCell = branchIfNotCell(valueGPR);
+
+        if (cellMask != cellTags) {
+            auto typeIs = [&](JSType type) { return branch32(Equal, scratchGPR, TrustedImm32(type)); };
+            auto branchIfNotType = [&](JSType type) { return branch32(NotEqual, scratchGPR, TrustedImm32(type)); };
+            auto notObject = [&] { return branch32(Below, scratchGPR, TrustedImm32(ObjectType)); };
+            Address flags(valueGPR, JSCell::typeInfoFlagsOffset());
+
+            load8(Address(valueGPR, JSCell::typeInfoTypeOffset()), scratchGPR);
+
+            unsigned remainingCellTags = cellMask;
+            auto testPrimitive = [&](unsigned tag, JSType type) {
+                if (!(cellMask & tag))
+                    return;
+                remainingCellTags &= ~tag;
+                if (remainingCellTags)
+                    pass.append(typeIs(type));
+                else
+                    fail.append(branchIfNotType(type));
+            };
+            testPrimitive(SoundTypeString, StringType);
+            testPrimitive(SoundTypeSymbol, SymbolType);
+            testPrimitive(SoundTypeBigInt, HeapBigIntType);
+
+            bool acceptsArrays = cellMask & SoundTypeArray;
+            switch (cellMask & SoundTypeAnyObject) {
+            case 0:
+                break;
+            case SoundTypeAnyObject:
+                fail.append(notObject());
+                break;
+            case SoundTypeArray:
+                static_assert(DerivedArrayType == ArrayType + 1);
+                sub32(TrustedImm32(ArrayType), scratchGPR);
+                fail.append(branch32(Above, scratchGPR, TrustedImm32(DerivedArrayType - ArrayType)));
+                break;
+            case SoundTypeFunction | SoundTypeOtherObject:
+                fail.append(notObject());
+                fail.append(typeIs(ArrayType));
+                fail.append(typeIs(DerivedArrayType));
+                break;
+            case SoundTypeFunction:
+            case SoundTypeFunction | SoundTypeArray:
+                pass.append(typeIs(JSFunctionType));
+                pass.append(typeIs(InternalFunctionType));
+                if (acceptsArrays) {
+                    pass.append(typeIs(ArrayType));
+                    pass.append(typeIs(DerivedArrayType));
+                }
+                fail.append(notObject());
+                fail.append(branchTest8(Zero, flags, TrustedImm32(OverridesGetCallData)));
+                undecided.append(jump());
+                break;
+            case SoundTypeOtherObject:
+            case SoundTypeOtherObject | SoundTypeArray:
+                fail.append(notObject());
+                fail.append(typeIs(JSFunctionType));
+                fail.append(typeIs(InternalFunctionType));
+                if (!acceptsArrays) {
+                    fail.append(typeIs(ArrayType));
+                    fail.append(typeIs(DerivedArrayType));
+                }
+                undecided.append(branchTest8(NonZero, flags, TrustedImm32(OverridesGetCallData)));
+                break;
+            }
+        }
+
+#if USE(BIGINT32)
+        bool done = isLast(cellTags & ~SoundTypeBigInt);
+#else
+        bool done = isLast(cellTags);
+#endif
+        if (done) {
+            fail.append(notCell);
+            pass.link(this);
+            return;
+        }
+        pass.append(jump());
+        notCell.link(this);
+    }
+
+    constexpr unsigned otherTags = SoundTypeUndefined | SoundTypeNull;
+    if ((remaining & otherTags) == otherTags) {
+        if (isLast(otherTags))
+            fail.append(branchIfNotOther(valueGPR, scratchGPR));
+        else
+            pass.append(branchIfOther(valueGPR, scratchGPR));
+    } else if (remaining & SoundTypeUndefined) {
+        if (isLast(SoundTypeUndefined))
+            fail.append(branchIfNotUndefined(valueGPR));
+        else
+            pass.append(branchIfUndefined(valueGPR));
+    } else if (remaining & SoundTypeNull) {
+        if (isLast(SoundTypeNull))
+            fail.append(branchIfNotNull(valueGPR));
+        else
+            pass.append(branchIfNull(valueGPR));
+    }
+    if (remaining & SoundTypeBoolean) {
+        if (isLast(SoundTypeBoolean))
+            fail.append(branchIfNotBoolean(valueGPR, scratchGPR));
+        else
+            pass.append(branchIfBoolean(valueGPR, scratchGPR));
+    }
+#if USE(BIGINT32)
+    if (remaining & SoundTypeBigInt) {
+        isLast(SoundTypeBigInt);
+        fail.append(branchIfNotBigInt32(valueGPR, scratchGPR));
+    }
+#endif
+    ASSERT(!remaining);
+    pass.link(this);
 }
 
 AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, GPRReg scratch, GPRReg scratchIfShouldCheckMasqueradesAsUndefined, FPRReg valueAsFPR, FPRReg tempFPR, bool shouldCheckMasqueradesAsUndefined, Variant<JSGlobalObject*, GPRReg, LazyGlobalObjectLoadTag> globalObject, bool invert)
@@ -2031,7 +2190,6 @@ void AssemblyHelpers::loadTypedArrayLength(GPRReg baseGPR, GPRReg valueGPR, GPRR
 {
     loadTypedArrayByteLengthCommonImpl(baseGPR, valueGPR, scratchGPR, scratch2GPR, typedArrayType, TypedArrayField::Length);
 }
-
 
 #if ENABLE(WEBASSEMBLY)
 #if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)

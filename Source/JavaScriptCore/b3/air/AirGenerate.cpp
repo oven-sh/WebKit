@@ -253,6 +253,11 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             && block->successorBlock(0) == code.findNextBlock(block))
             continue;
 
+#if USE(BUN_JSC_ADDITIONS)
+        if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && code.findNextBlock(block))
+            continue;
+#endif
+
         if (isReturn(block->last().kind.opcode)) {
             // We currently don't represent the full prologue/epilogue in Air, so we need to
             // have this override.

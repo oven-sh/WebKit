@@ -81,7 +81,6 @@ public:
                     }
                 }
 
-            
                 // Prevent a tower of overflowing additions from creating a value that is out of the
                 // safe 2^48 range.
                 m_allowNestedOverflowingAdditions = block->size() < (1 << 16);
@@ -309,6 +308,10 @@ private:
         case MovHint:
         case Check:
         case CheckVarargs:
+            break;
+
+        case CheckSoundType:
+            node->child1()->mergeFlags(NodeBytecodeUsesAsOther);
             break;
             
         case ValueBitNot:
@@ -732,4 +735,3 @@ bool performBackwardsPropagation(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

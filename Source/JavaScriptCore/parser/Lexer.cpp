@@ -804,7 +804,6 @@ static ALWAYS_INLINE bool cannotBeIdentPartOrEscapeStart(char16_t c)
     return isWhiteSpace(c) || isLineTerminator(c);
 }
 
-
 template<>
 ALWAYS_INLINE char32_t Lexer<Latin1Character>::currentCodePoint() const
 {
@@ -2109,6 +2108,7 @@ JSTokenType Lexer<T>::lexWithoutClearingLineTerminator(JSToken* tokenRecord, Opt
     ASSERT(m_buffer8.isEmpty());
     ASSERT(m_buffer16.isEmpty());
     JSTokenType token = ERRORTOK;
+    tokenRecord->m_typeTag = 0;
 
 start:
     skipWhitespace();
@@ -2966,8 +2966,33 @@ start:
         goto invalidCharacter;
     }
 
+    case   1 /*   1 = Start of Heading CharacterInvalid */: {
+        if (!Options::useTypeTags())
+            goto invalidCharacter;
+        uint64_t tag = 0;
+        for (unsigned i = 0; i < 6; ++i) {
+            shift();
+            unsigned digit;
+            if (m_current >= '0' && m_current <= '9')
+                digit = m_current - '0';
+            else if (m_current >= 'A' && m_current <= 'Z')
+                digit = m_current - 'A' + 10;
+            else if (m_current >= 'a' && m_current <= 'z')
+                digit = m_current - 'a' + 36;
+            else if (m_current == '_')
+                digit = 62;
+            else if (m_current == '$')
+                digit = 63;
+            else
+                goto invalidCharacter;
+            tag = tag << 6 | digit;
+        }
+        shift();
+        tokenRecord->m_typeTag = static_cast<uint32_t>(tag);
+        goto start;
+    }
+
     case 183 /* 183 = Po category      CharacterOtherIdentifierPart */:
-    case   1 /*   1 = Start of Heading CharacterInvalid */:
     case   2 /*   2 = Start of Text    CharacterInvalid */:
     case   3 /*   3 = End of Text      CharacterInvalid */:
     case   4 /*   4 = End of Transm.   CharacterInvalid */:

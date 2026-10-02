@@ -28,6 +28,7 @@
 
 #if ENABLE(DFG_JIT)
 
+#include "AOTImage.h"
 #include "ArrayPrototype.h"
 #include "CacheableIdentifierInlines.h"
 #include "CodeBlock.h"
@@ -307,6 +308,8 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
             }
         }
     }
+    if (node->hasSoundTypeMask())
+        out.print(comma, SoundTypeMaskDump(node->soundTypeMask()));
     if (node->hasQueriedType()) {
         JSTypeRange range = node->queriedType();
         if (range.first == range.last)
@@ -1217,7 +1220,6 @@ bool Graph::isLiveInBytecode(Operand operand, CodeOrigin codeOrigin)
             if (reg.isArgument()) {
                 RELEASE_ASSERT(reg.offset() < CallFrame::headerSizeInRegisters);
 
-
                 if (inlineCallFrame->isClosureCall
                     && reg == CallFrameSlot::callee) {
                     dataLogLnIf(verbose, "Looks like a callee.");
@@ -1462,6 +1464,11 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
         if (offset.offset() >= firstImportSlot && offset.offset() - firstImportSlot < moduleEnvironment->importSlotCount())
             return moduleEnvironment->importSlot(offset.offset() - firstImportSlot).get();
     }
+
+#if ENABLE(AOT)
+    if (AOT::Image::hasAny())
+        return JSValue();
+#endif
 
     JSValue value;
     InlineWatchpointSet* set;

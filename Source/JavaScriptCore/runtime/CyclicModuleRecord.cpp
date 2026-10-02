@@ -26,6 +26,9 @@
 #include "config.h"
 #include "CyclicModuleRecord.h"
 
+#include "AOTImage.h"
+#include "AOTRuntime.h"
+
 #include "BuiltinNames.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
@@ -228,6 +231,15 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
         env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
+#if ENABLE(AOT)
+        if (isPrelinked() && AOT::Image::environmentsSize()) {
+            AOT::ImageEnvironment environment = AOT::Image::environmentOf(prelinkedIndex());
+            if (environment.distance && environment.size == JSModuleEnvironment::allocationSize(symbolTable, jsModule->importSlotCount())) {
+                if (JSCell** slot = AOT::Instance::ensure(moduleLoader()).environmentSlot(environment); slot && !*slot)
+                    *slot = env;
+            }
+        }
+#endif
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);
@@ -441,10 +453,44 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
     // 18. Let code be module.[[ECMAScriptCode]].
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = moduleProgramExecutable->unlinkedCodeBlock();
+#if ENABLE(AOT)
+    const AOT::ProgramModule* programModule = moduleProgramExecutable->programModule();
+    if (programModule) {
+        for (unsigned i = 0; i < programModule->numberOfVarScopeOffsets; ++i)
+            env->variableAt(ScopeOffset(programModule->firstVarScopeOffset + i)).setUndefined();
+        jsModule->setProgramModule(vm, moduleProgramExecutable);
+        if (!Options::useLazyModuleFunctionDeclarations()) {
+            for (uint32_t slot : AOT::ProgramData::get()->functionDeclarationSlots(*programModule))
+                jsModule->readFunctionDeclarationSlot(vm, env, ScopeOffset(slot));
+        }
+    }
+#else
+    constexpr bool programModule = false;
+#endif
     // 19. Let varDeclarations be the VarScopedDeclarations of code.
     // 20. Let declaredVarNames be a new empty List.
     // 21. For each element d of varDeclarations, do
-    for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
+    bool initializeVarsByOffset = !programModule && symbolTable->hasCachedEntriesPending();
+    if (initializeVarsByOffset) {
+        for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)
+            env->variableAt(ScopeOffset(unlinkedCodeBlock->firstVarScopeOffset() + i)).setUndefined();
+        if (Options::validatePrelinkedModuleInfo()) [[unlikely]] {
+            unsigned found = 0;
+            for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
+                SymbolTableEntry::Fast entry = symbolTable->get(variable.key.get());
+                if (entry.isNull() || entry.varOffset().isStack())
+                    continue;
+                unsigned offset = entry.scopeOffset().offset();
+                RELEASE_ASSERT(offset >= unlinkedCodeBlock->firstVarScopeOffset() && offset - unlinkedCodeBlock->firstVarScopeOffset() < unlinkedCodeBlock->numberOfVarScopeOffsets(), offset, unlinkedCodeBlock->firstVarScopeOffset(), unlinkedCodeBlock->numberOfVarScopeOffsets());
+                found++;
+            }
+            RELEASE_ASSERT(found == unlinkedCodeBlock->numberOfVarScopeOffsets(), found, unlinkedCodeBlock->numberOfVarScopeOffsets());
+        }
+    }
+    static NeverDestroyed<const VariableEnvironment> noVariables;
+    for (const auto& variable : programModule ? noVariables.get() : unlinkedCodeBlock->variableDeclarations()) {
+        if (initializeVarsByOffset)
+            break;
         // 21.a. For each element dn of the BoundNames of d, do
         // 21.a.i. If declaredVarNames does not contain dn, then
         // 21.a.i.1. Perform ! env.CreateMutableBinding(dn, false).
@@ -467,12 +513,14 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 24. For each element d of lexDeclarations, do
     // The heap-allocated declarations come first (BytecodeGenerator); the stack-allocated rest is the module body's to
     // create, so do not look those up by name (the name may still be in the bytecode cache).
-    size_t numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
-    // The profilers want every function's range up front.
-    bool leaveFunctionDeclarationsUninstantiated = Options::useLazyModuleFunctionDeclarations() && !vm.typeProfiler() && !vm.controlFlowProfiler();
-    jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, unlinkedCodeBlock, leaveFunctionDeclarationsUninstantiated);
-    if (leaveFunctionDeclarationsUninstantiated && jsModule->numberOfUninstantiatedFunctionDeclarations() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls())
-        numberOfFunctions = 0;
+    size_t numberOfFunctions = 0;
+    if (!programModule) {
+        numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
+        bool leaveFunctionDeclarationsUninstantiated = Options::useLazyModuleFunctionDeclarations() && !vm.typeProfiler() && !vm.controlFlowProfiler();
+        jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, unlinkedCodeBlock, leaveFunctionDeclarationsUninstantiated);
+        if (leaveFunctionDeclarationsUninstantiated && jsModule->numberOfUninstantiatedFunctionDeclarations() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls())
+            numberOfFunctions = 0;
+    }
     for (size_t i = 0; i < numberOfFunctions; ++i) {
         // 24.a. For each element dn of the BoundNames of d, do
         // 24.a.i. If IsConstantDeclaration of d is true, then
@@ -480,11 +528,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 24.a.ii. Else,
         // 24.a.ii.1. Perform ! env.CreateMutableBinding(dn, false).
         UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
-        SymbolTableEntry::Fast entry = symbolTable->get(unlinkedFunctionExecutable->name().impl());
-        VarOffset offset = entry.varOffset();
+        const Identifier& name = unlinkedFunctionExecutable->name();
+        VarOffset offset = symbolTable->get(name.impl()).varOffset();
         ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         if (!offset.isStack()) {
-            ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
+            ASSERT(!name.isEmpty());
             if (vm.typeProfiler() || vm.controlFlowProfiler()) {
                 vm.functionHasExecutedCache()->insertUnexecutedRange(moduleProgramExecutable->sourceID(),
                     unlinkedFunctionExecutable->unlinkedFunctionStart(),
@@ -506,7 +554,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             RETURN_IF_EXCEPTION(scope, void());
             // 24.a.iii.2. Perform ! env.InitializeBinding(dn, fo).
             bool putResult = false;
-            symbolTablePutTouchWatchpointSet(env, globalObject, unlinkedFunctionExecutable->name(), function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+            symbolTablePutTouchWatchpointSet(env, globalObject, name, function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }

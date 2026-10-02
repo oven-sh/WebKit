@@ -26,6 +26,8 @@
 #include "config.h"
 #include "SamplingProfiler.h"
 
+#include "AOTRuntime.h"
+
 #if ENABLE(SAMPLING_PROFILER)
 
 #include "CodeBlock.h"
@@ -83,9 +85,10 @@ ALWAYS_INLINE static void reportStats()
 
 class FrameWalker {
 public:
-    FrameWalker(VM& vm, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+    FrameWalker(VM& vm, CallFrame* callFrame, void* pc, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
         : m_vm(vm)
         , m_callFrame(callFrame)
+        , m_pc(pc)
         , m_entryFrame(vm.topEntryFrame)
         , m_codeBlockSetLocker(codeBlockSetLocker)
         , m_machineThreadsLocker(machineThreadsLocker)
@@ -122,6 +125,23 @@ protected:
         CallSiteIndex callSiteIndex;
         CalleeBits unsafeCallee = m_callFrame->unsafeCallee();
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
+#if ENABLE(AOT)
+        switch (m_pcInfo.kind) {
+        case AOT::ImageAddressInfo::Function: {
+            AOT::FunctionRef function { m_vm.m_aotInstances[0], m_pcInfo.index };
+            auto callSite = AOT::tryCallSiteAt(*function.info().function(), m_pcInfo.offset);
+            stackTrace[m_depth] = UnprocessedStackFrame(nullptr, CalleeBits(), CallSiteIndex(callSite.value_or(0)));
+            stackTrace[m_depth].aotFunction = function;
+            m_depth++;
+            return;
+        }
+        case AOT::ImageAddressInfo::Stub:
+        case AOT::ImageAddressInfo::Adapter:
+            return;
+        case AOT::ImageAddressInfo::NotInImage:
+            break;
+        }
+#endif
         if (unsafeCallee.isNativeCallee())
             codeBlock = nullptr;
         if (codeBlock) {
@@ -169,7 +189,21 @@ protected:
     SUPPRESS_ASAN
     void advanceToParentFrame()
     {
+#if ENABLE(AOT)
+        void* pc = removeCodePtrTag(m_callFrame->rawReturnPC());
+        if (m_pcInfo.kind == AOT::ImageAddressInfo::Function || m_pcInfo.kind == AOT::ImageAddressInfo::Stub) {
+            m_callFrame = m_callFrame->callerFrame();
+            m_pc = pc;
+            return;
+        }
+        EntryFrame* calleeEntryFrame = m_entryFrame;
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
+        if (m_entryFrame != calleeEntryFrame && m_callFrame && AOT::hasCode())
+            pc = AOT::returnAddressForFrame(m_callFrame, calleeEntryFrame);
+        m_pc = pc;
+#else
+        m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
+#endif
     }
 
     bool NODELETE isAtTop() const
@@ -190,6 +224,12 @@ protected:
                 sNumFailedWalks++;
             return;
         }
+
+#if ENABLE(AOT)
+        m_pcInfo = AOT::classifyAddress(m_pc);
+        if (m_pcInfo.kind != AOT::ImageAddressInfo::NotInImage)
+            return;
+#endif
 
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
         if (!codeBlock || m_callFrame->unsafeCallee().isNativeCallee())
@@ -228,6 +268,10 @@ protected:
 
     VM& m_vm;
     CallFrame* m_callFrame;
+    void* m_pc;
+#if ENABLE(AOT)
+    AOT::ImageAddressInfo m_pcInfo { };
+#endif
     EntryFrame* m_entryFrame;
     const AbstractLocker& m_codeBlockSetLocker;
     const AbstractLocker& m_machineThreadsLocker;
@@ -239,8 +283,8 @@ class CFrameWalker : public FrameWalker {
 public:
     typedef FrameWalker Base;
 
-    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
-        : Base(vm, callFrame, codeBlockSetLocker, machineThreadsLocker)
+    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, void* pc, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, callFrame, pc, codeBlockSetLocker, machineThreadsLocker)
         , m_machineFrame(machineFrame)
     {
     }
@@ -395,6 +439,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             void* machineFrame;
             CallFrame* callFrame;
             void* machinePC;
+            void* machineLinkRegister = nullptr;
             bool topFrameIsLLInt = false;
             RegExp* regExp = nullptr;
             void* llintPC;
@@ -408,6 +453,9 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     machinePC = instructionPointer->untaggedPtr();
                 else
                     machinePC = nullptr;
+#if OS(DARWIN) && CPU(ARM64)
+                machineLinkRegister = MachineContext::linkRegister(registers).untaggedPtr();
+#endif
                 llintPC = removeCodePtrTag(MachineContext::llintInstructionPointer(registers));
                 assertIsNotTagged(machinePC);
             }
@@ -423,6 +471,9 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 topFrameIsLLInt = true;
                 // We're okay to take a normal stack trace when the PC
                 // is in LLInt code.
+#if ENABLE(AOT)
+            } else if (AOT::classifyAddress(machinePC).kind != AOT::ImageAddressInfo::NotInImage) {
+#endif
             } else {
                 // RegExp evaluation is leaf. So if RegExp evaluation exists, we can say it is RegExp evaluation is the top user-visible frame.
                 regExp = m_vm.m_executingRegExp;
@@ -433,15 +484,26 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     shouldAppendTopFrameAsCCode = true;
             }
 
+            void* framePC = machinePC;
+#if ENABLE(AOT)
+            if (callFrame != machineFrame && AOT::hasCode()) {
+                if (auto innermost = AOT::innermostFrame(machineFrame, machinePC, machineLinkRegister, callFrame, m_jscExecutionThread->stack())) {
+                    callFrame = static_cast<CallFrame*>(innermost->frame);
+                    framePC = innermost->pc;
+                } else if (callFrame)
+                    framePC = AOT::returnAddressForFrame(callFrame, machineFrame);
+            }
+#endif
+
             size_t walkSize;
             bool wasValidWalk;
             bool didRunOutOfVectorSpace;
             if (Options::sampleCCode()) {
-                CFrameWalker walker(m_vm, machineFrame, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                CFrameWalker walker(m_vm, machineFrame, callFrame, framePC, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             } else {
-                FrameWalker walker(m_vm, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                FrameWalker walker(m_vm, callFrame, framePC, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             }
@@ -707,6 +769,20 @@ void SamplingProfiler::processUnverifiedStackTraces()
                     appendCodeBlockNoInlining();
 #else
                 appendCodeBlockNoInlining();
+#endif
+#if ENABLE(AOT)
+            } else if (AOT::FunctionRef function = unprocessedStackFrame.aotFunction; function && m_vm.m_aotInstances.contains(function.instance) && function.executable()) {
+                assertIsHeld(m_lock);
+                stackTrace.frames.append(StackFrame(function.executable()));
+                m_liveCellPointers.add(function.executable());
+                auto& location = stackTrace.frames.last().semanticLocation;
+                BytecodeIndex bytecodeIndex = unprocessedStackFrame.callSiteIndex.bytecodeIndex();
+                if (bytecodeIndex.offset() < function.instructionsSize()) {
+                    location.lineColumn = function.lineColumnFor(bytecodeIndex);
+                    location.bytecodeIndex = bytecodeIndex;
+                }
+                location.codeBlockHash = CodeBlockHash(function.executable()->source(), function.codeType() == FunctionCode ? function.info().kind() : CodeSpecializationKind::CodeForCall);
+                location.jitType = JITType::AOTJIT;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {
                 appendEmptyFrame();

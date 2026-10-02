@@ -1269,7 +1269,6 @@ private:
                 }
             }
             
-            
             node->setArrayMode(
                 node->arrayMode().refine(
                     m_graph, node,
@@ -1290,7 +1289,6 @@ private:
                 if (!CCallHelpers::supportsFloat16())
                     node->setArrayMode(ArrayMode(Array::Generic, node->arrayMode().action()));
                 break;
-
 
             case Array::ForceExit: {
                 // Don't force OSR because we have only seen OwnStructureMode.
@@ -2601,6 +2599,11 @@ private:
         case CheckIsConstant: {
             if (node->constant()->value().isCell() && node->constant()->value())
                 fixEdge<CellUse>(node->child1());
+            break;
+        }
+
+        case CheckSoundType: {
+            fixupCheckSoundType(node);
             break;
         }
 
@@ -4060,6 +4063,68 @@ private:
             ASSERT(!node->child3());
             node->convertToIdentity();
         }
+    }
+
+    void fixupCheckSoundType(Node* node)
+    {
+        constexpr unsigned other = SoundTypeUndefined | SoundTypeNull;
+        constexpr unsigned notCell = other | SoundTypeBoolean | SoundTypeNumber;
+        [[maybe_unused]] constexpr unsigned cell = SoundTypeAll & ~notCell;
+        Edge& child = node->child1();
+        switch (node->soundTypeMask()) {
+        case other:
+            fixEdge<OtherUse>(child);
+            break;
+        case SoundTypeBoolean:
+            fixEdge<BooleanUse>(child);
+            break;
+        case other | SoundTypeBoolean:
+            fixEdge<MiscUse>(child);
+            break;
+        case SoundTypeNumber:
+            fixEdge<NumberUse>(child);
+            break;
+        case notCell:
+            fixEdge<NotCellNorBigIntUse>(child);
+            break;
+        case SoundTypeString:
+            fixEdge<StringUse>(child);
+            break;
+        case SoundTypeString | other:
+            fixEdge<StringOrOtherUse>(child);
+            break;
+        case SoundTypeSymbol:
+            fixEdge<SymbolUse>(child);
+            break;
+        case SoundTypeAll & ~SoundTypeSymbol:
+            fixEdge<NotSymbolUse>(child);
+            break;
+        case SoundTypeBigInt:
+#if USE(BIGINT32)
+            fixEdge<AnyBigIntUse>(child);
+#else
+            fixEdge<HeapBigIntUse>(child);
+#endif
+            break;
+        case SoundTypeAnyObject:
+            fixEdge<ObjectUse>(child);
+            break;
+        case SoundTypeAnyObject | other:
+            fixEdge<ObjectOrOtherUse>(child);
+            break;
+#if !USE(BIGINT32)
+        case cell:
+            fixEdge<CellUse>(child);
+            break;
+        case cell | other:
+            fixEdge<CellOrOtherUse>(child);
+            break;
+#endif
+        default:
+            fixEdge<UntypedUse>(child);
+            return;
+        }
+        node->remove(m_graph);
     }
 
     void fixupIsCellWithType(Node* node)
@@ -5718,7 +5783,6 @@ private:
                 return;
         }
 
-
         if (Node::shouldSpeculateBoolean(node->child1().node(), node->child2().node())) {
             fixEdge<BooleanUse>(node->child1());
             fixEdge<BooleanUse>(node->child2());
@@ -5835,7 +5899,6 @@ private:
             node->setOpAndDefaultFlags(CompareStrictEq);
             return;
         }
-
 
         if (node->child1()->shouldSpeculateMisc() && node->child2()->shouldSpeculateMisc()) {
             fixEdge<MiscUse>(node->child1());

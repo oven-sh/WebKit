@@ -76,6 +76,7 @@ JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const 
 extern JS_EXPORT_PRIVATE const ASCIILiteral NonExtensibleObjectPropertyDefineError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError;
@@ -360,6 +361,10 @@ public:
     bool hasOwnProperty(JSGlobalObject*, unsigned) const;
 
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void evictTypedField(VM&, PropertyName);
+    JS_EXPORT_PRIVATE unsigned evictMistypedFields(VM&);
+#endif
     JS_EXPORT_PRIVATE static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     bool deleteProperty(JSGlobalObject*, PropertyName);
     bool deleteProperty(JSGlobalObject*, uint32_t propertyName);
@@ -565,6 +570,7 @@ public:
 
     void setStructure(VM&, Structure*);
 
+    JS_EXPORT_PRIVATE void makePropertiesImmutable(JSGlobalObject*);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
 
@@ -653,6 +659,8 @@ public:
 
     bool mayBePrototype() const;
     void didBecomePrototype(VM&);
+    bool isPrototypeUsedByMegamorphicCache() const;
+    void setIsPrototypeUsedByMegamorphicCache() { setPerCellBit(true); }
 
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
 
@@ -1402,7 +1410,6 @@ bool setterThatIgnoresPrototypeProperties(JSGlobalObject*, JSValue thisValue, JS
 
 #define JSC_NATIVE_GETTER_WITHOUT_TRANSITION(jsName, cppName, attributes) \
     JSC_NATIVE_INTRINSIC_GETTER_WITHOUT_TRANSITION((jsName), (cppName), (attributes), JSC::NoIntrinsic)
-
 
 #define STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(DerivedClass, BaseClass) \
     static_assert(sizeof(DerivedClass) == sizeof(BaseClass)); \

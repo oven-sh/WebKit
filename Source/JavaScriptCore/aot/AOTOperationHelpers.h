@@ -1,0 +1,84 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTRuntime.h"
+#include "CodeBlock.h"
+#include "FrameTracers.h"
+#include "JSCInlines.h"
+
+namespace JSC { namespace AOT {
+
+ALWAYS_INLINE FunctionRef caller(Instance* instance, CallFrame* callFrame) { return FunctionRef::at(instance, removeCodePtrTag(callFrame->rawReturnPC())); }
+ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* callFrame)
+{
+    FunctionRef function = caller(instance, callFrame);
+    if (!function.info().function()->hasInlineFrames) [[likely]]
+        return function;
+    return function.locationForReturnAddress(removeCodePtrTag(callFrame->rawReturnPC())).function;
+}
+ALWAYS_INLINE BytecodeIndex callerBytecodeIndex(Instance* instance, CallFrame* callFrame) { return caller(instance, callFrame).bytecodeIndexAt(removeCodePtrTag(callFrame->rawReturnPC())); }
+
+ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
+{
+    constexpr uint32_t samplingInterval = 8;
+    if (++instance->uncountedOperations % samplingInterval) [[likely]]
+        return;
+    FunctionRef function = caller(instance, callFrame);
+    if (!function.instance->dataIfExists(function.index)) [[unlikely]]
+        function.instance->countMisses(function.index, samplingInterval);
+}
+
+#define AOT_OPERATION_BEGIN(instance) \
+    JSGlobalObject* globalObject = (instance)->globalObject; \
+    UNUSED_VARIABLE(globalObject); \
+    VM& vm = *(instance)->vm; \
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    countOperationFor(instance, callFrame); \
+    auto scope = DECLARE_THROW_SCOPE(vm); \
+    UNUSED_VARIABLE(scope)
+
+#define AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance) \
+    JSGlobalObject* globalObject = (instance)->globalObject; \
+    UNUSED_VARIABLE(globalObject); \
+    VM& vm = *(instance)->vm; \
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    auto scope = DECLARE_THROW_SCOPE(vm); \
+    UNUSED_VARIABLE(scope)
+
+ALWAYS_INLINE Data* callerData(Instance* instance, CallFrame* callFrame)
+{
+    FunctionRef function = caller(instance, callFrame);
+    Data* data = function.instance->dataIfExists(function.index);
+    return data ? data : function.instance->sharedData;
+}
+ALWAYS_INLINE UnlinkedCodeBlock* callerCode(Instance* instance, CallFrame* callFrame) { return callerBytecodeOwner(instance, callFrame).ensureUnlinkedCodeBlock(); }
+
+ALWAYS_INLINE void didFillSlot(VM&, Data* data)
+{
+    if (data == SharedData::get())
+        return;
+    data->slotEpoch++;
+    if (!data->hasBeenFilledSinceLastCollection)
+        data->noteFilled();
+}
+ALWAYS_INLINE const Identifier& identifierAt(Instance* instance, CallFrame* callFrame, unsigned index) { UNUSED_PARAM(callFrame); return instance->program->identifierAsIdentifier(index); }
+ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* callFrame, uint32_t whose)
+{
+    FunctionRef function = caller(instance, callFrame);
+    if (!whose) [[likely]]
+        return function;
+    return { function.instance, function.info().function()->knownCallees()[whose - 1] };
+}
+ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(Instance* instance, CallFrame* callFrame) { return caller(instance, callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

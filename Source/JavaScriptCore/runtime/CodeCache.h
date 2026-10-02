@@ -102,6 +102,18 @@ public:
     {
         prune();
 
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (std::is_base_of_v<UnlinkedCodeBlock, UnlinkedCodeBlockType>) {
+#if ENABLE(AOT)
+            if (key.source().provider().aotModuleID()) [[unlikely]] {
+                auto* program = AOT::VMProgram::of(vm);
+                if (UnlinkedCodeBlock* own = program ? program->topLevelCodeFor(key) : nullptr)
+                    return uncheckedDowncast<UnlinkedCodeBlockType>(own);
+            }
+#endif
+        }
+#endif
+
         iterator findResult = m_map.find(key);
         if (findResult == m_map.end()) {
             // A block decoded from the provider's cached bytecode is as reusable as one we generated: remember it the

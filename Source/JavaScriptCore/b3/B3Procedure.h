@@ -258,6 +258,9 @@ public:
     
     JS_EXPORT_PRIVATE void NODELETE setOptLevel(unsigned value);
     unsigned optLevel() const { return m_optLevel; }
+
+    void setPositionIndependent(bool value = true) { m_positionIndependent = value; }
+    bool positionIndependent() const { return m_positionIndependent; }
     
     // You can turn off used registers calculation. This may speed up compilation a bit. But if
     // you turn it off then you cannot use StackmapGenerationParams::usedRegisters() or
@@ -358,6 +361,7 @@ private:
     RefPtr<JSON::Array> m_ionGraphPasses;
     unsigned m_numEntrypoints { 1 };
     unsigned m_optLevel { defaultOptLevel() };
+    bool m_positionIndependent { false };
     bool m_needsUsedRegisters : 1 { true };
     bool m_hasQuirks : 1 { false };
     bool m_needsPCToOriginMap : 1 { false };

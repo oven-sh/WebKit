@@ -94,6 +94,7 @@ enum class SpecificPattern : uint8_t {
     TrailingSpacesStar,
     TrailingSpacesPlus,
     Newlines,
+    AnchoredWordList,
 };
 
 enum class ExecutionMode : uint8_t {

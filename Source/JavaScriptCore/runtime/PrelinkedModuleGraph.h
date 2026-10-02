@@ -45,7 +45,6 @@ class VM;
 // initializeEnvironment / getModuleNamespace from these arrays and only build their by-name entry maps when something
 // else asks for them. The graph object itself is plain data and exists whether or not the option is on.
 //
-// Blob layout (version 2; written by Bun's src/bundler/prelinked_module_graph.rs `serialize`, bump both together),
 // little-endian u32 throughout, 4-byte aligned:
 //   Header, then the arrays it points at. Module-relative request indices (< 2^16); graph-wide module indices
 //   (noModule = none); sids < stringCount, or starDefaultSid / starNamespaceSid. Imports are sorted by
@@ -56,7 +55,7 @@ class PrelinkedModuleGraph final : public RefCounted<PrelinkedModuleGraph> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PrelinkedModuleGraph);
 public:
     static constexpr uint32_t magic = 0x474d4c50; // "PLMG"
-    static constexpr uint32_t currentVersion = 2;
+    static constexpr uint32_t currentVersion = 4;
     static constexpr uint32_t noModule = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t starDefaultSid = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t starNamespaceSid = std::numeric_limits<uint32_t>::max() - 1;
@@ -76,7 +75,9 @@ public:
         uint32_t importsOffset;
         uint32_t exportsOffset;
         uint32_t starExportsOffset;
-        uint32_t reserved[3];
+        uint32_t bindingCount;
+        uint32_t bindingsOffset;
+        uint32_t reserved[1];
     };
 
     struct Module {
@@ -97,6 +98,8 @@ public:
         uint32_t exportCount;
         uint32_t firstStarExport;
         uint32_t starExportCount;
+        uint32_t firstBinding;
+        uint32_t bindingCount;
     };
 
     enum class FetchKind : uint8_t { None, JavaScript, WebAssembly, JSON, HostDefined };
@@ -152,8 +155,27 @@ public:
         bool isNamespaceReexport() const { return kind() == ExportKind::Namespace || (kind() == ExportKind::Indirect && localOrImportSid == starNamespaceSid); }
     };
 
+    struct Binding {
+        enum class Kind : uint8_t { Function = 2, GeneratorOrAsyncFunction, Class, Const };
+        enum Flags : uint32_t {
+            KindMask = 0xf,
+            IsAssigned = 1 << 4,
+            Escapes = 1 << 5,
+            CallIgnoresThis = 1 << 6,
+            IsExternallyVisible = 1 << 7,
+        };
+        uint32_t nameSid;
+        uint32_t flags;
+        Kind kind() const { return static_cast<Kind>(flags & KindMask); }
+        bool keepsDeclaredValue() const
+        {
+            return !(flags & IsAssigned);
+        }
+    };
+
     static_assert(sizeof(Header) == 16 * sizeof(uint32_t));
-    static_assert(sizeof(Module) == 10 * sizeof(uint32_t));
+    static_assert(sizeof(Module) == 12 * sizeof(uint32_t));
+    static_assert(sizeof(Binding) == 2 * sizeof(uint32_t));
     static_assert(sizeof(Request) == 4 * sizeof(uint32_t));
     static_assert(sizeof(Import) == 6 * sizeof(uint32_t));
     static_assert(sizeof(Export) == 6 * sizeof(uint32_t));

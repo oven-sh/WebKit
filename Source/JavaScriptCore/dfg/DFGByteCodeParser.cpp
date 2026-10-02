@@ -8915,6 +8915,12 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NEXT_OPCODE(op_check_tdz);
         }
 
+        case op_check_type: {
+            auto bytecode = currentInstruction->as<OpCheckType>();
+            addToGraph(CheckSoundType, OpInfo(bytecode.m_mask), get(bytecode.m_value));
+            NEXT_OPCODE(op_check_type);
+        }
+
         case op_identity_with_profile: {
             auto bytecode = currentInstruction->as<OpIdentityWithProfile>();
             Node* srcDst = get(bytecode.m_srcDst);
@@ -10947,6 +10953,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
             addToGraph(Check); // We add a nop here so that basic block linking doesn't break.
             NEXT_OPCODE(op_nop);
         }
+
+        case op_type_tag:
+            NEXT_OPCODE(op_type_tag);
 
         case op_super_sampler_begin: {
             addToGraph(SuperSamplerBegin);

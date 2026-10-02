@@ -26,6 +26,7 @@
 #include "config.h"
 #include "UnlinkedFunctionExecutable.h"
 
+#include "AOTProgram.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeGenerator.h"
 #include "CachedBytecode.h"
@@ -69,6 +70,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     }
 
     function->finishParsing(executable->name(), executable->functionMode());
+    function->setPlainInstanceFieldNames(executable->plainInstanceFieldNames());
     executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
 
     bool isClassContext = executable->superBinding() == SuperBinding::Needed || executable->parseMode() == SourceParseMode::ClassFieldInitializerMode;
@@ -76,7 +78,11 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, executable->evalContextType(), executable->isBuiltinDefaultClassConstructor()), codeGenerationMode);
 
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
-    RefPtr<DeclaredNamesLink> parentDeclaredNames = executable->takeParentDeclaredNames();
+    RefPtr<DeclaredNamesLink> parentDeclaredNames = vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically ? executable->parentDeclaredNames() : executable->takeParentDeclaredNames();
+#if ENABLE(AOT)
+    if (vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
+        AOT::noteDeclaredNames(result, RefPtr { parentDeclaredNames });
+#endif
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames = executable->generatorOrAsyncWrapperFunctionParameterNames();
     const PrivateNameEnvironment* parentPrivateNameEnvironment = executable->parentPrivateNameEnvironment();
     error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, parentPrivateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
@@ -313,6 +319,13 @@ std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> UnlinkedFuncti
     return { m_unlinkedCodeBlockForCall.get(), m_unlinkedCodeBlockForConstruct.get() };
 }
 #endif
+
+void UnlinkedFunctionExecutable::discardCode()
+{
+    RELEASE_ASSERT(!m_isCached);
+    m_unlinkedCodeBlockForCall.clear();
+    m_unlinkedCodeBlockForConstruct.clear();
+}
 
 void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
 {

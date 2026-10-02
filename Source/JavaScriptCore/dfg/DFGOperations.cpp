@@ -26,7 +26,6 @@
 #include "config.h"
 #include "DFGOperations.h"
 
-
 #include "ArrayPrototypeInlines.h"
 #include "ArrayConstructor.h"
 #include "ButterflyInlines.h"
@@ -1234,7 +1233,6 @@ JSC_DEFINE_JIT_OPERATION(operationArrayPushMultiple, EncodedJSValue, (JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), elementCount);
 
-
     // We assume that multiple JSArray::push calls with ArrayWithInt32/ArrayWithContiguous do not cause JS traps.
     // If it can cause any JS interactions, we can call the caller JS function of this function and overwrite the
     // content of ScratchBuffer. If the IndexingType is now ArrayWithInt32/ArrayWithContiguous, we can ensure
@@ -2011,7 +2009,6 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpMatchFastGlobalString, EncodedJSValue, (
             return end + 1;
         })));
 }
-
 
 JSC_DEFINE_JIT_OPERATION(operationParseIntGenericNoRadix, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedValue))
 {
@@ -3156,7 +3153,6 @@ JSC_DEFINE_JIT_OPERATION(operationCreateClonedArgumentsDuringExit, JSCell*, (VM*
     for (unsigned i = length; i--;)
         result->putDirectIndex(globalObject, i, arguments[i].jsValue());
 
-    
     OPERATION_RETURN(scope, result);
 }
 
@@ -3207,6 +3203,16 @@ JSC_DEFINE_JIT_OPERATION(operationObjectIsCallable, size_t, (JSGlobalObject* glo
     ASSERT(is<JSObject>(object));
     
     OPERATION_RETURN(scope, object->isCallable());
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeTag, size_t, (EncodedJSValue value))
+{
+    return soundTypeTag(JSValue::decode(value));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeMaskAccepts, size_t, (EncodedJSValue value, uint32_t mask))
+{
+    return soundTypeMaskAccepts(mask, JSValue::decode(value));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationIsConstructor, size_t, (JSGlobalObject* globalObject, EncodedJSValue value))
@@ -3975,6 +3981,7 @@ JSC_DEFINE_JIT_OPERATION(operationStringLocaleCompare, UCPUStrictInt32, (JSGloba
     }
 
     auto* collator = globalObject->defaultCollator();
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
 
     OPERATION_RETURN(scope, toUCPUStrictInt32(collator->compareStrings(globalObject, string, that)));
 }
@@ -5969,7 +5976,6 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSpecies, JSObject*, (JSGlobalObjec
     uint64_t length = truncateDoubleToUint64(JSValue::decode(encodedLength).asNumber());
     OPERATION_RETURN(scope, newArrayWithSpeciesImpl(globalObject, length, array, indexingType));
 }
-
 
 JSC_DEFINE_JIT_OPERATION(operationProcessTypeProfilerLogDFG, void, (VM* vmPointer))
 {

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AOTFunction.h"
 #include "BytecodeIndex.h"
 #include "CalleeBits.h"
 #include "LineColumn.h"
@@ -49,7 +50,13 @@ class JSFunction;
 class ClonedArguments;
 class Register;
 class RegisterAtOffsetList;
+class ScriptExecutable;
 class StackVisitor;
+class UnlinkedCodeBlock;
+
+namespace AOT {
+struct Data;
+}
 
 template<typename T>
 concept StackVisitorFunctor = requires(const T t, StackVisitor& visitor) {
@@ -78,7 +85,20 @@ public:
         CallFrame* callerFrame() const { return m_callerFrame; }
         EntryFrame* entryFrame() const { return m_entryFrame; }
         CalleeBits callee() const { return m_callee; }
-        CodeBlock* codeBlock() const { return m_codeBlock; }
+        CodeBlock* codeBlock() const
+        {
+            if (m_aotFunction && !m_codeBlock) [[unlikely]]
+                return makeCodeBlock();
+            return m_codeBlock;
+        }
+        bool hasCode() const { return m_codeBlock || m_aotFunction; }
+        JS_EXPORT_PRIVATE JSGlobalObject* lexicalGlobalObject(VM&) const;
+        AOT::FunctionRef aotFunction() const { return m_aotFunction; }
+        CallFrame* aotAdapterFrame() const { return m_aotAdapterFrame; }
+        bool isInlinedAOTFrame() const { return !!m_aotInlineFrame; }
+        bool isTailDeleted() const { return m_isTailDeleted; }
+        JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
+        JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
         BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
         InlineCallFrame* inlineCallFrame() const {
 #if ENABLE(DFG_JIT)
@@ -89,7 +109,7 @@ public:
         }
         void* returnPC() const { return m_returnPC; }
 
-        bool isNativeFrame() const { return !codeBlock() && !isNativeCalleeFrame(); }
+        bool isNativeFrame() const { return !hasCode() && !isNativeCalleeFrame(); }
         bool isInlinedDFGFrame() const { return !isNativeCalleeFrame() && !!inlineCallFrame(); }
         bool isNativeCalleeFrame() const { return m_callee.isNativeCallee(); }
         Wasm::IndexOrName const wasmFunctionIndexOrName()
@@ -120,6 +140,7 @@ public:
         CallFrame* callFrame() const { return m_callFrame; }
 
         JS_EXPORT_PRIVATE bool isImplementationVisibilityPrivate() const;
+        JS_EXPORT_PRIVATE bool isFrameOf(JSCell* function) const;
 
         void dump(PrintStream&, Indenter = Indenter()) const;
         void dump(PrintStream&, Indenter, WTF::Function<void(PrintStream&)> prefix) const;
@@ -129,6 +150,7 @@ public:
         ~Frame() { }
 
         void NODELETE setToEnd();
+        JS_EXPORT_PRIVATE CodeBlock* makeCodeBlock() const;
 
 #if ENABLE(DFG_JIT)
         InlineCallFrame* m_inlineDFGCallFrame { nullptr };
@@ -139,8 +161,14 @@ public:
         EntryFrame* m_callerEntryFrame { nullptr };
         CallFrame* m_callerFrame { nullptr };
         CalleeBits m_callee { };
-        CodeBlock* m_codeBlock { nullptr };
+        mutable CodeBlock* m_codeBlock { nullptr };
+        AOT::FunctionRef m_aotFunction;
+        CallFrame* m_aotAdapterFrame { nullptr };
+        AOT::FunctionRef m_frameAOTFunction;
+        unsigned m_aotInlineFrame { 0 };
+        bool m_isTailDeleted { false };
         void* m_returnPC { nullptr };
+        void* m_callerReturnPC { nullptr };
         size_t m_index { 0 };
         size_t m_argumentCountIncludingThis { 0 };
         BytecodeIndex m_bytecodeIndex { };
@@ -162,6 +190,10 @@ public:
     static void visit(CallFrame* startFrame, VM& vm, const Functor& functor, bool skipFirstFrame = false)
     {
         StackVisitor visitor(startFrame, vm, skipFirstFrame);
+        if constexpr (requires { functor.didSkipAOTAdapterAtTop(startFrame); }) {
+            if (visitor.m_aotAdapterSkippedAtTop) [[unlikely]]
+                functor.didSkipAOTAdapterAtTop(visitor.m_aotAdapterSkippedAtTop);
+        }
         if (action == TerminateIfTopEntryFrameIsEmpty && visitor.topEntryFrameIsEmpty())
             return;
         while (visitor->callFrame()) {
@@ -186,6 +218,10 @@ private:
     void readFrame(CallFrame*);
     void readInlinableNativeCalleeFrame(CallFrame*);
     void readNonInlinedFrame(CallFrame*, CodeOrigin* = nullptr);
+    void findCaller(CallFrame*);
+#if ENABLE(AOT)
+    void readAOTFrame(CallFrame*, void* returnPC, uint32_t index);
+#endif
 #if ENABLE(DFG_JIT)
     void readInlinedFrame(CallFrame*, CodeOrigin*);
 #endif
@@ -193,6 +229,8 @@ private:
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
+    AOT::Instance* m_aotInstance { nullptr };
+    CallFrame* m_aotAdapterSkippedAtTop { nullptr };
     bool m_topEntryFrameIsEmpty { false };
 };
 

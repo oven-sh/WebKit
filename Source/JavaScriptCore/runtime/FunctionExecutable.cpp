@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "FunctionExecutable.h"
+#include "AOTRuntime.h"
 
 #include "CodeBlock.h"
 #include "FunctionCodeBlock.h"
@@ -35,6 +36,7 @@
 #include "IsoCellSetInlines.h"
 #include "JSArray.h"
 #include "JSCJSValueInlines.h"
+#include "AOTProgramData.h"
 #include <wtf/Threading.h>
 
 namespace JSC {
@@ -48,6 +50,49 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
 {
     RELEASE_ASSERT(!source.isNull());
     ASSERT(source.length());
+}
+
+void FunctionExecutable::becomeSharedAcrossRealms(VM& vm)
+{
+    m_topLevelExecutable.clear();
+    m_singleton.invalidate(vm, StringFireDetail("It is shared by every realm"));
+}
+
+FunctionExecutable* FunctionExecutable::createInShortForm(VM& vm, const uint64_t (&entry)[2], const uint32_t (&index)[2])
+{
+    static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_jitCodeForCallWithArityCheck) == sizeOfShortForm);
+    void* cell = vm.cellSpace().allocate(vm, sizeOfShortForm, nullptr, AllocationFailureMode::Assert);
+    auto* result = static_cast<FunctionExecutable*>(cell);
+    Structure* structure = vm.shortFunctionExecutableStructure.get();
+    auto* words = static_cast<uint32_t*>(cell);
+    words[JSCell::structureIDOffset() / sizeof(uint32_t)] = structure->id().bits();
+    words[JSCell::indexingTypeAndMiscOffset() / sizeof(uint32_t)] = structure->typeInfoBlob();
+    for (unsigned i = 0; i < 2; ++i) {
+        result->m_aotEntry[i] = entry[i];
+        result->m_aotIndex[i] = index[i];
+    }
+    return result;
+}
+
+extern "C" {
+JS_EXPORT_PRIVATE void* g_aotStaticFunctionEntrypoints[3] { };
+}
+
+CodePtr<JSEntryPtrTag> ExecutableBase::staticCodeEntrypoint(CodeSpecializationKind kind) const
+{
+    unsigned which = static_cast<unsigned>(kind);
+    if (!m_aotEntry[which])
+        return nullptr;
+    if (kind == CodeSpecializationKind::CodeForConstruct && m_aotIndex[which] == FunctionExecutable::aotConstructViaCallIndex)
+        which = 2;
+    ASSERT(g_aotStaticFunctionEntrypoints[which]);
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_aotStaticFunctionEntrypoints[which]);
+}
+
+void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, uint64_t entry, uint32_t index)
+{
+    m_aotEntry[static_cast<unsigned>(kind)] = entry;
+    m_aotIndex[static_cast<unsigned>(kind)] = index;
 }
 
 void FunctionExecutable::destroy(JSCell* cell)
@@ -96,6 +141,9 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     FunctionExecutable* thisObject = uncheckedDowncast<FunctionExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    if (thisObject->isShortForm())
+        return;
+    thisObject = thisObject->fullForm();
 #if USE(BUN_JSC_ADDITIONS)
     thisObject->visitSourceFetcher(visitor);
 #endif
@@ -169,6 +217,60 @@ FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, J
     return executable;
 }
 
+#if ENABLE(AOT)
+const AOT::ExecutableRow& ScriptExecutable::shortFormRow() const
+{
+    return AOT::ProgramData::get()->executableRowForFunction(shortFormIndex());
+}
+
+UnlinkedFunctionExecutable* FunctionExecutable::shortFormUnlinkedExecutable() const
+{
+    return AOT::VMProgram::of(vm())->unlinkedFunction(shortFormRow().unlinkedFunction, true);
+}
+
+const Identifier& FunctionExecutable::shortFormName() const
+{
+    return AOT::VMProgram::of(vm())->identifierAsIdentifier(shortFormRow().name);
+}
+
+SourceProvider* ScriptExecutable::shortFormSourceProvider() const
+{
+    return AOT::VMProgram::of(vm())->moduleProvider(shortFormRow().module);
+}
+
+LineColumn ScriptExecutable::shortFormStartPosition() const
+{
+    return AOT::ProgramData::get()->functionStartPosition(shortFormIndex());
+}
+
+const SourceCode& ScriptExecutable::shortFormSource() const
+{
+    return AOT::VMProgram::of(vm())->shortExecutableSource(AOT::ProgramData::get()->executableIndexForFunction(shortFormIndex()));
+}
+#else
+const AOT::ExecutableRow& ScriptExecutable::shortFormRow() const { RELEASE_ASSERT_NOT_REACHED(); }
+UnlinkedFunctionExecutable* FunctionExecutable::shortFormUnlinkedExecutable() const { RELEASE_ASSERT_NOT_REACHED(); }
+const Identifier& FunctionExecutable::shortFormName() const { RELEASE_ASSERT_NOT_REACHED(); }
+SourceProvider* ScriptExecutable::shortFormSourceProvider() const { RELEASE_ASSERT_NOT_REACHED(); }
+LineColumn ScriptExecutable::shortFormStartPosition() const { RELEASE_ASSERT_NOT_REACHED(); }
+const SourceCode& ScriptExecutable::shortFormSource() const { RELEASE_ASSERT_NOT_REACHED(); }
+#endif
+
+CodeFeatures ScriptExecutable::shortFormFeatures() const
+{
+    return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->features();
+}
+
+LexicallyScopedFeatures ScriptExecutable::shortFormLexicallyScopedFeatures() const
+{
+    return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->lexicallyScopedFeatures();
+}
+
+DerivedContextType ScriptExecutable::shortFormDerivedContextType() const
+{
+    return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->derivedContextType();
+}
+
 FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
 {
     ASSERT(!m_rareData);
@@ -184,13 +286,15 @@ FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
 JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
-    ASSERT(m_rareData && !m_rareData->m_asString);
+    ASSERT(!rareData() || !rareData()->m_asString);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     const auto& cache = [&](JSString* asString) {
+        if (!rareData())
+            return asString;
         WTF::storeStoreFence();
-        m_rareData->m_asString.set(vm, this, asString);
+        rareData()->m_asString.set(vm, this, asString);
         return asString;
     };
 
@@ -205,6 +309,59 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
     if (isBuiltinFunction())
 #endif
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() { [native code] }"_s));
+
+#if USE(BUN_JSC_ADDITIONS)
+    if ((isClass() ? classSource().provider() : sourceProvider())->hasNoSourceText() || (Options::hideFunctionSourceForTesting() && !isBuiltinFunction())) [[unlikely]] {
+        if (isClass())
+            return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, ecmaName().string(), " { [native code] }"_s));
+        ASCIILiteral before = "function "_s;
+        bool isNamed = true;
+        switch (parseMode()) {
+        case SourceParseMode::ArrowFunctionMode:
+            before = ""_s;
+            isNamed = false;
+            break;
+        case SourceParseMode::AsyncArrowFunctionMode:
+        case SourceParseMode::AsyncArrowFunctionBodyMode:
+            before = "async "_s;
+            isNamed = false;
+            break;
+        case SourceParseMode::GeneratorWrapperFunctionMode:
+        case SourceParseMode::GeneratorBodyMode:
+            before = "function* "_s;
+            break;
+        case SourceParseMode::AsyncFunctionMode:
+        case SourceParseMode::AsyncFunctionBodyMode:
+            before = "async function "_s;
+            break;
+        case SourceParseMode::AsyncGeneratorWrapperFunctionMode:
+        case SourceParseMode::AsyncGeneratorBodyMode:
+            before = "async function* "_s;
+            break;
+        case SourceParseMode::MethodMode:
+            before = ""_s;
+            break;
+        case SourceParseMode::GeneratorWrapperMethodMode:
+            before = "*"_s;
+            break;
+        case SourceParseMode::AsyncMethodMode:
+            before = "async "_s;
+            break;
+        case SourceParseMode::AsyncGeneratorWrapperMethodMode:
+            before = "async *"_s;
+            break;
+        case SourceParseMode::GetterMode:
+            before = "get "_s;
+            break;
+        case SourceParseMode::SetterMode:
+            before = "set "_s;
+            break;
+        default:
+            break;
+        }
+        return cacheIfNoException(jsMakeNontrivialString(globalObject, before, isNamed ? ecmaName().string() : String(), isNamed ? "() { [native code] }"_s : "() => { [native code] }"_s));
+    }
+#endif
 
     if (isClass())
         return cache(jsString(vm, classSource().view()));

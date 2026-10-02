@@ -62,6 +62,7 @@ enum class LinkTimeConstant : int32_t;
     macro(isCallable) \
     macro(isConstructor) \
     macro(isJSArray) \
+    macro(isEmpty) \
     macro(isProxyObject) \
     macro(isDerivedArray) \
     macro(isGenerator) \
@@ -154,9 +155,7 @@ enum class LinkTimeConstant : int32_t;
     macro(InternalMicrotaskAsyncFromSyncIteratorContinue) \
     macro(InternalMicrotaskAsyncFromSyncIteratorDone) \
 
-
-#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro) \
-    macro(orderedHashTableSentinel)
+#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro)
 
 class BytecodeIntrinsicRegistry {
     WTF_MAKE_NONCOPYABLE(BytecodeIntrinsicRegistry);

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JITExceptions.h"
 
+#include "AOTRuntime.h"
 #include "CallFrame.h"
 #include "CodeBlock.h"
 #include "Interpreter.h"
@@ -44,12 +45,12 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     CallFrame* topJSCallFrame = vm.topJSCallFrame();
     if (Options::breakOnThrow()) [[unlikely]] {
-        CodeBlock* codeBlock = topJSCallFrame->isNativeCalleeFrame() ? nullptr : topJSCallFrame->codeBlock();
+        CodeBlock* codeBlock = !topJSCallFrame || topJSCallFrame->isNativeCalleeFrame() ? nullptr : topJSCallFrame->codeBlock();
         dataLog("In call frame ", RawPointer(topJSCallFrame), " for code block ", codeBlock, "\n");
         WTFBreakpointTrap();
     }
     
-    if (auto* shadowChicken = vm.shadowChicken())
+    if (auto* shadowChicken = vm.shadowChicken(); shadowChicken && topJSCallFrame)
         shadowChicken->log(vm, topJSCallFrame, ShadowChicken::Packet::throwPacket());
 
     Exception* exception = scope.exception();
@@ -84,6 +85,13 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
 #endif
     } else
         catchRoutine = LLInt::handleUncaughtException(vm).code().taggedPtr();
+
+#if ENABLE(AOT)
+    if (handler.m_valid && handler.m_isAOT) {
+        dispatchAndCatchRoutine = catchRoutine;
+        catchRoutine = AOT::catchThunk();
+    }
+#endif
 
     ASSERT(std::bit_cast<uintptr_t>(callFrame) < std::bit_cast<uintptr_t>(vm.topEntryFrame));
 

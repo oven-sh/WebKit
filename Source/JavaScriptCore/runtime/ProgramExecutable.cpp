@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ProgramExecutable.h"
 
+#include "AOTRuntime.h"
 #include "BatchedTransitionOptimizer.h"
 #include "CodeCache.h"
 #include "Debugger.h"
@@ -117,6 +118,11 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     if (error.isValid())
         RELEASE_AND_RETURN(throwScope, error.toErrorObject(globalObject, source()));
 
+#if ENABLE(AOT)
+    if (unlinkedCodeBlock->hasNoInstructions())
+        AOT::Instance::ensure(globalObject).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
+#endif
+
     JSValue nextPrototype = globalObject->getPrototypeDirect();
     while (nextPrototype && nextPrototype.isObject()) {
         if (asObject(nextPrototype)->type() == ProxyObjectType) [[unlikely]]
@@ -129,6 +135,13 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     const VariableEnvironment& variableDeclarations = unlinkedCodeBlock->variableDeclarations();
     const VariableEnvironment& lexicalDeclarations = unlinkedCodeBlock->lexicalDeclarations();
     size_t numberOfFunctions = unlinkedCodeBlock->numberOfFunctionDecls();
+    auto functionName = [&](size_t i) -> const Identifier& {
+#if USE(BUN_JSC_ADDITIONS)
+        if (FunctionExecutable* executable = unlinkedCodeBlock->functionDeclExecutable(i))
+            return executable->name();
+#endif
+        return unlinkedCodeBlock->functionDecl(i)->name();
+    };
     // The ES6 spec says that no vars/global properties/let/const can be duplicated in the global scope.
     // This carried out section 15.1.8 of the ES6 spec: http://www.ecma-international.org/ecma-262/6.0/index.html#sec-globaldeclarationinstantiation
     {
@@ -185,18 +198,17 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         }
 
         for (size_t i = 0; i < numberOfFunctions; ++i) {
-            UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
-            ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
-            bool canDeclare = globalObject->canDeclareGlobalFunction(unlinkedFunctionExecutable->name());
+            ASSERT(!functionName(i).isEmpty());
+            bool canDeclare = globalObject->canDeclareGlobalFunction(functionName(i));
             RETURN_IF_EXCEPTION(throwScope, nullptr);
             if (!canDeclare) {
                 if (requiresCanDeclareGlobalFunctionQuirk()) {
                     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-                    JSCell::deleteProperty(globalObject, globalObject, unlinkedFunctionExecutable->name());
+                    JSCell::deleteProperty(globalObject, globalObject, functionName(i));
                     RETURN_IF_EXCEPTION(throwScope, nullptr);
                     continue;
                 }
-                return createErrorForInvalidGlobalFunctionDeclaration(globalObject, unlinkedFunctionExecutable->name());
+                return createErrorForInvalidGlobalFunctionDeclaration(globalObject, functionName(i));
             }
         }
 
@@ -244,11 +256,11 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     }
 
     for (size_t i = 0; i < numberOfFunctions; ++i) {
-        UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
-        ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
-        globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(unlinkedFunctionExecutable->name());
+        ASSERT(!functionName(i).isEmpty());
+        globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(functionName(i));
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         if (vm.typeProfiler() || vm.controlFlowProfiler()) {
+            UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
             vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), 
                 unlinkedFunctionExecutable->unlinkedFunctionStart(),
                 unlinkedFunctionExecutable->unlinkedFunctionEnd());

@@ -1,0 +1,54 @@
+# AOT compilation tools
+
+The compiler and its runtime live in `Source/JavaScriptCore/aot/`, behind `ENABLE(AOT)`.
+
+Every script documents its usage at the top of the file and via `--help`.
+
+## The shell
+
+`jsc` uses the same entry points as an embedder (`buildAOTFile()`, `useAOTFile()`) for a single script or module:
+
+| Command | Effect |
+| --- | --- |
+| `jsc --writeAOTImageTo=<file> main.js` | Compiles the script, writes the code and program data to the file, and exits |
+| `jsc --aotImagePath=<file> main.js` | Maps the file read-only and runs from it |
+| `jsc --compileMainScriptAheadOfTime=1 main.js` | Both: writes a temporary file and reruns itself with it. The tests use this. |
+
+Pass `-m` to treat the file as a module. Anything else that gets loaded is interpreted, except the same file loaded again in another
+realm (`createGlobalObject().load()`), on another thread (`$.agent.start()`), or by another module loader in the same realm
+(`importInNewLoader()`). `isAOTCompiled(f)` reports whether a function runs compiled code.
+
+| Goal | Tool |
+| --- | --- |
+| Quick regression check (10 seconds) | `run-tests.py <jsc>` runs `JSTests/stress/aot-*.js` and `sound-types-*.js`, each with its own options and again with validation. |
+| Compare against the interpreter (minutes) | `compare-with-interpreter.py <jsc>` runs all of `JSTests/stress` both ways. It only needs a `jsc` binary, so it is also the fastest way to try a new platform. |
+| Catch missing includes hidden by the precompiled header (about a minute per pass) | `check-includes.py <build directory> <base commit>`, with and without `--headers` and `--gate-off`. |
+| Fuzzing (open-ended) | `fuzz.py` mutates `JSTests/stress` and compares the interpreter with compiled code. `minimize.py` reduces a finding. |
+| Limit a runaway compile | `capped.py <GB> <seconds> <command...>` |
+
+## Before pushing
+
+1. `run-tests.py <jsc>`
+2. `check-includes.py`, all four combinations.
+3. The embedder's tests. In Bun: `test/bundler/bundler_compile_aot*.test.ts`, `test/cli/run/run-aot.test.ts`,
+   `test/cli/test/test-aot.test.ts`, and the two that share the module graph, `test/bundler/bundler_compile.test.ts` and
+   `test/js/bun/module-graph/module-graph-compile.test.ts`.
+4. After changing what `ENABLE(AOT)` guards, remember that a syntax-only check cannot catch link errors. Inspect the embedder's
+   undefined symbols (`nm -u`) for `AOT` symbols that are only defined when the gate is on.
+
+`run-javascriptcore-tests` has two AOT modes, `aot` and `aot-validate`. The second checks every inferred type against the runtime
+value and runs the B3 and Air validators after every phase. In both modes built-in objects are immutable and the program has no
+source text, so tests that modify a built-in or read function source are skipped. `JSTests/bun-tests-that-change-builtins.txt` and
+`JSTests/bun-tests-that-read-function-text.txt` describe how those lists are generated.
+
+## CI artifacts
+
+A cancelled or failed job still uploads its artifacts. `jsc-test-results-<platform>` contains the full test log (`jsc-tests.log`,
+including a repro command for each failure), and `jsc-shell-<platform>` contains the exact binary with symbols. For a rare failure, run
+its repro command in a loop inside a container with core dumps enabled (`--ulimit core=-1`) and open the core in `gdb`.
+
+## Verify that new checks can fail
+
+Four checks behind these tools passed for a while only because they could not fail: one looked at output instead of exit codes, one
+matched coloured diagnostics with a pattern written for plain text, one classified a crash as harmless, and one ran a test without
+the option that made it meaningful. Before trusting a new check, confirm that it fails on a known-bad input.

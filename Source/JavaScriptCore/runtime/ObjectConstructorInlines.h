@@ -140,7 +140,6 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
     return true;
 }
 
-
 ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* source)
 {
     static constexpr bool verbose = false;
@@ -158,7 +157,12 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
     if (!checkStructureForClone(targetStructure))
         return false;
 
-    if (targetStructure->transitionWatchpointSetIsStillValid()) {
+#if USE(BUN_JSC_ADDITIONS)
+    if (targetStructure->typedLayoutID() && targetStructure->typedLayoutID() != sourceStructure->typedLayoutID())
+        return false;
+#endif
+
+    if (!targetStructure->typedLayoutID() && targetStructure->transitionWatchpointSetIsStillValid()) {
         dataLogLnIf(verbose, "target transitionWatchpointSetIsStillValid");
         return false;
     }
@@ -341,7 +345,6 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 
     return true;
 }
-
 
 } // namespace JSC
 

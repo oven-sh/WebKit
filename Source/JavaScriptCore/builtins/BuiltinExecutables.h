@@ -76,6 +76,14 @@ SourceCode name##Source();
     JSC_FOREACH_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
+    JS_EXPORT_PRIVATE void forEachStandaloneBuiltin(const Function<void(unsigned index, UnlinkedFunctionExecutable*, const SourceCode&)>&);
+    std::optional<unsigned> indexOf(UnlinkedFunctionExecutable*) const;
+    static constexpr unsigned stampOf(unsigned index) { return 0xeb170000u | index; }
+    static constexpr bool isStamp(unsigned stamp) { return (stamp & 0xffff0000u) == 0xeb170000u; }
+    static_assert(numberOfBuiltinCodes < 0x10000);
+    static std::span<const Latin1Character> textOf(unsigned index);
+    JS_EXPORT_PRIVATE FunctionExecutable* programExecutableFor(BuiltinCodeIndex, const char* text, size_t length);
+
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 

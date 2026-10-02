@@ -182,6 +182,11 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 #endif
 
 #if ENABLE(FTL_JIT)
+namespace AOT {
+class VMProgram;
+class RuntimeTable;
+struct Instance;
+}
 namespace FTL {
 class Thunks;
 }
@@ -311,6 +316,7 @@ public:
     bool isEntered() const { return !!entryScope; }
 
     inline CallFrame* topJSCallFrame() const;
+    JS_EXPORT_PRIVATE JSGlobalObject* topFrameGlobalObject();
 
     // Global object in which execution began.
     JS_EXPORT_PRIVATE JSGlobalObject* NODELETE deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
@@ -490,6 +496,28 @@ public:
 
 #if ENABLE(JIT)
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
+#if ENABLE(AOT)
+    std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
+#endif
+    Vector<AOT::Instance*, 1> m_aotInstances;
+    uintptr_t m_structureIDBase { 0 };
+    static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VM, m_structureIDBase); }
+    Vector<AOT::Instance*> m_aotInstancesToDestroy;
+    std::unique_ptr<AOT::VMProgram> m_aotProgram;
+
+    struct BytecodeGenerationOptions {
+        bool useSoundTypes { Options::useSoundTypes() };
+        bool resolveAllScopeSlotsStatically { Options::resolveAllScopeSlotsStatically() };
+        bool evaluateObjectLiteralValuesFirst { Options::evaluateObjectLiteralValuesFirst() };
+        bool definePlainInstanceFieldsInConstructor { Options::definePlainInstanceFieldsInConstructor() };
+        bool keepAllSourceLineStarts { false };
+    };
+    BytecodeGenerationOptions bytecodeGenerationOptions;
+
+    bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
+#if ENABLE(AOT)
+    static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); }
+#endif
 #endif
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }
@@ -552,6 +580,7 @@ public:
     WriteBarrier<Structure> evalExecutableStructure;
     WriteBarrier<Structure> programExecutableStructure;
     WriteBarrier<Structure> functionExecutableStructure;
+    WriteBarrier<Structure> shortFunctionExecutableStructure;
 #if ENABLE(WEBASSEMBLY)
     WriteBarrier<Structure> pinballCompletionStructure;
     WriteBarrier<Structure> webAssemblyCalleeGroupStructure;
@@ -652,6 +681,14 @@ public:
     Ref<StringImpl> lastAtomizedIdentifierStringImpl { *StringImpl::empty() };
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
     JSONAtomStringCache jsonAtomStringCache;
+    struct {
+        uint32_t length { 0 };
+        bool isUTF16 { false };
+    } jsonStringifyHints;
+    struct {
+        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint16_t> ids;
+        uint32_t next { 0 };
+    } aotPropertyNameIDs;
     KeyAtomStringCache keyAtomStringCache;
     // Bytecode-cache decode: one lazy [class(c0)<<6|class(c1)] -> atom table for the bulk of minified identifiers, shared by every Decoder. The 64 classes are the ASCII identifier characters (Decoder::atomForInlineString).
     static constexpr unsigned cachedBytecodeTwoCharacterAtomsSize = 64 * 64;
@@ -696,6 +733,7 @@ public:
     {
         return m_orderedHashTableSentinel.get();
     }
+    static constexpr ptrdiff_t offsetOfOrderedHashTableDeletedValue() { return OBJECT_OFFSETOF(VM, m_orderedHashTableDeletedValue); }
 
     Structure* sentinelStructure() { return m_sentinelStructure.get(); }
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
@@ -769,7 +807,7 @@ public:
     static JS_EXPORT_PRIVATE bool canUseAssembler();
     static bool isInMiniMode()
     {
-        return !Options::useJIT() || Options::forceMiniVMMode();
+        return (!Options::useJIT() && Options::useMiniVMModeWithoutJIT()) || Options::forceMiniVMMode();
     }
 
     static bool useUnlinkedCodeBlockJettisoning()
@@ -1559,7 +1597,6 @@ JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 } // namespace JSC
 
-
 namespace WTF {
 
 // Unfortunately we have a lot of code that uses JSC::VM without locally
@@ -1590,6 +1627,5 @@ template<> struct DefaultRefDerefTraits<JSC::VM> {
 };
 
 } // namespace WTF
-
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

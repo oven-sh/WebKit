@@ -444,6 +444,7 @@ public:
     // early collections find nothing to free. Only widens the budget of the cycle in progress; once a collection has run,
     // sizing is back to the usual rules and minimums.
     JS_EXPORT_PRIVATE void setInitialAllocationBudget(size_t bytes);
+    JS_EXPORT_PRIVATE bool isPastTypicalFirstCollection();
 #endif
     
     JS_EXPORT_PRIVATE void collect(Synchronousness, GCRequest = GCRequest());
@@ -1433,7 +1434,6 @@ private:
     IsoSubspace functionExecutableSpace;
     IsoSubspace programExecutableSpace;
     IsoSubspace unlinkedFunctionExecutableSpace;
-
 
     friend class JSC::VM;
 };

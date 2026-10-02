@@ -86,6 +86,10 @@ public:
     JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&, JSScope* moduleScope);
 
     JSScope* moduleScope() const { return m_moduleScope.get(); }
+#if ENABLE(AOT)
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // The async context (JSGlobalObject::m_asyncContextData field 0) the top-level code of
@@ -235,6 +239,10 @@ public:
         m_moduleMap.clear();
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
+#if ENABLE(AOT)
+        if (m_aotInstance)
+            AOT::didClearLoaderOf(m_aotInstance);
+#endif
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
@@ -303,6 +311,9 @@ private:
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 
     WriteBarrier<JSScope> m_moduleScope;
+#if ENABLE(AOT)
+    AOT::Instance* m_aotInstance { nullptr };
+#endif
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<Unknown> m_asyncContext;
 #endif

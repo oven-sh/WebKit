@@ -639,7 +639,6 @@ namespace JSC {
             m_codeBlock->addExpressionInfo(instructionOffset, divotOffset, startOffset, endOffset);
         }
 
-
         ALWAYS_INLINE bool leftHandSideNeedsCopy(bool rightHasAssignments, bool rightIsPure)
         {
             return (m_codeType != FunctionCode || rightHasAssignments) && !rightIsPure;
@@ -746,11 +745,17 @@ namespace JSC {
         RegisterID* emitCreateAsyncGenerator(RegisterID* dst, RegisterID* newTarget);
         RegisterID* emitInstanceFieldInitializationIfNeeded(RegisterID* dst, RegisterID* constructor, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
         void emitTDZCheck(RegisterID* target);
+        void emitCheckType(RegisterID* value, unsigned soundTypeMask);
         void emitTDZCheck(RegisterID* target, const Variable&);
         bool needsTDZCheck(const Variable&);
         void emitTDZCheckIfNecessary(const Variable&, RegisterID* target, RegisterID* scope);
         void liftTDZCheckIfPossible(const Variable&);
         RegisterID* emitNewObject(RegisterID* dst);
+        void emitTypeTag(uint32_t tag)
+        {
+            if (tag) [[unlikely]]
+                OpTypeTag::emit(this, tag);
+        }
         RegisterID* emitNewPromise(RegisterID* dst);
         RegisterID* emitNewGenerator(RegisterID* dst);
         RegisterID* emitNewAsyncFunctionGenerator(RegisterID* dst);
@@ -879,8 +884,9 @@ namespace JSC {
         void emitCallDefineProperty(RegisterID* newObj, RegisterID* propertyNameRegister,
             RegisterID* valueRegister, RegisterID* getterRegister, RegisterID* setterRegister, unsigned options, const JSTextPosition&);
 
+        enum class MayCompleteNormally : bool { No, Yes };
         void emitTryWithFinallyThatDoesNotShadowException(const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally);
-        void emitTryWithFinallyThatDoesNotShadowException(FinallyContext&, const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally);
+        void emitTryWithFinallyThatDoesNotShadowException(FinallyContext&, const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally, MayCompleteNormally);
 
         // Explicit Resource Management: using declarations
         UsingScope& currentUsingScope() { ASSERT(!m_usingScopeStack.isEmpty()); return m_usingScopeStack.last(); }
@@ -1054,7 +1060,7 @@ namespace JSC {
 
         bool emitJumpViaFinallyIfNeeded(int targetLabelScopeDepth, Label& jumpTarget);
         bool emitReturnViaFinallyIfNeeded(RegisterID* returnRegister);
-        void emitFinallyCompletion(FinallyContext&, Label& normalCompletionLabel);
+        void emitFinallyCompletion(FinallyContext&, Label& normalCompletionLabel, MayCompleteNormally = MayCompleteNormally::Yes);
 
     public:
         void pushFinallyControlFlowScope(FinallyContext&);
@@ -1098,6 +1104,7 @@ namespace JSC {
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
+        void recordFunctionAssignment(const Identifier&, const Variable&, ExpressionNode* right);
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
         void setUsesCheckpoints() { m_codeBlock->setHasCheckpoints(); }
@@ -1249,6 +1256,7 @@ namespace JSC {
             auto* executable = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::None, scriptMode(), WTF::move(optionalVariablesUnderTDZ), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), newDerivedContextType, newEvalContextType, needsClassFieldInitializer, privateBrandRequirement);
             if (shouldRunBytecodeOptimizer()) [[unlikely]]
                 executable->setParentDeclaredNames(currentDeclaredNames());
+            executable->setPlainInstanceFieldNames(metadata->plainInstanceFieldNames());
             return executable;
         }
 
@@ -1333,6 +1341,8 @@ namespace JSC {
     private:
         OptionSet<CodeGenerationMode> m_codeGenerationMode;
         bool m_optimizeBytecode;
+        UncheckedKeyHashMap<FunctionMetadataNode*, unsigned> m_functionExprIndices;
+        Vector<FunctionAssignment> m_functionAssignments;
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
         // currentDeclaredNames() state: one shared Frame per m_lexicalScopeStack entry (built lazily, dropped when the
         // entry is popped), the module's import names, and the last link handed out.

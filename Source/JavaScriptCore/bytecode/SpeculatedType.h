@@ -31,6 +31,7 @@
 #include <JavaScriptCore/CPU.h>
 #include <JavaScriptCore/JSType.h>
 #include <wtf/Forward.h>
+#include <wtf/PrintStream.h>
 
 namespace JSC {
 
@@ -133,6 +134,93 @@ static constexpr SpeculatedType SpecTypeofMightBeFunction             = SpecFunc
 // On 64-bit platforms, the empty value passes a cell check. Also, ~SpecCellCheck is the type
 // set that representing the values that flow through when testing that something is not a cell.
 static constexpr SpeculatedType SpecCellCheck          = SpecCell | SpecEmpty;
+
+static constexpr unsigned SoundTypeUndefined   = 1u << 0;
+static constexpr unsigned SoundTypeNull        = 1u << 1;
+static constexpr unsigned SoundTypeBoolean     = 1u << 2;
+static constexpr unsigned SoundTypeNumber      = 1u << 3;
+static constexpr unsigned SoundTypeString      = 1u << 4;
+static constexpr unsigned SoundTypeSymbol      = 1u << 5;
+static constexpr unsigned SoundTypeBigInt      = 1u << 6;
+static constexpr unsigned SoundTypeFunction    = 1u << 7;
+static constexpr unsigned SoundTypeArray       = 1u << 8;
+static constexpr unsigned SoundTypeOtherObject = 1u << 9;
+static constexpr unsigned SoundTypeAnyObject   = SoundTypeFunction | SoundTypeArray | SoundTypeOtherObject;
+static constexpr unsigned SoundTypeAll         = (1u << 10) - 1;
+
+static constexpr unsigned SoundTypeTypedArrayShift = 10;
+static constexpr JSType soundTypeOtherObjectKinds[] = { JSMapType, JSSetType, JSWeakMapType, JSWeakSetType, RegExpObjectType, JSPromiseType, JSDateType, ErrorInstanceType };
+static constexpr unsigned SoundTypeMaskEnd = (NumberOfTypedArrayTypesExcludingDataView + std::size(soundTypeOtherObjectKinds) + 1) << SoundTypeTypedArrayShift;
+constexpr unsigned soundTypeTagsForMask(unsigned mask) { return mask & SoundTypeAll; }
+constexpr bool soundTypeMaskNamesTypedArray(unsigned mask) { return mask > SoundTypeAll; }
+constexpr JSType typedArrayTypeForSoundTypeMask(unsigned mask)
+{
+    unsigned kind = (mask >> SoundTypeTypedArrayShift) - 1;
+    return kind < NumberOfTypedArrayTypesExcludingDataView ? static_cast<JSType>(FirstTypedArrayType + kind) : soundTypeOtherObjectKinds[kind - NumberOfTypedArrayTypesExcludingDataView];
+}
+constexpr bool isValidSoundTypeMask(unsigned mask)
+{
+    if (!soundTypeMaskNamesTypedArray(mask))
+        return mask >= 1 && mask < SoundTypeAll;
+    return mask < SoundTypeMaskEnd && (mask & SoundTypeOtherObject);
+}
+
+constexpr SpeculatedType speculationFromSoundTypeMask(unsigned mask)
+{
+    SpeculatedType result = SpecNone;
+    if (mask & (SoundTypeUndefined | SoundTypeNull))
+        result |= SpecOther;
+    if (mask & SoundTypeBoolean)
+        result |= SpecBoolean;
+    if (mask & SoundTypeNumber)
+        result |= SpecBytecodeNumber;
+    if (mask & SoundTypeString)
+        result |= SpecString;
+    if (mask & SoundTypeSymbol)
+        result |= SpecSymbol;
+    if (mask & SoundTypeBigInt)
+        result |= SpecBigInt;
+    if (mask & SoundTypeFunction)
+        result |= SpecTypeofMightBeFunction;
+    if (mask & SoundTypeArray)
+        result |= SpecArray | SpecDerivedArray;
+    if (mask & SoundTypeOtherObject)
+        result |= SpecObject & ~(SpecFunction | SpecArray | SpecDerivedArray);
+    return result;
+}
+
+constexpr SpeculatedType speculationProvingSoundTypeMask(unsigned mask)
+{
+    SpeculatedType result = SpecNone;
+    if ((mask & (SoundTypeUndefined | SoundTypeNull)) == (SoundTypeUndefined | SoundTypeNull))
+        result |= SpecOther;
+    if (mask & SoundTypeBoolean)
+        result |= SpecBoolean;
+    if (mask & SoundTypeNumber)
+        result |= SpecFullNumber;
+    if (mask & SoundTypeString)
+        result |= SpecString;
+    if (mask & SoundTypeSymbol)
+        result |= SpecSymbol;
+    if (mask & SoundTypeBigInt)
+        result |= SpecBigInt;
+    if (mask & SoundTypeFunction)
+        result |= SpecFunction;
+    if (mask & SoundTypeArray)
+        result |= SpecArray | SpecDerivedArray;
+    if (soundTypeMaskNamesTypedArray(mask))
+        return result;
+    if (mask & SoundTypeOtherObject)
+        result |= SpecObject & ~(SpecTypeofMightBeFunction | SpecArray | SpecDerivedArray);
+    if ((mask & (SoundTypeFunction | SoundTypeOtherObject)) == (SoundTypeFunction | SoundTypeOtherObject))
+        result |= SpecTypeofMightBeFunction;
+    return result;
+}
+
+JS_EXPORT_PRIVATE unsigned soundTypeTag(JSValue);
+JS_EXPORT_PRIVATE bool soundTypeMaskAccepts(unsigned mask, JSValue);
+void dumpSoundTypeMask(PrintStream&, unsigned mask);
+MAKE_PRINT_ADAPTOR(SoundTypeMaskDump, unsigned, dumpSoundTypeMask);
 
 typedef bool (*SpeculatedTypeChecker)(SpeculatedType);
 

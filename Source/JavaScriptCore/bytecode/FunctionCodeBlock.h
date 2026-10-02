@@ -54,11 +54,11 @@ public:
         return instance;
     }
 
-    static FunctionCodeBlock* create(VM& vm, FunctionExecutable* ownerExecutable, UnlinkedFunctionCodeBlock* unlinkedCodeBlock, JSScope* scope)
+    static FunctionCodeBlock* create(VM& vm, FunctionExecutable* ownerExecutable, UnlinkedFunctionCodeBlock* unlinkedCodeBlock, JSScope* scope, LinkMode linkMode = LinkMode::Full)
     {
         FunctionCodeBlock* instance = new (NotNull, allocateCell<FunctionCodeBlock>(vm))
-            FunctionCodeBlock(vm, vm.functionCodeBlockStructure.get(), ownerExecutable, unlinkedCodeBlock, scope);
-        if (!instance->finishCreation(vm, ownerExecutable, unlinkedCodeBlock, scope))
+            FunctionCodeBlock(vm, vm.functionCodeBlockStructure.get(), ownerExecutable, unlinkedCodeBlock, scope, linkMode);
+        if (!instance->finishCreation(vm, ownerExecutable, unlinkedCodeBlock, scope, linkMode))
             return nullptr;
         return instance;
     }
@@ -71,8 +71,8 @@ private:
     {
     }
 
-    FunctionCodeBlock(VM& vm, Structure* structure, FunctionExecutable* ownerExecutable, UnlinkedFunctionCodeBlock* unlinkedCodeBlock, JSScope* scope)
-        : CodeBlock(vm, structure, ownerExecutable, unlinkedCodeBlock, scope)
+    FunctionCodeBlock(VM& vm, Structure* structure, FunctionExecutable* ownerExecutable, UnlinkedFunctionCodeBlock* unlinkedCodeBlock, JSScope* scope, LinkMode linkMode)
+        : CodeBlock(vm, structure, ownerExecutable, unlinkedCodeBlock, scope, linkMode)
     {
     }
 };

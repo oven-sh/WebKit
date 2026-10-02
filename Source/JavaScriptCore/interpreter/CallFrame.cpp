@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CallFrame.h"
 
+#include "AOTFunction.h"
 #include "CodeBlock.h"
 #include "DebuggerCallFrame.h"
 #include "ExecutableAllocator.h"
@@ -213,14 +214,14 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
             // In the above case, the eval function will be interpreted as the indirect call to eval inside forEach function.
             // At that time, the generated eval code should have the source origin to the original caller of the forEach function
             // instead of the source origin of the forEach function.
-            if (static_cast<FunctionExecutable*>(visitor->codeBlock()->ownerExecutable())->isPrivateBuiltinFunction())
+            if (static_cast<FunctionExecutable*>(visitor->ownerExecutable())->isPrivateBuiltinFunction())
                 return IterationStatus::Continue;
             [[fallthrough]];
 
         case StackVisitor::Frame::CodeType::Eval:
         case StackVisitor::Frame::CodeType::Module:
         case StackVisitor::Frame::CodeType::Global:
-            sourceOrigin = visitor->codeBlock()->ownerExecutable()->sourceOrigin();
+            sourceOrigin = visitor->ownerExecutable()->sourceOrigin();
             return IterationStatus::Done;
 
         case StackVisitor::Frame::CodeType::Native:
@@ -245,13 +246,13 @@ JSGlobalObject* CallFrame::globalObjectOfClosestCodeBlock(VM& vm, CallFrame* cal
     StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
         // Note that this is OK for InlineCache Callee.
         if (visitor->isNativeCalleeFrame()) {
-            globalObject = visitor->callFrame()->lexicalGlobalObject(vm);
+            globalObject = visitor->lexicalGlobalObject(vm);
             return IterationStatus::Done;
         }
-        if (auto* codeBlock = visitor->codeBlock()) {
-            if (codeBlock->codeType() == CodeType::FunctionCode && static_cast<FunctionExecutable*>(codeBlock->ownerExecutable())->isBuiltinFunction())
+        if (visitor->hasCode()) {
+            if (auto* function = dynamicDowncast<FunctionExecutable>(visitor->ownerExecutable()); function && function->isBuiltinFunction())
                 return IterationStatus::Continue;
-            globalObject = codeBlock->globalObject();
+            globalObject = visitor->lexicalGlobalObject(vm);
             return IterationStatus::Done;
         }
         ASSERT(visitor->codeType() == StackVisitor::Frame::CodeType::Native);
@@ -375,16 +376,14 @@ void CallFrame::convertToZombieFrame(VM& vm, CodeBlock* codeBlockToKeepAliveUnti
     ASSERT(!isEmptyTopLevelCallFrameForDebugger());
     ASSERT(codeBlockToKeepAliveUntilFrameIsUnwound->inherits<CodeBlock>());
 
-    EntryFrame* entryFrame = vm.topEntryFrame;
-    CallFrame* throwOriginFrame = this;
-    do {
-        throwOriginFrame = throwOriginFrame->callerFrame(entryFrame);
-    } while (throwOriginFrame && throwOriginFrame->callee().isNativeCallee());
-
     JSGlobalObject* globalObject = nullptr;
-    if (throwOriginFrame)
-        globalObject = throwOriginFrame->jsCallee()->realm();
-    else
+    StackVisitor::visit(this, vm, [&](StackVisitor& visitor) {
+        if (visitor->callFrame() == this || visitor->isNativeCalleeFrame())
+            return IterationStatus::Continue;
+        globalObject = visitor->lexicalGlobalObject(vm);
+        return IterationStatus::Done;
+    });
+    if (!globalObject)
         globalObject = vm.entryScope->globalObject();
     JSObject* zombieFrameCallee = globalObject->zombieFrameCallee();
 
@@ -435,6 +434,10 @@ bool isFromJSCode(void* returnAddress)
     if (isJITPC(returnAddress))
         return true;
 #endif
+#if ENABLE(AOT)
+    if (AOT::classifyAddress(returnAddress).kind != AOT::ImageAddressInfo::NotInImage)
+        return true;
+#endif
 #if ENABLE(C_LOOP)
     return true;
 #else
@@ -449,7 +452,6 @@ JSWebAssemblyInstance* CallFrame::wasmInstance() const
     return uncheckedDowncast<JSWebAssemblyInstance>(this[static_cast<int>(CallFrameSlot::codeBlock)].jsValue());
 }
 #endif
-
 
 } // namespace JSC
 

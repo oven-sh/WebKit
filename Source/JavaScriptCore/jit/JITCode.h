@@ -69,9 +69,10 @@ enum class JITType : uint8_t {
     BaselineJIT = 0b011,
     DFGJIT = 0b100,
     FTLJIT = 0b101,
+    AOTJIT = 0b110,
 };
 static constexpr unsigned widthOfJITType = 3;
-static_assert(WTF::getMSBSet(static_cast<std::underlying_type_t<JITType>>(JITType::FTLJIT)) + 1 == widthOfJITType);
+static_assert(WTF::getMSBSet(static_cast<std::underlying_type_t<JITType>>(JITType::AOTJIT)) + 1 == widthOfJITType);
 
 #if ENABLE(JIT)
 template<typename ByteSizedEnumType>
@@ -167,6 +168,7 @@ public:
         case JITType::BaselineJIT:
         case JITType::DFGJIT:
         case JITType::FTLJIT:
+        case JITType::AOTJIT:
             return true;
         default:
             return false;

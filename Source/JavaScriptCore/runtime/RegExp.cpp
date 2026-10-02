@@ -22,7 +22,9 @@
 
 #include "config.h"
 #include "RegExp.h"
+#include "CompilerHooks.h"
 
+#include "AOTImage.h"
 #include "Lexer.h"
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
@@ -210,8 +212,20 @@ void RegExp::updateMetadataFromPattern(Yarr::YarrPattern& pattern)
     if (m_rareData)
         return;
 #endif
-    if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndices.isEmpty()) {
+    if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndices.isEmpty() || !pattern.m_anchoredWords.isEmpty()) {
         auto rareData = makeUnique<RareData>();
+        if (!pattern.m_anchoredWords.isEmpty()) {
+            auto& words = pattern.m_anchoredWords;
+            std::ranges::stable_sort(words, { }, &String::length);
+            Vector<unsigned> firstLengthWord;
+            firstLengthWord.fill(words.size(), words.last().length() + 2);
+            for (unsigned i = words.size(); i--;)
+                firstLengthWord[words[i].length()] = i;
+            for (unsigned length = firstLengthWord.size() - 1; length--;)
+                firstLengthWord[length] = std::min(firstLengthWord[length], firstLengthWord[length + 1]);
+            rareData->m_anchoredWords = FixedVector<String>(WTF::move(words));
+            rareData->m_firstLengthWord = FixedVector<unsigned>(WTF::move(firstLengthWord));
+        }
         rareData->m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
         rareData->m_captureGroupNames = FixedVector<AtomString>::map(pattern.m_captureGroupNames, [](auto& name) {
             return AtomString { name };
@@ -308,8 +322,6 @@ void RegExp::finishCreationFromCache(VM& vm, unsigned numSubpatterns, String&& a
     m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
 }
 
-
-
 static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, Yarr::ErrorCode& errorCode)
 {
     return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock);
@@ -337,6 +349,13 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     }
 }
 
+bool RegExp::startsInterpreted(std::optional<StringView> subject) const
+{
+    if (Options::useJIT() || !Options::useRegExpJIT())
+        return false;
+    return m_workInInterpreter + (subject ? subject->length() / 32 : 0) < workBeforeJIT;
+}
+
 void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     Locker locker { cellLock() };
@@ -356,26 +375,42 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     }
 
 #if ENABLE(YARR_JIT)
-    if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
+#if ENABLE(AOT)
+    if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags)) {
+        ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
+        m_state = JITCode;
+        m_minimumSize = pattern.m_body->m_minimumSize;
+        return;
+    }
+#endif
+    bool isInitiallyInterpreted = startsInterpreted(sampleString);
+    bool wasInitiallyInterpreted = m_workInInterpreter == workBeforeJIT;
+    if (!isInitiallyInterpreted)
+        m_workInInterpreter = jitWasConsidered;
+    if (!isInitiallyInterpreted && !pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
         && !pattern.m_containsBackreferences
 #endif
         && (!pattern.m_containsLookbehinds || Options::useRegExpLookbehindJIT())
         ) {
         auto& jitCode = ensureRegExpJITCode();
-        Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::IncludeSubpatterns);
+        reinterpret_cast<decltype(&Yarr::jitCompile)>(g_compilerHooks.compileRegExp)(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::IncludeSubpatterns);
         if (!jitCode.failureReason()) {
+            dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Compiled this regular expression: \"/", m_patternString, "/\"");
             m_state = JITCode;
             m_minimumSize = pattern.m_body->m_minimumSize;
+            if (wasInitiallyInterpreted)
+                m_regExpBytecode = nullptr;
             return;
         }
     }
 #else
     UNUSED_PARAM(charSize);
     UNUSED_PARAM(sampleString);
+    constexpr bool isInitiallyInterpreted = false;
 #endif
 
-    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), isInitiallyInterpreted ? "Interpreting this regular expression at first: \"/" : "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
@@ -444,26 +479,42 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     }
 
 #if ENABLE(YARR_JIT)
-    if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
+#if ENABLE(AOT)
+    if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags)) {
+        ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
+        m_state = JITCode;
+        m_minimumSize = pattern.m_body->m_minimumSize;
+        return;
+    }
+#endif
+    bool isInitiallyInterpreted = startsInterpreted(sampleString);
+    bool wasInitiallyInterpreted = m_workInInterpreter == workBeforeJIT;
+    if (!isInitiallyInterpreted)
+        m_workInInterpreter = jitWasConsidered;
+    if (!isInitiallyInterpreted && !pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
         && !pattern.m_containsBackreferences
 #endif
         && (!pattern.m_containsLookbehinds || Options::useRegExpLookbehindJIT())
         ) {
         auto& jitCode = ensureRegExpJITCode();
-        Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::MatchOnly);
+        reinterpret_cast<decltype(&Yarr::jitCompile)>(g_compilerHooks.compileRegExp)(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::MatchOnly);
         if (!jitCode.failureReason()) {
+            dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Compiled this regular expression: \"/", m_patternString, "/\"");
             m_state = JITCode;
             m_minimumSize = pattern.m_body->m_minimumSize;
+            if (wasInitiallyInterpreted)
+                m_regExpBytecode = nullptr;
             return;
         }
     }
 #else
     UNUSED_PARAM(charSize);
     UNUSED_PARAM(sampleString);
+    constexpr bool isInitiallyInterpreted = false;
 #endif
 
-    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), isInitiallyInterpreted ? "Interpreting this regular expression at first: \"/" : "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
     // m_regExpBytecode is shared with capture-observing operations (exec/match) and the Yarr

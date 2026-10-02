@@ -65,6 +65,10 @@ enum class TransitionKind : uint8_t {
 
     // Support for transitions related with private brand
     SetBrand = 17,
+
+#if USE(BUN_JSC_ADDITIONS)
+    MakePropertiesImmutable = 18,
+#endif
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -135,6 +139,7 @@ inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
     switch (transition) {
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
+    case TransitionKind::MakePropertiesImmutable:
         return true;
     default:
         return false;
@@ -145,6 +150,7 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
 {
     switch (transition) {
     case TransitionKind::Freeze:
+    case TransitionKind::MakePropertiesImmutable:
         return true;
     default:
         return false;
