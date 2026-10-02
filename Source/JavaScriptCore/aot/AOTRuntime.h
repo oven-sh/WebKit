@@ -711,7 +711,7 @@ struct SharedData {
     static bool contains(const Slot* slot) { return std::bit_cast<uintptr_t>(slot) - std::bit_cast<uintptr_t>(get()) < size; }
 };
 
-inline const FunctionInfo* ProgramData::infos() const { return at<FunctionInfo>(offsetOfInfos); }
+inline const FunctionInfo* ProgramData::infos() const { return at<FunctionInfo>(infosOffset); }
 inline const ProgramData& FunctionRef::programData() const { return instance ? instance->program->data() : *ProgramData::get(); }
 inline const FunctionInfo& FunctionRef::info() const { return instance ? instance->infos[index] : ProgramData::get()->infos()[index]; }
 

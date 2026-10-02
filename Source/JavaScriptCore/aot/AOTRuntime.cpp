@@ -301,7 +301,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections->dataEnd = size >> stateWithDataShift;
     instance->program = program;
     instance->programData = &program->data();
-    instance->stringConstantRecords = program->data().at<uint32_t>(program->data().offsetOfStringConstantRecords);
+    instance->stringConstantRecords = program->data().at<uint32_t>(program->data().stringConstantRecordsOffset);
     instance->infos = program->data().infos();
     instance->functionMetadataOffsets = program->data().functionMetadataOffsets();
     instance->programIdentifiers = program->identifiers();
@@ -390,8 +390,8 @@ static ScriptExecutable* topLevelExecutableOf(Data& data)
         if (ScriptExecutable* result = data.instance->topLevelExecutableOf(moduleID))
             return result;
         const ProgramModule* module = ProgramData::get()->moduleWithEntryOffset(moduleID - 1);
-        RELEASE_ASSERT(module && module->isBuiltinFunction && module->number);
-        return data.instance->program->executable(module->number - 1);
+        RELEASE_ASSERT(module && module->isBuiltinFunction && module->hasExecutable());
+        return data.instance->program->executable(module->executableIndex);
     }
     return data.executable->topLevelExecutable();
 }

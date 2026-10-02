@@ -55,20 +55,24 @@ struct FunctionInfo;
 struct ImageKey;
 
 struct ProgramModule {
+    static constexpr uint32_t invalidIndex = UINT32_MAX;
+
+    bool hasExecutable() const { return executableIndex != invalidIndex; }
+    bool hasTopLevelCode() const { return topLevelCodeIndex != invalidIndex; }
+    bool isCompiledModule() const { return functionIndex != invalidIndex; }
+
     uint32_t entryOffset;
     uint32_t keyHash;
     uint32_t keyLength;
     uint32_t keyFlags;
     uint32_t isBuiltinFunction;
-    uint32_t number;
-    static constexpr uint32_t invalidFunctionIndex = UINT32_MAX;
-    bool isCompiledModule() const { return functionIndex != invalidFunctionIndex; }
-
-    uint32_t functionIndex { invalidFunctionIndex };
+    uint32_t executableIndex { invalidIndex };
+    uint32_t topLevelCodeIndex { invalidIndex };
+    uint32_t functionIndex { invalidIndex };
     uint32_t environmentSymbolTable;
     uint32_t firstVarScopeOffset;
     uint32_t numberOfVarScopeOffsets;
-    uint32_t offsetOfFunctionDeclarationSlots;
+    uint32_t functionDeclarationSlotsOffset;
     uint32_t numberOfFunctionDeclarationSlots;
     uint32_t features;
     uint32_t lexicallyScopedFeaturesAndFlags;
@@ -109,15 +113,15 @@ struct ProgramData {
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(this) + offset); }
     template<typename T> std::span<const T> spanAt(uint32_t offset, size_t count) const { return { at<T>(offset), count }; }
 
-    std::span<const uint8_t> strings() const { return spanAt<uint8_t>(offsetOfStrings, sizeOfStrings); }
-    std::span<const uint8_t> objects() const { return spanAt<uint8_t>(offsetOfObjects, sizeOfObjects); }
-    std::span<const ProgramModule> modules() const { return spanAt<ProgramModule>(offsetOfModules, numberOfModules); }
+    std::span<const uint8_t> strings() const { return spanAt<uint8_t>(stringsOffset, stringsSize); }
+    std::span<const uint8_t> objects() const { return spanAt<uint8_t>(objectsOffset, objectsSize); }
+    std::span<const ProgramModule> modules() const { return spanAt<ProgramModule>(modulesOffset, numberOfModules); }
     const ProgramModule* moduleWithEntryOffset(uint32_t) const;
-    std::span<const uint32_t> functionDeclarationSlots(const ProgramModule& module) const { return spanAt<uint32_t>(module.offsetOfFunctionDeclarationSlots, module.numberOfFunctionDeclarationSlots); }
+    std::span<const uint32_t> functionDeclarationSlots(const ProgramModule& module) const { return spanAt<uint32_t>(module.functionDeclarationSlotsOffset, module.numberOfFunctionDeclarationSlots); }
     JS_EXPORT_PRIVATE std::span<const uint32_t> functionDeclarationListEntries(const ProgramModule&) const;
     inline const FunctionInfo* infos() const;
-    const uint32_t* functionMetadataOffsets() const { return at<uint32_t>(offsetOfFunctionMetadataOffsets); }
-    const ExecutableRow& executableRow(uint32_t number) const { return at<ExecutableRow>(offsetOfExecutableRows)[number]; }
+    const uint32_t* functionMetadataOffsets() const { return at<uint32_t>(functionMetadataTableOffset); }
+    const ExecutableRow& executableRow(uint32_t index) const { return at<ExecutableRow>(executableRowsOffset)[index]; }
     JS_EXPORT_PRIVATE const ExecutableRow& executableRowForFunction(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE uint32_t executableIndexForFunction(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE LineColumn functionStartPosition(uint32_t functionIndex) const;
@@ -128,27 +132,27 @@ struct ProgramData {
     uint64_t magic;
     uint64_t stamp;
     uint32_t size;
-    uint32_t offsetOfStrings;
-    uint32_t sizeOfStrings;
-    uint32_t offsetOfObjects;
-    uint32_t sizeOfObjects;
-    uint32_t offsetOfModules;
+    uint32_t stringsOffset;
+    uint32_t stringsSize;
+    uint32_t objectsOffset;
+    uint32_t objectsSize;
+    uint32_t modulesOffset;
     uint32_t numberOfModules;
-    uint32_t offsetOfInfos;
+    uint32_t infosOffset;
     uint32_t numberOfFunctions;
-    uint32_t offsetOfFunctionMetadataOffsets;
-    uint32_t offsetOfExecutableRows;
+    uint32_t functionMetadataTableOffset;
+    uint32_t executableRowsOffset;
     uint32_t numberOfExecutables;
     uint32_t numberOfIdentifiers;
     uint32_t numberOfConstants;
     uint32_t numberOfUnlinkedFunctions;
     uint32_t numberOfTopLevelCodes;
-    uint32_t offsetOfSourceNames;
+    uint32_t sourceNamesOffset;
     uint32_t numberOfSources;
-    uint32_t offsetOfImageKeys;
+    uint32_t imageKeysOffset;
     uint32_t imageKeyCapacity;
-    uint32_t offsetOfStringConstantRecords;
-    uint32_t offsetOfEngineBuiltinModules;
+    uint32_t stringConstantRecordsOffset;
+    uint32_t engineBuiltinModulesOffset;
     uint32_t numberOfEngineBuiltins;
 };
 
@@ -165,29 +169,29 @@ public:
     UniquedStringImpl* const* identifiers() const { return m_identifiers; }
     static constexpr uint32_t constantHashMultiplier = 2654435761u;
     static constexpr unsigned constantHashShift = 15;
-    static uint32_t constantHash(uint32_t number)
+    static uint32_t constantHash(uint32_t index)
     {
-        uint32_t hash = number * constantHashMultiplier;
+        uint32_t hash = index * constantHashMultiplier;
         return hash ^ hash >> constantHashShift;
     }
     static constexpr ptrdiff_t offsetOfConstantValues() { return OBJECT_OFFSETOF(VMProgram, m_constantValues); }
     static constexpr ptrdiff_t offsetOfConstantKeys() { return OBJECT_OFFSETOF(VMProgram, m_constantKeys); }
     static constexpr ptrdiff_t offsetOfConstantMask() { return OBJECT_OFFSETOF(VMProgram, m_constantMask); }
 
-    JS_EXPORT_PRIVATE JSValue constant(uint32_t number);
-    JSValue createTransientConstant(uint32_t number);
-    JS_EXPORT_PRIVATE UniquedStringImpl* identifier(uint32_t number);
-    const Identifier& identifierAsIdentifier(uint32_t number);
-    JS_EXPORT_PRIVATE FunctionExecutable* executable(uint32_t number);
+    JS_EXPORT_PRIVATE JSValue constant(uint32_t index);
+    JSValue createTransientConstant(uint32_t index);
+    JS_EXPORT_PRIVATE UniquedStringImpl* identifier(uint32_t index);
+    const Identifier& identifierAsIdentifier(uint32_t index);
+    JS_EXPORT_PRIVATE FunctionExecutable* executable(uint32_t index);
     FunctionExecutable* executableForFunction(uint32_t functionIndex) { return executable(m_data.executableIndexForFunction(functionIndex)); }
-    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* unlinkedFunction(uint32_t number, bool isShared);
+    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* unlinkedFunction(uint32_t index, bool isShared);
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* topLevelCodeFor(const SourceCodeKey&);
     JS_EXPORT_PRIVATE const ProgramModule* moduleFor(SourceProvider&);
-    UnlinkedCodeBlock* topLevelCode(uint32_t number);
+    UnlinkedCodeBlock* topLevelCode(uint32_t index);
 
     JS_EXPORT_PRIVATE SourceProvider* moduleProvider(uint32_t moduleIndex);
     JS_EXPORT_PRIVATE void didLoadModule(SourceProvider&);
-    const SourceCode& shortExecutableSource(uint32_t numberOfExecutable);
+    const SourceCode& shortExecutableSource(uint32_t executableIndex);
 
     JS_EXPORT_PRIVATE FunctionExecutable* builtinFunctionFor(uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
     FunctionExecutable* engineBuiltinFor(unsigned index, std::span<const Latin1Character> text);
@@ -199,20 +203,20 @@ public:
     void didFinishCollection();
 
 private:
-    struct Rest;
+    struct Impl;
     void didMaterialize(JSCell*);
     DecoderStringTable& strings();
 
     VM& m_vm;
     const ProgramData& m_data;
-    void addConstant(uint32_t number, JSValue);
+    void addConstant(uint32_t index, JSValue);
     EncodedJSValue* m_constantValues { nullptr };
     uint32_t* m_constantKeys { nullptr };
     uint32_t m_constantMask { 0 };
     uint32_t m_numberOfMaterializedConstants { 0 };
     UniquedStringImpl** m_identifiers;
     FunctionExecutable** m_executables;
-    std::unique_ptr<Rest> m_rest;
+    std::unique_ptr<Impl> m_impl;
 };
 
 } } // namespace JSC::AOT

@@ -289,9 +289,9 @@ public:
         m_functionMetadataOffsets[index] = append(words);
     }
 
-    static constexpr uint32_t noExecutable = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t invalidExecutableIndex = std::numeric_limits<uint32_t>::max();
 
-    void fillInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t numberOfExecutable, CodeSpecializationKind kind, LineStartTable& lineStarts)
+    void fillInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t executableIndex, CodeSpecializationKind kind, LineStartTable& lineStarts)
     {
         FunctionInfo& info = m_infos[function.index];
         auto& constantIndices = m_reportableSites[function.index].constantIndices;
@@ -299,13 +299,13 @@ public:
             RELEASE_ASSERT(constantIndices.size() == codeBlock->constantRegisters().size());
             for (unsigned i = 0; i < constantIndices.size(); ++i) {
                 JSValue value = codeBlock->constantRegisters()[i].get();
-                uint32_t number = constantIndices[i];
+                uint32_t constantIndex = constantIndices[i];
                 if (codeBlock->constantsSourceCodeRepresentation()[i] == SourceCodeRepresentation::LinkTimeConstant)
                     value = JSValue();
-                RELEASE_ASSERT(!value == (number == invalidConstantIndex));
+                RELEASE_ASSERT(!value == (constantIndex == invalidConstantIndex));
                 if (!value)
                     continue;
-                JSValue& inTable = m_constants[number];
+                JSValue& inTable = m_constants[constantIndex];
                 if (!inTable)
                     inTable = value;
                 else if (inTable != value) {
@@ -330,14 +330,14 @@ public:
             inTable = name;
         }
         info.sites = safeCast<uint32_t>(std::bit_cast<uintptr_t>(function.sites));
-        info.set(numberOfExecutable == noExecutable ? 0 : numberOfExecutable + 1, kind, FunctionCode);
+        info.set(executableIndex == invalidExecutableIndex ? 0 : executableIndex + 1, kind, FunctionCode);
         info.flags = (function.hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveInlineConstants) | (function.startsCold && executable ? FunctionInfo::startsCold : 0) | FunctionInfo::encodeSlotCountInFlags(function.numSlots);
         fillMetadata(function.index, codeBlock, executable, lineStarts);
     }
 
     void fillTopLevelCodeInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, uint32_t numberOfTopLevelCode, LineStartTable& lineStarts)
     {
-        fillInfo(function, codeBlock, nullptr, noExecutable, CodeSpecializationKind::CodeForCall, lineStarts);
+        fillInfo(function, codeBlock, nullptr, invalidExecutableIndex, CodeSpecializationKind::CodeForCall, lineStarts);
         FunctionInfo& info = m_infos[function.index];
         info.set(numberOfTopLevelCode + 1, CodeSpecializationKind::CodeForCall, codeBlock->codeType());
     }
@@ -367,16 +367,16 @@ public:
             if (isDefaultConstructor) {
                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                     if (auto& function = code[static_cast<unsigned>(kind)]; function && !m_infos[function->index].sites)
-                        fillInfo(*function, unlinked->codeBlockIfExists(kind), nullptr, noExecutable, kind, lineStarts);
+                        fillInfo(*function, unlinked->codeBlockIfExists(kind), nullptr, invalidExecutableIndex, kind, lineStarts);
                 }
                 return;
             }
-            uint32_t existing = noExecutable;
+            uint32_t existing = invalidExecutableIndex;
             for (auto& function : code) {
                 if (function && m_infos[function->index].indexPlusOne())
                     existing = m_infos[function->index].indexPlusOne() - 1;
             }
-            if (existing != noExecutable) {
+            if (existing != invalidExecutableIndex) {
                 bool isComplete = true;
                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                     if (auto& function = code[static_cast<unsigned>(kind)])
@@ -393,17 +393,17 @@ public:
                 return;
             }
             FunctionExecutable* executable = unlinked->link(m_vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
-            uint32_t number = safeCast<uint32_t>(m_executables.size());
+            uint32_t executableIndex = safeCast<uint32_t>(m_executables.size());
             m_executables.append({ executable, moduleIndex });
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto& function = code[static_cast<unsigned>(kind)]) {
                     executable->setAOTCode(kind, function->entry, function->index);
-                    fillInfo(*function, unlinked->codeBlockIfExists(kind), executable, number, kind, lineStarts);
+                    fillInfo(*function, unlinked->codeBlockIfExists(kind), executable, executableIndex, kind, lineStarts);
                 }
             }
             if (code[0] && !code[1] && unlinked->constructAbility() == ConstructAbility::CanConstruct && !unlinked->isClassConstructorFunction())
                 executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, m_image.stubCodeOffset(Stub::ConstructViaCall), FunctionExecutable::aotConstructViaCallIndex);
-            m_unlinkedFunctionExecutable.add(unlinked, number);
+            m_unlinkedFunctionExecutable.add(unlinked, executableIndex);
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto* nested = unlinked->codeBlockIfExists(kind))
                     makeExecutables(nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleIndex, lineStarts);
@@ -642,7 +642,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             unsigned builtinStamp = 0;
             LineStarts builtinLineStarts;
             UnlinkedFunctionExecutable* builtinFunction = decodeBuiltinForProgramData(decoder.get(), builtinLength, builtinStamp, builtinLineStarts, functions);
-            uint32_t number = 0;
+            ProgramModule module { };
             if (builtinFunction) {
                 setLineStarts(builtinLineStarts);
                 builder.makeExecutables(nullptr, SourceCode { provider.copyRef(), 0, static_cast<int>(builtinLength) }, false, i, lineStarts, builtinFunction);
@@ -652,14 +652,12 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
                         builder.dropUnreferencedVariableNames(code, lookedUp);
                 }
                 if (auto it = builder.m_unlinkedFunctionExecutable.find(builtinFunction); it != builder.m_unlinkedFunctionExecutable.end())
-                    number = it->value + 1;
+                    module.executableIndex = it->value;
             }
-            ProgramModule module { };
             module.entryOffset = sortedOffsets[i];
             module.keyHash = builtinStamp;
             module.keyLength = builtinLength;
             module.isBuiltinFunction = true;
-            module.number = number;
             modules.append(module);
             continue;
         }
@@ -681,7 +679,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         auto function = image->find(imageKeyForTopLevelCode(sortedOffsets[i] + 1));
         auto* moduleValue = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock);
         if (!moduleValue) {
-            module.number = safeCast<uint32_t>(builder.m_topLevelCodes.size()) + 1;
+            module.topLevelCodeIndex = safeCast<uint32_t>(builder.m_topLevelCodes.size());
             builder.m_topLevelCodes.append(codeBlock);
         }
         if (function)
@@ -694,7 +692,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             module.numberOfVarScopeOffsets = moduleValue->numberOfVarScopeOffsets();
             if (auto* slots = moduleValue->heapAllocatedFunctionDeclSlots()) {
                 RELEASE_ASSERT(slots->size() == moduleValue->numberOfHeapAllocatedFunctionDecls());
-                module.offsetOfFunctionDeclarationSlots = builder.append(slots->offsets().span());
+                module.functionDeclarationSlotsOffset = builder.append(slots->offsets().span());
                 module.numberOfFunctionDeclarationSlots = slots->size();
             } else
                 RELEASE_ASSERT(!moduleValue->numberOfHeapAllocatedFunctionDecls());
@@ -728,8 +726,8 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     ProgramData header { };
     header.magic = expectedMagic;
     header.stamp = imageStamp();
-    header.offsetOfStrings = builder.append(strings, 16);
-    header.sizeOfStrings = safeCast<uint32_t>(strings.size());
+    header.stringsOffset = builder.append(strings, 16);
+    header.stringsSize = safeCast<uint32_t>(strings.size());
     {
         ProgramObjects objects;
         objects.identifiers = builder.m_identifiers.span();
@@ -750,8 +748,8 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         }
         objects.unlinkedFunctions = builder.m_unlinkedFunctions.span();
         Vector<uint8_t> encoded = encodeProgramObjects(vm, encoderStringTable, objects);
-        header.offsetOfObjects = builder.append(encoded.span(), 16);
-        header.sizeOfObjects = safeCast<uint32_t>(encoded.size());
+        header.objectsOffset = builder.append(encoded.span(), 16);
+        header.objectsSize = safeCast<uint32_t>(encoded.size());
     }
     {
         Vector<uint32_t> records;
@@ -766,29 +764,29 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
                 continue;
             uint32_t ordinal = encoderStringTable.ordinalFor(*said.impl());
             RELEASE_ASSERT(ordinal < table.count());
-            records[i] = header.offsetOfStrings + offsets[ordinal];
+            records[i] = header.stringsOffset + offsets[ordinal];
         }
-        header.offsetOfStringConstantRecords = builder.append(records);
+        header.stringConstantRecordsOffset = builder.append(records);
     }
-    header.offsetOfModules = builder.append(modules);
+    header.modulesOffset = builder.append(modules);
     header.numberOfModules = modules.size();
     {
         Vector<uint32_t> engineBuiltinModules;
         for (uint32_t i = 0; i < modules.size(); ++i) {
-            if (!modules[i].isBuiltinFunction || !modules[i].number || !BuiltinExecutables::isStamp(modules[i].keyHash))
+            if (!modules[i].isBuiltinFunction || !modules[i].hasExecutable() || !BuiltinExecutables::isStamp(modules[i].keyHash))
                 continue;
             unsigned which = modules[i].keyHash & 0xffff;
             while (engineBuiltinModules.size() <= which)
                 engineBuiltinModules.append(0);
             engineBuiltinModules[which] = i + 1;
         }
-        header.offsetOfEngineBuiltinModules = builder.append(engineBuiltinModules);
+        header.engineBuiltinModulesOffset = builder.append(engineBuiltinModules);
         header.numberOfEngineBuiltins = engineBuiltinModules.size();
     }
-    header.offsetOfInfos = builder.append(builder.m_infos);
+    header.infosOffset = builder.append(builder.m_infos);
     header.numberOfFunctions = builder.m_infos.size();
-    header.offsetOfFunctionMetadataOffsets = builder.append(builder.m_functionMetadataOffsets);
-    header.offsetOfExecutableRows = builder.append(builder.m_rows);
+    header.functionMetadataTableOffset = builder.append(builder.m_functionMetadataOffsets);
+    header.executableRowsOffset = builder.append(builder.m_rows);
     header.numberOfExecutables = builder.m_rows.size();
     header.numberOfIdentifiers = builder.m_identifiers.size();
     header.numberOfConstants = builder.m_constants.size();
@@ -802,7 +800,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             text.append(name.span());
         }
         starts.append(text.size());
-        header.offsetOfSourceNames = builder.append(starts);
+        header.sourceNamesOffset = builder.append(starts);
         builder.m_out.appendVector(text);
         header.numberOfSources = builder.m_sourceNames.size();
     }
@@ -827,13 +825,13 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
                 bucket = (bucket + 1) & (capacity - 1);
             kept[bucket] = key;
         }
-        header.offsetOfImageKeys = builder.append(kept);
+        header.imageKeysOffset = builder.append(kept);
         header.imageKeyCapacity = capacity;
     }
     header.size = safeCast<uint32_t>(builder.m_out.size());
     memcpy(builder.m_out.mutableSpan().data(), &header, sizeof(header));
     if (Options::verboseAOTCompilation()) [[unlikely]]
-        dataLogLn("AOT: program data: ", header.size, " bytes: strings ", header.sizeOfStrings, ", objects ", header.sizeOfObjects, "; ", header.numberOfFunctions, " functions, ", header.numberOfExecutables, " executables, ", header.numberOfUnlinkedFunctions, " unlinked functions, ", header.numberOfIdentifiers, " identifiers, ", header.numberOfConstants, " constants, ", header.numberOfSources, " sources");
+        dataLogLn("AOT: program data: ", header.size, " bytes: strings ", header.stringsSize, ", objects ", header.objectsSize, "; ", header.numberOfFunctions, " functions, ", header.numberOfExecutables, " executables, ", header.numberOfUnlinkedFunctions, " unlinked functions, ", header.numberOfIdentifiers, " identifiers, ", header.numberOfConstants, " constants, ", header.numberOfSources, " sources");
     return WTF::move(builder.m_out);
 }
 
@@ -851,9 +849,9 @@ std::optional<std::pair<size_t, size_t>> ProgramData::stringTableIn(std::span<co
         return std::nullopt;
     ProgramData header;
     memcpy(&header, bytes.data(), sizeof(header));
-    if (header.magic != expectedMagic || header.size > bytes.size() || header.offsetOfStrings > header.size || header.sizeOfStrings > header.size - header.offsetOfStrings)
+    if (header.magic != expectedMagic || header.size > bytes.size() || header.stringsOffset > header.size || header.stringsSize > header.size - header.stringsOffset)
         return std::nullopt;
-    return std::pair { static_cast<size_t>(header.offsetOfStrings), static_cast<size_t>(header.sizeOfStrings) };
+    return std::pair { static_cast<size_t>(header.stringsOffset), static_cast<size_t>(header.stringsSize) };
 }
 
 std::span<const uint32_t> ProgramData::functionDeclarationListEntries(const ProgramModule& module) const
@@ -885,7 +883,7 @@ const ExecutableRow& ProgramData::executableRowForFunction(uint32_t functionInde
 String ProgramData::sourceName(uint32_t source) const
 {
     RELEASE_ASSERT(source && source <= numberOfSources);
-    auto* starts = at<uint32_t>(offsetOfSourceNames);
+    auto* starts = at<uint32_t>(sourceNamesOffset);
     auto* text = reinterpret_cast<const char8_t*>(starts + numberOfSources + 1);
     return String::fromUTF8(std::span { text + starts[source - 1], static_cast<size_t>(starts[source] - starts[source - 1]) });
 }
@@ -915,7 +913,7 @@ Vector<uint32_t> ProgramData::moduleEntryOffsets() const
 {
     Vector<uint32_t> result;
     for (auto& module : modules()) {
-        if (!module.isBuiltinFunction && (module.number || module.isCompiledModule()))
+        if (!module.isBuiltinFunction && (module.hasTopLevelCode() || module.isCompiledModule()))
             result.append(module.entryOffset);
     }
     return result;
@@ -923,11 +921,11 @@ Vector<uint32_t> ProgramData::moduleEntryOffsets() const
 
 std::span<const ImageKey> ProgramData::imageKeys() const
 {
-    return spanAt<ImageKey>(offsetOfImageKeys, imageKeyCapacity);
+    return spanAt<ImageKey>(imageKeysOffset, imageKeyCapacity);
 }
 
-struct VMProgram::Rest {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Rest);
+struct VMProgram::Impl {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Impl);
 
     std::unique_ptr<DecoderStringTable> ownStrings;
     std::unique_ptr<ProgramObjectsDecoder> decoder;
@@ -963,21 +961,21 @@ VMProgram::VMProgram(VM& vm)
     , m_data(*ProgramData::get())
     , m_identifiers(zeroedTable<UniquedStringImpl*>(m_data.numberOfIdentifiers))
     , m_executables(zeroedTable<FunctionExecutable*>(m_data.numberOfExecutables))
-    , m_rest(makeUnique<Rest>())
+    , m_impl(makeUnique<Impl>())
 {
-    m_rest->unlinkedFunctions.fill(nullptr, m_data.numberOfUnlinkedFunctions);
-    m_rest->providers.grow(m_data.numberOfModules);
+    m_impl->unlinkedFunctions.fill(nullptr, m_data.numberOfUnlinkedFunctions);
+    m_impl->providers.grow(m_data.numberOfModules);
     constexpr uint32_t initialCapacity = 1024;
     m_constantValues = static_cast<EncodedJSValue*>(fastZeroedMalloc(initialCapacity * sizeof(EncodedJSValue)));
     m_constantKeys = static_cast<uint32_t*>(fastZeroedMalloc(initialCapacity * sizeof(uint32_t)));
     m_constantMask = initialCapacity - 1;
-    m_rest->materializedExecutables.ensureSize(m_data.numberOfExecutables);
+    m_impl->materializedExecutables.ensureSize(m_data.numberOfExecutables);
 }
 
 VMProgram::~VMProgram()
 {
-    for (uint32_t number : m_rest->materializedIdentifierCount)
-        m_identifiers[number]->deref();
+    for (uint32_t index : m_impl->materializedIdentifierCount)
+        m_identifiers[index]->deref();
     fastFree(m_constantValues);
     fastFree(m_constantKeys);
     freeTable(m_identifiers, m_data.numberOfIdentifiers);
@@ -986,9 +984,9 @@ VMProgram::~VMProgram()
 
 DecoderStringTable& VMProgram::strings()
 {
-    if (!m_rest->ownStrings)
-        m_rest->ownStrings = makeUnique<DecoderStringTable>(m_data.strings(), DecoderStringTable::Slots::No);
-    return *m_rest->ownStrings;
+    if (!m_impl->ownStrings)
+        m_impl->ownStrings = makeUnique<DecoderStringTable>(m_data.strings(), DecoderStringTable::Slots::No);
+    return *m_impl->ownStrings;
 }
 
 static ProgramObjectsDecoder& ensureDecoder(std::unique_ptr<ProgramObjectsDecoder>& decoder, VM& vm, const ProgramData& data, DecoderStringTable& strings)
@@ -1000,47 +998,47 @@ static ProgramObjectsDecoder& ensureDecoder(std::unique_ptr<ProgramObjectsDecode
 
 void VMProgram::didMaterialize(JSCell* cell)
 {
-    m_rest->createdSinceLastCollection.append(cell);
+    m_impl->createdSinceLastCollection.append(cell);
 }
 
-JSValue VMProgram::constant(uint32_t number)
+JSValue VMProgram::constant(uint32_t index)
 {
-    RELEASE_ASSERT(number < m_data.numberOfConstants);
-    for (uint32_t place = constantHash(number);; ++place) {
+    RELEASE_ASSERT(index < m_data.numberOfConstants);
+    for (uint32_t place = constantHash(index);; ++place) {
         uint32_t key = m_constantKeys[place & m_constantMask];
-        if (key == number + 1)
+        if (key == index + 1)
             return JSValue::decode(m_constantValues[place & m_constantMask]);
         if (!key)
             break;
     }
     DeferGC deferGC(m_vm);
-    ProgramObjectsDecoder& decoder = ensureDecoder(m_rest->decoder, m_vm, m_data, strings());
-    if (auto other = decoder.constantAliasTarget(number)) {
+    ProgramObjectsDecoder& decoder = ensureDecoder(m_impl->decoder, m_vm, m_data, strings());
+    if (auto other = decoder.constantAliasTarget(index)) {
         JSValue value = constant(*other);
-        addConstant(number, value);
+        addConstant(index, value);
         return value;
     }
-    JSValue value = decoder.constant(number);
+    JSValue value = decoder.constant(index);
     RELEASE_ASSERT(value && (!value.isCell() || !value.isObject()));
     if (value.isCell())
         didMaterialize(value.asCell());
-    addConstant(number, value);
+    addConstant(index, value);
     return value;
 }
 
-JSValue VMProgram::createTransientConstant(uint32_t number)
+JSValue VMProgram::createTransientConstant(uint32_t index)
 {
-    RELEASE_ASSERT(number < m_data.numberOfConstants);
+    RELEASE_ASSERT(index < m_data.numberOfConstants);
     DeferGC deferGC(m_vm);
-    ProgramObjectsDecoder& decoder = ensureDecoder(m_rest->decoder, m_vm, m_data, strings());
-    if (decoder.constantAliasTarget(number))
-        return constant(number);
-    JSValue value = decoder.constant(number);
+    ProgramObjectsDecoder& decoder = ensureDecoder(m_impl->decoder, m_vm, m_data, strings());
+    if (decoder.constantAliasTarget(index))
+        return constant(index);
+    JSValue value = decoder.constant(index);
     RELEASE_ASSERT(value && (!value.isCell() || !value.isObject()));
     return value;
 }
 
-void VMProgram::addConstant(uint32_t number, JSValue value)
+void VMProgram::addConstant(uint32_t index, JSValue value)
 {
     auto add = [&](uint32_t key, EncodedJSValue encoded) {
         uint32_t place = constantHash(key - 1);
@@ -1063,50 +1061,50 @@ void VMProgram::addConstant(uint32_t number, JSValue value)
         fastFree(oldValues);
         fastFree(oldKeys);
     }
-    add(number + 1, JSValue::encode(value));
+    add(index + 1, JSValue::encode(value));
 }
 
-UniquedStringImpl* VMProgram::identifier(uint32_t number)
+UniquedStringImpl* VMProgram::identifier(uint32_t index)
 {
-    RELEASE_ASSERT(number < m_data.numberOfIdentifiers);
-    if (UniquedStringImpl* existing = m_identifiers[number])
+    RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
+    if (UniquedStringImpl* existing = m_identifiers[index])
         return existing;
-    Identifier identifier = ensureDecoder(m_rest->decoder, m_vm, m_data, strings()).identifier(number);
+    Identifier identifier = ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).identifier(index);
     RELEASE_ASSERT(!identifier.isNull());
     identifier.impl()->ref();
-    m_rest->materializedIdentifierCount.append(number);
-    m_identifiers[number] = identifier.impl();
+    m_impl->materializedIdentifierCount.append(index);
+    m_identifiers[index] = identifier.impl();
     return identifier.impl();
 }
 
-const Identifier& VMProgram::identifierAsIdentifier(uint32_t number)
+const Identifier& VMProgram::identifierAsIdentifier(uint32_t index)
 {
     static_assert(sizeof(Identifier) == sizeof(UniquedStringImpl*));
-    if (number)
-        identifier(number);
-    return *reinterpret_cast<const Identifier*>(&m_identifiers[number]);
+    if (index)
+        identifier(index);
+    return *reinterpret_cast<const Identifier*>(&m_identifiers[index]);
 }
 
-UnlinkedFunctionExecutable* VMProgram::unlinkedFunction(uint32_t number, bool isShared)
+UnlinkedFunctionExecutable* VMProgram::unlinkedFunction(uint32_t index, bool isShared)
 {
-    RELEASE_ASSERT(number < m_data.numberOfUnlinkedFunctions);
-    if (UnlinkedFunctionExecutable* existing = m_rest->unlinkedFunctions[number])
+    RELEASE_ASSERT(index < m_data.numberOfUnlinkedFunctions);
+    if (UnlinkedFunctionExecutable* existing = m_impl->unlinkedFunctions[index])
         return existing;
     DeferGC deferGC(m_vm);
-    UnlinkedFunctionExecutable* result = ensureDecoder(m_rest->decoder, m_vm, m_data, strings()).unlinkedFunction(number);
+    UnlinkedFunctionExecutable* result = ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).unlinkedFunction(index);
     RELEASE_ASSERT(result);
     if (isShared)
         result->convertToSharedTemplate();
     didMaterialize(result);
-    m_rest->unlinkedFunctions[number] = result;
+    m_impl->unlinkedFunctions[index] = result;
     return result;
 }
 
-UnlinkedCodeBlock* VMProgram::topLevelCode(uint32_t number)
+UnlinkedCodeBlock* VMProgram::topLevelCode(uint32_t index)
 {
-    RELEASE_ASSERT(number < m_data.numberOfTopLevelCodes);
+    RELEASE_ASSERT(index < m_data.numberOfTopLevelCodes);
     DeferGC deferGC(m_vm);
-    UnlinkedCodeBlock* result = ensureDecoder(m_rest->decoder, m_vm, m_data, strings()).topLevelCode(number);
+    UnlinkedCodeBlock* result = ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).topLevelCode(index);
     RELEASE_ASSERT(result);
     return result;
 }
@@ -1118,10 +1116,10 @@ UnlinkedCodeBlock* VMProgram::topLevelCodeFor(const SourceCodeKey& key)
     if (!id || !provider.hasNoSourceText())
         return nullptr;
     const ProgramModule* module = m_data.moduleWithEntryOffset(id - 1);
-    if (!module || module->isBuiltinFunction || !module->number || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
+    if (!module || module->isBuiltinFunction || !module->hasTopLevelCode() || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
         return nullptr;
     didLoadModule(provider);
-    return topLevelCode(module->number - 1);
+    return topLevelCode(module->topLevelCodeIndex);
 }
 
 const ProgramModule* VMProgram::moduleFor(SourceProvider& provider)
@@ -1140,14 +1138,14 @@ void VMProgram::didLoadModule(SourceProvider& provider)
 {
     const ProgramModule* module = m_data.moduleWithEntryOffset(provider.aotModuleID() - 1);
     RELEASE_ASSERT(module);
-    RefPtr<SourceProvider>& first = m_rest->providers[module - m_data.modules().data()];
+    RefPtr<SourceProvider>& first = m_impl->providers[module - m_data.modules().data()];
     if (!first)
         first = &provider;
 }
 
 SourceProvider* VMProgram::moduleProvider(uint32_t moduleIndex)
 {
-    RefPtr<SourceProvider>& provider = m_rest->providers[moduleIndex];
+    RefPtr<SourceProvider>& provider = m_impl->providers[moduleIndex];
     if (!provider) {
         const ProgramModule& module = m_data.modules()[moduleIndex];
         RELEASE_ASSERT(module.isBuiltinFunction);
@@ -1162,19 +1160,19 @@ SourceProvider* VMProgram::moduleProvider(uint32_t moduleIndex)
     return provider.get();
 }
 
-const SourceCode& VMProgram::shortExecutableSource(uint32_t number)
+const SourceCode& VMProgram::shortExecutableSource(uint32_t index)
 {
-    return *m_rest->shortExecutableSources.ensure(number, [&] {
-        return makeUniqueWithoutFastMallocCheck<SourceCode>(RefPtr { moduleProvider(m_data.executableRow(number).module) }, 0, 0);
+    return *m_impl->shortExecutableSources.ensure(index, [&] {
+        return makeUniqueWithoutFastMallocCheck<SourceCode>(RefPtr { moduleProvider(m_data.executableRow(index).module) }, 0, 0);
     }).iterator->value;
 }
 
-FunctionExecutable* VMProgram::executable(uint32_t number)
+FunctionExecutable* VMProgram::executable(uint32_t executableIndex)
 {
-    RELEASE_ASSERT(number < m_data.numberOfExecutables);
-    if (FunctionExecutable* existing = m_executables[number])
+    RELEASE_ASSERT(executableIndex < m_data.numberOfExecutables);
+    if (FunctionExecutable* existing = m_executables[executableIndex])
         return existing;
-    const ExecutableRow& row = m_data.executableRow(number);
+    const ExecutableRow& row = m_data.executableRow(executableIndex);
     DeferGC deferGC(m_vm);
     FunctionExecutable* result;
     if (row.isShort)
@@ -1189,8 +1187,8 @@ FunctionExecutable* VMProgram::executable(uint32_t number)
         }
     }
     didMaterialize(result);
-    m_rest->materializedExecutables.quickSet(number);
-    m_executables[number] = result;
+    m_impl->materializedExecutables.quickSet(executableIndex);
+    m_executables[executableIndex] = result;
     return result;
 }
 
@@ -1199,35 +1197,35 @@ FunctionExecutable* VMProgram::builtinFunctionFor(uint32_t entryOffset, unsigned
     if (BytecodeOrderRecorder::ofVM(m_vm))
         return nullptr;
     const ProgramModule* module = m_data.moduleWithEntryOffset(entryOffset);
-    if (!module || !module->isBuiltinFunction || !module->number || module->keyHash != embedderStamp || module->keyLength != text.length())
+    if (!module || !module->isBuiltinFunction || !module->hasExecutable() || module->keyHash != embedderStamp || module->keyLength != text.length())
         return nullptr;
-    RefPtr<SourceProvider>& provider = m_rest->providers[module - m_data.modules().data()];
+    RefPtr<SourceProvider>& provider = m_impl->providers[module - m_data.modules().data()];
     if (!provider) {
         provider = StringSourceProvider::create(text, sourceOrigin, String { sourceURL }, SourceTaintedOrigin::Untainted);
         provider->setAOTModuleID(entryOffset + 1);
     }
-    return executable(module->number - 1);
+    return executable(module->executableIndex);
 }
 
 FunctionExecutable* VMProgram::engineBuiltinFor(unsigned index, std::span<const Latin1Character> text)
 {
-    uint32_t moduleIndexPlusOne = index < m_data.numberOfEngineBuiltins ? m_data.at<uint32_t>(m_data.offsetOfEngineBuiltinModules)[index] : 0;
+    uint32_t moduleIndexPlusOne = index < m_data.numberOfEngineBuiltins ? m_data.at<uint32_t>(m_data.engineBuiltinModulesOffset)[index] : 0;
     if (!moduleIndexPlusOne)
         return nullptr;
     const ProgramModule& module = m_data.modules()[moduleIndexPlusOne - 1];
     if (BytecodeOrderRecorder::ofVM(m_vm) || module.keyLength != text.size())
         return nullptr;
-    RefPtr<SourceProvider>& provider = m_rest->providers[moduleIndexPlusOne - 1];
+    RefPtr<SourceProvider>& provider = m_impl->providers[moduleIndexPlusOne - 1];
     if (!provider) {
         provider = StringSourceProvider::create(StringImpl::createWithoutCopying(text), SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
         provider->setAOTModuleID(module.entryOffset + 1);
     }
-    return executable(module.number - 1);
+    return executable(module.executableIndex);
 }
 
 const UnlinkedStringJumpTable& VMProgram::stringSwitchJumpTable(uint32_t offsetOfTables, unsigned which)
 {
-    return m_rest->stringSwitchJumpTables.ensure(offsetOfTables, [&] {
+    return m_impl->stringSwitchJumpTables.ensure(offsetOfTables, [&] {
         const uint32_t* words = m_data.at<uint32_t>(offsetOfTables);
         FixedVector<UnlinkedStringJumpTable> tables(*words++);
         for (auto& table : tables) {
@@ -1246,7 +1244,7 @@ const UnlinkedStringJumpTable& VMProgram::stringSwitchJumpTable(uint32_t offsetO
 
 const IdentifierSet& VMProgram::identifierSet(uint32_t offsetOfSets, unsigned which)
 {
-    return m_rest->identifierSets.ensure(offsetOfSets, [&] {
+    return m_impl->identifierSets.ensure(offsetOfSets, [&] {
         const uint32_t* words = m_data.at<uint32_t>(offsetOfSets);
         FixedVector<IdentifierSet> sets(*words++);
         for (auto& set : sets) {
@@ -1261,7 +1259,7 @@ template<typename Visitor>
 void VMProgram::visit(Visitor& visitor, CollectionScope scope)
 {
     if (scope == CollectionScope::Eden) {
-        for (JSCell* cell : m_rest->createdSinceLastCollection)
+        for (JSCell* cell : m_impl->createdSinceLastCollection)
             visitor.appendUnbarriered(cell);
         return;
     }
@@ -1269,10 +1267,10 @@ void VMProgram::visit(Visitor& visitor, CollectionScope scope)
         if (JSValue value = JSValue::decode(m_constantValues[i]); m_constantKeys[i] && value.isCell())
             visitor.appendUnbarriered(value.asCell());
     }
-    m_rest->materializedExecutables.forEachSetBit([&](size_t number) {
-        visitor.appendUnbarriered(m_executables[number]);
+    m_impl->materializedExecutables.forEachSetBit([&](size_t index) {
+        visitor.appendUnbarriered(m_executables[index]);
     });
-    for (auto* function : m_rest->unlinkedFunctions) {
+    for (auto* function : m_impl->unlinkedFunctions) {
         if (function)
             visitor.appendUnbarriered(function);
     }
@@ -1282,7 +1280,7 @@ template void VMProgram::visit(SlotVisitor&, CollectionScope);
 
 void VMProgram::didFinishCollection()
 {
-    m_rest->createdSinceLastCollection.clear();
+    m_impl->createdSinceLastCollection.clear();
     if (Options::verboseAOTCompilation()) [[unlikely]] {
         UncheckedKeyHashMap<const ClassInfo*, std::pair<size_t, size_t>> byClass;
         auto count = [&](JSCell* cell) {
@@ -1294,15 +1292,15 @@ void VMProgram::didFinishCollection()
             if (JSValue value = JSValue::decode(m_constantValues[i]); m_constantKeys[i] && value.isCell())
                 count(value.asCell());
         }
-        m_rest->materializedExecutables.forEachSetBit([&](size_t number) { count(m_executables[number]); });
-        for (auto* function : m_rest->unlinkedFunctions) {
+        m_impl->materializedExecutables.forEachSetBit([&](size_t index) { count(m_executables[index]); });
+        for (auto* function : m_impl->unlinkedFunctions) {
             if (function)
                 count(function);
         }
-        dataLog("AOT: made so far: ", m_rest->materializedIdentifierCount.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfMaterializedConstants, " of ", m_data.numberOfConstants, " constants, ", m_rest->materializedExecutables.bitCount(), " of ", m_data.numberOfExecutables, " executables:");
+        dataLog("AOT: made so far: ", m_impl->materializedIdentifierCount.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfMaterializedConstants, " of ", m_data.numberOfConstants, " constants, ", m_impl->materializedExecutables.bitCount(), " of ", m_data.numberOfExecutables, " executables:");
         for (auto& [info, entry] : byClass)
             dataLog(" ", info->className, " ", entry.first, " (", entry.second, " bytes)");
-        dataLogLn("; ", m_rest->stringSwitchJumpTables.size(), " + ", m_rest->identifierSets.size(), " tables of functions");
+        dataLogLn("; ", m_impl->stringSwitchJumpTables.size(), " + ", m_impl->identifierSets.size(), " tables of functions");
     }
 }
 
