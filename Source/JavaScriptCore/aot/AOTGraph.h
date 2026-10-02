@@ -498,6 +498,7 @@ public:
     UncheckedKeyHashMap<Node*, Vector<Node*, 8>> returnValueReads;
     bool makesCalls { false };
     bool emitsCalls { false };
+    UncheckedKeyHashSet<B3::Value*> patchpointsTakingData;
     Vector<String> remarks;
     void remark(ASCIILiteral what, StringView detail = { })
     {

@@ -35,9 +35,9 @@ static constexpr GPRReg countGPR = X86Registers::r10;
 static constexpr GPRReg calleeGPR = X86Registers::r8;
 static constexpr GPRReg callMarkerGPR = X86Registers::ebp;
 static constexpr bool hasStubsForFunctionsWithoutFrame = false;
-static constexpr GPRReg stubTemporaryGPRs[] = { X86Registers::r10, X86Registers::r8, X86Registers::r9, X86Registers::ebx, X86Registers::r12 };
-static constexpr GPRReg seventhOperationArgumentGPR = X86Registers::ebx;
-static constexpr GPRReg eighthOperationArgumentGPR = X86Registers::r12;
+static constexpr GPRReg stubTemporaryGPRs[] = { X86Registers::r10, X86Registers::r8, X86Registers::r9, X86Registers::edi, X86Registers::r12 };
+static constexpr GPRReg seventhOperationArgumentGPR = X86Registers::r12;
+static constexpr GPRReg eighthOperationArgumentGPR = X86Registers::ebx;
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters + 2;
 constexpr GPRReg operationArgumentGPR(unsigned index)
 {

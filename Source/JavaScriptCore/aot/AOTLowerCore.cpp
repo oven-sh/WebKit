@@ -561,8 +561,10 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         }
         patchpoint->append(ConstrainedValue(value, ValueRep::reg(argument.reg)));
     }
-    if (slotArgument)
+    if (slotArgument) {
         patchpoint->append(ConstrainedValue(m_data, ValueRep::SomeRegister));
+        m_graph.patchpointsTakingData.add(patchpoint);
+    }
     for (auto& immediate : immediates) {
         if (immediate.reg != stubImmediateGPR)
             clobberedBeforeCall.add(immediate.reg, IgnoreVectors);

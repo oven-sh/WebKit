@@ -417,7 +417,7 @@ struct CallSite {
 #if CPU(ARM64)
 static constexpr GPRReg functionIndexGPR = ARM64Registers::x15;
 #elif CPU(X86_64)
-static constexpr GPRReg functionIndexGPR = X86Registers::edi;
+static constexpr GPRReg functionIndexGPR = X86Registers::r10;
 #endif
 #if CPU(ARM64) || CPU(X86_64)
 void loadFunctionIndexAt(CCallHelpers&, GPRReg pc);

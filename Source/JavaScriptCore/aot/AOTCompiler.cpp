@@ -111,6 +111,21 @@ static void usePinnedRegistersDirectly(B3::Air::Code& code)
     }
 }
 
+#if CPU(X86_64)
+static void keepDataInRegister(const Graph& graph, B3::Air::Code& code)
+{
+    for (B3::Air::BasicBlock* block : code) {
+        for (B3::Air::Inst& inst : *block) {
+            if (inst.kind.opcode != B3::Air::Patch || !inst.origin || !graph.patchpointsTakingData.contains(inst.origin))
+                continue;
+            B3::Air::Arg& data = inst.args()[inst.args().size() - 1];
+            if (data.isTmp() && !data.tmp().isReg())
+                code.addFastTmp(data.tmp());
+        }
+    }
+}
+#endif
+
 bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
 {
     if (code.frameSize() || code.calleeSaveRegisterAtOffsetList().registerCount() || graph.alwaysEmitsCalls || !graph.catchEntrypoints.isEmpty())
@@ -245,7 +260,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     proc.pinRegister(GPRInfo::numberTagRegister);
     proc.pinRegister(GPRInfo::notCellMaskRegister);
 #if CPU(X86_64)
-    proc.code().setUnsavedCalleeSaves(RegisterSet { X86Registers::ebx, X86Registers::r12 });
+    proc.code().setUnsavedCalleeSaves(RegisterSet { X86Registers::r12 });
 #endif
     Lowering lowering(graph, proc);
     if (!lowering.run())
@@ -301,6 +316,9 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
 
     B3::generateToAir(proc);
     usePinnedRegistersDirectly(proc.code());
+#if CPU(X86_64)
+    keepDataInRegister(graph, proc.code());
+#endif
     B3::Air::prepareForGeneration(proc.code());
     CCallHelpers jit;
     CCallHelpers::Jump jumpToMainEntrypoint;
