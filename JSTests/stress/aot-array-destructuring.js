@@ -139,9 +139,9 @@ check(fromCall(0), "0,1", "the result of a call");
 check(nestedLiteral(0), "0,1", "a literal in a literal");
 check(breaks([1, 2, 3]), 2, "leaving a loop early");
 for (let f of [swap, rotate, fewer, defaults, elision, members])
-    doesNotApply(f, "calls:IteratorOpen", "calls:IteratorNext", "calls:operationAOTNewArray");
+    doesNotApply(f, "opens-iterator", "advances-iterator", "calls:operationAOTNewArray");
 for (let f of [result, spreads, takesRest, fromCall, two, three, skip, nested, rest, groups])
-    applies(f, "calls:IteratorOpen", "calls:IteratorNext");
+    applies(f, "opens-iterator", "advances-iterator");
 for (let f of [result, takesRest])
     applies(f, "calls:operationAOTNewArray");
 for (let f of [two, three, skip, nested, rest, result, breaks])

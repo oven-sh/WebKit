@@ -61,6 +61,7 @@ void Lowering::checkIteratorResultIsObject(Node* node, LValue value)
 
 void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
 {
+    m_graph.remark("opens-iterator"_s);
     VirtualRegister iteratorRegister, nextRegister, symbolIteratorRegister, iterableRegister;
     if (isAsync) {
         auto bytecode = node->as<OpAsyncIteratorOpen>();
@@ -134,6 +135,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
 
 void Lowering::lowerIteratorNext(Node* node)
 {
+    m_graph.remark("advances-iterator"_s);
     auto bytecode = node->as<OpIteratorNext>();
     Node* nextNode = node->use(bytecode.m_next);
     Node* iteratorNode = node->use(bytecode.m_iterator);

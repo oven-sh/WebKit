@@ -3,9 +3,9 @@
 
     run-tests.py <jsc>
 
-The tests are JSTests/stress/aot-*.js and sound-types-*.js. Each runs with the options of its header, twice: as it says, and with
-every inferred type checked against the value and the B3 and Air validators on, as in the mode `aot-validate`. A `//@ run("name", ...)` in the
-header is one more run.
+The tests are JSTests/stress/aot-*.js and sound-types-*.js. Each runs with the options of its header, three times: as it says; with
+every inferred type checked against the value and the B3 and Air validators on, as in the mode `aot-validate`; and without data stubs,
+which is what every CPU but ARM64 compiles. A `//@ run("name", ...)` in the header is one more run.
 
 A test fails if it prints anything or exits with anything but 0. run-javascriptcore-tests runs all of this and much more, in
 the modes `aot` and `aot-validate` among the rest. This is what is quick enough to run after every change.
@@ -49,10 +49,10 @@ def main():
         for line in header:
             if also := re.match(r'//@ run\("([^"]+)"(.*)\)', line):
                 runs.append((test, options + re.findall(r'"(--?[^"]*)"', also.group(2)), also.group(1)))
-        for extra in ([], ["--validateAOTInferredTypes=true", "--validateGraphAtEachPhase=true"]):
-            if extra and any("$skipModes << :aot_validate" in line for line in header):
-                continue
-            runs.append((test, options + extra, "validated" if extra else "as it says"))
+        runs.append((test, options, "as it says"))
+        if not any("$skipModes << :aot_validate" in line for line in header):
+            runs.append((test, options + ["--validateAOTInferredTypes=true", "--validateGraphAtEachPhase=true"], "validated"))
+        runs.append((test, options + ["--useAOTDataStubs=false"], "without data stubs"))
 
     failures = 0
     for test, options, label in runs:

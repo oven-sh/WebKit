@@ -50,5 +50,6 @@ for (let round = 0; round < 40; round++) {
         break;
     }
 }
-if (!reused)
+let usesDataStubs = (aotRemarks("read") || []).includes("calls:GetById");
+if (!reused && usesDataStubs)
     throw new Error("this did not test anything");

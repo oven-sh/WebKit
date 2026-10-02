@@ -75,11 +75,16 @@ check(isWide("4"), false, "a 16-bit literal, and its low byte");
 check(isEither("ab", "ab"), true, "two variables");
 check(isLoose("ab"), true, "==");
 check(isLoose({ toString() { return "ab"; } }), true, "==, with a conversion");
-for (let f of [is1, is2, is3, is4, is5, is6, is7, is8, isNot4, isHigh])
+function readsProperty(o) { return o.p; }
+readsProperty({ p: 1 });
+let usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+for (let f of usesDataStubs ? [is1, is2, is3, is4, is5, is6, is7, is8, isNot4, isHigh] : [])
     applies(f, "short-literal-comparison");
-applies(is1, "calls:IsStringEqualToLiteral1");
-applies(is3, "calls:IsStringEqualToLiteral2To3");
-applies(is7, "calls:IsStringEqualToLiteral4To7");
-applies(is8, "calls:IsStringEqualToLiteral8");
+if (usesDataStubs) {
+    applies(is1, "calls:IsStringEqualToLiteral1");
+    applies(is3, "calls:IsStringEqualToLiteral2To3");
+    applies(is7, "calls:IsStringEqualToLiteral4To7");
+    applies(is8, "calls:IsStringEqualToLiteral8");
+}
 for (let f of [is0, is9, isWide, isEither, isLoose])
     doesNotApply(f, "short-literal-comparison");
