@@ -1856,6 +1856,8 @@ void JSObject::convertInt32ForValue(VM& vm, JSValue value)
 void JSObject::convertFromCopyOnWrite(VM& vm)
 {
     ASSERT(isCopyOnWrite(indexingMode()));
+    // Every caller that reaches this for an object with immutable properties is about to write its elements in place.
+    RELEASE_ASSERT(!structure()->hasImmutableProperties());
     ASSERT(structure()->indexingMode() == indexingMode());
 
     const bool hasIndexingHeader = true;
@@ -1918,6 +1920,9 @@ ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
     ASSERT(inherits(info()));
 
     if (isCopyOnWrite(indexingMode())) {
+        // Compiled code asks for this before it stores in place.
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, Int32Shape) == Int32Shape) {
             ASSERT(hasInt32(indexingMode()));
             convertFromCopyOnWrite(vm);
@@ -1955,6 +1960,9 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
     ASSERT(inherits(info()));
 
     if (isCopyOnWrite(indexingMode())) {
+        // Compiled code asks for this before it stores in place.
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, DoubleShape) == DoubleShape) {
             convertFromCopyOnWrite(vm);
             if (hasDouble(indexingMode()))
@@ -1994,6 +2002,9 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
     ASSERT(inherits(info()));
 
     if (isCopyOnWrite(indexingMode())) {
+        // Compiled code asks for this before it stores in place.
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, ContiguousShape) == ContiguousShape) {
             convertFromCopyOnWrite(vm);
             if (hasContiguous(indexingMode()))
@@ -2111,7 +2122,10 @@ ArrayStorage* JSObject::ensureArrayStorageExistsAndEnterDictionaryIndexingMode(V
 
 void JSObject::switchToSlowPutArrayStorage(VM& vm)
 {
-    ensureWritable(vm);
+    // Slow-put storage makes a store into a hole consult the prototype chain. Nothing is stored into an array with immutable
+    // properties, and its packed elements stay readable in place.
+    if (!tryEnsureWritable(vm)) [[unlikely]]
+        return;
 
     switch (indexingType()) {
     case ArrayClass:
@@ -3014,6 +3028,46 @@ bool JSObject::hasImmutableProperties() const
     return structure()->hasImmutableProperties();
 }
 
+// Copy-on-write storage is the one kind every tier reads in place and no tier stores into in place. It is a cell of its own with
+// room for elements only, and its users expect no holes. Null: this object's elements cannot go there.
+static JSCellButterfly* tryCopyElementsToCopyOnWriteStorage(VM& vm, JSObject* object)
+{
+    if (!isJSArray(object) || object->structure()->outOfLineCapacity() || object->structure()->hijacksIndexingHeader())
+        return nullptr;
+    IndexingType type = object->indexingType();
+    Butterfly* butterfly = object->butterfly();
+    unsigned length = butterfly->publicLength();
+    IndexingType copyOnWriteType;
+    if (hasInt32(type))
+        copyOnWriteType = CopyOnWriteArrayWithInt32;
+    else if (hasDouble(type))
+        copyOnWriteType = CopyOnWriteArrayWithDouble;
+    else if (hasContiguous(type))
+        copyOnWriteType = CopyOnWriteArrayWithContiguous;
+    else
+        return nullptr;
+    for (unsigned i = 0; i < length; ++i) {
+        if (hasDouble(type)) {
+            double value = butterfly->contiguousDouble().at(object, i);
+            if (value != value)
+                return nullptr;
+        } else if (!butterfly->contiguous().at(object, i).get())
+            return nullptr;
+    }
+    JSCellButterfly* result = JSCellButterfly::tryCreate(vm, copyOnWriteType, length);
+    if (!result)
+        return nullptr;
+    // (Allocating can run the collector, which leaves the object's own storage where it is.)
+    butterfly = object->butterfly();
+    for (unsigned i = 0; i < length; ++i) {
+        if (hasDouble(type))
+            result->setIndex(vm, i, jsDoubleNumber(butterfly->contiguousDouble().at(object, i)));
+        else
+            result->setIndex(vm, i, butterfly->contiguous().at(object, i).get());
+    }
+    return result;
+}
+
 bool JSObject::makePropertiesImmutable(VM& vm)
 {
     if (structure()->hasImmutableProperties())
@@ -3042,18 +3096,37 @@ bool JSObject::makePropertiesImmutable(VM& vm)
             global->varReadOnlyWatchpointSet().fireAll(vm, "The global object's properties were made immutable");
     }
     // The JIT and the quick C++ paths write Int32/Double/Contiguous/ArrayStorage elements in place, slow-put storage included
-    // (it only diverts stores to holes). Dictionary indexing mode keeps every element in the sparse map, so each indexed store,
-    // delete and length change reaches a C++ slow path, which refuses. Objects with no indexed storage
-    // (every intrinsic prototype) are untouched, so Array.prototype keeps its blank indexing.
-    if (hasIndexedProperties(indexingType()))
-        enterDictionaryIndexingMode(vm);
+    // (it only diverts stores to holes). There are two kinds of storage they do not write in place, so that each indexed store,
+    // delete and length change reaches a C++ path, which refuses: copy-on-write storage, which every tier still reads in place,
+    // and the sparse map of dictionary indexing mode. A JSArray's packed elements go to the first (an array literal's are there
+    // already), elements of any other kind to the second. Objects with no indexed storage (every intrinsic prototype) are
+    // untouched, so Array.prototype keeps its blank indexing.
+    JSCellButterfly* copyOnWriteElements = nullptr;
+    if (hasIndexedProperties(indexingType())) {
+        bool staysPacked = false;
+        if (Options::useCopyOnWriteStorageForImmutableArrayElements()) {
+            if (isCopyOnWrite(indexingMode()))
+                staysPacked = true;
+            else {
+                copyOnWriteElements = tryCopyElementsToCopyOnWriteStorage(vm, this);
+                staysPacked = copyOnWriteElements;
+            }
+        }
+        if (!staysPacked)
+            enterDictionaryIndexingMode(vm);
+    }
     // Compiled code tests RegExpObject's own lastIndex-writable flag, not the Structure: make the two agree.
     if (auto* regExpObject = dynamicDowncast<RegExpObject>(this))
         regExpObject->setLastIndexIsNotWritable();
-    Structure* oldStructure = structure();
+    StructureID oldStructureID = structureID();
+    Structure* oldStructure = oldStructureID.decode();
     // Deferred, so adaptive watchpoints on this object see the new structure and re-install instead of firing their sets.
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-    setStructure(vm, Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred));
+    Structure* newStructure = Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred);
+    RELEASE_ASSERT(isCopyOnWrite(newStructure->indexingMode()) == (copyOnWriteElements || isCopyOnWrite(oldStructure->indexingMode())));
+    if (copyOnWriteElements)
+        nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteElements->toButterfly());
+    setStructure(vm, newStructure);
     if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
     return true;

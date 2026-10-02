@@ -1646,6 +1646,16 @@ inline void JSObject::ensureWritable(VM& vm)
         convertFromCopyOnWrite(vm);
 }
 
+inline bool JSObject::tryEnsureWritable(VM& vm)
+{
+    if (isCopyOnWrite(indexingMode())) {
+        if (structure()->hasImmutableProperties()) [[unlikely]]
+            return false;
+        convertFromCopyOnWrite(vm);
+    }
+    return true;
+}
+
 } // namespace JSC
 
 

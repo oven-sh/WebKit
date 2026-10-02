@@ -307,7 +307,10 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSArray* thisObject = uncheckedDowncast<JSArray>(cell);
-    thisObject->ensureWritable(vm);
+    // (An array whose elements stay in copy-on-write storage goes to JSObject's implementation, which refuses for it and serves
+    // another receiver.)
+    if (!thisObject->tryEnsureWritable(vm)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSObject::put(cell, globalObject, propertyName, value, slot));
 
     if (propertyName == vm.propertyNames->length) {
         if (!thisObject->isLengthWritable()) {
@@ -547,8 +550,8 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
 
 bool JSArray::fastFill(VM& vm, unsigned startIndex, unsigned endIndex, JSValue value)
 {
-    if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+    if (!tryEnsureWritable(vm)) [[unlikely]]
+        return false;
 
     IndexingType type = indexingType();
     if (!(type & IsArray) || hasAnyArrayStorage(type))
@@ -895,8 +898,8 @@ bool JSArray::fastCopyWithin(JSGlobalObject* globalObject, uint64_t from64, uint
     if (!canDoFastPath)
         return false;
 
-    if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+    if (!tryEnsureWritable(vm)) [[unlikely]]
+        return false;
 
     auto type = this->indexingType();
     switch (type) {
@@ -1113,8 +1116,8 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+    if (!tryEnsureWritable(vm)) [[unlikely]]
+        return false;
 
     IndexingType type = indexingType();
     bool allowPromotion = false;
@@ -1432,7 +1435,8 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
 
 JSValue JSArray::fastShift(VM& vm)
 {
-    ensureWritable(vm);
+    if (!tryEnsureWritable(vm)) [[unlikely]]
+        return { };
 
     Butterfly* butterfly = this->butterfly();
     auto indexingType = this->indexingType();

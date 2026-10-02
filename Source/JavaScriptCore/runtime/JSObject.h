@@ -642,6 +642,9 @@ public:
     }
 
     void ensureWritable(VM& vm); // Defined in JSObjectInlines.h
+    // As ensureWritable(), for a caller that can do without. False: the elements are in copy-on-write storage to keep them from
+    // changing (JSObject::makePropertiesImmutable()), and stay there.
+    bool tryEnsureWritable(VM&); // Defined in JSObjectInlines.h
 
     static constexpr size_t offsetOfInlineStorage();
 

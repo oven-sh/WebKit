@@ -623,7 +623,12 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
     uint64_t length = toLength(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    thisObject->ensureWritable(vm);
+    if (!thisObject->tryEnsureWritable(vm)) [[unlikely]] {
+        // What the generic path below does for such an array: nothing if there is nothing to exchange, else the first Set fails.
+        if (length > 1)
+            return throwVMTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+        return JSValue::encode(thisObject);
+    }
 
     switch (thisObject->indexingType()) {
     case ALL_CONTIGUOUS_INDEXING_TYPES:

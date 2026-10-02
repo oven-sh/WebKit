@@ -116,6 +116,12 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
         return (oldType & ~IndexingShapeAndWritabilityMask) | SlowPutArrayStorageShape;
     case TransitionKind::AddIndexedAccessors:
         return oldType | MayHaveIndexedAccessors;
+    case TransitionKind::MakePropertiesImmutable:
+        // A JSArray that still has packed elements here keeps them, in copy-on-write storage: JSObject::makePropertiesImmutable()
+        // has moved them there. Every other object with elements has been given dictionary indexing first.
+        if ((oldType & IsArray) && (hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType)))
+            return oldType | CopyOnWrite;
+        return oldType;
     default:
         return oldType;
     }
