@@ -1,9 +1,10 @@
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1")
 
 // The compiler of the non-backtracking matcher takes, from the program of a pattern, the most
-// steps a position of the subject can cost a match (maximumStepsPerPosition). No match takes
-// more. This checks that on patterns made from a fixed sequence of numbers: groups,
-// alternatives, repeats, and lookarounds inside one another.
+// steps a position of the subject can cost a match (maximumStepsPerPosition) and the most
+// working memory a match can hold (maximumScratchBytes). No match takes more. This checks that
+// on patterns made from a fixed sequence of numbers: groups, alternatives, repeats, and
+// lookarounds inside one another.
 
 let state = 1;
 
@@ -121,6 +122,8 @@ for (let index = 0; index < 2000; ++index) {
         statistics = $vm.regExpMatchStatistics(regExp, characters, start);
         if (statistics.steps > statistics.maximumStepsPerPosition * (characters.length - start + 1))
             throw new Error(regExp + " on " + JSON.stringify(characters) + " from " + start + ": " + statistics.steps + " steps, with a bound of " + statistics.maximumStepsPerPosition + " per position");
+        if (statistics.scratchBytes > statistics.maximumScratchBytes)
+            throw new Error(regExp + " on " + JSON.stringify(characters) + " from " + start + ": " + statistics.scratchBytes + " bytes, with a bound of " + statistics.maximumScratchBytes);
     }
 }
 

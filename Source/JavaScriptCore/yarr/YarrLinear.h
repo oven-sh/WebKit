@@ -52,12 +52,19 @@ namespace JSC { namespace Yarr {
 // The states of a position are kept in the order backtracking would try them. The match that is
 // found, and what each group captured, are therefore the ones the backtracking engines report.
 //
-// A backreference has no such automaton. A lookaround is run to its end at every position that
-// asserts it, so it is accepted only when what it can match has a bounded length, and when the
-// lookarounds of the pattern, inside one another, do not cost a position more steps than the
-// largest program without a lookaround does. The compiler refuses the other patterns and says
-// why. A refused pattern is compiled as it is without the option: RegExp::compile() asks this
-// matcher first and turns to the JIT and the bytecode interpreter when it refuses.
+// What a backreference matches depends on what a group captured, which is not a state of the
+// automaton, and the compiler does not expand the ones whose group can only capture a few
+// strings. A lookaround is run to its end at every position that asserts it, so it is accepted
+// only when what it can match has a bounded length, and when the lookarounds of the pattern,
+// inside one another, do not cost a position more steps than the largest program without a
+// lookaround does. The compiler refuses the other patterns and says why.
+//
+// The engine of a RegExp is chosen once, when it is compiled: RegExp::compile() asks this
+// matcher first, and a pattern it refuses is compiled for the JIT and the bytecode interpreter
+// as it is without the option. No match changes engine part of the way through.
+//
+// The bound is for one match. A global loop (replace, matchAll, split) runs one match per
+// result, and each of them can read the subject to its end.
 
 enum class LinearRefusal : uint8_t {
     None,
@@ -153,9 +160,11 @@ class LinearProgram {
 public:
     // What one match cost. Both numbers depend only on the program and the subject.
     struct Statistics {
-        // Instructions executed, over every state.
+        // Instructions executed, over every state. At most m_maximumStepsPerPosition for each
+        // position the match reads.
         uint64_t steps { 0 };
-        // Bytes of working memory the matcher held at the end of the match.
+        // Bytes of working memory the matcher held at the end of the match. At most
+        // m_maximumScratchBytes.
         size_t scratchBytes { 0 };
     };
 
@@ -186,6 +195,9 @@ public:
     // start, ..., length of the subject. At most four times
     // Options::maximumRegExpLinearProgramSize(): the compiler refuses the program otherwise.
     uint64_t m_maximumStepsPerPosition { 0 };
+    // A match holds at most this much working memory, whatever the subject is. At most
+    // Options::maximumRegExpLinearWorkingMemory(): the compiler refuses the program otherwise.
+    uint64_t m_maximumScratchBytes { 0 };
 };
 
 // Null, with the reason in the LinearRefusal, for a pattern the matcher cannot run.

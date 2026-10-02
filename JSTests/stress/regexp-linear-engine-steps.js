@@ -8,8 +8,11 @@
 // How steep the line is has a limit too. The compiler takes from the program the most steps a
 // position of the subject can cost (maximumStepsPerPosition), and it refuses a program that
 // can cost more than four steps for each of the maximumRegExpLinearProgramSize instructions.
+// It does the same for the working memory (maximumScratchBytes, at most
+// maximumRegExpLinearWorkingMemory).
 
 const maximumProgramSize = 65536;
+const maximumWorkingMemory = 8 * 1024 * 1024;
 
 function statisticsOf(regExp, subject)
 {
@@ -20,6 +23,8 @@ function statisticsOf(regExp, subject)
         throw new Error(regExp + " took " + statistics.steps + " steps for " + subject.length + " characters, with a bound of " + statistics.maximumStepsPerPosition + " per position");
     if (statistics.maximumStepsPerPosition > 4 * maximumProgramSize)
         throw new Error(regExp + " was accepted with a bound of " + statistics.maximumStepsPerPosition + " steps per position");
+    if (statistics.scratchBytes > statistics.maximumScratchBytes || statistics.maximumScratchBytes > maximumWorkingMemory)
+        throw new Error(regExp + " held " + statistics.scratchBytes + " bytes, with a bound of " + statistics.maximumScratchBytes);
     return statistics;
 }
 
@@ -128,3 +133,30 @@ if (statisticsOf(nested(6), "a".repeat(40)).index !== -1)
 let refused = $vm.regExpMatchStatistics(nested(7), "a", 0);
 if (refused.engine !== "backtracking" || refused.refusal !== "lookaround too costly")
     throw new Error("Seven lookarounds inside one another: " + refused.engine + " (" + refused.refusal + ")");
+
+// The matcher keeps the result of a lookaround for the position it evaluated last, and the
+// bound counts on that. Without it, the first of these takes 2.8 times its bound.
+for (let regExp of [/(?:(?=a{30})a?){4}c/, /(?:(?<=a{30})a?){3}c/, /(?=(?:a|aa|aaa|aaaa|aaaaa)a{20}b)/])
+    statisticsOf(regExp, "a".repeat(200));
+
+// All of the above is about one match. A global loop runs one match per result, and each of
+// them can read the subject to its end: /a*b/ fails only there, and then "a" matches. So the
+// steps of the loop grow with the square of the subject, as they do for a backtracking engine.
+function stepsOfGlobalLoop(regExp, subject)
+{
+    let steps = 0;
+    for (let start = 0; start < subject.length;) {
+        let statistics = $vm.regExpMatchStatistics(regExp, subject, start);
+        if (statistics.engine !== "linear" || statistics.index !== start)
+            throw new Error(regExp + " from " + start + ": " + statistics.engine + ", matched at " + statistics.index);
+        if (statistics.steps > statistics.maximumStepsPerPosition * (subject.length - start + 1))
+            throw new Error(regExp + " from " + start + " took " + statistics.steps + " steps");
+        steps += statistics.steps;
+        start = statistics.index + 1;
+    }
+    return steps;
+}
+
+let loop = [250, 500, 1000].map(length => stepsOfGlobalLoop(/a*b|a/, "a".repeat(length)));
+if (loop[1] < 3.9 * loop[0] || loop[2] < 3.9 * loop[1])
+    throw new Error("A global loop of /a*b|a/ took " + loop.join(", ") + " steps for 250, 500 and 1000 characters");

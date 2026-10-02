@@ -90,8 +90,11 @@ public:
     std::unique_ptr<LinearProgram> compile(LinearRefusal& refusal)
     {
         compileBody();
-        if (!failed() && workingMemoryBound() > Options::maximumRegExpLinearWorkingMemory())
-            refuse(LinearRefusal::WorkingMemoryTooLarge);
+        if (!failed()) {
+            m_program->m_maximumScratchBytes = workingMemoryBound();
+            if (m_program->m_maximumScratchBytes > Options::maximumRegExpLinearWorkingMemory())
+                refuse(LinearRefusal::WorkingMemoryTooLarge);
+        }
         if (!failed()) {
             // Without a lookaround the bound is under this limit: the program is.
             m_program->m_maximumStepsPerPosition = maximumStepsPerPosition();
@@ -118,8 +121,10 @@ private:
     // The matcher keeps an instruction's index and a bit in one unsigned.
     static constexpr unsigned maximumProgramSizeLimit = 1u << 30;
 
-    // LinearMatcher::Frame.
+    // LinearMatcher::Frame, and what the matcher holds for a code before its vectors allocate:
+    // LinearMatcher::Scratch, with their inline capacity, and a pointer to it.
     static constexpr uint64_t bytesPerFrame = 3 * sizeof(unsigned);
+    static constexpr uint64_t bytesPerScratch = 2304;
 
     static constexpr uint64_t unbounded = std::numeric_limits<uint64_t>::max();
 
@@ -691,7 +696,7 @@ private:
     // at most two states per instruction that waits on a character, in two lists, and every
     // state of a code that writes slots has a copy of the slots. addThread() keeps a frame for
     // each instruction it is in the middle of, and one for each slot that instruction wrote. The
-    // vectors that hold all this grow by a quarter at a time.
+    // vectors that hold all this grow by a quarter at a time, past the capacity they start with.
     uint64_t workingMemoryBound() const
     {
         uint64_t bytes = 0;
@@ -725,7 +730,7 @@ private:
             bytes += frames * bytesPerFrame;
             bytes += 2 * slots * sizeof(unsigned);
         }
-        return bytes + bytes / 4;
+        return bytes + bytes / 4 + m_program->m_codes.size() * bytesPerScratch;
     }
 
     // A step of the matcher is a visit of addThread(), or a state run() takes over a
@@ -997,12 +1002,14 @@ public:
 
     uint64_t steps() const { return m_steps; }
 
+    // The working memory this matcher holds: a Scratch for the pattern and one for each
+    // lookaround it evaluated, and what their vectors allocated past their inline capacity.
     size_t scratchBytes() const
     {
-        size_t bytes = m_scratch.bytes();
+        size_t bytes = sizeof(Scratch) + m_scratch.outOfLineBytes() + outOfLineBytesOf(m_lookaroundScratch);
         for (auto& scratch : m_lookaroundScratch) {
             if (scratch)
-                bytes += sizeof(Scratch) + scratch->bytes();
+                bytes += sizeof(Scratch) + scratch->outOfLineBytes();
         }
         return bytes;
     }
@@ -1010,6 +1017,12 @@ public:
 private:
     static constexpr char32_t errorCodePoint = 0xFFFFFFFFu;
     static constexpr unsigned notEvaluated = std::numeric_limits<unsigned>::max();
+
+    template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minimumCapacity, typename Malloc>
+    static size_t outOfLineBytesOf(const Vector<T, inlineCapacity, OverflowHandler, minimumCapacity, Malloc>& vector)
+    {
+        return vector.capacity() > inlineCapacity ? vector.capacity() * sizeof(T) : 0;
+    }
 
     // The states of one position, in the order backtracking would try them. A state is the
     // instruction it waits on and, in a code that writes slots, its copy of the slots.
@@ -1034,7 +1047,7 @@ private:
             return slots.span().subspan(index * slotCount, slotCount);
         }
 
-        size_t bytes() const { return (programCounters.capacity() + slots.capacity()) * sizeof(unsigned); }
+        size_t outOfLineBytes() const { return outOfLineBytesOf(programCounters) + outOfLineBytesOf(slots); }
 
         Vector<unsigned, 16> programCounters;
         Vector<unsigned, 64> slots;
@@ -1055,12 +1068,10 @@ private:
     public:
         Scratch() = default;
 
-        size_t bytes() const
+        size_t outOfLineBytes() const
         {
-            return current.bytes() + next.bytes()
-                + visited.capacity() * sizeof(unsigned)
-                + stack.capacity() * sizeof(Frame)
-                + (working.capacity() + result.capacity()) * sizeof(unsigned);
+            return current.outOfLineBytes() + next.outOfLineBytes()
+                + outOfLineBytesOf(visited) + outOfLineBytesOf(stack) + outOfLineBytesOf(working) + outOfLineBytesOf(result);
         }
 
         ThreadList current;
@@ -1078,6 +1089,8 @@ private:
         bool isPrepared { false };
         bool isRunning { false };
     };
+    // Seven vectors, each of which can hold one element more than a quarter over what it needs.
+    static_assert(sizeof(Scratch) + 7 * sizeof(Frame) + sizeof(void*) <= 2304, "LinearCompiler::workingMemoryBound() counts a Scratch as this much");
 
     Scratch& scratchFor(unsigned codeIndex)
     {
@@ -1453,6 +1466,9 @@ unsigned LinearProgram::match(StringView input, unsigned start, unsigned* output
     auto matchWith = [&](auto characters) {
         LinearMatcher<typename decltype(characters)::value_type> matcher(*this, characters);
         unsigned result = matcher.match(start, output);
+        // What the compiler promised for this program.
+        ASSERT(start > characters.size() || matcher.steps() <= m_maximumStepsPerPosition * (characters.size() - start + 1));
+        ASSERT(matcher.scratchBytes() <= m_maximumScratchBytes);
         if (statistics) {
             statistics->steps = matcher.steps();
             statistics->scratchBytes = matcher.scratchBytes();

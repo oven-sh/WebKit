@@ -3375,6 +3375,7 @@ unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, 
         statistics.engine = InterpretStatistics::Engine::Linear;
         statistics.programSize = bytecode->m_linearProgram->instructionCount();
         statistics.maximumStepsPerPosition = bytecode->m_linearProgram->m_maximumStepsPerPosition;
+        statistics.maximumScratchBytes = bytecode->m_linearProgram->m_maximumScratchBytes;
         return bytecode->m_linearProgram->match(input, start, output, &statistics.linear);
     }
     return interpret(bytecode, input, start, output);

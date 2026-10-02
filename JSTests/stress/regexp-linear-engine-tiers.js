@@ -27,8 +27,12 @@ function accepted(subject)
         subject.split(/\s*,\s*/).length,
         subject.search(/\d/),
         subject.match(/[a-z]+/g),
-        // The backtracking engines give up on this one and answer "no match".
+        // The backtracking engines give up on this one and answer "no match", so these four
+        // say which engine ran.
         /(a*)*b|a*!/.test(subject),
+        /(a*)*b|a*!/.exec(subject) !== null,
+        subject.replace(/(a*)*b|a*!/, "").length,
+        subject.split(/(?:a*)*b|a*!/).length,
     ];
 }
 noInline(accepted);
@@ -60,8 +64,8 @@ noInline(refused);
 
 let manyA = "a".repeat(64) + "!";
 for (let i = 0; i < 20000; ++i) {
-    check("accepted", accepted("ab 2026-10-01, x"), [false, [3, "2026", "10", "01"], "ab_2026-10-01,_x", 2, 3, ["ab", "x"], true]);
-    check("accepted", accepted(manyA), [true, null, manyA, 1, -1, ["a".repeat(64)], true]);
+    check("accepted", accepted("ab 2026-10-01, x"), [false, [3, "2026", "10", "01"], "ab_2026-10-01,_x", 2, 3, ["ab", "x"], true, true, 14, 2]);
+    check("accepted", accepted(manyA), [true, null, manyA, 1, -1, ["a".repeat(64)], true, true, 0, 2]);
     check("folded", folded(), [true, "20", 3, "on 01.10.2026", true]);
     check("refused", refused("aa <b>x</b> 1"), [true, "b", "a <b>x</b> 1", true]);
     check("refused", refused("ab"), [false, null, "ab", false]);

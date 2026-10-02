@@ -599,6 +599,7 @@ struct InterpretStatistics {
     // The rest is of Engine::Linear only: the backtracking engines do not count.
     size_t programSize { 0 };
     uint64_t maximumStepsPerPosition { 0 };
+    uint64_t maximumScratchBytes { 0 };
     LinearProgram::Statistics linear;
 };
 // interpret(), with the report.

@@ -1,7 +1,12 @@
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1")
+//@ runDefault("--useDollarVM=1")
+//@ runDefault("--useRegExpJIT=0", "--useDollarVM=1")
 
 // The non-backtracking matcher finds the match, and the captures, that backtracking finds.
-// Every expectation here is what the YARR JIT, the YARR interpreter and V8 report.
+// Every expectation here is what the YARR JIT, the YARR interpreter and V8 report, and this
+// file runs on each of the three engines of JavaScriptCore to say so.
+
+const matcherIsOn = $vm.regExpMatchStatistics(/a/, "a", 0).engine === "linear";
 
 function describe(value)
 {
@@ -11,11 +16,15 @@ function describe(value)
 function test(regExp, subject, expected, lastIndex = 0)
 {
     let statistics = $vm.regExpMatchStatistics(regExp, subject, lastIndex);
-    if (statistics.engine !== "linear")
-        throw new Error(regExp + " did not run on the non-backtracking matcher: " + statistics.refusal);
-    // The compiler says what a position can cost at most, and no match costs more.
-    if (statistics.steps > statistics.maximumStepsPerPosition * (subject.length - lastIndex + 1))
-        throw new Error(regExp + " on " + describe(subject) + " from " + lastIndex + ": " + statistics.steps + " steps, with a bound of " + statistics.maximumStepsPerPosition + " per position");
+    if (matcherIsOn) {
+        if (statistics.engine !== "linear")
+            throw new Error(regExp + " did not run on the non-backtracking matcher: " + statistics.refusal);
+        // The compiler says what a match can cost at most, and no match costs more.
+        if (statistics.steps > statistics.maximumStepsPerPosition * (subject.length - lastIndex + 1))
+            throw new Error(regExp + " on " + describe(subject) + " from " + lastIndex + ": " + statistics.steps + " steps, with a bound of " + statistics.maximumStepsPerPosition + " per position");
+        if (statistics.scratchBytes > statistics.maximumScratchBytes)
+            throw new Error(regExp + " on " + describe(subject) + ": " + statistics.scratchBytes + " bytes, with a bound of " + statistics.maximumScratchBytes);
+    }
 
     regExp.lastIndex = lastIndex;
     let match = regExp.exec(subject);

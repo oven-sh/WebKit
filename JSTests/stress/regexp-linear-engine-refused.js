@@ -113,7 +113,19 @@ if (hasCodeOfJIT(/(a*)*b/, "aab") || hasCodeOfJIT(/a/, "a"))
     throw new Error("An accepted pattern has the code of the JIT");
 
 // The backtracking engines run a refused pattern as they do without the matcher, where they
-// rewrite /.*X.*/ to a search for X. This one reads 32,000 characters once.
-let wrapped = /.*foo(?=.*bar).*/;
-if ($vm.regExpMatchStatistics(wrapped, "x".repeat(32000), 0).refusal !== "lookaround of unbounded length" || wrapped.test("x".repeat(32000)) || !wrapped.test("x".repeat(32000) + "foo bar"))
-    throw new Error("/.*foo(?=.*bar).*/ does not match as it does without the matcher");
+// rewrite /.*X.*/ to a search for X and read these subjects once.
+function refusedWrapped(regExp, subject, expectedIndex)
+{
+    let statistics = $vm.regExpMatchStatistics(regExp, subject, 0);
+    if (statistics.engine !== "backtracking" || statistics.refusal !== "lookaround of unbounded length")
+        throw new Error(regExp + ": " + statistics.engine + " (" + statistics.refusal + ")");
+    let match = regExp.exec(subject);
+    if ((match ? match.index : -1) !== expectedIndex || statistics.index !== expectedIndex)
+        throw new Error(regExp + " matched at " + (match ? match.index : -1) + " and " + statistics.index + ", expected " + expectedIndex);
+}
+
+refusedWrapped(/.*foo(?=.*bar).*/, "x".repeat(32000), -1);
+refusedWrapped(/.*foo(?=.*bar).*/, "x".repeat(32000) + "foo bar", 0);
+refusedWrapped(/.*err(?!.*ignored).*/, "c".repeat(8000), -1);
+refusedWrapped(/.*(?<!\/\/.*)import.*/, "x".repeat(2000), -1);
+refusedWrapped(/.*(?:ab)+(?=.*;).*/, ("c".repeat(2000) + "\n").repeat(60) + "ab;", 120060);
