@@ -1140,6 +1140,8 @@ void Lowering::lowerResolveScope(Node* node)
     }
 
     StaticVariable variable = resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType);
+    if (variable.isGlobal && !node->useCount)
+        return;
     if (variable.isAtStaticDepth()) {
         setJSValue(node, walk(variable.depth));
         return;

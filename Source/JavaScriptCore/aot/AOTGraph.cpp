@@ -364,11 +364,22 @@ Node* Graph::intrinsic(unsigned number)
 
 Node* Graph::intrinsicReadBy(const JSInstruction* instruction, Node* base)
 {
+    auto isGlobal = [&](unsigned identifier, unsigned depth, ResolveType type) {
+        return !isStaticClosureVarResolveType(type) && type != ResolvedClosureVar && type != ResolvedLazyClosureVar && resolveStatically(identifier, depth, type).isGlobal;
+    };
+    if (instruction->opcodeID() == op_get_from_scope) {
+        auto bytecode = instruction->as<OpGetFromScope>();
+        const Identifier& name = m_codeBlock->identifier(bytecode.m_var);
+        bool isUndefined = name == m_vm.propertyNames->undefinedKeyword;
+        bool isNaN = name == m_vm.propertyNames->NaN;
+        if ((isUndefined || isNaN || name == m_vm.propertyNames->Infinity) && isGlobal(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_getPutInfo.resolveType()))
+            return constant(isUndefined ? jsUndefined() : isNaN ? jsNaN() : jsNumber(std::numeric_limits<double>::infinity()));
+    }
     const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
     if (!intrinsics)
         return nullptr;
     auto variable = [&](unsigned identifier, unsigned depth, ResolveType type) -> unsigned {
-        if (isStaticClosureVarResolveType(type) || type == ResolvedClosureVar || type == ResolvedLazyClosureVar || !resolveStatically(identifier, depth, type).isGlobal)
+        if (!isGlobal(identifier, depth, type))
             return 0;
         return intrinsics->find(ImmutableIntrinsics::globalObject, *m_codeBlock->identifier(identifier).impl());
     };
