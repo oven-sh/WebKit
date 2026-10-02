@@ -15,6 +15,7 @@ stress/aot-constructors.js
 stress/aot-loop-guards.js
 stress/aot-object-literals.js
 stress/aot-objects-and-caches.js
+stress/array-buffer-slice-species-constructor.js
 stress/array-copywithin.js
 stress/array-from-arguments-overwritten-length.js
 stress/array-from-map-iterator-symbol-iterator-override.js
@@ -143,6 +144,7 @@ stress/put-non-reified-static-function-or-custom.js
 stress/put-to-primitive-non-reified-static-custom.js
 stress/put-to-proto-chain-overrides-put.js
 stress/racy-slow-put-cloned-arguments-when-having-a-bad-time.js
+stress/reflect-construct-call-site-guard.js
 stress/reflect-set.js
 stress/regexp-flags-getter-fast-path.js
 stress/regexp-prototype-matchall-watchpoint.js
@@ -176,6 +178,7 @@ stress/slowputarraystorage-stale-structure-bit.js
 stress/spread-array-iterator-watchpoint-2.js
 stress/spread-array-iterator-watchpoint.js
 stress/spread-forward-varargs-rest-parameter-change-iterator-protocol.js
+stress/spread-set-cross-realm-symbol-iterator-side-effects.js
 stress/spread-set.js
 stress/static-function-delete.js
 stress/static-getter-delete.js
@@ -211,3 +214,4 @@ stress/weak-map-constructor-adder-error-cross-realm.js
 stress/weak-map-constructor-adder.js
 stress/weak-set-constructor-adder-error-cross-realm.js
 stress/weak-set-constructor-adder.js
+v8-v6/v8-deltablue.js

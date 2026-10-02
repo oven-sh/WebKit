@@ -27,6 +27,7 @@
 #include "StackFrame.h"
 
 #include "AOTRuntime.h"
+#include "StaticHeap.h"
 #include "CodeBlock.h"
 #include "DebuggerPrimitives.h"
 #include "FunctionExecutable.h"
@@ -90,7 +91,7 @@ CodeBlock* StackFrame::makeCodeBlock() const
 #if ENABLE(AOT)
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
     VM& vm = jsFrame.aotExecutable->vm();
-    if (vm.heap.mutatorState() != MutatorState::Running)
+    if (vm.heap.mutatorState() != MutatorState::Running || !StaticHeap::ensureSourceProviderOf(vm, jsFrame.aotExecutable.get()))
         return nullptr;
     if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, jsFrame.aotExecutable.get(), jsFrame.aotKind))
         return function.ensureCodeBlock();

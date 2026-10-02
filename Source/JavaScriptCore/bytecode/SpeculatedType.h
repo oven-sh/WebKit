@@ -31,6 +31,7 @@
 #include <JavaScriptCore/CPU.h>
 #include <JavaScriptCore/JSType.h>
 #include <wtf/Forward.h>
+#include <wtf/PrintStream.h>
 
 namespace JSC {
 
