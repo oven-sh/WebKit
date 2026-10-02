@@ -154,14 +154,19 @@ Rules for an edit to an upstream test:
   also runs wherever `--jsc-only` is given (so the JSCOnly port can be tested on macOS and Windows, where `jsc` is
   `<root>/bin/jsc`).
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
-  Two modes, `aot` and `aot-validate`, are part of the default run on arm64: the main script is compiled ahead of time, in-process
-  (`--compileMainScriptAheadOfTime=true`), and runs that code with the JIT off. `aot-validate` also checks every type the compiler
+  Two modes, `aot` and `aot-validate`, are part of the default run on arm64: the main script is compiled ahead of time to a temporary
+  file (`--compileMainScriptAheadOfTime=true`), and the shell runs again from that file, as an executable does: JIT off, no bytecode,
+  no source text. `aot-validate` also checks every type the compiler
   inferred against the value at run time, and runs the B3 and Air validators on what the compiler emits and after every phase. Both are
   skipped wherever `lockdown` is: that is upstream's default mode with the JIT off, so a test that needs the JIT already skips it. To
   run only these modes: `--filter '\.aot(-validate)?$'`.
 - Built-in objects are immutable in these modes (`useAOT` implies `useImmutableIntrinsics`): ahead-of-time compiled code relies on it. The
   204 tests that change one are listed in `JSTests/bun-tests-that-change-builtins.txt`, which the runner reads, instead of each
   having a directive, so that they stay as upstream has them. They fail with `--useImmutableIntrinsics=1` in the plain interpreter too.
+- A program that is compiled ahead of time has no source text, so `Function.prototype.toString()` says of its functions what it says of
+  native ones. The 20 tests of `JSTests/stress` that depend on the text are listed in `JSTests/bun-tests-that-read-function-text.txt`, likewise.
+  They fail with `--hideTextOfFunctionsForTesting=1` in the plain interpreter too. `Tools/Scripts/aot/list-tests-that-read-function-text.py`
+  makes the list.
 - On a machine that is also used for something else, pass `--memory-limited`. It skips the 132 tests marked `//@ memoryHog!`, some of
   which allocate until allocation fails: `stress/typed-array-oom-in-buffer-accessor.js` takes about 130 GB on a machine that has it.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated

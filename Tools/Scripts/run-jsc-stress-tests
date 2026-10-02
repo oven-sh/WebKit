@@ -884,11 +884,13 @@ def addRunCommandConfig(config, *additionalEnv)
     if kind =~ /\Aaot(-|\z)/ and $skipModes.include?(:lockdown)
         return
     end
-    # Bun: built-in objects are immutable in the AOT modes. The tests that change one are listed in a file of the fork's, so that they stay
-    # as upstream has them.
+    # Bun: in the AOT modes built-in objects are immutable and the program has no source text. The tests that change a built-in object or read
+    # the text of a function are listed in files of the fork's, so that they stay as upstream has them.
     if kind =~ /\Aaot(-|\z)/
-        $testsThatChangeBuiltins ||= Set.new((WEBKIT_PATH + "JSTests" + "bun-tests-that-change-builtins.txt").readlines.map(&:strip).reject { |line| line.empty? or line.start_with?("#") })
-        return if $testsThatChangeBuiltins.include?("#{$collectionName}/#{$benchmark}")
+        $testsSkippedInAOTModes ||= Set.new(["bun-tests-that-change-builtins.txt", "bun-tests-that-read-function-text.txt"].flat_map { |name|
+            (WEBKIT_PATH + "JSTests" + name).readlines.map(&:strip).reject { |line| line.empty? or line.start_with?("#") }
+        })
+        return if $testsSkippedInAOTModes.include?("#{$collectionName}/#{$benchmark}")
     end
     $didAddRunCommand = true
     name = baseOutputName(config[:kind])
@@ -1397,8 +1399,9 @@ BASE_MODES = [
             "--useJIT=false",
         ]
     ],
-    # Bun: the main script is compiled ahead of time, in-process, and runs that code. The JIT is off, as it is in an executable built
-    # with AOT. Code the compiler never saw (eval, new Function, other scripts that are loaded) runs in the interpreter.
+    # Bun: the main script is compiled ahead of time to a temporary file, and the shell runs again from that file, as an executable built
+    # with AOT does: JIT off, no bytecode, no source text. Code the compiler never saw (eval, new Function, other scripts that are loaded)
+    # runs in the interpreter.
     [
         "AOT",
         "aot",

@@ -38,8 +38,9 @@ function runs compiled code.
    embedder's objects (`nm -u`) for anything of `AOT`, `StaticHeap` or `StaticRegion` that is only defined with the gate on.
 
 `run-javascriptcore-tests` has the modes `aot` and `aot-validate`. The second checks every type that the compiler inferred against
-the value at run time, and runs the B3 and Air validators after every phase. Built-in objects are immutable in those modes, so the
-tests that change one are skipped there: `JSTests/bun-tests-that-change-builtins.txt` says how that list is made.
+the value at run time, and runs the B3 and Air validators after every phase. Built-in objects are immutable in those modes and the
+program has no source text, so the tests that change a built-in object or read the text of a function are skipped there:
+`JSTests/bun-tests-that-change-builtins.txt` and `JSTests/bun-tests-that-read-function-text.txt` say how those lists are made.
 
 ## What CI keeps
 
