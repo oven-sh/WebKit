@@ -108,6 +108,7 @@ public:
         FrameType frameType { FrameType::Unknown };
         const void* cCodePC { nullptr };
         ExecutableBase* executable { nullptr };
+        AOT::FunctionRef unresolvedAOTFunction;
         JSObject* callee { nullptr };
         RegExp* regExp { nullptr };
 #if ENABLE(WEBASSEMBLY)
@@ -235,6 +236,11 @@ private:
     RefPtr<Thread> m_jscExecutionThread WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashSet<JSCell*> m_liveCellPointers WTF_GUARDED_BY_LOCK(m_lock);
     Vector<UnprocessedStackFrame> m_currentFrames WTF_GUARDED_BY_LOCK(m_lock);
+    void resolveAOTFrames() WTF_REQUIRES_LOCK(m_lock);
+#if ENABLE(AOT)
+    void resolveAOTFrame(StackFrame&) WTF_REQUIRES_LOCK(m_lock);
+    bool m_hasUnresolvedAOTFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
+#endif
 };
 
 } // namespace JSC

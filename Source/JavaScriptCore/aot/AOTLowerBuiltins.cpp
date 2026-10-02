@@ -21,6 +21,20 @@ namespace JSC { namespace AOT {
 
 using namespace B3;
 
+static ASCIILiteral pathOf(Builtin builtin)
+{
+    switch (builtin) {
+#define AOT_BUILTIN_PATH(name, path) \
+    case Builtin::name: \
+        return path ""_s;
+    FOR_EACH_AOT_BUILTIN(AOT_BUILTIN_PATH)
+#undef AOT_BUILTIN_PATH
+    case Builtin::None:
+        break;
+    }
+    return ""_s;
+}
+
 bool Lowering::mayBeOverridden(ASCIILiteral className, Node* read)
 {
     return Graph::methodMayBeOverridden(className, read);
@@ -138,6 +152,7 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
 
     LBasicBlock otherwise = nullptr;
     auto begin = [&](bool mayGiveUp = false) {
+        m_graph.remark("lowered-builtin"_s, pathOf(builtin));
         if (!fits && !mayGiveUp)
             return;
         otherwise = m_out.newBlock();
@@ -426,7 +441,10 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         m_out.appendTo(differ);
         m_out.branch(m_out.bitAnd(isNumber(a), isNumber(b)), unsure(numbers), unsure(notNumbers));
         m_out.appendTo(numbers);
-        answers.append(m_out.anchor(m_out.equal(m_out.bitCast(numberToDouble(a), Int64), m_out.bitCast(numberToDouble(b), Int64))));
+        LValue first = numberToDouble(a);
+        LValue second = numberToDouble(b);
+        LValue bothAreNaN = m_out.bitAnd(m_out.doubleNotEqualOrUnordered(first, first), m_out.doubleNotEqualOrUnordered(second, second));
+        answers.append(m_out.anchor(m_out.bitOr(m_out.equal(m_out.bitCast(first, Int64), m_out.bitCast(second, Int64)), bothAreNaN)));
         m_out.jump(settled);
         m_out.appendTo(notNumbers);
         answers.append(m_out.anchor(m_out.booleanFalse));

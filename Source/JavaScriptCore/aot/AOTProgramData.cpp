@@ -1184,6 +1184,7 @@ FunctionExecutable* VMProgram::executable(uint32_t executableIndex)
     RELEASE_ASSERT(executableIndex < m_data.numberOfExecutables);
     if (FunctionExecutable* existing = m_executables[executableIndex])
         return existing;
+    RELEASE_ASSERT(!m_vm.heap.isShuttingDown() && m_vm.heap.mutatorState() == MutatorState::Running && !m_vm.heap.worldIsStopped() && !m_vm.heap.objectSpace().isIterating());
     const ExecutableRow& row = m_data.executableRow(executableIndex);
     DeferGC deferGC(m_vm);
     FunctionExecutable* result;
