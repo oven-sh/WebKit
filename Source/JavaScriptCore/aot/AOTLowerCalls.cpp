@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTLowering.h"
 
-#if ENABLE(AOT) && CPU(ARM64)
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
 
 #include "AOTCompiler.h"
 #include "AOTProgram.h"
@@ -48,7 +48,7 @@ void Lowering::finishCall(PatchpointValue* patchpoint, CallMode mode, Rep result
     }
     m_graph.emitsCalls = true;
     patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
-    patchpoint->clobberLate(RegisterSet { ARM64Registers::lr });
+    patchpoint->clobberLate(registersClobberedByCalls());
     patchpoint->resultConstraints = { result == Rep::Double ? ValueRep::reg(FPRInfo::returnValueFPR) : ValueRep::reg(GPRInfo::returnValueGPR) };
 }
 
@@ -546,4 +546,4 @@ bool Lowering::tryLowerCall(Node* node)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(AOT) && CPU(ARM64)
+#endif // ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))

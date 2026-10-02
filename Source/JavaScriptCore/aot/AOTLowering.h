@@ -226,6 +226,22 @@ private:
     B3::PatchpointValue* emitColdCall(Node*, LType, Entry, LValue first, LValue second, ColdCall);
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
     static bool mayBeOverridden(ASCIILiteral className, Node* read);
+    static RegisterSet stubTemporaries(unsigned count)
+    {
+        RELEASE_ASSERT(count <= std::size(stubTemporaryGPRs));
+        RegisterSet result;
+        for (unsigned i = 0; i < count; ++i)
+            result.add(stubTemporaryGPRs[i], IgnoreVectors);
+        return result;
+    }
+    static RegisterSet registersClobberedByCalls()
+    {
+#if CPU(ARM64)
+        return RegisterSet { ARM64Registers::lr };
+#else
+        return stubTemporaries(std::size(stubTemporaryGPRs));
+#endif
+    }
     bool isCompact() const
     {
         if (!usesDataStubs())

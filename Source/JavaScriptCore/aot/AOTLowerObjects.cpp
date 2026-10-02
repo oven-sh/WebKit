@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTLowering.h"
 
-#if ENABLE(AOT) && CPU(ARM64)
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
 
 #include "AOTOperationsObjects.h"
 #include "B3ValueInlines.h"
@@ -732,7 +732,7 @@ bool Lowering::tryLowerConversion(Node* node)
 
         m_out.appendTo(valueIsObject);
         LValue prototype = getByIdCached(node, constructor, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Prototype));
-        results.append(m_out.anchor(callStub(Stub::InstanceOf, Int64, { { value, GPRInfo::argumentGPR0 }, { prototype, GPRInfo::argumentGPR1 } }, { })));
+        results.append(m_out.anchor(usesDataStubs() ? callStub(Stub::InstanceOf, Int64, { { value, GPRInfo::argumentGPR0 }, { prototype, GPRInfo::argumentGPR1 } }, { }) : vmCall(node, Int64, Entry::operationAOTDefaultHasInstance, m_instance, value, prototype)));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation);
@@ -1067,4 +1067,4 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(AOT) && CPU(ARM64)
+#endif // ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))

@@ -398,7 +398,7 @@ void didUseLinkTimeConstant(unsigned which)
 void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code, String&& nameForMap)
 {
     for (auto& call : code.info.stubCalls)
-        memset(code.bytes.mutableSpan().data() + call.offset, 0, sizeof(uint32_t));
+        memset(code.bytes.mutableSpan().data() + call.offset, 0, sizeOfNearCall);
     Locker locker { m_lock };
     m_functions.append(Function { key, rank, WTF::move(code), WTF::move(nameForMap) });
 }
@@ -882,7 +882,7 @@ Vector<uint8_t> ImageBuilder::finish()
         Vector<std::pair<uint32_t, uint32_t>> all;
         for (auto& call : function.code.info.stubCalls) {
             if (call.callSite != StubCall::noCallSite && !call.isTailCall)
-                all.append({ call.offset + static_cast<uint32_t>(sizeof(uint32_t)), call.callSite });
+                all.append({ call.offset + static_cast<uint32_t>(sizeOfNearCall), call.callSite });
         }
         if (all.isEmpty()) {
             functionCallSites.append(0);
@@ -906,7 +906,7 @@ Vector<uint8_t> ImageBuilder::finish()
         uint32_t previousOffset = 0;
         int64_t previousSite = 0;
         for (auto& [offset, site] : all) {
-            appendVarint(callSites, (offset - previousOffset) / sizeof(uint32_t));
+            appendVarint(callSites, (offset - previousOffset) / codeOffsetUnit);
             int64_t step = static_cast<int64_t>(site) - previousSite;
             appendVarint(callSites, static_cast<uint64_t>(step << 1) ^ static_cast<uint64_t>(step >> 63));
             previousOffset = offset;
@@ -1628,7 +1628,7 @@ std::optional<uint32_t> tryCallSiteAt(const ImageFunction& function, uint32_t of
     uint64_t first = readVarint(at);
     skipInlineFrames(at, first);
     for (uint64_t count = first >> 2; count--;) {
-        offset += readVarint(at) * sizeof(uint32_t);
+        offset += readVarint(at) * codeOffsetUnit;
         uint64_t step = readVarint(at);
         site += static_cast<int64_t>(step >> 1) ^ -static_cast<int64_t>(step & 1);
         if (offset >= offsetOfReturnAddress) {

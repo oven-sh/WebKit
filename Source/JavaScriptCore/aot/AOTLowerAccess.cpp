@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTLowering.h"
 
-#if ENABLE(AOT) && CPU(ARM64)
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
 
 #include "B3PatchpointValue.h"
 #include "BytecodeStructs.h"
@@ -1380,4 +1380,4 @@ bool Lowering::tryLowerAccess(Node* node)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(AOT) && CPU(ARM64)
+#endif // ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))

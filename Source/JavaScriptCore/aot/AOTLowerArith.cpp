@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTLowering.h"
 
-#if ENABLE(AOT) && CPU(ARM64)
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
 
 #include "B3PatchpointValue.h"
 #include "BytecodeStructs.h"
@@ -805,10 +805,10 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
                     bits = chunk(0, 4) | chunk(length - 4, 4) << 32;
                 } else
                     bits = chunk(0, 8);
-                return callStub(stub, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 }, { m_out.constInt64(bits), GPRInfo::argumentGPR1 } }, { { GPRInfo::regT9, programConstantIndex(literal) << shortLiteralLengthBits | length } });
+                return callStub(stub, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 }, { m_out.constInt64(bits), GPRInfo::argumentGPR1 } }, { { stubImmediateGPR, programConstantIndex(literal) << shortLiteralLengthBits | length } });
             }
             if (said && !said->isEmpty())
-                return callStub(Stub::IsStringEqualToConstant, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 } }, { { GPRInfo::regT9, programConstantIndex(literal) } });
+                return callStub(Stub::IsStringEqualToConstant, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 } }, { { stubImmediateGPR, programConstantIndex(literal) } });
         }
     }
 
@@ -952,4 +952,4 @@ bool Lowering::tryLowerArith(Node* node)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(AOT) && CPU(ARM64)
+#endif // ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))

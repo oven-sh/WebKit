@@ -438,7 +438,15 @@ private:
 };
 
 void retargetStubCall(uint8_t* base, size_t instruction, size_t target, bool isTailCall);
+#if CPU(X86_64)
+static constexpr size_t sizeOfNearCall = 5;
+static constexpr size_t codeOffsetUnit = 1;
+static constexpr size_t stubCallReach = 1536 * MB;
+#else
+static constexpr size_t sizeOfNearCall = sizeof(uint32_t);
+static constexpr size_t codeOffsetUnit = sizeof(uint32_t);
 static constexpr size_t stubCallReach = 96 * MB;
+#endif
 static constexpr size_t sizeOfVeneer = 3 * sizeof(uint32_t);
 static constexpr size_t stubCallReachSlack = 24 * MB;
 void writeVeneer(uint8_t* base, size_t veneer, size_t target);

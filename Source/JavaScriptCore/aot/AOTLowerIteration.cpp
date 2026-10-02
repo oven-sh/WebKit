@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTLowering.h"
 
-#if ENABLE(AOT) && CPU(ARM64)
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
 
 #include "AOTOperationsObjects.h"
 #include "B3ValueInlines.h"
@@ -531,4 +531,4 @@ bool Lowering::tryLowerIteration(Node* node)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(AOT) && CPU(ARM64)
+#endif // ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))

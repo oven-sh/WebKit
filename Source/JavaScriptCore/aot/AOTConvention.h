@@ -17,21 +17,41 @@ namespace AOT {
 
 static constexpr GPRReg instanceGPR = GPRInfo::jitDataRegister;
 
-static constexpr unsigned numberOfArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg argumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #if CPU(ARM64)
+static constexpr unsigned numberOfArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 static constexpr GPRReg thisGPR = ARM64Registers::x8;
 static constexpr GPRReg countGPR = ARM64Registers::x9;
 static constexpr GPRReg calleeGPR = ARM64Registers::x10;
+static constexpr GPRReg stubTemporaryGPRs[] = { ARM64Registers::x9, ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x12, ARM64Registers::x13, ARM64Registers::x14, ARM64Registers::x15 };
+static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
+constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #elif CPU(X86_64)
+static constexpr unsigned numberOfArgumentGPRs = 4;
 static constexpr GPRReg thisGPR = X86Registers::eax;
 static constexpr GPRReg countGPR = X86Registers::r10;
-static constexpr GPRReg calleeGPR = X86Registers::r11;
+static constexpr GPRReg calleeGPR = X86Registers::r8;
+static constexpr GPRReg stubTemporaryGPRs[] = { X86Registers::r10, X86Registers::r8, X86Registers::r9, X86Registers::ebx, X86Registers::r12 };
+static constexpr GPRReg seventhOperationArgumentGPR = X86Registers::ebx;
+static constexpr GPRReg eighthOperationArgumentGPR = X86Registers::r12;
+static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters + 2;
+constexpr GPRReg operationArgumentGPR(unsigned index)
+{
+    if (index < GPRInfo::numberOfArgumentRegisters)
+        return GPRInfo::toArgumentRegister(index);
+    return index == GPRInfo::numberOfArgumentRegisters ? seventhOperationArgumentGPR : eighthOperationArgumentGPR;
+}
 #else
+static constexpr unsigned numberOfArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 static constexpr GPRReg thisGPR = InvalidGPRReg;
 static constexpr GPRReg countGPR = InvalidGPRReg;
 static constexpr GPRReg calleeGPR = InvalidGPRReg;
+static constexpr GPRReg stubTemporaryGPRs[] = { InvalidGPRReg };
+static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
+constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #endif
+static constexpr GPRReg stubImmediateGPR = countGPR;
+static_assert(stubTemporaryGPRs[0] == stubImmediateGPR);
 
 enum class Signature : uint8_t {
     Registers,

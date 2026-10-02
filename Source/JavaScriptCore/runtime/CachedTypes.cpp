@@ -6953,7 +6953,7 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
 
 void installImageCompiler()
 {
-#if ENABLE(AOT) && CPU(ARM64)
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
     g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };
 #endif
 }

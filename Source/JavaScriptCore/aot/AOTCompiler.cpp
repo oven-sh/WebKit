@@ -43,7 +43,7 @@ static ScopeChain unknownScopeChain()
     return chain;
 }
 
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(X86_64)
 
 static void estimateFrequencies(B3::Procedure& proc)
 {
@@ -113,6 +113,11 @@ static void usePinnedRegistersDirectly(B3::Air::Code& code)
 
 bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
 {
+#if CPU(X86_64)
+    UNUSED_PARAM(graph);
+    UNUSED_PARAM(code);
+    return false;
+#else
     if (code.frameSize() || code.calleeSaveRegisterAtOffsetList().registerCount() || graph.alwaysEmitsCalls || !graph.catchEntrypoints.isEmpty())
         return false;
     if (!graph.emitsCalls)
@@ -130,6 +135,7 @@ bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
         graph.hasRemainingCalls = found;
     }
     return !*graph.hasRemainingCalls;
+#endif
 }
 
 void emitEpilogueBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Code& code)
@@ -267,9 +273,20 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.emitFunctionPrologue();
         constexpr unsigned maxFrameSizeWithoutStackCheck = 256;
-        if (graph.makesCalls || code.frameSize() > maxFrameSizeWithoutStackCheck)
+        if (graph.makesCalls || code.frameSize() > maxFrameSizeWithoutStackCheck) {
+#if CPU(X86_64)
+            constexpr GPRReg newStackPointer = CCallHelpers::s_scratchRegister;
+            constexpr GPRReg vm = stubTemporaryGPRs[2];
+            jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(code.frameSize())), GPRInfo::callFrameRegister, newStackPointer);
+            jit.loadPtr(CCallHelpers::Address(instanceGPR, Instance::offsetOfVM()), vm);
+            CCallHelpers::Jump fits = jit.branchPtr(CCallHelpers::BelowOrEqual, CCallHelpers::Address(vm, VM::offsetOfSoftStackLimit()), newStackPointer);
+            stubCalls.tailCall(jit, Stub::ThrowStackOverflowAtPrologue);
+            fits.link(&jit);
+            jit.move(newStackPointer, CCallHelpers::stackPointerRegister);
+#else
             stubCalls.call(jit, Stub::Prologue, code.frameSize(), CallSite { });
-        else if (code.frameSize())
+#endif
+        } else if (code.frameSize())
             jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
         jit.emitSave(code.calleeSaveRegisterAtOffsetList());
     }));
@@ -300,7 +317,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         RELEASE_ASSERT(!CCallHelpers::differenceBetween(codeStart, proc.code().entrypointLabel(0)));
     jit.breakpoint();
     jit.padBeforePatch();
-    Vector<uint32_t> storage(jit.m_assembler.codeSize() / sizeof(uint32_t));
+    Vector<uint32_t> storage(WTF::roundUpToMultipleOf<sizeof(uint32_t)>(jit.m_assembler.codeSize()) / sizeof(uint32_t));
     LinkBuffer linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(storage.mutableSpan().data()), storage.sizeInBytes(), LinkBuffer::Profile::FTL);
 
     CompiledFunctionInfo info;
@@ -308,13 +325,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.indexReferences = graph.indexReferences.link(linkBuffer);
     info.codeSize = linkBuffer.size();
     void* start = linkBuffer.entrypoint<JSEntryPtrTag>().untaggedPtr();
-    if (jumpToMainEntrypoint.isSet() && static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(proc.code().entrypointLabel(0)).untaggedPtr()) - static_cast<uint8_t*>(start) == sizeof(uint32_t)) {
-        start = static_cast<uint8_t*>(start) + sizeof(uint32_t);
-        info.codeSize -= sizeof(uint32_t);
+    uint32_t sizeOfJump = static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(codeStart).untaggedPtr()) - static_cast<uint8_t*>(start);
+    if (jumpToMainEntrypoint.isSet() && static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(proc.code().entrypointLabel(0)).untaggedPtr()) - static_cast<uint8_t*>(start) == sizeOfJump) {
+        start = static_cast<uint8_t*>(start) + sizeOfJump;
+        info.codeSize -= sizeOfJump;
         for (auto& call : info.stubCalls)
-            call.offset -= sizeof(uint32_t);
+            call.offset -= sizeOfJump;
         for (auto& reference : info.indexReferences)
-            reference.offset -= sizeof(uint32_t);
+            reference.offset -= sizeOfJump;
     }
     auto offsetOf = [&](CCallHelpers::Label label) {
         return static_cast<unsigned>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(label).untaggedPtr()) - static_cast<uint8_t*>(start));
@@ -367,6 +385,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         info.catchEntrypoints.append({ graph.catchEntrypoints[i]->bytecodeBegin, offsetOf(proc.code().entrypointLabel(i + 1)) });
 
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
+#if CPU(ARM64)
     {
         constexpr uint32_t breakpoint = 0xd4200000;
         constexpr uint32_t nop = 0xd503201f;
@@ -380,13 +399,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         while (info.codeSize > minimumSize && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == breakpoint)
             info.codeSize -= sizeof(uint32_t);
     }
+#endif
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
     result.info = WTF::move(info);
     result.remarks = WTF::move(graph.remarks);
     return true;
 }
 
-#endif // CPU(ARM64)
+#endif // CPU(ARM64) || CPU(X86_64)
 
 bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* summary, VariableSummaries* variableSummaries)
 {
@@ -424,7 +444,7 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
 
 bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program)
 {
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(X86_64)
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
     bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program);

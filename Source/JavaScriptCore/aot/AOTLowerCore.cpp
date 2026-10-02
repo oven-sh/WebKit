@@ -9,7 +9,7 @@
 #include "AOTCompiler.h"
 #include "AOTImage.h"
 
-#if ENABLE(AOT) && CPU(ARM64)
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
 
 #include "AirCode.h"
 #include "AirStackSlot.h"
@@ -523,7 +523,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     Vector<std::pair<GPRReg, B3::Air::StackSlot*>, 2> frameSlots;
     std::optional<uint32_t> t9Value;
     for (auto& immediate : immediates) {
-        if (immediate.reg == GPRInfo::regT9)
+        if (immediate.reg == stubImmediateGPR)
             t9Value = immediate.value;
     }
     bool operandUsesAnyRegister = !type.isTuple() && !arguments.isEmpty() && arguments[0].reg.isGPR() && acceptsOperandInAnyRegister(stub, t9Value) && arguments[0].reg.gpr() == defaultOperandRegister(stub)
@@ -560,7 +560,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     if (slotArgument)
         patchpoint->append(ConstrainedValue(m_data, ValueRep::SomeRegister));
     for (auto& immediate : immediates) {
-        if (immediate.reg != GPRInfo::regT9)
+        if (immediate.reg != stubImmediateGPR)
             clobberedBeforeCall.add(immediate.reg, IgnoreVectors);
     }
     if (operandUsesAnyRegister || slotArgument)
@@ -569,7 +569,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     if (operandUsesAnyRegister) {
         RegisterSet excludedRegisters;
         for (unsigned i = 0; i < 16; ++i) {
-            GPRReg reg = static_cast<GPRReg>(static_cast<unsigned>(ARM64Registers::x0) + i);
+            GPRReg reg = static_cast<GPRReg>(i);
             if (!operandAllowedInRegister(stub, reg) || (secondOperandUsesAnyRegister && i >= 9))
                 excludedRegisters.add(reg, IgnoreVectors);
         }
@@ -578,19 +578,17 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         if (!preservesOperandRegister(stub))
             patchpoint->clobberLate(RegisterSet { defaultOperandRegister(stub) });
     }
+#if CPU(ARM64)
     patchpoint->clobberLate(RegisterSet { ARM64Registers::lr });
+#endif
     switch (clobbers) {
     case StubClobbers::CallerSavedRegisters:
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
         break;
     case StubClobbers::Temporaries: {
-        RegisterSet temporaries;
-        temporaries.add(GPRInfo::regT9, IgnoreVectors);
-        temporaries.add(GPRInfo::regT10, IgnoreVectors);
-        temporaries.add(GPRInfo::regT11, IgnoreVectors);
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-        patchpoint->clobber(temporaries);
+        patchpoint->clobber(stubTemporaries(3));
         break;
     }
     case StubClobbers::Nothing:
@@ -609,7 +607,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         for (auto& [reg, slot] : frameSlots)
             jit.addPtr(CCallHelpers::TrustedImm32(slot->offsetFromFP()), GPRInfo::callFrameRegister, reg);
         for (auto& immediate : immediates) {
-            if (immediate.reg != GPRInfo::regT9)
+            if (immediate.reg != stubImmediateGPR)
                 jit.move(CCallHelpers::TrustedImm32(immediate.value), immediate.reg);
         }
         if (resultUsesAssignedRegister)
@@ -654,19 +652,18 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
         patchpoint->append(ConstrainedValue(first, ValueRep::reg(GPRInfo::argumentGPR1)));
     if (second)
         patchpoint->append(ConstrainedValue(second, ValueRep::reg(GPRInfo::argumentGPR2)));
-    RegisterSet temporaries;
-    temporaries.add(GPRInfo::regT9, IgnoreVectors);
-    temporaries.add(GPRInfo::regT10, IgnoreVectors);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobber(temporaries);
+    patchpoint->clobber(stubTemporaries(2));
     if (returnsValue)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { callSiteBitsOf(node) };
     patchpoint->setGenerator([graph = &m_graph, t9Value, site, returnsValue, firstOperandUsesAnyRegister](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         bool isLeaf = hasNoFrame(*graph, params.proc().code());
+#if CPU(ARM64)
         if (isLeaf)
-            jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
+            jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
+#endif
         Stub stub = returnsValue ? (isLeaf ? Stub::LeafColdOperationValue : Stub::ColdOperationValue) : (isLeaf ? Stub::LeafColdOperationVoid : Stub::ColdOperationVoid);
         if (firstOperandUsesAnyRegister)
             graph->stubCalls.callWithOperandInRegister(jit, stub, t9Value, params[returnsValue ? 1 : 0].gpr(), site);
@@ -703,12 +700,14 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
             placed.append({ arguments[i], FPRInfo::toArgumentRegister(nextFPR++) });
             continue;
         }
-        GPRReg reg = GPRInfo::toArgumentRegister(nextGPR++);
+        RELEASE_ASSERT(nextGPR < numberOfOperationArgumentGPRs);
+        GPRReg reg = operationArgumentGPR(nextGPR++);
         if (!i && (withGlobalObject || withInstance || withVM))
             continue;
         placed.append({ arguments[i], reg });
     }
-    RELEASE_ASSERT(nextGPR <= GPRInfo::numberOfArgumentRegisters && nextFPR <= FPRInfo::numberOfArgumentRegisters);
+    RELEASE_ASSERT(nextFPR <= FPRInfo::numberOfArgumentRegisters);
+    RELEASE_ASSERT(throws || nextGPR <= GPRInfo::numberOfArgumentRegisters);
 
     Stub stub;
     if (!throws)
@@ -721,7 +720,7 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
         stub = withGlobalObject ? Stub::OperationValueWithGlobalObject : withInstance ? Stub::OperationValueWithInstance : Stub::OperationValue;
 
     Vector<StubImmediate, 2> immediates;
-    immediates.append({ GPRInfo::regT9, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)) });
+    immediates.append({ stubImmediateGPR, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)) });
     PatchpointValue* result = callStub(stub, type, placed, immediates, StubClobbers::CallerSavedRegisters, node);
     return type == Void ? nullptr : result;
 }
@@ -900,25 +899,23 @@ LValue Lowering::constantThroughStub(uint32_t number, Stub stub)
 {
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     patchpoint->effects = Effects::none();
-    RegisterSet temporaries;
-    temporaries.add(GPRInfo::regT9, IgnoreVectors);
-    temporaries.add(GPRInfo::regT10, IgnoreVectors);
-    temporaries.add(GPRInfo::regT11, IgnoreVectors);
-    temporaries.add(GPRInfo::regT12, IgnoreVectors);
-    temporaries.add(GPRInfo::regT13, IgnoreVectors);
-    temporaries.add(GPRInfo::regT14, IgnoreVectors);
-    temporaries.add(GPRInfo::regT15, IgnoreVectors);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobber(temporaries);
+    patchpoint->clobber(stubTemporaries(isARM64() ? 7 : 3));
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     patchpoint->setGenerator([graph = &m_graph, number, stub](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
+#if CPU(ARM64)
         bool isLeaf = hasNoFrame(*graph, params.proc().code());
         if (isLeaf)
-            jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
+            jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
+#else
+        UNUSED_PARAM(params);
+#endif
         graph->stubCalls.call(jit, stub, number, CallSite { });
+#if CPU(ARM64)
         if (isLeaf)
-            jit.move(GPRInfo::regT10, CCallHelpers::linkRegister);
+            jit.move(stubTemporaryGPRs[1], CCallHelpers::linkRegister);
+#endif
     });
     return patchpoint;
 }
@@ -1373,4 +1370,4 @@ LBasicBlock Lowering::blockFor(Node* branch, int relativeOffset)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(AOT) && CPU(ARM64)
+#endif // ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
