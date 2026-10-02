@@ -220,6 +220,7 @@ struct Instance::Collections {
     JSModuleLoader* loader { nullptr };
     Vector<std::pair<Structure*, Structure*>, 12> structuresOfFunctions;
     UncheckedKeyHashMap<SourceProvider*, ScriptExecutable*> topLevelExecutables;
+    UncheckedKeyHashMap<RegExp*, RegExp*> regExps;
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
     size_t sizeOfInfos { 0 }; // Zero unless the Instance owns them.
@@ -393,9 +394,17 @@ static ScriptExecutable* topLevelExecutableOf(Data& data)
     return data.executable->topLevelExecutable();
 }
 
-Structure* Instance::structureOfFunctions(Structure* ofRealm, FunctionExecutable* executable)
+RegExp* Instance::regExpFor(RegExp* regExp)
 {
-    if (executable->isBuiltinFunction())
+    if (!StaticHeap::contains(regExp))
+        return regExp;
+    DeferGC deferGC(*vm);
+    return collections->regExps.ensure(regExp, [&] { return RegExp::createLike(*vm, *regExp); }).iterator->value;
+}
+
+Structure* Instance::structureOfFunctions(Structure* ofRealm, FunctionExecutable* executable, JSScope* scope)
+{
+    if (executable->isBuiltinFunction() && !(executable->unlinkedExecutable()->isBuiltinDefaultClassConstructor() && &instanceOf(scope) == this))
         return ofRealm;
     for (auto& [from, to] : collections->structuresOfFunctions) {
         if (from == ofRealm)
@@ -412,12 +421,12 @@ Structure* Instance::structureOfFunctions(Structure* ofRealm, FunctionExecutable
 JSFunction* Instance::makeFunction(FunctionExecutable* executable, JSScope* scope)
 {
     if (isAsyncGeneratorWrapperParseMode(executable->parseMode()))
-        return JSAsyncGeneratorFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->asyncGeneratorFunctionStructure(), executable));
+        return JSAsyncGeneratorFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->asyncGeneratorFunctionStructure(), executable, scope));
     if (isGeneratorWrapperParseMode(executable->parseMode()))
-        return JSGeneratorFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->generatorFunctionStructure(), executable));
+        return JSGeneratorFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->generatorFunctionStructure(), executable, scope));
     if (isAsyncFunctionWrapperParseMode(executable->parseMode()))
-        return JSAsyncFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->asyncFunctionStructure(), executable));
-    return JSFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(JSFunction::selectStructureForNewFuncExp(globalObject, executable), executable));
+        return JSAsyncFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->asyncFunctionStructure(), executable, scope));
+    return JSFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(JSFunction::selectStructureForNewFuncExp(globalObject, executable), executable, scope));
 }
 
 ScriptExecutable* Instance::topLevelExecutableOf(SourceProvider* provider)
@@ -754,8 +763,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
         return nullptr;
     }
     if (!info.sites) {
-        if (!instance.collections->sizeOfInfos && Options::verboseAOTCompilation()) [[unlikely]]
-            dataLogLn("AOT: nothing was known of function ", code.index(), " when the program was built");
+        RELEASE_ASSERT(instance.collections->sizeOfInfos);
         fillInfo(info, executable, unlinkedCodeBlock, code, data->constants);
     }
     RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && (info.flags >> FunctionInfo::numberOfFlagBits) == std::min<uint32_t>(numSlots, FunctionInfo::maxEncodedSlots) && (!info.executable() || info.executable() == executable));
@@ -850,6 +858,15 @@ BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
     return locationForReturnAddress(returnAddress).bytecodeIndex;
 }
 
+FunctionRef FunctionRef::whereLinked(VM& vm, uint32_t index)
+{
+    for (Instance* instance : vm.m_aotInstances) {
+        if (instance->isLinked(index))
+            return { instance, index };
+    }
+    return { };
+}
+
 FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind)
 {
     if (StaticHeap::contains(executable) && executable->aotIndexFor(kind) != FunctionExecutable::aotIndexOfWhatConstructsByCalling)
@@ -937,6 +954,8 @@ UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfExists() const
 {
     if (Data* data = dataIfExists(); data && data->unlinkedCodeBlock)
         return data->unlinkedCodeBlock;
+    if (UnlinkedCodeBlock* code = info().topLevelCode())
+        return code;
     return uncheckedDowncast<FunctionExecutable>(executable())->unlinkedExecutable()->codeBlockIfExists(info().kind());
 }
 
@@ -1309,16 +1328,15 @@ FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
     return ensureData()->functionExpr(index);
 }
 
-bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSGlobalObject* globalObject, Ref<JITCode>&& code)
+bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope, Ref<JITCode>&& code)
 {
-    Instance& instance = Instance::ensure(globalObject);
+    Instance& instance = instanceOf(scope);
     code->setInstance(instance);
     uint32_t index = code->index();
     if (instance.isLinked(index))
         RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
     else if (code->imageFunction()->startsCold && !instance.infos[index].sites && hasOnlyRealmIndependentConstants(unlinkedCodeBlock)) {
-        if (!instance.collections->sizeOfInfos && Options::verboseAOTCompilation()) [[unlikely]]
-            dataLogLn("AOT: nothing was known of function ", index, " when the program was built");
+        RELEASE_ASSERT(instance.collections->sizeOfInfos);
         fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
         instance.infos[index].flags |= FunctionInfo::startsCold;
         instance.collections->functionsWithoutData.append({ executable, unlinkedCodeBlock });
@@ -1455,6 +1473,8 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
     }
     for (auto& [from, to] : collections->structuresOfFunctions)
         visitor.appendUnbarriered(to);
+    for (RegExp* regExp : collections->regExps.values())
+        visitor.appendUnbarriered(regExp);
     for (ScriptExecutable* executable : collections->topLevelExecutables.values())
         visitor.appendUnbarriered(executable);
 }

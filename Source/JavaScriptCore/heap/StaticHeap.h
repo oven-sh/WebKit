@@ -64,12 +64,10 @@ struct ReportableSitesOfFunction {
 // freed.
 //
 // To the GC they look like precise allocations (recognized by address) that all share one PreciseAllocation header, which reports
-// them as marked. The GC therefore never visits or writes to them. A static cell only refers to other static cells unless it has
-// been stored to since startup; the write barrier records those (Heap::addToRememberedSet()).
+// them as marked. The GC therefore never visits or writes to them. A static cell only refers to other static cells.
 //
 // Static cells are built for the first VM of the process: their headers carry StructureIDs of that VM's Structures. Since nothing
-// writes to them, other VMs may also refer to them for as long as the first VM is alive. The exception is the mutable arenas, which
-// only the first VM may use (isOnlyForFirstVM()).
+// writes to them, other VMs may also refer to them for as long as the first VM is alive.
 class StaticHeap {
 public:
     static ALWAYS_INLINE bool contains(const void* pointer) { return bmalloc::StaticRegion::contains(pointer); }
@@ -108,11 +106,6 @@ public:
     JS_EXPORT_PRIVATE static void install(VM&);
     static void willDestroy(VM&);
     static bool isUsedBy(VM&);
-    static bool isFirst(VM& vm) { return s_vm == &vm; }
-    static ALWAYS_INLINE bool isOnlyForFirstVM(const void* pointer)
-    {
-        return std::bit_cast<uintptr_t>(pointer) - bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::MutableCells) < 2 * bmalloc::StaticRegion::arenaReservation;
-    }
     // Once more than one VM uses the heap, the PreciseAllocation for a static cell is that of the VM that placed it, or else that
     // of the calling thread's VM.
     static ALWAYS_INLINE bool isShared() { return s_isShared; }

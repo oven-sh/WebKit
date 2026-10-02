@@ -1149,8 +1149,6 @@ private:
 public:
     void* m_placeOfNextCell { nullptr }; // See StaticHeap::tryAllocateCellSlow().
 private:
-    Lock m_staticCellsStoredToLock;
-    UncheckedKeyHashSet<JSCell*> m_staticCellsStoredTo WTF_GUARDED_BY_LOCK(m_staticCellsStoredToLock); // See StaticHeap.
     
     CurrentThreadState* m_currentThreadState { nullptr };
     Thread* m_currentThread { nullptr }; // It's OK if this becomes a dangling pointer.

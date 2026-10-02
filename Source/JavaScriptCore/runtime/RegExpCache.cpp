@@ -86,6 +86,13 @@ RegExp* RegExp::createFromCache(VM& vm, const String& patternString, OptionSet<Y
     });
 }
 
+RegExp* RegExp::createLike(VM& vm, const RegExp& other)
+{
+    if (!other.isValid() || other.m_rareData)
+        return create(vm, other.m_patternString, other.m_flags);
+    return createFromCache(vm, other.m_patternString, other.m_flags, other.m_numSubpatterns, String { other.m_atom }, other.m_specificPattern);
+}
+
 RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)
 {
     return lookupOrCreate(vm, patternString, flags, [&] { return RegExp::createWithoutCaching(vm, patternString, flags); });

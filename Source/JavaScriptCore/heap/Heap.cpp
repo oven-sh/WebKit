@@ -1348,11 +1348,6 @@ void Heap::addToRememberedSet(const JSCell* constCell)
     ASSERT(cell);
     ASSERT(!Options::useConcurrentJIT() || !isCompilationThread());
     m_barriersExecuted++;
-    if (StaticHeap::contains(cell)) [[unlikely]] {
-        // No collection finds it, since it is marked already. From now on every one starts from it.
-        Locker locker { m_staticCellsStoredToLock };
-        m_staticCellsStoredTo.add(cell);
-    }
     if (m_mutatorShouldBeFenced) {
         WTF::loadLoadFence();
         if (!isMarked(cell)) {
@@ -3817,19 +3812,6 @@ void Heap::addCoreConstraints()
         })),
         ConstraintVolatility::GreyedByExecution);
     
-    m_constraintSet->add(
-        "St"_s, "Static Heap"_s,
-        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
-            // (An eden collection has the ones stored to since the last collection in the remembered set.)
-            if (m_collectionScope && m_collectionScope.value() == CollectionScope::Eden)
-                return;
-            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
-            Locker locker { m_staticCellsStoredToLock };
-            for (JSCell* cell : m_staticCellsStoredTo)
-                visitor.visitAsConstraint(cell);
-        })),
-        ConstraintVolatility::GreyedByExecution);
-
 #if ENABLE(AOT)
     m_constraintSet->add(
         "Ao"_s, "Instances of Statically Compiled Code"_s,

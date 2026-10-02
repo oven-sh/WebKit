@@ -101,6 +101,10 @@ realm can run a program several times over, and nothing distinguishes the first.
   is so for builtins.
 - Three stubs depend on that: `findCodeOfCallee()` (none, or the caller's: straight in; otherwise the long way), `generateEnterStaticFunction()`
   (callee, Structure, instance), and `adapt()`, which saves, switches and restores the register.
+- A function belongs to the instance of the module whose environment it closes over (`instanceOf()`). One that closes over none is
+  the realm's.
+- A RegExp of the static heap only says what to make. Each instance makes its own on first use (`Instance::regExpFor()`), through the
+  VM's cache.
 - An instance lives as long as its loader. Code that runs was entered through a frame with its callee in it, which is what keeps the
   loader alive, so **the entry adapter's frame must have the callee where the collector's scan of the stack sees it.**
 
@@ -115,9 +119,11 @@ realm can run a program several times over, and nothing distinguishes the first.
 
 ## The platform, as opposed to the CPU
 
-- **The static region** is 32 GB at a fixed address, chosen per OS in `StaticRegion.h`: beyond ASAN's shadow memory on macOS, within a
-  39-bit address space on Linux. Every process maps its first 256 KB, whether or not it was compiled ahead of time, and does not start
-  if the address is taken. Structures follow the region, by a hint.
+- **The static region** is 24 GB of addresses at a fixed place, chosen per OS in `StaticRegion.h`: beyond ASAN's shadow memory on macOS,
+  within a 39-bit address space on Linux. What comes from the file is mapped read-only, all of it (`StaticRegion::map()` cannot do
+  otherwise), so a write to it is a crash and not a bug that one thread in a hundred sees. Every process maps 256 KB of
+  `Arena::Bss`, whether or not it was compiled ahead of time, and does not start if the address is taken. Structures follow the
+  region, by a hint.
 - **Page and block sizes.** `MarkedBlock::blockSize` is the larger of 16 KB and `CeilingOnPageSize`, which is 64 KB on Linux arm64 and 4 KB on
   x86-64. A constant of 16 KB where that was meant crashed every process on Linux arm64 and nowhere else; there is a `static_assert`
   now (`StaticHeap::offsetOfFirstStructureBlock`). An image is aligned to 16 KB in its file (`imagePageSize`, `pageSizeOfImage`), so a kernel with

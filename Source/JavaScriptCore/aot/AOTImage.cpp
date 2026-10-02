@@ -2001,7 +2001,7 @@ static String nameForLogging(ScriptExecutable* executable)
     return "(top level)"_s;
 }
 
-static Instance& instanceOf(JSScope* scope)
+Instance& instanceOf(JSScope* scope)
 {
     for (JSScope* current = scope; current; current = current->next()) {
         if (current->type() == ModuleEnvironmentType)

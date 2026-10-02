@@ -568,10 +568,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (Instance* instance, 
 {
     AOT_OPERATION_BEGIN(instance);
     static constexpr bool areLegacyFeaturesEnabled = true;
-    // Matching writes to the RegExp. One in the static heap may only be written by the first VM.
-    if (StaticHeap::isOnlyForFirstVM(regExp) && !StaticHeap::isFirst(vm)) [[unlikely]]
-        regExp = RegExp::create(vm, uncheckedDowncast<RegExp>(regExp)->pattern(), uncheckedDowncast<RegExp>(regExp)->flags());
-    OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), uncheckedDowncast<RegExp>(regExp), areLegacyFeaturesEnabled));
+    OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), instance->regExpFor(uncheckedDowncast<RegExp>(regExp)), areLegacyFeaturesEnabled));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instance* instance, JSObject* object))
@@ -598,9 +595,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (Instance* instance, JSCell* cell, uint32_t forTest, Slot* cache))
 {
     AOT_OPERATION_BEGIN(instance);
-    if (StaticHeap::isOnlyForFirstVM(cell) && !StaticHeap::isFirst(vm)) [[unlikely]]
-        cell = RegExp::create(vm, uncheckedDowncast<RegExp>(cell)->pattern(), uncheckedDowncast<RegExp>(cell)->flags());
-    auto* regExp = uncheckedDowncast<RegExp>(cell);
+    RegExp* regExp = instance->regExpFor(uncheckedDowncast<RegExp>(cell));
     // (Compiled code keeps using the cached object, which is only valid if nothing can intercept the call to the builtin.)
     if (!Options::useSharedRegExpLiteralObjects() || !RegExpObject::canShareLiteralAsReceiver(globalObject, forTest))
         OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
@@ -619,16 +614,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance* instance
     JSFunction* result = nullptr;
     switch (static_cast<FunctionKind>(kind)) {
     case FunctionKind::Normal:
-        result = JSFunction::create(vm, globalObject, executable, environment, instance->structureOfFunctions(JSFunction::selectStructureForNewFuncExp(globalObject, executable), executable));
+        result = JSFunction::create(vm, globalObject, executable, environment, instance->structureOfFunctions(JSFunction::selectStructureForNewFuncExp(globalObject, executable), executable, environment));
         break;
     case FunctionKind::Generator:
-        result = JSGeneratorFunction::create(vm, globalObject, executable, environment, instance->structureOfFunctions(globalObject->generatorFunctionStructure(), executable));
+        result = JSGeneratorFunction::create(vm, globalObject, executable, environment, instance->structureOfFunctions(globalObject->generatorFunctionStructure(), executable, environment));
         break;
     case FunctionKind::Async:
-        result = JSAsyncFunction::create(vm, globalObject, executable, environment, instance->structureOfFunctions(globalObject->asyncFunctionStructure(), executable));
+        result = JSAsyncFunction::create(vm, globalObject, executable, environment, instance->structureOfFunctions(globalObject->asyncFunctionStructure(), executable, environment));
         break;
     case FunctionKind::AsyncGenerator:
-        result = JSAsyncGeneratorFunction::create(vm, globalObject, executable, environment, instance->structureOfFunctions(globalObject->asyncGeneratorFunctionStructure(), executable));
+        result = JSAsyncGeneratorFunction::create(vm, globalObject, executable, environment, instance->structureOfFunctions(globalObject->asyncGeneratorFunctionStructure(), executable, environment));
         break;
     }
     // Optimized code may constant-fold the only closure of a function. Once a second one has been created, the watchpoint has fired

@@ -454,7 +454,14 @@ struct FunctionInfo {
         executableAndMoreLow = static_cast<uint32_t>(bits);
         executableAndMoreHigh = static_cast<uint16_t>(bits >> 32);
     }
-    ScriptExecutable* executable() const { return std::bit_cast<ScriptExecutable*>((static_cast<uintptr_t>(executableAndMoreHigh) << 32 | executableAndMoreLow) & ~static_cast<uintptr_t>(7)); }
+    void setTopLevelCode(UnlinkedCodeBlock* code)
+    {
+        setExecutable(std::bit_cast<ScriptExecutable*>(code), CodeSpecializationKind::CodeForCall, hasOnlyRealmIndependentConstants());
+        executableAndMoreLow |= 4;
+    }
+    UnlinkedCodeBlock* topLevelCode() const { return executableAndMoreLow & 4 ? std::bit_cast<UnlinkedCodeBlock*>(cellAndMore() & ~static_cast<uintptr_t>(7)) : nullptr; }
+    uintptr_t cellAndMore() const { return static_cast<uintptr_t>(executableAndMoreHigh) << 32 | executableAndMoreLow; }
+    ScriptExecutable* executable() const { return executableAndMoreLow & 4 ? nullptr : std::bit_cast<ScriptExecutable*>((static_cast<uintptr_t>(executableAndMoreHigh) << 32 | executableAndMoreLow) & ~static_cast<uintptr_t>(7)); }
     CodeSpecializationKind kind() const { return executableAndMoreLow & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
     bool hasOnlyRealmIndependentConstants() const { return executableAndMoreLow & 2; } // `constants` is complete; the Data has none of its own.
     bool isOfCodeInImage() const { return flags & (hasSiteConstants | sitesHaveTheirConstants); }
@@ -474,7 +481,8 @@ struct Instance {
     JS_EXPORT_PRIVATE static Instance& ensure(JSModuleLoader*);
     static Instance& ensure(JSGlobalObject*); // Of the realm's own loader.
     static Instance* of(JSFunction*);
-    Structure* structureOfFunctions(Structure* ofRealm, FunctionExecutable*);
+    Structure* structureOfFunctions(Structure* ofRealm, FunctionExecutable*, JSScope*);
+    RegExp* regExpFor(RegExp*);
     JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
     ScriptExecutable* topLevelExecutableOf(SourceProvider*);
     JS_EXPORT_PRIVATE void setTopLevelExecutableOf(SourceProvider*, ScriptExecutable*);
@@ -1016,7 +1024,8 @@ private:
 };
 
 // Installs the code on the function, without creating a CodeBlock. Returns false if an exception was thrown.
-bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSGlobalObject*, Ref<JITCode>&&);
+Instance& instanceOf(JSScope*);
+bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*, Ref<JITCode>&&);
 // Called when an executable from the static heap (FunctionExecutable::aotEntryFor()) is about to run for the first time. Links its
 // code to the realm. Returns false if the code cannot run in the function's realm.
 bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, JSScope*);

@@ -3190,9 +3190,8 @@ public:
     {
         String pattern { m_patternString.decode(decoder) };
         if (decoder.isForStaticHeap()) [[unlikely]] {
-            // Not through the VM's cache, which is not the cache of the VM that is going to use it. It is written to when it is used.
+            // Not through the VM's cache, which is not the cache of the VM that is going to use it.
             String atom { m_atom.decode(decoder) };
-            bmalloc::StaticRegion::MutableScope mutableScope;
             if (!m_parsed)
                 return RegExp::createWithoutCaching(decoder.vm(), pattern, m_flags);
             return RegExp::createFromCacheWithoutCaching(decoder.vm(), pattern, m_flags, m_numSubpatterns, WTF::move(atom), m_specificPattern);
@@ -4335,9 +4334,7 @@ public:
     {
         Tail storage;
         const Layout& layout = tail(decoder, storage).layout;
-        // (StaticHeap: linking the code for the interpreter writes to it.)
-        bmalloc::StaticRegion::MutableScope mutableScope;
-        if (!(layout.flags & LayoutHasMetadata))
+        if (!(layout.flags & LayoutHasMetadata) || decoder.isForStaticHeap())
             return UnlinkedMetadataTable::empty();
         std::span<const uint32_t> steps { at<uint32_t>(layout, layout.steps), layout.steps.count };
         if (decoder.canBorrowPayload())

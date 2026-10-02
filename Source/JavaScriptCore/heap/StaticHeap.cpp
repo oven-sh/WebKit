@@ -192,17 +192,16 @@ void StaticHeap::willAllocateUnlinkedFunctionSlow()
 }
 
 // The address and size of each cell, kept only while the heap is being built.
-static std::array<Vector<std::pair<void*, size_t>>, 2>& cellsBeingBuilt() // For Arena::Cells and for Arena::MutableCells.
+static Vector<std::pair<void*, size_t>>& cellsBeingBuilt()
 {
-    static NeverDestroyed<std::array<Vector<std::pair<void*, size_t>>, 2>> cells;
+    static NeverDestroyed<Vector<std::pair<void*, size_t>>> cells;
     return cells;
 }
 
-template<typename Functor> static void forEachCell(Region::Arena arena, const Functor& functor)
+template<typename Functor> static void forEachCell(const Functor& functor)
 {
-    RELEASE_ASSERT(arena == Region::Arena::Cells || arena == Region::Arena::MutableCells);
     // (Iterates by index, because the functor may allocate another cell.)
-    auto& cells = cellsBeingBuilt()[arena == Region::Arena::MutableCells];
+    auto& cells = cellsBeingBuilt();
     for (size_t i = 0; i < cells.size(); ++i)
         functor(cells[i].first, cells[i].second);
 }
@@ -217,10 +216,9 @@ void* StaticHeap::tryAllocateCellSlow(VM&, size_t size)
         cellsInScratch().add(cell);
         return cell;
     }
-    bool isMutable = Region::isAllocatingMutable();
-    void* cell = Region::allocate(isMutable ? Region::Arena::MutableCells : Region::Arena::Cells, size, 16, sizeOfCellHeader);
+    void* cell = Region::allocate(Region::Arena::Cells, size, 16, sizeOfCellHeader);
     Region::AllocationScope notInRegion(false);
-    cellsBeingBuilt()[isMutable].append({ cell, size });
+    cellsBeingBuilt().append({ cell, size });
     return cell;
 }
 
@@ -958,7 +956,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     auto place = [&](const void* bytes, size_t size) {
         void* cell = Region::allocate(Region::Arena::Cells, size, 16, sizeOfCellHeader);
         memcpy(cell, bytes, size);
-        cellsBeingBuilt()[0].append({ cell, size });
+        cellsBeingBuilt().append({ cell, size });
         return cell;
     };
     UncheckedKeyHashMap<UnlinkedFunctionExecutable*, UnlinkedFunctionExecutable*> kept;
@@ -1008,7 +1006,7 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
             copy = pages + pageSizeOfImage - sizeOfCellHeader - FunctionExecutable::sizeOfShortForm;
             memcpy(copy, static_cast<const void*>(executable), FunctionExecutable::sizeOfShortForm);
             memset(copy + FunctionExecutable::sizeOfShortForm, 0xfb, sizeOfCellHeader);
-            cellsBeingBuilt()[0].append({ copy, FunctionExecutable::sizeOfShortForm });
+            cellsBeingBuilt().append({ copy, FunctionExecutable::sizeOfShortForm });
         } else
             copy = static_cast<char*>(place(executable, FunctionExecutable::sizeOfShortForm));
         *reinterpret_cast<uint32_t*>(copy + JSCell::structureIDOffset()) = structureOfShortForm->id().bits();
@@ -1042,12 +1040,10 @@ void StaticHeap::retainNeededFunctionData(VM& vm, Header& header)
     }
     size_t ofExecutablesInFull = kept.size();
     Vector<UnlinkedCodeBlock*> codeBlocks;
-    for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-        forEachCell(arena, [&](void* pointer, size_t) {
-            if (auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(static_cast<JSCell*>(pointer)))
-                codeBlocks.append(codeBlock);
-        });
-    }
+    forEachCell([&](void* pointer, size_t) {
+        if (auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(static_cast<JSCell*>(pointer)))
+            codeBlocks.append(codeBlock);
+    });
     for (auto* codeBlock : codeBlocks) {
         for (auto list : { codeBlock->functionDecls(), codeBlock->functionExprs() }) {
             for (auto& entry : list) {
@@ -1129,13 +1125,13 @@ static void deduplicateSymbolTables()
         moved.add(table, kept.ensure(String { bytes }, [&] {
             void* cell = Region::allocate(Region::Arena::Cells, sizeof(SymbolTable), 16, StaticHeap::sizeOfCellHeader);
             memcpy(cell, bytes.data(), bytes.size());
-            cellsBeingBuilt()[0].append({ cell, sizeof(SymbolTable) });
+            cellsBeingBuilt().append({ cell, sizeof(SymbolTable) });
             return std::bit_cast<uintptr_t>(cell);
         }).iterator->value);
     }
     uintptr_t startOfScratch = Region::startOf(Region::Arena::Scratch);
     size_t usedOfScratch = Region::used(Region::Arena::Scratch);
-    for (auto arena : { Region::Arena::Data, Region::Arena::Malloc, Region::Arena::Cells, Region::Arena::MutableCells, Region::Arena::MutableMalloc }) {
+    for (auto arena : { Region::Arena::Data, Region::Arena::Malloc, Region::Arena::Cells }) {
         for (auto& word : std::span { std::bit_cast<uintptr_t*>(Region::startOf(arena)), Region::used(arena) / sizeof(uintptr_t) }) {
             if (word - startOfScratch >= usedOfScratch)
                 continue;
@@ -1151,8 +1147,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     s_identifiersOfProgram = { };
     s_constantsOfProgram = { };
     auto forgetCells = makeScopeExit([] {
-        for (auto& cells : cellsBeingBuilt())
-            cells = { };
+        cellsBeingBuilt() = { };
         s_allocatesFunctionsInScratch = false;
         s_nextCellIsOfAFunction = false;
         executablesInScratch() = { };
@@ -1228,10 +1223,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 auto imageView = AOT::ImageView::tryCreate(imageOfCode, reinterpret_cast<const void*>(Region::startOf(Region::Arena::Image)));
                 std::span<AOT::FunctionInfo> infosOfFunctions;
                 if (imageView) {
-                    // (In a writable arena: entries that are left empty are filled in at run time if they are needed. See
-                    // AOT::Data::create().)
                     size_t size = imageView->numberOfFunctions() * sizeof(AOT::FunctionInfo);
-                    infosOfFunctions = { static_cast<AOT::FunctionInfo*>(Region::allocate(Region::Arena::MutableMalloc, size, pageSizeOfImage)), imageView->numberOfFunctions() };
+                    infosOfFunctions = { static_cast<AOT::FunctionInfo*>(Region::allocate(Region::Arena::Data, size, pageSizeOfImage)), imageView->numberOfFunctions() };
                     memset(static_cast<void*>(infosOfFunctions.data()), 0, size);
                     header.infosOfFunctions = std::bit_cast<uint64_t>(infosOfFunctions.data());
                     s_arrayDeduplicator = &arrayDeduplicator;
@@ -1315,8 +1308,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             setLineStarts(uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->lineStarts());
                             makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, lineStarts);
                             // The top-level code of the module. Its executable is created at run time.
-                            if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
+                            if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1))) {
                                 fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall, lineStarts);
+                                infosOfFunctions[function->index].setTopLevelCode(codeBlock);
+                            }
                         }
                         if (codeBlock)
                             uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->setLineStarts({ });
@@ -1456,12 +1451,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     // The collector never visits the static heap, so nothing in it may hold the only reference to an object outside it.
     {
         ClosureChecker checker(vm);
-        for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-            forEachCell(arena, [&](void* pointer, size_t) {
-                checker.current = static_cast<JSCell*>(pointer);
-                checker.current->methodTable()->visitChildren(checker.current, checker);
-            });
-        }
+        forEachCell([&](void* pointer, size_t) {
+            checker.current = static_cast<JSCell*>(pointer);
+            checker.current->methodTable()->visitChildren(checker.current, checker);
+        });
         if (checker.numberOfEscapes) {
             dataLogLn("StaticHeap: ", checker.numberOfEscapes, " references out of it");
             ok = false;
@@ -1472,35 +1465,33 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     auto structures = structuresOf(vm);
     uint32_t blockOfStructures = vm.structureStructure->id().bits() & ~static_cast<uint32_t>(MarkedBlock::blockSize - 1);
     UncheckedKeyHashMap<uint32_t, uint32_t> idInFirstVM;
-    for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-        forEachCell(arena, [&](void* pointer, size_t size) {
-            auto* cell = static_cast<JSCell*>(pointer);
-            uint32_t id = cell->structureID().bits();
-            uint32_t translated = idInFirstVM.ensure(id, [&]() -> uint32_t {
-                if ((id & ~static_cast<uint32_t>(MarkedBlock::blockSize - 1)) != blockOfStructures || header.numberOfStructures == Header::maxStructures)
-                    return 0;
-                for (size_t i = 0; i < structures.size(); ++i) {
-                    if (structures[i] && structures[i]->id().bits() == id) {
-                        uint32_t result = offsetOfFirstStructureBlock + (id & (MarkedBlock::blockSize - 1));
-                        header.structures[header.numberOfStructures++] = { static_cast<uint32_t>(i), result };
-                        return result;
-                    }
-                }
+    forEachCell([&](void* pointer, size_t size) {
+        auto* cell = static_cast<JSCell*>(pointer);
+        uint32_t id = cell->structureID().bits();
+        uint32_t translated = idInFirstVM.ensure(id, [&]() -> uint32_t {
+            if ((id & ~static_cast<uint32_t>(MarkedBlock::blockSize - 1)) != blockOfStructures || header.numberOfStructures == Header::maxStructures)
                 return 0;
-            }).iterator->value;
-            if (!translated) {
-                if (ok)
-                    dataLogLn("StaticHeap: a ", cell->classInfo()->className, " has a structure that is not one of the VM's own");
-                ok = false;
-                return;
+            for (size_t i = 0; i < structures.size(); ++i) {
+                if (structures[i] && structures[i]->id().bits() == id) {
+                    uint32_t result = offsetOfFirstStructureBlock + (id & (MarkedBlock::blockSize - 1));
+                    header.structures[header.numberOfStructures++] = { static_cast<uint32_t>(i), result };
+                    return result;
+                }
             }
-            *reinterpret_cast<uint32_t*>(cell) = translated;
-            cell->setCellState(CellState::PossiblyBlack);
-        });
-    }
+            return 0;
+        }).iterator->value;
+        if (!translated) {
+            if (ok)
+                dataLogLn("StaticHeap: a ", cell->classInfo()->className, " has a structure that is not one of the VM's own");
+            ok = false;
+            return;
+        }
+        *reinterpret_cast<uint32_t*>(cell) = translated;
+        cell->setCellState(CellState::PossiblyBlack);
+    });
 
     // Compute now what a cell would otherwise compute lazily and cache, because these cells are read-only at run time.
-    forEachCell(Region::Arena::Cells, [&](void* pointer, size_t) {
+    forEachCell([&](void* pointer, size_t) {
         if (auto* bigInt = dynamicDowncast<JSBigInt>(static_cast<JSCell*>(pointer)))
             bigInt->hash();
     });
@@ -1562,11 +1553,9 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, int64_t
     }
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
         auto arena = static_cast<Region::Arena>(i);
-        bool isMutable = arena == Region::Arena::MutableCells || arena == Region::Arena::MutableMalloc;
-        auto access = isMutable ? Region::Access::ReadAndWrite : Region::Access::Read;
         // (If a later mapping fails, the arenas that are already mapped stay mapped. Nothing uses them, because s_header is not
         // set.)
-        if (!Region::map(arena, access, fileDescriptor, offsetInFile + header.arenaOffset[i], header.arenaSize[i]))
+        if (!Region::map(arena, fileDescriptor, offsetInFile + header.arenaOffset[i], header.arenaSize[i]))
             return false;
     }
     for (uint64_t at = header.guardedFrom; at < header.guardedTo; at += 2 * pageSizeOfImage)

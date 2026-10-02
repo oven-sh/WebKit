@@ -69,6 +69,7 @@ public:
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
+    static RegExp* createLike(VM&, const RegExp&);
     static RegExp* createFromCacheWithoutCaching(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
     static void destroy(JSCell*);
     static size_t estimatedSize(JSCell*, VM&);

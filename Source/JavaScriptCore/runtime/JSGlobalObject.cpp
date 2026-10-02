@@ -2910,8 +2910,10 @@ void JSGlobalObject::haveABadTime(VM& vm)
         return;
 
 #if ENABLE(AOT)
-    if (m_aotInstance)
-        m_aotInstance->didHaveABadTime();
+    for (AOT::Instance* instance : vm.m_aotInstances) {
+        if (instance->globalObject == this)
+            instance->didHaveABadTime();
+    }
 #endif
 
     DeferGC deferGC(vm);

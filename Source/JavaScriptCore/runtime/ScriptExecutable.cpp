@@ -401,7 +401,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
             // Nothing, and no exception: it has code, which wants no CodeBlock.
             throwScope.release();
-            AOT::install(vm, executable, kind, unlinkedCodeBlock, globalObject, AOT::codeFromImage(code, unlinkedCodeBlock));
+            AOT::install(vm, executable, kind, unlinkedCodeBlock, scope, AOT::codeFromImage(code, unlinkedCodeBlock));
             return nullptr;
         }
     }

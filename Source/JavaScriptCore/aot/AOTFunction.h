@@ -78,6 +78,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*); // Empty unless its code is ahead-of-time compiled.
     // The function that has run as this executable's code of this kind. Empty if its realm is gone.
     JS_EXPORT_PRIVATE static FunctionRef of(VM&, FunctionExecutable*, CodeSpecializationKind);
+    static FunctionRef whereLinked(VM&, uint32_t index);
     explicit operator bool() const { return !!instance; }
 
     // These allocate nothing, take no locks, and may be called from any thread while the VM's thread is stopped.

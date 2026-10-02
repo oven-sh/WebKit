@@ -27,10 +27,6 @@ public:
         Data, // Raw bytes placed by the code that builds the region.
         Malloc, // What malloc returns while the region is being built.
         Cells, // For the garbage collector's clients. See JSC::StaticHeap.
-        // Like the previous two, but for objects that a running program is likely to write to. Keeping them apart avoids dirtying
-        // the other arenas' pages.
-        MutableCells,
-        MutableMalloc,
         // Not in the file. Zero-filled at process start, in every process, whether or not the program uses the other arenas. It is
         // for objects that have to be created at run time but are referred to by objects created at build time.
         Bss,
@@ -39,8 +35,8 @@ public:
         // Exists only while the region is being built, and is not written to any file. It is for temporary objects.
         Scratch,
     };
-    static constexpr unsigned numberOfArenas = 8;
-    static constexpr unsigned numberOfArenasInFile = 5;
+    static constexpr unsigned numberOfArenas = 6;
+    static constexpr unsigned numberOfArenasInFile = 3;
 
 #if BOS(DARWIN)
     // Beyond where mimalloc asks for memory, and beyond ASAN's shadow memory, which goes into the first gap that is large enough.
@@ -79,17 +75,6 @@ public:
         bool m_previous;
     };
     BEXPORT static bool isAllocatingOnThisThread();
-    // While there is one as well, it is in Arena::MutableMalloc.
-    class MutableScope {
-    public:
-        BEXPORT MutableScope();
-        BEXPORT ~MutableScope();
-        MutableScope(const MutableScope&) = delete;
-
-    private:
-        bool m_previous;
-    };
-    BEXPORT static bool isAllocatingMutable();
 
     // ---- When it runs.
 
@@ -112,9 +97,8 @@ public:
     static constexpr size_t offsetOfSourceProvidersInBss = 64 << 20; // One per module, like the next.
     static constexpr size_t endOfSourceProvidersInBss = 128 << 20;
 
-    enum class Access : uint8_t { Read, ReadAndWrite };
-    // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
-    BEXPORT static bool map(Arena, Access, int fileDescriptor, int64_t offsetInFile, size_t, size_t offsetInArena = 0);
+    // Read-only. False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
+    BEXPORT static bool map(Arena, int fileDescriptor, int64_t offsetInFile, size_t, size_t offsetInArena = 0);
 
     // ---- For malloc.
 
