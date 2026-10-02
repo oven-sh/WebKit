@@ -2394,22 +2394,24 @@ static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const L
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
     hasExecutable.link(&jit);
-    // A short-form executable does not store this. See ExecutableBase::entrypointOfShortForm().
-    Jump saysHowToGetIn = jit.branchIfNotType(T11, ShortFunctionExecutableType);
+    // An executable from the static heap does not say how to get in. See ExecutableBase::entrypointOfStaticCode().
+    Jump isShortForm = jit.branchIfType(T11, ShortFunctionExecutableType);
+    jit.loadPtr(Address(T11, ExecutableBase::offsetOfJITCodeWithArityCheckFor(kind)), T12);
+    Jump saysHowToGetIn = jit.branchTestPtr(CCallHelpers::NonZero, T12);
+    isShortForm.link(&jit);
     jit.loadPtr(Address(T11, FunctionExecutable::offsetOfAOTEntryFor(kind)), T12);
     slow.append(jit.branchTestPtr(CCallHelpers::Zero, T12));
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T12);
     if (kind == CodeSpecializationKind::CodeForConstruct) {
         jit.load32(Address(T11, FunctionExecutable::offsetOfAOTIndexFor(kind)), T11);
         Jump doesNotConstructByCalling = jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(static_cast<int32_t>(FunctionExecutable::aotIndexOfWhatConstructsByCalling)));
+        jit.loadPtr(Address(T12, static_cast<unsigned>(Entry::ConstructByCalling) * sizeof(void*)), T12);
         jit.farJump(T12, JSEntryPtrTag);
         doesNotConstructByCalling.link(&jit);
     }
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T12);
     jit.loadPtr(Address(T12, static_cast<unsigned>(isCall(kind) ? Entry::EnterStaticFunctionForCall : Entry::EnterStaticFunctionForConstruct) * sizeof(void*)), T12);
     jit.farJump(T12, JSEntryPtrTag);
     saysHowToGetIn.link(&jit);
-    jit.loadPtr(Address(T11, ExecutableBase::offsetOfJITCodeWithArityCheckFor(kind)), T12);
-    slow.append(jit.branchTestPtr(CCallHelpers::Zero, T12));
     Jump isNative = jit.branchIfNotType(T11, FunctionExecutableType);
     jit.loadPtr(Address(T11, FunctionExecutable::offsetOfCodeBlockFor(kind)), T11);
     jit.storePtr(T11, slotOfNewFrame(CallFrameSlot::codeBlock));
@@ -2492,6 +2494,8 @@ static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKin
     jit.addPtr(TrustedImm32(Instance::offsetOfStates()), T12, T9);
     jit.load32(CCallHelpers::BaseIndex(T9, T13, CCallHelpers::TimesFour), T9);
     Jump hasNothingYet = jit.branch32(CCallHelpers::Below, T9, TrustedImm32(Instance::isLinkedWithoutData));
+    jit.loadPtr(Address(T12, Instance::offsetOfCode()), T9);
+    jit.add64(T9, T11);
     adapt(jit, T11, T12);
 
     hasNothingYet.link(&jit);
@@ -2580,16 +2584,17 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, total, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(total, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), total);
     hasExecutable.link(&jit);
-    // A short-form executable does not store this. See ExecutableBase::entrypointOfShortForm().
-    Jump saysHowToGetIn = jit.branchIfNotType(total, ShortFunctionExecutableType);
+    // An executable from the static heap does not say how to get in. See ExecutableBase::entrypointOfStaticCode().
+    Jump isShortForm = jit.branchIfType(total, ShortFunctionExecutableType);
+    jit.loadPtr(Address(total, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), scratch);
+    Jump saysHowToGetIn = jit.branchTestPtr(CCallHelpers::NonZero, scratch);
+    isShortForm.link(&jit);
     jit.loadPtr(Address(total, FunctionExecutable::offsetOfAOTEntryFor(CodeSpecializationKind::CodeForCall)), scratch);
     slowCase.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
     jit.loadPtr(Address(vm, VM::offsetOfAOTRuntimeTable()), scratch);
     jit.loadPtr(Address(scratch, static_cast<unsigned>(Entry::EnterStaticFunctionForCall) * sizeof(void*)), scratch);
     Jump knowsHowToGetIn = jit.jump();
     saysHowToGetIn.link(&jit);
-    jit.loadPtr(Address(total, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), scratch);
-    slowCase.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
     Jump isNative = jit.branchIfNotType(total, FunctionExecutableType);
     jit.loadPtr(Address(total, FunctionExecutable::offsetOfCodeBlockForCall()), passed);
     jit.storePtr(passed, CCallHelpers::calleeFrameCodeBlockBeforeCall());
@@ -2646,7 +2651,7 @@ static void generateVirtualConstruct(CCallHelpers& jit) { dispatchCall(jit, Code
 static void generateVirtualTailCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
 
 // calleeGPR = the callee. If it is a function with AOT code that has already been linked in this realm, leaves its EntryWord in
-// T12. Clobbers T11 and T13.
+// T12, with an address. Clobbers T11 and T13.
 static void findCodeOfCallee(CCallHelpers& jit, CodeSpecializationKind kind, CCallHelpers::JumpList& otherwise)
 {
     otherwise.append(jit.branchIfNotCell(calleeGPR));
@@ -2664,6 +2669,8 @@ static void findCodeOfCallee(CCallHelpers& jit, CodeSpecializationKind kind, CCa
     jit.addPtr(TrustedImm32(Instance::offsetOfStates()), instanceGPR, T11);
     jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T11);
     otherwise.append(jit.branch32(CCallHelpers::Below, T11, TrustedImm32(Instance::isLinkedWithoutData)));
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfCode()), T11);
+    jit.add64(T11, T12);
     Jump isLinked = jit.jump();
 
     // The executable is not from the static heap, so its code was installed at run time (AOT::install()), which also linked it. The

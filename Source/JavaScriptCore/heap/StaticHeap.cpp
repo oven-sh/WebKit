@@ -806,14 +806,13 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         executable->becomeStatic(vm);
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto& function = code[static_cast<unsigned>(kind)]) {
-                    executable->setAOTCode(kind, image.addressOfStub(isCall(kind) ? AOT::Stub::EnterStaticFunctionForCall : AOT::Stub::EnterStaticFunctionForConstruct), function->entry, function->index);
+                executable->setAOTCode(kind, function->entry, function->index);
                 fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfExists(kind), executable, kind, lineStarts);
             }
         }
         // (Any other function either has code for construct or cannot be constructed.)
         if (code[0] && !code[1] && unlinked->constructAbility() == ConstructAbility::CanConstruct && !unlinked->isClassConstructorFunction()) {
-            void* stub = image.addressOfStub(AOT::Stub::ConstructByCalling);
-            executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, stub, std::bit_cast<uintptr_t>(stub), FunctionExecutable::aotIndexOfWhatConstructsByCalling);
+            executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, image.offsetInCodeOfStub(AOT::Stub::ConstructByCalling), FunctionExecutable::aotIndexOfWhatConstructsByCalling);
         }
         unlinked->setStaticExecutable(executable);
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {

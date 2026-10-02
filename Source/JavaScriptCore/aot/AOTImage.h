@@ -282,7 +282,7 @@ private:
 class ImageView {
 public:
     struct Function {
-        uint64_t entry; // An EntryWord.
+        uint64_t entry; // An EntryWord with an offset.
         uint32_t index;
         const Site* sites; // Address after mapping.
         const ImageFunction* function; // Address after mapping.
@@ -292,7 +292,7 @@ public:
     };
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
-    JS_EXPORT_PRIVATE void* addressOfStub(Stub) const;
+    JS_EXPORT_PRIVATE uint32_t offsetInCodeOfStub(Stub) const;
     // The image omits its key table, which instead follows the image in `data`. The caller keeps whatever part of it is needed.
     bool keysAreOmitted() const { return !header().tableCapacity; }
     JS_EXPORT_PRIVATE std::span<const ImageKey> keys() const; // The hash table. Entries with no record are empty.

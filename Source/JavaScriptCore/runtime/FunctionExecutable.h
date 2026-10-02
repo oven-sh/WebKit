@@ -336,13 +336,13 @@ public:
 
     // For an executable in the static heap, which is read-only: the entry word of the code that was compiled for it, and the index
     // of that function (AOT::ImageFunction::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which read these.
-    uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; } // An AOT::EntryWord.
+    uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; } // An AOT::EntryWord with an offset.
     uint32_t aotIndexFor(CodeSpecializationKind kind) const { return m_aotIndex[static_cast<unsigned>(kind)]; }
     void setUnlinkedExecutableWhileStaticHeapIsBuilt(UnlinkedFunctionExecutable* unlinked) { inFull()->m_unlinkedExecutable.setWithoutWriteBarrier(unlinked); }
     JS_EXPORT_PRIVATE void becomeStatic(VM&);
-    JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, void* stub, uint64_t entry, uint32_t index);
+    JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, uint64_t entry, uint32_t index);
     // There is code to call it with and none to construct with, and to construct is to make an object, call it, and see what
-    // comes back (AOT::Stub::ConstructByCalling, which is then what aotEntryFor() is). That will do for a function that has no way
+    // comes back (AOT::Stub::ConstructByCalling, which is then its entry point). That will do for a function that has no way
     // of telling: see generateUnlinkedCodeBlockForFunctions().
     static constexpr uint32_t aotIndexOfWhatConstructsByCalling = std::numeric_limits<uint32_t>::max();
     bool constructsByCalling() const { return m_aotIndex[static_cast<unsigned>(CodeSpecializationKind::CodeForConstruct)] == aotIndexOfWhatConstructsByCalling; }

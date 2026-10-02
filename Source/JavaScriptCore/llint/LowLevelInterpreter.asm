@@ -2767,9 +2767,9 @@ macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, i
     btpz t5, (constexpr JSFunction::rareDataTag), .isExecutable
     loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t5], t5
 .isExecutable:
-    bbeq JSCell::m_type[t5], ShortFunctionExecutableType, .isShortForm
+    bbeq JSCell::m_type[t5], ShortFunctionExecutableType, .doesNotSayHowToGetIn
     loadp offsetOfJITCodeWithArityCheck[t5], t4
-    btpz t4, slowCase # When jumping to slowCase, t0, t1, t2, needs to be unmodified.
+    btpz t4, .doesNotSayHowToGetIn
     move t4, t1
     move 0, t0
     bbneq JSCell::m_type[t5], FunctionExecutableType, .callCode
@@ -2777,17 +2777,19 @@ macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, i
 .callCode:
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
-.isShortForm:
-    # It does not say how to get in, which is the same for all of them: ExecutableBase::entrypointOfShortForm().
+.doesNotSayHowToGetIn:
+    # If it is from the static heap, the way in is the same for all of them: ExecutableBase::entrypointOfStaticCode().
     loadp (ExecutableBase::m_aotEntry + which * 8)[t5], t4
-    btpz t4, slowCase
-    move t4, t1
+    btpz t4, slowCase # When jumping to slowCase, t0, t1, t2, needs to be unmodified.
     move 0, t0
-    # FunctionExecutable::aotIndexOfWhatConstructsByCalling: then that is the way in. (No function that is called has such an index.)
-    loadi (ExecutableBase::m_aotIndex + which * 4)[t5], t5
-    bieq t5, -1, .callCode
     leap _g_aotStaticFunctionEntrypoints, t1
+    # FunctionExecutable::aotIndexOfWhatConstructsByCalling. (No function that is called has such an index.)
+    loadi (ExecutableBase::m_aotIndex + which * 4)[t5], t5
+    bieq t5, -1, .constructsByCalling
     loadp (which * 8)[t1], t1
+    jmp .callCode
+.constructsByCalling:
+    loadp 16[t1], t1
     jmp .callCode
 .notJSFunction:
     bbneq JSCell::m_type[t0], InternalFunctionType, slowCase

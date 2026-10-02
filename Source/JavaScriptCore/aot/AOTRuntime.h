@@ -180,6 +180,7 @@ namespace AOT {
     v(NativeCallTrampoline) \
     v(EnterStaticFunctionForCall) \
     v(EnterStaticFunctionForConstruct) \
+    v(ConstructByCalling) \
     v(MegamorphicCache) \
     /* TypedLayoutTable::layoutIDsOfFieldsInSlot() */ \
     v(LayoutIDsOfFieldsInSlot0) \

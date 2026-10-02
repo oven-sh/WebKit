@@ -114,7 +114,7 @@ public:
     static constexpr size_t offsetOfTopLevelExecutablesInBss = 128 << 20;
     static constexpr size_t offsetOfBlocksInBss = 256 << 20; // JSC::StaticHeap::allocateBlock()
 
-    enum class Access : uint8_t { Read, ReadAndWrite, ReadAndExecute };
+    enum class Access : uint8_t { Read, ReadAndWrite };
     // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
     BEXPORT static bool map(Arena, Access, int fileDescriptor, int64_t offsetInFile, size_t, size_t offsetInArena = 0);
 

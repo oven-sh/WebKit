@@ -1256,9 +1256,9 @@ Vector<uint8_t> ImageBuilder::finish()
     header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(endOfTables);
     header.codeSize = codeSize;
     header.size = WTF::roundUpToMultipleOf<imagePageSize>(header.codeOffset + codeSize);
-    // B: the address of the code in an executable, which has its image at a fixed address, and its size.
+    // B: the size of the code.
     if (map) [[unlikely]]
-        map->println("B\t", bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Image) + header.codeOffset, "\t", codeSize);
+        map->println("B\t", codeSize);
     header.numberOfFunctions = m_functions.size();
     for (unsigned i = 0; i < numberOfStubs; ++i)
         header.stubOffsets[i] = stubs.offsets[i];
@@ -1881,9 +1881,9 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         if (!table[bucket].sameFunction(key))
             continue;
         auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + table[bucket].record - 1);
-        size_t start = header.codeOffset + reinterpret_cast<const uint32_t*>(m_data.data() + header.startsOfFunctionsOffset)[function.index];
+        uint64_t start = reinterpret_cast<const uint32_t*>(m_data.data() + header.startsOfFunctionsOffset)[function.index];
         auto whereItIsGoingToBe = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
-        return Function { EntryWord::encode(m_address + start, function.convention()), function.index,
+        return Function { EntryWord::encode(start, function.convention()), function.index,
             reinterpret_cast<const Site*>(whereItIsGoingToBe(function.sites())), reinterpret_cast<const ImageFunction*>(whereItIsGoingToBe(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants };
     }
     return std::nullopt;
@@ -1904,9 +1904,9 @@ uint32_t ImageView::indexOfFunctionWith(const ImageKey& key) const
     return function.index;
 }
 
-void* ImageView::addressOfStub(Stub stub) const
+uint32_t ImageView::offsetInCodeOfStub(Stub stub) const
 {
-    return const_cast<uint8_t*>(m_address) + header().codeOffset + header().stubOffsets[static_cast<unsigned>(stub)];
+    return header().stubOffsets[static_cast<unsigned>(stub)];
 }
 
 std::pair<Image*, const ImageFunction*> Image::find(const ImageKey& key)

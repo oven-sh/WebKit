@@ -65,7 +65,8 @@ struct Convention {
 JS_EXPORT_PRIVATE Convention conventionOf(UnlinkedCodeBlock*);
 
 // The address of a function's code and, in the bits above the address, what is needed to call it without knowing anything else
-// about it.
+// about it. In an executable of the static heap, which is made before anyone knows where the code will be mapped, the offset of
+// the function in the image's code takes the place of the address. Adding Instance::code to such a word makes it one with an address.
 struct EntryWord {
     static constexpr unsigned shiftOfNumberOfParameters = 48;
     static constexpr unsigned bitsOfNumberOfParameters = 4;
@@ -73,15 +74,14 @@ struct EntryWord {
     static constexpr uint64_t addressMask = (1ULL << shiftOfNumberOfParameters) - 1;
     static_assert(numberOfArgumentGPRs < (1u << bitsOfNumberOfParameters));
 
-    static uint64_t encode(const void* address, Convention convention)
+    static uint64_t encode(const void* address, Convention convention) { return encode(std::bit_cast<uintptr_t>(address), convention); }
+    static uint64_t encode(uint64_t bits, Convention convention)
     {
-        uint64_t bits = std::bit_cast<uintptr_t>(address);
-        RELEASE_ASSERT(!(bits & ~addressMask));
+        RELEASE_ASSERT(bits && !(bits & ~addressMask));
         if (convention.signature == Signature::List)
             return bits | 1ULL << bitOfIsList;
         return bits | static_cast<uint64_t>(convention.numberOfParameters) << shiftOfNumberOfParameters;
     }
-    static void* address(uint64_t word) { return std::bit_cast<void*>(static_cast<uintptr_t>(word & addressMask)); }
 };
 
 } } // namespace JSC::AOT

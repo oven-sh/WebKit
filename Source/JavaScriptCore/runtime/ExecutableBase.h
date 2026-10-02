@@ -141,16 +141,20 @@ public:
 
     CodePtr<JSEntryPtrTag> generatedJITCodeWithArityCheckForCall() const
     {
-        if (isShortFunctionExecutable()) [[unlikely]]
-            return entrypointOfShortForm(CodeSpecializationKind::CodeForCall);
-        return WTF::opaque(this)->m_jitCodeForCallWithArityCheck;
+        if (!isShortFunctionExecutable()) [[likely]] {
+            if (CodePtr<JSEntryPtrTag> result = WTF::opaque(this)->m_jitCodeForCallWithArityCheck) [[likely]]
+                return result;
+        }
+        return entrypointOfStaticCode(CodeSpecializationKind::CodeForCall);
     }
 
     CodePtr<JSEntryPtrTag> generatedJITCodeWithArityCheckForConstruct() const
     {
-        if (isShortFunctionExecutable()) [[unlikely]]
-            return entrypointOfShortForm(CodeSpecializationKind::CodeForConstruct);
-        return WTF::opaque(this)->m_jitCodeForConstructWithArityCheck;
+        if (!isShortFunctionExecutable()) [[likely]] {
+            if (CodePtr<JSEntryPtrTag> result = WTF::opaque(this)->m_jitCodeForConstructWithArityCheck) [[likely]]
+                return result;
+        }
+        return entrypointOfStaticCode(CodeSpecializationKind::CodeForConstruct);
     }
 
     CodePtr<JSEntryPtrTag> generatedJITCodeWithArityCheckFor(CodeSpecializationKind kind) const
@@ -166,8 +170,8 @@ public:
         // Check if we have a cached result. We only have it for arity check because we use the
         // no-arity entrypoint in non-virtual calls, which will "cache" this value directly in
         // machine code.
-        if (isShortFunctionExecutable()) [[unlikely]]
-            return entrypointOfShortForm(kind);
+        if (m_aotEntry[static_cast<unsigned>(kind)] || isShortFunctionExecutable()) [[unlikely]]
+            return entrypointOfStaticCode(kind);
         ExecutableBase* inFull = WTF::opaque(this);
         if (arity == ArityCheckMode::MustCheckArity) {
             switch (kind) {
@@ -266,8 +270,9 @@ public:
     void dump(PrintStream&) const;
         
 protected:
-    // What m_jitCodeFor*WithArityCheck would be, of a FunctionExecutable in the short form.
-    JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> entrypointOfShortForm(CodeSpecializationKind) const;
+    // What m_jitCodeFor*WithArityCheck would be, of a FunctionExecutable from the static heap. It does not say so itself: in the
+    // short form it has no room to, and in full it could only do so with an address, and the code is wherever it was mapped.
+    JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> entrypointOfStaticCode(CodeSpecializationKind) const;
 
     // Of a FunctionExecutable: see aotEntryFor().
     uint64_t m_aotEntry[2] { }; // AOT::EntryWord

@@ -158,17 +158,10 @@ bool StaticRegion::map(Arena arena, Access access, int fileDescriptor, int64_t o
     if (!size)
         return true;
     void* wanted = reinterpret_cast<void*>(startOf(arena) + offsetInArena);
-    int protection = access == Access::ReadAndWrite ? PROT_READ | PROT_WRITE : access == Access::ReadAndExecute ? PROT_READ | PROT_EXEC : PROT_READ;
-    void* result = mmap(wanted, size, protection, MAP_PRIVATE, fileDescriptor, offsetInFile);
-    // Darwin refuses an executable mapping of a file that is not signed (EPERM), but allows a mapping of one to be made executable.
-    bool needsExecutePermission = false;
-    if (result == MAP_FAILED && access == Access::ReadAndExecute && errno == EPERM) {
-        result = mmap(wanted, size, PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
-        needsExecutePermission = true;
-    }
+    void* result = mmap(wanted, size, access == Access::ReadAndWrite ? PROT_READ | PROT_WRITE : PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
     if (result == MAP_FAILED)
         return false;
-    if (result != wanted || (needsExecutePermission && mprotect(result, size, protection))) {
+    if (result != wanted) {
         munmap(result, size);
         return false;
     }

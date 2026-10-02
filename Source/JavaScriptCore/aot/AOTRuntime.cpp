@@ -92,7 +92,7 @@ void* nearCallTargetFor(void* code)
     return result.iterator->value.code().untaggedPtr();
 }
 
-extern "C" void* g_aotStaticFunctionEntrypoints[2]; // FunctionExecutable.cpp
+extern "C" void* g_aotStaticFunctionEntrypoints[3]; // FunctionExecutable.cpp
 
 RuntimeTable::RuntimeTable(VM& vm)
 {
@@ -113,12 +113,14 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
-    // A FunctionExecutable in the short form has no room for its entry points, so they are read from here:
-    // ExecutableBase::entrypointOfShortForm().
+    // A FunctionExecutable from the static heap does not have its entry points, so they are read from here:
+    // ExecutableBase::entrypointOfStaticCode().
     set(Entry::EnterStaticFunctionForCall, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterStaticFunctionForCall)));
     set(Entry::EnterStaticFunctionForConstruct, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterStaticFunctionForConstruct)));
     g_aotStaticFunctionEntrypoints[0] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForCall)];
+    set(Entry::ConstructByCalling, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::ConstructByCalling)));
     g_aotStaticFunctionEntrypoints[1] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForConstruct)];
+    g_aotStaticFunctionEntrypoints[2] = m_entries[static_cast<unsigned>(Entry::ConstructByCalling)];
 
     auto addCallLinkInfo = [&](Entry entry, CallLinkInfo::CallType type) {
         auto info = makeUnique<VirtualCallInfo>();

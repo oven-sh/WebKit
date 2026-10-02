@@ -60,29 +60,27 @@ void FunctionExecutable::becomeStatic(VM& vm)
     m_singleton.invalidate(vm, StringFireDetail("Created in the static heap"));
 }
 
-// AOT::Stub::EnterStaticFunctionForCall and AOT::Stub::EnterStaticFunctionForConstruct, once an AOT::RuntimeTable exists. (The
-// interpreter uses these too: virtualThunkFor.)
+// AOT::Stub::EnterStaticFunctionForCall, EnterStaticFunctionForConstruct and ConstructByCalling, once an AOT::RuntimeTable exists.
+// (The interpreter uses these too: virtualThunkFor.)
 extern "C" {
-JS_EXPORT_PRIVATE void* g_aotStaticFunctionEntrypoints[2] { };
+JS_EXPORT_PRIVATE void* g_aotStaticFunctionEntrypoints[3] { };
 }
 
-CodePtr<JSEntryPtrTag> ExecutableBase::entrypointOfShortForm(CodeSpecializationKind kind) const
+CodePtr<JSEntryPtrTag> ExecutableBase::entrypointOfStaticCode(CodeSpecializationKind kind) const
 {
     unsigned which = static_cast<unsigned>(kind);
     if (!m_aotEntry[which])
         return nullptr;
-    // (See FunctionExecutable::aotIndexOfWhatConstructsByCalling.)
     if (kind == CodeSpecializationKind::CodeForConstruct && m_aotIndex[which] == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
-        return CodePtr<JSEntryPtrTag>::fromTaggedPtr(std::bit_cast<void*>(m_aotEntry[which]));
+        which = 2;
     ASSERT(g_aotStaticFunctionEntrypoints[which]);
     return CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_aotStaticFunctionEntrypoints[which]);
 }
 
-void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, void* stub, uint64_t entry, uint32_t index)
+void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, uint64_t entry, uint32_t index)
 {
     m_aotEntry[static_cast<unsigned>(kind)] = entry;
     m_aotIndex[static_cast<unsigned>(kind)] = index;
-    (isCall(kind) ? m_jitCodeForCallWithArityCheck : m_jitCodeForConstructWithArityCheck) = CodePtr<JSEntryPtrTag>::fromTaggedPtr(stub);
 }
 
 ScriptExecutable* FunctionExecutable::topLevelExecutableOfStaticExecutable() const
