@@ -1,7 +1,7 @@
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--maximumRegExpLinearProgramSize=200")
 
-// A pattern the non-backtracking matcher cannot run goes to the bytecode interpreter, and
-// matches what it always matched.
+// A pattern the non-backtracking matcher refuses is compiled as it is without the matcher, for
+// the JIT or for the bytecode interpreter, and matches what it always matched.
 
 function describe(value)
 {
@@ -97,3 +97,23 @@ function nest(depth)
 }
 accepted(nest(16), "a", { index: 0, match: ["a"] });
 refused(nest(17), "a", "nesting too deep", { index: 0, match: ["a"] });
+
+// A refused pattern has the code of the JIT, where the JIT compiles it. An accepted one has
+// none: no tier has anything to run but the matcher.
+function hasCodeOfJIT(regExp, subject)
+{
+    return $vm.regExpMatchStatistics(regExp, subject, 0).jit;
+}
+
+if ($vm.useJIT()) {
+    if (!hasCodeOfJIT(/(a)\1/, "aa") || !hasCodeOfJIT(/(?=.*b)a/, "ab") || !hasCodeOfJIT(/(?:a{50}){5}b/, "ab"))
+        throw new Error("A refused pattern does not have the code of the JIT");
+}
+if (hasCodeOfJIT(/(a*)*b/, "aab") || hasCodeOfJIT(/a/, "a"))
+    throw new Error("An accepted pattern has the code of the JIT");
+
+// The backtracking engines run a refused pattern as they do without the matcher, where they
+// rewrite /.*X.*/ to a search for X. This one reads 32,000 characters once.
+let wrapped = /.*foo(?=.*bar).*/;
+if ($vm.regExpMatchStatistics(wrapped, "x".repeat(32000), 0).refusal !== "lookaround of unbounded length" || wrapped.test("x".repeat(32000)) || !wrapped.test("x".repeat(32000) + "foo bar"))
+    throw new Error("/.*foo(?=.*bar).*/ does not match as it does without the matcher");

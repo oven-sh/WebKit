@@ -2582,10 +2582,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // itself so its length, etc, aren't in the cache.
 //
 #if USE(BUN_JSC_ADDITIONS)
-// Matches a RegExp on its bytecode, which is where the non-backtracking matcher runs, and
-// reports which engine that was and what the match cost.
+// Matches a RegExp once, with the engine it is compiled for, and reports which engine that is
+// and what the match cost the non-backtracking matcher.
 // Usage: $vm.regExpMatchStatistics(regExp, string[, startOffset])
-// Returns { index, engine, refusal, programSize, maximumStepsPerPosition, steps, scratchBytes }.
+// Returns { index, engine, refusal, jit, programSize, maximumStepsPerPosition, steps, scratchBytes }.
 JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -2601,13 +2601,15 @@ JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalO
     RETURN_IF_EXCEPTION(scope, { });
 
     Yarr::InterpretStatistics statistics;
-    int index = regExpObject->regExp()->matchBytecodeForTesting(vm, string, startOffset, statistics);
+    int index = regExpObject->regExp()->matchForTesting(globalObject, string, startOffset, statistics);
+    RETURN_IF_EXCEPTION(scope, { });
 
     bool isLinear = statistics.engine == Yarr::InterpretStatistics::Engine::Linear;
     JSObject* result = constructEmptyObject(globalObject);
     result->putDirect(vm, Identifier::fromString(vm, "index"_s), jsNumber(index));
     result->putDirect(vm, Identifier::fromString(vm, "engine"_s), jsNontrivialString(vm, isLinear ? "linear"_s : "backtracking"_s));
     result->putDirect(vm, Identifier::fromString(vm, "refusal"_s), jsNontrivialString(vm, Yarr::linearRefusalName(statistics.refusal)));
+    result->putDirect(vm, Identifier::fromString(vm, "jit"_s), jsBoolean(statistics.usesJIT));
     result->putDirect(vm, Identifier::fromString(vm, "programSize"_s), jsNumber(statistics.programSize));
     result->putDirect(vm, Identifier::fromString(vm, "maximumStepsPerPosition"_s), jsNumber(static_cast<double>(statistics.maximumStepsPerPosition)));
     result->putDirect(vm, Identifier::fromString(vm, "steps"_s), jsNumber(static_cast<double>(statistics.linear.steps)));

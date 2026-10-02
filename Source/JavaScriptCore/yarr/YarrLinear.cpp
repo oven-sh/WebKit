@@ -90,7 +90,7 @@ public:
     std::unique_ptr<LinearProgram> compile(LinearRefusal& refusal)
     {
         compileBody();
-        if (!failed() && workingMemoryBound() > Options::maxRegExpStackSize())
+        if (!failed() && workingMemoryBound() > Options::maximumRegExpLinearWorkingMemory())
             refuse(LinearRefusal::WorkingMemoryTooLarge);
         if (!failed()) {
             // Without a lookaround the bound is under this limit: the program is.
@@ -117,6 +117,9 @@ private:
 
     // The matcher keeps an instruction's index and a bit in one unsigned.
     static constexpr unsigned maximumProgramSizeLimit = 1u << 30;
+
+    // LinearMatcher::Frame.
+    static constexpr uint64_t bytesPerFrame = 3 * sizeof(unsigned);
 
     static constexpr uint64_t unbounded = std::numeric_limits<uint64_t>::max();
 
@@ -234,10 +237,10 @@ private:
         case PatternTerm::Type::ParentheticalAssertion:
         case PatternTerm::Type::NumberedForwardReference:
         case PatternTerm::Type::NamedForwardReference:
-        case PatternTerm::Type::DotStarEnclosure:
             return { };
         case PatternTerm::Type::NumberedBackReference:
         case PatternTerm::Type::NamedBackReference:
+        case PatternTerm::Type::DotStarEnclosure:
             return { 0, unbounded };
         case PatternTerm::Type::PatternCharacter:
         case PatternTerm::Type::CharacterClass: {
@@ -331,6 +334,12 @@ private:
         }
         // No copy was made: every alternative has to begin at the start of the subject.
         m_program->m_anchoredAtStart = hasOnceThrough && selected.size() == alternatives.size();
+        // optimizeDotStarWrappedExpressions() moved a leading ^ into the enclosure and told
+        // optimizeBOL() nothing about it.
+        if (selected.size() == 1) {
+            if (auto* enclosure = dotStarEnclosureOf(*selected[0]); enclosure && enclosure->anchors.bolAnchor && !enclosure->multiline())
+                m_program->m_anchoredAtStart = true;
+        }
 
         emit(Opcode::Save, 0);
         if (!compileAlternatives(selected.span(), Forward))
@@ -374,14 +383,56 @@ private:
         return !failed();
     }
 
+    // optimizeDotStarWrappedExpressions() rewrites /^.*X.*$/ (with or without the ^ and the $)
+    // to X followed by one term that says which of the two anchors there were. The backtracking
+    // engines match X and widen the match to its line. The matcher runs the pattern as it was
+    // written, which is the same match.
+    static PatternTerm* dotStarEnclosureOf(PatternAlternative& alternative)
+    {
+        if (alternative.m_terms.isEmpty() || alternative.m_terms.last().type != PatternTerm::Type::DotStarEnclosure)
+            return nullptr;
+        return &alternative.m_terms.last();
+    }
+
+    bool emitDotStar(const PatternTerm& enclosure)
+    {
+        unsigned classIndex = classIndexFor(enclosure.dotAll() ? m_pattern.anyCharacterClass() : m_pattern.newlineCharacterClass());
+        uint8_t flags = enclosure.dotAll() ? 0 : LinearInstruction::Invert;
+        Repeat repeat;
+        repeat.minimum = 0;
+        repeat.maximum = quantifyInfinite;
+        repeat.iteration = { 1, 1 };
+        return emitRepeated(repeat, [&] {
+            emit(Opcode::CharacterClass, classIndex, 0, flags);
+            return true;
+        });
+    }
+
     bool compileAlternative(PatternAlternative& alternative, MatchDirection direction)
     {
-        // A lookbehind matches its terms from the last to the first.
         size_t count = alternative.m_terms.size();
+        PatternTerm* enclosure = dotStarEnclosureOf(alternative);
+        if (enclosure) {
+            ASSERT(direction == Forward);
+            --count;
+            if (enclosure->anchors.bolAnchor)
+                emit(Opcode::AssertBOL, 0, 0, enclosure->multiline() ? LinearInstruction::Multiline : 0);
+            if (!emitDotStar(*enclosure))
+                return false;
+        }
+
+        // A lookbehind matches its terms from the last to the first.
         for (size_t index = 0; index < count; ++index) {
             auto& term = alternative.m_terms[direction == Forward ? index : count - 1 - index];
             if (!compileTerm(term, direction))
                 return false;
+        }
+
+        if (enclosure) {
+            if (!emitDotStar(*enclosure))
+                return false;
+            if (enclosure->anchors.eolAnchor)
+                emit(Opcode::AssertEOL, 0, 0, enclosure->multiline() ? LinearInstruction::Multiline : 0);
         }
         return !failed();
     }
@@ -571,7 +622,8 @@ private:
         }
 
         case PatternTerm::Type::DotStarEnclosure:
-            // YarrPattern::compile() does not build one when this matcher is selected.
+            // compileAlternative() compiles the one at the end of the pattern, and
+            // optimizeDotStarWrappedExpressions() puts none anywhere else.
             return refuse(LinearRefusal::UnsupportedTerm);
         }
 
@@ -635,25 +687,45 @@ private:
         return child;
     }
 
-    // The most the matcher can hold for this program, whatever the subject is: a position has
+    // The most the matcher can hold for this program, whatever the subject is. A position has
     // at most two states per instruction that waits on a character, in two lists, and every
-    // state of a code that writes slots has a copy of the slots. The interpreter's limit
-    // (Options::maxRegExpStackSize()) is the limit of this matcher too.
+    // state of a code that writes slots has a copy of the slots. addThread() keeps a frame for
+    // each instruction it is in the middle of, and one for each slot that instruction wrote. The
+    // vectors that hold all this grow by a quarter at a time.
     uint64_t workingMemoryBound() const
     {
         uint64_t bytes = 0;
         for (auto& code : m_program->m_codes) {
+            uint64_t slots = code.writesSlots ? m_program->m_slotCount : 0;
             uint64_t waiting = 0;
+            uint64_t frames = 0;
             for (auto& instruction : code.instructions) {
                 if (instruction.isConsuming())
                     ++waiting;
+                uint64_t writes = 0;
+                switch (instruction.opcode) {
+                case Opcode::Save:
+                case Opcode::StoreSlot:
+                    writes = 1;
+                    break;
+                case Opcode::ClearSlots:
+                    writes = instruction.b - instruction.a;
+                    break;
+                case Opcode::Lookaround:
+                    writes = m_program->m_codes[instruction.a].writesSlots ? m_program->m_slotCount : 0;
+                    break;
+                default:
+                    break;
+                }
+                frames += 2 * (1 + writes);
             }
             uint64_t states = waiting * 2 * 2;
-            uint64_t slots = code.writesSlots ? m_program->m_slotCount : 0;
             bytes += states * (1 + slots) * sizeof(unsigned);
             bytes += code.instructions.size() * 2 * sizeof(unsigned);
+            bytes += frames * bytesPerFrame;
+            bytes += 2 * slots * sizeof(unsigned);
         }
-        return bytes;
+        return bytes + bytes / 4;
     }
 
     // A step of the matcher is a visit of addThread(), or a state run() takes over a
@@ -975,6 +1047,7 @@ private:
         unsigned a { 0 };
         unsigned b { 0 };
     };
+    static_assert(sizeof(Frame) == 3 * sizeof(unsigned), "LinearCompiler::workingMemoryBound() counts a frame as this much");
 
     struct Scratch {
         WTF_MAKE_NONCOPYABLE(Scratch);

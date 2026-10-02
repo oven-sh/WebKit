@@ -1,8 +1,9 @@
-//@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--maxRegExpStackSize=65536")
+//@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--maximumRegExpLinearWorkingMemory=65536")
 
 // Every state of the non-backtracking matcher has a copy of what the groups captured, so the
 // memory a match can need is known from the program: (states) x (groups). The matcher refuses
-// a pattern for which that is more than the interpreter may use (65536 bytes in this test).
+// a pattern for which that is more than maximumRegExpLinearWorkingMemory (65536 bytes in this
+// test). A refused pattern is compiled as it is without the matcher.
 
 function alternation(groupCount)
 {
@@ -20,6 +21,8 @@ function test(groupCount, engine, refusal)
         throw new Error(groupCount + " groups: expected " + engine + " (" + refusal + ") but got " + statistics.engine + " (" + statistics.refusal + ")");
     if (statistics.scratchBytes > 65536)
         throw new Error(groupCount + " groups: the matcher held " + statistics.scratchBytes + " bytes");
+    if (engine === "backtracking" && statistics.jit !== $vm.useJIT())
+        throw new Error(groupCount + " groups: a refused pattern " + (statistics.jit ? "has" : "does not have") + " the code of the JIT");
 
     let match = regExp.exec("0123z");
     if (match.index !== 4 || match[0] !== "z" || match[26] !== "z" || match[1] !== undefined)

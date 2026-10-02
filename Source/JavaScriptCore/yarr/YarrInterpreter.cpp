@@ -3312,24 +3312,42 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
     m_lineIndent = savedLineIndent;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, LinearRefusal& refusal, ConcurrentJSLock* lock)
+{
+    // Before the ByteCompiler: BytecodePattern takes the pattern's character classes.
+    auto linearProgram = compileLinear(pattern, refusal);
+    if (Options::dumpCompiledRegExpPatterns()) [[unlikely]] {
+        if (linearProgram)
+            linearProgram->dump(WTF::dataFile());
+        else
+            dataLogLn("The non-backtracking matcher refused this regular expression: ", linearRefusalName(refusal));
+    }
+    if (!linearProgram)
+        return nullptr;
+
+    auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+    if (bytecode)
+        bytecode->m_linearProgram = WTF::move(linearProgram);
+    return bytecode;
+}
+#endif
+
 std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
 {
 #if USE(BUN_JSC_ADDITIONS)
+    // For the callers that have this engine and no other (Yarr::RegularExpression), and for a
+    // RegExp whose JIT code gave up. RegExp::compile() asks byteCompileLinear() itself, before
+    // it turns to the JIT.
     if (Options::useRegExpLinearEngine()) [[unlikely]] {
-        // Before the ByteCompiler: BytecodePattern takes the pattern's character classes.
         LinearRefusal refusal = LinearRefusal::None;
-        auto linearProgram = compileLinear(pattern, refusal);
-        if (Options::dumpCompiledRegExpPatterns()) [[unlikely]] {
-            if (linearProgram)
-                linearProgram->dump(WTF::dataFile());
-            else
-                dataLogLn("The non-backtracking matcher refused this regular expression: ", linearRefusalName(refusal));
-        }
+        if (auto bytecode = byteCompileLinear(pattern, allocator, errorCode, refusal, lock))
+            return bytecode;
+        if (hasError(errorCode))
+            return nullptr;
         auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
-        if (bytecode) {
-            bytecode->m_linearProgram = WTF::move(linearProgram);
+        if (bytecode)
             bytecode->m_linearRefusal = refusal;
-        }
         return bytecode;
     }
 #endif
