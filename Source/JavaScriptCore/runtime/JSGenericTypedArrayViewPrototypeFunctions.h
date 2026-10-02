@@ -989,6 +989,18 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObjec
         return { };
     }
 
+    // A callback can detach the buffer or resize thisObject out of bounds. An element read after that
+    // is undefined. A Number typed array stores it as ToNumber(undefined), which is toNativeFromUndefined(),
+    // but a BigInt typed array stores it with ToBigInt(undefined), which throws once the result exists.
+    std::optional<size_t> firstUndefinedInKept;
+    auto keep = [&](JSValue element, typename ViewClass::ElementType nativeValue) ALWAYS_INLINE_LAMBDA {
+        if constexpr (ViewClass::Adaptor::isBigInt) {
+            if (element.isUndefined() && !firstUndefinedInKept) [[unlikely]]
+                firstUndefinedInKept = kept.size();
+        }
+        kept.append(nativeValue);
+    };
+
     if (callData.type == CallData::Type::JS) [[likely]] {
         CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1001,7 +1013,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObjec
 
             scope.release();
             if (result.toBoolean(globalObject))
-                kept.append(nativeValue);
+                keep(element, nativeValue);
             return IterationStatus::Continue;
         });
         RETURN_IF_EXCEPTION(scope, { });
@@ -1020,7 +1032,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObjec
 
             scope.release();
             if (result.toBoolean(globalObject))
-                kept.append(nativeValue);
+                keep(element, nativeValue);
             return IterationStatus::Continue;
         });
         RETURN_IF_EXCEPTION(scope, { });
@@ -1039,12 +1051,22 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObjec
 
     auto from = kept.span();
     ASSERT(from.size() == length);
+    if constexpr (ViewClass::Adaptor::isBigInt) {
+        // Store the elements before the first undefined one, as the spec's TypedArraySetElement loop does, then throw from ToBigInt(undefined).
+        if (firstUndefinedInKept) [[unlikely]]
+            from = from.first(firstUndefinedInKept.value());
+    }
 
     switch (result->type()) {
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_DISPATCH_TYPED_ARRAY)
     default:
         RELEASE_ASSERT_NOT_REACHED();
         break;
+    }
+
+    if constexpr (ViewClass::Adaptor::isBigInt) {
+        if (firstUndefinedInKept) [[unlikely]]
+            return throwVMTypeError(globalObject, scope, "Invalid argument type in ToBigInt operation"_s);
     }
 
     return JSValue::encode(result);
