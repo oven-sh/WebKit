@@ -939,6 +939,57 @@ void Graph::elideArrayIteratorMethodReads()
     }
 }
 
+void Graph::sinkIteratorMethodReads()
+{
+    if (!Options::useUnboxedFastArrayIteration())
+        return;
+    Vector<Node*, 4> candidates;
+    for (BasicBlock* block : m_rpo) {
+        if (block->isGeneric)
+            continue;
+        Node* previous = nullptr;
+        for (Node* node : block->nodes) {
+            if (node->isElided)
+                continue;
+            if (node->isBytecode(op_iterator_open) && previous && previous->isBytecode(op_get_by_id) && !node->guard && !node->guarded && !previous->guard && !previous->guarded) {
+                auto open = node->as<OpIteratorOpen>();
+                auto read = previous->as<OpGetById>();
+                Node* iterable = node->use(open.m_iterable);
+                if (node->use(open.m_symbolIterator) == previous && previous->use(read.m_base) == iterable && mayBe(iterable->type, TArray)
+                    && previous->graph->codeBlock()->identifier(read.m_property) == m_vm.propertyNames->iteratorSymbol) {
+                    node->iteratorMethodRead = previous;
+                    candidates.append(node);
+                }
+            }
+            previous = node;
+        }
+    }
+    if (candidates.isEmpty())
+        return;
+    UncheckedKeyHashMap<Node*, unsigned> uses;
+    for (Node* open : candidates)
+        uses.add(open->iteratorMethodRead, 0);
+    auto note = [&](Node* user) {
+        for (auto& use : user->uses) {
+            if (auto found = uses.find(use.node); found != uses.end())
+                found->value++;
+        }
+    };
+    for (BasicBlock* block : m_rpo) {
+        for (Node* phi : block->phis)
+            note(phi);
+        for (Node* node : block->nodes)
+            note(node);
+    }
+    for (Node* open : candidates) {
+        if (uses.get(open->iteratorMethodRead) == 1) {
+            open->iteratorMethodRead->isElided = true;
+            remark("sunk-iterator-method-read"_s);
+        } else
+            open->iteratorMethodRead = nullptr;
+    }
+}
+
 void Graph::elideUnpassedCalleeReads()
 {
     UncheckedKeyHashMap<Node*, unsigned> wanted;

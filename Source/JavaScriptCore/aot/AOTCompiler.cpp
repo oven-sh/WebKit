@@ -233,6 +233,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     optimizeLoops(graph);
     graph.elideUnpassedCalleeReads();
     graph.elideArrayIteratorMethodReads();
+    graph.sinkIteratorMethodReads();
     graph.findBuiltinsCalled();
     graph.findArgumentLists();
     promoteEnvironments(graph);

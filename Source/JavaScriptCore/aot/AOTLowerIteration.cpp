@@ -77,15 +77,48 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
         iterableRegister = bytecode.m_iterable;
     }
     LValue iterable = lowJSValue(node->use(iterableRegister));
-    LValue symbolIterator = lowJSValue(node->use(symbolIteratorRegister));
+    auto lowerMethod = [&] {
+        if (Node* read = node->iteratorMethodRead) {
+            Node* currentNode = std::exchange(m_node, read);
+            Graph* currentCode = std::exchange(m_code, read->graph);
+            lowerNode(read);
+            m_node = currentNode;
+            m_code = currentCode;
+        }
+        return lowJSValue(node->use(symbolIteratorRegister));
+    };
 
     if (usesDataStubs() && !isAsync) {
+        std::optional<ValueFromBlock> iteratorOfArray;
+        std::optional<ValueFromBlock> nextOfArray;
+        LBasicBlock continuation = nullptr;
+        if (Options::useUnboxedFastArrayIteration() && mayBe(node->use(iterableRegister)->type, TArray)) {
+            LBasicBlock isArray = m_out.newBlock();
+            LBasicBlock isOtherKind = m_out.newBlock();
+            continuation = m_out.newBlock();
+            m_out.branch(isCellAnd(node->use(iterableRegister), iterable, [&](LValue cell) { return isOriginalArray(cell); }), unsure(isArray), unsure(isOtherKind));
+            m_out.appendTo(isArray);
+            iteratorOfArray = m_out.anchor(fixedPointer(Instance::offsetOfArrayIterationSentinel()));
+            nextOfArray = m_out.anchor(m_out.constInt64(JSValue::encode(jsNumber(0))));
+            m_out.jump(continuation);
+            m_out.appendTo(isOtherKind);
+        }
+        LValue symbolIterator = lowerMethod();
         PatchpointValue* opened = callStub(Stub::IteratorOpen, m_proc.addTuple({ Int64, Int64 }),
             { { iterable, GPRInfo::argumentGPR0 }, { symbolIterator, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Next))), GPRInfo::argumentGPR2 } },
             { });
         opened->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1) };
-        setProj(node, iteratorRegister, m_out.extract(opened, 0));
-        setProj(node, nextRegister, m_out.extract(opened, 1));
+        if (!continuation) {
+            setProj(node, iteratorRegister, m_out.extract(opened, 0));
+            setProj(node, nextRegister, m_out.extract(opened, 1));
+            return;
+        }
+        ValueFromBlock iteratorOfOtherKind = m_out.anchor(m_out.extract(opened, 0));
+        ValueFromBlock nextOfOtherKind = m_out.anchor(m_out.extract(opened, 1));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setProj(node, iteratorRegister, m_out.phi(Int64, *iteratorOfArray, iteratorOfOtherKind));
+        setProj(node, nextRegister, m_out.phi(Int64, *nextOfArray, nextOfOtherKind));
         return;
     }
 
@@ -106,6 +139,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
         m_out.appendTo(isOtherKind);
     }
 
+    LValue symbolIterator = lowerMethod();
     LValue fastIterator = vmCall(node, Int64, isAsync ? Entry::operationAOTAsyncIteratorOpenTryFast : Entry::operationAOTIteratorOpenTryFast, m_instance, iterable, symbolIterator, scratchAddress());
     m_out.branch(m_out.notZero64(fastIterator), unsure(fastCase), unsure(genericCase));
 

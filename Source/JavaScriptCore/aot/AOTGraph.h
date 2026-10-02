@@ -165,6 +165,7 @@ struct Node {
     Node* guard { nullptr };
     Node* guarded { nullptr };
     Node* target { nullptr };
+    Node* iteratorMethodRead { nullptr };
     bool checksNarrowedType { false };
     Type narrowedTo { TNone };
     uint16_t fieldSlot { 0 };
@@ -356,6 +357,7 @@ public:
     void adoptInlinee(std::unique_ptr<Graph>&&, InlineFrame);
     void computeBlockOrder();
     void computeDominators();
+    void sinkIteratorMethodReads();
     const ModuleLinkage* linkage() const { return m_linkage; }
     Node* closureScope { nullptr };
     Node* closureFunction { nullptr };

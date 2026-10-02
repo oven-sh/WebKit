@@ -354,6 +354,28 @@ void Lowering::lowerGetById(Node* node)
         lowerBuiltinRead(node, baseNode);
         return;
     }
+    if (const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared(); intrinsics && !node->isElided && Options::useUnboxedFastArrayIteration() && mayBe(baseNode->type, TArray)
+        && code().codeBlock()->identifier(bytecode.m_property) == m_graph.vm().propertyNames->iteratorSymbol) {
+        unsigned array = intrinsics->find(ImmutableIntrinsics::globalObject, *String("Array"_s).impl());
+        unsigned prototype = array ? intrinsics->find(intrinsics->at(array).canonical, *String("prototype"_s).impl()) : 0;
+        if (unsigned values = prototype ? intrinsics->find(intrinsics->at(prototype).canonical, *String("values"_s).impl()) : 0) {
+            m_graph.remark("reads-iterator-method-of-array-inline"_s);
+            LValue base = lowJSValue(baseNode);
+            LBasicBlock isArray = m_out.newBlock();
+            LBasicBlock isOtherKind = m_out.newBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            m_out.branch(isCellAnd(baseNode, base, [&](LValue cell) { return isOriginalArray(cell); }), unsure(isArray), unsure(isOtherKind));
+            m_out.appendTo(isArray);
+            ValueFromBlock ofArray = m_out.anchor(m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[intrinsics->at(values).canonical]));
+            m_out.jump(continuation);
+            m_out.appendTo(isOtherKind);
+            ValueFromBlock ofOtherKind = m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            setJSValue(node, m_out.phi(Int64, ofArray, ofOtherKind));
+            return;
+        }
+    }
     if (auto field = (Options::aotShapeOptimizations() & 2) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
         m_graph.remark("typed-field-read"_s, code().codeBlock()->identifier(bytecode.m_property).string());
         LValue base = lowJSValue(baseNode);
