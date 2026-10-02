@@ -2888,6 +2888,59 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSize, char*, (JSGlobalObject* glob
     OPERATION_RETURN(scope, std::bit_cast<char*>(result));
 }
 
+// An inline allocation of an array with a run-time length asks auxiliarySpace for sizeof(IndexingHeader) +
+// length * sizeof(JSValue) bytes (SpeculativeJIT::emitAllocateButterfly, FTL allocateJSArray). This storage comes from
+// that same size class, so that the slow path refills the free list that the inline path reads. JSArray::tryCreate
+// gives a length of 0 or 1 the minimum capacity of the runtime instead, which is another size class: the inline path
+// would then find its free list empty at each allocation.
+static ALWAYS_INLINE JSArray* tryCreateArrayInSizeClassOfInlineAllocation(VM& vm, Structure* structure, unsigned length)
+{
+    ASSERT(!hasAnyArrayStorage(structure->indexingType()));
+    if (length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+        return nullptr;
+
+    unsigned vectorLength = Butterfly::availableContiguousVectorLength(structure, length);
+    Butterfly* butterfly = Butterfly::tryCreateUninitialized(vm, nullptr, 0, structure->outOfLineCapacity(), true, vectorLength * sizeof(EncodedJSValue));
+    if (!butterfly) [[unlikely]]
+        return nullptr;
+    butterfly->setVectorLength(vectorLength);
+    butterfly->setPublicLength(length);
+    Butterfly::clearRange(structure->indexingType(), butterfly, 0, vectorLength);
+    return JSArray::createWithButterfly(vm, nullptr, structure, butterfly);
+}
+
+// The slow path of an inline allocation of an array with a run-time length. Code that makes no inline attempt calls
+// operationNewArrayWithSize.
+JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSizeAfterInlineAllocation, char*, (JSGlobalObject* globalObject, Structure* arrayStructure, int32_t size, Butterfly* butterfly))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (size < 0) [[unlikely]] {
+        throwException(globalObject, scope, createRangeError(globalObject, ArrayInvalidLengthError));
+        OPERATION_RETURN(scope, nullptr);
+    }
+
+    JSArray* result;
+    if (butterfly) {
+        ASSERT(butterfly->publicLength() <= butterfly->vectorLength());
+        result = JSArray::createWithButterfly(vm, nullptr, arrayStructure, butterfly);
+    } else {
+        // A length that is too large for contiguous storage comes with an ArrayStorage structure. The inline path made no attempt.
+        if (hasAnyArrayStorage(arrayStructure->indexingType())) [[unlikely]]
+            result = JSArray::tryCreate(vm, arrayStructure, size);
+        else
+            result = tryCreateArrayInSizeClassOfInlineAllocation(vm, arrayStructure, size);
+        if (!result) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            OPERATION_RETURN(scope, nullptr);
+        }
+    }
+    OPERATION_RETURN(scope, std::bit_cast<char*>(result));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSizeAndHint, char*, (JSGlobalObject* globalObject, Structure* arrayStructure, int32_t size, int32_t vectorLengthHint, Butterfly* butterfly))
 {
     VM& vm = globalObject->vm();
