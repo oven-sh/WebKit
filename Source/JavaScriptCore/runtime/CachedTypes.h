@@ -529,6 +529,19 @@ private:
 // `image` holds the bytes of BytecodeLinkEncoder::Result::aotImage and must stay readable for the life of the process. `code` is the
 // address at which its code (aotImageCodeRange()) is mapped executable. Returns false if the image was built for another engine.
 JS_EXPORT_PRIVATE bool registerAOTImage(std::span<const uint8_t> image, const void* code);
+// A program that was compiled ahead of time is one range of a file: its code (BytecodeLinkEncoder::Result::aotImage), then what
+// StaticHeap::build() returned. `bytes` is that range, readable for as long as the process lives. Does what registerAOTImage() and
+// StaticHeap::map() do. On the thread that is going to have the first VM, before it has.
+struct UseOfAOTFile {
+    const char* whyNoStaticHeap { nullptr };
+    const char* whyNoImage { nullptr };
+    size_t sizeOfStaticHeap { 0 };
+    size_t sizeOfCode { 0 };
+    const void* code { nullptr };
+};
+JS_EXPORT_PRIVATE UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile);
+// Such a range for one script or module. Empty if it cannot be compiled.
+JS_EXPORT_PRIVATE Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool isModule);
 // Whether the address is in the code of a registered image. Takes no lock and does not allocate.
 JS_EXPORT_PRIVATE bool isPCOfAOTImage(const void*);
 // The offset and size of the code in the image, both multiples of the page size. Returns nullopt if `image` is not an image.

@@ -119,11 +119,11 @@ public:
     bool usesNonSimpleParameterList() const { return features() & NonSimpleParameterListFeature; }
 
     // (These settings do not apply to an executable in the short form, whose code never changes.)
-    void setNeverInline(bool value) { if (!isShortForm()) inFull()->m_neverInline = value; }
-    void setNeverOptimize(bool value) { if (!isShortForm()) inFull()->m_neverOptimize = value; }
-    void setNeverFTLOptimize(bool value) { if (!isShortForm()) inFull()->m_neverFTLOptimize = value; }
-    void setDidTryToEnterInLoop(bool value) { if (!isShortForm()) inFull()->m_didTryToEnterInLoop = value; }
-    void setCanUseOSRExitFuzzing(bool value) { if (!isShortForm()) inFull()->m_canUseOSRExitFuzzing = value; }
+    void setNeverInline(bool value) { if (!StaticHeap::contains(this)) inFull()->m_neverInline = value; }
+    void setNeverOptimize(bool value) { if (!StaticHeap::contains(this)) inFull()->m_neverOptimize = value; }
+    void setNeverFTLOptimize(bool value) { if (!StaticHeap::contains(this)) inFull()->m_neverFTLOptimize = value; }
+    void setDidTryToEnterInLoop(bool value) { if (!StaticHeap::contains(this)) inFull()->m_didTryToEnterInLoop = value; }
+    void setCanUseOSRExitFuzzing(bool value) { if (!StaticHeap::contains(this)) inFull()->m_canUseOSRExitFuzzing = value; }
     bool neverInline() const { return isShortForm() || inFull()->m_neverInline; }
     bool neverOptimize() const { return isShortForm() || inFull()->m_neverOptimize; }
     bool neverFTLOptimize() const { return isShortForm() || inFull()->m_neverFTLOptimize; }

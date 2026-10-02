@@ -128,12 +128,13 @@ realm can run a program several times over, and nothing distinguishes the first.
   x86-64. A constant of 16 KB where that was meant crashed every process on Linux arm64 and nowhere else; there is a `static_assert`
   now (`StaticHeap::offsetOfFirstStructureBlock`). An image is aligned to 16 KB in its file (`imagePageSize`, `pageSizeOfImage`), so a kernel with
   larger pages cannot map it.
-- **Mapping the code** is the embedder's business. Bun maps it from the executable's own file, wherever the system puts it.
+- **Mapping** is `useAOTFile()`, for the shell and for embedders alike: the tables and the static heap at their addresses, the code
+  wherever the system puts it. An embedder says which file, and where in it.
 
 ## An order to do it in
 
-1. Both gates on for the new CPU, the back end still missing. Everything compiles and links, in the engine and in the embedder, and
-   `run-tests.py` passes, because `compileForImage()` declines everything and the tests run interpreted.
+1. Both gates on for the new CPU, the back end still missing. Everything compiles and links, in the engine and in the embedder.
+   `compileForImage()` declines everything, so `run-tests.py` runs the tests interpreted: all pass but those that call `isAOTCompiled()`.
 2. Decide the registers (2 above).
 3. Lift the whole-file gates of `AOTLower*.cpp` and `AOTCompiler.cpp`, and make them compile.
 4. The entry adapter, the prologue and the epilogue. A function that returns a constant, called from the interpreter.
@@ -143,6 +144,8 @@ realm can run a program several times over, and nothing distinguishes the first.
 7. Exceptions and stack walking: `aot-*` tests with `catch`, stack overflow, `Error.stack`.
 8. `compare-with-interpreter.py` over all of `JSTests/stress`. Then the modes `aot` and `aot-validate` of `run-javascriptcore-tests`. Then `fuzz.py`.
 9. The embedder's tests.
+
+All but the last needs nothing but `jsc`, which builds a file and runs from it as an embedder does.
 
 The tools are in `Tools/Scripts/aot/`, with a README.
 

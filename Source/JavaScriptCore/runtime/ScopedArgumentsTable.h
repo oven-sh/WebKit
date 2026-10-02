@@ -75,7 +75,8 @@ public:
     
     void lock()
     {
-        m_locked = true;
+        if (!m_locked)
+            m_locked = true;
     }
     
     ScopedArgumentsTable* trySet(VM&, uint32_t index, ScopeOffset);

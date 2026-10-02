@@ -130,6 +130,7 @@ public:
     // Setup phase, before any read() or join(). Any thread.
     void giveUpOnName(UniquedStringImpl*);
     void giveUpOnScope(const void*);
+    void giveUpOnEveryScope() { m_hasGivenUpOnEveryScope.store(true, std::memory_order_relaxed); }
     // Some code reads a variable with this name but the analysis cannot tell which one. The reader treats the value as unknown, so
     // anything stored in a variable with this name escapes.
     void recordDynamicReadOfName(UniquedStringImpl*);
@@ -177,6 +178,7 @@ private:
     UncheckedKeyHashSet<UniquedStringImpl*> m_untrackedNames;
     UncheckedKeyHashSet<UniquedStringImpl*> m_dynamicallyReadNames;
     UncheckedKeyHashSet<const void*> m_untrackedScopes;
+    std::atomic<bool> m_hasGivenUpOnEveryScope { false };
     UncheckedKeyHashSet<const void*> m_scopesOfModules;
 };
 

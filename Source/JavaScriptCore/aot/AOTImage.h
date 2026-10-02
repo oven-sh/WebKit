@@ -74,7 +74,6 @@ struct ImageHeader {
     uint32_t largestFieldID; // Property name IDs (VM::aotPropertyNameIDs) start above this. Both kinds of ID are stored in Structure::m_fieldIDInSlot.
     uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes; // Options::auditAOTTypedFields()
-    uint32_t identifiesModulesByText; // ImageKey::module is a hash of the source text, because no embedder numbered the modules. See moduleIDFor().
     // If numberOfIdentifiersOfProgram is nonzero, a selector number is an identifier number and StaticHeap holds the strings.
     uint32_t selectorsOffset; // ImageSelector[], by selector number.
     uint32_t numberOfSelectors; // Highest selector number plus one.
@@ -185,7 +184,6 @@ public:
         m_numberOfIdentifiersOfProgram = number;
     }
     void setNumberOfConstantsOfProgram(uint32_t number) { m_numberOfConstantsOfProgram = number; }
-    void setIdentifiesModulesByText() { m_identifiesModulesByText = true; }
     // VM thread only. Returns false if the pattern cannot be compiled.
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
@@ -212,7 +210,6 @@ private:
     uint32_t m_numberOfIdentifiersOfProgram { 0 };
     const NumbersOfIdentifiers* m_numbersOfIdentifiersOfProgram { nullptr };
     uint32_t m_numberOfConstantsOfProgram { 0 };
-    bool m_identifiesModulesByText { false };
     Vector<RegExpCode> m_regExps;
     unsigned m_numberOfRegExpsNotCompiled { 0 };
     UncheckedKeyHashMap<String, bool> m_regExpsAsked; // Keyed by flags and pattern.
@@ -228,8 +225,6 @@ public:
     JS_EXPORT_PRIVATE static Image* registerImage(std::span<const uint8_t> data, const void* code);
     // For the jsc shell, and for platforms where a file cannot be mapped executable. Reads the file and copies its code into JIT
     // memory.
-    static Image* registerImageFromFile(const char* path);
-    static Image* registerImageCopyingCode(Vector<uint8_t>&&);
 
     static bool hasAny();
     static bool containsCode(const void*); // In any image.
@@ -237,8 +232,8 @@ public:
     const void* code() const { return m_code; }
     // These refer to the image that has module environments.
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
-    JS_EXPORT_PRIVATE static uint32_t numberOfFunctionsOfImageWithEnvironments();
-    static size_t sizeOfAllDatasOfImageWithEnvironments();
+    JS_EXPORT_PRIVATE static uint32_t numberOfFunctions();
+    static size_t sizeOfAllDatas();
     JS_EXPORT_PRIVATE static ImageEnvironment environmentOf(uint32_t moduleOfGraph);
     static const void* addressOfStub(Stub); // From any image. Null if none is loaded.
     static std::pair<Image*, const ImageFunction*> find(const ImageKey&);
@@ -317,7 +312,6 @@ private:
 
 // The module number images use for this provider, or zero if it is in no image.
 uint32_t moduleIDFor(SourceProvider&);
-uint32_t moduleIDFromText(SourceProvider&);
 std::optional<ImageKey> imageKeyFor(ScriptExecutable*, CodeSpecializationKind);
 JS_EXPORT_PRIVATE ImageKey imageKeyForTopLevelCode(uint32_t module); // For a program, or for a module's top-level code.
 unsigned hashOfCode(std::span<const uint8_t>); // For checking that two compilations produced the same code.

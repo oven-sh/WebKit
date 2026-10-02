@@ -40,8 +40,9 @@ static bool errorMayQuoteSource(const Graph& graph, Node* node)
     auto calleeMayNotBeFunction = [&](VirtualRegister callee) {
         if (calleeIsKnownDeclaration())
             return false;
+        // (An error that a native function throws quotes the call, which is in the innermost frame there is.)
         Node* value = node->use(callee);
-        return !value || value->type & ~TFunction;
+        return !value || value->type & ~TFunction || !functionNumberOf(value->type);
     };
     switch (node->opcode) {
     case op_get_by_id:
@@ -79,6 +80,10 @@ static bool errorMayQuoteSource(const Graph& graph, Node* node)
     case op_has_private_brand:
     case op_in_by_id:
     case op_in_by_val:
+    case op_enumerator_in_by_val:
+    case op_enumerator_get_by_val:
+    case op_enumerator_put_by_val:
+    case op_enumerator_has_own_property:
     case op_instanceof:
     case op_call_direct_eval:
     case op_call_varargs:

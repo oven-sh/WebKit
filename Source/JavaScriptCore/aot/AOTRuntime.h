@@ -479,12 +479,12 @@ static_assert(sizeof(FunctionInfo) == 32);
 // One per realm that runs ahead-of-time compiled code.
 struct Instance {
     JS_EXPORT_PRIVATE static Instance& ensure(JSModuleLoader*);
-    static Instance& ensure(JSGlobalObject*); // Of the realm's own loader.
+    JS_EXPORT_PRIVATE static Instance& ensure(JSGlobalObject*); // Of the realm's own loader.
     static Instance* of(JSFunction*);
     Structure* structureOfFunctions(Structure* ofRealm, FunctionExecutable*, JSScope*);
     RegExp* regExpFor(RegExp*);
     JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
-    ScriptExecutable* topLevelExecutableOf(SourceProvider*);
+    JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOf(SourceProvider*);
     JS_EXPORT_PRIVATE void setTopLevelExecutableOf(SourceProvider*, ScriptExecutable*);
     JSModuleLoader* loader() const;
     static bool convertToTypedLayout(VM&, JSObject*, uint16_t layoutID); // TypedLayoutTable::ConvertFunction
@@ -558,9 +558,6 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfMissesForEightSlots() { return OBJECT_OFFSETOF(Instance, missesForEightSlots); }
     static constexpr ptrdiff_t offsetOfMissesToSpare() { return OBJECT_OFFSETOF(Instance, missesToSpare); }
 
-    // Upper bound on the number of functions. This reserves address space, not memory.
-    static constexpr size_t maxFunctions = 4 << 20;
-
     // If the image requests it, the program's module environments are placed below the Instance, each at the same distance in every
     // realm, so compiled code can reach a module variable directly from the Instance. Returns null if this realm's environments are
     // ordinary GC allocations, in which case code that relies on the fixed placement cannot run in this realm.
@@ -598,7 +595,7 @@ struct Instance {
     VM* vm; // At the same offset as in JSWebAssemblyInstance, so code that finds the VM from a frame need not distinguish the two.
     struct Collections;
     Collections* collections; // Bookkeeping for the Datas.
-    FunctionInfo* infos; // By function index.
+    const FunctionInfo* infos; // By function index.
     Data* sharedData; // SharedData::get()
     const uint32_t* functionMetadataOffsets; // By function index: the offset of its FunctionMetadata in Arena::Data, or zero. Null if no function has metadata.
     // For mapping a code address to a function (loadIndexOfFunctionAt(), Image::classifyAddress()): the start of the image's code;

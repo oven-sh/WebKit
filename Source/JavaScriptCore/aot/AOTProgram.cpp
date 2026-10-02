@@ -125,7 +125,7 @@ void VariableSummaries::giveUpOnScope(const void* scope)
 
 bool VariableSummaries::isUntracked(Variable variable, UniquedStringImpl* name) const
 {
-    return m_untrackedScopes.contains(variable.scope) || m_untrackedNames.contains(name);
+    return m_hasGivenUpOnEveryScope.load(std::memory_order_relaxed) || m_untrackedScopes.contains(variable.scope) || m_untrackedNames.contains(name);
 }
 
 Type VariableSummaries::read(Variable variable, UniquedStringImpl* name, unsigned reader)

@@ -186,13 +186,6 @@ struct Instance::Collections {
     bool hasFieldAdditions { false }; // See Instance::fieldAdditions.
     AssumptionWatchpoint arraysInheritNoIsConcatSpreadable;
     AssumptionWatchpoint arraysInheritNoElements;
-    // Functions linked without a Data, which would otherwise mark these. Their FunctionInfo points into the UnlinkedCodeBlock, which the
-    // executable does not keep alive: an UnlinkedFunctionExecutable drops code that has aged (UnlinkedCodeBlock::maxAge).
-    struct FunctionWithoutData {
-        ScriptExecutable* executable;
-        UnlinkedCodeBlock* unlinkedCodeBlock;
-    };
-    Vector<FunctionWithoutData> functionsWithoutData;
     // The slots that cache, or have cached, a structure transition. The collector revisits them repeatedly while marking. There are
     // few.
     Vector<Slot*> transitions;
@@ -223,7 +216,6 @@ struct Instance::Collections {
     UncheckedKeyHashMap<RegExp*, RegExp*> regExps;
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
-    size_t sizeOfInfos { 0 }; // Zero unless the Instance owns them.
     size_t numberOfFunctions { 0 };
     // For Instance::allocateForData(). Offsets from the Instance, in units of 16 bytes.
     size_t startOfDatas { 0 };
@@ -281,10 +273,10 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     auto startOfDatasFor = [](size_t numberOfFunctions) {
         return std::max<size_t>(roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + numberOfFunctions * sizeof(uint32_t)), static_cast<size_t>(leastStateWithData) << shiftOfStateWithData);
     };
-    bool isOfStaticHeap = Image::environmentsSize() && StaticHeap::isUsedBy(vm);
-    size_t environmentsSize = isOfStaticHeap ? roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize()) : 0;
-    size_t numberOfFunctions = isOfStaticHeap ? Image::numberOfFunctionsOfImageWithEnvironments() : maxFunctions;
-    size_t size = startOfDatasFor(numberOfFunctions) + roundUpToMultipleOf(WTF::pageSize(), isOfStaticHeap ? Image::sizeOfAllDatasOfImageWithEnvironments() : 256 * MB);
+    RELEASE_ASSERT(StaticHeap::isUsedBy(vm) && StaticHeap::infosOfFunctions(vm));
+    size_t environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
+    size_t numberOfFunctions = Image::numberOfFunctions();
+    size_t size = startOfDatasFor(numberOfFunctions) + roundUpToMultipleOf(WTF::pageSize(), Image::sizeOfAllDatas());
     Instance* instance = reinterpret_cast<Instance*>(static_cast<char*>(OSAllocator::reserveAndCommit(environmentsSize + size, OSAllocator::FastMallocPages)) + environmentsSize);
     instance->runtimeTable = AOT::runtimeTable(vm).entries();
     instance->globalObject = globalObject;
@@ -297,13 +289,9 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections->startOfDatas = startOfDatasFor(numberOfFunctions) >> shiftOfStateWithData;
     instance->collections->endOfDatasUsed = instance->collections->startOfDatas;
     instance->collections->endOfDatas = size >> shiftOfStateWithData;
-    instance->infos = environmentsSize ? StaticHeap::infosOfFunctions(vm) : nullptr;
-    if (!instance->infos) {
-        instance->collections->sizeOfInfos = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(FunctionInfo));
-        instance->infos = static_cast<FunctionInfo*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfInfos, OSAllocator::FastMallocPages));
-    }
-    instance->functionMetadataOffsets = environmentsSize ? StaticHeap::functionMetadataOffsets(vm) : nullptr;
-    instance->constantsOfProgram = environmentsSize ? StaticHeap::constantsOfProgram(vm) : nullptr;
+    instance->infos = StaticHeap::infosOfFunctions(vm);
+    instance->functionMetadataOffsets = StaticHeap::functionMetadataOffsets(vm);
+    instance->constantsOfProgram = StaticHeap::constantsOfProgram(vm);
     instance->sharedData = SharedData::get();
     // (Pages are committed when they are first touched.)
     instance->fieldsWithObservableReads = static_cast<uint8_t*>(OSAllocator::reserveAndCommit(sizeOfFieldsWithObservableReads, OSAllocator::FastMallocPages));
@@ -489,8 +477,6 @@ void Instance::destroy(Instance* instance)
         Data::destroy(instance->collections->all.last());
     size_t environmentsSize = instance->collections->environmentsSize;
     size_t size = instance->collections->sizeFromInstance;
-    if (instance->collections->sizeOfInfos)
-        OSAllocator::decommitAndRelease(instance->infos, instance->collections->sizeOfInfos);
     delete instance->collections;
     OSAllocator::decommitAndRelease(instance->fieldsWithObservableReads, sizeOfFieldsWithObservableReads);
     fastFree(instance->selectorsOnObjectPrototype);
@@ -719,15 +705,6 @@ static bool linkConstants(VM& vm, Data& data)
     return true;
 }
 
-static void fillInfo(FunctionInfo& info, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, const void* constants)
-{
-    info.constants = constants;
-    info.identifiers = unlinkedCodeBlock->identifiers().span().data();
-    info.sites = code.sites();
-    info.setExecutable(executable, unlinkedCodeBlock->isConstructor() && unlinkedCodeBlock->codeType() == FunctionCode ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, false);
-    info.flags = (code.imageFunction()->hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveTheirConstants) | FunctionInfo::slotsAmongFlags(code.numSlots());
-}
-
 Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, CodeBlock* codeBlock)
 {
     VM& vm = *instance.vm;
@@ -742,7 +719,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->code = &code;
     // (With a static heap, use the identifiers from the FunctionInfo. The unlinked code, if it exists, may have been decoded later,
     // and has its own copy of the same identifiers.)
-    FunctionInfo& info = instance.infos[code.index()];
+    const FunctionInfo& info = instance.infos[code.index()];
     data->identifiers = info.sites ? info.identifiers : unlinkedCodeBlock->identifiers().span().data();
     data->sites = code.sites();
     data->hasSiteConstants = code.imageFunction()->hasSiteConstants;
@@ -761,10 +738,6 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     else if (!linkConstants(vm, *data)) {
         destroy(data);
         return nullptr;
-    }
-    if (!info.sites) {
-        RELEASE_ASSERT(instance.collections->sizeOfInfos);
-        fillInfo(info, executable, unlinkedCodeBlock, code, data->constants);
     }
     RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && (info.flags >> FunctionInfo::numberOfFlagBits) == std::min<uint32_t>(numSlots, FunctionInfo::maxEncodedSlots) && (!info.executable() || info.executable() == executable));
     return data;
@@ -995,8 +968,6 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromMetadata() const
     // (The nested functions are not needed either. They are looked up through functionDecl() and functionExpr().)
     if (const uint32_t* words = metadata->find(FunctionMetadata::Handlers))
         parts.handlers = { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
-    if (const uint32_t* word = metadata->find(FunctionMetadata::ExpressionInfo); word && !StaticHeap::hasPositionsOfCallSites())
-        parts.expressionInfo = StaticHeap::inData<uint8_t>(*word);
     return makeFunctionCodeFromParts(*instance->vm, parts);
 }
 
@@ -1042,8 +1013,6 @@ static uint64_t readVarint(const uint8_t*& at)
 // Decodes what makePositions() in StaticHeap.cpp wrote.
 auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstruction ofConstruction) const -> std::optional<ReportedPosition>
 {
-    if (!instance->functionMetadataOffsets || !StaticHeap::hasPositionsOfCallSites())
-        return std::nullopt;
     const uint8_t* at = nullptr;
     if (uint32_t word = instance->functionMetadataOffsets[index]; word & 1)
         at = StaticHeap::inData<uint8_t>(word - 1);
@@ -1335,13 +1304,7 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
     uint32_t index = code->index();
     if (instance.isLinked(index))
         RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
-    else if (code->imageFunction()->startsCold && !instance.infos[index].sites && hasOnlyRealmIndependentConstants(unlinkedCodeBlock)) {
-        RELEASE_ASSERT(instance.collections->sizeOfInfos);
-        fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
-        instance.infos[index].flags |= FunctionInfo::startsCold;
-        instance.collections->functionsWithoutData.append({ executable, unlinkedCodeBlock });
-        instance.setLinkedWithoutData(index);
-    } else if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
+    else if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
         return false;
     executable->installAOTCode(vm, kind, WTF::move(code));
     return true;
@@ -1459,10 +1422,6 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
         visitor.appendUnbarriered(from.first);
         if (to)
             visitor.appendUnbarriered(to);
-    }
-    for (auto& function : collections->functionsWithoutData) {
-        visitor.appendUnbarriered(function.executable);
-        visitor.appendUnbarriered(function.unlinkedCodeBlock);
     }
     visitor.appendUnbarriered(globalObject);
     if (collections->environmentsSize) {

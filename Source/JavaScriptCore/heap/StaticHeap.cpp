@@ -94,12 +94,11 @@ struct StaticHeap::Header {
     uint64_t guardedFrom;
     uint64_t guardedTo;
     uint64_t numberOfFunctions;
-    // See PositionsToKeep. With hasPositionsOfCallSites, FunctionMetadata::ExpressionInfo is the offset of the positions of a
+    // See PositionsToKeep. FunctionMetadata::ExpressionInfo is the offset of the positions of a
     // function's call sites. An odd entry in functionMetadataOffsets is one more than the offset of the positions for code that has
     // no metadata.
     uint64_t namesOfSources; // uint32_t[numberOfSources + 1]: the offset of each name in the UTF-8 text that follows the array.
     uint64_t numberOfSources;
-    uint64_t hasPositionsOfCallSites;
     uint64_t hasIdentifiersOfProgram; // See AOT::NumbersOfIdentifiers.
     uint64_t identifiersOfProgram; // UniquedStringImpl*[], indexed by identifier number.
     uint64_t constantsOfProgram; // EncodedJSValue[]. See AOT::NumbersOfConstants.
@@ -401,7 +400,7 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
             }
         }
     }
-    // (Allocated at an even address: see Header::hasPositionsOfCallSites.)
+    // (Allocated at an even address: see Header::namesOfSources.)
     auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, stream.size(), 2));
     memcpySpan(std::span { copy, stream.size() }, stream.span());
     s_bytesOfPositions += stream.size();
@@ -920,6 +919,18 @@ void StaticHeap::didMakeSourceProvider(void* place)
     sourceProviderSlotStates(s_header->numberOfModules)[index].isMade.store(true, std::memory_order_release);
 }
 
+Vector<uint32_t> StaticHeap::entryOffsetsOfModules()
+{
+    Vector<uint32_t> result;
+    if (!s_header)
+        return result;
+    for (auto& module : std::span { std::bit_cast<const StaticHeapModule*>(s_header->modules), static_cast<size_t>(s_header->numberOfModules) }) {
+        if (!module.isBuiltinFunction && module.codeBlock)
+            result.append(module.entryOffset);
+    }
+    return result;
+}
+
 void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t sizeOfProvider, SourceProvider*& made)
 {
     RELEASE_ASSERT(sizeOfProvider <= sizeOfPlaceForSourceProvider);
@@ -1399,7 +1410,6 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     starts[namesOfSources.size()] = at;
                     header.namesOfSources = std::bit_cast<uint64_t>(starts);
                     header.numberOfSources = namesOfSources.size();
-                    header.hasPositionsOfCallSites = true;
                     if (Options::verboseAOTCompilation()) [[unlikely]]
                         dataLogLn("StaticHeap: ", s_numberOfPositions, " positions of call sites: ", s_bytesOfPositions, " bytes, in ", namesOfSources.size(), " sources whose names take ", sizeOfText);
                 }
@@ -1494,6 +1504,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     forEachCell([&](void* pointer, size_t) {
         if (auto* bigInt = dynamicDowncast<JSBigInt>(static_cast<JSCell*>(pointer)))
             bigInt->hash();
+        if (auto* table = dynamicDowncast<ScopedArgumentsTable>(static_cast<JSCell*>(pointer)))
+            table->lock();
     });
 
     Region::clearFreeLists();
@@ -1638,11 +1650,6 @@ bool StaticHeap::hasIdentifiersOfProgram()
     return s_header && s_header->hasIdentifiersOfProgram;
 }
 
-bool StaticHeap::hasPositionsOfCallSites()
-{
-    return s_header && s_header->hasPositionsOfCallSites;
-}
-
 String StaticHeap::nameOfSource(uint32_t source)
 {
     RELEASE_ASSERT(s_header && source && source <= s_header->numberOfSources);
@@ -1654,7 +1661,7 @@ String StaticHeap::nameOfSource(uint32_t source)
 // Reads the first two values that makePositions() wrote.
 LineColumn StaticHeap::whereFunctionStarts(uint32_t indexOfFunction)
 {
-    RELEASE_ASSERT(s_header && s_header->hasPositionsOfCallSites && indexOfFunction < s_header->numberOfFunctions);
+    RELEASE_ASSERT(s_header && indexOfFunction < s_header->numberOfFunctions);
     uint32_t word = std::bit_cast<const uint32_t*>(s_header->functionMetadataOffsets)[indexOfFunction];
     RELEASE_ASSERT(word && !(word & 1));
     const uint32_t* where = inData<AOT::FunctionMetadata>(word)->find(AOT::FunctionMetadata::ExpressionInfo);
@@ -1813,7 +1820,6 @@ bool StaticHeap::isUsedBy(VM&) { return false; }
 PreciseAllocation* StaticHeap::containerOfSlow(const void*) { RELEASE_ASSERT_NOT_REACHED(); }
 std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM&, std::span<const uint8_t>) { return nullptr; }
 UnlinkedCodeBlock* StaticHeap::codeFor(VM&, const SourceCodeKey&) { return nullptr; }
-bool StaticHeap::hasPositionsOfCallSites() { return false; }
 bool StaticHeap::hasIdentifiersOfProgram() { return false; }
 WTF::UniquedStringImpl* const* StaticHeap::identifiersOfProgram() { return nullptr; }
 String StaticHeap::nameOfSource(uint32_t) { return { }; }

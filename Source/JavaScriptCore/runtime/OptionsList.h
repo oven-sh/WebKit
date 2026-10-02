@@ -141,7 +141,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
     \
     v(Bool, useAOT, false, Normal, "Use ahead-of-time compiled code: the embedder maps the static heap and registers the AOT image, and functions run the code the image has for them. If false, both are ignored."_s) \
-    v(Bool, compileMainScriptAheadOfTime, false, Normal, "jsc shell only, for testing the AOT compiler. Compiles the first script or module ahead of time, in-process, and registers the image before running it. Implies useAOT."_s) \
+    v(Bool, compileMainScriptAheadOfTime, false, Normal, "jsc shell only. Does what writeAOTImageTo does, to a temporary file, and then runs again with that as aotImagePath."_s) \
+    v(OptionString, writeAOTImageTo, nullptr, Normal, "jsc shell only. Compiles the first script or module ahead of time, writes the result to this file, and exits without running it."_s) \
     v(Bool, verboseAOTCompilation, false, Normal, "Log which functions the AOT compiler compiles and why it rejects a function."_s) \
     v(Bool, dumpAOTGraph, false, Normal, "Dump the AOT compiler's IR."_s) \
     v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
@@ -150,7 +151,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceAOTVeneers, false, Normal, "For testing. Route every direct call between functions in an image through a veneer, as if the target were out of range."_s) \
     v(Unsigned, numberOfAOTStubCopiesForTesting, 0, Normal, "For testing. If nonzero: lay out an image as if calls reached only far enough for it to need about this many copies of the stubs, instead of 96 MB. Calls between functions that are then out of range go through veneers."_s) \
     v(Unsigned, largestAOTFunctionNumberInTypesForTesting, 0, Normal, "For testing. If nonzero: the largest function number that a type can hold, instead of 262,143. A small program then has functions beyond it."_s) \
-    v(OptionString, aotImagePath, nullptr, Normal, "Path to an AOT image. Functions that the image has code for run that code."_s) \
+    v(OptionString, aotImagePath, nullptr, Normal, "jsc shell only. What writeAOTImageTo wrote for the first script or module. Implies useAOT."_s) \
     v(Bool, definePlainInstanceFieldsInConstructor, false, Normal, "A class whose instance fields all lack initializers (class C { a; b; }) defines them directly in its constructor instead of calling a synthesized initializer function."_s) \
     v(Bool, evaluateObjectLiteralValuesFirst, false, Normal, "Evaluate all property values of an object literal before allocating the object, where the difference is unobservable, so that the allocation and its stores form one run of instructions."_s) \
     v(Bool, resolveAllScopeSlotsStatically, false, Normal, "The bytecode optimizer resolves get_from_scope to a scope slot whenever it can prove the variable's location, even if that widens the instruction."_s) \

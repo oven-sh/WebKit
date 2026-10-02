@@ -1213,8 +1213,15 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
                 break;
             case op_call_direct_eval:
                 // Direct eval runs code the compiler has not seen, which can write any variable in scope.
-                if (m_declaredNames)
-                    m_declaredNames->forEachScope([&](const void* scope) { summaries.giveUpOnScope(scope); });
+                if (m_declaredNames) {
+                    m_declaredNames->forEachScope([&](const void* scope) {
+                        dataLogLnIf(Options::logAOTTypeInference(), "AOT inference: direct eval gives up on scope ", RawPointer(scope));
+                        summaries.giveUpOnScope(scope);
+                    });
+                } else {
+                    dataLogLnIf(Options::logAOTTypeInference(), "AOT inference: direct eval in code that does not know what is declared around it gives up on every scope");
+                    summaries.giveUpOnEveryScope();
+                }
                 for (BasicBlock* other : m_rpo) {
                     for (Node* made : other->nodes) {
                         if (made->isBytecode(op_create_lexical_environment) || made->isBytecode(op_create_generator_frame_environment)) {

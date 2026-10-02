@@ -5,6 +5,20 @@ The compiler and its runtime are in `Source/JavaScriptCore/aot/`, the static hea
 
 Each script says how to use it at the top, and with `--help`.
 
+## The shell
+
+`jsc` does what an embedder does, with the same calls (`buildAOTFile()`, `useAOTFile()`), for one script or module:
+
+| | |
+| --- | --- |
+| `jsc --writeAOTImageTo=<file> main.js` | compiles it, makes its static heap, writes both to the file, and exits |
+| `jsc --aotImagePath=<file> main.js` | maps the file read-only and runs from it |
+| `jsc --compileMainScriptAheadOfTime=1 main.js` | both: writes a temporary file and runs itself again on it. The tests use this. |
+
+With `-m` it is a module. Whatever else is loaded is interpreted, except the same file again: in another realm (`createGlobalObject().load()`),
+on another thread (`$.agent.start()`), or by another module loader of the same realm (`importInNewLoader()`). `isAOTCompiled(f)` says whether a
+function runs compiled code.
+
 | Question | Tool |
 | --- | --- |
 | Did I break it? (10 seconds) | `run-tests.py <jsc>` runs `JSTests/stress/aot-*.js` and `sound-types-*.js`, each as it says and validated. |

@@ -34,6 +34,10 @@
 #if OS(DARWIN) || OS(LINUX)
 #include <pthread.h>
 #include <sys/mman.h>
+#if OS(DARWIN)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #endif
 
 namespace JSC { namespace AOT {
@@ -1249,7 +1253,6 @@ Vector<uint8_t> ImageBuilder::finish()
     for (unsigned i = 0; i < 4; ++i)
         header.linkTimeConstantsUsed[i] = s_linkTimeConstantsUsed[i].load();
     header.numberOfCopiesOfStubs = stubsAt.size();
-    header.identifiesModulesByText = m_identifiesModulesByText;
     for (unsigned i = 0; i < stubsAt.size(); ++i)
         header.copiesOfStubs[i] = safeCast<uint32_t>(stubsAt[i]);
     RELEASE_ASSERT(stubs.returnsIntoAdapters.size() == numberOfAdapters);
@@ -1497,18 +1500,6 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     return image;
 }
 
-static Image* imageWithEnvironments()
-{
-    auto& all = registry();
-    if (!all.hasAny.load(std::memory_order_acquire))
-        return nullptr;
-    for (unsigned i = 0; i < all.images.size(); ++i) {
-        if (all.images[i]->header().environmentsSize)
-            return all.images[i];
-    }
-    return nullptr;
-}
-
 Image& Image::of(const ImageFunction& function)
 {
     auto& all = registry();
@@ -1563,25 +1554,25 @@ uint32_t Image::selectorNamed(const StringImpl& name) const
 
 uint32_t Image::environmentsSize()
 {
-    Image* image = imageWithEnvironments();
+    Image* image = withCode();
     return image ? image->header().environmentsSize : 0;
 }
 
-uint32_t Image::numberOfFunctionsOfImageWithEnvironments()
+uint32_t Image::numberOfFunctions()
 {
-    Image* image = imageWithEnvironments();
+    Image* image = withCode();
     return image ? image->header().numberOfFunctions : 0;
 }
 
-size_t Image::sizeOfAllDatasOfImageWithEnvironments()
+size_t Image::sizeOfAllDatas()
 {
-    Image* image = imageWithEnvironments();
+    Image* image = withCode();
     return image ? static_cast<size_t>(image->header().sizeOfAllDatasIn16Bytes) * 16 : 0;
 }
 
 ImageEnvironment Image::environmentOf(uint32_t moduleOfGraph)
 {
-    Image* image = imageWithEnvironments();
+    Image* image = withCode();
     if (!image || moduleOfGraph >= image->header().numberOfEnvironments)
         return { };
     return reinterpret_cast<const ImageEnvironment*>(image->m_data.data() + image->header().environmentsOffset)[moduleOfGraph];
@@ -1751,65 +1742,6 @@ uint32_t callSiteAt(const ImageFunction& function, uint32_t offsetOfReturnAddres
     return *result;
 }
 
-Image* Image::registerImageFromFile(const char* path)
-{
-    auto contents = FileSystem::readEntireFile(String::fromUTF8(path));
-    if (!contents)
-        return nullptr;
-    return registerImageCopyingCode(WTF::move(*contents));
-}
-
-// Returns an executable copy of the code, aligned to imagePageSize and never freed, or null. It does not come from ExecutableAllocator, so
-// that an image can be used with the JIT off, as it is when its code is mapped from an executable file.
-static void* copyToExecutableMemory(std::span<const uint8_t> code)
-{
-#if OS(DARWIN) || OS(LINUX)
-    size_t size = WTF::roundUpToMultipleOf(WTF::pageSize(), code.size() + imagePageSize);
-#if OS(DARWIN) && CPU(ARM64)
-    void* mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
-#else
-    void* mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-#endif
-    if (mapping == MAP_FAILED)
-        return nullptr;
-    void* result = reinterpret_cast<void*>(WTF::roundUpToMultipleOf<imagePageSize>(reinterpret_cast<uintptr_t>(mapping)));
-#if OS(DARWIN) && CPU(ARM64)
-    pthread_jit_write_protect_np(false);
-    memcpy(result, code.data(), code.size());
-    pthread_jit_write_protect_np(true);
-#else
-    memcpy(result, code.data(), code.size());
-    if (mprotect(mapping, size, PROT_READ | PROT_EXEC)) {
-        munmap(mapping, size);
-        return nullptr;
-    }
-#endif
-    MacroAssembler::cacheFlush(result, code.size());
-    return result;
-#else
-    UNUSED_PARAM(code);
-    return nullptr;
-#endif
-}
-
-Image* Image::registerImageCopyingCode(Vector<uint8_t>&& contents)
-{
-    if (contents.size() < sizeof(ImageHeader))
-        return nullptr;
-    // The image and its code are never freed.
-    auto* data = new Vector<uint8_t>(WTF::move(contents));
-    auto& header = *reinterpret_cast<const ImageHeader*>(data->span().data());
-    if (header.magic != imageMagic || header.codeOffset + header.codeSize > data->size())
-        return nullptr;
-    void* code = nullptr;
-    if (header.codeSize) {
-        code = copyToExecutableMemory(data->span().subspan(header.codeOffset, header.codeSize));
-        if (!code)
-            return nullptr;
-    }
-    return registerImage(data->span(), code);
-}
-
 bool Image::hasAny()
 {
     return registry().hasAny.load(std::memory_order_acquire);
@@ -1874,7 +1806,7 @@ std::optional<ImageView> ImageView::tryCreate(std::span<const uint8_t> data, con
     if (data.size() < sizeof(ImageHeader))
         return std::nullopt;
     auto& header = *reinterpret_cast<const ImageHeader*>(data.data());
-    if (header.magic != imageMagic || header.stamp != imageStamp() || header.size > data.size() || !header.environmentsSize)
+    if (header.magic != imageMagic || header.stamp != imageStamp() || header.size > data.size())
         return std::nullopt;
     return ImageView { data, address };
 }
@@ -1931,19 +1863,7 @@ std::pair<Image*, const ImageFunction*> Image::find(const ImageKey& key)
 
 uint32_t moduleIDFor(SourceProvider& provider)
 {
-    if (uint32_t id = provider.aotModuleID())
-        return id;
-    Image* image = Image::withCode();
-    if (!image || !image->header().identifiesModulesByText)
-        return 0;
-    return moduleIDFromText(provider);
-}
-
-uint32_t moduleIDFromText(SourceProvider& provider)
-{
-    uint32_t id = provider.hash() | 1;
-    provider.setAOTModuleID(id);
-    return id;
+    return provider.aotModuleID();
 }
 
 ImageKey imageKeyForTopLevelCode(uint32_t module)
@@ -2022,13 +1942,6 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
 {
     if (!Options::useAOT())
         return { };
-    static std::once_flag once;
-    std::call_once(once, [] {
-        if (const char* path = byteCast<char>(Options::aotImagePath())) {
-            if (!Image::registerImageFromFile(path))
-                dataLogLn("AOT: ", path, " is not an image for this engine");
-        }
-    });
     if (!Image::hasAny())
         return { };
 
@@ -2110,137 +2023,108 @@ bool registerAOTImage(std::span<const uint8_t> image, const void* code)
     return !!AOT::Image::registerImage(image, code);
 }
 
-static void compileAllIn(VM&, UnlinkedCodeBlock&, AOTCompileAllResult&);
-
-static void compileAllOf(VM& vm, UnlinkedFunctionExecutable& executable, AOTCompileAllResult& result)
+UseOfAOTFile useAOTFile(std::span<const uint8_t> bytes, int fileDescriptor, int64_t offsetInFile)
 {
-    auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(vm);
-    for (UnlinkedFunctionCodeBlock* codeBlock : { forCall, forConstruct }) {
-        if (!codeBlock)
-            continue;
-        result.functions++;
-        result.bytecodeBytes += codeBlock->instructionsSize();
-        AOT::CompiledCode code;
-        if (AOT::compileForImage(vm, codeBlock, code)) {
-            result.compiled++;
-            result.codeBytes += code.bytes.size();
-        }
-        compileAllIn(vm, *codeBlock, result);
+    UseOfAOTFile result;
+    auto neither = [&](const char* why) {
+        result.whyNoStaticHeap = result.whyNoImage = why;
+        return result;
+    };
+#if OS(DARWIN) || OS(LINUX)
+    using Region = bmalloc::StaticRegion;
+    if (!Options::useAOT())
+        return neither("useAOT is off");
+    auto sizeOfImage = aotImageSize(bytes);
+    auto rangeOfCode = aotImageCodeRange(bytes);
+    if (!sizeOfImage || !rangeOfCode)
+        return neither("not an image");
+    auto [offsetOfCode, sizeOfCode] = *rangeOfCode;
+    size_t pageSize = WTF::pageSize();
+    if (offsetInFile % pageSize || offsetOfCode % pageSize || *sizeOfImage % pageSize)
+        return neither("it is not on a page boundary of its file");
+
+    std::span<const uint8_t> image = bytes;
+    if (*sizeOfImage >= bytes.size())
+        result.whyNoStaticHeap = "there is none";
+    else if (!Region::map(Region::Arena::Image, fileDescriptor, offsetInFile, offsetOfCode) || !StaticHeap::map(bytes.subspan(*sizeOfImage), fileDescriptor, offsetInFile + *sizeOfImage))
+        result.whyNoStaticHeap = "it is for another build of the engine, or its place is taken, or the thread has atoms";
+    else {
+        result.sizeOfStaticHeap = bytes.size() - *sizeOfImage;
+        image = { reinterpret_cast<const uint8_t*>(Region::startOf(Region::Arena::Image)), bytes.size() };
     }
-}
 
-static void compileAllIn(VM& vm, UnlinkedCodeBlock& codeBlock, AOTCompileAllResult& result)
-{
-    for (unsigned i = 0; i < codeBlock.numberOfFunctionDecls(); ++i)
-        compileAllOf(vm, *codeBlock.functionDecl(i), result);
-    for (unsigned i = 0; i < codeBlock.numberOfFunctionExprs(); ++i)
-        compileAllOf(vm, *codeBlock.functionExpr(i), result);
-}
-
-std::optional<AOTCompileAllResult> aotCompileAllFunctions(VM& vm, const SourceCode& source, bool isModule)
-{
-    DeferGC deferGC(vm);
-    vm.keepUnlinkedCode();
-    ParserError error;
-    UnlinkedCodeBlock* codeBlock = isModule
-        ? static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, { }, error, EvalContextType::None, std::numeric_limits<unsigned>::max(), OptimizeBytecode::Yes))
-        : static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, NoLexicallyScopedFeatures, JSParserScriptMode::Classic, { }, error, EvalContextType::None, std::numeric_limits<unsigned>::max(), OptimizeBytecode::Yes));
-    std::optional<AOTCompileAllResult> result;
-    if (!error.isValid() && codeBlock) {
-        result = AOTCompileAllResult { };
-        result->functions++;
-        result->bytecodeBytes += codeBlock->instructionsSize();
-        AOT::CompiledCode code;
-        if (AOT::compileForImage(vm, codeBlock, code)) {
-            result->compiled++;
-            result->codeBytes += code.bytes.size();
+    void* code = nullptr;
+    if (sizeOfCode) {
+        int64_t at = offsetInFile + offsetOfCode;
+        code = mmap(nullptr, sizeOfCode, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, at);
+        // Darwin refuses an executable mapping of a file that is not signed (EPERM), but allows a mapping of one to be made executable.
+        if (code == MAP_FAILED && errno == EPERM) {
+            code = mmap(nullptr, sizeOfCode, PROT_READ, MAP_PRIVATE, fileDescriptor, at);
+            if (code != MAP_FAILED && mprotect(code, sizeOfCode, PROT_READ | PROT_EXEC)) {
+                munmap(code, sizeOfCode);
+                code = MAP_FAILED;
+            }
         }
-        compileAllIn(vm, *codeBlock, *result);
+        if (code == MAP_FAILED) {
+            result.whyNoImage = strerror(errno);
+            return result;
+        }
+#if OS(DARWIN)
+        mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), sizeOfCode, true, VM_PROT_READ | VM_PROT_EXECUTE);
+#endif
     }
-    vm.stopKeepingUnlinkedCode();
+    if (!registerAOTImage(image, code)) {
+        if (code)
+            munmap(code, sizeOfCode);
+        result.whyNoImage = "it was compiled for another build of the engine";
+        return result;
+    }
+    result.sizeOfCode = sizeOfCode;
+    result.code = code;
     return result;
+#else
+    UNUSED_PARAM(bytes);
+    UNUSED_PARAM(fileDescriptor);
+    UNUSED_PARAM(offsetInFile);
+    return neither("not supported on this platform");
+#endif
 }
 
-namespace {
-
-class SourceCompiler {
-public:
-    SourceCompiler(VM& vm, uint32_t module)
-        : m_vm(vm)
-        , m_module(module)
-    {
-        m_builder.setIdentifiesModulesByText();
-    }
-
-    void add(AOT::ImageKey key, UnlinkedCodeBlock* codeBlock)
-    {
-        // An inner function of a function with both call and construct code blocks is reached twice.
-        if (!m_keys.add({ key.start, key.kind }).isNewEntry)
-            return;
-        AOT::CompiledCode code;
-        if (AOT::compileForImage(m_vm, codeBlock, code))
-            m_builder.add(key, m_rank++, WTF::move(code));
-    }
-
-    void addFunctionsIn(UnlinkedCodeBlock& codeBlock, const SourceCode& source)
-    {
-        for (unsigned i = 0; i < codeBlock.numberOfFunctionDecls(); ++i)
-            addFunction(*codeBlock.functionDecl(i), source);
-        for (unsigned i = 0; i < codeBlock.numberOfFunctionExprs(); ++i)
-            addFunction(*codeBlock.functionExpr(i), source);
-    }
-
-    Vector<uint8_t> finish() { return m_builder.numberOfFunctions() ? m_builder.finish() : Vector<uint8_t> { }; }
-
-private:
-    void addFunction(UnlinkedFunctionExecutable& executable, const SourceCode& parentSource)
-    {
-        SourceCode source = executable.linkedSourceCode(parentSource);
-        auto functionKey = orderFunctionKey(executable, executable.isBuiltinDefaultClassConstructor() ? parentSource : source);
-        auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(m_vm);
-        for (bool isConstruct : { false, true }) {
-            UnlinkedFunctionCodeBlock* codeBlock = isConstruct ? forConstruct : forCall;
-            if (!codeBlock)
-                continue;
-            if (functionKey)
-                add({ m_module, functionKey->start, static_cast<uint32_t>(functionKey->kind) << 1 | isConstruct, 0 }, codeBlock);
-            addFunctionsIn(*codeBlock, source);
-        }
-    }
-
-    VM& m_vm;
-    uint32_t m_module;
-    uint64_t m_rank { 0 };
-    AOT::ImageBuilder m_builder;
-    using KeyTraits = PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    UncheckedKeyHashSet<std::pair<uint32_t, uint32_t>, DefaultHash<std::pair<uint32_t, uint32_t>>, KeyTraits> m_keys;
-};
-
-} // anonymous namespace
-
-bool aotCompileAndRegisterImage(VM& vm, const SourceCode& source, bool isModule)
+Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule)
 {
-    // The runtime supports one image with code per process.
-    if (!AOT::usesStubs || AOT::Image::withCode())
-        return false;
-    Vector<uint8_t> image;
+    auto& options = vm.bytecodeGenerationOptions;
+    options.resolveAllScopeSlotsStatically = true;
+    options.evaluateObjectLiteralValuesFirst = true;
+    options.definePlainInstanceFieldsInConstructor = true;
+    options.keepLineStartsOfEverySource = true;
+    vm.useImmutableIntrinsics = true;
+
+    EncoderStringTable strings;
+    BytecodeLinkEncoder::Result linked;
     {
-        DeferGC deferGC(vm);
-        vm.keepUnlinkedCode();
+        BytecodeLinkEncoder::Hints hints;
+        hints.compileAheadOfTime = true;
+        BytecodeLinkEncoder encoder(vm, &strings, WTF::move(hints));
         ParserError error;
         UnlinkedCodeBlock* codeBlock = isModule
             ? static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, { }, error, EvalContextType::None))
             : static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, NoLexicallyScopedFeatures, JSParserScriptMode::Classic, { }, error, EvalContextType::None));
-        if (!error.isValid() && codeBlock) {
-            uint32_t module = AOT::moduleIDFromText(*source.provider());
-            SourceCompiler compiler(vm, module);
-            compiler.add(AOT::imageKeyForTopLevelCode(module), codeBlock);
-            compiler.addFunctionsIn(*codeBlock, source);
-            image = compiler.finish();
-        }
-        vm.stopKeepingUnlinkedCode();
+        if (error.isValid() || !codeBlock)
+            return { };
+        encoder.addModule(isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source), codeBlock, source, { });
+        linked = encoder.finish();
     }
-    return !image.isEmpty() && AOT::Image::registerImageCopyingCode(WTF::move(image));
+    auto sizeOfImage = aotImageSize(linked.aotImage.span());
+    if (!linked.payload || !sizeOfImage)
+        return { };
+    StaticHeap::PositionsToKeep positions { linked.reportableSites, [](uint32_t, LineColumn, CString&, LineColumn&) { return false; } };
+    Vector<uint8_t> heap = StaticHeap::build(vm, strings.serialize().span(), linked.payload->span(), linked.entryOffsetsOfModules.span(), linked.aotImage.span(), positions, linked.reportableSites.span(), linked.variablesExportedByModules.span());
+    if (heap.isEmpty())
+        return { };
+    Vector<uint8_t> file;
+    file.append(linked.aotImage.span().first(*sizeOfImage));
+    file.appendVector(heap);
+    return file;
 }
 
 std::optional<size_t> aotImageSize(std::span<const uint8_t> image)
@@ -2282,8 +2166,8 @@ namespace JSC {
 // What embedders can call whether or not programs can be compiled ahead of time here.
 bool isPCOfAOTImage(const void*) { return false; }
 bool registerAOTImage(std::span<const uint8_t>, const void*) { return false; }
-std::optional<AOTCompileAllResult> aotCompileAllFunctions(VM&, const SourceCode&, bool) { return std::nullopt; }
-bool aotCompileAndRegisterImage(VM&, const SourceCode&, bool) { return false; }
+UseOfAOTFile useAOTFile(std::span<const uint8_t>, int, int64_t) { return { "not supported on this platform", "not supported on this platform" }; }
+Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool) { return { }; }
 std::optional<size_t> aotImageSize(std::span<const uint8_t>) { return std::nullopt; }
 std::optional<unsigned> aotImageNumberOfRegExps(std::span<const uint8_t>) { return std::nullopt; }
 std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t>) { return std::nullopt; }

@@ -118,7 +118,6 @@ public:
     // True if the provider was created at the address returned by takePlaceForSourceProvider().
     static bool isProviderOfModule(const SourceProvider& provider) { return bmalloc::StaticRegion::contains(&provider); }
     // See PositionsToKeep and AOT::FunctionRef::reportedPositionFor().
-    static bool hasPositionsOfCallSites();
     static bool hasIdentifiersOfProgram();
     static WTF::UniquedStringImpl* const* identifiersOfProgram(); // Indexed by identifier number. Null if there are none.
     JS_EXPORT_PRIVATE static String nameOfSource(uint32_t); // Source numbers start at one.
@@ -187,6 +186,7 @@ public:
     // returned in `made`; it is shared by all VMs and must be SourceProvider::becomeShareableBetweenThreads(). The provider is
     // never destroyed. Call didMakeSourceProvider() once it has been constructed.
     JS_EXPORT_PRIVATE static void* takePlaceForSourceProvider(VM&, size_t entryOffsetOfModule, size_t sizeOfProvider, SourceProvider*& made);
+    JS_EXPORT_PRIVATE static Vector<uint32_t> entryOffsetsOfModules(); // Not of builtins.
     JS_EXPORT_PRIVATE static void didMakeSourceProvider(void* place);
     // The function with this index in the code image (AOT::CodeHeader::index), and which of its two code kinds the index refers to.
     static std::pair<FunctionExecutable*, CodeSpecializationKind> executableOfFunction(uint32_t index);

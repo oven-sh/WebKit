@@ -97,7 +97,7 @@ check(b(xa(1, 2)), undefined, "still absent"); check(b(ab(1, 2)), 2, "own all th
 // ---- Another realm, with the same code.
 if (typeof createGlobalObject === "function") {
     let other = createGlobalObject();
-    let source = "(" + ab.toString() + ")";
+    let source = "(function ab(a, b) { return { a, b }; })";
     let theirs = other.eval(source);
     for (let i = 0; i < 200; ++i) {
         let o = theirs(i, 1);

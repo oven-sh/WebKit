@@ -104,7 +104,7 @@ if (typeof loadString === "function") {
 // ---- Another realm has its own.
 if (typeof createGlobalObject === "function") {
     let other = createGlobalObject();
-    let theirs = other.eval("(" + identity.toString() + ")"), theirArray = other.eval("(function () { return [Array, Math, Object.prototype, Math.floor, new Map().constructor, Symbol.iterator]; })");
+    let theirs = other.eval(`(function identity() { return Math === globalThis.Math && Object.prototype === Object.getPrototypeOf({}) && Array.prototype === Object.getPrototypeOf([]) && Array.prototype.constructor === Array && Function.prototype === Object.getPrototypeOf(identity) && Math.floor === globalThis.Math.floor && typeof Math === "object" && typeof Map === "function"; })`), theirArray = other.eval("(function () { return [Array, Math, Object.prototype, Math.floor, new Map().constructor, Symbol.iterator]; })");
     check(repeat(theirs), true, "another realm's are its own");
     let [A, M, OP, floor, MapOfTheirs, iterator] = repeat(theirArray);
     check(A === other.Array && A !== Array, true, "Array"); check(M === other.Math && M !== Math, true, "Math"); check(OP === other.Object.prototype && OP !== Object.prototype, true, "Object.prototype");

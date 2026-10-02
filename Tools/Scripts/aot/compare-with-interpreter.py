@@ -6,8 +6,8 @@
 The whole directory takes a few minutes with three jobs. It needs nothing but a jsc, so it is the quickest way to try a new
 platform: CI's artifact `jsc-shell-<platform>` in a container will do.
 
-The reference is the interpreter with immutable intrinsics, which ahead-of-time compilation implies. A test counts only if it
-passes that way. It is `same` if, compiled ahead of time, it exits with 0 and prints the same.
+The reference is the interpreter with immutable intrinsics and without the text of functions, both of which ahead-of-time
+compilation implies. A test counts only if it passes that way. It is `same` if, compiled ahead of time, it exits with 0 and prints the same.
 
 Left out: tests whose header skips them or asks for a particular way of running, and tests that look at the engine itself (the
 tiers, the collector, other scripts). Of what differs, expect the tests that run-jsc-stress-tests skips in its modes `aot` and
@@ -61,7 +61,7 @@ def main():
         head = "\n".join(text.split("\n")[:3])
         if RUNS_ITS_OWN_WAY.search(head) or LOOKS_AT_THE_ENGINE.search(text):
             return "left out", test, ""
-        code, expected = run(jsc, ["--useImmutableIntrinsics=1", "--useJIT=0"], test, 40)
+        code, expected = run(jsc, ["--useImmutableIntrinsics=1", "--hideTextOfFunctionsForTesting=1", "--useJIT=0"], test, 40)
         if code != 0:
             return "fails interpreted", test, ""
         code, actual = run(jsc, ["--compileMainScriptAheadOfTime=1", "--useJIT=0"], test, 80)

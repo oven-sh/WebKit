@@ -102,7 +102,7 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
 #if ENABLE(AOT)
-    if (SourceProvider* provider = source().provider(); m_moduleLoader && StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables() && AOT::Image::environmentsSize()) {
+    if (SourceProvider* provider = source().provider(); m_moduleLoader && StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables()) {
         AOT::Instance::ensure(m_moduleLoader.get()).setTopLevelExecutableOf(provider, this);
         setUsesStaticExecutables();
     }

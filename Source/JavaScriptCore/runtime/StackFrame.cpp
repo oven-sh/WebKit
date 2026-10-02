@@ -321,7 +321,7 @@ std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(A
 {
 #if ENABLE(AOT)
     auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
-    if (!jsFrame || !StaticHeap::hasPositionsOfCallSites())
+    if (!jsFrame || !StaticHeap::isMapped())
         return std::nullopt;
     AOT::FunctionRef function;
     if (jsFrame->aotExecutable)

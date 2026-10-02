@@ -44,8 +44,10 @@ def main():
     runs = []
     for test in tests:
         header = header_of(os.path.join(STRESS, test))
-        options = re.findall(r'"(--[^"]*)"', " ".join(header))
+        options = re.findall(r'"(--?[^"]*)"', " ".join(header))
         for extra in ([], ["--validateAOTInferredTypes=true", "--validateGraphAtEachPhase=true"]):
+            if extra and any("$skipModes << :aot_validate" in line for line in header):
+                continue
             runs.append((test, options + extra, "validated" if extra else "as it says"))
 
     failures = 0

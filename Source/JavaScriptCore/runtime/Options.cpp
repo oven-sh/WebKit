@@ -809,19 +809,12 @@ void Options::notifyOptionsChanged()
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
 
-    if (Options::compileMainScriptAheadOfTime())
+    if (Options::aotImagePath())
         Options::useAOT() = true;
 
     if (Options::useAOT()) {
         Options::useImmutableIntrinsics() = true;
         Options::useJIT() = false;
-    }
-
-    // AOT code only matches the bytecode it was compiled from, so the run must generate bytecode the same way.
-    if (Options::aotImagePath() || Options::compileMainScriptAheadOfTime()) {
-        Options::resolveAllScopeSlotsStatically() = true;
-        Options::evaluateObjectLiteralValuesFirst() = true;
-        Options::definePlainInstanceFieldsInConstructor() = true;
     }
 
 #if !ENABLE(OFFLINE_ASM_ALT_ENTRY)
