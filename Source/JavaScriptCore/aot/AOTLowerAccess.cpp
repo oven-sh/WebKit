@@ -383,7 +383,7 @@ void Lowering::lowerGetById(Node* node)
             bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
             Stub stub = static_cast<Stub>(static_cast<unsigned>(allowsUndefined ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
             auto throughStub = [&]() -> LValue {
-                return callStub(stub, Int64, { { base, GPRInfo::argumentGPR0 } }, { { GPRInfo::argumentGPR1, field->id } }, StubClobbers::CallerSavedRegisters, node);
+                return callStub(stub, Int64, { { base, firstStubOperandGPR } }, { { GPRInfo::argumentGPR1, field->id } }, StubClobbers::CallerSavedRegisters, node);
             };
             const AvailableField* available = availableField(baseNode, *field);
             LValue previouslyReadValue = available ? available->asJSValue : nullptr;
@@ -556,7 +556,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     if (stub == Stub::GetById)
         m_graph.noteSiteSelector(slot, code().codeBlock()->identifier(functionIdentifier).impl());
     auto throughStub = [&]() -> LValue {
-        return callStub(*stub, Int64, { { base, GPRInfo::argumentGPR0 }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { });
+        return callStub(*stub, Int64, { { base, firstStubOperandGPR }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { });
     };
     if (stub && isCompact())
         return throughStub();
@@ -857,7 +857,7 @@ void Lowering::lowerPutById(Node* node)
     if (isCompact() && Site::fits(numberOf(bytecode.m_property), flags)) {
         unsigned slot = sharedSite(node, numberOf(bytecode.m_property), flags);
         m_graph.noteSiteSelector(slot, code().codeBlock()->identifier(bytecode.m_property).impl());
-        callStub(Stub::PutById, Void, { { base, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
+        callStub(Stub::PutById, Void, { { base, firstStubOperandGPR }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
         return;
     }
     unsigned slot = allocateSlot();
@@ -1047,7 +1047,7 @@ void Lowering::lowerPutByVal(Node* node)
 
     auto throughStub = [&] {
         bool isInteger = propertyNode->rep() == Rep::Int64;
-        callStub(isInteger ? Stub::PutByValAtIndex : Stub::PutByVal, Void, { { base, GPRInfo::argumentGPR0 }, { isInteger ? lowRaw(propertyNode) : lowJSValue(propertyNode), GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
+        callStub(isInteger ? Stub::PutByValAtIndex : Stub::PutByVal, Void, { { base, firstStubOperandGPR }, { isInteger ? lowRaw(propertyNode) : lowJSValue(propertyNode), GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
             { { GPRInfo::argumentGPR3, bytecode.m_ecmaMode.isStrict() } });
     };
     if (isCompact()) {
@@ -1187,7 +1187,7 @@ void Lowering::lowerResolveScope(Node* node)
     if (isFusedWithGetFromScope(node))
         return;
     if (usesDataStubs() && variable.kind == StaticVariable::Unresolved && Site::fits(numberOf(bytecode.m_var), extra)) {
-        setJSValue(node, callStub(Stub::ResolveScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), extra)), GPRInfo::argumentGPR1 } }, { }));
+        setJSValue(node, callStub(Stub::ResolveScope, Int64, { { scope, firstStubOperandGPR }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), extra)), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
 
@@ -1248,7 +1248,7 @@ void Lowering::lowerGetFromScope(Node* node)
         unsigned site = allocateSite(resolveNode, numberOf(resolve.m_var), code().resolveScopeExtra(resolve));
         unsigned siteOfGet = allocateSite(node, numberOf(bytecode.m_var), code().getFromScopeExtra(bytecode));
         RELEASE_ASSERT(siteOfGet == site + 1);
-        setJSValue(node, callStub(Stub::GetGlobal, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(site), GPRInfo::argumentGPR1 } }, { }));
+        setJSValue(node, callStub(Stub::GetGlobal, Int64, { { scope, firstStubOperandGPR }, { slotAddress(site), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
     auto distance = m_graph.accessedEnvironmentDepth(node);
@@ -1293,7 +1293,7 @@ void Lowering::lowerGetFromScope(Node* node)
 
     unsigned throwIfNotFound = code().getFromScopeExtra(bytecode);
     if (usesDataStubs() && variable.isCachedInSlot() && Site::fits(numberOf(bytecode.m_var), throwIfNotFound)) {
-        setJSValue(node, callStub(Stub::GetFromScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), throwIfNotFound)), GPRInfo::argumentGPR1 } }, { }));
+        setJSValue(node, callStub(Stub::GetFromScope, Int64, { { scope, firstStubOperandGPR }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), throwIfNotFound)), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
 
@@ -1383,7 +1383,7 @@ void Lowering::lowerPutToScope(Node* node)
     RELEASE_ASSERT(static_cast<unsigned>(info.initializationMode()) <= 3);
 
     if (usesDataStubs() && Site::fits(numberOf(bytecode.m_var), how)) {
-        callStub(Stub::PutToScope, Void, { { scope, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, numberOf(bytecode.m_var), how)), GPRInfo::argumentGPR2 } }, { });
+        callStub(Stub::PutToScope, Void, { { scope, firstStubOperandGPR }, { value, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, numberOf(bytecode.m_var), how)), GPRInfo::argumentGPR2 } }, { });
         return;
     }
     vmCall(node, Void, Entry::operationAOTPutToScope, m_instance, scope, value, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(allocateSlot()), m_out.constInt32(how));

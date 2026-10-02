@@ -105,9 +105,9 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
         }
         LValue symbolIterator = lowerMethod();
         PatchpointValue* opened = callStub(Stub::IteratorOpen, m_proc.addTuple({ Int64, Int64 }),
-            { { iterable, GPRInfo::argumentGPR0 }, { symbolIterator, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Next))), GPRInfo::argumentGPR2 } },
+            { { iterable, firstStubOperandGPR }, { symbolIterator, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Next))), GPRInfo::argumentGPR2 } },
             { });
-        opened->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1) };
+        opened->resultConstraints = { ValueRep::reg(firstStubOperandGPR), ValueRep::reg(GPRInfo::argumentGPR1) };
         if (!continuation) {
             setProj(node, iteratorRegister, m_out.extract(opened, 0));
             setProj(node, nextRegister, m_out.extract(opened, 1));
@@ -217,9 +217,9 @@ void Lowering::lowerIteratorNext(Node* node)
 
         m_out.appendTo(otherwise, continuation);
         PatchpointValue* result = callStub(Stub::IteratorNext, m_proc.addTuple({ Int64, Int64, Int64 }),
-            { { next, GPRInfo::argumentGPR0 }, { iterator, GPRInfo::argumentGPR1 }, { iterable, GPRInfo::argumentGPR2 }, { slotAddress(doneSlot), GPRInfo::argumentGPR3 } },
+            { { next, firstStubOperandGPR }, { iterator, GPRInfo::argumentGPR1 }, { iterable, GPRInfo::argumentGPR2 }, { slotAddress(doneSlot), GPRInfo::argumentGPR3 } },
             { });
-        result->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1), ValueRep::reg(GPRInfo::argumentGPR2) };
+        result->resultConstraints = { ValueRep::reg(firstStubOperandGPR), ValueRep::reg(GPRInfo::argumentGPR1), ValueRep::reg(GPRInfo::argumentGPR2) };
         ValueFromBlock stubDone = m_out.anchor(m_out.extract(result, 0));
         ValueFromBlock stubValue = m_out.anchor(m_out.extract(result, 1));
         ValueFromBlock stubNext = m_out.anchor(m_out.extract(result, 2));
@@ -384,7 +384,7 @@ void Lowering::lowerIteratorCloseCheck(Node* node)
     }
     if (usesDataStubs()) {
         setJSValue(node, callStub(Stub::IteratorCloseCheck, Int64,
-            { { iterator, GPRInfo::argumentGPR0 }, { lowJSValue(node->use(bytecode.m_iterable)), GPRInfo::argumentGPR1 }, { lowJSValue(node->use(bytecode.m_next)), GPRInfo::argumentGPR2 } }, { }));
+            { { iterator, firstStubOperandGPR }, { lowJSValue(node->use(bytecode.m_iterable)), GPRInfo::argumentGPR1 }, { lowJSValue(node->use(bytecode.m_next)), GPRInfo::argumentGPR2 } }, { }));
         return;
     }
 

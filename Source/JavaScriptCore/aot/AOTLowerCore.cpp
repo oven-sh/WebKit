@@ -535,7 +535,9 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         && arguments[1].value->opcode() != SlotBase && !isSlotAddress(arguments[1].value);
     bool resultUsesAssignedRegister = type == Int64 && clobbers == StubClobbers::CallerSavedRegisters && returnsResultInAnyRegister(stub, t9Value) && m_node && place == m_node && isLiveAfterNextNode(m_node);
     RegisterSet clobberedBeforeCall;
-    for (auto& argument : arguments) {
+    bool placesFirstOperandLast = isX86_64() && !operandUsesAnyRegister;
+    for (unsigned i = 0; i < arguments.size(); ++i) {
+        auto& argument = arguments[placesFirstOperandLast ? arguments.size() - 1 - i : i];
         LValue value = argument.value;
         if (!slotArgument && value->opcode() == Add && value->child(0) == m_data && value->child(1)->hasIntPtr()) {
             slotArgument = { argument.reg.gpr(), static_cast<int32_t>(value->child(1)->asIntPtr()) };
@@ -594,14 +596,6 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     case StubClobbers::Temporaries: {
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobber(stubTemporaries(3));
-#if CPU(X86_64)
-        if (type != Void) {
-            RegisterSet operands;
-            for (auto& argument : arguments)
-                operands.add(argument.reg, IgnoreVectors);
-            patchpoint->clobberLate(operands);
-        }
-#endif
         break;
     }
     case StubClobbers::Nothing:
@@ -760,7 +754,7 @@ unsigned Lowering::sharedSite(Node* node, unsigned identifier, unsigned extra)
 void Lowering::storeBarrier(LValue owner)
 {
     if (usesDataStubs()) {
-        PatchpointValue* patchpoint = callStub(Stub::WriteBarrier, Void, { { owner, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
+        PatchpointValue* patchpoint = callStub(Stub::WriteBarrier, Void, { { owner, firstStubOperandGPR } }, { }, StubClobbers::Temporaries);
         patchpoint->effects = Effects::none();
         patchpoint->effects.controlDependent = true;
         m_heaps.decoratePatchpointRead(&m_heaps.JSCell_cellState, patchpoint);
@@ -1112,7 +1106,7 @@ LValue Lowering::toBoolean(Node* node)
         return m_out.phi(Int32, results);
     }
     if (isCompact())
-        return callStub(Stub::ToBoolean, Int32, { { value, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
+        return callStub(Stub::ToBoolean, Int32, { { value, firstStubOperandGPR } }, { }, StubClobbers::Temporaries);
 
     LBasicBlock notBoolean = m_out.newBlock();
     LBasicBlock notInt32 = m_out.newBlock();

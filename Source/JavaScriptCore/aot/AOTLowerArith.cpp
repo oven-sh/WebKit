@@ -39,7 +39,7 @@ static std::optional<Stub> stubFor(OpcodeID opcode)
 
 LValue Lowering::callBinaryStub(Node* node, Stub stub, LType type, LValue a, LValue b)
 {
-    return callStub(stub, type, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { }, StubClobbers::CallerSavedRegisters, node);
+    return callStub(stub, type, { { a, firstStubOperandGPR }, { b, GPRInfo::argumentGPR1 } }, { }, StubClobbers::CallerSavedRegisters, node);
 }
 
 static Entry operationFor(OpcodeID opcode)
@@ -616,7 +616,7 @@ LValue Lowering::compareWithLiteral(LValue characters, std::span<const Latin1Cha
 Lowering::Latin1Characters Lowering::latin1CharactersOf(LValue string, LBasicBlock otherwise, Vector<ValueFromBlock, 2>& lengthOtherwise)
 {
     if (isCompact()) {
-        PatchpointValue* both = callStub(Stub::Latin1Characters, Int64, { { string, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
+        PatchpointValue* both = callStub(Stub::Latin1Characters, Int64, { { string, firstStubOperandGPR } }, { }, StubClobbers::Temporaries);
         both->effects = Effects::none();
         both->effects.reads = HeapRange::top();
         LValue characters = m_out.bitAnd(both, m_out.constInt64((1ll << 48) - 1));
@@ -727,7 +727,7 @@ LValue Lowering::isStringEqualToAtom(Node* valueNode, LValue value, LValue liter
     m_out.branch(m_out.testNonZero32(m_out.load32(impl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom())), usually(continuation), rarely(throughStub));
 
     m_out.appendTo(throughStub);
-    results.append(m_out.anchor(callStub(Stub::IsStringEqualTo, Int32, { { value, GPRInfo::argumentGPR0 }, { literalString, GPRInfo::argumentGPR1 } }, { })));
+    results.append(m_out.anchor(callStub(Stub::IsStringEqualTo, Int32, { { value, firstStubOperandGPR }, { literalString, GPRInfo::argumentGPR1 } }, { })));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -805,10 +805,10 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
                     bits = chunk(0, 4) | chunk(length - 4, 4) << 32;
                 } else
                     bits = chunk(0, 8);
-                return callStub(stub, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 }, { m_out.constInt64(bits), GPRInfo::argumentGPR1 } }, { { stubImmediateGPR, programConstantIndex(literal) << shortLiteralLengthBits | length } });
+                return callStub(stub, Int32, { { lowJSValue(other), firstStubOperandGPR }, { m_out.constInt64(bits), GPRInfo::argumentGPR1 } }, { { stubImmediateGPR, programConstantIndex(literal) << shortLiteralLengthBits | length } });
             }
             if (said && !said->isEmpty())
-                return callStub(Stub::IsStringEqualToConstant, Int32, { { lowJSValue(other), GPRInfo::argumentGPR0 } }, { { stubImmediateGPR, programConstantIndex(literal) } });
+                return callStub(Stub::IsStringEqualToConstant, Int32, { { lowJSValue(other), firstStubOperandGPR } }, { { stubImmediateGPR, programConstantIndex(literal) } });
         }
     }
 
@@ -830,11 +830,11 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
         if (strict || isSubtype(both, TString)) {
             bool isInline = m_block->isInLoop && !m_block->isGeneric;
             if (constantStringOf(right) && isAtomIfString(right))
-                return isInline ? isStringEqualToAtom(left, a, b) : callStub(Stub::IsStringEqualTo, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { });
+                return isInline ? isStringEqualToAtom(left, a, b) : callStub(Stub::IsStringEqualTo, Int32, { { a, firstStubOperandGPR }, { b, GPRInfo::argumentGPR1 } }, { });
             if (constantStringOf(left) && isAtomIfString(left))
-                return isInline ? isStringEqualToAtom(right, b, a) : callStub(Stub::IsStringEqualTo, Int32, { { b, GPRInfo::argumentGPR0 }, { a, GPRInfo::argumentGPR1 } }, { });
+                return isInline ? isStringEqualToAtom(right, b, a) : callStub(Stub::IsStringEqualTo, Int32, { { b, firstStubOperandGPR }, { a, GPRInfo::argumentGPR1 } }, { });
         }
-        return callStub(strict ? Stub::StrictEqual : Stub::LooseEqual, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } },
+        return callStub(strict ? Stub::StrictEqual : Stub::LooseEqual, Int32, { { a, firstStubOperandGPR }, { b, GPRInfo::argumentGPR1 } },
             { });
     }
 

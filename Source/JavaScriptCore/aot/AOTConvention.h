@@ -51,6 +51,7 @@ static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgum
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #endif
 static constexpr GPRReg stubImmediateGPR = countGPR;
+static constexpr GPRReg firstStubOperandGPR = GPRInfo::returnValueGPR;
 static_assert(stubTemporaryGPRs[0] == stubImmediateGPR);
 
 enum class Signature : uint8_t {
