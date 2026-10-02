@@ -179,3 +179,41 @@ function shouldThrow(func, errorType) {
     shouldBe(calls, 1);
     shouldBe(object.a, 1);
 }
+
+// The same when the put starts on an object that inherits from the receiver and cannot take the fast path (it has a getter), so
+// that the walk up the prototype chain meets the receiver itself, with a static property that is not reified.
+{
+    let other = $vm.createGlobalObject();
+    $vm.makePropertiesImmutable(other.JSON);
+    let inheritor = Object.create(other.JSON, { unrelated: { get() { return 1; } } });
+    shouldBe(Reflect.set(inheritor, "stringify", 42, other.JSON), false);
+    shouldBe(typeof other.JSON.stringify, "function");
+    shouldBe(Reflect.set(inheritor, "stringify", 42), true);
+    shouldBe(inheritor.stringify, 42);
+
+    let withStatics = $vm.makePropertiesImmutable($vm.createStaticCustomValue());
+    let inheritorOfStatics = Object.create(withStatics, { unrelated: { get() { return 1; } } });
+    for (let name of ["testStaticValue", "testStaticValueSetFlag", "testStaticValueNoSetter"])
+        shouldBe(Reflect.set(inheritorOfStatics, name, 1, withStatics), false, name);
+    shouldBe("testStaticValueSetterCalled" in withStatics, false);
+}
+
+// An object that inherits from such an array gets an own length when it assigns one, as with an ordinary array: the array has a
+// length, so nothing further up the prototype chain is asked, neither a setter nor a frozen Array.prototype.
+for (let prepare of [array => array, array => { delete array[1]; return array; }]) {
+    class WithLengthSetter extends Array { set length(value) { this.setterCalled = true; } }
+    for (let change of [array => array, array => $vm.makePropertiesImmutable(array)]) {
+        let child = Object.create(change(prepare(new WithLengthSetter(1, 2, 3))));
+        child.length = 0;
+        shouldBe(Object.hasOwn(child, "length"), true);
+        shouldBe("setterCalled" in child, false);
+
+        let other = $vm.createGlobalObject();
+        let array = change(prepare(new other.Array(1, 2, 3)));
+        Object.freeze(other.Array.prototype);
+        let strictChild = Object.create(array);
+        (function () { "use strict"; strictChild.length = 7; })();
+        shouldBe(strictChild.length, 7);
+        shouldBe(array.length, 3);
+    }
+}

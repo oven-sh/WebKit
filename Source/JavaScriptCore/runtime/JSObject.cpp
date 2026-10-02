@@ -905,8 +905,10 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
                 customSetter(obj->realm(), JSValue::encode(slot.thisValue()), JSValue::encode(value), propertyName);
                 return true;
             }
+            // (The two shortcuts below put on the receiver without asking. A receiver with immutable properties goes on to
+            // definePropertyOnReceiver(), where its [[DefineOwnProperty]] decides.)
             if (attributes & PropertyAttribute::CustomValue) {
-                if (!isThisValueAltered(slot, obj)) {
+                if (!isThisValueAltered(slot, obj) && !obj->structure()->hasImmutableProperties()) {
                     if (customSetter) {
                         // FIXME: We should only be caching these if we're not an uncacheable dictionary:
                         // https://bugs.webkit.org/show_bug.cgi?id=215347
@@ -919,7 +921,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
                 }
             }
             if (attributes & PropertyAttribute::BuiltinOrFunctionOrLazyProperty) {
-                if (!isThisValueAltered(slot, obj)) {
+                if (!isThisValueAltered(slot, obj) && !obj->structure()->hasImmutableProperties()) {
                     // Avoid PutModePut because it fails for non-extensible structures.
                     obj->putDirect(vm, propertyName, value, attributesForStructure(attributes), slot);
                     return true;

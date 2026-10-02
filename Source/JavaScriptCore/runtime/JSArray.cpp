@@ -313,8 +313,8 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
 
     JSArray* thisObject = uncheckedDowncast<JSArray>(cell);
     // (An array whose elements stay in copy-on-write storage goes to JSObject's implementation, which refuses for it and serves
-    // another receiver.)
-    if (!thisObject->tryMakeWritable(vm)) [[unlikely]]
+    // another receiver. Not for length, which JSObject's implementation does not know this array has: the branch below does both.)
+    if (!thisObject->tryMakeWritable(vm) && propertyName != vm.propertyNames->length) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSObject::put(cell, globalObject, propertyName, value, slot));
 
     if (propertyName == vm.propertyNames->length) {
