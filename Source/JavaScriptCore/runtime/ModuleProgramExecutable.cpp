@@ -49,7 +49,8 @@ ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, c
 {
     for (unsigned i = 0; i < moduleScopeSymbolTables.size(); ++i)
         m_moduleScopeSymbolTables[i].setWithoutWriteBarrier(moduleScopeSymbolTables[i]);
-    m_isOfAnotherLoader = linker && linker->moduleLoader() != globalObject->moduleLoader();
+    if (linker)
+        m_moduleLoader.setWithoutWriteBarrier(linker->moduleLoader());
 #if USE(BUN_JSC_ADDITIONS)
     if (linker && linker->isPrelinked()) {
         m_linkerPrelinkedGraph = linker->prelinkedGraph();
@@ -101,17 +102,13 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
 #if ENABLE(AOT)
-    if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables()
-        && !isOfAnotherLoader() && AOT::Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
-        if (auto*& slot = StaticHeap::topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
-            slot = this;
-            setUsesStaticExecutables();
-        }
+    if (SourceProvider* provider = source().provider(); m_moduleLoader && StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !usesStaticExecutables() && AOT::Image::environmentsSize()) {
+        AOT::Instance::ensure(m_moduleLoader.get()).setTopLevelExecutableOf(provider, this);
+        setUsesStaticExecutables();
     }
     if (Options::verboseAOTCompilation() && StaticHeap::isUsedBy(vm) && !usesStaticExecutables()) [[unlikely]] {
         SourceProvider* provider = source().provider();
-        bool isInPlace = StaticHeap::isPlaceOfSourceProvider(provider);
-        dataLogLn("AOT: ", provider->sourceURL(), " does not get the functions that were made when the program was built: its provider is ", isInPlace ? "" : "not ", "in its place, its code is ", StaticHeap::contains(unlinkedModuleProgramCode) ? "" : "not ", "in the static heap, it is ", isOfAnotherLoader() ? "" : "not ", "of another loader", isInPlace && StaticHeap::topLevelExecutableOfModuleWithProvider(vm, provider) ? ", and another executable has them" : "");
+        dataLogLn("AOT: ", provider->sourceURL(), " does not get the functions that were made when the program was built: its provider is ", StaticHeap::isPlaceOfSourceProvider(provider) ? "" : "not ", "in its place, its code is ", StaticHeap::contains(unlinkedModuleProgramCode) ? "" : "not ", "in the static heap");
     }
 #endif
     // The symbol table and the function declarations' executables are made once and stay for as long as the executable
@@ -253,8 +250,6 @@ void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
 
 void ModuleProgramExecutable::destroy(JSCell* cell)
 {
-    if (auto* executable = static_cast<ModuleProgramExecutable*>(cell); executable->usesStaticExecutables())
-        StaticHeap::topLevelExecutableOfModuleWithProvider(executable->vm(), executable->source().provider()) = nullptr;
     static_cast<ModuleProgramExecutable*>(cell)->ModuleProgramExecutable::~ModuleProgramExecutable();
 }
 
@@ -270,6 +265,7 @@ void ModuleProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleEnvironmentSymbolTable);
+    visitor.append(thisObject->m_moduleLoader);
     visitor.append(thisObject->m_moduleScopeSymbolTables.begin(), thisObject->m_moduleScopeSymbolTables.end());
     {
         Locker locker { thisObject->cellLock() };

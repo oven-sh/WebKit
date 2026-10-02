@@ -199,11 +199,11 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
     auto searchInString = [&](Entry plain, std::optional<Entry> withIndex) -> LValue {
         if (count == 1 && mustBeString(1)) {
             begin();
-            return vmCall(node, Int64, plain, m_globalObject, thisValue, arguments[1]);
+            return vmCall(node, Int64, plain, contextOf(plain), thisValue, arguments[1]);
         }
         if (count == 2 && withIndex && mustBeString(1) && mustBeInt32(2)) {
             begin();
-            return vmCall(node, Int64, *withIndex, m_globalObject, thisValue, arguments[1], asInt32(2));
+            return vmCall(node, Int64, *withIndex, contextOf(*withIndex), thisValue, arguments[1], asInt32(2));
         }
         return nullptr;
     };
@@ -315,7 +315,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         return finish(plainCall(Double, Entry::operationAOTMathAtan2, asDouble(1), asDouble(2)), Rep::Double);
     case Builtin::MathRandom:
         begin();
-        return finish(plainCall(Double, Entry::operationAOTRandom, m_globalObject), Rep::Double);
+        return finish(plainCall(Double, Entry::operationAOTRandom, m_instance), Rep::Double);
 #define AOT_MATH_FUNCTION(name) \
     case Builtin::Math##name: \
         return mathFunction(MathFunction::name);
@@ -506,7 +506,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 2 || !mustBeObject(1))
             return false;
         begin();
-        return finishBoolean(isTrueResult(vmCall(node, Int64, Entry::operationAOTHasOwnProperty, m_globalObject, arguments[1], arguments[2])));
+        return finishBoolean(isTrueResult(vmCall(node, Int64, Entry::operationAOTHasOwnProperty, m_instance, arguments[1], arguments[2])));
     case Builtin::DateNow:
         begin();
         return finish(plainCall(Double, Entry::operationDateNow, m_globalObject), Rep::Double);
@@ -655,7 +655,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count < 2)
             return false;
         begin();
-        return finishValue(vmCall(node, Int64, Entry::operationAOTArrayPushMultiple, m_globalObject, thisValue, storeArgumentsToScratch(arguments), m_out.constInt32(count)));
+        return finishValue(vmCall(node, Int64, Entry::operationAOTArrayPushMultiple, m_instance, thisValue, storeArgumentsToScratch(arguments), m_out.constInt32(count)));
     case Builtin::ArrayShift:
         begin();
         return finishValue(vmCall(node, Int64, Entry::operationArrayShift, m_globalObject, thisValue));
@@ -709,7 +709,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count > 2 || (count >= 1 && !mustBeInt32(1)) || (count == 2 && !mustBeInt32(2)))
             return false;
         begin(true);
-        LValue made = vmCall(node, pointerType(), Entry::operationAOTArraySlice, m_globalObject, thisValue, count >= 1 ? asInt32(1) : m_out.int32Zero, count == 2 ? asInt32(2) : m_out.constInt32(std::numeric_limits<int32_t>::max()));
+        LValue made = vmCall(node, pointerType(), Entry::operationAOTArraySlice, m_instance, thisValue, count >= 1 ? asInt32(1) : m_out.int32Zero, count == 2 ? asInt32(2) : m_out.constInt32(std::numeric_limits<int32_t>::max()));
         orElse(m_out.notNull(made), otherwise);
         return finishValue(made);
     }
@@ -737,7 +737,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 1)
             return false;
         begin();
-        return finishBoolean(isTrueResult(vmCall(node, Int64, builtin == Builtin::MapDelete ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, m_globalObject, thisValue, arguments[1])));
+        return finishBoolean(isTrueResult(vmCall(node, Int64, builtin == Builtin::MapDelete ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, m_instance, thisValue, arguments[1])));
     case Builtin::WeakMapGet:
         if (count != 1)
             return false;

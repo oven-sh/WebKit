@@ -992,10 +992,6 @@ JSGlobalObject::~JSGlobalObject()
 
     if (m_debugger)
         m_debugger->detach(this, Debugger::GlobalObjectIsDestructing);
-#if ENABLE(AOT)
-    if (m_aotInstance)
-        AOT::Instance::destroy(m_aotInstance);
-#endif
 }
 
 void JSGlobalObject::destroy(JSCell* cell)

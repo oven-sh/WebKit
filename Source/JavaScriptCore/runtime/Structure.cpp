@@ -387,6 +387,9 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
 
     if (previous->m_realm)
         m_realm.set(vm, this, previous->m_realm.get());
+#if ENABLE(AOT)
+    m_aotInstance = previous->m_aotInstance;
+#endif
     ASSERT(hasAnyKindOfGetterSetterProperties() || !m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::AccessorOrCustomAccessorOrValue)));
     ASSERT(hasReadOnlyOrGetterSetterPropertiesExcludingProto() || !m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)));
     ASSERT(!this->typeInfo().overridesGetCallData() || m_classInfo->methodTable.getCallData != &JSCell::getCallData);
@@ -1738,6 +1741,10 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ConcurrentJSLocker locker(thisObject->m_lock);
     
     visitor.append(thisObject->m_realm);
+#if ENABLE(AOT)
+    if (thisObject->m_aotInstance) [[unlikely]]
+        visitor.appendUnbarriered(AOT::ownerOf(thisObject->m_aotInstance));
+#endif
     if (!thisObject->isObject()) {
         // We do not need to clear JSPropertyNameEnumerator since it is never cached for non-object Structure.
         // We do not have code clearing JSPropertyNameEnumerator since this function can be called concurrently.

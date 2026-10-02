@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "FunctionExecutable.h"
+#include "AOTRuntime.h"
 
 #include "CodeBlock.h"
 #include "FunctionCodeBlock.h"
@@ -87,7 +88,16 @@ ScriptExecutable* FunctionExecutable::topLevelExecutableOfStaticExecutable() con
 {
     SourceProvider* provider = sourceProvider();
     RELEASE_ASSERT(StaticHeap::isPlaceOfSourceProvider(provider));
-    return StaticHeap::topLevelExecutableOfModuleWithProvider(vm(), provider);
+    VM& vm = this->vm();
+    if (ScriptExecutable* ofBuiltin = StaticHeap::topLevelExecutableOfBuiltinWithProvider(vm, provider))
+        return ofBuiltin;
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : vm.m_aotInstances) {
+        if (ScriptExecutable* result = instance->topLevelExecutableOf(provider))
+            return result;
+    }
+#endif
+    return nullptr;
 }
 
 void FunctionExecutable::destroy(JSCell* cell)

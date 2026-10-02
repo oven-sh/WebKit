@@ -155,14 +155,14 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         return;
     }
     if (!mayBeNumbers) {
-        setJSValue(node, vmCall(node, Int64, operationFor(opcode), m_globalObject, a, b));
+        setJSValue(node, vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), a, b));
         return;
     }
     if (isCompact()) {
         if (auto stub = stubFor(opcode))
             setJSValue(node, callBinaryStub(node, *stub, Int64, a, b));
         else
-            setJSValue(node, vmCall(node, Int64, operationFor(opcode), m_globalObject, a, b));
+            setJSValue(node, vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), a, b));
         return;
     }
 
@@ -213,7 +213,7 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         m_out.jump(continuation);
         m_out.appendTo(notStrings);
     }
-    results.append(m_out.anchor(vmCall(node, Int64, operationFor(opcode), m_globalObject, a, b)));
+    results.append(m_out.anchor(vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), a, b)));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -290,7 +290,7 @@ void Lowering::lowerBitOp(Node* node, VirtualRegister lhs, VirtualRegister rhs)
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);
-    ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, operationFor(opcode), m_globalObject, a, b));
+    ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), a, b));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -396,7 +396,7 @@ void Lowering::lowerUnaryArith(Node* node, VirtualRegister operandRegister)
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);
-    results.append(m_out.anchor(vmCall(node, Int64, operationFor(opcode), m_globalObject, value)));
+    results.append(m_out.anchor(vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), value)));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -469,7 +469,7 @@ LValue Lowering::lowerCompare(Node* node, OpcodeID opcode, VirtualRegister lhs, 
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);
-    results.append(m_out.anchor(m_out.notZero64(vmCall(node, Int64, operationFor(opcode), m_globalObject, a, b))));
+    results.append(m_out.anchor(m_out.notZero64(vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), a, b))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -712,7 +712,7 @@ LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value
     m_out.branch(m_out.notEqual(m_out.phi(Int32, lengthsOtherwise), m_out.constInt32(said.length())), usually(continuation), rarely(slowCase));
 
     m_out.appendTo(slowCase);
-    results.append(m_out.anchor(m_out.notZero64(vmCall(comparison, Int64, Entry::operationAOTCompareStrictEq, m_globalObject, value, theString))));
+    results.append(m_out.anchor(m_out.notZero64(vmCall(comparison, Int64, Entry::operationAOTCompareStrictEq, m_instance, value, theString))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -773,7 +773,7 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
         ValueFromBlock itIs = m_out.anchor(m_out.booleanTrue);
         m_out.branch(isOriginalArray(array), usually(continuation), rarely(isNotOriginalArray));
         m_out.appendTo(isNotOriginalArray);
-        ValueFromBlock asked = m_out.anchor(m_out.equal(vmCall(read, Int64, Entry::operationAOTIteratorMethodOfArray, m_globalObject, array), lowJSValue(read == left ? right : left)));
+        ValueFromBlock asked = m_out.anchor(m_out.equal(vmCall(read, Int64, Entry::operationAOTIteratorMethodOfArray, m_instance, array), lowJSValue(read == left ? right : left)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         return m_out.phi(Int32, itIs, asked);
@@ -845,7 +845,7 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     m_out.branch(m_out.bitAnd(m_out.equal(a, b), isNotNumber(a)), unsure(continuation), unsure(slowCase));
 
     m_out.appendTo(slowCase, continuation);
-    results.append(m_out.anchor(m_out.notZero64(vmCall(node, Int64, strict ? Entry::operationAOTCompareStrictEq : Entry::operationAOTCompareEq, m_globalObject, a, b))));
+    results.append(m_out.anchor(m_out.notZero64(vmCall(node, Int64, strict ? Entry::operationAOTCompareStrictEq : Entry::operationAOTCompareEq, m_instance, a, b))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);

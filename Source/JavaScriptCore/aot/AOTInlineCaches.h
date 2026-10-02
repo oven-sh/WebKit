@@ -51,7 +51,7 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject*, JSValue base, Structure* oldS
 
 //     cache->structureID: the structure of the base. cache->offset: the location of the property.
 //     cache->newStructureID: the structure the base has afterwards, if the property is new.
-void cachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);
+void cachePutById(Instance*, Data*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);
 
 // For a site that allocates cells of one structure and size. Two slots.
 // cache[0].structureID: the structure. cache[0].offset, pointer: available for the site's own use.

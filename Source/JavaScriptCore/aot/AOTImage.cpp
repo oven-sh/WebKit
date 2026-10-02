@@ -1148,6 +1148,10 @@ Vector<uint8_t> ImageBuilder::finish()
     header.tableCapacity = keysAreOmitted ? 0 : capacity;
     header.recordsOffset = header.tableOffset + header.tableCapacity * sizeof(ImageKey);
     header.recordsSize = recordsSize;
+    size_t sizeOfAllDatas = 0;
+    for (auto& function : m_functions)
+        sizeOfAllDatas += roundUpToMultipleOf<16>(sizeof(Data) + function.code.info.numSlots * sizeof(Slot));
+    header.sizeOfAllDatasIn16Bytes = safeCast<uint32_t>(sizeOfAllDatas / 16);
     header.environmentsSize = m_environmentsSize;
     header.environmentsOffset = WTF::roundUpToMultipleOf<8>(static_cast<size_t>(header.recordsOffset) + recordsSize);
     header.numberOfEnvironments = m_environments.size();
@@ -1567,6 +1571,12 @@ uint32_t Image::numberOfFunctionsOfImageWithEnvironments()
 {
     Image* image = imageWithEnvironments();
     return image ? image->header().numberOfFunctions : 0;
+}
+
+size_t Image::sizeOfAllDatasOfImageWithEnvironments()
+{
+    Image* image = imageWithEnvironments();
+    return image ? static_cast<size_t>(image->header().sizeOfAllDatasIn16Bytes) * 16 : 0;
 }
 
 ImageEnvironment Image::environmentOf(uint32_t moduleOfGraph)
@@ -1991,6 +2001,15 @@ static String nameForLogging(ScriptExecutable* executable)
     return "(top level)"_s;
 }
 
+static Instance& instanceOf(JSScope* scope)
+{
+    for (JSScope* current = scope; current; current = current->next()) {
+        if (current->type() == ModuleEnvironmentType)
+            return Instance::ensure(uncheckedDowncast<JSModuleEnvironment>(current)->moduleRecord()->moduleLoader());
+    }
+    return Instance::ensure(scope->realm());
+}
+
 bool moduleIsLinkedAsCompiled(JSScope* scope)
 {
     while (scope && scope->type() != ModuleEnvironmentType)
@@ -2038,7 +2057,8 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
 
     // Compiled code finds its per-realm data by its function index, so each index belongs to one function per realm. The same text
     // evaluated a second time is a different function, with its own constants, and cannot share the index.
-    if (Instance* instance = scope->realm()->aotInstance()) {
+    {
+        Instance* instance = &instanceOf(scope);
         uint32_t index = function->index;
         if (instance->isLinked(index) && FunctionRef { instance, index }.executable() != executable)
             return { };
@@ -2049,7 +2069,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     // The code uses a table that only StaticHeap creates, and only for the realm that the program runs in.
     if (image->header().numberOfIdentifiersOfProgram) {
         uint32_t index = function->index;
-        if (!Instance::ensure(scope->realm()).infos[index].sites)
+        if (!instanceOf(scope).infos[index].sites)
             return { };
     }
 

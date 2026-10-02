@@ -191,6 +191,11 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     JSGlobalObject* globalObject = environment->globalObject();
     JSFunction* function = nullptr;
     SourceParseMode parseMode = functionExecutable->parseMode();
+#if ENABLE(AOT)
+    if (StaticHeap::contains(functionExecutable)) [[unlikely]]
+        function = AOT::Instance::ensure(moduleLoader()).makeFunction(functionExecutable, environment);
+    else
+#endif
     if (isAsyncGeneratorWrapperParseMode(parseMode))
         function = JSAsyncGeneratorFunction::create(vm, globalObject, functionExecutable, environment);
     else if (isGeneratorWrapperParseMode(parseMode))
@@ -508,8 +513,9 @@ bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const
         AOT::ImageEnvironment environment = AOT::Image::environmentOf(record->prelinkedIndex());
         if (!environment.distance)
             return true;
-        AOT::Instance* instance = globalObject->aotInstance();
-        return instance && instance->placeForEnvironment(environment) == record->moduleEnvironmentMayBeNull();
+        AOT::Instance* instance = moduleLoader()->aotInstance();
+        JSCell** slot = instance ? instance->slotOfEnvironment(environment) : nullptr;
+        return slot && *slot && *slot == record->moduleEnvironmentMayBeNull();
     };
     if (result) {
         result = environmentIsInItsPlace(this);
@@ -650,8 +656,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         // has to be the one this record would ask for.)
         if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode()) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
             && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
-            // (The code of a program that was compiled ahead of time is for one instance of it, which is the realm's own loader's.)
-            && (!StaticHeap::isUsedBy(vm) || shared->isOfAnotherLoader() == (moduleLoader() != globalObject->moduleLoader()))
+            && (!StaticHeap::isUsedBy(vm) || shared->moduleLoader() == moduleLoader())
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             bool alike = resolvesImportsLike(globalObject, shared);
             RETURN_IF_EXCEPTION(scope, nullptr);

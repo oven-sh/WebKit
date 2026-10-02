@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTRuntime.h"
+#include "JSModuleLoader.h"
 #include "CompilerHooks.h"
 
 #include "AOTBuiltins.h"
@@ -73,6 +74,27 @@ void* catchThunk()
 }
 
 extern "C" void* g_aotStaticFunctionEntrypoints[3]; // FunctionExecutable.cpp
+
+template<typename Wanted, typename Function> struct TakesFirst : std::false_type { };
+template<typename Wanted, typename Result, typename First, typename... Rest> struct TakesFirst<Wanted, Result(First, Rest...)> : std::is_same<Wanted, First> { };
+template<typename Wanted, typename Result, typename First, typename... Rest> struct TakesFirst<Wanted, Result(First, Rest...) noexcept> : std::is_same<Wanted, First> { };
+
+template<typename Wanted> static bool takesFirst(Entry entry)
+{
+    using namespace DFG;
+    switch (entry) {
+#define AOT_CASE_OF_OPERATION(name) \
+    case Entry::name: \
+        return TakesFirst<Wanted, std::remove_pointer_t<decltype(&name)>>::value;
+    FOR_EACH_AOT_OPERATION(AOT_CASE_OF_OPERATION)
+#undef AOT_CASE_OF_OPERATION
+    default:
+        return false;
+    }
+}
+
+bool takesInstance(Entry entry) { return takesFirst<Instance*>(entry); }
+bool takesGlobalObject(Entry entry) { return takesFirst<JSGlobalObject*>(entry); }
 
 RuntimeTable::RuntimeTable(VM& vm)
 {
@@ -195,6 +217,9 @@ struct Instance::Collections {
     // allocated at the same address, its objects only take the slow path.)
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, ASCIILiteral> rejectedConversions; // The value is the reason.
     UncheckedKeyHashMap<uint32_t, Structure*> emptyStructures;
+    JSModuleLoader* loader { nullptr };
+    Vector<std::pair<Structure*, Structure*>, 12> structuresOfFunctions;
+    UncheckedKeyHashMap<SourceProvider*, ScriptExecutable*> topLevelExecutables;
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
     size_t sizeOfInfos { 0 }; // Zero unless the Instance owns them.
@@ -222,40 +247,49 @@ Data* SharedData::get()
     return std::bit_cast<Data*>(s_sharedData.data());
 }
 
+JSCell* ownerOf(Instance* instance) { return instance->loader(); }
+JSModuleLoader* Instance::loader() const { return collections->loader; }
+
 Instance& Instance::ensure(JSGlobalObject* globalObject)
 {
     if (Instance* instance = globalObject->aotInstance())
         return *instance;
+    Instance& instance = ensure(globalObject->moduleLoader());
+    globalObject->setAOTInstance(&instance);
+    return instance;
+}
+
+Instance* Instance::of(JSFunction* function)
+{
+    Structure* structure = function->structure();
+    if (Instance* instance = structure->aotInstance())
+        return instance;
+    return &ensure(structure->realm());
+}
+
+Instance& Instance::ensure(JSModuleLoader* loader)
+{
+    if (Instance* instance = loader->aotInstance())
+        return *instance;
 #if ENABLE(WEBASSEMBLY)
     RELEASE_ASSERT(Instance::offsetOfVM() == JSWebAssemblyInstance::offsetOfVM());
 #endif
+    JSGlobalObject* globalObject = loader->moduleScope()->realm();
     VM& vm = globalObject->vm();
     RELEASE_ASSERT(vm.useImmutableIntrinsics);
-    Instance* instance;
-    size_t environmentsSize = 0;
-    size_t size;
-    size_t numberOfFunctions;
-    // (Only address space is reserved. Pages are committed when they are first touched.)
-    constexpr size_t roomForDatas = 256 * MB;
     auto startOfDatasFor = [](size_t numberOfFunctions) {
         return std::max<size_t>(roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + numberOfFunctions * sizeof(uint32_t)), static_cast<size_t>(leastStateWithData) << shiftOfStateWithData);
     };
-    auto sizeFor = [&](size_t numberOfFunctions) { return startOfDatasFor(numberOfFunctions) + roomForDatas; };
-    if (Image::environmentsSize() && !vm.m_aotInstanceOfProgram && StaticHeap::canPlaceCellsOf(vm)) {
-        // The environments are cells that the collector did not allocate, so they have to be in a block of the static heap.
-        environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
-        numberOfFunctions = Image::numberOfFunctionsOfImageWithEnvironments();
-        size = sizeFor(numberOfFunctions);
-        instance = reinterpret_cast<Instance*>(static_cast<char*>(StaticHeap::allocateBlock(vm, environmentsSize + size)) + environmentsSize);
-    } else {
-        numberOfFunctions = maxFunctions;
-        size = sizeFor(numberOfFunctions);
-        instance = static_cast<Instance*>(OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages));
-    }
+    bool isOfStaticHeap = Image::environmentsSize() && StaticHeap::isUsedBy(vm);
+    size_t environmentsSize = isOfStaticHeap ? roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize()) : 0;
+    size_t numberOfFunctions = isOfStaticHeap ? Image::numberOfFunctionsOfImageWithEnvironments() : maxFunctions;
+    size_t size = startOfDatasFor(numberOfFunctions) + roundUpToMultipleOf(WTF::pageSize(), isOfStaticHeap ? Image::sizeOfAllDatasOfImageWithEnvironments() : 256 * MB);
+    Instance* instance = reinterpret_cast<Instance*>(static_cast<char*>(OSAllocator::reserveAndCommit(environmentsSize + size, OSAllocator::FastMallocPages)) + environmentsSize);
     instance->runtimeTable = AOT::runtimeTable(vm).entries();
     instance->globalObject = globalObject;
     instance->vm = &vm;
     instance->collections = new Collections;
+    instance->collections->loader = loader;
     instance->collections->environmentsSize = environmentsSize;
     instance->collections->sizeFromInstance = size;
     instance->collections->numberOfFunctions = numberOfFunctions;
@@ -345,15 +379,55 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         }
         instance->selectorsOnObjectPrototype = static_cast<uint8_t*>(fastZeroedMalloc(image->header().numberOfSelectors / 8 + 1));
     }
-    globalObject->setAOTInstance(instance);
+    loader->setAOTInstance(instance);
     vm.m_aotInstances.append(instance);
-    if (environmentsSize) {
-        RELEASE_ASSERT(!vm.m_aotInstanceOfProgram);
-        // (StaticHeap::engineBuiltinFor() assumed that the first realm is the program's.)
-        RELEASE_ASSERT(!vm.m_firstRealmHasBuiltinsOfStaticHeap || vm.m_firstRealm == globalObject);
-        vm.m_aotInstanceOfProgram = instance;
-    }
     return *instance;
+}
+
+static ScriptExecutable* topLevelExecutableOf(Data& data)
+{
+    if (auto* function = dynamicDowncast<FunctionExecutable>(data.executable); function && StaticHeap::contains(function)) {
+        if (ScriptExecutable* result = data.instance->topLevelExecutableOf(function->sourceProvider()))
+            return result;
+    }
+    return data.executable->topLevelExecutable();
+}
+
+Structure* Instance::structureOfFunctions(Structure* ofRealm, FunctionExecutable* executable)
+{
+    if (executable->isBuiltinFunction())
+        return ofRealm;
+    for (auto& [from, to] : collections->structuresOfFunctions) {
+        if (from == ofRealm)
+            return to;
+    }
+    RELEASE_ASSERT(!ofRealm->didTransition() && !ofRealm->aotInstance());
+    DeferGC deferGC(*vm);
+    Structure* result = Structure::create(*vm, globalObject, ofRealm->storedPrototype(), ofRealm->typeInfo(), ofRealm->classInfoForCells(), ofRealm->indexingModeIncludingHistory(), ofRealm->inlineCapacity());
+    result->setAOTInstance(this);
+    collections->structuresOfFunctions.append({ ofRealm, result });
+    return result;
+}
+
+JSFunction* Instance::makeFunction(FunctionExecutable* executable, JSScope* scope)
+{
+    if (isAsyncGeneratorWrapperParseMode(executable->parseMode()))
+        return JSAsyncGeneratorFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->asyncGeneratorFunctionStructure(), executable));
+    if (isGeneratorWrapperParseMode(executable->parseMode()))
+        return JSGeneratorFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->generatorFunctionStructure(), executable));
+    if (isAsyncFunctionWrapperParseMode(executable->parseMode()))
+        return JSAsyncFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(globalObject->asyncFunctionStructure(), executable));
+    return JSFunction::create(*vm, globalObject, executable, scope, structureOfFunctions(JSFunction::selectStructureForNewFuncExp(globalObject, executable), executable));
+}
+
+ScriptExecutable* Instance::topLevelExecutableOf(SourceProvider* provider)
+{
+    return collections->topLevelExecutables.get(provider);
+}
+
+void Instance::setTopLevelExecutableOf(SourceProvider* provider, ScriptExecutable* executable)
+{
+    collections->topLevelExecutables.set(provider, executable);
 }
 
 void* Instance::allocateForData(size_t size)
@@ -402,8 +476,6 @@ void Instance::freeOfData(void* pointer, size_t size)
 void Instance::destroy(Instance* instance)
 {
     instance->vm->m_aotInstances.removeFirst(instance);
-    if (instance->vm->m_aotInstanceOfProgram == instance)
-        instance->vm->m_aotInstanceOfProgram = nullptr;
     while (!instance->collections->all.isEmpty())
         Data::destroy(instance->collections->all.last());
     size_t environmentsSize = instance->collections->environmentsSize;
@@ -413,17 +485,14 @@ void Instance::destroy(Instance* instance)
     delete instance->collections;
     OSAllocator::decommitAndRelease(instance->fieldsWithObservableReads, sizeOfFieldsWithObservableReads);
     fastFree(instance->selectorsOnObjectPrototype);
-    if (environmentsSize)
-        StaticHeap::freeBlock(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
-    else
-        OSAllocator::decommitAndRelease(instance, size);
+    OSAllocator::decommitAndRelease(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
 }
 
-void* Instance::placeForEnvironment(ImageEnvironment environment) const
+JSCell** Instance::slotOfEnvironment(ImageEnvironment environment) const
 {
     if (!environment.distance || environment.distance > collections->environmentsSize)
         return nullptr;
-    return const_cast<char*>(reinterpret_cast<const char*>(this)) - environment.distance;
+    return reinterpret_cast<JSCell**>(const_cast<char*>(reinterpret_cast<const char*>(this)) - environment.distance);
 }
 
 SUPPRESS_ASAN void* returnAddressForFrame(const void* frame, const void* startingFrom)
@@ -585,7 +654,7 @@ static bool linkConstants(VM& vm, Data& data)
             JSValue constant = constants[i].get();
             if (constant && constant.isCell()) {
                 if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(constant.asCell())) {
-                    constant = data.executable->topLevelExecutable()->createTemplateObject(globalObject, descriptor);
+                    constant = topLevelExecutableOf(data)->createTemplateObject(globalObject, descriptor);
                     RETURN_IF_EXCEPTION(scope, false);
                 }
             }
@@ -632,7 +701,7 @@ static bool linkConstants(VM& vm, Data& data)
             constant = globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant.asInt32AsAnyInt()));
         else if (constant && constant.isCell()) {
             if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(constant.asCell())) {
-                constant = data.executable->topLevelExecutable()->createTemplateObject(globalObject, descriptor);
+                constant = topLevelExecutableOf(data)->createTemplateObject(globalObject, descriptor);
                 RETURN_IF_EXCEPTION(scope, false);
             }
         }
@@ -784,7 +853,7 @@ BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
 FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind)
 {
     if (StaticHeap::contains(executable) && executable->aotIndexFor(kind) != FunctionExecutable::aotIndexOfWhatConstructsByCalling)
-        return { vm.m_aotInstanceOfProgram, executable->aotIndexFor(kind) };
+        return { vm.m_aotInstances[0], executable->aotIndexFor(kind) };
     if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
         return { };
     Ref generated = executable->generatedJITCodeFor(kind);
@@ -1194,7 +1263,7 @@ static FunctionExecutable* functionOf(Data& data, unsigned index, const WriteBar
     FunctionExecutable*& function = data.functions[index];
     if (!function) {
         ScriptExecutable* executable = data.executable;
-        function = unlinkedExecutable->link(*data.instance->vm, executable->topLevelExecutable(), executable->source(), std::nullopt, NoIntrinsic, executable->isInsideOrdinaryFunction());
+        function = unlinkedExecutable->link(*data.instance->vm, topLevelExecutableOf(data), executable->source(), std::nullopt, NoIntrinsic, executable->isInsideOrdinaryFunction());
         if (!data.hasBeenFilledSinceLastCollection)
             data.noteFilled();
     }
@@ -1260,10 +1329,9 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
     return true;
 }
 
-bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, JSScope* scope)
+bool linkStaticFunction(Instance* instance, FunctionExecutable* executable, CodeSpecializationKind kind, JSScope* scope)
 {
-    Instance* instance = vm.m_aotInstanceOfProgram;
-    if (!instance || scope->realm() != instance->globalObject)
+    if (scope->realm() != instance->globalObject)
         return false;
     uint32_t index = executable->aotIndexFor(kind);
     if (index == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
@@ -1378,6 +1446,17 @@ void Instance::visit(Visitor& visitor, bool onlyNew)
         visitor.appendUnbarriered(function.executable);
         visitor.appendUnbarriered(function.unlinkedCodeBlock);
     }
+    visitor.appendUnbarriered(globalObject);
+    if (collections->environmentsSize) {
+        for (uint32_t distance = sizeof(void*); distance <= Image::environmentsSize(); distance += sizeof(void*)) {
+            if (JSCell* environment = *reinterpret_cast<JSCell**>(reinterpret_cast<char*>(this) - distance))
+                visitor.appendUnbarriered(environment);
+        }
+    }
+    for (auto& [from, to] : collections->structuresOfFunctions)
+        visitor.appendUnbarriered(to);
+    for (ScriptExecutable* executable : collections->topLevelExecutables.values())
+        visitor.appendUnbarriered(executable);
 }
 
 Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names)

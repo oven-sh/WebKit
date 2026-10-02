@@ -130,7 +130,7 @@ protected:
 #if ENABLE(AOT)
         switch (m_pcInfo.kind) {
         case AOT::ImageAddressInfo::Function: {
-            AOT::FunctionRef function { m_vm.m_aotInstanceOfProgram ? m_vm.m_aotInstanceOfProgram : m_vm.m_aotInstances[0], m_pcInfo.index };
+            AOT::FunctionRef function { m_vm.m_aotInstances[0], m_pcInfo.index };
             auto callSite = AOT::tryCallSiteAt(*function.info().function(), m_pcInfo.offset);
             stackTrace[m_depth] = UnprocessedStackFrame(nullptr, CalleeBits(), CallSiteIndex(callSite.value_or(0)));
             stackTrace[m_depth].aotFunction = function;

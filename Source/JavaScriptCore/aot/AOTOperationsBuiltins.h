@@ -44,16 +44,16 @@ static constexpr uint32_t dateFieldIsUTC = 16;
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMath, double, (double, uint32_t));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMathAtan2, double, (double, double));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRandom, double, (JSGlobalObject*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRandom, double, (Instance*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWeakMapGet, EncodedJSValue, (JSCell*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWeakMapHas, size_t, (JSCell*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWeakSetHas, size_t, (JSCell*, EncodedJSValue));
-JSC_DECLARE_JIT_OPERATION(operationAOTMapDelete, size_t, (JSGlobalObject*, JSCell*, EncodedJSValue));
-JSC_DECLARE_JIT_OPERATION(operationAOTSetDelete, size_t, (JSGlobalObject*, JSCell*, EncodedJSValue));
-JSC_DECLARE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (JSGlobalObject*, JSArray*, EncodedJSValue*, uint32_t));
-JSC_DECLARE_JIT_OPERATION(operationAOTArraySlice, JSArray*, (JSGlobalObject*, JSArray*, int32_t, int32_t)); // Null: it is for the function itself.
+JSC_DECLARE_JIT_OPERATION(operationAOTMapDelete, size_t, (Instance*, JSCell*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetDelete, size_t, (Instance*, JSCell*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (Instance*, JSArray*, EncodedJSValue*, uint32_t));
+JSC_DECLARE_JIT_OPERATION(operationAOTArraySlice, JSArray*, (Instance*, JSArray*, int32_t, int32_t)); // Null: it is for the function itself.
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTDateField, EncodedJSValue, (VM*, DateInstance*, uint32_t));
-JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayOfValues, JSCell*, (JSGlobalObject*, const EncodedJSValue*, uint32_t, uint32_t));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayOfValues, JSCell*, (Instance*, const EncodedJSValue*, uint32_t, uint32_t));
 
 } } // namespace JSC::AOT
 

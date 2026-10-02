@@ -110,8 +110,7 @@ public:
     // The rest belongs to JSC::StaticHeap: mapRestOfBss(). Only pages that are touched are committed.
     static constexpr size_t sizeOfBssOfEveryProcess = 256 * 1024;
     static constexpr size_t offsetOfSourceProvidersInBss = 64 << 20; // One per module, like the next.
-    static constexpr size_t offsetOfTopLevelExecutablesInBss = 128 << 20;
-    static constexpr size_t offsetOfBlocksInBss = 256 << 20; // JSC::StaticHeap::allocateBlock()
+    static constexpr size_t endOfSourceProvidersInBss = 128 << 20;
 
     enum class Access : uint8_t { Read, ReadAndWrite };
     // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.

@@ -174,8 +174,8 @@ public:
     // Build time only. The program will run without bytecode, so no function's bytecode will ever be generated.
     JS_EXPORT_PRIVATE static bool keepsNothingForGeneratingCode();
 
-    // Returns memory for a cell while the region is being built, on a thread with a bmalloc::StaticRegion::AllocationScope; or the
-    // address passed to placeNextCell(). Null otherwise.
+    // Returns memory for a cell while the region is being built, on a thread with a bmalloc::StaticRegion::AllocationScope. Null
+    // otherwise.
     JS_EXPORT_PRIVATE static void* tryAllocateCellSlow(VM&, size_t); // Called when Heap::m_placeOfNextCell is set.
 
     // ---- Objects created at run time, at fixed addresses so that build-time objects can refer to them.
@@ -185,10 +185,6 @@ public:
     static void* addressOfEmbedderSymbols() { return reinterpret_cast<void*>(bmalloc::StaticRegion::addressInBss(bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss)); }
     static constexpr size_t sizeForEmbedderSymbols = bmalloc::StaticRegion::sizeOfBssOfEveryProcess - bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss;
     static bool isMapped() { return !!s_header; }
-    // The next cell allocated in the VM is placed at `address`. It is never collected or destroyed. After didPlaceCell(), every GC
-    // visits it.
-    JS_EXPORT_PRIVATE static void placeNextCell(VM&, void* address);
-    JS_EXPORT_PRIVATE static void didPlaceCell(VM&, JSCell*);
     // ---- FunctionExecutables created at build time. Each points at its module's SourceProvider, which is created at run time and
     // must therefore be created at that address.
 
@@ -224,25 +220,10 @@ public:
     {
         uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);
         uintptr_t address = std::bit_cast<uintptr_t>(pointer);
-        return address >= start + bmalloc::StaticRegion::offsetOfSourceProvidersInBss && address < start + bmalloc::StaticRegion::offsetOfTopLevelExecutablesInBss;
+        return address >= start + bmalloc::StaticRegion::offsetOfSourceProvidersInBss && address < start + bmalloc::StaticRegion::endOfSourceProvidersInBss;
     }
-    // The executable for the module's top-level code, in the realm that runs the program.
-    static ScriptExecutable*& topLevelExecutableOfModuleWithProvider(VM& vm, const void* provider)
-    {
-        uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);
-        size_t index = (std::bit_cast<uintptr_t>(provider) - start - bmalloc::StaticRegion::offsetOfSourceProvidersInBss) / sizeOfPlaceForSourceProvider;
-        if (!isFirst(vm)) [[unlikely]]
-            return topLevelExecutableOfModuleInOtherVM(vm, index);
-        return reinterpret_cast<ScriptExecutable**>(start + bmalloc::StaticRegion::offsetOfTopLevelExecutablesInBss)[index];
-    }
-    JS_EXPORT_PRIVATE static ScriptExecutable*& topLevelExecutableOfModuleInOtherVM(VM&, size_t index);
+    static ScriptExecutable* topLevelExecutableOfBuiltinWithProvider(VM&, const void* provider);
 
-    // All cells placed outside the GC's own memory belong to a single VM. Returns whether that is this VM. Without a static heap,
-    // the first VM to ask claims the role.
-    JS_EXPORT_PRIVATE static bool canPlaceCellsOf(VM&);
-    // Page-aligned, zeroed memory for placing cells. Any thread.
-    JS_EXPORT_PRIVATE static void* allocateBlock(VM&, size_t);
-    JS_EXPORT_PRIVATE static void freeBlock(void*, size_t);
 
 private:
     struct Header;

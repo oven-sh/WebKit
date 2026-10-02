@@ -429,14 +429,15 @@ void cachePrivateName(VM& vm, Data* data, Slot* cache, JSObject* base, JSValue n
 
 static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);
 
-void cachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
+void cachePutById(Instance* instance, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
+    JSGlobalObject* globalObject = instance->globalObject;
     // A field was added to an object with a typed layout. The next object with the same Structure that gains that field does not
     // need to call the runtime, at any site (Instance::fieldAdditions).
     if (slot.type() == PutPropertySlot::NewTypedField && base.isCell() && slot.base() == base.asCell() && isInlineOffset(slot.cachedOffset())) {
         Structure* newStructure = base.asCell()->structure();
         if (newStructure->previousID() == oldStructure && !newStructure->isDictionary() && !oldStructure->mayBePrototype() && oldStructure->outOfLineCapacity() == newStructure->outOfLineCapacity())
-            globalObject->aotInstance()->noteFieldAddition(oldStructure, slot.cachedOffset(), newStructure);
+            instance->noteFieldAddition(oldStructure, slot.cachedOffset(), newStructure);
     }
     if (SharedData::contains(cache))
         return;

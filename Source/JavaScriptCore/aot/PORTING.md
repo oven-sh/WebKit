@@ -25,8 +25,9 @@ The counts are from reading the source, not from compiling it for another CPU. E
 - `ENABLE_AOT` in `wtf/PlatformEnable.h`, and `BENABLE_STATIC_REGION` in `bmalloc/BPlatform.h`. They must agree.
 - The nine `AOTLower*.cpp` are gated as whole files on `ENABLE(AOT) && CPU(ARM64)`, as are most of `AOTCompiler.cpp`, `AOTStubs.cpp` and
   `AOTThunks.cpp`. **None of that has ever been compiled for another CPU.**
-- `compileForImage()` declines everything where there is no back end, so with the gates on and the back end missing, a program
-  runs from its bytecode. That is the first state to reach.
+- `compileForImage()` declines everything where there is no back end. With the gates on and the back end missing, the shell runs its
+  script interpreted, and an embedder's build fails: an executable has no bytecode to fall back on. That is the first state to
+  reach.
 
 ### 2. Registers: the hard part
 
@@ -42,6 +43,10 @@ x86-64 has 16 in all. Without the stack and frame pointers and the 3 pinned ones
 So decide this first. `numberOfArgumentGPRs` need not be `GPRInfo::numberOfArgumentRegisters`: with 4, there are 4 scratch registers,
 and functions with more parameters use `Signature::List`, which exists. (`EntryWord` has 4 bits for the count.) A function and its
 callers derive the convention from the bytecode alone (`conventionOf()`), so there is one place to change.
+
+An operation (C++) gets the instance as its first argument, which is a move from the pinned register. Operations that are shared with
+the other tiers get the global object, loaded from the instance. `takesInstance(Entry)` says which, from their signatures, and the
+compiler asserts it for every call.
 
 Also: `indexOfFunctionGPR` in `AOTStubs.h`; the sequences that save and restore every register around a call into C++
 (`AOTStubs.cpp`, about line 290: `x0` to `x15` in pairs, `d0` to `d7` and `d16` to `d31`); the stubs that are generated once per result
@@ -85,7 +90,21 @@ copies are identical byte for byte, so a stub cannot know which copy it is.
 absolute addresses in it are of data in the static region. An executable of the static heap refers to its code by offset
 (`EntryWord`).
 
-### 6. Odds and ends
+### 6. Instances
+
+Everything that a program writes to is reached from the instance register. There is one `AOT::Instance` for each module loader, so a
+realm can run a program several times over, and nothing distinguishes the first.
+
+- Below the `Instance` is a table of pointers to the module environments, which are ordinary cells. `ImageEnvironment::distance` is the
+  distance of the pointer.
+- A function's Structure names its instance (`Structure::m_aotInstance`). None means that it runs under any instance of its realm, which
+  is so for builtins.
+- Three stubs depend on that: `findCodeOfCallee()` (none, or the caller's: straight in; otherwise the long way), `generateEnterStaticFunction()`
+  (callee, Structure, instance), and `adapt()`, which saves, switches and restores the register.
+- An instance lives as long as its loader. Code that runs was entered through a frame with its callee in it, which is what keeps the
+  loader alive, so **the entry adapter's frame must have the callee where the collector's scan of the stack sees it.**
+
+### 7. Odds and ends
 
 - A StructureID becomes an address with one `movk` of the upper half of `structureIDBaseOfImages` (three places in `AOTStubs.cpp`).
 - Of the 133 methods of the macro assembler that `aot/` uses (1,941 uses), four have no definition for x86-64 or in the shared
@@ -123,7 +142,7 @@ The tools are in `Tools/Scripts/aot/`, with a README.
 
 ## What to be suspicious of
 
-- An executable that does not use its image still runs, from its bytecode, and passes most tests. Check that the image was used.
+- In the shell, what the compiler declines is interpreted, and the test passes. Check that it was compiled.
 - Anything that holds "usually": a mapping that tends to be nearby, a page size that happens to match. Make the rare case the normal
   one in tests.
 - A syntax check cannot see a link error, and a build with a precompiled header cannot see a missing include.

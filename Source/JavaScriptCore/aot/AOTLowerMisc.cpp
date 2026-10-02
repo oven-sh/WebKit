@@ -103,7 +103,7 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
         m_out.unreachable();
         return;
     case op_throw:
-        vmCall(node, Void, Entry::operationAOTThrow, m_globalObject, lowJSValue(node->use(node->as<OpThrow>().m_value)));
+        vmCall(node, Void, Entry::operationAOTThrow, m_instance, lowJSValue(node->use(node->as<OpThrow>().m_value)));
         m_out.unreachable();
         return;
     case op_throw_static_error:
@@ -248,7 +248,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
 
     // String literals in the program are atoms. So if the value equals any of the cases, an atom with its contents exists.
     m_out.appendTo(slowCase);
-    LValue atom = vmCall(place, pointerType(), Entry::operationAOTFindEqualAtom, m_globalObject, value);
+    LValue atom = vmCall(place, pointerType(), Entry::operationAOTFindEqualAtom, m_instance, value);
     proceedIf(m_out.notNull(atom), defaultBlock);
     ValueFromBlock charactersOfAtom = m_out.anchor(m_out.loadPtr(atom, m_heaps.StringImpl_data));
     ValueFromBlock lengthOfAtom = m_out.anchor(m_out.load32(atom, m_heaps.StringImpl_length));
@@ -502,7 +502,7 @@ void Lowering::lowerSwitch(Node* node)
             dispatchOnString(node, scrutinee, lowJSValue(scrutinee), all, blockFor(node, table.m_defaultOffset));
             return;
         }
-        LValue offset = vmCall(node, Int32, Entry::operationAOTSwitchString, m_globalObject, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex), m_out.constInt32(whoseBytecode(node)));
+        LValue offset = vmCall(node, Int32, Entry::operationAOTSwitchString, m_instance, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex), m_out.constInt32(whoseBytecode(node)));
         for (auto& entry : table.m_offsetTable)
             addCase(entry.value.m_branchOffset, entry.value.m_branchOffset);
         m_out.switchInstruction(offset, cases, blockFor(node, table.m_defaultOffset), FTL::Weight());
@@ -517,7 +517,7 @@ void Lowering::lowerSwitch(Node* node)
 
     LValue value;
     if (isChar)
-        value = vmCall(node, Int32, Entry::operationAOTSwitchChar, m_globalObject, lowJSValue(scrutinee));
+        value = vmCall(node, Int32, Entry::operationAOTSwitchChar, m_instance, lowJSValue(scrutinee));
     else if (scrutinee->rep() == Rep::Int32)
         value = lowInt32(scrutinee);
     else {

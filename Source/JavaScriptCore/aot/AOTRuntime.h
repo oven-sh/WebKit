@@ -260,6 +260,9 @@ enum class Entry : uint16_t {
 
 static constexpr unsigned numberOfEntries = static_cast<unsigned>(Entry::NumberOfEntries);
 
+bool takesInstance(Entry);
+bool takesGlobalObject(Entry);
+
 // The CallLinkInfo passed to the virtual call stubs is embedded in one of these. A tail call has already popped the caller's frame
 // by the time the callee needs the slow path, so the pointers normally found through that frame are kept here.
 struct VirtualCallInfo {
@@ -468,12 +471,19 @@ static_assert(sizeof(FunctionInfo) == 32);
 
 // One per realm that runs ahead-of-time compiled code.
 struct Instance {
-    static Instance& ensure(JSGlobalObject*);
+    JS_EXPORT_PRIVATE static Instance& ensure(JSModuleLoader*);
+    static Instance& ensure(JSGlobalObject*); // Of the realm's own loader.
+    static Instance* of(JSFunction*);
+    Structure* structureOfFunctions(Structure* ofRealm, FunctionExecutable*);
+    JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
+    ScriptExecutable* topLevelExecutableOf(SourceProvider*);
+    JS_EXPORT_PRIVATE void setTopLevelExecutableOf(SourceProvider*, ScriptExecutable*);
+    JSModuleLoader* loader() const;
     static bool convertToTypedLayout(VM&, JSObject*, uint16_t layoutID); // TypedLayoutTable::ConvertFunction
     Structure* emptyStructureForLayout(uint16_t layoutID);
     Structure* emptyStructureForLayout(uint16_t layoutID, JSObject* prototype); // Creates a new Structure. The caller must keep it alive.
     static JSObject* newObjectOf(VM&, Structure*); // Allocates an empty object, with out-of-line storage if the Structure has out-of-line slots.
-    static void destroy(Instance*);
+    JS_EXPORT_PRIVATE static void destroy(Instance*);
 
     // For the GC. Slots hold their referents weakly.
     template<typename Visitor> void visit(Visitor&, bool onlyNew);
@@ -546,7 +556,7 @@ struct Instance {
     // If the image requests it, the program's module environments are placed below the Instance, each at the same distance in every
     // realm, so compiled code can reach a module variable directly from the Instance. Returns null if this realm's environments are
     // ordinary GC allocations, in which case code that relies on the fixed placement cannot run in this realm.
-    JS_EXPORT_PRIVATE void* placeForEnvironment(ImageEnvironment) const;
+    JS_EXPORT_PRIVATE JSCell** slotOfEnvironment(ImageEnvironment) const;
 
     // Structure::createWithProperties() applied to the empty object literal Structure with that inline capacity. Cached by property
     // names, and never freed.
@@ -1009,7 +1019,7 @@ private:
 bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSGlobalObject*, Ref<JITCode>&&);
 // Called when an executable from the static heap (FunctionExecutable::aotEntryFor()) is about to run for the first time. Links its
 // code to the realm. Returns false if the code cannot run in the function's realm.
-bool linkStaticFunction(VM&, FunctionExecutable*, CodeSpecializationKind, JSScope*);
+bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, JSScope*);
 
 // An address within near-call range that JIT code can use to call `code`. Any thread.
 void* catchThunk();

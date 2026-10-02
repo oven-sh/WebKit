@@ -108,7 +108,7 @@ void Lowering::validateNewObject(Node* node, LValue object, uint32_t layout, con
     m_out.jump(settled);
     m_out.appendTo(someIsNot);
     if (TypeTable::hasTypedFields())
-        vmCall(node, Void, Entry::operationAOTValidateTypedObject, m_globalObject, object);
+        vmCall(node, Void, Entry::operationAOTValidateTypedObject, m_instance, object);
     else
         plainCall(Void, Entry::operationAOTValidateNewObject, m_instance, object);
     m_out.jump(settled);
@@ -120,16 +120,16 @@ bool Lowering::tryLowerAllocation(Node* node)
 
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
         m_graph.functionsCreated.append(isExpression ? code().codeBlock()->functionExpr(index) : code().codeBlock()->functionDecl(index));
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewFunction, m_globalObject, lowCell(node->use(scope)),
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewFunction, m_instance, lowCell(node->use(scope)),
             m_out.constInt32(index), m_out.constInt32(isExpression | whoseBytecode(node) << 1), m_out.constInt32(static_cast<uint32_t>(kind)), slotAddress(allocateSlots(2))));
         return true;
     };
     auto newInternalFieldObject = [&](InternalFieldObjectKind kind) {
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewInternalFieldObject, m_globalObject, m_out.constInt32(static_cast<uint32_t>(kind))));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewInternalFieldObject, m_instance, m_out.constInt32(static_cast<uint32_t>(kind))));
         return true;
     };
     auto createInternalFieldObject = [&](VirtualRegister callee, InternalFieldObjectKind kind) {
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateInternalFieldObject, m_globalObject, lowCell(node->use(callee)), m_out.constInt32(static_cast<uint32_t>(kind))));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateInternalFieldObject, m_instance, lowCell(node->use(callee)), m_out.constInt32(static_cast<uint32_t>(kind))));
         return true;
     };
 
@@ -147,14 +147,14 @@ bool Lowering::tryLowerAllocation(Node* node)
             if (uint16_t layoutID = Graph::layoutIDOfNewObject(node); layoutID && (!shapeOfThis || !shapeOfThis->layoutID)) {
                 // The object has a typed layout, but also a property that the layout has no slot for. So it is created empty, and
                 // its properties are added one at a time.
-                LValue object = vmCall(node, pointerType(), Entry::operationAOTNewTypedObject, m_globalObject, m_out.constInt32(layoutID), slotAddress(allocateSlots(2)));
+                LValue object = vmCall(node, pointerType(), Entry::operationAOTNewTypedObject, m_instance, m_out.constInt32(layoutID), slotAddress(allocateSlots(2)));
                 auto& instructions = code().codeBlock()->instructions();
                 auto& stores = code().storesOfLiteral(node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= count);
                 for (unsigned i = 0; i < count; ++i) {
                     auto store = instructions.at(stores[i])->as<OpPutById>();
                     uint32_t flags = (store.m_flags.isDirect() ? 1 : 0) | (store.m_flags.ecmaMode().isStrict() ? 2 : 0);
-                    vmCall(node, Void, Entry::operationAOTPutById, m_globalObject, object, values[i], m_out.constInt32(numberOf(store.m_property)), slotAddress(allocateSlot()), m_out.constInt32(flags));
+                    vmCall(node, Void, Entry::operationAOTPutById, m_instance, object, values[i], m_out.constInt32(numberOf(store.m_property)), slotAddress(allocateSlot()), m_out.constInt32(flags));
                 }
                 setJSValue(node, object);
                 return true;
@@ -203,7 +203,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.appendTo(slowCase, continuation);
             for (unsigned i = 0; i < values.size(); ++i)
                 m_out.store64(values[i], scratchWord(i));
-            results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewObjectLiteral, m_globalObject, scratchAddress(), m_out.constInt32(values.size()), slotAddress(slot))));
+            results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewObjectLiteral, m_instance, scratchAddress(), m_out.constInt32(values.size()), slotAddress(slot))));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), results);
@@ -212,10 +212,10 @@ bool Lowering::tryLowerAllocation(Node* node)
             return true;
         }
         if (uint16_t layoutID = Graph::layoutIDOfNewObject(node)) {
-            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewTypedObject, m_globalObject, m_out.constInt32(layoutID), slotAddress(allocateSlots(2))));
+            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewTypedObject, m_instance, m_out.constInt32(layoutID), slotAddress(allocateSlots(2))));
             return true;
         }
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewObject, m_globalObject, m_out.constInt32(node->as<OpNewObject>().m_inlineCapacity), slotAddress(allocateSlots(2))));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewObject, m_instance, m_out.constInt32(node->as<OpNewObject>().m_inlineCapacity), slotAddress(allocateSlots(2))));
         return true;
     case op_create_this: {
         auto bytecode = node->as<OpCreateThis>();
@@ -274,7 +274,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.appendTo(slowCase, continuation);
             for (unsigned i = 0; i < count; ++i)
                 m_out.store64(values[i], scratchWord(i));
-            ValueFromBlock slowResult = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTCreateThisWithProperties, m_globalObject, callee, scratchAddress(), m_out.constInt32(count), slotAddress(slot)));
+            ValueFromBlock slowResult = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTCreateThisWithProperties, m_instance, callee, scratchAddress(), m_out.constInt32(count), slotAddress(slot)));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), fastResult, slowResult);
@@ -282,7 +282,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             setJSValue(node, object);
             return true;
         }
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateThis, m_globalObject, lowCell(node->use(bytecode.m_callee)), m_out.constInt32(bytecode.m_inlineCapacity)));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateThis, m_instance, lowCell(node->use(bytecode.m_callee)), m_out.constInt32(bytecode.m_inlineCapacity)));
         return true;
     }
     case op_new_array: {
@@ -296,17 +296,17 @@ bool Lowering::tryLowerAllocation(Node* node)
         }
         LValue values = areInFrame ? addressFor(bytecode.m_argv).value() : bytecode.m_argc ? storeToScratch(node, bytecode.m_argv, bytecode.m_argc) : m_out.intPtrZero;
         setJSValue(node, withHelper(areInt32 ? Stub::HelperNewArrayOfInt32 : Stub::HelperNewArray, { values, m_out.constInt32(bytecode.m_argc) }, [&] {
-            return vmCall(node, pointerType(), Entry::operationAOTNewArray, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(areInt32 ? ArrayWithInt32 : ArrayWithContiguous));
+            return vmCall(node, pointerType(), Entry::operationAOTNewArray, m_instance, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(areInt32 ? ArrayWithInt32 : ArrayWithContiguous));
         }));
         return true;
     }
     case op_new_array_with_size:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSize, m_globalObject, lowJSValue(node->use(node->as<OpNewArrayWithSize>().m_length))));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSize, m_instance, lowJSValue(node->use(node->as<OpNewArrayWithSize>().m_length))));
         return true;
     case op_new_array_buffer: {
         LValue butterfly = lowCell(node->use(node->as<OpNewArrayBuffer>().m_immutableButterfly));
         setJSValue(node, withHelper(Stub::HelperNewArrayBuffer, { butterfly }, [&] {
-            return vmCall(node, pointerType(), Entry::operationAOTNewArrayBuffer, m_globalObject, butterfly);
+            return vmCall(node, pointerType(), Entry::operationAOTNewArrayBuffer, m_instance, butterfly);
         }));
         return true;
     }
@@ -331,7 +331,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.store64(lowJSValue(elements[i]), scratchWord(i));
         LValue values = m_scratch;
         auto slowCase = [&] {
-            return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread));
+            return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_instance, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread));
         };
         if (!someHaveBeenSpread)
             setJSValue(node, withHelper(Stub::HelperNewArrayWithSpread, { values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread) }, slowCase));
@@ -343,22 +343,22 @@ bool Lowering::tryLowerAllocation(Node* node)
         auto bytecode = node->as<OpNewArrayWithSpecies>();
         LValue length = lowJSValue(node->use(bytecode.m_length));
         LValue array = lowCell(node->use(bytecode.m_array));
-        auto slowCase = [&] { return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpecies, m_globalObject, length, array); };
+        auto slowCase = [&] { return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpecies, m_instance, length, array); };
         setJSValue(node, withHelper(Stub::HelperNewArrayWithSpecies, { length, array }, slowCase));
         return true;
     }
     case op_spread:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTSpread, m_globalObject, lowJSValue(node->use(node->as<OpSpread>().m_argument))));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTSpread, m_instance, lowJSValue(node->use(node->as<OpSpread>().m_argument))));
         return true;
     case op_new_reg_exp:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_globalObject, lowConstantRegister(node->as<OpNewRegExp>().m_regexp)));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_instance, lowConstantRegister(node->as<OpNewRegExp>().m_regexp)));
         return true;
     case op_new_reg_exp_shared: {
         // One object is shared by all executions of the site. Only the builtin that it is the receiver of ever sees it, and that
         // leaves it unchanged.
         auto bytecode = node->as<OpNewRegExpShared>();
         if (!Options::useSharedRegExpLiteralObjects()) {
-            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_globalObject, lowConstantRegister(bytecode.m_regexp)));
+            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_instance, lowConstantRegister(bytecode.m_regexp)));
             return true;
         }
         unsigned slot = allocateSlot();
@@ -368,7 +368,7 @@ bool Lowering::tryLowerAllocation(Node* node)
         ValueFromBlock found = m_out.anchor(cached);
         m_out.branch(m_out.notZero64(cached), usually(continuation), rarely(make));
         m_out.appendTo(make);
-        ValueFromBlock made = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewRegExpForReceiver, m_globalObject, lowConstantRegister(bytecode.m_regexp), m_out.constInt32(bytecode.m_forTest), slotAddress(slot)));
+        ValueFromBlock made = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewRegExpForReceiver, m_instance, lowConstantRegister(bytecode.m_regexp), m_out.constInt32(bytecode.m_forTest), slotAddress(slot)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, found, made));
@@ -392,7 +392,7 @@ bool Lowering::tryLowerAllocation(Node* node)
 
     case op_set_function_name: {
         auto bytecode = node->as<OpSetFunctionName>();
-        vmCall(node, Void, Entry::operationAOTSetFunctionName, m_globalObject, lowCell(node->use(bytecode.m_function)), lowJSValue(node->use(bytecode.m_name)));
+        vmCall(node, Void, Entry::operationAOTSetFunctionName, m_instance, lowCell(node->use(bytecode.m_function)), lowJSValue(node->use(bytecode.m_name)));
         return true;
     }
     case op_new_promise:
@@ -421,35 +421,35 @@ bool Lowering::tryLowerAllocation(Node* node)
         LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
         unsigned scopeSize = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
         setJSValue(node, withHelper(Stub::HelperNewActivation, { scope, symbolTable, initialValue, m_out.constInt32(scopeSize) }, [&] {
-            return vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_globalObject, scope, symbolTable, initialValue, m_out.constInt32(scopeSize));
+            return vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_instance, scope, symbolTable, initialValue, m_out.constInt32(scopeSize));
         }));
         return true;
     }
     case op_push_with_scope: {
         auto bytecode = node->as<OpPushWithScope>();
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTPushWithScope, m_globalObject, lowCell(node->use(bytecode.m_currentScope)), lowJSValue(node->use(bytecode.m_newScope))));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTPushWithScope, m_instance, lowCell(node->use(bytecode.m_currentScope)), lowJSValue(node->use(bytecode.m_newScope))));
         return true;
     }
     case op_resolve_scope_for_hoisting_func_decl_in_eval: {
         auto bytecode = node->as<OpResolveScopeForHoistingFuncDeclInEval>();
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTResolveScopeForHoistingFuncDeclInEval, m_globalObject, lowCell(node->use(bytecode.m_scope)), m_out.constInt32(numberOf(bytecode.m_property))));
+        setJSValue(node, vmCall(node, Int64, Entry::operationAOTResolveScopeForHoistingFuncDeclInEval, m_instance, lowCell(node->use(bytecode.m_scope)), m_out.constInt32(numberOf(bytecode.m_property))));
         return true;
     }
     case op_create_direct_arguments:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateDirectArguments, m_globalObject, callee(), numberOfArgumentsPassed(), argumentsPassed(), m_out.constInt32(code().codeBlock()->numParameters() - 1)));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateDirectArguments, m_instance, callee(), numberOfArgumentsPassed(), argumentsPassed(), m_out.constInt32(code().codeBlock()->numParameters() - 1)));
         return true;
     case op_create_scoped_arguments:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateScopedArguments, m_globalObject, lowCell(node->use(node->as<OpCreateScopedArguments>().m_scope)), callee(), numberOfArgumentsPassed(), argumentsPassed()));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateScopedArguments, m_instance, lowCell(node->use(node->as<OpCreateScopedArguments>().m_scope)), callee(), numberOfArgumentsPassed(), argumentsPassed()));
         return true;
     case op_create_cloned_arguments:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateClonedArguments, m_globalObject, callee(), numberOfArgumentsPassed(), argumentsPassed()));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateClonedArguments, m_instance, callee(), numberOfArgumentsPassed(), argumentsPassed()));
         return true;
     case op_create_rest: {
         unsigned skipped = node->as<OpCreateRest>().m_numParametersToSkip;
         LValue passed = numberOfArgumentsPassed();
         LValue count = m_out.select(m_out.above(passed, m_out.constInt32(skipped)), m_out.sub(passed, m_out.constInt32(skipped)), m_out.int32Zero);
         setJSValue(node, withHelper(Stub::HelperNewArray, { m_out.add(argumentsPassed(), m_out.constIntPtr(skipped * sizeof(EncodedJSValue))), count }, [&] {
-            return vmCall(node, pointerType(), Entry::operationAOTCreateRest, m_globalObject, passed, argumentsPassed(), m_out.constInt32(skipped));
+            return vmCall(node, pointerType(), Entry::operationAOTCreateRest, m_instance, passed, argumentsPassed(), m_out.constInt32(skipped));
         }));
         return true;
     }
@@ -470,7 +470,7 @@ void Lowering::throwTDZError(Node* node)
 void Lowering::throwStaticError(Node* node)
 {
     auto bytecode = node->as<OpThrowStaticError>();
-    vmCall(node, Void, Entry::operationAOTThrowStaticError, m_globalObject, lowJSValue(node->use(bytecode.m_message)), m_out.constInt32(static_cast<uint32_t>(bytecode.m_errorType)));
+    vmCall(node, Void, Entry::operationAOTThrowStaticError, m_instance, lowJSValue(node->use(bytecode.m_message)), m_out.constInt32(static_cast<uint32_t>(bytecode.m_errorType)));
     m_out.unreachable();
 }
 
@@ -509,7 +509,7 @@ void Lowering::lowerToThis(Node* node)
     m_out.branch(isScope, rarely(slowCase), usually(continuation));
 
     m_out.appendTo(slowCase, continuation);
-    results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTToThis, m_globalObject, value, m_out.constInt32(isStrict))));
+    results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTToThis, m_instance, value, m_out.constInt32(isStrict))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -566,7 +566,7 @@ bool Lowering::tryLowerConversion(Node* node)
         return identityOr(valueNode, TAnyObject, [&](LValue value) {
             return isCellAnd(valueNode, value, [&](LValue cell) { return isObjectCell(cell); });
         }, [&](LValue value) {
-            return vmCall(node, pointerType(), Entry::operationAOTToObject, m_globalObject, value, m_out.constInt32(numberOf(bytecode.m_message)));
+            return vmCall(node, pointerType(), Entry::operationAOTToObject, m_instance, value, m_out.constInt32(numberOf(bytecode.m_message)));
         });
     }
     case op_to_primitive: {
@@ -574,7 +574,7 @@ bool Lowering::tryLowerConversion(Node* node)
         return identityOr(valueNode, TPrimitive, [&](LValue value) {
             return m_out.logicalNot(isCellAnd(valueNode, value, [&](LValue cell) { return isObjectCell(cell); }));
         }, [&](LValue value) {
-            return vmCall(node, Int64, Entry::operationAOTToPrimitive, m_globalObject, value);
+            return vmCall(node, Int64, Entry::operationAOTToPrimitive, m_instance, value);
         });
     }
     case op_to_property_key: {
@@ -582,7 +582,7 @@ bool Lowering::tryLowerConversion(Node* node)
         return identityOr(valueNode, TString | TSymbol, [&](LValue value) {
             return isStringOrSymbol(valueNode, value);
         }, [&](LValue value) {
-            return vmCall(node, Int64, Entry::operationAOTToPropertyKey, m_globalObject, value);
+            return vmCall(node, Int64, Entry::operationAOTToPropertyKey, m_instance, value);
         });
     }
     case op_to_property_key_or_number: {
@@ -590,11 +590,11 @@ bool Lowering::tryLowerConversion(Node* node)
         return identityOr(valueNode, TString | TSymbol | TNumber, [&](LValue value) {
             return m_out.bitOr(isNumber(value), isStringOrSymbol(valueNode, value));
         }, [&](LValue value) {
-            return vmCall(node, Int64, Entry::operationAOTToPropertyKey, m_globalObject, value);
+            return vmCall(node, Int64, Entry::operationAOTToPropertyKey, m_instance, value);
         });
     }
     case op_typeof:
-        setJSValue(node, plainCall(pointerType(), Entry::operationAOTTypeof, m_globalObject, lowJSValue(node->use(node->as<OpTypeof>().m_value))));
+        setJSValue(node, plainCall(pointerType(), Entry::operationAOTTypeof, m_instance, lowJSValue(node->use(node->as<OpTypeof>().m_value))));
         return true;
     case op_typeof_is_object:
     case op_typeof_is_function: {
@@ -636,7 +636,7 @@ bool Lowering::tryLowerConversion(Node* node)
         m_out.branch(m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(MasqueradesAsUndefined | OverridesGetCallData)), rarely(slowPath), usually(continuation));
 
         m_out.appendTo(slowPath);
-        results.append(m_out.anchor(m_out.notZero64(plainCall(Int64, wantsObject ? Entry::operationAOTTypeofIsObject : Entry::operationAOTTypeofIsFunction, m_globalObject, value))));
+        results.append(m_out.anchor(m_out.notZero64(plainCall(Int64, wantsObject ? Entry::operationAOTTypeofIsObject : Entry::operationAOTTypeofIsFunction, m_instance, value))));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation);
@@ -673,11 +673,11 @@ bool Lowering::tryLowerConversion(Node* node)
             return true;
         }
         LValue values = storeToScratch(node, bytecode.m_src, bytecode.m_count);
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTStrcat, m_globalObject, values, m_out.constInt32(bytecode.m_count)));
+        setJSValue(node, vmCall(node, Int64, Entry::operationAOTStrcat, m_instance, values, m_out.constInt32(bytecode.m_count)));
         return true;
     }
     case op_get_prototype_of:
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetPrototypeOf, m_globalObject, lowJSValue(node->use(node->as<OpGetPrototypeOf>().m_value))));
+        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetPrototypeOf, m_instance, lowJSValue(node->use(node->as<OpGetPrototypeOf>().m_value))));
         return true;
     case op_instanceof: {
         // The steps of JIT::emit_op_instanceof(). Both property reads go through ordinary inline caches.
@@ -697,7 +697,7 @@ bool Lowering::tryLowerConversion(Node* node)
         m_out.branch(isCellAnd(constructorNode, constructor, [&](LValue cell) { return isObjectCell(cell); }), usually(constructorIsObject), rarely(constructorIsNotObject));
 
         m_out.appendTo(constructorIsNotObject);
-        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTInstanceof, m_globalObject, value, constructor))); // Throws.
+        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTInstanceof, m_instance, value, constructor))); // Throws.
         m_out.jump(continuation);
 
         m_out.appendTo(constructorIsObject);
@@ -707,7 +707,7 @@ bool Lowering::tryLowerConversion(Node* node)
         m_out.branch(m_out.bitAnd(m_out.equal(hasInstance, defaultHasInstance), implementsDefault), usually(isDefault), rarely(isCustom));
 
         m_out.appendTo(isCustom);
-        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTInstanceofCustom, m_globalObject, value, constructor, hasInstance)));
+        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTInstanceofCustom, m_instance, value, constructor, hasInstance)));
         m_out.jump(continuation);
 
         m_out.appendTo(isDefault);
@@ -846,22 +846,22 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_get_by_id_with_this: {
         auto bytecode = node->as<OpGetByIdWithThis>();
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetByIdWithThis, m_globalObject, low(bytecode.m_base), low(bytecode.m_thisValue), m_out.constInt32(numberOf(bytecode.m_property))));
+        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetByIdWithThis, m_instance, low(bytecode.m_base), low(bytecode.m_thisValue), m_out.constInt32(numberOf(bytecode.m_property))));
         return true;
     }
     case op_get_by_val_with_this: {
         auto bytecode = node->as<OpGetByValWithThis>();
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetByValWithThis, m_globalObject, low(bytecode.m_base), low(bytecode.m_thisValue), low(bytecode.m_property)));
+        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetByValWithThis, m_instance, low(bytecode.m_base), low(bytecode.m_thisValue), low(bytecode.m_property)));
         return true;
     }
     case op_put_by_id_with_this: {
         auto bytecode = node->as<OpPutByIdWithThis>();
-        vmCall(node, Void, Entry::operationAOTPutByIdWithThis, m_globalObject, low(bytecode.m_base), low(bytecode.m_thisValue), low(bytecode.m_value), m_out.constInt32(numberOf(bytecode.m_property)), strictness(bytecode.m_ecmaMode));
+        vmCall(node, Void, Entry::operationAOTPutByIdWithThis, m_instance, low(bytecode.m_base), low(bytecode.m_thisValue), low(bytecode.m_value), m_out.constInt32(numberOf(bytecode.m_property)), strictness(bytecode.m_ecmaMode));
         return true;
     }
     case op_put_by_val_with_this: {
         auto bytecode = node->as<OpPutByValWithThis>();
-        vmCall(node, Void, Entry::operationAOTPutByValWithThis, m_globalObject, low(bytecode.m_base), low(bytecode.m_thisValue), low(bytecode.m_property), low(bytecode.m_value), strictness(bytecode.m_ecmaMode));
+        vmCall(node, Void, Entry::operationAOTPutByValWithThis, m_instance, low(bytecode.m_base), low(bytecode.m_thisValue), low(bytecode.m_property), low(bytecode.m_value), strictness(bytecode.m_ecmaMode));
         return true;
     }
     case op_put_by_val_direct: {
@@ -904,7 +904,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
             m_out.jump(continuation);
             m_out.appendTo(slowCase);
         }
-        vmCall(node, Void, Entry::operationAOTPutByValDirect, m_globalObject, base, property, value, strictness(bytecode.m_ecmaMode));
+        vmCall(node, Void, Entry::operationAOTPutByValDirect, m_instance, base, property, value, strictness(bytecode.m_ecmaMode));
         if (continuation) {
             m_out.jump(continuation);
             m_out.appendTo(continuation);
@@ -913,7 +913,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_in_by_id: {
         auto bytecode = node->as<OpInById>();
-        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property))));
+        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInById, m_instance, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property))));
     }
     case op_in_by_val: {
         auto bytecode = node->as<OpInByVal>();
@@ -922,7 +922,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
         // (The built-in methods of arrays ask `index in array` for each element, to skip holes. So in a loop the fast path is inline.)
         bool isInLoop = m_block->isInLoop && !m_block->isGeneric;
         if ((isCompact() && !isInLoop) || !mayBe(baseNode->type, TAnyObject) || !mayBe(propertyNode->type, TNumber))
-            return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property)));
+            return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInByVal, m_instance, low(bytecode.m_base), low(bytecode.m_property)));
 
         // An element that is present in contiguous or int32 storage. For a hole, the runtime has to search the prototype chain.
         LValue base = lowJSValue(baseNode);
@@ -953,7 +953,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
         m_out.branch(m_out.notZero64(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)))), usually(continuation), rarely(slowCase));
 
         m_out.appendTo(slowCase, continuation);
-        ValueFromBlock found = m_out.anchor(m_out.notZero64(vmCall(node, Int64, Entry::operationAOTInByVal, m_globalObject, base, lowJSValue(propertyNode))));
+        ValueFromBlock found = m_out.anchor(m_out.notZero64(vmCall(node, Int64, Entry::operationAOTInByVal, m_instance, base, lowJSValue(propertyNode))));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation);
@@ -962,18 +962,18 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_del_by_id: {
         auto bytecode = node->as<OpDelById>();
-        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTDelById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), strictness(bytecode.m_ecmaMode)));
+        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTDelById, m_instance, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), strictness(bytecode.m_ecmaMode)));
     }
     case op_del_by_val: {
         auto bytecode = node->as<OpDelByVal>();
-        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTDelByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property), strictness(bytecode.m_ecmaMode)));
+        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTDelByVal, m_instance, low(bytecode.m_base), low(bytecode.m_property), strictness(bytecode.m_ecmaMode)));
     }
     case op_get_private_name: {
         auto bytecode = node->as<OpGetPrivateName>();
         if constexpr (usesStubs)
             setJSValue(node, callStub(Stub::GetPrivateName, Int64, { { low(bytecode.m_base), GPRInfo::argumentGPR0 }, { low(bytecode.m_property), GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, 0)), GPRInfo::argumentGPR2 } }, { }));
         else
-            setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetPrivateName, m_globalObject, low(bytecode.m_base), low(bytecode.m_property), m_out.int32Zero, slotAddress(allocateSlot()), m_out.int32Zero));
+            setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetPrivateName, m_instance, low(bytecode.m_base), low(bytecode.m_property), m_out.int32Zero, slotAddress(allocateSlot()), m_out.int32Zero));
         return true;
     }
     case op_put_private_name: {
@@ -982,63 +982,63 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
             callStub(Stub::PutPrivateName, Void, { { low(bytecode.m_base), GPRInfo::argumentGPR0 }, { low(bytecode.m_property), GPRInfo::argumentGPR1 }, { low(bytecode.m_value), GPRInfo::argumentGPR2 },
                 { slotAddress(allocateSite(node, 0, bytecode.m_putKind.isDefine())), GPRInfo::argumentGPR3 } }, { });
         } else
-            vmCall(node, Void, Entry::operationAOTPutPrivateName, m_globalObject, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), m_out.int32Zero, slotAddress(allocateSlot()), m_out.constInt32(bytecode.m_putKind.isDefine()));
+            vmCall(node, Void, Entry::operationAOTPutPrivateName, m_instance, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), m_out.int32Zero, slotAddress(allocateSlot()), m_out.constInt32(bytecode.m_putKind.isDefine()));
         return true;
     }
     case op_has_private_name: {
         auto bytecode = node->as<OpHasPrivateName>();
-        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTHasPrivateName, m_globalObject, low(bytecode.m_base), low(bytecode.m_property)));
+        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTHasPrivateName, m_instance, low(bytecode.m_base), low(bytecode.m_property)));
     }
     case op_has_private_brand: {
         auto bytecode = node->as<OpHasPrivateBrand>();
-        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTHasPrivateBrand, m_globalObject, low(bytecode.m_base), low(bytecode.m_brand)));
+        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTHasPrivateBrand, m_instance, low(bytecode.m_base), low(bytecode.m_brand)));
     }
     case op_check_private_brand: {
         auto bytecode = node->as<OpCheckPrivateBrand>();
         if constexpr (usesStubs)
             callStub(Stub::CheckPrivateBrand, Void, { { low(bytecode.m_base), GPRInfo::argumentGPR0 }, { low(bytecode.m_brand), GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, 0)), GPRInfo::argumentGPR2 } }, { });
         else
-            vmCall(node, Void, Entry::operationAOTCheckPrivateBrand, m_globalObject, low(bytecode.m_base), low(bytecode.m_brand), m_out.int32Zero, slotAddress(allocateSlot()), m_out.int32Zero);
+            vmCall(node, Void, Entry::operationAOTCheckPrivateBrand, m_instance, low(bytecode.m_base), low(bytecode.m_brand), m_out.int32Zero, slotAddress(allocateSlot()), m_out.int32Zero);
         return true;
     }
     case op_set_private_brand: {
         auto bytecode = node->as<OpSetPrivateBrand>();
-        vmCall(node, Void, Entry::operationAOTSetPrivateBrand, m_globalObject, low(bytecode.m_base), low(bytecode.m_brand));
+        vmCall(node, Void, Entry::operationAOTSetPrivateBrand, m_instance, low(bytecode.m_base), low(bytecode.m_brand));
         return true;
     }
     case op_put_getter_by_id: {
         auto bytecode = node->as<OpPutGetterById>();
-        vmCall(node, Void, Entry::operationAOTPutAccessorById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(false));
+        vmCall(node, Void, Entry::operationAOTPutAccessorById, m_instance, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(false));
         return true;
     }
     case op_put_setter_by_id: {
         auto bytecode = node->as<OpPutSetterById>();
-        vmCall(node, Void, Entry::operationAOTPutAccessorById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(true));
+        vmCall(node, Void, Entry::operationAOTPutAccessorById, m_instance, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(true));
         return true;
     }
     case op_put_getter_setter_by_id: {
         auto bytecode = node->as<OpPutGetterSetterById>();
-        vmCall(node, Void, Entry::operationAOTPutGetterSetterById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_getter), low(bytecode.m_setter));
+        vmCall(node, Void, Entry::operationAOTPutGetterSetterById, m_instance, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_getter), low(bytecode.m_setter));
         return true;
     }
     case op_put_getter_by_val: {
         auto bytecode = node->as<OpPutGetterByVal>();
-        vmCall(node, Void, Entry::operationAOTPutAccessorByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(false));
+        vmCall(node, Void, Entry::operationAOTPutAccessorByVal, m_instance, low(bytecode.m_base), low(bytecode.m_property), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(false));
         return true;
     }
     case op_put_setter_by_val: {
         auto bytecode = node->as<OpPutSetterByVal>();
-        vmCall(node, Void, Entry::operationAOTPutAccessorByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(true));
+        vmCall(node, Void, Entry::operationAOTPutAccessorByVal, m_instance, low(bytecode.m_base), low(bytecode.m_property), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(true));
         return true;
     }
     case op_define_data_property: {
         auto bytecode = node->as<OpDefineDataProperty>();
-        vmCall(node, Void, Entry::operationAOTDefineDataProperty, m_globalObject, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), unboxInt32(low(bytecode.m_attributes)));
+        vmCall(node, Void, Entry::operationAOTDefineDataProperty, m_instance, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), unboxInt32(low(bytecode.m_attributes)));
         return true;
     }
     case op_define_accessor_property: {
         auto bytecode = node->as<OpDefineAccessorProperty>();
-        vmCall(node, Void, Entry::operationAOTDefineAccessorProperty, m_globalObject, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_getter), low(bytecode.m_setter), unboxInt32(low(bytecode.m_attributes)));
+        vmCall(node, Void, Entry::operationAOTDefineAccessorProperty, m_instance, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_getter), low(bytecode.m_setter), unboxInt32(low(bytecode.m_attributes)));
         return true;
     }
     case op_get_from_arguments: {

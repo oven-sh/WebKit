@@ -51,7 +51,8 @@ struct ImageHeader {
     uint32_t recordsOffset;
     uint32_t recordsSize;
     uint32_t numberOfFunctions;
-    uint32_t environmentsSize; // Size of the area below the Instance. See Instance::placeForEnvironment().
+    uint32_t sizeOfAllDatasIn16Bytes;
+    uint32_t environmentsSize; // Size of the area below the Instance. See Instance::slotOfEnvironment().
     uint32_t environmentsOffset; // ImageEnvironment[], indexed by module index in the linked module graph.
     uint32_t numberOfEnvironments;
     // Shape and selector numbers start at one.
@@ -151,9 +152,9 @@ struct ImageDispatchEntry {
     static uint32_t encode(uint32_t selector, int32_t location) { return selector << locationBits | (static_cast<uint32_t>(location) & ((1u << locationBits) - 1)); }
 };
 
-// The location of a module's JSModuleEnvironment, the same in every realm that runs the module's code from the image.
+// Where the pointer to a module's JSModuleEnvironment is.
 struct ImageEnvironment {
-    uint32_t distance; // Distance below the Instance. Zero if it has no fixed location.
+    uint32_t distance; // Distance below the Instance. Zero if there is none.
     uint32_t size;
 };
 
@@ -237,6 +238,7 @@ public:
     // These refer to the image that has module environments.
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
     JS_EXPORT_PRIVATE static uint32_t numberOfFunctionsOfImageWithEnvironments();
+    static size_t sizeOfAllDatasOfImageWithEnvironments();
     JS_EXPORT_PRIVATE static ImageEnvironment environmentOf(uint32_t moduleOfGraph);
     static const void* addressOfStub(Stub); // From any image. Null if none is loaded.
     static std::pair<Image*, const ImageFunction*> find(const ImageKey&);

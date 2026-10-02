@@ -23,13 +23,6 @@
 
 namespace JSC { namespace AOT {
 
-#define AOT_OPERATION_PROLOGUE(globalObject) \
-    VM& vm = (globalObject)->vm(); \
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
-    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
-    auto scope = DECLARE_THROW_SCOPE(vm); \
-    UNUSED_VARIABLE(scope)
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMath, double, (double x, uint32_t which))
 {
     switch (static_cast<MathFunction>(which)) {
@@ -81,8 +74,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMathAtan2, double, (double y, doub
     return atan2(y, x);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRandom, double, (JSGlobalObject* globalObject))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRandom, double, (Instance* instance))
 {
+    JSGlobalObject* globalObject = instance->globalObject;
     return globalObject->weakRandomNumber();
 }
 
@@ -106,22 +100,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWeakSetHas, size_t, (JSCell* set, 
     return key.isCell() && uncheckedDowncast<JSWeakSet>(set)->has(key.asCell());
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTMapDelete, size_t, (JSGlobalObject* globalObject, JSCell* map, EncodedJSValue key))
+JSC_DEFINE_JIT_OPERATION(operationAOTMapDelete, size_t, (Instance* instance, JSCell* map, EncodedJSValue key))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     OPERATION_RETURN(scope, uncheckedDowncast<JSMap>(map)->remove(globalObject, JSValue::decode(key)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSetDelete, size_t, (JSGlobalObject* globalObject, JSCell* set, EncodedJSValue key))
+JSC_DEFINE_JIT_OPERATION(operationAOTSetDelete, size_t, (Instance* instance, JSCell* set, EncodedJSValue key))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     OPERATION_RETURN(scope, uncheckedDowncast<JSSet>(set)->remove(globalObject, JSValue::decode(key)));
 }
 
 // (The values are in the caller's frame, where the collector finds them.)
-JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (JSGlobalObject* globalObject, JSArray* array, EncodedJSValue* values, uint32_t count))
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (Instance* instance, JSArray* array, EncodedJSValue* values, uint32_t count))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     uint64_t length = array->length();
     if (length + count > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
         // The same steps as arrayProtoFuncPush() with several arguments: every value is stored, past the last index as a named property,
@@ -142,9 +136,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (JSGloba
 }
 
 // end: INT32_MAX if the argument was omitted.
-JSC_DEFINE_JIT_OPERATION(operationAOTArraySlice, JSArray*, (JSGlobalObject* globalObject, JSArray* array, int32_t start, int32_t end))
+JSC_DEFINE_JIT_OPERATION(operationAOTArraySlice, JSArray*, (Instance* instance, JSArray* array, int32_t start, int32_t end))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     int64_t length = array->length();
     auto clamp = [&](int64_t index) { return index < 0 ? std::max<int64_t>(length + index, 0) : std::min<int64_t>(index, length); };
     int64_t from = clamp(start);
@@ -181,9 +175,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDateField, EncodedJSValue, (VM* vm
 
 // The fallback for when compiled code cannot allocate the array inline (Lowering::newArrayOf()). Creates an array with those
 // elements and that indexing type.
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfValues, JSCell*, (JSGlobalObject* globalObject, const EncodedJSValue* values, uint32_t count, uint32_t indexingType))
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfValues, JSCell*, (Instance* instance, const EncodedJSValue* values, uint32_t count, uint32_t indexingType))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(static_cast<IndexingType>(indexingType));
     OPERATION_RETURN(scope, constructArray(globalObject, structure, std::bit_cast<const JSValue*>(values), count));
 }

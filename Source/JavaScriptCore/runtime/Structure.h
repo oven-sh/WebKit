@@ -54,6 +54,13 @@ class UniquedStringImpl;
 
 namespace JSC {
 
+#if ENABLE(AOT)
+namespace AOT {
+struct Instance;
+JS_EXPORT_PRIVATE JSCell* ownerOf(Instance*);
+}
+#endif
+
 class DeferGC;
 class DeferredStructureTransitionWatchpointFire;
 class LLIntOffsetsExtractor;
@@ -849,6 +856,12 @@ public:
         return OBJECT_OFFSETOF(Structure, m_realm);
     }
 
+#if ENABLE(AOT)
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(Structure, m_aotInstance); }
+#endif
+
     static constexpr ptrdiff_t classInfoOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_classInfo);
@@ -1223,6 +1236,9 @@ private:
 
 
     WriteBarrier<JSGlobalObject> m_realm;
+#if ENABLE(AOT)
+    AOT::Instance* m_aotInstance { nullptr };
+#endif
     WriteBarrier<Unknown> m_prototype;
     mutable WriteBarrier<StructureChain> m_cachedPrototypeChain;
 

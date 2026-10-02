@@ -405,6 +405,10 @@ bool JSBoundFunction::canSkipNameAndLengthMaterialization(JSGlobalObject* global
     if (structure->classInfoForCells()->isSubClassOf(JSBoundFunction::info()))
         return false;
 
+#if ENABLE(AOT)
+    if (structure->aotInstance())
+        return true;
+#endif
     if (structure == globalObject->arrowFunctionStructure(true) || structure == globalObject->arrowFunctionStructure(false))
         return true;
     if (structure == globalObject->strictFunctionStructure(true) || structure == globalObject->strictFunctionStructure(false))

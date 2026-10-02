@@ -1111,7 +1111,8 @@ void CodeBlock::adoptAOTCode(AOT::JITCode& jitCode, AOT::Data* data)
 void CodeBlock::installAOTCode(Ref<AOT::JITCode>&& jitCode)
 {
     RELEASE_ASSERT(codeType() != FunctionCode);
-    AOT::Instance& instance = AOT::Instance::ensure(globalObject());
+    auto* module = dynamicDowncast<ModuleProgramExecutable>(ownerExecutable());
+    AOT::Instance& instance = module && module->moduleLoader() ? AOT::Instance::ensure(module->moduleLoader()) : AOT::Instance::ensure(globalObject());
     jitCode->setInstance(instance);
     AOT::Data* data = AOT::Data::create(instance, ownerExecutable(), unlinkedCodeBlock(), jitCode.get(), this);
     adoptAOTCode(jitCode.get(), data);

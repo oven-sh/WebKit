@@ -19,6 +19,7 @@
 #include "GetPutInfo.h"
 #include "JSCInlines.h"
 #include "JSGlobalLexicalEnvironment.h"
+#include "JSModuleLoader.h"
 #include "JSLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
@@ -30,18 +31,10 @@
 
 namespace JSC { namespace AOT {
 
-#define AOT_OPERATION_PROLOGUE(globalObject) \
-    VM& vm = (globalObject)->vm(); \
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
-    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
-    countOperationFor(globalObject, callFrame); \
-    auto scope = DECLARE_THROW_SCOPE(vm); \
-    UNUSED_VARIABLE(scope)
-
 #define AOT_BINARY_OPERATION(name, function) \
-    JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
+    JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
     { \
-        AOT_OPERATION_PROLOGUE(globalObject); \
+        AOT_OPERATION_BEGIN(instance); \
         OPERATION_RETURN(scope, JSValue::encode(function(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)))); \
     }
 
@@ -58,9 +51,9 @@ AOT_BINARY_OPERATION(operationAOTValueLShift, jsLShift)
 AOT_BINARY_OPERATION(operationAOTValueRShift, jsRShift)
 AOT_BINARY_OPERATION(operationAOTValueURShift, jsURShift)
 
-JSC_DEFINE_JIT_OPERATION(operationAOTValueNegate, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOperand))
+JSC_DEFINE_JIT_OPERATION(operationAOTValueNegate, EncodedJSValue, (Instance* instance, EncodedJSValue encodedOperand))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue primitive = JSValue::decode(encodedOperand).toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (primitive.isHeapBigInt())
@@ -68,91 +61,91 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValueNegate, EncodedJSValue, (JSGlobalObjec
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(-primitive.toNumber(globalObject))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTValueBitNot, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOperand))
+JSC_DEFINE_JIT_OPERATION(operationAOTValueBitNot, EncodedJSValue, (Instance* instance, EncodedJSValue encodedOperand))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::encode(jsBitwiseNot(globalObject, JSValue::decode(encodedOperand))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTValueInc, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOperand))
+JSC_DEFINE_JIT_OPERATION(operationAOTValueInc, EncodedJSValue, (Instance* instance, EncodedJSValue encodedOperand))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::encode(jsInc(globalObject, JSValue::decode(encodedOperand))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTValueDec, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOperand))
+JSC_DEFINE_JIT_OPERATION(operationAOTValueDec, EncodedJSValue, (Instance* instance, EncodedJSValue encodedOperand))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::encode(jsDec(globalObject, JSValue::decode(encodedOperand))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTToNumber, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOperand))
+JSC_DEFINE_JIT_OPERATION(operationAOTToNumber, EncodedJSValue, (Instance* instance, EncodedJSValue encodedOperand))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(JSValue::decode(encodedOperand).toNumber(globalObject))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTToNumeric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOperand))
+JSC_DEFINE_JIT_OPERATION(operationAOTToNumeric, EncodedJSValue, (Instance* instance, EncodedJSValue encodedOperand))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(encodedOperand).toNumeric(globalObject)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTToString, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOperand))
+JSC_DEFINE_JIT_OPERATION(operationAOTToString, EncodedJSValue, (Instance* instance, EncodedJSValue encodedOperand))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(encodedOperand).toString(globalObject)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToBoolean, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedOperand))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToBoolean, size_t, (Instance* instance, EncodedJSValue encodedOperand))
 {
+    JSGlobalObject* globalObject = instance->globalObject;
     return JSValue::decode(encodedOperand).toBoolean(globalObject);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCompareLess, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
+JSC_DEFINE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, jsLess<true>(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
+JSC_DEFINE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, jsLessEq<true>(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCompareGreater, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
+JSC_DEFINE_JIT_OPERATION(operationAOTCompareGreater, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, jsLess<false>(globalObject, JSValue::decode(encodedRight), JSValue::decode(encodedLeft)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCompareGreaterEq, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
+JSC_DEFINE_JIT_OPERATION(operationAOTCompareGreaterEq, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, jsLessEq<false>(globalObject, JSValue::decode(encodedRight), JSValue::decode(encodedLeft)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCompareEq, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
+JSC_DEFINE_JIT_OPERATION(operationAOTCompareEq, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::equal(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCompareStrictEq, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
+JSC_DEFINE_JIT_OPERATION(operationAOTCompareStrictEq, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::strictEqual(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint32_t identifierIndex, Slot* cache))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t identifierIndex, Slot* cache))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue base = JSValue::decode(encodedBase);
-    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
-    Instance& instance = *globalObject->aotInstance();
+    const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     if (base.isCell()) {
-        auto& known = instance.customGetterFor(base.asCell()->structureID().bits(), ident.impl());
+        auto& known = instance->customGetterFor(base.asCell()->structureID().bits(), ident.impl());
         if (known.uid == ident.impl() && known.structureID == base.asCell()->structureID().bits() && vm.megamorphicCache() && known.epoch == vm.megamorphicCache()->epoch()) {
             auto getter = GetValueFunc(std::bit_cast<GetValueFunc::Ptr>(known.getter));
             OPERATION_RETURN(scope, getter(known.holder->globalObject(), known.passesHolder ? JSValue::encode(known.holder) : encodedBase, ident));
@@ -163,23 +156,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
     JSValue result = getByIdAndFillMegamorphicCache(globalObject, base, ident, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (slot.isCacheableCustom() && base.isObject() && base.asCell()->structure() == structureBefore)
-        noteCustomGetter(globalObject, instance, asObject(base), ident, slot);
+        noteCustomGetter(globalObject, *instance, asObject(base), ident, slot);
     if (slot.isUnset() && structureBefore && structureBefore->knownShape())
-        caller(globalObject, callFrame).instance->lookAtObjectPrototype();
-    cacheGetById(globalObject, callerData(globalObject, callFrame), base, structureBefore, ident, slot, cache, true);
+        caller(instance, callFrame).instance->lookAtObjectPrototype();
+    cacheGetById(globalObject, callerData(instance, callFrame), base, structureBefore, ident, slot, cache, true);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedValue, uint32_t identifierIndex, Slot* cache, uint32_t flagBits))
+JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedValue, uint32_t identifierIndex, Slot* cache, uint32_t flagBits))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue base = JSValue::decode(encodedBase);
     JSValue value = JSValue::decode(encodedValue);
-    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     bool isDirect = flagBits & 1;
     bool isStrict = flagBits & 2;
 
-    PutPropertySlot slot(base, isStrict, putByIdContextOf(globalObject, callFrame));
+    PutPropertySlot slot(base, isStrict, putByIdContextOf(instance, callFrame));
     Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
     if (isDirect && oldStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
         // (A class field that is declared without an initializer is undefined until the constructor assigns it. Its slot stays
@@ -195,14 +188,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
     // intercepts the store.)
     if (!isDirect || (slot.type() == PutPropertySlot::NewProperty && base.isObject() && asObject(base)->canPerformFastPutInline(vm, ident)))
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
-    cachePutById(globalObject, callerData(globalObject, callFrame), base, oldStructure, ident, slot, isDirect, cache);
+    cachePutById(instance, callerData(instance, callFrame), base, oldStructure, ident, slot, isDirect, cache);
     OPERATION_RETURN(scope);
 }
 
 // For Graph::readsElementsOrEmpty. index: a non-negative integer.
-JSC_DEFINE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedArray, EncodedJSValue encodedIndex))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (Instance* instance, EncodedJSValue encodedArray, EncodedJSValue encodedIndex))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSObject* array = JSValue::decode(encodedArray).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     PropertySlot slot(array, PropertySlot::InternalMethodType::Get);
@@ -214,9 +207,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (JSGloba
     OPERATION_RETURN(scope, JSValue::encode(index <= MAX_ARRAY_INDEX ? slot.getValue(globalObject, static_cast<unsigned>(index)) : slot.getValue(globalObject, Identifier::from(vm, index))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
 
@@ -260,9 +253,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* 
     OPERATION_RETURN(scope, JSValue::encode(base.get(globalObject, key)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedProperty, EncodedJSValue encodedValue, uint32_t isStrict))
+JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty, EncodedJSValue encodedValue, uint32_t isStrict))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
     JSValue value = JSValue::decode(encodedValue);
@@ -295,19 +288,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (JSGlobalObject* globalObje
 // Resolves a name that no enclosing function or module declares. The result is a scope object. It is cached when it cannot change:
 // for an import, or for a global as long as no global lexical binding shadows it.
 // cache->pointer: the scope. cache->offset: the global lexical binding epoch at the time of the lookup, plus one.
-JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* globalObject, JSScope* startScope, uint32_t identifierIndex, Slot* cache, uint32_t localScopeDepth))
+JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (Instance* instance, JSScope* startScope, uint32_t identifierIndex, Slot* cache, uint32_t localScopeDepth))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     Slot unusedSlot { };
     if (SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     UNUSED_VARIABLE(uid);
     // The compiler has seen the declarations of the enclosing code, and this name is not among them. Skipping those scopes also
     // means that they do not have to keep the names of their variables.
     if (localScopeDepth == Site::resolvesInGlobalScopes)
-        startScope = globalObject->globalLexicalEnvironment();
+        startScope = bytecodeOwnerOfCaller(instance, callFrame).isBuiltinFunction() ? globalObject->globalLexicalEnvironment() : instance->loader()->moduleScope();
     JSObject* resolved = JSScope::resolve(globalObject, startScope, ident);
     OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
 
@@ -338,7 +331,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
             depth++;
         }
     }
-    if (cacheable && resolved->type() == LexicalEnvironmentType) {
+    if (cacheable && resolved->type() == LexicalEnvironmentType && localScopeDepth != Site::resolvesInGlobalScopes) {
         // The scope of an enclosing function. It is a different object on every call, but its depth is fixed by how the code nests.
         cache->pointer = nullptr;
         cache->offset = Slot::resolvesByDepth | depth;
@@ -367,14 +360,14 @@ static void cacheVariableOfEnvironment(VM& vm, Data* codeBlock, Slot* cache, JSL
 // cache->structureID: the structure that the scope must have for the cache to apply.
 // cache->pointer: the address of the variable, if that address is stable. Otherwise see cacheVariableOfEnvironment().
 // cache->offset: without a pointer, the offset of the property in the global object.
-JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObject* globalObject, JSObject* scopeObject, uint32_t identifierIndex, Slot* cache, uint32_t how))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (Instance* instance, JSObject* scopeObject, uint32_t identifierIndex, Slot* cache, uint32_t how))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     bool throwIfNotFound = how & Site::throwsIfNotFound;
     Slot unusedSlot { };
     if (SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
 
     // For a scope that is unique at this site: the global object, its lexical environment, or the module's environment. The
@@ -386,7 +379,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
         cache->pointer = address;
         WTF::storeStoreFence();
         cache->structureID = scopeObject->structureID();
-        didFillSlot(vm, callerData(globalObject, callFrame));
+        didFillSlot(vm, callerData(instance, callFrame));
     };
 
     if (scopeObject->type() == ModuleEnvironmentType) {
@@ -428,7 +421,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
         auto* environment = uncheckedDowncast<JSLexicalEnvironment>(scopeObject);
         auto entry = environment->symbolTable()->get(uid);
         if (!entry.isNull()) {
-            cacheVariableOfEnvironment(vm, callerData(globalObject, callFrame), cache, environment, entry.scopeOffset());
+            cacheVariableOfEnvironment(vm, callerData(instance, callFrame), cache, environment, entry.scopeOffset());
             OPERATION_RETURN(scope, JSValue::encode(environment->variableAt(entry.scopeOffset()).get()));
         }
     }
@@ -466,7 +459,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
                 cache->pointer = nullptr;
                 WTF::storeStoreFence();
                 cache->structureID = scopeObject->structureID();
-                didFillSlot(vm, callerData(globalObject, callFrame));
+                didFillSlot(vm, callerData(instance, callFrame));
             }
         }
         return slot.getValue(globalObject, ident);
@@ -474,29 +467,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
 }
 
 // Returns the environment that holds an import whose location the compiler knows.
-JSC_DEFINE_JIT_OPERATION(operationAOTFillImportSlot, JSObject*, (JSGlobalObject* globalObject, JSObject* importer, uint32_t slot))
+JSC_DEFINE_JIT_OPERATION(operationAOTFillImportSlot, JSObject*, (Instance* instance, JSObject* importer, uint32_t slot))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     auto* environment = uncheckedDowncast<JSModuleEnvironment>(importer);
     OPERATION_RETURN(scope, uncheckedDowncast<JSModuleRecord>(environment->moduleRecord())->fillImportSlot(globalObject, slot));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTReadLazyClosureVar, EncodedJSValue, (JSGlobalObject* globalObject, JSObject* scopeObject, uint32_t offset))
+JSC_DEFINE_JIT_OPERATION(operationAOTReadLazyClosureVar, EncodedJSValue, (Instance* instance, JSObject* scopeObject, uint32_t offset))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::encode(JSModuleEnvironment::readLazyClosureVar(vm, scopeObject, ScopeOffset(offset))));
 }
 
 // closureOffsetPlusOne: nonzero if the compiler knows that the variable is at that offset, minus one, in the environment.
 // cache->offset: 1 once the variable's watchpoint set has been looked up. cache->pointer: the set, if there is one.
 // how: the resolve mode, then the initialization mode (two bits), then whether the code is strict.
-JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalObject, JSObject* scopeObject, EncodedJSValue encodedValue, uint32_t identifierIndex, Slot* cache, uint32_t how))
+JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (Instance* instance, JSObject* scopeObject, EncodedJSValue encodedValue, uint32_t identifierIndex, Slot* cache, uint32_t how))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     Slot unusedSlot { };
     if (SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     GetPutInfo getPutInfo(static_cast<ResolveMode>(how & 1), GlobalProperty, static_cast<InitializationMode>((how >> 1) & 3), how & 8 ? ECMAMode::strict() : ECMAMode::sloppy());
     JSValue value = JSValue::decode(encodedValue);
@@ -519,7 +512,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
             // From now on compiled code stores to the variable without firing the watchpoint, so invalidate it now.
             if (set)
                 set->invalidate(vm, StringFireDetail("Executed op_put_to_scope in AOT code"));
-            cacheVariableOfEnvironment(vm, callerData(globalObject, callFrame), cache, environment, offset);
+            cacheVariableOfEnvironment(vm, callerData(instance, callFrame), cache, environment, offset);
             OPERATION_RETURN(scope);
         }
     }
@@ -545,16 +538,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue))
+JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJSValue encodedValue))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     throwException(globalObject, scope, JSValue::decode(encodedValue));
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t mask))
+JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (Instance* instance, EncodedJSValue encodedValue, uint32_t mask))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     unsigned tag = soundTypeTag(JSValue::decode(encodedValue));
     if (soundTypeMaskAccepts(mask, JSValue::decode(encodedValue)))
         OPERATION_RETURN(scope);
@@ -562,16 +555,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(encodedBase).get(globalObject, vm.propertyNames->length)));
 }
 
 // Returns normally only if the value has the typed layout, after conversion if necessary.
-JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t layoutID))
+JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (Instance* instance, EncodedJSValue encodedValue, uint32_t layoutID))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isUndefinedOrNull()) {
         // Throw the error that accessing a property of it would throw.
@@ -597,9 +590,9 @@ alignas(16) static const EncodedJSValue s_emptyTypedObject[2 + 256] = { };
 
 // Returns the object that typed code should read the value's fields from: the value itself if it has the typed layout, after
 // conversion if necessary.
-JSC_DEFINE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t layoutID))
+JSC_DEFINE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue, uint32_t layoutID))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isObject() && (asObject(value)->structure()->typedLayoutID() == layoutID || Instance::convertToTypedLayout(vm, asObject(value), safeCast<uint16_t>(layoutID))))
         OPERATION_RETURN(scope, encodedValue);
@@ -608,9 +601,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (JSGlo
     OPERATION_RETURN(scope, static_cast<EncodedJSValue>(std::bit_cast<uintptr_t>(&s_emptyTypedObject[0])));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint64_t which))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint64_t which))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     uint16_t layoutID = static_cast<uint16_t>(which >> 32);
     unsigned slot = which >> 48 & 0xff;
     bool allowsUndefined = which >> 56 & 1;
@@ -636,9 +629,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (JSGlobalObje
 }
 
 // Called when the Structure of the base does not say that the field is in its slot.
-JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint32_t which))
+JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t which))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     unsigned slot = which >> 16 & 0xff;
     bool allowsUndefined = which >> 24 & 1;
     const TypedLayoutTable::Field& field = TypedLayoutTable::fieldWithID(slot, static_cast<uint16_t>(which));
@@ -671,7 +664,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         // (An entry in the megamorphic cache is always a plain property or the absence of one.)
         if (!base.isObject() || (propertySlot.isUnset() ? propertySlot.isTaintedByOpaqueObject() : !propertySlot.isCacheableValue()))
-            globalObject->aotInstance()->noteObservableRead(slot, field.id);
+            instance->noteObservableRead(slot, field.id);
     }
     if (value.isUndefined() && allowsUndefined)
         OPERATION_RETURN(scope, JSValue::encode(value));
@@ -683,9 +676,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(field, value)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject* globalObject, JSObject* object))
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance* instance, JSObject* object))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     uint16_t layoutID = object->structure()->typedLayoutID();
     if (TypedLayoutTable::usesFieldIDs(layoutID)) {
         bool isRejected = false;
@@ -710,8 +703,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject*
 
 // For Options::validateAOTInferredTypes().
 // Validation must not change what the program does: this may be called while an exception is propagating.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Instance* instance, EncodedJSValue encodedValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
 {
+    JSGlobalObject* globalObject = instance->globalObject;
     Type type = static_cast<Type>(highHalfOfType) << 64 | lowHalfOfType;
     Type actual = typeOfValue(JSValue::decode(encodedValue));
     // Refine the type with the object's typed layout.
@@ -747,7 +741,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlo
     else
         dataLog("a node of kind ", which);
     if (identifierIndexPlusOne)
-        dataLog(" of `", identifierAt(globalObject, callFrame, identifierIndexPlusOne - 1).impl(), "`");
+        dataLog(" of `", identifierAt(instance, callFrame, identifierIndexPlusOne - 1).impl(), "`");
     if (scopeWhenCompiled)
         dataLog(" (scope ", RawPointer(std::bit_cast<void*>(static_cast<uintptr_t>(scopeWhenCompiled))), " offset ", scopeOffset, ")");
     dataLog(" was inferred to be ");
@@ -801,9 +795,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (JSGlo
     _exit(70);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTHandleTraps, void, (JSGlobalObject* globalObject))
+JSC_DEFINE_JIT_OPERATION(operationAOTHandleTraps, void, (Instance* instance))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     ASSERT(vm.traps().needHandling(VMTraps::AsyncEvents));
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN(scope);
@@ -831,9 +825,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer)
     return exception;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTFindEqualAtom, StringImpl*, (JSGlobalObject* globalObject, JSString* string))
+JSC_DEFINE_JIT_OPERATION(operationAOTFindEqualAtom, StringImpl*, (Instance* instance, JSString* string))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     auto atom = string->toExistingAtomString(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr); // Out of memory resolving a rope.
     StringImpl* impl = atom.data;
@@ -841,22 +835,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTFindEqualAtom, StringImpl*, (JSGlobalObject
 }
 
 // The jump offset, relative to the switch; 0 for the default.
-JSC_DEFINE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t tableIndex, uint32_t whose))
+JSC_DEFINE_JIT_OPERATION(operationAOTSwitchString, int32_t, (Instance* instance, EncodedJSValue encodedValue, uint32_t tableIndex, uint32_t whose))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue value = JSValue::decode(encodedValue);
     if (!value.isString())
         OPERATION_RETURN(scope, 0);
     auto string = asString(value)->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0); // Out of memory resolving a rope.
-    const UnlinkedStringJumpTable& table = bytecodeOwnerOfCaller(globalObject, callFrame, whose).stringSwitchJumpTable(tableIndex);
+    const UnlinkedStringJumpTable& table = bytecodeOwnerOfCaller(instance, callFrame, whose).stringSwitchJumpTable(tableIndex);
     OPERATION_RETURN(scope, table.offsetForValue(string.data.impl()));
 }
 
 // The character of a one character string, or -1.
-JSC_DEFINE_JIT_OPERATION(operationAOTSwitchChar, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue))
+JSC_DEFINE_JIT_OPERATION(operationAOTSwitchChar, int32_t, (Instance* instance, EncodedJSValue encodedValue))
 {
-    AOT_OPERATION_PROLOGUE(globalObject);
+    AOT_OPERATION_BEGIN(instance);
     JSValue value = JSValue::decode(encodedValue);
     if (!value.isString())
         OPERATION_RETURN(scope, -1);

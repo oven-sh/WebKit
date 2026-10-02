@@ -55,7 +55,7 @@ void Lowering::checkIsObjectOrThrowIteratorResultIsNotObject(Node* node, LValue 
     m_out.appendTo(cellCase, notObject);
     m_out.branch(isObjectCell(value), usually(continuation), rarely(notObject));
     m_out.appendTo(notObject, continuation);
-    vmCall(node, Void, Entry::operationAOTThrowIteratorResultIsNotObject, m_globalObject);
+    vmCall(node, Void, Entry::operationAOTThrowIteratorResultIsNotObject, m_instance);
     m_out.unreachable();
     m_out.appendTo(continuation);
 }
@@ -111,7 +111,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
         m_out.appendTo(isSomethingElse);
     }
 
-    LValue fastIterator = vmCall(node, Int64, isAsync ? Entry::operationAOTAsyncIteratorOpenTryFast : Entry::operationAOTIteratorOpenTryFast, m_globalObject, iterable, symbolIterator, scratchAddress());
+    LValue fastIterator = vmCall(node, Int64, isAsync ? Entry::operationAOTAsyncIteratorOpenTryFast : Entry::operationAOTIteratorOpenTryFast, m_instance, iterable, symbolIterator, scratchAddress());
     m_out.branch(m_out.notZero64(fastIterator), unsure(fastCase), unsure(genericCase));
 
     m_out.appendTo(fastCase, genericCase);
@@ -248,7 +248,7 @@ void Lowering::lowerIteratorNext(Node* node)
 
     m_out.appendTo(markedCase, indexCase);
     {
-        LValue value = vmCall(node, Int64, Entry::operationAOTIteratorNextTryFast, m_globalObject, iterator);
+        LValue value = vmCall(node, Int64, Entry::operationAOTIteratorNextTryFast, m_instance, iterator);
         finish(doneIfEmpty(value), value, next);
         m_out.jump(continuation);
     }
@@ -292,7 +292,7 @@ void Lowering::lowerIteratorNext(Node* node)
     m_out.appendTo(indexSlow, genericCase);
     {
         m_out.store64(next, scratchWord(0));
-        LValue value = vmCall(node, Int64, Entry::operationAOTIteratorNextWithIndex, m_globalObject, iterable, scratchAddress());
+        LValue value = vmCall(node, Int64, Entry::operationAOTIteratorNextWithIndex, m_instance, iterable, scratchAddress());
         finish(doneIfEmpty(value), value, m_out.load64(scratchWord(0)));
         m_out.jump(continuation);
     }
@@ -309,7 +309,7 @@ void Lowering::lowerIteratorNext(Node* node)
         ValueFromBlock booleanResult = m_out.anchor(unboxBoolean(done));
         m_out.branch(isBoolean(done), usually(haveDone), rarely(notBoolean));
         m_out.appendTo(notBoolean, haveDone);
-        ValueFromBlock otherResult = m_out.anchor(m_out.notZero64(plainCall(Int64, Entry::operationAOTToBoolean, m_globalObject, done)));
+        ValueFromBlock otherResult = m_out.anchor(m_out.notZero64(plainCall(Int64, Entry::operationAOTToBoolean, m_instance, done)));
         m_out.jump(haveDone);
         m_out.appendTo(haveDone);
         isDone = m_out.phi(Int32, booleanResult, otherResult);
@@ -344,7 +344,7 @@ void Lowering::lowerAsyncIteratorNext(Node* node)
     m_out.branch(isMarked, unsure(markedCase), unsure(genericCase));
 
     m_out.appendTo(markedCase, genericCase);
-    ValueFromBlock markedResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTAsyncIteratorNextWithDriver, m_globalObject, iterator, lowCell(node->use(bytecode.m_driver)),
+    ValueFromBlock markedResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTAsyncIteratorNextWithDriver, m_instance, iterator, lowCell(node->use(bytecode.m_driver)),
         resumeValue ? resumeValue : m_out.constInt64(JSValue::encode(JSValue()))));
     m_out.jump(continuation);
 
@@ -392,7 +392,7 @@ void Lowering::lowerIteratorCloseCheck(Node* node)
     m_out.branch(isStillValid, usually(continuation), rarely(materialize));
 
     m_out.appendTo(materialize, continuation);
-    results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTMaterializeArrayIterator, m_globalObject, lowJSValue(node->use(bytecode.m_iterable)), lowJSValue(node->use(bytecode.m_next)))));
+    results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTMaterializeArrayIterator, m_instance, lowJSValue(node->use(bytecode.m_iterable)), lowJSValue(node->use(bytecode.m_next)))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -449,7 +449,7 @@ bool Lowering::tryLowerIteration(Node* node)
         ValueFromBlock remembered = m_out.anchor(cachedAndFlag);
         m_out.jump(continuation);
         m_out.appendTo(generic);
-        ValueFromBlock made = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTGetPropertyEnumerator, m_globalObject, base));
+        ValueFromBlock made = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTGetPropertyEnumerator, m_instance, base));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(pointerType(), remembered, made));
@@ -499,7 +499,7 @@ bool Lowering::tryLowerIteration(Node* node)
         m_out.appendTo(generic);
         m_out.store64(mode, scratchWord(0));
         m_out.store64(index, scratchWord(1));
-        names.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTEnumeratorNext, m_globalObject, base, enumerator, scratchAddress())));
+        names.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTEnumeratorNext, m_instance, base, enumerator, scratchAddress())));
         modes.append(m_out.anchor(m_out.load64(scratchWord(0))));
         indices.append(m_out.anchor(m_out.load64(scratchWord(1))));
         m_out.jump(continuation);
@@ -536,7 +536,7 @@ bool Lowering::tryLowerIteration(Node* node)
         ValueFromBlock outside = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(m_out.sub(m_out.loadPtr(base, m_heaps.JSObject_butterfly), m_out.shl(howFarOut, m_out.constInt32(3))), m_out.constIntPtr(static_cast<intptr_t>(offsetInButterfly(firstOutOfLineOffset)) * static_cast<intptr_t>(sizeof(EncodedJSValue)))))));
         m_out.jump(continuation);
         m_out.appendTo(generic);
-        ValueFromBlock found = m_out.anchor(vmCall(node, Int64, Entry::operationAOTEnumeratorGetByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator)));
+        ValueFromBlock found = m_out.anchor(vmCall(node, Int64, Entry::operationAOTEnumeratorGetByVal, m_instance, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, inObject, outside, found));
@@ -544,17 +544,17 @@ bool Lowering::tryLowerIteration(Node* node)
     }
     case op_enumerator_in_by_val: {
         auto bytecode = node->as<OpEnumeratorInByVal>();
-        setBoolean(node, m_out.notZero64(vmCall(node, Int64, Entry::operationAOTEnumeratorInByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator))));
+        setBoolean(node, m_out.notZero64(vmCall(node, Int64, Entry::operationAOTEnumeratorInByVal, m_instance, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator))));
         return true;
     }
     case op_enumerator_put_by_val: {
         auto bytecode = node->as<OpEnumeratorPutByVal>();
-        vmCall(node, Void, Entry::operationAOTEnumeratorPutByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_value), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator), m_out.constInt32(bytecode.m_ecmaMode.isStrict()));
+        vmCall(node, Void, Entry::operationAOTEnumeratorPutByVal, m_instance, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_value), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator), m_out.constInt32(bytecode.m_ecmaMode.isStrict()));
         return true;
     }
     case op_enumerator_has_own_property: {
         auto bytecode = node->as<OpEnumeratorHasOwnProperty>();
-        setBoolean(node, m_out.notZero64(vmCall(node, Int64, Entry::operationAOTEnumeratorHasOwnProperty, m_globalObject, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator))));
+        setBoolean(node, m_out.notZero64(vmCall(node, Int64, Entry::operationAOTEnumeratorHasOwnProperty, m_instance, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator))));
         return true;
     }
     default:

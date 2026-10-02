@@ -125,9 +125,7 @@ public:
 #endif
     // A second record has taken this executable: its code now runs against more than one module environment.
     bool isShared() const { return m_isShared; }
-    // It was made for a module of a loader other than the realm's own: a further instance of a program. What was made when the
-    // program was built (StaticHeap) is for the first.
-    bool isOfAnotherLoader() const { return m_isOfAnotherLoader; }
+    JSModuleLoader* moduleLoader() const { return m_moduleLoader.get(); }
     void didShare() { m_isShared = true; }
     bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
     // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
@@ -167,13 +165,13 @@ private:
     uint32_t m_linkerPrelinkedIndex { PrelinkedModuleGraph::noModule };
 #endif
     std::optional<ImportedBindings> m_linkerImportedBindings;
+    WriteBarrier<JSModuleLoader> m_moduleLoader;
     FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExpressions;
     unsigned m_recordsYetToFinishEvaluation { 0 };
     bool m_hasBeenEvaluated { false };
     bool m_hasReleasedUnlinkedCode { false };
     bool m_isShared { false };
-    bool m_isOfAnotherLoader { false };
     OptionSet<CodeGenerationMode> m_codeGenerationMode;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };

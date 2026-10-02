@@ -171,7 +171,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
             m_out.branch(isCellOfType(callee, JSFunctionType), usually(isInitialized), rarely(isNotInitialized));
         }
         m_out.appendTo(isNotInitialized);
-        vmCall(node, Void, isConstruct ? Entry::operationAOTThrowNotAConstructor : Entry::operationAOTThrowNotAFunction, m_globalObject, callee);
+        vmCall(node, Void, isConstruct ? Entry::operationAOTThrowNotAConstructor : Entry::operationAOTThrowNotAFunction, m_instance, callee);
         m_out.unreachable();
         m_out.appendTo(isInitialized);
     }
@@ -272,12 +272,12 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     // A call that records that a class with a typed layout has been defined.
     if (uint32_t classType = Graph::classNotedBy(node)) {
         if (uint16_t layoutID = TypeTable::shared()->layoutIDOfInstancesOf(classType))
-            vmCall(node, Void, Entry::operationAOTNoteClass, m_globalObject, arguments[0], arguments[1], m_out.constInt32(layoutID));
+            vmCall(node, Void, Entry::operationAOTNoteClass, m_instance, arguments[0], arguments[1], m_out.constInt32(layoutID));
         return;
     }
     // { ...x }
     if (mode == CallMode::Call && argc == 1 && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::cloneObject) {
-        LValue copy = vmCall(node, pointerType(), Entry::operationAOTCloneObject, m_globalObject, arguments[0], m_out.constInt32(Graph::layoutIDOfNewObject(node)));
+        LValue copy = vmCall(node, pointerType(), Entry::operationAOTCloneObject, m_instance, arguments[0], m_out.constInt32(Graph::layoutIDOfNewObject(node)));
         if (hasResult)
             setJSValue(node, copy);
         return;
@@ -517,7 +517,7 @@ void Lowering::lowerCallDirectEval(Node* node)
     LValue thisValue = lowJSValue(node->use(bytecode.m_thisValue));
 
     // An empty result means that the callee is not eval.
-    LValue result = vmCall(node, Int64, Entry::operationAOTCallDirectEval, m_globalObject, callee, m_out.constInt32(arguments.size() - 1),
+    LValue result = vmCall(node, Int64, Entry::operationAOTCallDirectEval, m_instance, callee, m_out.constInt32(arguments.size() - 1),
         arguments.size() > 1 ? arguments[1] : m_out.constInt64(JSValue::ValueUndefined), scope, thisValue, m_out.constInt32(node->bytecodeIndex.asBits()), m_out.constInt32(bytecode.m_lexicallyScopedFeatures));
 
     LBasicBlock notEval = m_out.newBlock();

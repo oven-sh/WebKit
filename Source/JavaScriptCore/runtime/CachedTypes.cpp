@@ -5991,14 +5991,13 @@ struct BytecodeLinkEncoder::Impl {
             linked[graphModule] = { codeBlock, uncheckedDowncast<SymbolTable>(symbolTable.asCell()), index };
         }
 
-        // Where the environment of each is going to be: see AOT::Instance::placeForEnvironment().
         environmentsOfLink.fill(AOT::ImageEnvironment { }, graphModules.size());
         for (unsigned graphModule = 0; graphModule < linked.size(); ++graphModule) {
             if (!linked[graphModule].codeBlock)
                 continue;
             size_t size = JSModuleEnvironment::allocationSize(linked[graphModule].symbolTable, graphModules[graphModule].importCount);
-            environmentsSizeOfLink += roundUpToMultipleOf<16>(StaticHeap::sizeOfCellHeader + size);
-            environmentsOfLink[graphModule] = { static_cast<uint32_t>(environmentsSizeOfLink - StaticHeap::sizeOfCellHeader), static_cast<uint32_t>(size) };
+            environmentsSizeOfLink += sizeof(void*);
+            environmentsOfLink[graphModule] = { static_cast<uint32_t>(environmentsSizeOfLink), static_cast<uint32_t>(size) };
         }
 
         auto nameOf = [&](uint32_t sid) -> Identifier {

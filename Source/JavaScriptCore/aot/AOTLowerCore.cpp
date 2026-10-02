@@ -491,6 +491,7 @@ static bool mayLookAtStack(Stub stub)
     case Stub::LinkFunction:
     case Stub::PlainOperation:
     case Stub::PlainOperationWithGlobalObject:
+    case Stub::PlainOperationWithInstance:
     case Stub::PlainOperationWithVM:
     case Stub::WriteBarrier:
     case Stub::ToBoolean:
@@ -711,7 +712,9 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
 {
     bool throws = !!node;
     bool withGlobalObject = !arguments.isEmpty() && arguments[0] == m_globalObject;
+    bool withInstance = !arguments.isEmpty() && arguments[0] == m_instance;
     bool withVM = !throws && !arguments.isEmpty() && arguments[0] == m_vm;
+    RELEASE_ASSERT(withInstance == takesInstance(function) && withGlobalObject == takesGlobalObject(function));
 
     Vector<StubArgument, 8> placed;
     unsigned nextGPR = 0;
@@ -722,7 +725,7 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
             continue;
         }
         GPRReg reg = GPRInfo::toArgumentRegister(nextGPR++);
-        if (!i && (withGlobalObject || withVM))
+        if (!i && (withGlobalObject || withInstance || withVM))
             continue;
         placed.append({ arguments[i], reg });
     }
@@ -730,13 +733,13 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
 
     Stub stub;
     if (!throws)
-        stub = withGlobalObject ? Stub::PlainOperationWithGlobalObject : withVM ? Stub::PlainOperationWithVM : Stub::PlainOperation;
+        stub = withGlobalObject ? Stub::PlainOperationWithGlobalObject : withInstance ? Stub::PlainOperationWithInstance : withVM ? Stub::PlainOperationWithVM : Stub::PlainOperation;
     else if (type == Double)
-        stub = withGlobalObject ? Stub::OperationDoubleWithGlobalObject : Stub::OperationDouble;
+        stub = withGlobalObject ? Stub::OperationDoubleWithGlobalObject : withInstance ? Stub::OperationDoubleWithInstance : Stub::OperationDouble;
     else if (type == Void)
-        stub = withGlobalObject ? Stub::OperationVoidWithGlobalObject : Stub::OperationVoid;
+        stub = withGlobalObject ? Stub::OperationVoidWithGlobalObject : withInstance ? Stub::OperationVoidWithInstance : Stub::OperationVoid;
     else
-        stub = withGlobalObject ? Stub::OperationValueWithGlobalObject : Stub::OperationValue;
+        stub = withGlobalObject ? Stub::OperationValueWithGlobalObject : withInstance ? Stub::OperationValueWithInstance : Stub::OperationValue;
 
     Vector<StubImmediate, 2> immediates;
     immediates.append({ GPRInfo::regT9, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)) });
@@ -991,7 +994,7 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
         m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected >> 64));
         m_graph.wideIntegerConstants.add(static_cast<int64_t>(std::bit_cast<uintptr_t>(variable.scope)));
         if (place->kind == NodeKind::Bytecode) {
-            vmCall(place, Void, Entry::operationAOTVerifyInferredType, m_globalObject, value, m_out.constInt64(static_cast<int64_t>(expected)), m_out.constInt64(static_cast<int64_t>(expected >> 64)), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
+            vmCall(place, Void, Entry::operationAOTVerifyInferredType, m_instance, value, m_out.constInt64(static_cast<int64_t>(expected)), m_out.constInt64(static_cast<int64_t>(expected >> 64)), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
                 m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
         }
     }
@@ -1108,7 +1111,7 @@ LValue Lowering::toBoolean(Node* node)
     m_out.branch(isInt32(value), unsure(continuation), unsure(notInt32));
 
     m_out.appendTo(notInt32, continuation);
-    results.append(m_out.anchor(m_out.notZero64(plainCall(Int64, Entry::operationAOTToBoolean, m_globalObject, value))));
+    results.append(m_out.anchor(m_out.notZero64(plainCall(Int64, Entry::operationAOTToBoolean, m_instance, value))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);

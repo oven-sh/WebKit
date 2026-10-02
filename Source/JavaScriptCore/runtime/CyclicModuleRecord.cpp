@@ -231,32 +231,15 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
+        env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
 #if ENABLE(AOT)
-        // Code that was compiled with the whole program in front of it finds the variables of a module without looking for the
-        // module: see AOT::Instance::placeForEnvironment().
-        void* place = nullptr;
-        // (The program that was compiled is the one that the realm's own loader loads. Another loader's is a further instance of it.)
-        if (isPrelinked() && AOT::Image::environmentsSize() && moduleLoader() == globalObject->moduleLoader()) {
+        if (isPrelinked() && AOT::Image::environmentsSize()) {
             AOT::ImageEnvironment environment = AOT::Image::environmentOf(prelinkedIndex());
             if (environment.distance && environment.size == JSModuleEnvironment::allocationSize(symbolTable, jsModule->importSlotCount())) {
-                place = AOT::Instance::ensure(globalObject).placeForEnvironment(environment);
-                // (Linked a second time, after the first came to nothing.)
-                if (place && *static_cast<uint64_t*>(place))
-                    place = nullptr;
+                if (JSCell** slot = AOT::Instance::ensure(moduleLoader()).slotOfEnvironment(environment); slot && !*slot)
+                    *slot = env;
             }
         }
-        // (Nothing else is to be allocated in between.)
-        globalObject->moduleEnvironmentStructure();
-        JSScope* scopeOfModules = moduleLoader()->moduleScope();
-        if (place)
-            StaticHeap::placeNextCell(vm, place);
-        env = JSModuleEnvironment::create(vm, globalObject, scopeOfModules, symbolTable, jsTDZValue(), this);
-#else
-        env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
-#endif
-#if ENABLE(AOT)
-        if (place)
-            StaticHeap::didPlaceCell(vm, env);
 #endif
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
@@ -553,6 +536,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             FunctionExecutable* executable = moduleProgramExecutable->functionDeclaration(vm, i);
             SourceParseMode parseMode = executable->parseMode();
             JSFunction* function = nullptr;
+#if ENABLE(AOT)
+            if (StaticHeap::contains(executable)) [[unlikely]]
+                function = AOT::Instance::ensure(moduleLoader()).makeFunction(executable, env);
+            else
+#endif
             if (isAsyncGeneratorWrapperParseMode(parseMode))
                 function = JSAsyncGeneratorFunction::create(vm, globalObject, executable, env);
             else if (isGeneratorWrapperParseMode(parseMode))

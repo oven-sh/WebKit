@@ -138,7 +138,6 @@ struct StaticHeapOfVM {
 
     uint64_t number { 0 }; // Unique in the process, and never reused. (A VM's address can be reused by a later VM.)
     PreciseAllocation* container { nullptr };
-    Vector<ScriptExecutable*> topLevelExecutables; // Indexed by module.
     UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, std::array<Strong<UnlinkedFunctionCodeBlock>, 2>> code;
     UncheckedKeyHashMap<FunctionExecutable*, Strong<FunctionExecutable>> standIns;
 };
@@ -153,26 +152,8 @@ bool StaticHeap::isUsedBy(VM& vm)
     return s_vm == &vm || vm.m_staticHeapOfVM;
 }
 
-// Records which VM's container owns each block that cells are placed in.
-struct OwnerOfBlock {
-    std::atomic<uintptr_t> start { 0 };
-    std::atomic<size_t> size { 0 };
-    std::atomic<PreciseAllocation*> container { nullptr };
-};
-static constexpr unsigned maxBlocks = 256;
-static OwnerOfBlock s_ownersOfBlocks[maxBlocks];
-static std::atomic<unsigned> s_numberOfOwnersEverUsed { 0 }; // Only the first s_numberOfOwnersEverUsed entries have ever been used.
-
-PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
+PreciseAllocation* StaticHeap::containerOfSlow(const void*)
 {
-    uintptr_t address = std::bit_cast<uintptr_t>(cell);
-    if (address - (Region::startOf(Region::Arena::Bss) + Region::offsetOfBlocksInBss) < Region::arenaReservation - Region::offsetOfBlocksInBss) {
-        for (unsigned i = 0, count = s_numberOfOwnersEverUsed.load(std::memory_order_acquire); i < count; ++i) {
-            auto& owner = s_ownersOfBlocks[i];
-            if (address - owner.start.load(std::memory_order_relaxed) < owner.size.load(std::memory_order_acquire))
-                return owner.container.load(std::memory_order_relaxed);
-        }
-    }
     // (A GC helper thread has no VM. It only needs to know that the cell is marked, and every container reports that.)
     if (auto* ofVM = t_ofVMOfThread)
         return ofVM->container;
@@ -226,90 +207,8 @@ template<typename Functor> static void forEachCell(Region::Arena arena, const Fu
         functor(cells[i].first, cells[i].second);
 }
 
-void StaticHeap::placeNextCell(VM& vm, void* address)
+void* StaticHeap::tryAllocateCellSlow(VM&, size_t size)
 {
-    RELEASE_ASSERT(!vm.heap.m_placeOfNextCell && !s_isBuilding && contains(address) && (std::bit_cast<uintptr_t>(address) & 15) == sizeOfCellHeader);
-    vm.heap.m_placeOfNextCell = address;
-}
-
-bool StaticHeap::canPlaceCellsOf(VM& vm)
-{
-    static Lock lock;
-    Locker locker { lock };
-    if (!s_vmOfContainer && !s_isBuilding)
-        makeContainer(vm);
-    return s_vmOfContainer == &vm || vm.m_staticHeapOfVM;
-}
-
-static Lock s_blocksLock;
-static size_t s_blocksUsed WTF_GUARDED_BY_LOCK(s_blocksLock) = 0;
-static Vector<std::pair<void*, size_t>>& freeBlocks() WTF_REQUIRES_LOCK(s_blocksLock)
-{
-    static NeverDestroyed<Vector<std::pair<void*, size_t>>> blocks;
-    return blocks;
-}
-
-void* StaticHeap::allocateBlock(VM& vm, size_t size)
-{
-    RELEASE_ASSERT(!(size % WTF::pageSize()));
-    RELEASE_ASSERT(Region::mapRestOfBss());
-    Locker locker { s_blocksLock };
-    void* result = nullptr;
-    auto& free = freeBlocks();
-    for (unsigned i = 0; i < free.size(); ++i) {
-        if (free[i].second == size) {
-            result = free[i].first;
-            free.removeAt(i);
-            break;
-        }
-    }
-    if (!result) {
-        size_t offset = Region::offsetOfBlocksInBss + s_blocksUsed;
-        RELEASE_ASSERT(size <= Region::arenaReservation - offset);
-        s_blocksUsed += size;
-        result = reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + offset);
-    }
-    for (unsigned i = 0; i < maxBlocks; ++i) {
-        auto& owner = s_ownersOfBlocks[i];
-        if (owner.size.load(std::memory_order_relaxed))
-            continue;
-        if (i >= s_numberOfOwnersEverUsed.load(std::memory_order_relaxed))
-            s_numberOfOwnersEverUsed.store(i + 1, std::memory_order_release);
-        owner.container.store(ofVM(vm) ? ofVM(vm)->container : PreciseAllocation::containerOfStaticCells(), std::memory_order_relaxed);
-        owner.start.store(std::bit_cast<uintptr_t>(result), std::memory_order_relaxed);
-        owner.size.store(size, std::memory_order_release);
-        return result;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void StaticHeap::freeBlock(void* block, size_t size)
-{
-    for (auto& owner : s_ownersOfBlocks) {
-        if (owner.start.load(std::memory_order_relaxed) == std::bit_cast<uintptr_t>(block) && owner.size.load(std::memory_order_relaxed))
-            owner.size.store(0, std::memory_order_release);
-    }
-    // Remapping zeroes the block and releases its physical pages until it is written again.
-    void* result = mmap(block, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE | MAP_FIXED, -1, 0);
-    RELEASE_ASSERT(result == block);
-    Locker locker { s_blocksLock };
-    freeBlocks().append({ block, size });
-}
-
-void StaticHeap::didPlaceCell(VM& vm, JSCell* cell)
-{
-    RELEASE_ASSERT(contains(cell) && !vm.heap.m_placeOfNextCell);
-    // Give the cell the state it would have after a collection that marked it. The write barrier makes the next collection visit
-    // it, to find what has been stored in it since it was allocated.
-    cell->setCellState(CellState::PossiblyBlack);
-    vm.writeBarrier(cell);
-}
-
-void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
-{
-    if (vm.heap.m_placeOfNextCell != placeOfEveryCellWhileBuilding) {
-        return std::exchange(vm.heap.m_placeOfNextCell, nullptr);
-    }
     if (!Region::isAllocatingOnThisThread())
         return nullptr;
     if (std::exchange(s_nextCellIsOfAFunction, false) && s_allocatesFunctionsInScratch) {
@@ -916,13 +815,25 @@ const uint32_t* StaticHeap::functionMetadataOffsets(VM& vm)
     return hasExecutablesOfFunctions(vm) ? std::bit_cast<const uint32_t*>(s_header->functionMetadataOffsets) : nullptr;
 }
 
+static decltype(StaticHeapOfVM::standIns)& standInsOf(VM& vm)
+{
+    static NeverDestroyed<decltype(StaticHeapOfVM::standIns)> standInsOfFirstVM;
+    return ofVM(vm) ? ofVM(vm)->standIns : standInsOfFirstVM.get();
+}
+
+static FunctionExecutable* standInIfExistsFor(VM& vm, FunctionExecutable* executable)
+{
+    auto& standIns = standInsOf(vm);
+    auto it = standIns.find(executable);
+    return it == standIns.end() ? nullptr : it->value.get();
+}
+
 FunctionExecutable* StaticHeap::standInFor(VM& vm, FunctionExecutable* executable)
 {
     RELEASE_ASSERT(isUsedBy(vm) && contains(executable) && !executable->isShortForm());
-    static NeverDestroyed<decltype(StaticHeapOfVM::standIns)> standInsOfFirstVM;
-    auto& standIns = ofVM(vm) ? ofVM(vm)->standIns : standInsOfFirstVM.get();
-    if (auto it = standIns.find(executable); it != standIns.end())
-        return it->value.get();
+    auto& standIns = standInsOf(vm);
+    if (FunctionExecutable* existing = standInIfExistsFor(vm, executable))
+        return existing;
     FunctionExecutable* result = FunctionExecutable::create(vm, executable->topLevelExecutable(), executable->source(), executable->unlinkedExecutable(), NoIntrinsic, executable->isInsideOrdinaryFunction());
     standIns.add(executable, Strong<FunctionExecutable> { vm, result });
     return result;
@@ -980,9 +891,13 @@ bool StaticHeap::hasExecutablesOfFunctions(VM& vm)
     return s_header && isUsedBy(vm) && s_header->numberOfFunctions;
 }
 
-ScriptExecutable*& StaticHeap::topLevelExecutableOfModuleInOtherVM(VM& vm, size_t index)
+ScriptExecutable* StaticHeap::topLevelExecutableOfBuiltinWithProvider(VM& vm, const void* provider)
 {
-    return ofVM(vm)->topLevelExecutables[index];
+    size_t index = (std::bit_cast<uintptr_t>(provider) - std::bit_cast<uintptr_t>(addressOfSourceProvider(0))) / sizeOfPlaceForSourceProvider;
+    auto& module = std::bit_cast<const StaticHeapModule*>(s_header->modules)[index];
+    if (!module.isBuiltinFunction || !module.codeBlock)
+        return nullptr;
+    return standInIfExistsFor(vm, std::bit_cast<UnlinkedFunctionExecutable*>(module.codeBlock)->staticExecutable());
 }
 
 // The state of each slot for a SourceProvider: free (maker is zero), being constructed by the VM whose number is `maker`, or
@@ -1022,9 +937,6 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
     uint64_t maker = 0;
     if (state.maker.compare_exchange_strong(maker, numberOf(vm)))
         return place;
-    // (A VM that loads the same module a second time gets an ordinary heap-allocated provider, as it would without a static heap.)
-    if (maker == numberOf(vm))
-        return nullptr;
     while (!state.isMade.load(std::memory_order_acquire))
         Thread::yield();
     made = static_cast<SourceProvider*>(place);
@@ -1697,7 +1609,6 @@ void StaticHeap::install(VM& vm)
         auto* ofVM = new StaticHeapOfVM;
         ofVM->number = ++lastNumber;
         ofVM->container = PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace);
-        ofVM->topLevelExecutables.fill(nullptr, s_header->numberOfModules);
         vm.symbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[0]));
         vm.privateSymbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[1]));
         vm.m_staticHeapOfVM = ofVM;
@@ -1846,9 +1757,9 @@ bool StaticHeap::ensureSourceProviderOf(VM& vm, ScriptExecutable* executable)
         return true;
     auto& module = std::bit_cast<const StaticHeapModule*>(s_header->modules)[index];
     // (It allocates.)
-    if (module.isBuiltinFunction && BuiltinExecutables::isStamp(module.keyHash) && vm.m_aotInstanceOfProgram && vm.heap.mutatorState() == MutatorState::Running) {
+    if (module.isBuiltinFunction && BuiltinExecutables::isStamp(module.keyHash) && !vm.m_aotInstances.isEmpty() && vm.heap.mutatorState() == MutatorState::Running) {
         unsigned which = module.keyHash & 0xffff;
-        engineBuiltinFor(vm.m_aotInstanceOfProgram->globalObject, which, BuiltinExecutables::textOf(which));
+        engineBuiltinFor(vm.m_aotInstances[0]->globalObject, which, BuiltinExecutables::textOf(which));
     }
     return isMade.load(std::memory_order_acquire);
 }
@@ -1864,7 +1775,7 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
         return nullptr;
     if (modules[index].keyHash != embedderStamp || modules[index].keyLength != text.length())
         return nullptr;
-    if (!s_realmIsProgramRealm && &AOT::Instance::ensure(globalObject) != vm.m_aotInstanceOfProgram)
+    if (!s_realmIsProgramRealm && globalObject != vm.m_firstRealm)
         return nullptr;
 
     SourceProvider* provider = nullptr;
@@ -1878,12 +1789,7 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
         return nullptr;
 
     FunctionExecutable* executable = std::bit_cast<UnlinkedFunctionExecutable*>(modules[index].codeBlock)->staticExecutable();
-    // The functions nested in the builtin need a top-level executable, which is written to, so it is a stand-in in the ordinary
-    // heap.
-    if (auto*& slot = topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
-        slot = standInFor(vm, executable);
-        slot->setUsesStaticExecutables();
-    }
+    standInFor(vm, executable)->setUsesStaticExecutables();
     return executable;
 }
 
@@ -1928,8 +1834,6 @@ bool StaticHeap::ensureSourceProviderOf(VM&, ScriptExecutable*) { return true; }
 LineColumn StaticHeap::whereFunctionStarts(uint32_t) { return { }; }
 bool StaticHeap::keepsNothingForGeneratingCode() { return false; }
 void* StaticHeap::tryAllocateCellSlow(VM&, size_t) { return nullptr; }
-void StaticHeap::placeNextCell(VM&, void*) { RELEASE_ASSERT_NOT_REACHED(); }
-void StaticHeap::didPlaceCell(VM&, JSCell*) { }
 void* StaticHeap::takePlaceForSourceProvider(VM&, size_t, size_t, SourceProvider*& made) { made = nullptr; return nullptr; }
 void StaticHeap::didMakeSourceProvider(void*) { }
 std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfFunction(uint32_t) { return { nullptr, CodeSpecializationKind::CodeForCall }; }
@@ -1941,10 +1845,7 @@ const uint32_t* StaticHeap::functionMetadataOffsets(VM&) { return nullptr; }
 FunctionExecutable* StaticHeap::standInFor(VM&, FunctionExecutable* executable) { return executable; }
 UnlinkedFunctionCodeBlock* StaticHeap::codeOf(VM&, const UnlinkedFunctionExecutable&, CodeSpecializationKind) { return nullptr; }
 void StaticHeap::setCodeOf(VM&, const UnlinkedFunctionExecutable&, CodeSpecializationKind, UnlinkedFunctionCodeBlock*) { }
-ScriptExecutable*& StaticHeap::topLevelExecutableOfModuleInOtherVM(VM&, size_t) { RELEASE_ASSERT_NOT_REACHED(); }
-bool StaticHeap::canPlaceCellsOf(VM&) { return false; }
-void* StaticHeap::allocateBlock(VM&, size_t) { return nullptr; }
-void StaticHeap::freeBlock(void*, size_t) { }
+ScriptExecutable* StaticHeap::topLevelExecutableOfBuiltinWithProvider(VM&, const void*) { return nullptr; }
 void StaticHeap::willAllocateUnlinkedFunctionSlow() { }
 
 } // namespace JSC

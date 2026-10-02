@@ -158,14 +158,17 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     /* Called by a function that finds it has not been linked to the realm yet. Preserves every register. */ \
     v(LinkFunction) \
     /* Calls to C++. T9 = Entry * 8, with arguments where the C++ ABI expects them. The Plain variants are for operations that */ \
-    /* neither throw nor walk the stack. In the WithGlobalObject and WithVM variants the stub supplies the first argument. */ \
+    /* neither throw nor walk the stack. In the With variants the stub supplies the first argument. */ \
     v(OperationValue) \
     v(OperationVoid) \
     v(OperationDouble) \
     v(OperationValueWithGlobalObject) \
     v(OperationVoidWithGlobalObject) \
     v(OperationDoubleWithGlobalObject) \
-    /* The same (global object, then A1 and A2; no result), for rarely executed calls. Preserves all registers except T9, T10 */ \
+    v(OperationValueWithInstance) \
+    v(OperationVoidWithInstance) \
+    v(OperationDoubleWithInstance) \
+    /* The same (instance, then A1 and A2; no result), for rarely executed calls. Preserves all registers except T9, T10 */ \
     /* and the assembler's scratch registers. OfLeaf: the caller has no frame and T10 = its return address. The stub sets up a */ \
     /* frame for the duration of the call. */ \
     v(ColdOperationVoid) \
@@ -175,6 +178,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(ColdOperationValueOfLeaf) \
     v(PlainOperation) \
     v(PlainOperationWithGlobalObject) \
+    v(PlainOperationWithInstance) \
     v(PlainOperationWithVM) \
     /* A0 = the cell that was stored to. Clobbers only T9-T11. */ \
     v(WriteBarrier) \

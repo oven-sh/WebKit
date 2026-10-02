@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltins.h"
+#include "B3MemoryValue.h"
 #include "AOTEmitter.h"
 #include "AOTGraph.h"
 #include "AOTTypeTable.h"
@@ -110,14 +111,11 @@ private:
             return registerOnEntry(argumentGPR(index));
         }
     }
-    // The address at ImageEnvironment::distance below the Instance. Computed in two steps. The first is shared by all nearby
-    // environments and is made opaque so that B3 does not fold it into the second. The remainder then fits in the immediate offset
-    // of a load or store, which the full distance does not.
     LValue environmentAt(uint32_t distance)
     {
-        constexpr uint32_t window = 16 * KB;
-        uint32_t start = roundUpToMultipleOf<window>(distance);
-        return m_out.add(m_out.opaque(m_out.sub(m_instance, m_out.constIntPtr(start))), m_out.constIntPtr(start - distance));
+        LValue result = m_out.loadPtr(m_out.address(m_heaps.root, m_instance, -static_cast<ptrdiff_t>(distance)));
+        static_cast<B3::MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
+        return result;
     }
     // The function object this function was called as.
     LValue callee()
@@ -259,6 +257,7 @@ private:
     // place: the node whose location the function reports during the call, if not the one being lowered.
     B3::PatchpointValue* callStub(Stub, LType, const Vector<StubArgument, 8>&, const Vector<StubImmediate, 2>&, StubClobbers = StubClobbers::CallerSavedRegisters, Node* place = nullptr);
     LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // A null node means the operation does not throw.
+    LValue contextOf(Entry operation) const { return takesInstance(operation) ? m_instance : m_globalObject; }
     // Calls a helper (generateHelper()). Returns null if the helper bailed out.
     LValue callHelper(Stub, const Vector<LValue, 4>& arguments);
     // The same, falling back to `slow` if the helper bailed out.

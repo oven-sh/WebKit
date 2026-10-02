@@ -270,11 +270,14 @@ static void callAndCheckException(CCallHelpers& jit, GPRReg function, Returns re
     jumpToEntry(jit, T9, Entry::HandleException);
 }
 
-static void generateOperation(CCallHelpers& jit, Returns returns, bool withGlobalObject, GPRReg result = GPRInfo::returnValueGPR)
+enum class Supplies : uint8_t { Nothing, GlobalObject, Instance };
+static void generateOperation(CCallHelpers& jit, Returns returns, Supplies supplies, GPRReg result = GPRInfo::returnValueGPR)
 {
     loadInstance(jit, T11);
-    if (withGlobalObject)
+    if (supplies == Supplies::GlobalObject)
         jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    else if (supplies == Supplies::Instance)
+        jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
     callAndCheckException(jit, T11, returns, result);
@@ -300,7 +303,7 @@ static void generateColdOperation(CCallHelpers& jit, bool ofLeaf, bool returnsVa
     for (unsigned i = 0; i < numberOfFPRs; ++i)
         jit.storeDouble(fpr(i), Address(sp, (numberOfGPRs + i) * 8));
     loadInstance(jit, T11);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
     prepareCallOperation(jit, T12);
@@ -329,18 +332,23 @@ static void generateColdOperationVoidOfLeaf(CCallHelpers& jit) { generateColdOpe
 static void generateColdOperationValue(CCallHelpers& jit) { generateColdOperation(jit, false, true); }
 static void generateColdOperationValueOfLeaf(CCallHelpers& jit) { generateColdOperation(jit, true, true); }
 
-static void generateOperationValue(CCallHelpers& jit) { generateOperation(jit, Returns::Value, false); }
-static void generateOperationVoid(CCallHelpers& jit) { generateOperation(jit, Returns::Void, false); }
-static void generateOperationDouble(CCallHelpers& jit) { generateOperation(jit, Returns::Double, false); }
-static void generateOperationValueWithGlobalObject(CCallHelpers& jit) { generateOperation(jit, Returns::Value, true); }
-static void generateOperationVoidWithGlobalObject(CCallHelpers& jit) { generateOperation(jit, Returns::Void, true); }
-static void generateOperationDoubleWithGlobalObject(CCallHelpers& jit) { generateOperation(jit, Returns::Double, true); }
+static void generateOperationValue(CCallHelpers& jit) { generateOperation(jit, Returns::Value, Supplies::Nothing); }
+static void generateOperationVoid(CCallHelpers& jit) { generateOperation(jit, Returns::Void, Supplies::Nothing); }
+static void generateOperationDouble(CCallHelpers& jit) { generateOperation(jit, Returns::Double, Supplies::Nothing); }
+static void generateOperationValueWithGlobalObject(CCallHelpers& jit) { generateOperation(jit, Returns::Value, Supplies::GlobalObject); }
+static void generateOperationVoidWithGlobalObject(CCallHelpers& jit) { generateOperation(jit, Returns::Void, Supplies::GlobalObject); }
+static void generateOperationDoubleWithGlobalObject(CCallHelpers& jit) { generateOperation(jit, Returns::Double, Supplies::GlobalObject); }
+static void generateOperationValueWithInstance(CCallHelpers& jit) { generateOperation(jit, Returns::Value, Supplies::Instance); }
+static void generateOperationVoidWithInstance(CCallHelpers& jit) { generateOperation(jit, Returns::Void, Supplies::Instance); }
+static void generateOperationDoubleWithInstance(CCallHelpers& jit) { generateOperation(jit, Returns::Double, Supplies::Instance); }
 
-static void generatePlain(CCallHelpers& jit, std::optional<ptrdiff_t> firstArgument)
+static void generatePlain(CCallHelpers& jit, std::optional<ptrdiff_t> firstArgument, bool suppliesInstance = false)
 {
     loadInstance(jit, T11);
     if (firstArgument)
         jit.loadPtr(Address(T11, *firstArgument), A0);
+    if (suppliesInstance)
+        jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
     jit.farJump(T11, OperationPtrTag);
@@ -348,6 +356,7 @@ static void generatePlain(CCallHelpers& jit, std::optional<ptrdiff_t> firstArgum
 
 static void generatePlainOperation(CCallHelpers& jit) { generatePlain(jit, std::nullopt); }
 static void generatePlainOperationWithGlobalObject(CCallHelpers& jit) { generatePlain(jit, Instance::offsetOfGlobalObject()); }
+static void generatePlainOperationWithInstance(CCallHelpers& jit) { generatePlain(jit, std::nullopt, true); }
 static void generatePlainOperationWithVM(CCallHelpers& jit) { generatePlain(jit, Instance::offsetOfVM()); }
 
 // Calls an operation that neither throws nor walks the stack, then returns from the stub with every register preserved (except the
@@ -478,7 +487,7 @@ static void generateToBoolean(CCallHelpers& jit, GPRReg asked)
     longWayOfToBoolean() = jit.label();
     callPreservingRegistersAndReturn(jit, Entry::operationAOTToBoolean, true, [&] {
         jit.move(T9, A1);
-        jit.loadPtr(Address(T10, Instance::offsetOfGlobalObject()), A0);
+        jit.move(T10, A0);
     });
 }
 static void generateToBoolean(CCallHelpers& jit) { generateToBoolean(jit, A0); }
@@ -504,7 +513,7 @@ static void generateEqual(CCallHelpers& jit, Entry operation)
     loadInstance(jit, T11);
     jit.move(A1, A2);
     jit.move(A0, A1);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Value);
@@ -543,7 +552,7 @@ static void generateInstanceOf(CCallHelpers& jit)
     loadInstance(jit, T11);
     jit.move(A1, A2);
     jit.move(A0, A1);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTDefaultHasInstance) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Value);
@@ -685,7 +694,7 @@ static void callBinaryOperation(CCallHelpers& jit, Entry operation)
     loadInstance(jit, T11);
     jit.move(A1, A2);
     jit.move(A0, A1);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Value);
@@ -1150,7 +1159,7 @@ static void generatePutByVal(CCallHelpers& jit)
     jit.move(A2, A3);
     jit.move(A1, A2);
     jit.move(A0, A1);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTPutByVal) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Void);
@@ -1196,7 +1205,7 @@ static void generatePutByValDirect(CCallHelpers& jit)
     jit.move(A2, A3);
     jit.move(A1, A2);
     jit.move(A0, A1);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTPutByValDirect) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Void);
@@ -1242,7 +1251,7 @@ static void prepareMissAtSite(CCallHelpers& jit, Entry operation, unsigned numbe
     jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), T12, identifier);
     jit.urshift32(T12, TrustedImm32(Site::identifierBits), extra);
     jit.move(T11, slot);
-    jit.loadPtr(Address(T9, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T9, A0);
     jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(operation) * sizeof(void*)), T9);
 }
@@ -2350,9 +2359,8 @@ static void adapt(CCallHelpers& jit, GPRReg word, GPRReg instance)
 static void generateEnter(CCallHelpers& jit)
 {
     jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::codeBlock), T11);
-    jit.loadPtr(Address(T11, CodeBlock::offsetOfGlobalObject()), T12);
     jit.loadPtr(Address(T11, CodeBlock::jitCodeOffset()), T11);
-    jit.loadPtr(Address(T12, JSGlobalObject::offsetOfAOTInstance()), T12);
+    jit.loadPtr(Address(T11, JITCode::offsetOfInstance()), T12);
     jit.loadPtr(Address(T11, JITCode::offsetOfEntry()), T11);
     adapt(jit, T11, T12);
 }
@@ -2482,8 +2490,14 @@ static void loadCalleeOfFrameBeingMadeAndItsVM(CCallHelpers& jit, GPRReg callee,
 
 static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKind kind, Entry callLinkInfo)
 {
-    loadCalleeOfFrameBeingMadeAndItsVM(jit, T11, T12);
-    jit.loadPtr(Address(T12, VM::offsetOfAOTInstanceOfProgram()), T12);
+    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::callee), T11);
+    jit.load32(Address(T11, JSCell::structureIDOffset()), T9);
+    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T9);
+    jit.loadPtr(Address(T9, Structure::offsetOfAOTInstance()), T12);
+    Jump hasInstance = jit.branchTestPtr(CCallHelpers::NonZero, T12);
+    jit.loadPtr(Address(T9, Structure::realmOffset()), T12);
+    jit.loadPtr(Address(T12, JSGlobalObject::offsetOfAOTInstance()), T12);
+    hasInstance.link(&jit);
 
     jit.loadPtr(Address(T11, JSFunction::offsetOfExecutableOrRareData()), T11);
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
@@ -2663,6 +2677,12 @@ static void findCodeOfCallee(CCallHelpers& jit, CodeSpecializationKind kind, CCa
     otherwise.append(jit.branchIfNotType(T11, JSTypeRange { FunctionExecutableType, ShortFunctionExecutableType }));
     jit.load64(Address(T11, FunctionExecutable::offsetOfAOTEntryFor(kind)), T12);
     Jump isNotStatic = jit.branchTest64(CCallHelpers::Zero, T12);
+    jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), T13);
+    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T13);
+    jit.loadPtr(Address(T13, Structure::offsetOfAOTInstance()), T13);
+    Jump runsUnderAnyInstance = jit.branchTestPtr(CCallHelpers::Zero, T13);
+    otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, T13, instanceGPR));
+    runsUnderAnyInstance.link(&jit);
     jit.load32(Address(T11, FunctionExecutable::offsetOfAOTIndexFor(kind)), T13);
     if (kind == CodeSpecializationKind::CodeForConstruct)
         otherwise.append(jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(static_cast<int32_t>(FunctionExecutable::aotIndexOfWhatConstructsByCalling))));
@@ -2910,7 +2930,7 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
     constexpr ptrdiff_t offsetOfLength = -40;
     auto local = [](ptrdiff_t offset) { return Address(GPRInfo::callFrameRegister, offset); };
     auto callOperation = [&](Entry operation) {
-        jit.loadPtr(Address(instanceGPR, Instance::offsetOfGlobalObject()), A0);
+        jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
         jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
         jit.call(T11, OperationPtrTag);
@@ -3013,7 +3033,7 @@ static void getWellKnownInFrameOfStub(CCallHelpers& jit, WellKnownIdentifier ide
     jit.move(A0, A1);
     jit.move(TrustedImm32(static_cast<uint32_t>(identifier)), A2);
     loadInstance(jit, T11);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTGetByIdWellKnown) * sizeof(void*)), T11);
     jit.call(T11, OperationPtrTag);
@@ -3037,7 +3057,7 @@ static void throwFromFrameOfStub(CCallHelpers& jit, CCallHelpers::JumpList& notO
 {
     notObject.link(&jit);
     loadInstance(jit, T11);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTThrowIteratorResultIsNotObject) * sizeof(void*)), T11);
     jit.call(T11, OperationPtrTag);
@@ -3067,7 +3087,7 @@ static void generateIteratorNext(CCallHelpers& jit)
         jit.store64(kept, Address(CCallHelpers::stackPointerRegister));
         loadInstance(jit, T11);
         setUp();
-        jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+        jit.move(T11, A0);
         jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
         jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
         jit.call(T11, OperationPtrTag);
@@ -3210,7 +3230,7 @@ static void generateIteratorOpen(CCallHelpers& jit)
     jit.move(A0, A1);
     jit.addPtr(TrustedImm32(keptNext), sp, A3);
     loadInstance(jit, T11);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTIteratorOpenTryFast) * sizeof(void*)), T11);
     jit.call(T11, OperationPtrTag);
@@ -3255,7 +3275,7 @@ static void generateIteratorCloseCheck(CCallHelpers& jit)
     // Array iterators have been given a `return` method, so closing one is observable and a real iterator is required.
     isInvalidated.link(&jit);
     isInvalidatedToo.link(&jit);
-    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTMaterializeArrayIterator) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Value);
@@ -3382,7 +3402,7 @@ static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise,
     found.link(&jit);
 }
 
-static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CCallHelpers::Label operationVoidWithGlobalObject, CCallHelpers::JumpList& otherwise)
+static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CCallHelpers::Label operationVoidWithInstance, CCallHelpers::JumpList& otherwise)
 {
     auto argument = [](unsigned index) {
         RELEASE_ASSERT(index <= 2);
@@ -3559,7 +3579,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
         };
         auto leaveToOperation = [&](Entry operation) {
             jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
-            jit.jump().linkTo(operationVoidWithGlobalObject, &jit);
+            jit.jump().linkTo(operationVoidWithInstance, &jit);
         };
         if (!isOfSet) {
             CCallHelpers::JumpList notThere;
@@ -3745,7 +3765,8 @@ FOR_EACH_AOT_STUB(AOT_NO_STUB)
 // count.
 static constexpr Stub operationCallStubs[] = {
     Stub::OperationValue, Stub::OperationVoid, Stub::OperationDouble, Stub::OperationValueWithGlobalObject, Stub::OperationVoidWithGlobalObject, Stub::OperationDoubleWithGlobalObject,
-    Stub::PlainOperation, Stub::PlainOperationWithGlobalObject, Stub::PlainOperationWithVM,
+    Stub::OperationValueWithInstance, Stub::OperationVoidWithInstance, Stub::OperationDoubleWithInstance,
+    Stub::PlainOperation, Stub::PlainOperationWithGlobalObject, Stub::PlainOperationWithInstance, Stub::PlainOperationWithVM,
     Stub::ColdOperationVoid, Stub::ColdOperationVoidOfLeaf, Stub::ColdOperationValue, Stub::ColdOperationValueOfLeaf,
 };
 static constexpr Stub functionCallStubs[] = { Stub::Call, Stub::Construct };
@@ -3775,15 +3796,15 @@ static constexpr OperationWithAnyRegisterOperand operationsWithAnyRegisterOperan
     { Stub::ColdOperationVoid, Entry::operationAOTCheckTypedLayout }, { Stub::ColdOperationVoidOfLeaf, Entry::operationAOTCheckTypedLayout },
     { Stub::ColdOperationValue, Entry::operationAOTGetElementOrEmpty }, { Stub::ColdOperationValueOfLeaf, Entry::operationAOTGetElementOrEmpty },
     { Stub::ColdOperationValue, Entry::operationAOTGetByVal }, { Stub::ColdOperationValueOfLeaf, Entry::operationAOTGetByVal },
-    { Stub::OperationValueWithGlobalObject, Entry::operationAOTNewFunction },
-    { Stub::OperationValueWithGlobalObject, Entry::operationAOTToString },
-    { Stub::OperationValueWithGlobalObject, Entry::operationAOTToThis },
-    { Stub::OperationValueWithGlobalObject, Entry::operationAOTCreateLexicalEnvironment },
-    { Stub::OperationValueWithGlobalObject, Entry::operationAOTCloneObject },
-    { Stub::OperationValueWithGlobalObject, Entry::operationAOTReadLazyClosureVar },
-    { Stub::OperationVoidWithGlobalObject, Entry::operationAOTThrow },
-    { Stub::OperationVoidWithGlobalObject, Entry::operationAOTThrowNotAFunction },
-    { Stub::PlainOperationWithGlobalObject, Entry::operationAOTToBoolean },
+    { Stub::OperationValueWithInstance, Entry::operationAOTNewFunction },
+    { Stub::OperationValueWithInstance, Entry::operationAOTToString },
+    { Stub::OperationValueWithInstance, Entry::operationAOTToThis },
+    { Stub::OperationValueWithInstance, Entry::operationAOTCreateLexicalEnvironment },
+    { Stub::OperationValueWithInstance, Entry::operationAOTCloneObject },
+    { Stub::OperationValueWithInstance, Entry::operationAOTReadLazyClosureVar },
+    { Stub::OperationVoidWithInstance, Entry::operationAOTThrow },
+    { Stub::OperationVoidWithInstance, Entry::operationAOTThrowNotAFunction },
+    { Stub::PlainOperationWithInstance, Entry::operationAOTToBoolean },
 };
 // x0 to x29. Not all of them can hold an operand, but a pinned register can if the operand equals its value: the boxed integer 0 is
 // the number tag.
@@ -3793,7 +3814,7 @@ static constexpr unsigned firstThunkOfOperandsOfOperations = firstThunkOfOperand
 // acceptsTwoOperandsInAnyRegisters(): entered through two moves.
 static constexpr Stub stubsWithTwoAnyRegisterOperands[] = { Stub::StrictEqual, Stub::LooseEqual, Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::HelperAddField };
 static constexpr unsigned numberOfRegistersForPair = 16; // x0 to x8, x19 to x25
-// returnsResultInAnyRegister(). All are variants of Stub::OperationValueWithGlobalObject, with one copy per result register.
+// returnsResultInAnyRegister(). All are variants of Stub::OperationValueWithInstance or WithGlobalObject, with one copy per result register.
 struct OperationWithAnyRegisterResult {
     Entry operation;
     bool acceptsOperandInAnyRegister; // Also listed in operationsWithAnyRegisterOperand.
@@ -3923,7 +3944,7 @@ static GPRReg registerForPair(unsigned number)
 
 static std::optional<unsigned> indexOfOperationWithAnyRegisterResult(Stub stub, std::optional<uint32_t> valueOfT9)
 {
-    if (thereAreNoWaysInByRegister() || stub != Stub::OperationValueWithGlobalObject || !valueOfT9)
+    if (thereAreNoWaysInByRegister() || (stub != Stub::OperationValueWithGlobalObject && stub != Stub::OperationValueWithInstance) || !valueOfT9)
         return std::nullopt;
     for (unsigned i = 0; i < std::size(operationsWithAnyRegisterResult); ++i) {
         if (static_cast<unsigned>(operationsWithAnyRegisterResult[i].operation) * sizeof(void*) == *valueOfT9)
@@ -4034,7 +4055,7 @@ const StubBlob& stubBlob()
                 jit.align();
                 thunkLabels.append(jit.label());
                 CCallHelpers::JumpList otherwise;
-                generateCallIntrinsic(jit, intrinsic, labels[static_cast<unsigned>(Stub::OperationVoidWithGlobalObject)], otherwise);
+                generateCallIntrinsic(jit, intrinsic, labels[static_cast<unsigned>(Stub::OperationVoidWithInstance)], otherwise);
                 otherwise.link(&jit);
                 jit.move(T14, argumentGPR(0));
                 jit.move(T15, argumentGPR(1));
@@ -4096,11 +4117,13 @@ const StubBlob& stubBlob()
                     }
                 }
             }
-            CCallHelpers::Label handsBackIn[numberOfRegistersForResult];
-            for (unsigned i = 0; i < numberOfRegistersForResult; ++i) {
-                jit.align();
-                handsBackIn[i] = jit.label();
-                generateOperation(jit, Returns::Value, true, static_cast<GPRReg>(static_cast<unsigned>(ARM64Registers::x19) + i));
+            CCallHelpers::Label handsBackIn[2][numberOfRegistersForResult];
+            for (bool suppliesInstance : { false, true }) {
+                for (unsigned i = 0; i < numberOfRegistersForResult; ++i) {
+                    jit.align();
+                    handsBackIn[suppliesInstance][i] = jit.label();
+                    generateOperation(jit, Returns::Value, suppliesInstance ? Supplies::Instance : Supplies::GlobalObject, static_cast<GPRReg>(static_cast<unsigned>(ARM64Registers::x19) + i));
+                }
             }
             for (auto& [operation, acceptsOperandInAnyRegister] : operationsWithAnyRegisterResult) {
                 for (unsigned i = 0; i < numberOfRegistersForResult; ++i) {
@@ -4113,7 +4136,7 @@ const StubBlob& stubBlob()
                         if (acceptsOperandInAnyRegister)
                             jit.move(static_cast<GPRReg>(number), GPRInfo::argumentGPR1);
                         jit.move(CCallHelpers::TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), GPRInfo::regT9);
-                        jit.jump().linkTo(handsBackIn[i], &jit);
+                        jit.jump().linkTo(handsBackIn[takesInstance(operation)][i], &jit);
                     }
                 }
             }
@@ -4201,7 +4224,7 @@ const StubBlob& stubBlob()
             for (auto& [operation, acceptsOperandInAnyRegister] : operationsWithAnyRegisterResult) {
                 for (unsigned i = 0; i < numberOfRegistersForResult * numberOfRegistersForOperand; ++i, ++thunk) {
                     if (acceptsOperandInAnyRegister || !(i % numberOfRegistersForOperand))
-                        note(blob->thunkOffsets[thunk], "OperationValueWithGlobalObject to "_s, nameOfEntry(operation), " of x"_s, i % numberOfRegistersForOperand, " into x"_s, 19 + i / numberOfRegistersForOperand);
+                        note(blob->thunkOffsets[thunk], "OperationValue to "_s, nameOfEntry(operation), " of x"_s, i % numberOfRegistersForOperand, " into x"_s, 19 + i / numberOfRegistersForOperand);
                 }
             }
             note(size, "End"_s);

@@ -809,6 +809,9 @@ void Heap::reconcileWeakReferencesAtGCEnd()
     CollectionScope collectionScope = this->collectionScope().value_or(CollectionScope::Full);
 
 #if ENABLE(AOT)
+    vm().m_aotInstances.removeAllMatching([&](AOT::Instance* instance) {
+        return !isMarked(instance->loader());
+    });
     for (AOT::Instance* instance : vm().m_aotInstances)
         instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
     if (auto* cache = vm().megamorphicCache(); cache && !vm().m_aotInstances.isEmpty())
@@ -3833,8 +3836,10 @@ void Heap::addCoreConstraints()
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
             bool onlyNew = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
-            for (AOT::Instance* instance : vm().m_aotInstances)
-                instance->visit(visitor, onlyNew);
+            for (AOT::Instance* instance : vm().m_aotInstances) {
+                if (visitor.isMarked(instance->loader()))
+                    instance->visit(visitor, onlyNew);
+            }
         })),
         ConstraintVolatility::GreyedByMarking);
 #endif

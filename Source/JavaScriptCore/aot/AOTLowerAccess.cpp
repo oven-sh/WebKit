@@ -547,7 +547,7 @@ void Lowering::lowerGetById(Node* node)
             LBasicBlock undecided = m_out.newBlock();
             emitTypeTests(nullptr, TTop, slowCaseResult, field->fieldType.kinds, isThat, undecided);
             m_out.appendTo(undecided);
-            vmCall(node, Void, Entry::operationAOTCheckType, m_globalObject, slowCaseResult, m_out.constInt32(field->fieldType.kinds));
+            vmCall(node, Void, Entry::operationAOTCheckType, m_instance, slowCaseResult, m_out.constInt32(field->fieldType.kinds));
             m_out.jump(isThat);
             m_out.appendTo(isThat);
         }
@@ -618,7 +618,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);
-    ValueFromBlock slowResult = m_out.anchor(stub ? throughStub() : vmCall(node, Int64, operation, m_globalObject, base, m_out.constInt32(identifier), slotAddress(slot)));
+    ValueFromBlock slowResult = m_out.anchor(stub ? throughStub() : vmCall(node, Int64, operation, contextOf(operation), base, m_out.constInt32(identifier), slotAddress(slot)));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -772,7 +772,7 @@ void Lowering::lowerPutById(Node* node)
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);
-    vmCall(node, Void, Entry::operationAOTPutById, m_globalObject, base, value, m_out.constInt32(numberOf(bytecode.m_property)), slotAddress(slot), m_out.constInt32(flags));
+    vmCall(node, Void, Entry::operationAOTPutById, m_instance, base, value, m_out.constInt32(numberOf(bytecode.m_property)), slotAddress(slot), m_out.constInt32(flags));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -904,13 +904,13 @@ void Lowering::lowerGetByVal(Node* node)
 
     m_out.appendTo(slowCase, continuation);
     if (allowsEmpty && !isOfArray)
-        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetElementOrEmpty, m_globalObject, base, lowJSValue(propertyNode))));
+        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetElementOrEmpty, m_instance, base, lowJSValue(propertyNode))));
     else if (isOfArray)
         results.append(m_out.anchor(coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode))));
     else if constexpr (usesStubs)
         results.append(m_out.anchor(callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode))));
     else
-        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetByVal, m_globalObject, base, lowJSValue(propertyNode))));
+        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetByVal, m_instance, base, lowJSValue(propertyNode))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -986,7 +986,7 @@ void Lowering::lowerPutByVal(Node* node)
     if constexpr (usesStubs)
         throughStub();
     else
-        vmCall(node, Void, Entry::operationAOTPutByVal, m_globalObject, base, lowJSValue(propertyNode), value, m_out.constInt32(bytecode.m_ecmaMode.isStrict()));
+        vmCall(node, Void, Entry::operationAOTPutByVal, m_instance, base, lowJSValue(propertyNode), value, m_out.constInt32(bytecode.m_ecmaMode.isStrict()));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -1063,7 +1063,7 @@ void Lowering::lowerResolveScope(Node* node)
         ValueFromBlock fastResult = m_out.anchor(exporter);
         m_out.branch(m_out.isZero64(exporter), rarely(slowCase), usually(continuation));
         m_out.appendTo(slowCase, continuation);
-        ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTFillImportSlot, m_globalObject, importer, m_out.constInt32(variable.import.slot)));
+        ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTFillImportSlot, m_instance, importer, m_out.constInt32(variable.import.slot)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, fastResult, slowResult));
@@ -1092,7 +1092,7 @@ void Lowering::lowerResolveScope(Node* node)
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
-    results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTResolveScope, m_globalObject, scope, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(slot), m_out.constInt32(variable.isInGlobalScopes ? Site::resolvesInGlobalScopes : 0))));
+    results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTResolveScope, m_instance, scope, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(slot), m_out.constInt32(variable.isInGlobalScopes ? Site::resolvesInGlobalScopes : 0))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -1154,7 +1154,7 @@ void Lowering::lowerGetFromScope(Node* node)
         ValueFromBlock fastResult = m_out.anchor(value);
         m_out.branch(m_out.isZero64(value), rarely(slowCase), usually(continuation));
         m_out.appendTo(slowCase, continuation);
-        ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTReadLazyClosureVar, m_globalObject, distance ? environmentAt(*distance) : scope, m_out.constInt32(offset)));
+        ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTReadLazyClosureVar, m_instance, distance ? environmentAt(*distance) : scope, m_out.constInt32(offset)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, fastResult, slowResult));
@@ -1216,7 +1216,7 @@ void Lowering::lowerGetFromScope(Node* node)
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
-    results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetFromScope, m_globalObject, scope, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(slot), m_out.constInt32(throwIfNotFound))));
+    results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetFromScope, m_instance, scope, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(slot), m_out.constInt32(throwIfNotFound))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -1264,7 +1264,7 @@ void Lowering::lowerPutToScope(Node* node)
         callStub(Stub::PutToScope, Void, { { scope, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, numberOf(bytecode.m_var), how)), GPRInfo::argumentGPR2 } }, { });
         return;
     }
-    vmCall(node, Void, Entry::operationAOTPutToScope, m_globalObject, scope, value, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(allocateSlot()), m_out.constInt32(how));
+    vmCall(node, Void, Entry::operationAOTPutToScope, m_instance, scope, value, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(allocateSlot()), m_out.constInt32(how));
 }
 
 bool Lowering::tryLowerAccess(Node* node)
