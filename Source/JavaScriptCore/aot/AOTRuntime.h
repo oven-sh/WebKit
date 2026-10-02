@@ -506,7 +506,11 @@ struct Instance {
     Structure* literalStructure(Structure* empty, std::span<UniquedStringImpl* const>);
 
     Structure* knownShapeStructure(uint32_t shape, std::span<UniquedStringImpl* const> names);
-    Structure* structureAfterPropertyRun(Structure*, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames);
+    struct PropertyRunTarget {
+        Structure* last { nullptr };
+        Vector<StructureID, 4> prototypeStructures;
+    };
+    const PropertyRunTarget& propertyRunTarget(Structure*, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames);
     static PropertyOffset offsetAfter(PropertyOffset offset, unsigned inlineCapacity)
     {
         if (offset == invalidOffset)

@@ -194,7 +194,7 @@ struct Instance::Collections {
     UncheckedKeyHashMap<uint32_t, Structure*> knownShapes;
     UncheckedKeyHashMap<Structure*, Structure*> copyStructures;
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> convertedStructures;
-    UncheckedKeyHashMap<std::pair<Structure*, const uint32_t*>, Structure*> structuresAfterPropertyRuns;
+    UncheckedKeyHashMap<std::pair<Structure*, const uint32_t*>, Instance::PropertyRunTarget> propertyRunTargets;
     struct LayoutConversionPlan {
         Vector<std::pair<PropertyOffset, uint16_t>> moves;
         Vector<const TypedLayoutTable::Field*> fields;
@@ -1369,9 +1369,9 @@ void Instance::visit(Visitor& visitor, bool newOnly)
         if (to)
             visitor.appendUnbarriered(to);
     }
-    for (auto& [from, to] : collections->structuresAfterPropertyRuns) {
-        if (to && visitor.isMarked(from.first))
-            visitor.appendUnbarriered(to);
+    for (auto& [from, to] : collections->propertyRunTargets) {
+        if (to.last && visitor.isMarked(from.first))
+            visitor.appendUnbarriered(to.last);
     }
     visitor.appendUnbarriered(globalObject);
     if (collections->environmentsSize) {
@@ -1389,25 +1389,44 @@ void Instance::visit(Visitor& visitor, bool newOnly)
         visitor.appendUnbarriered(templateObject);
 }
 
-Structure* Instance::structureAfterPropertyRun(Structure* structure, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames)
+const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* structure, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames)
 {
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
-        return realmInstance.structureAfterPropertyRun(structure, run, collectNames);
-    auto result = collections->structuresAfterPropertyRuns.add({ structure, run }, nullptr);
-    if (!result.isNewEntry)
-        return result.iterator->value;
+        return realmInstance.propertyRunTarget(structure, run, collectNames);
+    if (auto it = collections->propertyRunTargets.find({ structure, run }); it != collections->propertyRunTargets.end())
+        return it->value;
     Vector<UniquedStringImpl*, 16> names;
     collectNames(names);
-    Structure* last = structure;
+    PropertyRunTarget target;
+    bool mayBeIntercepted = false;
+    for (JSValue next = structure->storedPrototype(); next.isObject() && !mayBeIntercepted;) {
+        JSObject* prototype = asObject(next);
+        Structure* prototypeStructure = prototype->structure();
+        TypeInfo info = prototypeStructure->typeInfo();
+        if (prototypeStructure->isDictionary() || prototypeStructure->hasPolyProto() || info.overridesPut() || info.overridesGetPrototype() || info.overridesGetOwnPropertySlot() || prototype->hasNonReifiedStaticProperties()) {
+            mayBeIntercepted = true;
+            break;
+        }
+        if (prototypeStructure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
+            for (UniquedStringImpl* name : names) {
+                unsigned attributes;
+                if (isValidOffset(prototypeStructure->get(*vm, name, attributes)))
+                    mayBeIntercepted |= !!(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+            }
+        }
+        target.prototypeStructures.append(prototypeStructure->id());
+        next = prototypeStructure->storedPrototype();
+    }
+    Structure* last = mayBeIntercepted ? nullptr : structure;
     unsigned followed = 0;
-    for (; followed < names.size(); ++followed) {
+    for (; last && followed < names.size(); ++followed) {
         PropertyOffset offset;
         Structure* next = Structure::addPropertyTransitionToExistingStructure(last, names[followed], 0, offset);
         if (!next)
             break;
         last = next;
     }
-    if (followed < names.size()) {
+    if (last && followed < names.size()) {
         if (last->isDictionary())
             last = nullptr;
         else {
@@ -1423,8 +1442,8 @@ Structure* Instance::structureAfterPropertyRun(Structure* structure, const uint3
     }
     if (last && (last->maxOffset() != offset || last->isDictionary()))
         last = nullptr;
-    collections->structuresAfterPropertyRuns.set({ structure, run }, last);
-    return last;
+    target.last = last;
+    return collections->propertyRunTargets.add({ structure, run }, WTF::move(target)).iterator->value;
 }
 
 Structure* Instance::knownShapeStructure(uint32_t shape, std::span<UniquedStringImpl* const> names)
@@ -1795,8 +1814,10 @@ void Instance::finalizeUnconditionally(bool newOnly)
     for (Data* data : collections->filledSinceLastCollection)
         data->hasBeenFilledSinceLastCollection = false;
     collections->filledSinceLastCollection.shrink(0);
-    collections->structuresAfterPropertyRuns.removeIf([&](auto& entry) {
-        return !vm->heap.isMarked(entry.key.first) || (entry.value && !vm->heap.isMarked(entry.value));
+    collections->propertyRunTargets.removeIf([&](auto& entry) {
+        if (!vm->heap.isMarked(entry.key.first) || (entry.value.last && !vm->heap.isMarked(entry.value.last)))
+            return true;
+        return std::ranges::any_of(entry.value.prototypeStructures, [&](StructureID id) { return !vm->heap.isMarked(id.decode()); });
     });
     collections->transitions.appendVector(collections->transitionsSinceLastCollection);
     collections->transitionsSinceLastCollection.shrink(0);

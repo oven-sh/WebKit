@@ -1,4 +1,4 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -184,3 +184,42 @@ for (let f of [four, fourStrict, closures, fresh, many, twoRuns])
 doesNotApply(straddles, "property-run:6");
 for (let f of [three, callBetween, readBetween, interleaved, sameName, setsProto, inLoop, computed, assignsBetween, tooEarly, reassigned])
     doesNotApply(f, "property-run");
+
+if (isAOTCompiled(four)) {
+    let structuresBehind = o => $vm.getStructureTransitionList(o).length / 5;
+    class UnrelatedGetter { get other() { return 1; } set another(v) { } }
+    class SetterForC { set c(v) { } }
+    class GetterForB { get b() { return 1; } }
+    class Changes { get other() { return 1; } }
+    let inOneStep = {
+        "an empty object": () => ({}),
+        "an object with properties": () => ({ y: 1, z: 2 }),
+        "no prototype": () => Object.create(null),
+        "a class with accessors under other names": () => new UnrelatedGetter,
+        "a subclass of it": () => new (class extends UnrelatedGetter { }),
+        "a prototype with a plain property of that name": () => Object.create({ b: "shadowed" }),
+        "an accessor of its own under another name": () => ({ get other() { return 1; } }),
+    };
+    let oneByOne = {
+        "a setter for one of the names": () => new SetterForC,
+        "a getter without a setter for one of them": () => new GetterForB,
+        "a read-only property of that name on the prototype": () => Object.create(Object.freeze({ b: 1 })),
+        "a proxy on the chain": () => Object.create(new Proxy({}, {})),
+        "one of the names is there already": () => ({ c: 0 }),
+        "an array on the chain": () => Object.create([]),
+    };
+    for (let round = 0; round < 2; ++round) {
+        for (let [what, make] of Object.entries(inOneStep))
+            check(structuresBehind(four(make())), 1, "in one step: " + what);
+        for (let [what, make] of Object.entries(oneByOne))
+            check(structuresBehind(four(make())) > 1, true, "one by one: " + what);
+    }
+    check(structuresBehind(four(new Changes)), 1, "before the prototype changes");
+    let seen = [];
+    Object.defineProperty(Changes.prototype, "c", { set(v) { seen.push(v); } });
+    check(describe(four(new Changes)), "a=1,b=2,d=4", "a setter that appeared on the prototype later");
+    check(seen.join(), "3", "is called");
+    let usedAsPrototype = {};
+    Object.create(usedAsPrototype);
+    check(describe(four(usedAsPrototype)), "a=1,b=2,c=3,d=4", "an object that is a prototype");
+}

@@ -309,11 +309,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutProperties, void, (Instance* instance, E
     if (base.isCell() && base.asCell()->type() == FinalObjectType) {
         JSObject* object = asObject(base);
         Structure* structure = object->structure();
-        if (!structure->isDictionary() && structure->isStructureExtensible() && !structure->typedLayoutID() && !structure->hasPolyProto() && !structure->mayBePrototype() && object->canPerformFastPutInlineExcludingProto()) {
-            Structure* last = instance->structureAfterPropertyRun(structure, plan.words, [&](Vector<UniquedStringImpl*, 16>& names) {
+        if (!structure->isDictionary() && structure->isStructureExtensible() && !(structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) && !structure->hasPolyProto() && !structure->mayBePrototype()) {
+            auto& target = instance->propertyRunTarget(structure, plan.words, [&](Vector<UniquedStringImpl*, 16>& names) {
                 for (unsigned i = 0; i < count; ++i)
                     names.append(identifierAt(instance, callFrame, plan.identifier(i)).impl());
             });
+            Structure* last = target.last;
+            JSValue prototype = structure->storedPrototype();
+            for (StructureID expected : target.prototypeStructures) {
+                if (!last || !prototype.isObject() || asObject(prototype)->structureID() != expected) {
+                    last = nullptr;
+                    break;
+                }
+                prototype = expected.decode()->storedPrototype();
+            }
+            if (last && prototype.isObject())
+                last = nullptr;
             if (last) {
                 PropertyOffset offset = structure->maxOffset();
                 size_t oldCapacity = structure->outOfLineCapacity();

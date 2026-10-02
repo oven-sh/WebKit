@@ -3051,6 +3051,8 @@ public:
             symbolTable->becomeSharedAcrossRealms(decoder.vm());
         if (decoder.canDeferIntoPayload() && m_map.entryCount() && !decoder.isForProgramData())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
+        else if (decoder.isForProgramData() && !decoder.isForBuildingProgramData() && m_map.entryCount())
+            symbolTable->setCachedEntries(decoder, this, true);
         else if (decoder.isForProgramData())
             m_map.decodeIf(decoder, symbolTable->m_map, [](const CachedSymbolTableEntry& entry) { return entry.isScope(); });
         else
