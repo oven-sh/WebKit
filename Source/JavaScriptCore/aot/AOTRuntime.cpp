@@ -72,26 +72,6 @@ void* catchThunk()
     return tagCodePtr<ExceptionHandlerPtrTag>(addressOfStub(Stub::Catch));
 }
 
-void* nearCallTargetFor(void* code)
-{
-    if (isJITPC(code))
-        return code;
-    // Like the LLInt's entry points, code in an image is out of range of a near call from JIT memory, so the call goes through a
-    // thunk.
-    static Lock lock;
-    static NeverDestroyed<UncheckedKeyHashMap<void*, MacroAssemblerCodeRef<JSEntryPtrTag>>> thunks;
-    Locker locker { lock };
-    auto result = thunks.get().add(code, MacroAssemblerCodeRef<JSEntryPtrTag>());
-    if (result.isNewEntry) {
-        CCallHelpers jit;
-        jit.move(CCallHelpers::TrustedImmPtr(code), GPRInfo::nonArgGPR0);
-        jit.farJump(GPRInfo::nonArgGPR0, JSEntryPtrTag);
-        LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
-        result.iterator->value = FINALIZE_THUNK(patchBuffer, JSEntryPtrTag, "AOTFarJump"_s, "Jump to code in an image");
-    }
-    return result.iterator->value.code().untaggedPtr();
-}
-
 extern "C" void* g_aotStaticFunctionEntrypoints[3]; // FunctionExecutable.cpp
 
 RuntimeTable::RuntimeTable(VM& vm)
@@ -164,8 +144,7 @@ RuntimeTable::RuntimeTable(VM& vm)
 
     installOperationFrontEnds(vm, m_entries);
 
-    // (With the JIT, bound functions use the thunk from boundFunctionCallGenerator().)
-    if (usesStubs && !Options::useJIT())
+    if (usesStubs)
         vm.getBoundFunction(true, SourceTaintedOrigin::Untainted)->setCallEntrypoint(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::CallBoundFunction))));
 }
 
@@ -322,10 +301,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         }
         instance->collections->arraysInheritNoIsConcatSpreadable.install(globalObject->arrayIsConcatSpreadableWatchpointSet(), instance->arraysInheritNoIsConcatSpreadable);
         instance->collections->arraysInheritNoElements.install(globalObject->arrayPrototypeChainIsSaneWatchpointSet(), instance->arraysInheritNoElements);
-        // (The JIT tiers have to be notified of the first and second activation created for each SymbolTable. Inline allocation
-        // skips that, so it is only enabled without the JIT.)
-        if (!Options::useJIT())
-            instance->structureIDOfActivation = idOf(globalObject->activationStructure());
+        instance->structureIDOfActivation = idOf(globalObject->activationStructure());
         instance->auxiliarySpace = &vm.auxiliarySpace();
         instance->spaceOfActivations = subspaceFor<JSLexicalEnvironment>(vm);
         instance->allocatorOfArrays = subspaceFor<JSArray>(vm)->allocatorFor(sizeof(JSArray), AllocatorForMode::EnsureAllocator).localAllocator();

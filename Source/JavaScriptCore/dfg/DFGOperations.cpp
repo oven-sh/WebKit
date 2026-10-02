@@ -6450,7 +6450,7 @@ JSC_DEFINE_JIT_OPERATION(operationLinkDirectCall, void, (DirectCallLinkInfo* cal
         OPERATION_RETURN_IF_EXCEPTION(scope);
 
         unsigned argumentStackSlots = callLinkInfo->maxArgumentCountIncludingThis();
-        if (!codeBlock || argumentStackSlots < static_cast<size_t>(codeBlock->numParameters()))
+        if (argumentStackSlots < static_cast<size_t>(codeBlock->numParameters()))
             codePtr = functionExecutable->entrypointFor(kind, ArityCheckMode::MustCheckArity);
         else
             codePtr = functionExecutable->entrypointFor(kind, ArityCheckMode::ArityCheckNotRequired);

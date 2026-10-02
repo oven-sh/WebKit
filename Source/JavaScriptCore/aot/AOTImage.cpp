@@ -1464,8 +1464,7 @@ Registry& registry()
 
 Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
 {
-    // Its code was compiled on the assumption that the intrinsics cannot change.
-    if (!Options::useImmutableIntrinsics())
+    if (!Options::useImmutableIntrinsics() || Options::useJIT())
         return nullptr;
     if (data.size() < sizeof(ImageHeader))
         return nullptr;

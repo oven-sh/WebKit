@@ -2046,12 +2046,6 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
         return { UINT_MAX, InlineAttribute::None };
     }
 
-    if (codeBlock->jitType() == JITType::AOTJIT) {
-        // There is no Baseline or LLInt code to exit to, and no profiling information.
-        VERBOSE_LOG("    Failing because the callee is AOT code.\n");
-        return { UINT_MAX, InlineAttribute::None };
-    }
-
     CodeBlock* targetCodeBlock = executable->codeBlockFor(specializationKind);
     if (!m_graph.m_plan.isFTL())
         targetCodeBlock = codeBlock;

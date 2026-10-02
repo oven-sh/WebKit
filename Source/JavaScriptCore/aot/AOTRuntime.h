@@ -1012,7 +1012,6 @@ bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock
 bool linkStaticFunction(VM&, FunctionExecutable*, CodeSpecializationKind, JSScope*);
 
 // An address within near-call range that JIT code can use to call `code`. Any thread.
-void* nearCallTargetFor(void* code);
 void* catchThunk();
 // A permanent copy of the stub, from an image if one is loaded, so that nothing needs to be generated.
 void* addressOfStub(Stub);

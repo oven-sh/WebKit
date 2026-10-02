@@ -48,7 +48,6 @@ using Region = bmalloc::StaticRegion;
 bool StaticHeap::s_isBuilding = false;
 VM* StaticHeap::s_vm = nullptr;
 bool StaticHeap::s_isShared = false;
-bool StaticHeap::s_hasNoCompilerThreads = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
 static constexpr size_t pageSizeOfImage = 16 * KB;
 
@@ -1804,8 +1803,7 @@ void StaticHeap::willDestroy(VM& vm)
 void StaticHeap::install(VM& vm)
 {
     if (s_header && s_vm && s_vm != &vm && !vm.m_staticHeapOfVM) {
-        // Objects whose locks are skipped (needsNoLocking()) must not be read by compiler threads, of any VM.
-        if (!t_threadIsPrepared || !s_hasNoCompilerThreads || t_ofVMOfThread)
+        if (!t_threadIsPrepared || t_ofVMOfThread)
             return;
         static std::atomic<uint64_t> lastNumber { 1 };
         auto* ofVM = new StaticHeapOfVM;
@@ -1830,7 +1828,6 @@ void StaticHeap::install(VM& vm)
         if (expected.indexInVM >= structures.size() || !structures[expected.indexInVM] || structures[expected.indexInVM]->id().bits() != expected.id)
             return;
     }
-    s_hasNoCompilerThreads = !Options::useJIT();
     vm.symbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[0]));
     vm.privateSymbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[1]));
     makeContainer(vm);
@@ -2085,7 +2082,6 @@ bool StaticHeap::s_isBuilding = false;
 const StaticHeap::RowOfFunction* StaticHeap::s_rowsOfFunctions = nullptr;
 VM* StaticHeap::s_vm = nullptr;
 bool StaticHeap::s_isShared = false;
-bool StaticHeap::s_hasNoCompilerThreads = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
 
 Vector<uint8_t> StaticHeap::build(VM&, std::span<const uint8_t>, std::span<const uint8_t>, std::span<const uint32_t>, std::span<const uint8_t>, size_t, const PositionsToKeep*, std::span<const ReportableSitesOfFunction>, std::span<const std::optional<Vector<uint32_t>>>) { return { }; }

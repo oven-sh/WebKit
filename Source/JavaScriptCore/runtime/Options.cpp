@@ -812,9 +812,10 @@ void Options::notifyOptionsChanged()
     if (Options::compileMainScriptAheadOfTime())
         Options::useAOT() = true;
 
-    // AOT code is compiled on the assumption that the intrinsics cannot change.
-    if (Options::useAOT())
+    if (Options::useAOT()) {
         Options::useImmutableIntrinsics() = true;
+        Options::useJIT() = false;
+    }
 
     // AOT code only matches the bytecode it was compiled from, so the run must generate bytecode the same way.
     if (Options::aotImagePath() || Options::compileMainScriptAheadOfTime()) {

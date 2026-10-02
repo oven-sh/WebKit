@@ -655,10 +655,6 @@ void DirectCallLinkInfo::setCallTarget(CodeBlock* codeBlock, CodeLocationLabel<J
             CCallHelpers::replaceWithNops(fastPathStart(), CCallHelpers::patchableJumpSize());
         }
 
-#if ENABLE(AOT)
-        if (codeBlock && codeBlock->jitType() == JITType::AOTJIT)
-            target = CodeLocationLabel<JSEntryPtrTag>(tagCodePtr<JSEntryPtrTag>(AOT::nearCallTargetFor(target.untaggedPtr())));
-#endif
         MacroAssembler::repatchNearCall(m_callLocation, target);
         MacroAssembler::repatchPointer(m_codeBlockLocation, codeBlock);
     }

@@ -132,9 +132,7 @@ public:
     // of the calling thread's VM.
     static ALWAYS_INLINE bool isShared() { return s_isShared; }
     JS_EXPORT_PRIVATE static PreciseAllocation* containerOfSlow(const void* cell);
-    // For locks that protect the mutator's data from compiler threads. Taking such a lock would write to a static cell, and with no
-    // JIT there are no compiler threads.
-    static ALWAYS_INLINE bool needsNoLocking(const void* lock) { return contains(lock) && s_hasNoCompilerThreads; }
+    static ALWAYS_INLINE bool needsNoLocking(const void* lock) { return contains(lock) && isMapped(); }
     // Returns a table in which all strings already exist, if `strings` is what build() was given and the VM uses this heap.
     JS_EXPORT_PRIVATE static std::unique_ptr<DecoderStringTable> tryCreateStringTable(VM&, std::span<const uint8_t> strings);
     // Returns what decoding would produce, if the bytecode is a module of the payload given to build() and matches the key.
@@ -283,7 +281,6 @@ private:
     JS_EXPORT_PRIVATE static const RowOfFunction* s_rowsOfFunctions;
     JS_EXPORT_PRIVATE static VM* s_vm;
     JS_EXPORT_PRIVATE static bool s_isShared;
-    JS_EXPORT_PRIVATE static bool s_hasNoCompilerThreads;
     static const Header* s_header; // Header of the mapped image.
 };
 
