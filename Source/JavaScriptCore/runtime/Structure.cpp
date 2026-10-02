@@ -435,6 +435,29 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     return result;
 }
 
+Structure* Structure::addPropertiesTransition(VM& vm, Structure* structure, std::span<UniquedStringImpl* const> names, DeferredStructureTransitionWatchpointFire* deferred)
+{
+    RELEASE_ASSERT(!structure->isDictionary() && structure->isStructureExtensible() && !names.empty());
+    DeferGC deferGC(vm);
+    for (UniquedStringImpl* name : names) {
+        if (JSC::isValidOffset(structure->get(vm, name)))
+            return nullptr;
+    }
+    Structure* transition = Structure::create(vm, structure, deferred);
+    PropertyTable* table = structure->copyPropertyTableForPinning(vm);
+    transition->pin(Locker { transition->m_lock }, vm, table);
+    transition->setMaxOffset(vm, structure->maxOffset());
+    for (UniquedStringImpl* name : names) {
+        if (JSC::isValidOffset(transition->get(vm, name)))
+            return nullptr;
+        transition->addPropertyWithoutTransition(vm, name, 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset newMaxOffset) {
+            transition->setMaxOffset(vm, newMaxOffset);
+        });
+    }
+    transition->checkOffsetConsistency();
+    return transition;
+}
+
 Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved, unsigned inlineSlots, std::span<const unsigned> attributes)
 {
     RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto() && names.size() == slots.size() && (attributes.empty() || attributes.size() == names.size()));

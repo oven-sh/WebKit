@@ -150,6 +150,7 @@ public:
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
     // table visits it for as long as the VM lives.
     JSString* jsStringFor(VM&, uint32_t ordinal);
+    bool& createsPlainStrings() { return m_createsPlainStrings; }
     // The characters as a plain string, touching neither the slot, a cell nor the atom table (a reader that must not
     // atomize: a stack trace the collector builds).
     String stringFor(uint32_t ordinal) const;
@@ -198,6 +199,7 @@ private:
 
     std::span<const uint8_t> m_bytes;
     uintptr_t* m_slots { nullptr };
+    bool m_createsPlainStrings { false };
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
     // atomFor's outcomes so far (mutator only); expectedAtomTableInserts scales by them.

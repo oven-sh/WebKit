@@ -420,6 +420,7 @@ public:
     static void destroy(JSCell*);
 
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
+    JS_EXPORT_PRIVATE static Structure* addPropertiesTransition(VM&, Structure*, std::span<UniquedStringImpl* const>, DeferredStructureTransitionWatchpointFire*);
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
     void copyAccessorAndReadOnlyFlagsFrom(const Structure& other)
     {

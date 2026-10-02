@@ -26,6 +26,7 @@ struct Slot;
     v(operationAOTNewObject) \
     v(operationAOTNewObjectLiteral) \
     v(operationAOTCreateThisWithProperties) \
+    v(operationAOTPutProperties) \
     v(operationAOTCreateThis) \
     v(operationAOTNewArray) \
     v(operationAOTNewArrayWithSize) \
@@ -150,6 +151,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (Instance*, Encode
 JSC_DECLARE_JIT_OPERATION(operationAOTNoteClass, void, (Instance*, EncodedJSValue constructor, EncodedJSValue prototype, uint32_t layoutID));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Instance*, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot*));
+JSC_DECLARE_JIT_OPERATION(operationAOTPutProperties, void, (Instance*, EncodedJSValue base, EncodedJSValue* values, uint32_t count, Slot* cache));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance*, JSObject* callee, uint32_t inlineCapacity));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance*, const EncodedJSValue* values, uint32_t count, uint32_t indexingType));

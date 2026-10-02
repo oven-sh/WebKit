@@ -282,6 +282,10 @@ bool Lowering::run()
     }
 
     unsigned scratchWords = 0;
+    for (BasicBlock* block : m_graph.m_rpo)
+        findPropertyRuns(block);
+    for (auto& run : m_propertyRuns)
+        scratchWords = std::max<unsigned>(scratchWords, run.size());
     for (BasicBlock* block : m_graph.m_rpo) {
         for (Node* node : block->nodes) {
             scratchWords = std::max(scratchWords, scratchWordsFor(node));
@@ -887,7 +891,7 @@ LValue Lowering::lowConstantRegister(Graph& graph, VirtualRegister reg)
     JSCell* constant = graph.codeBlock()->getConstant(reg).asCell();
     if (constant->inherits<JSTemplateObjectDescriptor>())
         return constantThroughStub(number, Stub::TemplateObject);
-    if (isInRunOnceCode())
+    if (isInRunOnceCode() && &graph == &m_graph)
         return constantThroughStub(number, Stub::TransientConstant);
     return constantThroughStub(number, Stub::Constant);
 }
@@ -1218,6 +1222,15 @@ void Lowering::lowerBlock(BasicBlock* block)
             break;
         if (node->isElided)
             continue;
+        if (auto run = m_propertyRunOfStore.find(node); run != m_propertyRunOfStore.end()) {
+            const PropertyRun& stores = m_propertyRuns[run->value];
+            if (node != stores.last())
+                continue;
+            setCurrentNode(stores[0]);
+            lowerPropertyRun(stores);
+            m_availableFields.shrink(0);
+            continue;
+        }
         setCurrentNode(node);
         m_nodePreservesFields = false;
         lowerNode(node);

@@ -611,6 +611,93 @@ LValue Lowering::getByIdWithThisCached(Node* node, LValue base, LValue thisValue
     return m_out.phi(Int64, fastResult, slowResult);
 }
 
+void Lowering::findPropertyRuns(BasicBlock* block)
+{
+    constexpr unsigned minimumLength = 4;
+    constexpr unsigned maximumLength = 64;
+    if (block->isInLoop || block->isGeneric || m_graph.hasFrameRegisters())
+        return;
+    Node* base = nullptr;
+    PropertyRun stores;
+    Vector<UniquedStringImpl*, 16> names;
+    UncheckedKeyHashSet<Node*> createdSinceLastEffect;
+    auto endRun = [&] {
+        if (stores.size() >= minimumLength) {
+            for (Node* store : stores)
+                m_propertyRunOfStore.add(store, m_propertyRuns.size());
+            m_propertyRuns.append(stores);
+        }
+        stores.shrink(0);
+        names.shrink(0);
+        base = nullptr;
+    };
+    auto end = [&] {
+        endRun();
+        createdSinceLastEffect.clear();
+    };
+    for (Node* node : block->nodes) {
+        if (node->isElided)
+            continue;
+        if (node->kind == NodeKind::Constant || node->kind == NodeKind::ConstantCell || node->kind == NodeKind::LinkTimeConstant)
+            continue;
+        if (node->kind != NodeKind::Bytecode || node->guard || node->guarded) {
+            end();
+            continue;
+        }
+        switch (node->opcode) {
+        case op_new_func_exp:
+        case op_new_async_func_exp:
+        case op_new_generator_func_exp:
+        case op_new_async_generator_func_exp:
+        case op_new_object:
+            createdSinceLastEffect.add(node);
+            continue;
+        case op_put_by_id: {
+            auto bytecode = node->as<OpPutById>();
+            Node* target = node->use(bytecode.m_base);
+            UniquedStringImpl* name = node->graph->codeBlock()->identifier(bytecode.m_property).impl();
+            if (createdSinceLastEffect.contains(target) && (bytecode.m_flags.isDirect() || (name->isSymbol() && static_cast<SymbolImpl*>(name)->isPrivate())))
+                continue;
+            if (Graph::typeTagOf(node) || name->isSymbol() || WTF::equal(name, "__proto__"_s)) {
+                end();
+                continue;
+            }
+            if (target != base || names.contains(name) || stores.size() == maximumLength) {
+                if (target != base)
+                    end();
+                else
+                    endRun();
+                base = target;
+            }
+            stores.append(node);
+            names.append(name);
+            continue;
+        }
+        default:
+            end();
+            continue;
+        }
+    }
+    end();
+}
+
+void Lowering::lowerPropertyRun(const PropertyRun& stores)
+{
+    Node* first = stores[0];
+    unsigned count = stores.size();
+    unsigned slot = allocateSlots(2);
+    LValue base = lowJSValue(first->use(first->as<OpPutById>().m_base));
+    Vector<uint32_t, 16> words { AllocationPlan::encode(0, count) };
+    for (unsigned i = 0; i < count; ++i) {
+        auto bytecode = stores[i]->as<OpPutById>();
+        words.append(AllocationPlan::encode(numberOf(*stores[i]->graph, bytecode.m_property), bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict()));
+        m_out.store64(lowJSValue(stores[i]->use(bytecode.m_value)), scratchWord(i));
+    }
+    m_graph.noteSitePlan(slot, WTF::move(words));
+    m_graph.remark("property-run"_s, String::number(count));
+    vmCall(first, Void, Entry::operationAOTPutProperties, m_instance, base, scratchAddress(), m_out.constInt32(count), slotAddress(slot));
+}
+
 void Lowering::lowerPutById(Node* node)
 {
     auto bytecode = node->as<OpPutById>();

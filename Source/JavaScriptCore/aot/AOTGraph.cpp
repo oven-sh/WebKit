@@ -3157,6 +3157,8 @@ private:
             node->range = IntegerRange::unknown();
             node->reg = reg;
             node->type = value.asCell()->inherits<JSTemplateObjectDescriptor>() ? TArray : valueType(value);
+            if (value.isString() && m_codeBlock->codeType() == ModuleCode)
+                node->type |= asString(value)->length() <= TypedLayoutTable::maxAtomizedStringLength ? TShortOtherString : TLongString;
             m_constantCells[index] = node;
         }
         return m_constantCells[index];

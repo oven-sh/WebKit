@@ -26,6 +26,8 @@
 #include "config.h"
 #include "AbstractModuleRecord.h"
 
+#include "AOTProgramData.h"
+
 #include "BuiltinNames.h"
 #include "CyclicModuleRecord.h"
 #include "Error.h"
@@ -35,6 +37,7 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
+#include "JSModuleNamespaceObjectInlines.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #if USE(BUN_JSC_ADDITIONS)
@@ -1353,7 +1356,12 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     } // !collected
 #endif
 
-    auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
+    Structure* namespaceStructure = globalObject->moduleNamespaceObjectStructure();
+#if ENABLE(AOT)
+    if (AOT::VMProgram::of(vm))
+        namespaceStructure = JSModuleNamespaceObject::createStructure(vm, globalObject, jsNull());
+#endif
+    auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, namespaceStructure, this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (phase == ModulePhase::Defer) {

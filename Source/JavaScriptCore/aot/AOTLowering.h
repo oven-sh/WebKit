@@ -282,6 +282,9 @@ private:
     bool tryLowerAccess(Node*);
     void lowerGetById(Node*);
     void lowerPutById(Node*);
+    using PropertyRun = Vector<Node*, 16>;
+    void findPropertyRuns(BasicBlock*);
+    void lowerPropertyRun(const PropertyRun&);
     void lowerGetByVal(Node*);
     void lowerPutByVal(Node*);
     void lowerResolveScope(Node*);
@@ -382,6 +385,8 @@ private:
     unsigned m_slotCheckSlot { 0 };
     UncheckedKeyHashMap<uint64_t, unsigned, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_sharedSites;
     BasicBlock* m_block { nullptr };
+    Vector<PropertyRun> m_propertyRuns;
+    UncheckedKeyHashMap<Node*, unsigned> m_propertyRunOfStore;
     unsigned m_nodeIndex { 0 };
     Node* m_node { nullptr };
     Graph* m_code { nullptr };

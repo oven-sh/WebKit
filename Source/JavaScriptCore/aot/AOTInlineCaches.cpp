@@ -14,6 +14,7 @@
 #include "GetterSetter.h"
 #include "InlineCacheCompiler.h"
 #include "JSCInlines.h"
+#include "JSModuleEnvironment.h"
 #include "JSTypedArrayViewPrototype.h"
 #include "MegamorphicCache.h"
 #include "ObjectPropertyConditionSet.h"
@@ -221,6 +222,16 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
 {
     if (SharedData::contains(cache))
         return;
+    if (auto namespaceSlot = slot.moduleNamespaceSlot()) {
+        Structure* structure = base.asCell()->structure();
+        uint32_t location = JSLexicalEnvironment::offsetOfVariable(ScopeOffset(namespaceSlot->scopeOffset)) / sizeof(EncodedJSValue);
+        if (usesStubs && structure == structureBefore && structure != globalObject->moduleNamespaceObjectStructure() && location < (1u << (Slot::offsetBits - 1)) && mayReplace(cache, structure)) {
+            if (cache->hasPointer())
+                stopWatching(data, cache);
+            fill(globalObject->vm(), data, cache, structure, location | Slot::pointerIsCell, namespaceSlot->environment);
+        }
+        return;
+    }
     if (mayBePolymorphic && usesStubs && base.isCell() && base.asCell()->structure() == structureBefore) {
         if (uint16_t id = recordPropertyNameInStructure(globalObject->vm(), base.asCell(), structureBefore, ident, slot)) {
             uint32_t location = *propertyLocation(slot.cachedOffset());

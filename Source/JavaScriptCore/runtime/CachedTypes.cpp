@@ -764,6 +764,15 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
     if (!m_slots) [[unlikely]] {
+        if (m_createsPlainStrings) {
+            Record r = record(ordinal);
+            if (r.length == 1) {
+                char16_t c = r.is8Bit ? *r.characters : *std::bit_cast<const char16_t*>(r.characters);
+                if (c <= maxSingleCharacterString)
+                    return vm.smallStrings.singleCharacterString(c);
+            }
+            return JSString::createHasOtherOwner(vm, createImpl(r));
+        }
         Ref atom = atomFor(vm, ordinal);
         if (atom->length() == 1 && atom.get()[0] <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString(atom.get()[0]);

@@ -506,6 +506,13 @@ struct Instance {
     Structure* literalStructure(Structure* empty, std::span<UniquedStringImpl* const>);
 
     Structure* knownShapeStructure(uint32_t shape, std::span<UniquedStringImpl* const> names);
+    Structure* structureAfterPropertyRun(Structure*, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames);
+    static PropertyOffset offsetAfter(PropertyOffset offset, unsigned inlineCapacity)
+    {
+        if (offset == invalidOffset)
+            return inlineCapacity ? 0 : firstOutOfLineOffset;
+        return offset + 1 == static_cast<PropertyOffset>(inlineCapacity) ? firstOutOfLineOffset : offset + 1;
+    }
 
     JSObject* tryCopySlotsForSpread(JSObject* source);
     std::span<const uint16_t> knownShapeSlots(uint32_t shape) const;

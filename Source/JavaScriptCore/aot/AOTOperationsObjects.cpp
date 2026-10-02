@@ -299,6 +299,52 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
     OPERATION_RETURN(scope, object);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTPutProperties, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue* values, uint32_t count, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue base = JSValue::decode(encodedBase);
+    AllocationPlan plan = caller(instance, callFrame).planOf(cache);
+    RELEASE_ASSERT(plan && plan.count() == count);
+
+    if (base.isCell() && base.asCell()->type() == FinalObjectType) {
+        JSObject* object = asObject(base);
+        Structure* structure = object->structure();
+        if (!structure->isDictionary() && structure->isStructureExtensible() && !structure->typedLayoutID() && !structure->hasPolyProto() && !structure->mayBePrototype() && object->canPerformFastPutInlineExcludingProto()) {
+            Structure* last = instance->structureAfterPropertyRun(structure, plan.words, [&](Vector<UniquedStringImpl*, 16>& names) {
+                for (unsigned i = 0; i < count; ++i)
+                    names.append(identifierAt(instance, callFrame, plan.identifier(i)).impl());
+            });
+            if (last) {
+                PropertyOffset offset = structure->maxOffset();
+                size_t oldCapacity = structure->outOfLineCapacity();
+                size_t newCapacity = last->outOfLineCapacity();
+                if (oldCapacity != newCapacity) {
+                    Butterfly* butterfly = object->allocateMoreOutOfLineStorage(vm, oldCapacity, newCapacity);
+                    object->nukeStructureAndSetButterfly(vm, structure->id(), butterfly);
+                }
+                for (unsigned i = 0; i < count; ++i) {
+                    offset = Instance::offsetAfter(offset, structure->inlineCapacity());
+                    object->putDirectOffset(vm, offset, JSValue::decode(values[i]));
+                }
+                RELEASE_ASSERT(offset == last->maxOffset());
+                object->setStructure(vm, last);
+                OPERATION_RETURN(scope);
+            }
+        }
+    }
+
+    for (unsigned i = 0; i < count; ++i) {
+        const Identifier& ident = identifierAt(instance, callFrame, plan.identifier(i));
+        PutPropertySlot slot(base, plan.isStrict(i), putByIdContextOf(instance, callFrame));
+        if (plan.isDefined(i))
+            CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(base), ident, JSValue::decode(values[i]), slot);
+        else
+            base.putInline(globalObject, ident, JSValue::decode(values[i]), slot);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+    }
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConstructViaCall, UGPRPair, (CallFrame* callFrame))
 {
     auto* function = uncheckedDowncast<JSFunction>(callFrame->jsCallee());

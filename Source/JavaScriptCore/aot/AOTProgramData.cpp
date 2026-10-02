@@ -1044,6 +1044,7 @@ JSValue VMProgram::createTransientConstant(uint32_t index)
     ProgramObjectsDecoder& decoder = ensureDecoder(m_impl->decoder, m_vm, m_data, strings());
     if (decoder.constantAliasTarget(index))
         return constant(index);
+    SetForScope createsPlainStrings(strings().createsPlainStrings(), true);
     JSValue value = decoder.constant(index);
     RELEASE_ASSERT(value && (!value.isCell() || !value.isObject()));
     return value;
