@@ -27,7 +27,9 @@
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
 #include "SourceCharacters.h"
+#include "YarrInterpreter.h"
 #include "YarrJIT.h"
+#include "YarrMatchingContextHolder.h"
 #include "YarrPattern.h"
 #include "YarrSyntaxChecker.h"
 #include <wtf/Assertions.h>
@@ -355,6 +357,13 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         m_state = ByteCode;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useRegExpLinearEngine()) [[unlikely]] {
+        if (compileForLinearMatcher(vm, pattern))
+            return;
+    }
+#endif
+
 #if ENABLE(YARR_JIT)
     if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
@@ -443,6 +452,20 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         m_state = ByteCode;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useRegExpLinearEngine() && m_linearRefusal == Yarr::LinearRefusal::None) [[unlikely]] {
+        // exec() and match() share what is compiled here, so the program of the matcher comes
+        // from a pattern that has every group, as the bytecode below does.
+        Yarr::YarrPattern capturePattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::IncludeSubpatterns);
+        if (hasError(m_constructionErrorCode)) {
+            m_state = ParseError;
+            return;
+        }
+        if (compileForLinearMatcher(vm, capturePattern))
+            return;
+    }
+#endif
+
 #if ENABLE(YARR_JIT)
     if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
@@ -500,6 +523,53 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
         return false;
     return true;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// With Options::useRegExpLinearEngine(), before the RegExp is compiled for the JIT or the
+// interpreter: true when the non-backtracking matcher accepts the pattern. The RegExp then has
+// bytecode that carries the matcher's program, and no JIT code, so no tier runs anything else.
+// False when the matcher refuses the pattern. The pattern is as it was, and the caller goes on
+// as it does without the option.
+bool RegExp::compileForLinearMatcher(VM* vm, Yarr::YarrPattern& pattern)
+{
+    if (m_linearRefusal != Yarr::LinearRefusal::None)
+        return false;
+
+    Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
+    auto bytecode = Yarr::byteCompileLinear(pattern, &vm->m_regExpAllocator, errorCode, m_linearRefusal, &vm->m_regExpAllocatorLock);
+    if (!bytecode) {
+        // Accepted, but the bytecode that carries the program could not be made.
+        if (m_linearRefusal == Yarr::LinearRefusal::None)
+            m_linearRefusal = Yarr::LinearRefusal::UnsupportedTerm;
+        dataLogLnIf(Options::reportRegExpLinearRefusals(), "The non-backtracking matcher refused ", toSourceString(), ": ", Yarr::linearRefusalName(m_linearRefusal));
+        return false;
+    }
+
+    m_state = ByteCode;
+    m_regExpBytecode = WTF::move(bytecode);
+    m_minimumSize = pattern.m_body->m_minimumSize;
+    return true;
+}
+
+int RegExp::matchForTesting(JSGlobalObject* globalObject, StringView s, unsigned startOffset, Yarr::InterpretStatistics& statistics)
+{
+    VM& vm = globalObject->vm();
+    statistics = { };
+
+    compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
+
+    Vector<int, 32> ovector;
+    ovector.grow(offsetVectorSize());
+    if (m_state == ByteCode && m_regExpBytecode && m_regExpBytecode->m_linearProgram) {
+        Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
+        return Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(ovector.mutableSpan().data()), statistics);
+    }
+
+    statistics.refusal = m_linearRefusal;
+    statistics.usesJIT = m_state == JITCode;
+    return match(globalObject, s, startOffset, ovector.mutableSpan());
+}
+#endif
 
 bool RegExp::wasUsedInCurrentFullCollectionCycle(VM& vm) const
 {
