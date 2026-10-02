@@ -69,6 +69,7 @@ uint64_t imageStamp()
 #elif CPU(X86_64)
     mix(2);
 #endif
+    mix(usesDataStubs());
     return stamp;
 }
 
