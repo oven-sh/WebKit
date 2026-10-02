@@ -115,6 +115,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTemplateObject, EncodedJSValue, (I
     return JSValue::encode(instance->templateObjectFor(number));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConstantForOneUse, EncodedJSValue, (Instance* instance, uint32_t number))
+{
+    DeferGCForAWhile deferGC(*instance->vm);
+    return JSValue::encode(instance->program->constantForOneUse(number));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance);

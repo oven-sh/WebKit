@@ -453,19 +453,32 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
     // 18. Let code be module.[[ECMAScriptCode]].
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = moduleProgramExecutable->unlinkedCodeBlock();
+#if ENABLE(AOT)
+    // Steps 19 to 24 for a module that was compiled ahead of time, which has no code block. Where its variables are is in the file. (The
+    // table may not so much as have the names: only those that something can ask for are kept.)
+    const AOT::ModuleOfProgram* moduleOfProgram = moduleProgramExecutable->moduleOfProgram();
+    if (moduleOfProgram) {
+        for (unsigned i = 0; i < moduleOfProgram->numberOfVarScopeOffsets; ++i)
+            env->variableAt(ScopeOffset(moduleOfProgram->firstVarScopeOffset + i)).setUndefined();
+        jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, nullptr, true);
+        if (!Options::useLazyModuleFunctionDeclarations()) {
+            for (unsigned i = 0; i < moduleOfProgram->numberOfFunctionDeclarationSlots; ++i)
+                jsModule->readFunctionDeclarationSlot(vm, env, ScopeOffset(AOT::ProgramData::get()->at<uint32_t>(moduleOfProgram->offsetOfFunctionDeclarationSlots)[i]));
+        }
+    }
+#else
+    constexpr bool moduleOfProgram = false;
+#endif
     // 19. Let varDeclarations be the VarScopedDeclarations of code.
     // 20. Let declaredVarNames be a new empty List.
     // 21. For each element d of varDeclarations, do
     // While the symbol table's entries are still in the bytecode cache nothing watches them, and where the variables are is known
     // without their names.
-    // (Likewise in a program that was compiled ahead of time. The table may not so much as have the names: only those that something
-    // can ask for are kept.)
-    bool isCompiledAheadOfTime = unlinkedCodeBlock->isWithoutCode();
-    bool initializeVarsByOffset = symbolTable->hasCachedEntriesPending() || isCompiledAheadOfTime;
+    bool initializeVarsByOffset = !moduleOfProgram && symbolTable->hasCachedEntriesPending();
     if (initializeVarsByOffset) {
         for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)
             env->variableAt(ScopeOffset(unlinkedCodeBlock->firstVarScopeOffset() + i)).setUndefined();
-        if (Options::validatePrelinkedModuleInfo() && !isCompiledAheadOfTime) [[unlikely]] {
+        if (Options::validatePrelinkedModuleInfo()) [[unlikely]] {
             unsigned found = 0;
             for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
                 SymbolTableEntry::Fast entry = symbolTable->get(variable.key.get());
@@ -478,7 +491,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             RELEASE_ASSERT(found == unlinkedCodeBlock->numberOfVarScopeOffsets(), found, unlinkedCodeBlock->numberOfVarScopeOffsets());
         }
     }
-    for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
+    static NeverDestroyed<const VariableEnvironment> noVariables;
+    for (const auto& variable : moduleOfProgram ? noVariables.get() : unlinkedCodeBlock->variableDeclarations()) {
         if (initializeVarsByOffset)
             break;
         // 21.a. For each element dn of the BoundNames of d, do
@@ -503,29 +517,28 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 24. For each element d of lexDeclarations, do
     // The heap-allocated declarations come first (BytecodeGenerator); the stack-allocated rest is the module body's to
     // create, so do not look those up by name (the name may still be in the bytecode cache).
-    size_t numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
-    // The profilers want every function's range up front.
-    bool leaveFunctionDeclarationsUninstantiated = Options::useLazyModuleFunctionDeclarations() && !vm.typeProfiler() && !vm.controlFlowProfiler();
-    jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, unlinkedCodeBlock, leaveFunctionDeclarationsUninstantiated);
-    if (leaveFunctionDeclarationsUninstantiated && jsModule->numberOfUninstantiatedFunctionDeclarations() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls())
-        numberOfFunctions = 0;
+    size_t numberOfFunctions = 0;
+    if (!moduleOfProgram) {
+        numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
+        // The profilers want every function's range up front.
+        bool leaveFunctionDeclarationsUninstantiated = Options::useLazyModuleFunctionDeclarations() && !vm.typeProfiler() && !vm.controlFlowProfiler();
+        jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, unlinkedCodeBlock, leaveFunctionDeclarationsUninstantiated);
+        if (leaveFunctionDeclarationsUninstantiated && jsModule->numberOfUninstantiatedFunctionDeclarations() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls())
+            numberOfFunctions = 0;
+    }
     for (size_t i = 0; i < numberOfFunctions; ++i) {
         // 24.a. For each element dn of the BoundNames of d, do
         // 24.a.i. If IsConstantDeclaration of d is true, then
         // 24.a.i.1. Perform ! env.CreateImmutableBinding(dn, true).
         // 24.a.ii. Else,
         // 24.a.ii.1. Perform ! env.CreateMutableBinding(dn, false).
-        FunctionExecutable* staticExecutable = unlinkedCodeBlock->executableOfFunctionDecl(i);
-        UnlinkedFunctionExecutable* unlinkedFunctionExecutable = staticExecutable ? nullptr : unlinkedCodeBlock->functionDecl(i);
-        const Identifier& name = staticExecutable ? staticExecutable->name() : unlinkedFunctionExecutable->name();
-        std::optional<ScopeOffset> whereItIs;
-        if (auto* slots = isCompiledAheadOfTime ? unlinkedCodeBlock->heapAllocatedFunctionDeclSlots() : nullptr; slots && i < slots->size())
-            whereItIs = slots->at(i);
-        VarOffset offset = whereItIs ? VarOffset(*whereItIs) : symbolTable->get(name.impl()).varOffset();
+        UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
+        const Identifier& name = unlinkedFunctionExecutable->name();
+        VarOffset offset = symbolTable->get(name.impl()).varOffset();
         ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         if (!offset.isStack()) {
             ASSERT(!name.isEmpty());
-            if (unlinkedFunctionExecutable && (vm.typeProfiler() || vm.controlFlowProfiler())) {
+            if (vm.typeProfiler() || vm.controlFlowProfiler()) {
                 vm.functionHasExecutedCache()->insertUnexecutedRange(moduleProgramExecutable->sourceID(),
                     unlinkedFunctionExecutable->unlinkedFunctionStart(),
                     unlinkedFunctionExecutable->unlinkedFunctionEnd());
@@ -535,11 +548,6 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             FunctionExecutable* executable = moduleProgramExecutable->functionDeclaration(vm, i);
             SourceParseMode parseMode = executable->parseMode();
             JSFunction* function = nullptr;
-#if ENABLE(AOT)
-            if (executable->hasAOTEntry()) [[unlikely]]
-                function = AOT::Instance::ensure(moduleLoader()).makeFunction(executable, env);
-            else
-#endif
             if (isAsyncGeneratorWrapperParseMode(parseMode))
                 function = JSAsyncGeneratorFunction::create(vm, globalObject, executable, env);
             else if (isGeneratorWrapperParseMode(parseMode))
@@ -550,10 +558,6 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 function = JSFunction::create(vm, globalObject, executable, env);
             RETURN_IF_EXCEPTION(scope, void());
             // 24.a.iii.2. Perform ! env.InitializeBinding(dn, fo).
-            if (whereItIs) {
-                env->variableAt(*whereItIs).set(vm, env, function);
-                continue;
-            }
             bool putResult = false;
             symbolTablePutTouchWatchpointSet(env, globalObject, name, function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
             RETURN_IF_EXCEPTION(scope, void());

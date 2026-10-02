@@ -74,14 +74,14 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 {
 }
 
-StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, FunctionExecutable* executable, CodeSpecializationKind kind, JSCell* tokenOfInstance, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
+StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, ScriptExecutable* executable, CodeSpecializationKind kind, JSCell* tokenOfInstance, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
     : m_frameData(JSFrameData {
         callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>(),
         WriteBarrier<CodeBlock>(),
         bytecodeIndex,
         isAsyncFrame,
         kind,
-        WriteBarrier<FunctionExecutable>(vm, owner, executable),
+        WriteBarrier<ScriptExecutable>(vm, owner, executable),
         WriteBarrier<JSCell>(vm, owner, tokenOfInstance)
     })
 {
@@ -94,7 +94,7 @@ CodeBlock* StackFrame::makeCodeBlock() const
     VM& vm = jsFrame.aotExecutable->vm();
     if (vm.heap.mutatorState() != MutatorState::Running)
         return nullptr;
-    if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, jsFrame.aotExecutable.get(), jsFrame.aotKind, jsFrame.aotInstanceToken.get()); function && function.instance)
+    if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, jsFrame.aotExecutable.get(), jsFrame.aotKind, jsFrame.aotInstanceToken.get()); function && function.instance && function.codeType() == FunctionCode)
         return function.ensureCodeBlock();
 #endif
     return nullptr;
@@ -116,7 +116,9 @@ ScriptExecutable* StackFrame::ownerExecutable() const
 CodeType StackFrame::codeType() const
 {
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
-    return jsFrame.aotExecutable ? FunctionCode : jsFrame.codeBlock->codeType();
+    if (jsFrame.aotExecutable)
+        return jsFrame.aotExecutable->isFunctionExecutable() ? FunctionCode : ModuleCode;
+    return jsFrame.codeBlock->codeType();
 }
 
 bool StackFrame::isConstructor() const
@@ -128,7 +130,11 @@ bool StackFrame::isConstructor() const
 bool StackFrame::isBuiltinFunction() const
 {
     auto& jsFrame = std::get<JSFrameData>(m_frameData);
-    return jsFrame.aotExecutable ? jsFrame.aotExecutable->isBuiltinFunction() : jsFrame.codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
+    if (jsFrame.aotExecutable) {
+        auto* ofFunction = dynamicDowncast<FunctionExecutable>(jsFrame.aotExecutable.get());
+        return ofFunction && ofFunction->isBuiltinFunction();
+    }
+    return jsFrame.codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
 }
 
 JSGlobalObject* StackFrame::globalObjectOfCode() const

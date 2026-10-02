@@ -924,8 +924,13 @@ LValue Lowering::lowConstantRegister(Graph& graph, VirtualRegister reg)
     RELEASE_ASSERT(number != notAConstantOfProgram);
     // The VM makes it when it is first asked for (ProgramOfVM::constant()). What the code means by a JSTemplateObjectDescriptor is the
     // instance's template object.
-    bool isTemplate = graph.codeBlock()->getConstant(reg).asCell()->inherits<JSTemplateObjectDescriptor>();
-    return constantThroughStub(number, isTemplate ? Stub::TemplateObject : Stub::Constant);
+    JSCell* constant = graph.codeBlock()->getConstant(reg).asCell();
+    if (constant->inherits<JSTemplateObjectDescriptor>())
+        return constantThroughStub(number, Stub::TemplateObject);
+    // (If the program keeps it, it is the program's. Otherwise it is collected, like anything else that a module's code is done with.)
+    if (runsOnce())
+        return constantThroughStub(number, Stub::ConstantForOneUse);
+    return constantThroughStub(number, Stub::Constant);
 }
 
 LValue Lowering::constantThroughStub(uint32_t number, Stub stub)

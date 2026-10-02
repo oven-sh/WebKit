@@ -101,6 +101,7 @@ namespace AOT {
     v(operationAOTCatch) \
     v(operationAOTConstantOfProgram) \
     v(operationAOTTemplateObject) \
+    v(operationAOTConstantForOneUse) \
     v(operationAOTSwitchString) \
     v(operationAOTSwitchChar) \
     v(operationAOTFMod) \
@@ -443,15 +444,17 @@ struct FunctionInfo {
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(FunctionInfo, sites); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(FunctionInfo, flags); }
 
-    void set(uint32_t oneMoreThanNumber, CodeSpecializationKind kind, bool isTopLevelCode)
+    void set(uint32_t oneMoreThanNumber, CodeSpecializationKind kind, CodeType codeType)
     {
-        RELEASE_ASSERT(!(oneMoreThanNumber >> 30));
-        numberAndMore = oneMoreThanNumber << 2 | (isTopLevelCode ? 2 : 0) | (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0);
+        static_assert(FunctionCode < 4 && ModuleCode < 4 && GlobalCode < 4);
+        RELEASE_ASSERT(!(oneMoreThanNumber >> 29));
+        numberAndMore = oneMoreThanNumber << 3 | static_cast<uint32_t>(codeType) << 1 | (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0);
     }
-    // Of its executable (ProgramOfVM::executable()), or of top-level code (ProgramOfVM::topLevelCode()), whose executable is created at
-    // run time. Zero: only the Data knows the executable.
-    uint32_t oneMoreThanNumber() const { return numberAndMore >> 2; }
-    bool isTopLevelCode() const { return numberAndMore & 2; }
+    // Of its executable (ProgramOfVM::executable()), or for top-level code, whose executable is created at run time, of its module
+    // (ProgramData::modules()). Zero: only the Data knows the executable.
+    uint32_t oneMoreThanNumber() const { return numberAndMore >> 3; }
+    CodeType codeType() const { return static_cast<CodeType>(numberAndMore >> 1 & 3); }
+    bool isTopLevelCode() const { return codeType() != FunctionCode; }
     bool hasExecutable() const { return oneMoreThanNumber() && !isTopLevelCode(); }
     CodeSpecializationKind kind() const { return numberAndMore & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
     bool isOfCodeInImage() const { return flags & (hasSiteConstants | sitesHaveTheirConstants); }
@@ -477,6 +480,9 @@ struct Instance {
     // By SourceProvider::aotModuleID().
     JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOf(uint32_t moduleID);
     JS_EXPORT_PRIVATE void setTopLevelExecutableOf(uint32_t moduleID, ScriptExecutable*);
+    // Before a module's code is entered, through entrypointOfModuleCode(): gives the EntryWord to pass. Zero if it threw.
+    JS_EXPORT_PRIVATE uint64_t prepareModuleCode(ModuleProgramExecutable*, JSScope*);
+    JS_EXPORT_PRIVATE void didFinishWithModuleCode(ModuleProgramExecutable*); // Nothing is going to run it again.
     JSModuleLoader* loader() const;
     // Once its loader has been cleared, an instance is only needed while its token is marked: by a Structure of one of its functions, or
     // by the executable of one of its modules.
@@ -1005,6 +1011,7 @@ public:
     const Site* sites() const { return m_function->sites(); }
     const void* start() const { return m_code; }
     static constexpr ptrdiff_t offsetOfEntry() { return OBJECT_OFFSETOF(JITCode, m_entry); } // An EntryWord.
+    uint64_t entry() const { return m_entry; }
     // A JITCode belongs to one executable, and therefore to one realm.
     static constexpr ptrdiff_t offsetOfInstance() { return OBJECT_OFFSETOF(JITCode, m_instance); }
     Instance* instance() const { return m_instance; }
@@ -1025,6 +1032,8 @@ bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock
 // code to the realm. Returns false if the code cannot run in the function's realm.
 bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, JSScope*);
 
+// For a frame in the interpreter's format whose arguments are followed by the Instance and the EntryWord.
+JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> entrypointOfModuleCode();
 // An address within near-call range that JIT code can use to call `code`. Any thread.
 void* catchThunk();
 // A permanent copy of the stub, from an image if one is loaded, so that nothing needs to be generated.

@@ -696,8 +696,8 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 }
                 }
 #if ENABLE(AOT)
-            } else if (AOT::FunctionRef function = visitor->aotFunction(); function && function.codeType() == FunctionCode && !function.codeBlockIfExists() && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
-                results.append(StackFrame(vm, owner, visitor->callee().asCell(), uncheckedDowncast<FunctionExecutable>(function.executable()), function.info().kind(), AOT::tokenOf(function.instance), visitor->bytecodeIndex()));
+            } else if (AOT::FunctionRef function = visitor->aotFunction(); function && !function.codeBlockIfExists() && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
+                results.append(StackFrame(vm, owner, visitor->callee().asCell(), function.executable(), function.info().kind(), AOT::tokenOf(function.instance), visitor->bytecodeIndex()));
 #endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())
@@ -1812,13 +1812,31 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     RefPtr<JSC::JITCode> jitCode;
 
     ProtoCallFrame protoCallFrame;
-    EncodedJSValue args[numberOfArguments] = {
+    EncodedJSValue args[numberOfArguments + 2] = {
         JSValue::encode(record),
         JSValue::encode(record->internalField(JSModuleRecord::Field::State).get()),
         JSValue::encode(sentValue),
         JSValue::encode(resumeMode),
         JSValue::encode(scope),
     };
+
+#if ENABLE(AOT)
+    if (executable->moduleOfProgram()) {
+        {
+            DeferTraps deferTraps(vm);
+            AOT::Instance& instance = AOT::Instance::ensure(record->moduleLoader());
+            uint64_t entry = instance.prepareModuleCode(executable, scope);
+            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, throwScope.exception());
+            // See AOT::entrypointOfModuleCode().
+            args[numberOfArguments] = std::bit_cast<EncodedJSValue>(&instance);
+            args[numberOfArguments + 1] = static_cast<EncodedJSValue>(entry);
+            protoCallFrame.init(nullptr, globalObject, callee, jsUndefined(), nullptr, numberOfArguments + 3, args);
+            record->internalField(JSModuleRecord::Field::State).set(vm, record, jsNumber(static_cast<int>(JSModuleRecord::State::Executing)));
+        }
+        throwScope.release();
+        return JSValue::decode(vmEntryToJavaScript(AOT::entrypointOfModuleCode().taggedPtr(), &vm, &protoCallFrame));
+    }
+#endif
 
     {
         DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.

@@ -63,7 +63,18 @@ struct ModuleOfProgram {
     uint32_t keyLength;
     uint32_t keyFlags;
     uint32_t isBuiltinFunction;
-    uint32_t number; // One more than the number of its top-level code, or of a builtin function's executable. Zero: it has none.
+    uint32_t number; // One more than the number of a script's top-level code, or of a builtin function's executable. Zero: it has none.
+    // Of a module. Its code is a function of the image like any other, and this is all else that the engine needs.
+    uint32_t oneMoreThanIndexOfCode; // In the image. Zero: it is not a module.
+    uint32_t symbolTableOfEnvironment; // The number of a constant.
+    uint32_t firstVarScopeOffset;
+    uint32_t numberOfVarScopeOffsets;
+    // uint32_t[]: the ScopeOffset of each function declaration that is in the environment, ascending. They are the first of the code's
+    // FunctionMetadata::FunctionDecls.
+    uint32_t offsetOfFunctionDeclarationSlots;
+    uint32_t numberOfFunctionDeclarationSlots;
+    uint32_t features; // CodeFeatures
+    uint32_t lexicallyScopedFeaturesAndMore; // LexicallyScopedFeatures, and 1 << 16 if it has captured variables.
 };
 
 struct RowOfExecutable {
@@ -180,13 +191,15 @@ public:
     static constexpr ptrdiff_t offsetOfMaskOfConstants() { return OBJECT_OFFSETOF(ProgramOfVM, m_maskOfConstants); }
 
     JS_EXPORT_PRIVATE JSValue constant(uint32_t number);
+    JSValue constantForOneUse(uint32_t number); // As good as constant(number), and kept by nothing.
     JS_EXPORT_PRIVATE UniquedStringImpl* identifier(uint32_t number);
     const Identifier& identifierAsIdentifier(uint32_t number);
     JS_EXPORT_PRIVATE FunctionExecutable* executable(uint32_t number);
     FunctionExecutable* executableOfFunction(uint32_t indexOfFunction) { return executable(m_data.numberOfExecutableOfFunction(indexOfFunction)); }
     JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* unlinkedFunction(uint32_t number, bool isShared);
     // The top-level code of the module whose provider says so (SourceProvider::aotModuleID()).
-    JS_EXPORT_PRIVATE UnlinkedCodeBlock* topLevelCodeFor(const SourceCodeKey&);
+    JS_EXPORT_PRIVATE UnlinkedCodeBlock* topLevelCodeFor(const SourceCodeKey&); // Of a script.
+    JS_EXPORT_PRIVATE const ModuleOfProgram* moduleFor(SourceProvider&); // Null unless it is a module of the program.
     UnlinkedCodeBlock* topLevelCode(uint32_t number);
 
     // What the executables of a module's functions say their source is. The first provider that the module is loaded with in this

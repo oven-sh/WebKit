@@ -42,9 +42,12 @@ class UnlinkedFunctionExecutable;
 class ModuleFunctionDeclarationSlots final : public ThreadSafeRefCounted<ModuleFunctionDeclarationSlots> {
 public:
     static Ref<ModuleFunctionDeclarationSlots> create(FixedVector<uint32_t>&& offsets) { return adoptRef(*new ModuleFunctionDeclarationSlots(WTF::move(offsets))); }
+    // Of a program that was compiled ahead of time. Both are read where they are in the file. entries: for each, what
+    // AOT::FunctionMetadata::executableInList() says.
+    static Ref<ModuleFunctionDeclarationSlots> createOfProgram(std::span<const uint32_t> offsets, const uint32_t* entries) { return adoptRef(*new ModuleFunctionDeclarationSlots(offsets, entries)); }
 
-    unsigned size() const { return m_offsets.size(); }
-    ScopeOffset at(unsigned index) const { return ScopeOffset(m_offsets[index]); }
+    unsigned size() const { return m_span.size(); }
+    ScopeOffset at(unsigned index) const { return ScopeOffset(m_span[index]); }
     const FixedVector<uint32_t>& offsets() const LIFETIME_BOUND { return m_offsets; }
 
     // Set when the code was decoded from a bytecode cache payload that stays around (Decoder::canDeferIntoPayload())
@@ -54,15 +57,13 @@ public:
     void setDecodeSource(Ref<Decoder>&&, const void* cachedFunctionDecls);
     UnlinkedFunctionExecutable* decode(VM&, unsigned index) const;
 
-    // Of a program that was compiled ahead of time: for each, what AOT::FunctionMetadata::executableInList() says, where it is in the file.
     const uint32_t* entriesOfProgram() const { return m_entriesOfProgram; }
-    void setEntriesOfProgram(const uint32_t* entries) { m_entriesOfProgram = entries; }
 
     JS_EXPORT_PRIVATE ~ModuleFunctionDeclarationSlots();
 
     std::optional<unsigned> find(ScopeOffset offset) const
     {
-        auto offsets = m_offsets.span();
+        auto offsets = m_span;
         auto it = std::ranges::lower_bound(offsets, offset.offset());
         if (it == offsets.end() || *it != offset.offset())
             return std::nullopt;
@@ -72,10 +73,18 @@ public:
 private:
     explicit ModuleFunctionDeclarationSlots(FixedVector<uint32_t>&& offsets)
         : m_offsets(WTF::move(offsets))
+        , m_span(m_offsets.span())
+    {
+    }
+
+    ModuleFunctionDeclarationSlots(std::span<const uint32_t> offsets, const uint32_t* entries)
+        : m_span(offsets)
+        , m_entriesOfProgram(entries)
     {
     }
 
     FixedVector<uint32_t> m_offsets;
+    std::span<const uint32_t> m_span; // m_offsets, unless they are in a file.
     RefPtr<Decoder> m_decoder;
     const void* m_cachedFunctionDecls { nullptr }; // CachedWriteBarrier<CachedFunctionExecutable>[size()] in m_decoder's payload
     const uint32_t* m_entriesOfProgram { nullptr };

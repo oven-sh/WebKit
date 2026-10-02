@@ -146,6 +146,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(CallIntrinsic) \
     /* See generateEnter(). */ \
     v(Enter) \
+    v(EnterModule) \
     v(EnterFunctionForCall) \
     v(EnterFunctionForConstruct) \
     /* See generateEnterStaticFunction(). */ \
@@ -162,6 +163,8 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(Constant) \
     /* The same, for the number of a JSTemplateObjectDescriptor: returns the instance's template object. */ \
     v(TemplateObject) \
+    /* The same, in code that runs once: returns one that nothing keeps. */ \
+    v(ConstantForOneUse) \
     /* A0 === the program's constant whose number is in T9, which is a string literal that is 8-bit and not empty. */ \
     v(IsStringEqualToConstant) \
     /* Calls to C++. T9 = Entry * 8, with arguments where the C++ ABI expects them. The Plain variants are for operations that */ \

@@ -1033,7 +1033,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_define_data_property: {
         auto bytecode = node->as<OpDefineDataProperty>();
-        vmCall(node, Void, Entry::operationAOTDefineDataProperty, m_instance, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), unboxInt32(low(bytecode.m_attributes)));
+        vmCall(node, Void, runsOnce() ? Entry::operationAOTDefineDataPropertyOfOneOfAKind : Entry::operationAOTDefineDataProperty, m_instance, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), unboxInt32(low(bytecode.m_attributes)));
         return true;
     }
     case op_define_accessor_property: {

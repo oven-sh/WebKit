@@ -41,6 +41,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTToString, EncodedJSValue, (Instance*, Enco
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTToBoolean, size_t, (Instance*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstantOfProgram, EncodedJSValue, (Instance*, uint32_t number));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTTemplateObject, EncodedJSValue, (Instance*, uint32_t number));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstantForOneUse, EncodedJSValue, (Instance*, uint32_t number));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareGreater, size_t, (Instance*, EncodedJSValue, EncodedJSValue));

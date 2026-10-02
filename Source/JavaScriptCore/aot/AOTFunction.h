@@ -79,7 +79,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*); // Empty unless its code is ahead-of-time compiled.
     // The function that is this executable's code of this kind, in the instance that has this token (tokenOf()). If that instance is
     // gone, the result has none, and can only be asked what is the same in every instance.
-    JS_EXPORT_PRIVATE static FunctionRef of(VM&, FunctionExecutable*, CodeSpecializationKind, JSCell* tokenOfInstance);
+    JS_EXPORT_PRIVATE static FunctionRef of(VM&, ScriptExecutable*, CodeSpecializationKind, JSCell* tokenOfInstance);
     explicit operator bool() const { return index != none; }
 
     // On the VM's thread, and not while the collector is at work: the executable of a builtin that has only been called by compiled
@@ -90,7 +90,7 @@ struct FunctionRef {
     const FunctionInfo& info() const;
     const ProgramData& programData() const;
     JS_EXPORT_PRIVATE Data* dataIfExists() const;
-    JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlockIfExists() const; // Non-null if there is no metadata().
+    JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlockIfExists() const;
     JS_EXPORT_PRIVATE CodeBlock* codeBlockIfExists() const;
     const FunctionMetadata* metadata() const;
     // Properties of the unlinked code block, available whether or not it has been decoded.

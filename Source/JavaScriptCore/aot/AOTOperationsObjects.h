@@ -100,6 +100,7 @@ struct Slot;
     v(operationAOTPutGetterSetterById) \
     v(operationAOTPutAccessorByVal) \
     v(operationAOTDefineDataProperty) \
+    v(operationAOTDefineDataPropertyOfOneOfAKind) \
     v(operationAOTDefineAccessorProperty) \
     v(operationAOTGetPropertyEnumerator) \
     v(operationAOTEnumeratorNext) \
@@ -230,6 +231,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutAccessorById, void, (Instance*, JSObjec
 JSC_DECLARE_JIT_OPERATION(operationAOTPutGetterSetterById, void, (Instance*, JSObject* base, uint32_t identifierIndex, uint32_t attributes, EncodedJSValue getter, EncodedJSValue setter));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutAccessorByVal, void, (Instance*, JSObject* base, EncodedJSValue property, uint32_t attributes, JSObject* accessor, uint32_t isSetter));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefineDataProperty, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue value, int32_t attributes));
+JSC_DECLARE_JIT_OPERATION(operationAOTDefineDataPropertyOfOneOfAKind, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue value, int32_t attributes));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefineAccessorProperty, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue getter, EncodedJSValue setter, int32_t attributes));
 
 // for-in. The mode and the index are passed as the numbers the bytecode has them as. modeAndIndex: in and out.

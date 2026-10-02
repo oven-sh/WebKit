@@ -37,7 +37,7 @@ static constexpr size_t imagePageSize = 16 * KB;
 static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16; // Also the alignment of everything else that is not a function.
 static constexpr unsigned mostCopiesOfStubsInImage = 8;
-static constexpr unsigned numberOfAdapters = 5;
+static constexpr unsigned numberOfAdapters = 6;
 
 struct ImageHeader {
     uint64_t magic;

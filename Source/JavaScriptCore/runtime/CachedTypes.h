@@ -60,6 +60,7 @@ class ExpressionInfo;
 class SymbolTable;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
+class UnlinkedModuleProgramCodeBlock;
 class UnlinkedFunctionExecutable;
 struct LineStarts;
 
@@ -399,6 +400,7 @@ struct PartsOfFunctionCode {
 };
 Vector<uint8_t> scalarsToMakeFunctionCodeFrom(const UnlinkedCodeBlock&);
 UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM&, const PartsOfFunctionCode&);
+UnlinkedModuleProgramCodeBlock* makeModuleCodeFromParts(VM&, const PartsOfFunctionCode&);
 
 // The same for an entry that encodeBuiltinFunction() or BytecodeLinkEncoder::addBuiltinFunction() wrote.
 bool entryIsOfBuiltinFunction(Decoder&);

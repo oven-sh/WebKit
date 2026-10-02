@@ -222,18 +222,13 @@ public:
     {
         if (m_functionMetadataOffsets[index])
             return;
-        if (codeBlock->codeType() != FunctionCode) {
-            // The code of a module. Its UnlinkedCodeBlock is kept, so only the positions are needed.
-            m_functionMetadataOffsets[index] = makePositions(index, codeBlock, 0, lineStarts) | 1;
-            return;
-        }
         using Metadata = FunctionMetadata;
         RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Metadata::shiftOfInstructionsSize)));
         Vector<uint32_t, 16> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Metadata::shiftOfInstructionsSize | (codeBlock->isBuiltinFunction() ? Metadata::isBuiltinFunction : 0) };
         // (A default class constructor gets its own executable in every realm, and has no position in any source.)
-        if (executable) {
+        if (executable || codeBlock->codeType() != FunctionCode) {
             words[0] |= Metadata::ExpressionInfo;
-            words.append(makePositions(index, codeBlock, executable->source().startOffset(), lineStarts));
+            words.append(makePositions(index, codeBlock, executable ? executable->source().startOffset() : 0, lineStarts));
         }
         if (size_t count = codeBlock->numberOfExceptionHandlers()) {
             // (Field by field, into zeros: what goes into the file has no bits that nothing has set.)
@@ -358,7 +353,7 @@ public:
             inTable = name;
         }
         info.sites = safeCast<uint32_t>(std::bit_cast<uintptr_t>(function.sites));
-        info.set(numberOfExecutable == noExecutable ? 0 : numberOfExecutable + 1, kind, false);
+        info.set(numberOfExecutable == noExecutable ? 0 : numberOfExecutable + 1, kind, FunctionCode);
         info.flags = (function.hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveTheirConstants) | (function.startsCold && executable ? FunctionInfo::startsCold : 0) | FunctionInfo::slotsAmongFlags(function.numSlots);
         fillMetadata(function.index, codeBlock, executable, lineStarts);
     }
@@ -367,7 +362,7 @@ public:
     {
         fillInfo(function, codeBlock, nullptr, noExecutable, CodeSpecializationKind::CodeForCall, lineStarts);
         FunctionInfo& info = m_infos[function.index];
-        info.set(numberOfTopLevelCode + 1, CodeSpecializationKind::CodeForCall, true);
+        info.set(numberOfTopLevelCode + 1, CodeSpecializationKind::CodeForCall, codeBlock->codeType());
     }
 
     // Numbers the executables of the functions nested in `codeBlock`, whose source is `source`, recursively.
@@ -701,7 +696,13 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
                 if (auto it = builder.m_executableOfUnlinkedFunction.find(builtinFunction); it != builder.m_executableOfUnlinkedFunction.end())
                     number = it->value + 1;
             }
-            modules.append({ sortedOffsets[i], stampOfBuiltin, lengthOfBuiltin, 0, true, number });
+            ModuleOfProgram module { };
+            module.entryOffset = sortedOffsets[i];
+            module.keyHash = stampOfBuiltin;
+            module.keyLength = lengthOfBuiltin;
+            module.isBuiltinFunction = true;
+            module.number = number;
+            modules.append(module);
             continue;
         }
         UnlinkedCodeBlock* codeBlock = decodeAllForProgramData(decoder.get(), key, functions);
@@ -714,15 +715,37 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         }
         setLineStarts(uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->lineStarts());
         builder.makeExecutables(codeBlock, SourceCode { provider.copyRef(), 0, static_cast<int>(key.length()) }, false, i, lineStarts);
-        uint32_t number = safeCast<uint32_t>(builder.m_topLevelCodes.size());
-        builder.m_topLevelCodes.append(codeBlock);
-        // The top-level code of the module. Its executable is created at run time.
-        if (auto function = image->find(imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
-            builder.fillInfoOfTopLevelCode(*function, codeBlock, number, lineStarts);
+        ModuleOfProgram module { };
+        module.entryOffset = sortedOffsets[i];
+        module.keyHash = key.hash();
+        module.keyLength = static_cast<uint32_t>(key.length());
+        module.keyFlags = key.flagsBits();
+        // Its top-level code. The executable of that is created at run time.
+        auto function = image->find(imageKeyForTopLevelCode(sortedOffsets[i] + 1));
+        auto* ofModule = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock);
+        if (!ofModule) {
+            // (What a script declares, it declares by name.)
+            module.number = safeCast<uint32_t>(builder.m_topLevelCodes.size()) + 1;
+            builder.m_topLevelCodes.append(codeBlock);
+        }
+        if (function)
+            builder.fillInfoOfTopLevelCode(*function, codeBlock, safeCast<uint32_t>(modules.size()), lineStarts);
+        if (function && ofModule) {
+            module.oneMoreThanIndexOfCode = function->index + 1;
+            module.symbolTableOfEnvironment = builder.m_reportableSites[function->index].numbersOfConstants[VirtualRegister(ofModule->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex()];
+            RELEASE_ASSERT(module.symbolTableOfEnvironment != notAConstantOfProgram);
+            module.firstVarScopeOffset = ofModule->firstVarScopeOffset();
+            module.numberOfVarScopeOffsets = ofModule->numberOfVarScopeOffsets();
+            if (auto* slots = ofModule->heapAllocatedFunctionDeclSlots()) {
+                RELEASE_ASSERT(slots->size() == ofModule->numberOfHeapAllocatedFunctionDecls());
+                module.offsetOfFunctionDeclarationSlots = builder.append(slots->offsets().span());
+                module.numberOfFunctionDeclarationSlots = slots->size();
+            } else
+                RELEASE_ASSERT(!ofModule->numberOfHeapAllocatedFunctionDecls());
+            module.features = ofModule->codeFeatures();
+            module.lexicallyScopedFeaturesAndMore = ofModule->lexicallyScopedFeatures() | (ofModule->hasCapturedVariables() ? 1u << 16 : 0);
+        }
         uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->setLineStarts({ });
-        // (Its variables are set to undefined by their offsets: CyclicModuleRecord::initializeEnvironment().)
-        if (auto* ofModule = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock))
-            ofModule->setVariableDeclarations({ });
         DynamicallyResolvedNames lookedUp;
         const Vector<uint32_t>* exported = nullptr;
         for (size_t index = 0; index < variablesExportedByModules.size() && index < entryOffsetsOfModules.size(); ++index) {
@@ -730,7 +753,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
                 exported = &*variablesExportedByModules[index];
         }
         builder.dropUnreferencedVariableNames(codeBlock, lookedUp, exported);
-        modules.append({ sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), false, number + 1 });
+        modules.append(module);
     }
     if (!ok)
         return { };
@@ -936,7 +959,7 @@ Vector<uint32_t> ProgramData::entryOffsetsOfModules() const
 {
     Vector<uint32_t> result;
     for (auto& module : modules()) {
-        if (!module.isBuiltinFunction && module.number)
+        if (!module.isBuiltinFunction && (module.number || module.oneMoreThanIndexOfCode))
             result.append(module.entryOffset);
     }
     return result;
@@ -1052,6 +1075,19 @@ JSValue ProgramOfVM::constant(uint32_t number)
     return value;
 }
 
+JSValue ProgramOfVM::constantForOneUse(uint32_t number)
+{
+    RELEASE_ASSERT(number < m_data.numberOfConstants);
+    DeferGC deferGC(m_vm);
+    ObjectsOfProgramDecoder& decoder = ensureDecoder(m_rest->decoder, m_vm, m_data, strings());
+    // (One that many have is worth keeping.)
+    if (decoder.constantIsSameAs(number))
+        return constant(number);
+    JSValue value = decoder.constant(number);
+    RELEASE_ASSERT(value && (!value.isCell() || !value.isObject()));
+    return value;
+}
+
 void ProgramOfVM::addConstant(uint32_t number, JSValue value)
 {
     auto add = [&](uint32_t key, EncodedJSValue encoded) {
@@ -1135,6 +1171,18 @@ UnlinkedCodeBlock* ProgramOfVM::topLevelCodeFor(const SourceCodeKey& key)
         return nullptr;
     didLoadModule(provider);
     return topLevelCode(module->number - 1);
+}
+
+const ModuleOfProgram* ProgramOfVM::moduleFor(SourceProvider& provider)
+{
+    uint32_t id = provider.aotModuleID();
+    if (!id || !provider.hasNoText())
+        return nullptr;
+    const ModuleOfProgram* module = m_data.moduleWithEntryOffset(id - 1);
+    if (!module || !module->oneMoreThanIndexOfCode)
+        return nullptr;
+    didLoadModule(provider);
+    return module;
 }
 
 void ProgramOfVM::didLoadModule(SourceProvider& provider)

@@ -108,6 +108,16 @@ size_t JSModuleRecord::estimatedSize(JSCell* cell, VM& vm)
 }
 #endif
 
+static bool hasNoCodeBlocks(ModuleProgramExecutable* executable)
+{
+#if ENABLE(AOT)
+    return executable->moduleOfProgram();
+#else
+    UNUSED_PARAM(executable);
+    return false;
+#endif
+}
+
 template<typename Visitor>
 void JSModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -132,15 +142,19 @@ DEFINE_VISIT_CHILDREN(JSModuleRecord);
 
 void JSModuleRecord::setFunctionDeclarationSlots(VM& vm, ModuleProgramExecutable* executable, UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock, bool leftUninstantiated)
 {
+#if ENABLE(AOT)
+    RefPtr slots = unlinkedCodeBlock ? RefPtr { unlinkedCodeBlock->heapAllocatedFunctionDeclSlots() } : executable->functionDeclarationSlotsOfProgram();
+#else
     RefPtr slots = unlinkedCodeBlock->heapAllocatedFunctionDeclSlots();
+#endif
     std::unique_ptr<UninstantiatedFunctionDeclarations> uninstantiated;
     if (leftUninstantiated && slots && slots->size()) {
-        RELEASE_ASSERT(slots->size() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
+        RELEASE_ASSERT(!unlinkedCodeBlock || slots->size() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         uninstantiated = makeUnique<UninstantiatedFunctionDeclarations>();
         uninstantiated->executable.set(vm, this, executable);
         // Code that ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable() lets go of once the module has run is not
         // kept alive from here: its declarations are still in the payload the slots decode from.
-        bool declarationsOutliveTheCodeBlock = (slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex()) || slots->entriesOfProgram();
+        bool declarationsOutliveTheCodeBlock = slots->entriesOfProgram() || (slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex());
         if (!declarationsOutliveTheCodeBlock)
             uninstantiated->unlinkedCodeBlock.set(vm, this, unlinkedCodeBlock);
         uninstantiated->remaining = slots->size();
@@ -661,14 +675,14 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         // releaseUnlinkedCodeIfRecoverable, is adopted and decodes it again. Either way the
         // executable's code is in the mode of its first code, see getUnlinkedCodeBlock, which
         // has to be the one this record would ask for.)
-        if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode()) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
+        if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode() || hasNoCodeBlocks(shared)) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
             && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
             && (!AOT::ProgramData::get() || shared->moduleLoader() == moduleLoader())
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             bool alike = resolvesImportsLike(globalObject, shared);
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (alike) {
-                if (!shared->unlinkedCodeBlock()) {
+                if (!shared->unlinkedCodeBlock() && !hasNoCodeBlocks(shared)) {
                     shared->getUnlinkedCodeBlock(globalObject);
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }

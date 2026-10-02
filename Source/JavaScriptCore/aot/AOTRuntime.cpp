@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTRuntime.h"
+#include "HeapIterationScope.h"
 #include "JSModuleLoader.h"
 #include "CompilerHooks.h"
 
@@ -14,6 +15,9 @@
 #include "ArrayConstructor.h"
 #include "ArrayPrototype.h"
 #include "MapPrototype.h"
+#include "ModuleProgramCodeBlock.h"
+#include "ModuleProgramExecutable.h"
+#include "SamplingProfiler.h"
 #include "SetPrototype.h"
 #include "StringPrototype.h"
 
@@ -47,6 +51,7 @@
 #include "LinkBuffer.h"
 #include "ObjectConstructorInlines.h"
 #include "ThunkGenerators.h"
+#include "UnlinkedModuleProgramCodeBlock.h"
 #include <wtf/TZoneMallocInlines.h>
 
 #if OS(DARWIN)
@@ -458,6 +463,53 @@ ScriptExecutable* Instance::topLevelExecutableOf(uint32_t moduleID)
     return collections->topLevelExecutables.get(moduleID);
 }
 
+uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScope* scope)
+{
+    VM& vm = *this->vm;
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    uint32_t index = executable->moduleOfProgram()->oneMoreThanIndexOfCode - 1;
+    // (It is there already if the module is being resumed after an await, or if another record has run it.)
+    if (Data* data = dataIfExists(index); data && data->executable == executable)
+        return data->code->entry();
+    DeferGCForAWhile deferGC(vm);
+    ImageCode found = findInImage(executable, CodeSpecializationKind::CodeForCall, nullptr, scope);
+    if (!found) {
+        throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and cannot be run the way it has been loaded"_s));
+        return 0;
+    }
+    Ref<JITCode> code = codeOfFunctionFromImage(found, CodeSpecializationKind::CodeForCall);
+    code->setInstance(*this);
+    return Data::create(*this, executable, nullptr, code.get(), nullptr)->code->entry();
+}
+
+void Instance::didFinishWithModuleCode(ModuleProgramExecutable* executable)
+{
+    // The collector looks at it, from its own threads. It does not start doing so behind the back of code that allocates nothing.
+    if (vm->heap.collectionScope())
+        return;
+    Data* data = dataIfExists(executable->moduleOfProgram()->oneMoreThanIndexOfCode - 1);
+    if (!data || data->executable != executable)
+        return;
+#if ENABLE(SAMPLING_PROFILER)
+    // Samples that have not been looked at yet say which code a frame was of by pointing at this.
+    if (SamplingProfiler* profiler = vm->samplingProfiler()) [[unlikely]] {
+        DeferGCForAWhile deferGC(*vm);
+        Locker locker { profiler->getLock() };
+        HeapIterationScope heapIterationScope(vm->heap);
+        profiler->processUnverifiedStackTraces();
+    }
+#endif
+    if (CodeBlock* codeBlock = data->codeBlock)
+        codeBlock->releaseAOTData();
+    else
+        Data::destroy(data);
+}
+
+CodePtr<JSEntryPtrTag> entrypointOfModuleCode()
+{
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterModule)));
+}
+
 void Instance::setTopLevelExecutableOf(uint32_t moduleID, ScriptExecutable* executable)
 {
     RELEASE_ASSERT(moduleID);
@@ -763,16 +815,22 @@ BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
     return locationForReturnAddress(returnAddress).bytecodeIndex;
 }
 
-FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, JSCell* tokenOfInstance)
+FunctionRef FunctionRef::of(VM& vm, ScriptExecutable* ofAnyKind, CodeSpecializationKind kind, JSCell* tokenOfInstance)
 {
+    auto instanceWithToken = [&]() -> Instance* {
+        for (Instance* instance : vm.m_aotInstances) {
+            if (tokenOf(instance) == tokenOfInstance)
+                return instance;
+        }
+        return nullptr;
+    };
+    if (auto* ofModule = dynamicDowncast<ModuleProgramExecutable>(ofAnyKind))
+        return { instanceWithToken(), ofModule->moduleOfProgram()->oneMoreThanIndexOfCode - 1 };
+    auto* executable = uncheckedDowncast<FunctionExecutable>(ofAnyKind);
     if (executable->hasAOTEntry()) {
         if (!executable->aotEntryFor(kind) || executable->aotIndexFor(kind) == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
             return { };
-        for (Instance* instance : vm.m_aotInstances) {
-            if (tokenOf(instance) == tokenOfInstance)
-                return { instance, executable->aotIndexFor(kind) };
-        }
-        return { nullptr, executable->aotIndexFor(kind) };
+        return { instanceWithToken(), executable->aotIndexFor(kind) };
     }
     if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
         return { };
@@ -874,6 +932,8 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromMetadata() const
     // (Nor the identifiers, the constants or the nested functions, which are looked up through functionDecl() and functionExpr().)
     if (const uint32_t* words = metadata->find(FunctionMetadata::Handlers))
         parts.handlers = { programData().at<UnlinkedHandlerInfo>(words[0]), words[1] };
+    if (codeType() == ModuleCode)
+        return makeModuleCodeFromParts(*instance->vm, parts);
     return makeFunctionCodeFromParts(*instance->vm, parts);
 }
 
@@ -898,8 +958,7 @@ const FunctionMetadata* FunctionRef::metadata() const
 {
     const ProgramData& data = programData();
     uint32_t at = data.functionMetadataOffsets()[index];
-    // (For odd values, see reportedPositionFor().)
-    return at && !(at & 1) ? data.at<FunctionMetadata>(at) : nullptr;
+    return at ? data.at<FunctionMetadata>(at) : nullptr;
 }
 
 static uint64_t readVarint(const uint8_t*& at)
@@ -917,9 +976,7 @@ static uint64_t readVarint(const uint8_t*& at)
 auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstruction ofConstruction) const -> std::optional<ReportedPosition>
 {
     const uint8_t* at = nullptr;
-    if (uint32_t word = programData().functionMetadataOffsets()[index]; word & 1)
-        at = programData().at<uint8_t>(word - 1);
-    else if (auto* metadata = this->metadata()) {
+    if (auto* metadata = this->metadata()) {
         if (const uint32_t* where = metadata->find(FunctionMetadata::ExpressionInfo))
             at = programData().at<uint8_t>(*where);
     }
@@ -967,21 +1024,17 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
 
 CodeType FunctionRef::codeType() const
 {
-    return metadata() ? FunctionCode : unlinkedCodeBlockIfExists()->codeType();
+    return info().codeType();
 }
 
 bool FunctionRef::isBuiltinFunction() const
 {
-    if (auto* metadata = this->metadata())
-        return metadata->flagsAndInstructionsSize & FunctionMetadata::isBuiltinFunction;
-    return unlinkedCodeBlockIfExists()->isBuiltinFunction();
+    return metadata()->flagsAndInstructionsSize & FunctionMetadata::isBuiltinFunction;
 }
 
 unsigned FunctionRef::instructionsSize() const
 {
-    if (auto* metadata = this->metadata())
-        return metadata->instructionsSize();
-    return unlinkedCodeBlockIfExists()->instructions().size();
+    return metadata()->instructionsSize();
 }
 
 void* FunctionRef::addressOfCatchEntrypoint(unsigned bytecodeOffset) const
@@ -996,10 +1049,7 @@ void* FunctionRef::addressOfCatchEntrypoint(unsigned bytecodeOffset) const
 
 const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) const
 {
-    auto* metadata = this->metadata();
-    if (!metadata)
-        return unlinkedCodeBlockIfExists()->handlerForIndex(bytecodeOffset, RequiredHandler::AnyHandler);
-    const uint32_t* words = metadata->find(FunctionMetadata::Handlers);
+    const uint32_t* words = metadata()->find(FunctionMetadata::Handlers);
     if (!words)
         return nullptr;
     std::span<const UnlinkedHandlerInfo> handlers { programData().at<UnlinkedHandlerInfo>(words[0]), words[1] };
@@ -1008,18 +1058,12 @@ const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) cons
 
 const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned tableIndex) const
 {
-    auto* metadata = this->metadata();
-    if (!metadata)
-        return unlinkedCodeBlockIfExists()->unlinkedStringSwitchJumpTable(tableIndex);
-    return instance->program->stringSwitchJumpTable(*metadata->find(FunctionMetadata::StringSwitchJumpTables), tableIndex);
+    return instance->program->stringSwitchJumpTable(*metadata()->find(FunctionMetadata::StringSwitchJumpTables), tableIndex);
 }
 
 const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
 {
-    auto* metadata = this->metadata();
-    if (!metadata)
-        return ensureUnlinkedCodeBlock()->constantIdentifierSets()[index];
-    return instance->program->identifierSet(*metadata->find(FunctionMetadata::ConstantIdentifierSets), index);
+    return instance->program->identifierSet(*metadata()->find(FunctionMetadata::ConstantIdentifierSets), index);
 }
 
 BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
@@ -1027,14 +1071,11 @@ BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
     if (state <= 0)
         return BytecodeIndex(0);
     int32_t offset = 0;
-    if (auto* metadata = this->metadata()) {
-        if (const uint32_t* word = metadata->find(FunctionMetadata::ResumePoints)) {
-            const int32_t* table = programData().at<int32_t>(*word);
-            if (state >= table[0] && static_cast<uint32_t>(state - table[0]) < static_cast<uint32_t>(table[1]))
-                offset = table[2 + state - table[0]];
-        }
-    } else if (UnlinkedCodeBlock* codeBlock = unlinkedCodeBlockIfExists(); codeBlock && codeBlock->numberOfUnlinkedSwitchJumpTables())
-        offset = codeBlock->unlinkedSwitchJumpTable(codeBlock->numberOfUnlinkedSwitchJumpTables() - 1).offsetForValue(state);
+    if (const uint32_t* word = metadata()->find(FunctionMetadata::ResumePoints)) {
+        const int32_t* table = programData().at<int32_t>(*word);
+        if (state >= table[0] && static_cast<uint32_t>(state - table[0]) < static_cast<uint32_t>(table[1]))
+            offset = table[2 + state - table[0]];
+    }
     return BytecodeIndex(std::max(offset, 0));
 }
 
@@ -1093,13 +1134,16 @@ CodeBlock* Data::ensureCodeBlock()
     VM& vm = *instance->vm;
     if (!unlinkedCodeBlock)
         function().ensureUnlinkedCodeBlock();
-    RELEASE_ASSERT(unlinkedCodeBlock->codeType() == FunctionCode);
     DeferGCForAWhile deferGC(vm);
     // The caller may be handling an exception, so this must not observe a pending termination request.
     DeferTerminationForAWhile deferTermination(vm);
     SuspendExceptionScope suspendExceptions(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    FunctionCodeBlock* result = FunctionCodeBlock::create(vm, uncheckedDowncast<FunctionExecutable>(executable), uncheckedDowncast<UnlinkedFunctionCodeBlock>(unlinkedCodeBlock), instance->globalObject, CodeBlock::LinkMode::ForCodeFromImage);
+    CodeBlock* result;
+    if (auto* ofModule = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(unlinkedCodeBlock))
+        result = ModuleProgramCodeBlock::create(vm, uncheckedDowncast<ModuleProgramExecutable>(executable), ofModule, instance->globalObject, CodeBlock::LinkMode::ForCodeFromImage);
+    else
+        result = FunctionCodeBlock::create(vm, uncheckedDowncast<FunctionExecutable>(executable), uncheckedDowncast<UnlinkedFunctionCodeBlock>(unlinkedCodeBlock), instance->globalObject, CodeBlock::LinkMode::ForCodeFromImage);
     scope.releaseAssertNoException();
     RELEASE_ASSERT(result);
     result->adoptAOTCode(*code, this);
@@ -1117,10 +1161,7 @@ LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
     RELEASE_ASSERT(bytecodeIndex.offset() < instructionsSize());
     SourceProvider& provider = *executable->sourceProvider();
     unsigned sourceOffset = executable->source().startOffset();
-    LineColumn inText = provider.lineColumnInTextForOffset(sourceOffset);
-    if (!metadata())
-        inText = unlinkedCodeBlockIfExists()->lineColumnInTextForBytecodeIndex(bytecodeIndex, provider, sourceOffset);
-    return provider.documentLineColumn(inText);
+    return provider.documentLineColumn(provider.lineColumnInTextForOffset(sourceOffset));
 }
 
 // entry: see FunctionMetadata::executableInList().
@@ -1146,35 +1187,26 @@ static FunctionExecutable* functionOf(Data& data, unsigned index, uint32_t entry
 
 FunctionExecutable* Data::functionDecl(unsigned index)
 {
-    // A module's code shares its nested functions with the other tiers that run it.
-    if (function().codeType() != FunctionCode)
-        return codeBlock->functionDecl(index);
     return functionOf(*this, index, functionsIn(*function().metadata(), FunctionMetadata::FunctionDecls)[index]);
 }
 
 FunctionExecutable* Data::functionExpr(unsigned index)
 {
-    if (function().codeType() != FunctionCode)
-        return codeBlock->functionExpr(index);
     const FunctionMetadata& metadata = *function().metadata();
     return functionOf(*this, functionsIn(metadata, FunctionMetadata::FunctionDecls).size() + index, functionsIn(metadata, FunctionMetadata::FunctionExprs)[index]);
 }
 
 FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
 {
-    if (auto* metadata = this->metadata()) {
-        if (uint32_t entry = functionsIn(*metadata, FunctionMetadata::FunctionDecls)[index]; !(entry & 1))
-            return instance->program->executable((entry >> 1) - 1);
-    }
+    if (uint32_t entry = functionsIn(*metadata(), FunctionMetadata::FunctionDecls)[index]; !(entry & 1))
+        return instance->program->executable((entry >> 1) - 1);
     return ensureData()->functionDecl(index);
 }
 
 FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
 {
-    if (auto* metadata = this->metadata()) {
-        if (uint32_t entry = functionsIn(*metadata, FunctionMetadata::FunctionExprs)[index]; !(entry & 1))
-            return instance->program->executable((entry >> 1) - 1);
-    }
+    if (uint32_t entry = functionsIn(*metadata(), FunctionMetadata::FunctionExprs)[index]; !(entry & 1))
+        return instance->program->executable((entry >> 1) - 1);
     return ensureData()->functionExpr(index);
 }
 

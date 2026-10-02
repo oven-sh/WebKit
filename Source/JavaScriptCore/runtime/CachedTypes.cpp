@@ -4713,8 +4713,6 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
     decodeOwnMembers(decoder, *codeBlock);
-    if (tail.layout.flags & LayoutIsWithoutCode)
-        codeBlock->m_heapAllocatedFunctionDeclSlots->setEntriesOfProgram(at<uint32_t>(tail.layout, tail.layout.functionDecls));
     if (numberOfFunctionDeclsToLeaveInPayload(decoder, tail))
         codeBlock->m_heapAllocatedFunctionDeclSlots->setDecodeSource(Ref { decoder }, at<CachedWriteBarrier<CachedFunctionExecutable>>(tail.layout, tail.layout.functionDecls));
     return codeBlock;
@@ -5350,7 +5348,11 @@ CodeBlockType* CachedCodeBlock<CodeBlockType>::makeFromParts(VM& vm, const Parts
     ExecutableInfo info(s.isConstructor, static_cast<PrivateBrandRequirement>(bits >> 1 & 1), s.isBuiltinFunction, static_cast<ConstructorKind>(s.constructorKind), static_cast<JSParserScriptMode>(s.scriptMode),
         static_cast<SuperBinding>(s.superBinding), s.parseMode, static_cast<DerivedContextType>(s.derivedContextType), static_cast<NeedsClassFieldInitializer>(bits & 1), s.isArrowFunctionContext, s.isClassContext,
         static_cast<EvalContextType>(s.evalContextType));
-    CodeBlockType* result = CodeBlockType::create(vm, static_cast<CodeType>(s.codeType), info, s.codeGenerationMode);
+    CodeBlockType* result;
+    if constexpr (std::is_same_v<CodeBlockType, UnlinkedModuleProgramCodeBlock>)
+        result = CodeBlockType::create(vm, info, s.codeGenerationMode);
+    else
+        result = CodeBlockType::create(vm, static_cast<CodeType>(s.codeType), info, s.codeGenerationMode);
     UnlinkedCodeBlock& codeBlock = *result;
     codeBlock.m_thisRegister = s.thisRegister;
     codeBlock.m_scopeRegister = s.scopeRegister;
@@ -7498,6 +7500,11 @@ Vector<uint8_t> scalarsToMakeFunctionCodeFrom(const UnlinkedCodeBlock& codeBlock
 UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM& vm, const PartsOfFunctionCode& parts)
 {
     return CachedCodeBlock<UnlinkedFunctionCodeBlock>::makeFromParts(vm, parts);
+}
+
+UnlinkedModuleProgramCodeBlock* makeModuleCodeFromParts(VM& vm, const PartsOfFunctionCode& parts)
+{
+    return CachedCodeBlock<UnlinkedModuleProgramCodeBlock>::makeFromParts(vm, parts);
 }
 
 std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo)

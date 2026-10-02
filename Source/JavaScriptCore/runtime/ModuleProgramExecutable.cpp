@@ -95,16 +95,14 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 
     // After releaseUnlinkedCodeIfRecoverable() this has to be the very same code again, decoded from the same payload:
     // the module's environment and the symbol table kept for it were made for that code's layout.
-    if (m_hasReleasedUnlinkedCode && !unlinkedModuleProgramCode->cachedPayloadIndex() && !unlinkedModuleProgramCode->isWithoutCode()) [[unlikely]] {
+    if (m_hasReleasedUnlinkedCode && !unlinkedModuleProgramCode->cachedPayloadIndex()) [[unlikely]] {
         throwVMError(globalObject, throwScope, createError(globalObject, "The module's code is no longer available from its bytecode cache"_s));
         return nullptr;
     }
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
 #if ENABLE(AOT)
-    if (m_moduleLoader && unlinkedModuleProgramCode->isWithoutCode())
-        AOT::Instance::ensure(m_moduleLoader.get()).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
-    else if (Options::verboseAOTCompilation() && AOT::ProgramData::get()) [[unlikely]]
+    if (Options::verboseAOTCompilation() && AOT::ProgramData::get()) [[unlikely]]
         dataLogLn("AOT: ", source().provider()->sourceURL(), " was not compiled ahead of time");
 #endif
     // The symbol table and the function declarations' executables are made once and stay for as long as the executable
@@ -133,6 +131,31 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     ASSERT(m_functionDeclarations.size() == unlinkedModuleProgramCode->numberOfFunctionDecls());
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 }
+
+#if ENABLE(AOT)
+bool ModuleProgramExecutable::useProgramData(VM& vm)
+{
+    auto* program = AOT::ProgramOfVM::of(vm);
+    const AOT::ModuleOfProgram* module = program && m_moduleLoader ? program->moduleFor(*source().provider()) : nullptr;
+    if (!module)
+        return false;
+    m_moduleOfProgram = module;
+    m_moduleEnvironmentSymbolTable.set(vm, this, uncheckedDowncast<SymbolTable>(program->constant(module->symbolTableOfEnvironment).asCell()));
+    recordParse(static_cast<CodeFeatures>(module->features), static_cast<LexicallyScopedFeatures>(module->lexicallyScopedFeaturesAndMore & 0xffff), module->lexicallyScopedFeaturesAndMore >> 16);
+    AOT::Instance::ensure(m_moduleLoader.get()).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
+    return true;
+}
+
+RefPtr<ModuleFunctionDeclarationSlots> ModuleProgramExecutable::functionDeclarationSlotsOfProgram() const
+{
+    if (!m_moduleOfProgram->numberOfFunctionDeclarationSlots)
+        return nullptr;
+    const AOT::ProgramData& data = *AOT::ProgramData::get();
+    const uint32_t* list = AOT::FunctionRef { nullptr, m_moduleOfProgram->oneMoreThanIndexOfCode - 1 }.metadata()->find(AOT::FunctionMetadata::FunctionDecls);
+    RELEASE_ASSERT(list && list[1] >= m_moduleOfProgram->numberOfFunctionDeclarationSlots);
+    return ModuleFunctionDeclarationSlots::createOfProgram({ data.at<uint32_t>(m_moduleOfProgram->offsetOfFunctionDeclarationSlots), m_moduleOfProgram->numberOfFunctionDeclarationSlots }, data.at<uint32_t>(list[0]));
+}
+#endif
 
 JSModuleRecord* ModuleProgramExecutable::linker() const
 {
@@ -192,6 +215,10 @@ ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* glob
 
     ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables);
     executable->finishCreation(vm);
+#if ENABLE(AOT)
+    if (executable->useProgramData(vm))
+        return executable;
+#endif
     executable->getUnlinkedCodeBlock(globalObject); // This generates and binds unlinked code block. Null: it has thrown.
     RETURN_IF_EXCEPTION(scope, nullptr);
     return executable;
@@ -223,12 +250,14 @@ void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
     // executables (and so their CodeBlocks and JIT code) only as long as the linked code they belong to does.
     if (m_isShared)
         return;
+#if ENABLE(AOT)
+    if (m_moduleOfProgram) {
+        AOT::Instance::ensure(m_moduleLoader.get()).didFinishWithModuleCode(this);
+        return;
+    }
+#endif
     if (!Options::useRunOnceCodeRelease() || !canReleaseLinkedCodeNow(vm))
         return;
-#if ENABLE(AOT)
-    if (CodeBlock* codeBlock = this->codeBlock())
-        codeBlock->releaseAOTData();
-#endif
     clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()), ClearCode::KeepWhatNeedsParsing);
 }
 
@@ -237,15 +266,7 @@ void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
     // The environment's symbol table stays: environments already made from it and any code linked later must agree on
     // the one table.
     UnlinkedModuleProgramCodeBlock* unlinkedCode = unlinkedCodeBlock();
-    if (!hasFinishedEvaluation() || !unlinkedCode)
-        return;
-    // (Of a program that was compiled ahead of time: it can be made of the program's data again.)
-    if (unlinkedCode->isWithoutCode()) {
-        m_hasReleasedUnlinkedCode = true;
-        m_unlinkedCodeBlock.clear();
-        return;
-    }
-    if (!unlinkedCode->cachedPayloadIndex())
+    if (!hasFinishedEvaluation() || !unlinkedCode || !unlinkedCode->cachedPayloadIndex())
         return;
     vm.codeCache()->forgetUnlinkedModuleProgramCodeBlock(this, source(), unlinkedCode);
     m_hasReleasedUnlinkedCode = true;

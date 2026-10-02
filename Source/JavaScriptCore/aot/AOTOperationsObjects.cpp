@@ -1300,6 +1300,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineDataProperty, void, (Instance* instan
     OPERATION_RETURN(scope);
 }
 
+// In code that runs once. What a class definition defines members on (its prototype, and the class itself) is one of a kind, so a
+// Structure for each member, each kept by the next, would be of use to nothing. It gets a Structure of its own, which the members are
+// added to. Whatever first caches a property of it makes that an ordinary Structure (Structure::flattenDictionaryStructure()).
+JSC_DEFINE_JIT_OPERATION(operationAOTDefineDataPropertyOfOneOfAKind, void, (Instance* instance, JSObject* base, EncodedJSValue property, EncodedJSValue value, int32_t attributes))
+{
+    AOT_OPERATION_BEGIN(instance);
+    auto key = JSValue::decode(property).toPropertyKey(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (Structure* structure = base->structure(); base->type() == FinalObjectType && !structure->isDictionary() && !structure->hasBeenFlattenedBefore())
+        base->convertToDictionary(vm);
+    PropertyDescriptor descriptor = toPropertyDescriptor(JSValue::decode(value), jsUndefined(), jsUndefined(), DefinePropertyAttributes(attributes));
+    base->methodTable()->defineOwnProperty(base, globalObject, key, descriptor, true);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineAccessorProperty, void, (Instance* instance, JSObject* base, EncodedJSValue property, EncodedJSValue getter, EncodedJSValue setter, int32_t attributes))
 {
     AOT_OPERATION_BEGIN(instance);

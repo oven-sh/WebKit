@@ -126,6 +126,8 @@ private:
     LValue lowConstantRegister(VirtualRegister reg) { return lowConstantRegister(code(), reg); } // For an operand that BytecodeUseDef does not report as a use.
     LValue lowConstantRegister(Graph&, VirtualRegister);
     LValue constantThroughStub(uint32_t number, Stub);
+    // What is being lowered is in a module's own code, and not in a loop.
+    bool runsOnce() const { return m_graph.codeBlock()->codeType() == ModuleCode && !m_block->isInLoop; }
     uint32_t numberOfConstantOfProgram(Node*); // Of a NodeKind::ConstantCell.
     // The graph that the node being lowered came from (Node::graph), which differs from m_graph for inlined code. Output always
     // goes to m_graph.

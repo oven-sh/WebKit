@@ -2448,7 +2448,16 @@ static void adapt(CCallHelpers& jit, GPRReg word, GPRReg instance)
     jit.ret();
 }
 
-// Program or module code, which is entered with a CodeBlock in the frame, like an interpreter frame.
+// A module's code, which has no CodeBlock. See entrypointOfModuleCode().
+static void generateEnterModule(CCallHelpers& jit)
+{
+    constexpr ptrdiff_t afterArguments = static_cast<ptrdiff_t>(AbstractModuleRecord::Argument::NumberOfArguments) * sizeof(Register);
+    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::firstArgument, afterArguments), T12);
+    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::firstArgument, afterArguments + sizeof(Register)), T11);
+    adapt(jit, T11, T12);
+}
+
+// A script's code, which is entered with a CodeBlock in the frame, like an interpreter frame.
 static void generateEnter(CCallHelpers& jit)
 {
     jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::codeBlock), T11);
@@ -2785,6 +2794,14 @@ static void generateConstant(CCallHelpers& jit)
 static void generateTemplateObject(CCallHelpers& jit)
 {
     callPreservingRegistersAndReturn(jit, Entry::operationAOTTemplateObject, true, [&] {
+        jit.move(T9, A1);
+        jit.move(T10, A0);
+    });
+}
+
+static void generateConstantForOneUse(CCallHelpers& jit)
+{
+    callPreservingRegistersAndReturn(jit, Entry::operationAOTConstantForOneUse, true, [&] {
         jit.move(T9, A1);
         jit.move(T10, A0);
     });
