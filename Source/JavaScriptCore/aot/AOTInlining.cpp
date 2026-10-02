@@ -103,7 +103,9 @@ public:
 
     static bool canBeInlinedIntoCaller(UnlinkedCodeBlock* callee)
     {
-        if (callee->codeType() != FunctionCode || callee->isConstructor() || callee->numberOfExceptionHandlers())
+        if (callee->codeType() != FunctionCode || callee->numberOfExceptionHandlers())
+            return false;
+        if (callee->isConstructor() && callee->constructorKind() == ConstructorKind::Extends)
             return false;
         if (callee->parseMode() != SourceParseMode::NormalFunctionMode && callee->parseMode() != SourceParseMode::ArrowFunctionMode && callee->parseMode() != SourceParseMode::MethodMode)
             return false;
@@ -181,15 +183,25 @@ private:
             argv = bytecode.m_argv;
             break;
         }
+        case op_construct: {
+            auto bytecode = call->as<OpConstruct>();
+            calleeRegister = bytecode.m_callee;
+            argc = bytecode.m_argc;
+            argv = bytecode.m_argv;
+            break;
+        }
         default:
             return false;
         }
 
+        bool isConstruct = call->opcode == op_construct;
+        bool checksCalleeIsInitialized = false;
         Graph& caller = *call->graph;
         Node* calleeNode = resolve(call->use(calleeRegister));
         UnlinkedFunctionCodeBlock* callee = nullptr;
         UnlinkedFunctionExecutable* calleeExecutable = nullptr;
         Node* closureScope = nullptr;
+        Node* closureFunction = nullptr;
         unsigned guardedIntrinsic = 0;
         bool calleeIsProvenIntrinsic = false;
         bool isArraySpecialization = false;
@@ -197,7 +209,18 @@ private:
             dataLogLnIf(Options::verboseAOTCompilation(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
             return false;
         };
-        if (calleeNode->isBytecode(op_new_func_exp)) {
+        if (isConstruct) {
+            bool isExact = false;
+            const KnownFunction* known = caller.knownCallee(call, &isExact);
+            if (!known || !isExact || !known->forConstruct || !calleeNode->isBytecode(op_get_from_scope) || m_graph.codeBlock()->codeType() != FunctionCode)
+                return false;
+            if (resolve(call->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset()))) != calleeNode)
+                return false;
+            callee = known->forConstruct;
+            calleeExecutable = known->executable;
+            closureFunction = calleeNode;
+            checksCalleeIsInitialized = !known->isDeclaration;
+        } else if (calleeNode->isBytecode(op_new_func_exp)) {
             auto bytecode = calleeNode->as<OpNewFuncExp>();
             calleeExecutable = calleeNode->graph->codeBlock()->functionExpr(bytecode.m_functionDecl);
             callee = calleeExecutable->codeBlockIfExists(CodeSpecializationKind::CodeForCall);
@@ -219,8 +242,13 @@ private:
         } else {
             bool isExact = false;
             const KnownFunction* known = caller.knownCallee(call, &isExact);
-            if (!known || !isExact || !known->forCall || !(known->isDeclaration || Graph::closedMethodReadBy(calleeNode)) || !caller.passesNoFunctionObject(call))
+            if (!known || !isExact || !known->forCall || !(known->isDeclaration || Graph::closedMethodReadBy(calleeNode)))
                 return false;
+            if (!caller.passesNoFunctionObject(call)) {
+                if (!Graph::closedMethodReadBy(calleeNode))
+                    return false;
+                closureFunction = calleeNode;
+            }
             callee = known->forCall;
             calleeExecutable = known->executable;
         }
@@ -249,7 +277,7 @@ private:
         inlinee->setLinkage(about->linkage, declaredNamesFor(callee));
         inlinee->loopSplittingIsDisabled = !!guardedIntrinsic || m_graph.loopSplittingIsDisabled;
         inlinee->isInlinedBuiltin = !!guardedIntrinsic;
-        if (!closureScope && !guardedIntrinsic && (inlinee->needsFunctionObject() || !inlinee->scopeIsModuleEnvironment()))
+        if (!closureScope && !closureFunction && !guardedIntrinsic && (inlinee->needsFunctionObject() || !inlinee->scopeIsModuleEnvironment()))
             return false;
         if (!parseBytecode(*inlinee) || !inlinee->catchEntrypoints.isEmpty() || inlinee->hasFrameRegisters())
             return guardedIntrinsic ? declineToInline("its bytecode is not parsed, or it catches, or it has registers with homes"_s) : false;
@@ -277,7 +305,7 @@ private:
 
         dataLogLnIf(Options::verboseAOTCompilation() && guardedIntrinsic, "AOT: a builtin is made part of its caller at bc#", call->bytecodeIndex.offset());
         if (calleeExecutable)
-            m_graph.remark(closureScope ? "inlined-closure"_s : "inlined-call"_s, calleeExecutable->ecmaName().string());
+            m_graph.remark(isConstruct ? "inlined-construct"_s : closureScope ? "inlined-closure"_s : "inlined-call"_s, calleeExecutable->ecmaName().string());
         else
             m_graph.remark("inlined-builtin"_s);
         m_didInline = true;
@@ -372,6 +400,15 @@ private:
             });
         }
 
+        if (closureFunction) {
+            inlinee->closureFunction = closureFunction;
+            for (BasicBlock* inlineeBlock : inlinee->m_rpo) {
+                for (Node* node : inlineeBlock->nodes) {
+                    if (node->isBytecode(op_get_scope))
+                        node->uses.append({ VirtualRegister(), closureFunction });
+                }
+            }
+        }
         if (closureScope) {
             inlinee->closureScope = closureScope;
             for (BasicBlock* inlineeBlock : inlinee->m_rpo) {
@@ -411,16 +448,16 @@ private:
         block->successors.append(entry);
         entry->predecessors.append(block);
         Node* fallbackCall = nullptr;
-        if (guardedIntrinsic && !calleeIsProvenIntrinsic) {
+        if ((guardedIntrinsic && !calleeIsProvenIntrinsic) || checksCalleeIsInitialized) {
             Node* guard = m_graph.addNode(NodeKind::Guard);
             guard->graph = block->graph;
-            guard->guardKind = isArraySpecialization ? GuardKind::IsArrayIntrinsic : GuardKind::IsIntrinsic;
+            guard->guardKind = checksCalleeIsInitialized ? GuardKind::KnownCallee : isArraySpecialization ? GuardKind::IsArrayIntrinsic : GuardKind::IsIntrinsic;
             guard->intrinsic = guardedIntrinsic;
             guard->opcode = call->opcode;
             guard->instruction = call->instruction;
             guard->bytecodeIndex = call->bytecodeIndex;
             guard->block = block;
-            guard->uses.append({ VirtualRegister(), calleeNode });
+            guard->uses.append({ checksCalleeIsInitialized ? calleeRegister : VirtualRegister(), calleeNode });
             if (isArraySpecialization)
                 guard->uses.append({ VirtualRegister(), call->use(VirtualRegister(firstArgument)) });
             block->nodes.append(guard);

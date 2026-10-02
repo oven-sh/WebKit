@@ -357,6 +357,7 @@ public:
     void computeBlockOrder();
     const ModuleLinkage* linkage() const { return m_linkage; }
     Node* closureScope { nullptr };
+    Node* closureFunction { nullptr };
     bool isInTailPosition { true };
     bool loopSplittingIsDisabled { false };
     Vector<UnlinkedFunctionExecutable*> functionsCreated;

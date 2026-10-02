@@ -634,9 +634,12 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
             proven = true;
         }
     }
-    if ((!known || !proven) && node->opcode != op_construct) {
+    if (!known || !proven) {
         VirtualRegister calleeRegister;
         switch (node->opcode) {
+        case op_construct:
+            calleeRegister = node->as<OpConstruct>().m_callee;
+            break;
         case op_call:
             calleeRegister = node->as<OpCall>().m_callee;
             break;
@@ -650,8 +653,13 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
             break;
         }
         if (calleeRegister.isValid() && programFunctions()) {
-            Type type = node->use(calleeRegister)->type;
-            if (const KnownFunction* function = mayBe(type, TOtherObject) ? nullptr : programFunctions()->function(functionNumberOf(type)); function && function->forCall) {
+            Node* callee = node->use(calleeRegister);
+            Type type = callee->type;
+            if (callee->isBytecode(op_get_from_scope) && m_variableSummaries) {
+                if (Variable variable = const_cast<Graph*>(this)->variableAccessedBy(callee))
+                    type = m_variableSummaries->read(variable, callee->graph->codeBlock()->identifier(callee->as<OpGetFromScope>().m_var).impl(), summaryReader());
+            }
+            if (const KnownFunction* function = mayBe(type, TOtherObject) ? nullptr : programFunctions()->function(functionNumberOf(type)); function && (node->opcode == op_construct ? function->forConstruct && !function->executable->isBuiltinDefaultClassConstructor() : !!function->forCall)) {
                 known = function;
                 proven = true;
             }

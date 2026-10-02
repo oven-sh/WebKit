@@ -667,6 +667,11 @@ bool Lowering::tryLowerMisc(Node* node)
             setJSValue(node, lowJSValue(scope));
             return true;
         }
+        if (Node* function = code().closureFunction) {
+            if (node->useCount)
+                setJSValue(node, m_out.loadPtr(lowCell(function), m_heaps.JSCallee_scope));
+            return true;
+        }
         if (code().scopeIsModuleEnvironment()) {
             if (node->useCount)
                 setJSValue(node, environmentAt(code().moduleEnvironmentDepth()));
