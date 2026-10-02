@@ -108,6 +108,29 @@ for (let [name, source] of Object.entries(operations)) {
         shouldBe(site(objects[i & 3], "!"), "abc!");
 }
 
+// The object comes from an inlined function of another realm: it is that realm's String.prototype that counts, which the site, in this
+// realm, does not watch. Such an object, immutable properties or not, is not taken for one of this realm's.
+for (let change of [object => object, object => $vm.makePropertiesImmutable(object)]) {
+    let other = $vm.createGlobalObject();
+    change(new other.String("abc"));
+    let object = change(new other.String("abc"));
+    let fresh = other.Function("return new String('abc'); // site " + ++sites);
+    let existing = other.Function("object", "return object; // site " + ++sites);
+    let addFresh = new Function("make", "suffix", "return make() + suffix; // site " + ++sites);
+    let addExisting = new Function("make", "object", "suffix", "return make(object) + suffix; // site " + ++sites);
+    noInline(addFresh);
+    noInline(addExisting);
+    for (let i = 0; i < hot; ++i) {
+        shouldBe(addFresh(fresh, "!"), "abc!");
+        shouldBe(addExisting(existing, object, "!"), "abc!");
+    }
+    other.String.prototype.valueOf = other.Function("return 'replaced';");
+    for (let i = 0; i < hot; ++i) {
+        shouldBe(addFresh(fresh, "!"), "replaced!");
+        shouldBe(addExisting(existing, object, "!"), "replaced!");
+    }
+}
+
 // A change to String.prototype reaches such an object, hot, as it reaches any other.
 {
     let site = makeSite("object + suffix");

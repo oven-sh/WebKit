@@ -4004,7 +4004,9 @@ private:
     {
         RELEASE_ASSERT(useKind == StringObjectUse || useKind == StringOrStringObjectUse);
 
-        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+        // The realm of the conversion, whose String.prototype canOptimizeStringObjectAccess() has the caller watch. (The node may come
+        // from an inlined function of another realm, whose String.prototype nobody here watches.)
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(origin.semantic);
         StructureSet set;
         set.add(globalObject->stringObjectStructure());
         // A StringObject with that structure whose properties were made immutable has no more properties of its own, and the same
