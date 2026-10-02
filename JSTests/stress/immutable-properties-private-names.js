@@ -90,7 +90,7 @@ class PublicFieldStamper extends ReturnsArgument {
 
 // A public field is CreateDataPropertyOrThrow, which is [[DefineOwnProperty]]: through a constructor that returns its argument it
 // succeeds when it changes nothing, whatever cell or number representation the equal value arrives in, and throws otherwise. The
-// same holds for an index key, for packed elements and for the others, and it agrees with Object.defineProperty().
+// same holds for an index key, for a copy-on-write array and for the others, and it agrees with Object.defineProperty().
 {
     function outcome(func) {
         try {
@@ -102,8 +102,8 @@ class PublicFieldStamper extends ReturnsArgument {
     }
     let suffix = "b", ten = 10n, quarter = 0.25;
     let make = () => ({ text: "ab", number: 1, half: 2.5, big: 10n ** 30n, zero: 0, nan: NaN, symbol: Symbol.for("s"), object: Object.prototype });
-    let packed = () => { let a = []; for (let i = 0; i < 4; ++i) a.push(i + 0.5); return a; };
-    let holey = () => { let a = packed(); a[9] = 9.5; return a; };
+    let withoutHoles = () => { let a = []; for (let i = 0; i < 4; ++i) a.push(i + 0.5); return a; };
+    let holey = () => { let a = withoutHoles(); a[9] = 9.5; return a; };
     let target;
     class Base { constructor() { return target; } }
     let unchanged = {
@@ -135,7 +135,7 @@ class PublicFieldStamper extends ReturnsArgument {
     shouldBe(outcome(() => Object.defineProperty(target, "big", { value: ten ** 30n })), "ok");
     shouldBe(outcome(() => Object.defineProperty(target, "zero", { value: -0 })), "TypeError");
     // Index keys.
-    for (let makeArray of [packed, holey]) {
+    for (let makeArray of [withoutHoles, holey]) {
         class SameElement extends Base { 1 = quarter * 6; }
         class OtherElement extends Base { 1 = 7; }
         class NewElement extends Base { 20 = 7; }

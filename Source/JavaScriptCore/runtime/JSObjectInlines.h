@@ -201,8 +201,8 @@ ALWAYS_INLINE bool JSObject::canPerformFastPutInlineExcludingProto()
     JSObject* obj = this;
     while (true) {
         Structure* structure = obj->structure();
-        bool sendsPutOffTheFastPath = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrHasImmutableProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
-        if (sendsPutOffTheFastPath || structure->typeInfo().overridesGetPrototype())
+        bool mayInterceptPut = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+        if (mayInterceptPut || structure->typeInfo().overridesGetPrototype())
             return false;
         if (obj != this && structure->typeInfo().overridesPut())
             return false;
@@ -378,7 +378,7 @@ inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyNa
     ASSERT(!value.isCustomGetterSetter());
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
-    if (structure->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
+    if (structure->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         return;
     PropertyOffset offset = prepareToPutDirectWithoutTransition(vm, propertyName, attributes, structureID, structure);
     putDirectOffset(vm, offset, value);
@@ -505,9 +505,9 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
-    // Refused, unless the engine is materializing a property the object logically already has (AllowLazyPropertyMaterialization).
+    // Refused, unless the engine is materializing a property the object logically already has (AllowLazyMaterializationOfImmutableProperties).
     if (structure->hasImmutableProperties()) [[unlikely]] {
-        if (mode == PutModePut || !vm.allowLazyPropertyMaterializationCount)
+        if (mode == PutModePut || !vm.allowLazyMaterializationOfImmutablePropertiesCount)
             return ReadonlyPropertyChangeError;
     }
     if (structure->isDictionary()) {
@@ -1647,7 +1647,7 @@ inline void JSObject::ensureWritable(VM& vm)
         convertFromCopyOnWrite(vm);
 }
 
-inline bool JSObject::tryEnsureWritable(VM& vm)
+inline bool JSObject::tryMakeWritable(VM& vm)
 {
     if (isCopyOnWrite(indexingMode())) {
         if (structure()->hasImmutableProperties()) [[unlikely]]

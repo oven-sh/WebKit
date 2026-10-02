@@ -73,7 +73,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSObjectWithButterfly);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
-const ASCIILiteral ImmutableObjectPropertyDefineError { "Attempting to define property on object with immutable properties."_s };
+const ASCIILiteral ImmutablePropertyDefineError { "Attempting to define property on object with immutable properties."_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
@@ -2109,8 +2109,8 @@ ArrayStorage* JSObject::ensureArrayStorageExistsAndEnterDictionaryIndexingMode(V
 void JSObject::switchToSlowPutArrayStorage(VM& vm)
 {
     // Slow-put storage makes a store into a hole consult the prototype chain. Nothing is stored into an array with immutable
-    // properties, and its packed elements stay readable in place.
-    if (!tryEnsureWritable(vm)) [[unlikely]]
+    // properties, and its copy-on-write elements stay readable in place.
+    if (!tryMakeWritable(vm)) [[unlikely]]
         return;
 
     switch (indexingType()) {
@@ -2335,7 +2335,7 @@ void JSObject::putDirectCustomGetterSetterWithoutTransition(VM& vm, PropertyName
     ASSERT(value.isCustomGetterSetter());
     ASSERT(attributes & PropertyAttribute::CustomAccessorOrValue);
     // (No result to give: the caller is initializing an object it takes to be new, and the property is not put.)
-    if (structure()->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         return;
 
     StructureID structureID = this->structureID();
@@ -2369,7 +2369,7 @@ void JSObject::putDirectNonIndexAccessorWithoutTransition(VM& vm, PropertyName p
 {
     ASSERT(attributes & PropertyAttribute::Accessor);
     // (As above.)
-    if (structure()->hasImmutableProperties() && !vm.allowLazyPropertyMaterializationCount) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         return;
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
@@ -3005,13 +3005,18 @@ static bool canMakePropertiesImmutable(JSObject* object)
 {
     // Not DirectArguments or ScopedArguments: a mapped element is a view of the function's parameter variable, which the function
     // can still assign.
-    const MethodTable* table = object->methodTable();
-    for (const ClassInfo* listed : { JSObject::info(), JSArray::info(), JSFunction::info(), ErrorInstance::info(), RegExpObject::info(), StringObject::info(), ClonedArguments::info(), JSGlobalObject::info() }) {
-        // The object's write hooks have to be the listed class's own: nothing is known about a hook a subclass brings.
-        const MethodTable& own = listed->methodTable;
-        if (object->inherits(listed) && table->put == own.put && table->putByIndex == own.putByIndex && table->deleteProperty == own.deleteProperty
-            && table->deletePropertyByIndex == own.deletePropertyByIndex && table->defineOwnProperty == own.defineOwnProperty
-            && table->setPrototype == own.setPrototype && table->preventExtensions == own.preventExtensions)
+    const MethodTable* methodTable = object->methodTable();
+    for (const ClassInfo* classInfo : { JSObject::info(), JSArray::info(), JSFunction::info(), ErrorInstance::info(), RegExpObject::info(), StringObject::info(), ClonedArguments::info(), JSGlobalObject::info() }) {
+        // The object's write hooks have to be this class's own: nothing is known about a hook a subclass brings.
+        const MethodTable& classMethodTable = classInfo->methodTable;
+        if (object->inherits(classInfo)
+            && methodTable->put == classMethodTable.put
+            && methodTable->putByIndex == classMethodTable.putByIndex
+            && methodTable->deleteProperty == classMethodTable.deleteProperty
+            && methodTable->deletePropertyByIndex == classMethodTable.deletePropertyByIndex
+            && methodTable->defineOwnProperty == classMethodTable.defineOwnProperty
+            && methodTable->setPrototype == classMethodTable.setPrototype
+            && methodTable->preventExtensions == classMethodTable.preventExtensions)
             return true;
     }
     return false;
@@ -3026,7 +3031,7 @@ bool JSObject::hasImmutableProperties() const
 
 // Copy-on-write storage is the one kind every tier reads in place and no tier stores into in place. It is a cell of its own with
 // room for elements only, and its users expect no holes. Null: this object's elements cannot go there.
-static JSCellButterfly* tryCopyElementsToCopyOnWriteStorage(VM& vm, JSObject* object)
+static JSCellButterfly* tryCreateCopyOnWriteButterfly(VM& vm, JSObject* object)
 {
     if (!isJSArray(object) || object->structure()->outOfLineCapacity() || object->structure()->hijacksIndexingHeader())
         return nullptr;
@@ -3094,21 +3099,21 @@ bool JSObject::makePropertiesImmutable(VM& vm)
     // The JIT and the quick C++ paths write Int32/Double/Contiguous/ArrayStorage elements in place, slow-put storage included
     // (it only diverts stores to holes). There are two kinds of storage they do not write in place, so that each indexed store,
     // delete and length change reaches a C++ path, which refuses: copy-on-write storage, which every tier still reads in place,
-    // and the sparse map of dictionary indexing mode. A JSArray's packed elements go to the first (an array literal's are there
-    // already), elements of any other kind to the second. Objects with no indexed storage (every intrinsic prototype) are
+    // and the sparse map of dictionary indexing mode. A JSArray's Int32, Double or Contiguous elements go to the first if they have
+    // no holes (an array literal's are there already), elements of any other kind to the second. Objects with no indexed storage (every intrinsic prototype) are
     // untouched, so Array.prototype keeps its blank indexing.
-    JSCellButterfly* copyOnWriteElements = nullptr;
+    JSCellButterfly* copyOnWriteButterfly = nullptr;
     if (hasIndexedProperties(indexingType())) {
-        bool staysPacked = false;
-        if (Options::useCopyOnWriteStorageForImmutableArrayElements()) {
+        bool willBeCopyOnWrite = false;
+        if (Options::useCopyOnWriteArraysForImmutableProperties()) {
             if (isCopyOnWrite(indexingMode()))
-                staysPacked = true;
+                willBeCopyOnWrite = true;
             else {
-                copyOnWriteElements = tryCopyElementsToCopyOnWriteStorage(vm, this);
-                staysPacked = copyOnWriteElements;
+                copyOnWriteButterfly = tryCreateCopyOnWriteButterfly(vm, this);
+                willBeCopyOnWrite = copyOnWriteButterfly;
             }
         }
-        if (!staysPacked)
+        if (!willBeCopyOnWrite)
             enterDictionaryIndexingMode(vm);
     }
     // Compiled code tests RegExpObject's own lastIndex-writable flag, not the Structure: make the two agree, and tell the realm, as
@@ -3122,9 +3127,9 @@ bool JSObject::makePropertiesImmutable(VM& vm)
     // Deferred, so adaptive watchpoints on this object see the new structure and re-install instead of firing their sets.
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
     Structure* newStructure = Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred);
-    RELEASE_ASSERT(isCopyOnWrite(newStructure->indexingMode()) == (copyOnWriteElements || isCopyOnWrite(oldStructure->indexingMode())));
-    if (copyOnWriteElements)
-        nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteElements->toButterfly());
+    RELEASE_ASSERT(isCopyOnWrite(newStructure->indexingMode()) == (copyOnWriteButterfly || isCopyOnWrite(oldStructure->indexingMode())));
+    if (copyOnWriteButterfly)
+        nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteButterfly->toButterfly());
     setStructure(vm, newStructure);
     if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
@@ -4188,31 +4193,31 @@ bool JSObject::putDirectMayBeIndex(JSGlobalObject* globalObject, PropertyName pr
     return putDirect(globalObject->vm(), propertyName, value);
 }
 
-// True unless every field of the descriptor is already in the current one with the same value.
-static bool wouldChangeProperty(JSGlobalObject* globalObject, const PropertyDescriptor& descriptor, const PropertyDescriptor& current)
+// True if every field of the descriptor is already in the current one with the same value.
+static bool isPropertyUnchangedByDescriptor(JSGlobalObject* globalObject, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
 {
     if (descriptor.enumerablePresent() && descriptor.enumerable() != current.enumerable())
-        return true;
+        return false;
     if (descriptor.configurablePresent() && descriptor.configurable() != current.configurable())
-        return true;
+        return false;
     if (descriptor.isAccessorDescriptor()) {
         if (!current.isAccessorDescriptor())
-            return true;
+            return false;
         if (descriptor.getterPresent() && descriptor.getter() != current.getter())
-            return true;
+            return false;
         if (descriptor.setterPresent() && descriptor.setter() != current.setter())
-            return true;
-        return false;
+            return false;
+        return true;
     }
     if (descriptor.isDataDescriptor()) {
         if (!current.isDataDescriptor())
-            return true;
+            return false;
         if (descriptor.writablePresent() && descriptor.writable() != current.writable())
-            return true;
+            return false;
         if (descriptor.value() && !sameValue(globalObject, descriptor.value(), current.value()))
-            return true;
+            return false;
     }
-    return false;
+    return true;
 }
 
 // https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor
@@ -4255,10 +4260,10 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
 
     // An object with immutable properties accepts a definition that changes nothing and refuses every other one.
     if (object && object->structure()->hasImmutableProperties()) [[unlikely]] {
-        bool wouldChange = wouldChangeProperty(globalObject, descriptor, current);
+        bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
-        if (wouldChange)
-            return typeError(globalObject, scope, throwException, ImmutableObjectPropertyDefineError);
+        if (!isUnchanged)
+            return typeError(globalObject, scope, throwException, ImmutablePropertyDefineError);
         return true;
     }
 

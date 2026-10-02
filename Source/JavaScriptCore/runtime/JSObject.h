@@ -74,7 +74,7 @@ struct HashTableValue;
 
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const String&);
 extern JS_EXPORT_PRIVATE const ASCIILiteral NonExtensibleObjectPropertyDefineError;
-extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutableObjectPropertyDefineError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutablePropertyDefineError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
@@ -644,7 +644,7 @@ public:
     void ensureWritable(VM& vm); // Defined in JSObjectInlines.h
     // As ensureWritable(), for a caller that can do without. False: the elements are in copy-on-write storage to keep them from
     // changing (JSObject::makePropertiesImmutable()), and stay there.
-    bool tryEnsureWritable(VM&); // Defined in JSObjectInlines.h
+    [[nodiscard]] bool tryMakeWritable(VM&); // Defined in JSObjectInlines.h
 
     static constexpr size_t offsetOfInlineStorage();
 

@@ -75,7 +75,7 @@ ALWAYS_INLINE bool RegExpObject::isSymbolSearchFastAndNonObservable()
     // path skips both writes, which is only unobservable when lastIndex is a plain writable
     // number, or, for a RegExp with immutable properties, when neither write would happen;
     // otherwise a non-writable lastIndex must throw in the generic path.
-    if (!lastIndexIsWritable() && !searchNeverWritesLastIndex())
+    if (!lastIndexIsWritable() && !canSearchWithoutWritingLastIndex())
         return false;
 
     if (!getLastIndex().isNumber())

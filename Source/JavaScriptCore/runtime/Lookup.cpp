@@ -42,7 +42,7 @@ void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObje
         }
     }
     GetterSetter* accessor = GetterSetter::create(vm, globalObject, getter, nullptr);
-    AllowLazyPropertyMaterialization allowMaterialization(vm);
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     thisObject.putDirectNonIndexAccessor(vm, propertyName, accessor, attributesForStructure(value.attributes()));
 }
 

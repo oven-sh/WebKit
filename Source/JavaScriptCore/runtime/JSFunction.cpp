@@ -322,7 +322,7 @@ bool JSFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObje
             if (!isValidOffset(offset)) {
                 // For class constructors, prototype object is initialized from bytecode via defineOwnProperty().
                 ASSERT(!thisObject->jsExecutable()->isClassConstructorFunction());
-                AllowLazyPropertyMaterialization allowMaterialization(vm);
+                AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
                 thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
                 offset = thisObject->getDirectOffset(vm, vm.propertyNames->prototype, attributes);
                 ASSERT(isValidOffset(offset));
@@ -531,7 +531,7 @@ void JSFunction::reifyLength(VM& vm)
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
     const Identifier& identifier = vm.propertyNames->length;
     rareData->setHasReifiedLength();
-    AllowLazyPropertyMaterialization allowMaterialization(vm);
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     putDirect(vm, identifier, initialValue, initialAttributes);
 }
 
@@ -566,7 +566,7 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
     RETURN_IF_EXCEPTION(throwScope, PropertyStatus::Lazy);
 
     rareData->setHasReifiedName();
-    AllowLazyPropertyMaterialization allowMaterialization(vm);
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     putDirect(vm, propID, jsString(vm, WTF::move(name)), initialAttributes);
     return PropertyStatus::Reified;
 }
@@ -621,7 +621,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyPrototypeIfNeeded(VM& vm, JSGlob
         if (!getDirect(vm, propertyName)) {
             // For class constructors, prototype object is initialized from bytecode via defineOwnProperty().
             ASSERT(!jsExecutable()->isClassConstructorFunction());
-            AllowLazyPropertyMaterialization allowMaterialization(vm);
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
             putDirect(vm, propertyName, constructPrototypeObject(globalObject, this), prototypeAttributesForNonClass);
             return PropertyStatus::Reified;
         }
@@ -672,7 +672,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         RETURN_IF_EXCEPTION(scope, PropertyStatus::Lazy);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         rareData->setHasReifiedName();
-        AllowLazyPropertyMaterialization allowMaterialization(vm);
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, nameIdent, string, initialAttributes);
     } else if (this->inherits<JSRemoteFunction>()) {
         FunctionRareData* rareData = this->ensureRareData(vm);
@@ -681,7 +681,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
             name = jsEmptyString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         rareData->setHasReifiedName();
-        AllowLazyPropertyMaterialization allowMaterialization(vm);
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, nameIdent, name, initialAttributes);
     } else {
         ASSERT(isNonBoundHostFunction());
@@ -689,7 +689,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         JSString* name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         rareData->setHasReifiedName();
-        AllowLazyPropertyMaterialization allowMaterialization(vm);
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, nameIdent, name, initialAttributes);
     }
     return PropertyStatus::Reified;

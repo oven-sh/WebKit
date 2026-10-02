@@ -1,10 +1,10 @@
 //@ defaultRun
-//@ runDefault("--useCopyOnWriteStorageForImmutableArrayElements=0")
+//@ runDefault("--useCopyOnWriteArraysForImmutableProperties=0")
 
-// The arrays and array-likes that do not keep packed elements when their properties are made immutable (holes, a named property, no
+// The arrays and array-likes that do not become copy-on-write arrays when their properties are made immutable (holes, a named property, no
 // elements yet, sparse or array storage, an array-like object, an arguments object) get dictionary indexing mode and are as
 // unchangeable. And what the engine does on its own account to every array in a realm, when the realm starts having a bad time,
-// leaves all of them as they are. (See immutable-properties-array-storage.js for the arrays that keep packed elements.)
+// leaves all of them as they are. (See immutable-properties-array-storage.js for the arrays that do.)
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -21,7 +21,7 @@ function snapshot(object) {
 function isCopyOnWrite(object) { return /CopyOnWrite/.test($vm.indexingMode(object)); }
 
 // An allocation site learns from what becomes of its arrays: an array that is written to, frozen or given dictionary indexing
-// teaches its site to hand out slower storage. So the arrays that must start packed come from sites of their own, whose arrays
+// teaches its site to hand out slower storage. So the arrays that must start without holes and in Int32, Double or Contiguous shape come from sites of their own, whose arrays
 // are never written after they are built, and are all built before anything else here runs.
 function int32Subject() { let a = []; for (let i = 0; i < 8; ++i) a.push(i); return a; }
 function doubleSubject() { let a = []; for (let i = 0; i < 8; ++i) a.push(i + 0.5); return a; }
@@ -69,7 +69,7 @@ let usesCopyOnWriteStorage = isCopyOnWrite(keptForTheEnd[0]);
     }
 }
 
-// 2. Assigning length is refused before the value is converted: no valueOf call and no RangeError, for packed elements and for the others.
+// 2. Assigning length is refused before the value is converted: no valueOf call and no RangeError, for a copy-on-write array and for the others.
 {
     let holey = int32Subject(); delete holey[1];
     for (let array of [$vm.makePropertiesImmutable(int32Subject()), $vm.makePropertiesImmutable(holey), $vm.makePropertiesImmutable([])]) {

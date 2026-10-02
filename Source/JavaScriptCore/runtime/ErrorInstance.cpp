@@ -473,7 +473,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
         // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
-        AllowLazyPropertyMaterialization allowMaterialization(vm);
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
         putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
         if (!m_sourceURL.isEmpty())
@@ -493,7 +493,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         {
             // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs inside.
-            AllowLazyPropertyMaterialization allowMaterialization(vm);
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
             putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
             putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
             if (!m_sourceURL.isEmpty())
@@ -514,7 +514,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
             else
 #endif
                 stackValue = jsString(vm, WTF::move(stackString));
-            AllowLazyPropertyMaterialization allowMaterialization(vm);
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
             putDirect(vm, vm.propertyNames->stack, stackValue, attributes);
         }
         m_errorInfoMaterialized = true;

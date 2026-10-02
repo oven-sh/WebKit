@@ -663,7 +663,7 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionRange, wasmFunctionIndexRangeToCompile, nullptr, Normal, "wasm function index range to allow compilation on, e.g. 1:100"_s) \
     v(Bool, useEagerWasmModuleHashing, false, Normal, "Unnamed Wasm modules are identified in backtraces through their hash, if available."_s) \
     v(Bool, useArrayAllocationProfiling, true, Normal, "If true, we will use our normal array allocation profiling. If false, the allocation profile will always claim to be undecided."_s) \
-    v(Bool, useCopyOnWriteStorageForImmutableArrayElements, true, Normal, "If true, JSObject::makePropertiesImmutable() keeps the packed elements of a JSArray, in copy-on-write storage. If false, they go to dictionary indexing mode, as the elements of every other object do."_s) \
+    v(Bool, useCopyOnWriteArraysForImmutableProperties, true, Normal, "If true, JSObject::makePropertiesImmutable() makes a JSArray whose Int32, Double or Contiguous elements have no holes a copy-on-write array. If false, it enters dictionary indexing mode, as every other object with elements does."_s) \
     v(Bool, forcePolyProto, false, Normal, "If true, create_this will always create an object with a poly proto structure."_s) \
     v(Bool, forceMiniVMMode, false, Normal, "If true, it will force mini VM mode on."_s) \
     v(Bool, useTracePoints, false, Normal, nullptr) \

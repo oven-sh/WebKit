@@ -272,7 +272,7 @@ inline unsigned JSGlobalObject::WeakCustomGetterOrSetterHash<T>::hash(const Prop
     return WTF::computeHash(functionPointer, classInfo);
 }
 
-inline bool JSGlobalObject::isImmutablePropertiesVariantOfOriginalArrayStructure(Structure* structure)
+inline bool JSGlobalObject::isOriginalArrayStructureWithImmutableProperties(Structure* structure)
 {
     if (structure->transitionKind() != TransitionKind::MakePropertiesImmutable)
         return false;

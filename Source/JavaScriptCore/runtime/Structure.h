@@ -378,7 +378,7 @@ public:
     }
 
     // What sends a put off the fast path when the object is its receiver. One test, as both are bits of m_bitField.
-    bool hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrHasImmutableProperties() const
+    bool hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() const
     {
         return m_bitField & (s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | s_hasImmutablePropertiesBits);
     }

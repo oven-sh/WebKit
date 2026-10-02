@@ -290,7 +290,7 @@ void ClonedArguments::materializeSpecials(JSGlobalObject* globalObject)
     
     {
         // An arguments object has these from the start, so one with immutable properties still gets them. No JavaScript runs here.
-        AllowLazyPropertyMaterialization allowMaterialization(vm);
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         if (isStrictMode || executable->usesNonSimpleParameterList())
             putDirectAccessor(globalObject, vm.propertyNames->callee, this->realm()->throwTypeErrorArgumentsCalleeGetterSetter(), PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
         else

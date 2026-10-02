@@ -1,10 +1,10 @@
 //@ defaultRun
-//@ runDefault("--useCopyOnWriteStorageForImmutableArrayElements=0")
+//@ runDefault("--useCopyOnWriteArraysForImmutableProperties=0")
 
-// A JSArray whose elements are packed (Int32, Double or Contiguous, no holes) and which has no named properties keeps packed
-// elements when its properties are made immutable: they move to copy-on-write storage, which every tier reads in place and no tier
-// stores into in place. Other arrays, and other objects with elements, get dictionary indexing mode. Either way nothing changes
-// afterwards. With --useCopyOnWriteStorageForImmutableArrayElements=0 every array takes the second path, and everything here but
+// A JSArray whose elements are Int32, Double or Contiguous without holes, and which has no named properties, keeps that shape when
+// its properties are made immutable: it becomes a copy-on-write array, whose storage every tier reads in place and no tier stores
+// into in place. Other arrays, and other objects with elements, get dictionary indexing mode. Either way nothing changes
+// afterwards. With --useCopyOnWriteArraysForImmutableProperties=0 every array takes the second path, and everything here but
 // the storage kind still holds.
 
 function shouldBe(actual, expected, message) {
@@ -22,7 +22,7 @@ function snapshot(object) {
 function isCopyOnWrite(object) { return /CopyOnWrite/.test($vm.indexingMode(object)); }
 
 // An allocation site learns from what becomes of its arrays: an array that is written to, frozen or given dictionary indexing
-// teaches its site to hand out slower storage. So the arrays that must start packed come from sites of their own, whose arrays
+// teaches its site to hand out slower storage. So the arrays that must start without holes and in Int32, Double or Contiguous shape come from sites of their own, whose arrays
 // are never written after they are built, and are all built before anything else here runs.
 function int32Subject() { let a = []; for (let i = 0; i < 8; ++i) a.push(i); return a; }
 function doubleSubject() { let a = []; for (let i = 0; i < 8; ++i) a.push(i + 0.5); return a; }
@@ -32,7 +32,7 @@ function literalSubject() { return [1, 2, 3, 4]; }
 class Derived extends Array { }
 function derivedSubject() { let a = new Derived; for (let i = 0; i < 8; ++i) a.push(i); return a; }
 function usedAsPrototypeSubject() { let a = int32Subject(); Object.create(a); return a; }
-let packedKinds = { int32: int32Subject, double: doubleSubject, contiguous: contiguousSubject, literal: literalSubject, derived: derivedSubject, usedAsPrototype: usedAsPrototypeSubject };
+let copyOnWriteKinds = { int32: int32Subject, double: doubleSubject, contiguous: contiguousSubject, literal: literalSubject, derived: derivedSubject, usedAsPrototype: usedAsPrototypeSubject };
 
 let mutators = [
     a => { a[0] = 9; }, a => { "use strict"; a[1] = 9; }, a => { a[a.length] = 9; }, a => { a[a.length + 5] = 9; }, a => { a.length = 0; }, a => { a.length = 99; },
@@ -50,16 +50,16 @@ let mutators = [
 let mutatorsNotWarmedUp = [a => Object.freeze(a), a => Object.seal(a)];
 
 let targets = {};
-for (let name in packedKinds)
-    targets[name] = $vm.makePropertiesImmutable(packedKinds[name]());
+for (let name in copyOnWriteKinds)
+    targets[name] = $vm.makePropertiesImmutable(copyOnWriteKinds[name]());
 let largeTarget = $vm.makePropertiesImmutable(largeSubject());
 let usesCopyOnWriteStorage = isCopyOnWrite(targets.int32);
-// (No array is packed in a realm that has a bad time from the start, --alwaysHaveABadTime=1: not even an array literal.)
+// (Every array has slow-put array storage in a realm that has a bad time from the start, --alwaysHaveABadTime=1: not even an array literal.)
 let literalsStartCopyOnWrite = isCopyOnWrite(literalSubject());
 
-// 1. Which arrays keep packed elements.
-for (let name in packedKinds) {
-    let array = packedKinds[name]();
+// 1. Which arrays become copy-on-write arrays, with their shape kept.
+for (let name in copyOnWriteKinds) {
+    let array = copyOnWriteKinds[name]();
     let before = $vm.indexingMode(array);
     shouldBe(isCopyOnWrite(array), name === "literal" && literalsStartCopyOnWrite, name + " before: " + before);
     shouldBe($vm.makePropertiesImmutable(array), array);
@@ -69,7 +69,7 @@ for (let name in packedKinds) {
         shouldBe($vm.indexingMode(array), before.replace("ArrayWith", "CopyOnWriteArrayWith"), name + " keeps its shape");
 }
 
-// 2. Every mutator, hot on ordinary arrays of the same kinds first, against every packed kind: nothing changes, the storage included.
+// 2. Every mutator, hot on ordinary arrays of the same kinds first, against every one of those kinds: nothing changes, the storage included.
 let ordinarySources = [int32Subject, doubleSubject, contiguousSubject, literalSubject, derivedSubject].map(make => make());
 for (let mutator of mutators) {
     noInline(mutator);
@@ -77,10 +77,10 @@ for (let mutator of mutators) {
         try { mutator(ordinarySources[i % ordinarySources.length].slice()); } catch { }
     }
 }
-for (let name in packedKinds) {
+for (let name in copyOnWriteKinds) {
     let array = targets[name];
     if (usesCopyOnWriteStorage)
-        shouldBe(isCopyOnWrite(array), true, "the " + name + " target is packed");
+        shouldBe(isCopyOnWrite(array), true, "the " + name + " target is copy-on-write");
     let before = snapshot(array), prototype = Object.getPrototypeOf(array), mode = $vm.indexingMode(array);
     for (let mutator of mutators.concat(mutatorsNotWarmedUp)) {
         for (let i = 0; i < 4; ++i) {
