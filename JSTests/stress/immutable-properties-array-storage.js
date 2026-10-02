@@ -47,12 +47,14 @@ for (let name in packedKinds)
     targets[name] = mutators.concat(mutatorsNotWarmedUp).map(() => $vm.makePropertiesImmutable(packedKinds[name]()));
 let keptForTheEnd = [int32Subject(), doubleSubject(), contiguousSubject(), literalSubject()].map(a => $vm.makePropertiesImmutable(a));
 let usesCopyOnWriteStorage = isCopyOnWrite(targets.int32[0]);
+// (No array is packed in a realm that has a bad time from the start, --alwaysHaveABadTime=1: not even an array literal.)
+let literalsStartCopyOnWrite = isCopyOnWrite(literalSubject());
 
 // 1. Which arrays keep packed elements.
 for (let name in packedKinds) {
     let array = packedKinds[name]();
     let before = $vm.indexingMode(array);
-    shouldBe(isCopyOnWrite(array), name === "literal", name + " before: " + before);
+    shouldBe(isCopyOnWrite(array), name === "literal" && literalsStartCopyOnWrite, name + " before: " + before);
     shouldBe($vm.makePropertiesImmutable(array), array);
     shouldBe($vm.hasImmutableProperties(array), true);
     shouldBe(isCopyOnWrite(array), usesCopyOnWriteStorage, name + ": " + before + " became " + $vm.indexingMode(array));
