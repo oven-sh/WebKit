@@ -47,14 +47,14 @@ let targets = {
 
 function warm(includeTargets) {
     let shapes = manyShapes();
-    for (let round = 0; round < 400; round++) {
+    for (let round = 0; round < Math.ceil(testLoopCount / 50); round++) {
         for (let object of shapes) {
             setX(object, round);
             setXStrict(object, round);
             setByKey(object, "x", round);
         }
     }
-    for (let round = 0; round < 3000; round++) {
+    for (let round = 0; round < Math.ceil(testLoopCount / 8); round++) {
         let scratch = { x: 0, 0: 0, 1: 1 };
         setByIndex(scratch, 1, round);
         addFresh({ x: 0 }, round);
@@ -66,7 +66,7 @@ function warm(includeTargets) {
     if (!includeTargets)
         return;
     for (let target of Object.values(targets)) {
-        for (let i = 0; i < 3000; i++) {
+        for (let i = 0; i < Math.ceil(testLoopCount / 8); i++) {
             setX(target, i);
             setXStrict(target, i);
             setByKey(target, "x", i);
@@ -84,9 +84,9 @@ for (let [name, target] of Object.entries(targets)) {
     let x = target.x;
     let one = target[1];
     let keys = Reflect.ownKeys(target).length;
-    for (let i = 0; i < 5000; i++) {
+    for (let i = 0; i < Math.ceil(testLoopCount / 4); i++) {
         setX(target, "X" + i);
-        try { setXStrict(target, "X" + i); } catch { }
+        try { setXStrict(target, "X" + i); } catch (e) { if (!(e instanceof TypeError)) throw e; }
         setByKey(target, "x", "X" + i);
         setByIndex(target, 1, "X" + i);
         setByIndex(target, 7, "X" + i);
@@ -106,7 +106,7 @@ for (let [name, target] of Object.entries(targets)) {
 // The same stores keep working for ordinary objects of the same original shapes.
 {
     let object = { x: 0, keep: 1 };
-    for (let i = 0; i < 5000; i++)
+    for (let i = 0; i < Math.ceil(testLoopCount / 4); i++)
         setX(object, i);
-    shouldBe(object.x, 4999);
+    shouldBe(object.x, Math.ceil(testLoopCount / 4) - 1);
 }

@@ -15,10 +15,13 @@ function outcome(func, subject) {
     }
 }
 
+// A use below runs its operation over six inputs, so this many calls of a use make the operation itself hot.
+let hot = Math.max(3, Math.ceil(testLoopCount / 20));
+
 function sameAsOrdinary(uses, makeOrdinary, label) {
     let ordinary = makeOrdinary(), subject = $vm.makePropertiesImmutable(makeOrdinary());
     for (let name in uses) {
-        for (let i = 0; i < 3000; ++i) { outcome(uses[name], ordinary); outcome(uses[name], subject); }
+        for (let i = 0; i < hot; ++i) { outcome(uses[name], ordinary); outcome(uses[name], subject); }
         shouldBe(outcome(uses[name], subject), outcome(uses[name], ordinary), label + " " + name);
     }
 }
@@ -40,7 +43,7 @@ for (let flags of ["g", "y", "gy"]) {
     let subject = $vm.makePropertiesImmutable(new RegExp("\\d", flags)), frozen = Object.freeze(new RegExp("\\d", flags));
     let uses = { replace: r => "1a2".replace(r, "x"), match: r => "1a2".match(r), test: r => r.test("1"), exec: r => r.exec("1"), search: r => "a1".search(r), split: r => "1a2".split(r), matchAll: r => [..."1a2".matchAll(r)].length };
     for (let name in uses) {
-        for (let i = 0; i < 3000; ++i) outcome(uses[name], subject);
+        for (let i = 0; i < hot; ++i) outcome(uses[name], subject);
         shouldBe(outcome(uses[name], subject), outcome(uses[name], frozen), flags + " " + name);
     }
     shouldBe(subject.lastIndex, 0);
@@ -49,7 +52,7 @@ for (let flags of ["g", "y", "gy"]) {
 // search has to write a lastIndex that is not 0, so it fails; with 0 it writes nothing.
 {
     let regExp = /\d/; regExp.lastIndex = 3; $vm.makePropertiesImmutable(regExp);
-    for (let i = 0; i < 3000; ++i) shouldBe(outcome(r => input(i).search(r), regExp), "throws TypeError");
+    for (let i = 0; i < hot; ++i) shouldBe(outcome(r => input(i).search(r), regExp), "throws TypeError");
     shouldBe(regExp.lastIndex, 3);
 }
 
@@ -72,14 +75,14 @@ sameAsOrdinary(arrayUses, () => [1, 2, 3], "array literal");
     // Not pristine: an own constructor's species and an own join are honoured.
     class Special extends Array { }
     let withSpecies = numbers(); withSpecies.constructor = Special; $vm.makePropertiesImmutable(withSpecies);
-    for (let i = 0; i < 3000; ++i) withSpecies.slice(1);
+    for (let i = 0; i < hot; ++i) withSpecies.slice(1);
     shouldBe(withSpecies.slice(1) instanceof Special, true); shouldBe(withSpecies.map(x => x) instanceof Special, true); shouldBe(withSpecies.concat([1]) instanceof Special, true);
     let withJoin = numbers(); withJoin.join = () => "own join"; $vm.makePropertiesImmutable(withJoin);
-    for (let i = 0; i < 3000; ++i) String(withJoin);
+    for (let i = 0; i < hot; ++i) String(withJoin);
     shouldBe(String(withJoin), "own join"); shouldBe(`${withJoin}`, "own join");
     // The realm's join is replaced: an immutable array follows it as an ordinary one does.
     let subject = $vm.makePropertiesImmutable(numbers()), ordinary = numbers(), join = Array.prototype.join;
-    for (let i = 0; i < 3000; ++i) String(subject);
+    for (let i = 0; i < hot; ++i) String(subject);
     Array.prototype.join = function () { return "replaced"; };
     shouldBe(String(subject), "replaced"); shouldBe(String(ordinary), "replaced");
     Array.prototype.join = join;
@@ -106,6 +109,20 @@ sameAsOrdinary(arrayUses, () => [1, 2, 3], "array literal");
     shouldBe(JSON.stringify([...iterator]), "[[1,2]]");
 
     let record = $vm.makePropertiesImmutable({ a: 1, b: { c: 2 } });
-    for (let i = 0; i < 3000; ++i) { let copy = { ...record }; copy.z = i; shouldBe(copy.z, i); shouldBe($vm.hasImmutableProperties(copy), false); }
+    for (let i = 0; i < hot; ++i) { let copy = { ...record }; copy.z = i; shouldBe(copy.z, i); shouldBe($vm.hasImmutableProperties(copy), false); }
     shouldBe(JSON.stringify(Object.assign({}, record)), '{"a":1,"b":{"c":2}}');
+}
+
+// A RegExp without immutable properties takes the path it took. A frozen one from another realm, searched with this realm's
+// RegExp.prototype[@@search], goes through that realm's exec, which records the match in that realm's RegExp.$1 and leaves this realm's alone.
+{
+    let other = $vm.createGlobalObject();
+    let frozen = Object.freeze(new other.RegExp("(c)"));
+    for (let i = 0; i < hot; ++i) {
+        /(q)/.exec("q");
+        new other.RegExp("(p)").exec("p");
+        shouldBe(RegExp.prototype[Symbol.search].call(frozen, "abc"), 2);
+        shouldBe(RegExp.$1, "q");
+        shouldBe(other.RegExp.$1, "c");
+    }
 }

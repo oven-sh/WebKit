@@ -24,61 +24,8 @@ function snapshot(object) {
     })) + " length:" + String(object.length);
 }
 
-// Arrays: every storage kind against every mutator, each mutator made hot on ordinary arrays of the same kind first.
+// Arrays. (Every storage kind against every mutator is in immutable-properties-array-storage.js and -array-other-storage.js.)
 {
-    let kinds = {
-        int32: () => [1, 2, 3, 4],
-        double: () => [1.5, 2.5, 3.5],
-        contiguous: () => ["a", {}, "c"],
-        holey: () => { let a = [1, 2, 3]; a[40] = 9; return a; },
-        arrayStorage: () => { let a = [1, 2, 3]; a[20000] = 1; delete a[20000]; a.length = 3; return a; },
-        sparse: () => { let a = []; a[30000] = 1; a[0] = 7; return a; },
-        undecided: () => new Array(4),
-        copyOnWrite: () => [10, 20, 30],
-        usedAsPrototype: () => { let a = [1, 2, 3]; Object.create(a); return a; },
-        arrayLike: () => ({ 0: "a", 1: "b", length: 2 }),
-    };
-    let mutators = {
-        push: a => Array.prototype.push.call(a, "X"),
-        pop: a => Array.prototype.pop.call(a),
-        shift: a => Array.prototype.shift.call(a),
-        unshift: a => Array.prototype.unshift.call(a, "X", "X"),
-        splice: a => Array.prototype.splice.call(a, 0, 1, "X", "X"),
-        sort: a => Array.prototype.sort.call(a, () => -1),
-        reverse: a => Array.prototype.reverse.call(a),
-        fill: a => Array.prototype.fill.call(a, "X"),
-        copyWithin: a => Array.prototype.copyWithin.call(a, 0, 1),
-        lengthToZero: a => { a.length = 0; },
-        lengthGrows: a => { a.length = 99; },
-        storeFirst: a => { a[0] = "X"; },
-        storeAtLength: a => { a[a.length] = "X"; },
-        storeFar: a => { a[40000] = "X"; },
-        deleteFirst: a => { delete a[0]; },
-        defineFirst: a => Object.defineProperty(a, 0, { value: "X" }),
-        defineLength: a => Object.defineProperty(a, "length", { value: 0 }),
-        reflectSet: a => Reflect.set(a, 0, "X"),
-        assign: a => Object.assign(a, ["X", "X"]),
-        freeze: a => Object.freeze(a),
-        seal: a => Object.seal(a),
-    };
-    for (let [kindName, make] of Object.entries(kinds)) {
-        for (let [mutatorName, mutate] of Object.entries(mutators)) {
-            for (let i = 0; i < 200; i++) {
-                try {
-                    mutate(make());
-                } catch { }
-            }
-            let array = $vm.makePropertiesImmutable(make());
-            let before = snapshot(array);
-            for (let i = 0; i < 40; i++) {
-                try {
-                    mutate(array);
-                } catch { }
-            }
-            shouldBe(snapshot(array), before, kindName + " / " + mutatorName);
-        }
-    }
-
     let array = $vm.makePropertiesImmutable([1, 2, 3]);
     shouldThrow(() => array.push(4), TypeError);
     shouldThrow(() => array.pop(), TypeError);
@@ -247,3 +194,36 @@ function snapshot(object) {
     fresh[5] = 1;
     shouldBe(fresh.length, 6);
 }
+
+// Error.captureStackTrace() defines a stack property and tells an ErrorInstance that its own is materialized: it throws for such an
+// object, and an error keeps the stack it had yet to materialize.
+{
+    let unread = $vm.makePropertiesImmutable(new Error("unread"));
+    shouldThrow(() => Error.captureStackTrace(unread), TypeError);
+    shouldBe(typeof unread.stack, "string");
+    shouldBe(unread.stack.length > 0, true);
+    let read = new Error("read"), stack = read.stack;
+    $vm.makePropertiesImmutable(read);
+    shouldThrow(() => Error.captureStackTrace(read), TypeError);
+    shouldBe(read.stack, stack);
+    let plain = $vm.makePropertiesImmutable({});
+    shouldThrow(() => Error.captureStackTrace(plain), TypeError);
+    shouldBe("stack" in plain, false);
+    let ordinary = {};
+    Error.captureStackTrace(ordinary);
+    shouldBe(typeof ordinary.stack, "string");
+}
+
+// The one attribute that changes reaches inheritors too: an object that inherits from such a RegExp cannot assign lastIndex, as
+// with a frozen RegExp. (Compiled code tests the RegExp's own lastIndex-is-writable flag before it stores lastIndex in place.)
+{
+    let regExp = $vm.makePropertiesImmutable(/a/);
+    let child = Object.create(regExp);
+    shouldThrow(() => { "use strict"; child.lastIndex = 5; }, TypeError);
+    shouldBe(Object.hasOwn(child, "lastIndex"), false);
+    child.other = 1;
+    shouldBe(child.other, 1);
+}
+
+// A class that inherits from a supported one and brings a write hook of its own is not supported.
+shouldThrow(() => $vm.makePropertiesImmutable($vm.createRuntimeArray(1, 2, 3)), TypeError);

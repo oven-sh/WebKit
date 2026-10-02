@@ -21,6 +21,8 @@ class ReturnsArgument {
     constructor(object) { return object; }
 }
 
+let hot = Math.max(5, Math.ceil(testLoopCount / 5));
+
 class FieldStamper extends ReturnsArgument {
     #field = 1;
     static has(object) { return #field in object; }
@@ -40,7 +42,7 @@ class PublicFieldStamper extends ReturnsArgument {
 
 // Adding one fails, hot or cold.
 {
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < hot; i++) {
         new FieldStamper({});
         new MethodStamper({});
         new PublicFieldStamper({});
@@ -61,14 +63,14 @@ class PublicFieldStamper extends ReturnsArgument {
     let object = {};
     new FieldStamper(object);
     new MethodStamper(object);
-    for (let i = 0; i < 2000; i++)
+    for (let i = 0; i < hot; i++)
         FieldStamper.set(object, i);
     $vm.makePropertiesImmutable(object);
     shouldBe(FieldStamper.has(object), true);
-    shouldBe(FieldStamper.get(object), 1999);
-    for (let i = 0; i < 2000; i++)
+    shouldBe(FieldStamper.get(object), hot - 1);
+    for (let i = 0; i < hot; i++)
         FieldStamper.set(object, -i);
-    shouldBe(FieldStamper.get(object), -1999);
+    shouldBe(FieldStamper.get(object), -(hot - 1));
     shouldBe(MethodStamper.call(object), 2);
     shouldThrow(() => new FieldStamper(object), TypeError);
     shouldBe(Reflect.ownKeys(object).length, 0);
@@ -116,14 +118,14 @@ class PublicFieldStamper extends ReturnsArgument {
     for (let name in unchanged) {
         target = $vm.makePropertiesImmutable(make());
         let before = JSON.stringify(Object.getOwnPropertyDescriptors(target), (k, v) => typeof v === "bigint" ? String(v) : v);
-        for (let i = 0; i < 3000; ++i)
+        for (let i = 0; i < hot; ++i)
             shouldBe(outcome(() => new unchanged[name]), "ok", name);
         shouldBe(JSON.stringify(Object.getOwnPropertyDescriptors(target), (k, v) => typeof v === "bigint" ? String(v) : v), before, name);
     }
     for (let name in changed) {
         target = $vm.makePropertiesImmutable(make());
         let before = JSON.stringify(Object.getOwnPropertyDescriptors(target), (k, v) => typeof v === "bigint" ? String(v) : v);
-        for (let i = 0; i < 3000; ++i)
+        for (let i = 0; i < hot; ++i)
             shouldBe(outcome(() => new changed[name]), "TypeError", name);
         shouldBe(JSON.stringify(Object.getOwnPropertyDescriptors(target), (k, v) => typeof v === "bigint" ? String(v) : v), before, name);
     }
@@ -139,7 +141,7 @@ class PublicFieldStamper extends ReturnsArgument {
         class NewElement extends Base { 20 = 7; }
         target = $vm.makePropertiesImmutable(makeArray());
         let before = JSON.stringify(target);
-        for (let i = 0; i < 3000; ++i) {
+        for (let i = 0; i < hot; ++i) {
             shouldBe(outcome(() => new SameElement), "ok");
             shouldBe(outcome(() => new OtherElement), "TypeError");
             shouldBe(outcome(() => new NewElement), "TypeError");

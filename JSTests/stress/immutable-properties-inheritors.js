@@ -126,3 +126,56 @@ function shouldThrow(func, errorType) {
     shouldBe($vm.hasImmutableProperties(immutable), true);
     shouldThrow(() => { "use strict"; immutable.a = 2; }, TypeError);
 }
+
+// A put that starts on another object and lands on such a receiver while the receiver still has static properties that are not
+// reified: it fails like any other put with that receiver, a native setter of a static property is not called, and nothing changes.
+{
+    let other = $vm.createGlobalObject();
+    $vm.makePropertiesImmutable(other.JSON);
+    shouldBe(Reflect.set({}, "parse", 1, other.JSON), false);
+    shouldBe(Reflect.set({}, "added", 1, other.JSON), false);
+    let holder = { __proto__: {}, assign(value) { "use strict"; super.parse = value; } };
+    shouldThrow(() => holder.assign.call(other.JSON, 1), TypeError);
+    shouldBe(typeof other.JSON.parse, "function");
+    shouldBe("added" in other.JSON, false);
+
+    let withStatics = $vm.makePropertiesImmutable($vm.createStaticCustomValue());
+    for (let name of ["testStaticValue", "testStaticValueSetFlag", "testStaticValueNoSetter", "testStaticValueReadOnly", "added"])
+        shouldBe(Reflect.set({}, name, 1, withStatics), false, name);
+    shouldBe("testStaticValueSetterCalled" in withStatics, false);
+    shouldBe(Object.hasOwn(withStatics, "added"), false);
+}
+
+// A put that starts on another object goes by the ordinary steps, in which the receiver's [[DefineOwnProperty]] decides: it fails
+// unless it changes nothing, and on every route to the receiver alike: an ordinary key, a key the receiver's class treats
+// specially, an index, a Proxy as the object it started on, and super. (A frozen receiver fails sooner, on its attribute.)
+{
+    let object = $vm.makePropertiesImmutable({ a: 1 });
+    let array = $vm.makePropertiesImmutable([1, 2, 3]);
+    let func = $vm.makePropertiesImmutable(function () { });
+    let proxy = new Proxy({}, {});
+    let frozen = Object.freeze({ a: 1 });
+    for (let i = 0; i < 100; ++i) {
+        for (let [target, key, same, different] of [[object, "a", 1, 2], [array, "length", 3, 2], [array, 0, 1, 2], [array, 3, undefined, 2], [func, "prototype", func.prototype, {}]]) {
+            for (let start of [{}, proxy]) {
+                if (same !== undefined)
+                    shouldBe(Reflect.set(start, key, same, target), true, String(key) + " same");
+                shouldBe(Reflect.set(start, key, different, target), false, String(key) + " different");
+            }
+        }
+    }
+    shouldBe(Reflect.set({}, "a", 1, frozen), false);
+    let holder = { __proto__: {}, assign(value) { "use strict"; super.a = value; } };
+    holder.assign.call(object, 1);
+    shouldThrow(() => holder.assign.call(object, 2), TypeError);
+    shouldBe(object.a, 1);
+    shouldBe(array.length, 3);
+    shouldBe(Object.keys(array).join(), "0,1,2");
+
+    // A setter of another object runs with such a receiver, as it does with any receiver; what it puts on the receiver fails.
+    let calls = 0;
+    let withSetter = { set a(value) { calls++; shouldBe(Reflect.set(this, "a", value), false); } };
+    shouldBe(Reflect.set(withSetter, "a", 5, object), true);
+    shouldBe(calls, 1);
+    shouldBe(object.a, 1);
+}

@@ -27,7 +27,7 @@ noInline(writeTopLevelVarStrict);
 noInline(writeGlobalProperty);
 
 globalThis.plainProperty = "before";
-for (let i = 0; i < 20000; i++) {
+for (let i = 0; i < testLoopCount * 2; i++) {
     writeTopLevelVar(i);
     writeTopLevelVarStrict(i);
     writeGlobalProperty("warm");
@@ -51,7 +51,7 @@ shouldBe(Array.name, "Array");
 shouldBe(typeof JSON, "object");
 
 // Hot compiled writers of a property and of a top-level variable.
-for (let i = 0; i < 20000; i++) {
+for (let i = 0; i < testLoopCount * 2; i++) {
     writeGlobalProperty("after");
     writeTopLevelVar(-1);
     try {
@@ -59,7 +59,7 @@ for (let i = 0; i < 20000; i++) {
     } catch { }
 }
 shouldBe(plainProperty, "warm");
-shouldBe(topLevelVar, 19999);
+shouldBe(topLevelVar, testLoopCount * 2 - 1);
 shouldThrow(() => writeTopLevelVarStrict(-1), TypeError);
 shouldThrow(() => { "use strict"; globalThis.topLevelVar = -1; }, TypeError);
 shouldBe(Object.getOwnPropertyDescriptor(globalThis, "topLevelVar").writable, false);
@@ -80,10 +80,21 @@ shouldBe(topLevelFunction(), "original");
 declares("function Array() { return 'replaced'; }");
 shouldBe(Array.isArray([]), true);
 declares("var topLevelVar;"); // re-declaring an existing variable is allowed and changes nothing
-shouldBe(topLevelVar, 19999);
+shouldBe(topLevelVar, testLoopCount * 2 - 1);
 shouldBe(Reflect.ownKeys(globalThis).length, ownKeysBefore);
 
 // Everything else keeps working.
 shouldBe([1, 2, 3].map(x => x * 2).join(), "2,4,6");
 shouldBe(typeof Intl.NumberFormat, "function");
 shouldBe(new Function("return 1 + 1")(), 2);
+
+// A top-level var or function reads as non-writable afterwards, which an object that inherits from the global object sees too:
+// it cannot assign that name, as with a frozen global object. A property of the global object that is not a variable is unaffected.
+{
+    let child = Object.create(globalThis);
+    shouldThrow(() => { "use strict"; child.topLevelVar = 1; }, TypeError);
+    shouldBe(Object.hasOwn(child, "topLevelVar"), false);
+    child.Array = 1;
+    shouldBe(child.Array, 1);
+    shouldBe(globalThis.Array === Array && typeof Array === "function", true);
+}
