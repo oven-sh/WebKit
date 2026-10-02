@@ -51,6 +51,9 @@ PutByVariant& PutByVariant::operator=(const PutByVariant& other)
     else
         m_callLinkStatus = nullptr;
     m_customAccessorSetter = other.m_customAccessorSetter;
+#if ASSERT_ENABLED
+    m_customAccessorRealm = other.m_customAccessorRealm;
+#endif
     if (other.m_domAttribute)
         m_domAttribute = WTF::makeUnique<DOMAttributeAnnotation>(*other.m_domAttribute);
     else
@@ -301,6 +304,8 @@ bool PutByVariant::attemptToMerge(const PutByVariant& other)
                 return false;
         }
         m_conditionSet = mergedConditionSet;
+
+        ASSERT(m_customAccessorRealm == other.m_customAccessorRealm);
 
         m_oldStructure.merge(other.m_oldStructure);
         return true;
