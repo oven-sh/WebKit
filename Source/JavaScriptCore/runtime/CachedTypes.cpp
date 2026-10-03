@@ -5954,7 +5954,7 @@ struct BytecodeLinkEncoder::Impl {
 #if ENABLE(AOT)
         if (compilesAheadOfTime) {
             if (auto key = orderFunctionKey(executable, source))
-                functionsToCompile.append({ module, *key, &executable, forCall, forConstruct });
+                functionsToCompile.append({ module, *key, &executable, forCall, forConstruct, static_cast<unsigned>(source.startOffset()) });
             else
                 omittedFunctions[2]++;
         }
@@ -6217,6 +6217,7 @@ struct BytecodeLinkEncoder::Impl {
             UnlinkedCodeBlock* codeBlock;
             unsigned module;
             UnlinkedFunctionExecutable* executable { nullptr };
+            unsigned sourceStart { 0 };
         };
         Vector<Job> jobs;
         constexpr uint64_t isNotHot = 1ull << 63;
@@ -6273,7 +6274,7 @@ struct BytecodeLinkEncoder::Impl {
                 uint64_t place = isNotHot | static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2;
                 if (auto hotRank = encoder.hotRankOf(*function.executable))
                     place = *hotRank << 2;
-                jobs.append({ key, place | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module, function.executable });
+                jobs.append({ key, place | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module, function.executable, function.sourceStart });
             }
         }
 
@@ -6802,8 +6803,8 @@ struct BytecodeLinkEncoder::Impl {
                     {
                         auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                         bool isTopLevel = !(jobs[index].rank & 2);
-                        bool startIsKnown = isTopLevel || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody;
-                        AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? moduleText(jobs[index].module) : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
+                        bool startIsKnown = isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor;
+                        AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? moduleText(jobs[index].module) : StringView { }, jobs[index].sourceStart);
                     }
                     if (Options::logAOTTypeInference()) [[unlikely]] {
                         auto* executable = jobs[index].executable;
@@ -6812,8 +6813,8 @@ struct BytecodeLinkEncoder::Impl {
                     auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                     bool isTopLevel = !(jobs[index].rank & 2);
                     bool isInProgram = isProgramModule(jobs[index].module);
-                    if (isInProgram && (isTopLevel || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody))
-                        AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), isTopLevel ? 0 : jobs[index].key.start);
+                    if (isInProgram && (isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor))
+                        AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), jobs[index].sourceStart);
                     else if (auto* executable = jobs[index].executable; executable && executable->isBuiltinDefaultClassConstructor()) {
                         SourceCode source = executable->linkedSourceCode(BuiltinExecutables::defaultConstructorSourceCode(executable->constructorKind()));
                         AOT::collectQuotes(code.info, jobs[index].codeBlock, source.provider()->source(), source.startOffset());
@@ -7094,6 +7095,7 @@ struct BytecodeLinkEncoder::Impl {
         UnlinkedFunctionExecutable* executable;
         UnlinkedFunctionCodeBlock* forCall;
         UnlinkedFunctionCodeBlock* forConstruct;
+        unsigned sourceStart;
     };
     Vector<FunctionToCompile> functionsToCompile;
     bool compilesAheadOfTime { false };

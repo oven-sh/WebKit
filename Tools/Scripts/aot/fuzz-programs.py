@@ -32,7 +32,8 @@ are static, async or generators, and super in all of them and in object literals
 break, continue, return and throw; destructuring with defaults and rests; spread; generators resumed, closed and thrown into;
 thenables; tagged templates; and operands that log when they are evaluated.
 
-What happens goes to a log, errors by the name of their class. A program counts if the interpreter runs it to an end without
+What happens goes to a log, errors that are caught by the name of their class and the start of their message (a long expression
+that a message quotes is cut short in an image). A program counts if the interpreter runs it to an end without
 running out of stack, which happens at another depth in other code. It is a finding if compiled code prints something else, ends
 otherwise, crashes or hangs: <output directory>/<kind>-<seed>.js, whose first line has the options. Half of the programs run as
 modules, and the options rotate through the validating and testing modes. Everything runs under capped.py (1.5 GB, 20 s).
@@ -211,7 +212,7 @@ function show(x) {
     return typeof x === "string" ? x.slice(0, 40) : String(x);
 }
 function note(x) { log.push(show(x)); }
-function tryCall(f) { try { burn(); return f(); } catch (e) { return e instanceof Error ? e.constructor.name : "thrown " + show(e); } }
+function tryCall(f) { try { burn(); return f(); } catch (e) { return e instanceof Error ? e.constructor.name + ": " + e.message.slice(0, 32) : "thrown " + show(e); } }
 function main() {
     function mapLike(array, f) { const result = []; for (let i = 0; i < array.length; i++) result.push(tryCall(() => f(array[i], i))); return result; }
 '''
@@ -361,7 +362,7 @@ function show(x, depth = 0) {
     return "{" + Object.keys(x).map(k => k + ":" + show(x[k], depth + 1)).join() + "}";
 }
 function note(x) { if (log.length < 6000) log.push(show(x)); }
-function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error ? e.constructor.name : e; } }
+function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error ? e.constructor.name + ": " + e.message.slice(0, 32) : e; } }
 function Point(x, y) { this.x = x; this.y = y; }
 Point.prototype.sum = function () { return this.x + this.y; };
 class Base {
@@ -524,7 +525,7 @@ function show(x, depth = 0) {
     return "{" + Object.keys(x).join() + "}";
 }
 function note(x) { if (log.length < 6000) log.push(show(x)); }
-function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error ? e.constructor.name : e; } }
+function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error ? e.constructor.name + ": " + e.message.slice(0, 32) : e; } }
 """
         functions = []
         for _ in range(r.randrange(2, 6)):
@@ -638,7 +639,7 @@ function show(x) {
     return String(x);
 }
 function note(x) { if (log.length < 12000) log.push(show(x)); }
-function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error ? e.constructor.name : e; } }
+function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error ? e.constructor.name + ": " + e.message.slice(0, 32) : e; } }
 """
         functions = []
         for _ in range(r.randrange(2, 7)):
@@ -849,7 +850,7 @@ function show(x, depth = 0) {
     return (x.constructor?.name ?? "null") + "{" + Object.keys(x).slice(0, 8).map(k => k + ":" + show(tryCall(() => x[k]), depth + 1)).join() + "}";
 }
 function note(x) { if (log.length < 5000) log.push(show(x)); }
-function tryCall(f) { try { burn(); return f(); } catch (e) { return e instanceof Error ? e.constructor.name : e; } }
+function tryCall(f) { try { burn(); return f(); } catch (e) { return e instanceof Error ? e.constructor.name + ": " + e.message.slice(0, 32) : e; } }
 function seq(n, x) { if (log.length < 5000) log.push("#" + n); return x; }
 function sum(...all) { return all.length + ":" + all.map(v => show(v)).join("+"); }
 function tag(strings, ...values) { tag.seen ??= new Set(); const again = tag.seen.has(strings); tag.seen.add(strings); return strings.raw.join("|") + again + values.map(v => show(v)).join(); }
