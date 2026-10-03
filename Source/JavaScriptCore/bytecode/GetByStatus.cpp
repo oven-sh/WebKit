@@ -252,7 +252,7 @@ GetByStatus::GetByStatus(const ModuleNamespaceAccessCase& accessCase)
 {
 }
 
-GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(const ConcurrentJSLocker& locker, CodeBlock* profiledBlock, PropertyInlineCache* propertyCache, CallLinkStatus::ExitSiteData callExitSiteData, CodeOrigin)
+GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(const ConcurrentJSLocker& locker, CodeBlock* profiledBlock, PropertyInlineCache* propertyCache, CallLinkStatus::ExitSiteData callExitSiteData, CodeOrigin codeOrigin)
 {
     PropertyInlineCacheSummary summary = PropertyInlineCache::summary(locker, profiledBlock->vm(), propertyCache);
     if (!isInlineable(summary))
@@ -355,8 +355,12 @@ GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(co
                 Structure* currStructure = access.structure();
                 if (auto* object = access.tryGetAlternateBase())
                     currStructure = object->structure();
-                // For now, we only support cases which JSGlobalObject is the same to the currently profiledBlock.
-                if (currStructure->realm() != profiledBlock->globalObject())
+                // A custom accessor is called with the realm of the object that holds it. The DFG and the FTL pass the
+                // realm of the code origin instead (Graph::globalObjectFor()), so for now we only support the case where
+                // the two are the same. Do not compare with profiledBlock->globalObject(): profiledBlock can be the
+                // optimized CodeBlock of a function that inlined this code origin, and that function can be in another realm.
+                JSGlobalObject* customAccessorRealm = currStructure->realm();
+                if (customAccessorRealm != profiledBlock->globalObjectFor(codeOrigin))
                     return GetByStatus(JSC::slowVersion(summary), propertyCache);
 
                 auto customAccessorGetter = access.as<GetterSetterAccessCase>().customAccessor();
@@ -370,6 +374,9 @@ GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(co
                     nullptr,
                     customAccessorGetter,
                     WTF::move(domAttribute));
+#if ASSERT_ENABLED
+                variant.setCustomAccessorRealm(customAccessorRealm);
+#endif
 
                 if (!result.appendVariant(variant))
                     return GetByStatus(JSC::slowVersion(summary), propertyCache);
@@ -485,6 +492,8 @@ GetByStatus GetByStatus::computeFor(
                 return bless(result);
         }
         
+        // An earlier compilation recorded this status for a code origin that has the same baseline CodeBlock at every
+        // inline level (CodeOrigin::isApproximatelyEqualTo()), so for the realm of this code origin.
         if (status.getStatus)
             return bless(*status.getStatus);
     }
