@@ -636,6 +636,12 @@ public:
     bool NODELETE canCachePropertyNameEnumerator(VM&) const;
     bool NODELETE canAccessPropertiesQuicklyForEnumeration() const;
 
+    // The class overrides put() or defineOwnProperty(), and not getOwnPropertySlot(). Code that stores to an own property with
+    // only the Structure to go by has no PutPropertySlot to ask, so it has to leave such an object to the method table.
+    // A class that also overrides getOwnPropertySlot() is not included. PutByStatus tests for that flag, and the put() of
+    // JSArray, JSFunction, RegExpObject and the like only guards names that the other such stores do not reach.
+    inline bool classInterceptsOwnPropertyStores() const; // Defined in StructureInlines.h
+
     inline JSCellButterfly* cachedPropertyNames(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
     inline JSCellButterfly* cachedPropertyNamesIgnoringSentinel(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
     void setCachedPropertyNames(VM&, CachedPropertyNamesKind, JSCellButterfly*);
