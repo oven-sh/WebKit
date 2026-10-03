@@ -819,7 +819,7 @@ private:
     {
         if (!left || !right)
             return TNone;
-        if (isSubtype(left | right, TNumberLike | TString))
+        if (isSubtype(left, TNumberLike | TString) || isSubtype(right, TNumberLike | TString))
             return TInt32;
         return TInt32 | TBigInt;
     }

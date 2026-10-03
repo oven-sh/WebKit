@@ -265,6 +265,26 @@ void Lowering::lowerBitOp(Node* node, VirtualRegister lhs, VirtualRegister rhs)
 
     LValue a = lowJSValue(left);
     LValue b = lowJSValue(right);
+    if (bool leftIsInt32 = isSubtype(left->type, TInt32); (leftIsInt32 || isSubtype(right->type, TInt32)) && isSubtype(node->type, TInt32)) {
+        m_graph.remark("inline-bit-operation"_s);
+        LBasicBlock intCase = m_out.newBlock();
+        LBasicBlock slowCase = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isInt32(leftIsInt32 ? b : a), usually(intCase), rarely(slowCase));
+
+        m_out.appendTo(intCase);
+        ValueFromBlock fastResult = m_out.anchor(intOp(unboxInt32(a), unboxInt32(b)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase);
+        LValue slow = isCompact() ? callBinaryStub(node, *stubFor(opcode), Int64, a, b) : vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), a, b);
+        ValueFromBlock slowResult = m_out.anchor(unboxInt32(slow));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        finish(m_out.phi(Int32, fastResult, slowResult));
+        return;
+    }
     if (isCompact()) {
         setJSValue(node, callBinaryStub(node, *stubFor(opcode), Int64, a, b));
         return;
@@ -824,6 +844,28 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     if ((strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt)) {
         if (areAtomStrings)
             return areEqualAssumingAtomStrings(left, a, right, b);
+    }
+
+    if (bool leftIsInt32 = isSubtype(left->type, TInt32); strict && (leftIsInt32 || isSubtype(right->type, TInt32))) {
+        m_graph.remark("inline-comparison-with-int32"_s);
+        LValue other = leftIsInt32 ? b : a;
+        LBasicBlock differs = m_out.newBlock();
+        LBasicBlock isDouble = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 3> results;
+        results.append(m_out.anchor(m_out.booleanTrue));
+        m_out.branch(m_out.equal(a, b), unsure(continuation), unsure(differs));
+
+        m_out.appendTo(differs);
+        results.append(m_out.anchor(m_out.booleanFalse));
+        m_out.branch(m_out.bitAnd(isNumber(other), isNotInt32(other)), rarely(isDouble), usually(continuation));
+
+        m_out.appendTo(isDouble);
+        results.append(m_out.anchor(m_out.doubleEqual(unboxDouble(other), m_out.intToDouble(unboxInt32(leftIsInt32 ? a : b)))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        return m_out.phi(Int32, results);
     }
 
     if (isCompact()) {
