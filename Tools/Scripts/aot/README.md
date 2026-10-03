@@ -24,6 +24,8 @@ realm (`createGlobalObject().load()`), on another thread (`$.agent.start()`), or
 | Compare against the interpreter (minutes) | `compare-with-interpreter.py <jsc>` runs all of `JSTests/stress` both ways. It only needs a `jsc` binary, so it is also the fastest way to try a new platform. |
 | Catch missing includes hidden by the precompiled header (about a minute per pass) | `check-includes.py <build directory> <base commit>`, with and without `--headers` and `--gate-off`. |
 | Fuzzing (open-ended) | `fuzz.py` mutates `JSTests/stress` and compares the interpreter with compiled code. `minimize.py` reduces a finding. |
+| Fuzzing with generated programs (open-ended) | `fuzz-programs.py` generates programs about scopes and closures, and about objects, their shapes and aliases, and compares likewise. `--minimize` reduces a finding. It found wrong code within a minute where `fuzz.py` found none in twenty. |
+| Check that a faster build still does the same work (minutes) | `compare-execution-counts.py`, see below |
 | Limit a runaway compile | `capped.py <GB> <seconds> <command...>` |
 
 ## Seeing what the compiler did
@@ -58,6 +60,16 @@ For a bundled program, pass the bundler's source maps (`--source-map`) to get po
 `reasons.txt` (`--reasons`) to get the reasons in words. `--lcov` writes a tracefile for tools that show code coverage, which can
 hold only hit or miss, and `--fail-under <percent>` makes the exit status usable in CI. The last table of the report compares the
 number of instructions reported with the number in the bytecode: anything but 100% is a bug in the compiler's reporting.
+
+## Before believing a speedup
+
+A miscompiled program need not crash. A build that walked one scope too far in functions with exception handlers ran a large
+program to the end with the same output as before and 12% fewer instructions, 8 of which were work it no longer did: what went
+wrong was caught by the program's own handlers. Every test passed.
+
+So before comparing the speed of two builds of a real program, compile both with `--useAOTTypeCoverageCounters=1`, run them on the
+same input and give the counters to `compare-execution-counts.py`. It compares how often the operations ran that optimizations
+leave in place (catches, throws, closures, object literals, property accesses) and at how many places in the program.
 
 ## Before pushing
 
