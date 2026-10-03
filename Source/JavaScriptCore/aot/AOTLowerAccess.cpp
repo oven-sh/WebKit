@@ -849,7 +849,6 @@ LValue Lowering::getByIdWithThisCached(Node* node, LValue base, LValue thisValue
     unsigned slot = allocateSlot();
     LBasicBlock cellCase = m_out.newBlock();
     LBasicBlock rightStructure = m_out.newBlock();
-    LBasicBlock hit = m_out.newBlock();
     LBasicBlock slowCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
     m_out.branch(isCell(base), usually(cellCase), rarely(slowCase));
@@ -858,10 +857,7 @@ LValue Lowering::getByIdWithThisCached(Node* node, LValue base, LValue thisValue
     LValue word = m_out.load64(slotWord(slot, 0));
     m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), lowHalf(m_out, word)), usually(rightStructure), rarely(slowCase));
 
-    m_out.appendTo(rightStructure, hit);
-    m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter) << 32)), usually(hit), rarely(slowCase));
-
-    m_out.appendTo(hit, slowCase);
+    m_out.appendTo(rightStructure, slowCase);
     LValue holder = m_out.loadPtr(slotWord(slot, 1));
     LValue isOnHolder = m_out.bitAnd(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIndirect) << 32)), m_out.notNull(holder));
     ValueFromBlock fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isOnHolder, holder, base), word)));
