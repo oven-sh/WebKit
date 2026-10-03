@@ -6723,6 +6723,10 @@ struct BytecodeLinkEncoder::Impl {
                     bool isInProgram = isProgramModule(jobs[index].module);
                     if (isInProgram && (isTopLevel || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody))
                         AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), isTopLevel ? 0 : jobs[index].key.start);
+                    else if (auto* executable = jobs[index].executable; executable && executable->isBuiltinDefaultClassConstructor()) {
+                        SourceCode source = executable->linkedSourceCode(BuiltinExecutables::defaultConstructorSourceCode(executable->constructorKind()));
+                        AOT::collectQuotes(code.info, jobs[index].codeBlock, source.provider()->source(), source.startOffset());
+                    }
                     if (auto* numbers = AOT::programIdentifierIndices()) {
                         for (auto& identifier : jobs[index].codeBlock->identifiers())
                             code.info.identifierIndices.append(numbers->get(identifier.impl()));
@@ -6736,10 +6740,6 @@ struct BytecodeLinkEncoder::Impl {
                     String nameForMap;
                     if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
                         nameForMap = executable->ecmaName().string();
-                    else if (auto* executable = jobs[index].executable; executable && executable->isBuiltinDefaultClassConstructor()) {
-                        SourceCode source = executable->linkedSourceCode(BuiltinExecutables::defaultConstructorSourceCode(executable->constructorKind()));
-                        AOT::collectQuotes(code.info, jobs[index].codeBlock, source.provider()->source(), source.startOffset());
-                    }
                     builder.add(jobs[index].key, jobs[index].rank, WTF::move(code), WTF::move(nameForMap));
                 }
                 else {
