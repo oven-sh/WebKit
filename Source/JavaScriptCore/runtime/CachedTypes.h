@@ -422,6 +422,7 @@ public:
     ProgramObjectsDecoder(VM&, std::span<const uint8_t>, DecoderStringTable&);
     ~ProgramObjectsDecoder();
     Identifier identifier(uint32_t);
+    String identifierAsPlainString(uint32_t);
     JSValue constant(uint32_t);
     std::optional<uint32_t> constantAliasTarget(uint32_t);
     UnlinkedFunctionExecutable* unlinkedFunction(uint32_t);

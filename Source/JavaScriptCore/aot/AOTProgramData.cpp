@@ -1080,8 +1080,26 @@ UniquedStringImpl* VMProgram::identifier(uint32_t index)
     RELEASE_ASSERT(!identifier.isNull());
     identifier.impl()->ref();
     m_impl->materializedIdentifierCount.append(index);
+    WTF::storeStoreFence();
     m_identifiers[index] = identifier.impl();
     return identifier.impl();
+}
+
+String VMProgram::identifierWithoutGC(uint32_t index)
+{
+    RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
+    if (!index || m_identifiers[index] || !m_vm.heap.currentThreadIsDoingGCWork())
+        return identifierAsIdentifier(index).string();
+    return ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).identifierAsPlainString(index);
+}
+
+const Identifier* VMProgram::tryGetIdentifierConcurrently(uint32_t index) const
+{
+    RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
+    if (index && !m_identifiers[index])
+        return nullptr;
+    WTF::loadLoadFence();
+    return reinterpret_cast<const Identifier*>(&m_identifiers[index]);
 }
 
 const Identifier& VMProgram::identifierAsIdentifier(uint32_t index)

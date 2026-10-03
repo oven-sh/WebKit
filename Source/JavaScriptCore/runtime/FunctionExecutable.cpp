@@ -233,6 +233,16 @@ const Identifier& FunctionExecutable::shortFormName() const
     return AOT::VMProgram::of(vm())->identifierAsIdentifier(shortFormRow().name);
 }
 
+String FunctionExecutable::shortFormNameWithoutGC() const
+{
+    return AOT::VMProgram::of(vm())->identifierWithoutGC(shortFormRow().name);
+}
+
+const Identifier* FunctionExecutable::tryGetShortFormNameConcurrently() const
+{
+    return AOT::VMProgram::of(vm())->tryGetIdentifierConcurrently(shortFormRow().name);
+}
+
 SourceProvider* ScriptExecutable::shortFormSourceProvider() const
 {
     return AOT::VMProgram::of(vm())->moduleProvider(shortFormRow().module);

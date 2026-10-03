@@ -7390,6 +7390,7 @@ public:
     }
 
     Identifier identifier(Decoder& decoder, uint32_t number) const { return m_identifiers.elements()[number].decode(decoder); }
+    String identifierAsPlainString(Decoder& decoder, uint32_t number) const { return m_identifiers.elements()[number].decodePlainString(decoder); }
     JSValue constant(Decoder& decoder, uint32_t number) const { return m_constants.elements()[number].decode(decoder, static_cast<CachedJSValue::Kind>(m_constantKinds.elements()[number])); }
     std::optional<uint32_t> constantAliasTarget(uint32_t number) const
     {
@@ -7454,6 +7455,7 @@ ProgramObjectsDecoder::ProgramObjectsDecoder(VM& vm, std::span<const uint8_t> by
 ProgramObjectsDecoder::~ProgramObjectsDecoder() = default;
 
 Identifier ProgramObjectsDecoder::identifier(uint32_t number) { return m_objects.identifier(m_decoder.get(), number); }
+String ProgramObjectsDecoder::identifierAsPlainString(uint32_t number) { return m_objects.identifierAsPlainString(m_decoder.get(), number); }
 JSValue ProgramObjectsDecoder::constant(uint32_t number) { return m_objects.constant(m_decoder.get(), number); }
 std::optional<uint32_t> ProgramObjectsDecoder::constantAliasTarget(uint32_t number) { return m_objects.constantAliasTarget(number); }
 UnlinkedFunctionExecutable* ProgramObjectsDecoder::unlinkedFunction(uint32_t number) { return m_objects.unlinkedFunction(m_decoder.get(), number); }

@@ -176,8 +176,8 @@ public:
     }
     // Unlike name() / ecmaName(), also callable from the collector's end phase (ErrorInstance::computeErrorInfo's stack traces).
     String nameWithoutGC() { return isShortForm() ? (unlinkedExecutable()->hasName() ? ecmaNameWithoutGC() : String()) : fullForm()->m_unlinkedExecutable->nameWithoutGC(); }
-    String ecmaNameWithoutGC() { return isShortForm() ? ecmaName().string() : fullForm()->m_unlinkedExecutable->ecmaNameWithoutGC(); }
-    const Identifier* tryGetEcmaNameConcurrently() { return isShortForm() ? &ecmaName() : fullForm()->m_unlinkedExecutable->tryGetEcmaNameConcurrently(); }
+    String ecmaNameWithoutGC() { return isShortForm() ? shortFormNameWithoutGC() : fullForm()->m_unlinkedExecutable->ecmaNameWithoutGC(); }
+    const Identifier* tryGetEcmaNameConcurrently() { return isShortForm() ? tryGetShortFormNameConcurrently() : fullForm()->m_unlinkedExecutable->tryGetEcmaNameConcurrently(); }
     UTF8CString inferredNameForTools(); // dumps and debug info; callable from compiler / GC threads, where a name still in the bytecode cache prints as a placeholder
     unsigned parameterCount() const { return isShortForm() ? shortFormRow().parameterCount : fullForm()->m_unlinkedExecutable->parameterCount(); }
     SourceParseMode parseMode() const { return unlinkedExecutable()->parseMode(); }
@@ -405,6 +405,8 @@ private:
 
     JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* shortFormUnlinkedExecutable() const;
     JS_EXPORT_PRIVATE const Identifier& shortFormName() const;
+    JS_EXPORT_PRIVATE String shortFormNameWithoutGC() const;
+    JS_EXPORT_PRIVATE const Identifier* tryGetShortFormNameConcurrently() const;
 };
 
 } // namespace JSC

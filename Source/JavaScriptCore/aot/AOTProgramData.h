@@ -183,6 +183,8 @@ public:
     JSValue createTransientConstant(uint32_t index);
     JS_EXPORT_PRIVATE UniquedStringImpl* identifier(uint32_t index);
     const Identifier& identifierAsIdentifier(uint32_t index);
+    String identifierWithoutGC(uint32_t index);
+    const Identifier* tryGetIdentifierConcurrently(uint32_t index) const;
     JS_EXPORT_PRIVATE FunctionExecutable* executable(uint32_t index);
     FunctionExecutable* executableIfExists(uint32_t index) const
     {
