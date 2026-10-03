@@ -364,13 +364,6 @@ public:
             }
             if (!code[0] && !code[1])
                 return;
-            if (isDefaultConstructor) {
-                for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                    if (auto& function = code[static_cast<unsigned>(kind)]; function && !m_infos[function->index].sites)
-                        fillInfo(*function, unlinked->codeBlockIfExists(kind), nullptr, invalidExecutableIndex, kind, lineStarts);
-                }
-                return;
-            }
             uint32_t existing = invalidExecutableIndex;
             for (auto& function : code) {
                 if (function && m_infos[function->index].indexPlusOne())
@@ -971,7 +964,7 @@ VMProgram::VMProgram(VM& vm)
     : m_vm(vm)
     , m_data(*ProgramData::get())
     , m_identifiers(zeroedTable<UniquedStringImpl*>(m_data.numberOfIdentifiers))
-    , m_executables(zeroedTable<FunctionExecutable*>(m_data.numberOfExecutables))
+    , m_executableChunks(static_cast<FunctionExecutable***>(fastZeroedMalloc((m_data.numberOfExecutables / executablesPerChunk + 1) * sizeof(FunctionExecutable**))))
     , m_impl(makeUnique<Impl>())
 {
     m_impl->unlinkedFunctions.fill(nullptr, m_data.numberOfUnlinkedFunctions);
@@ -990,7 +983,9 @@ VMProgram::~VMProgram()
     fastFree(m_constantValues);
     fastFree(m_constantKeys);
     freeTable(m_identifiers, m_data.numberOfIdentifiers);
-    freeTable(m_executables, m_data.numberOfExecutables);
+    for (uint32_t i = 0; i <= m_data.numberOfExecutables / executablesPerChunk; ++i)
+        fastFree(m_executableChunks[i]);
+    fastFree(m_executableChunks);
 }
 
 DecoderStringTable& VMProgram::strings()
@@ -1182,7 +1177,7 @@ const SourceCode& VMProgram::shortExecutableSource(uint32_t index)
 FunctionExecutable* VMProgram::executable(uint32_t executableIndex)
 {
     RELEASE_ASSERT(executableIndex < m_data.numberOfExecutables);
-    if (FunctionExecutable* existing = m_executables[executableIndex])
+    if (FunctionExecutable* existing = executableIfExists(executableIndex))
         return existing;
     RELEASE_ASSERT(!m_vm.heap.isShuttingDown() && m_vm.heap.mutatorState() == MutatorState::Running && !m_vm.heap.worldIsStopped() && !m_vm.heap.objectSpace().isIterating());
     const ExecutableRow& row = m_data.executableRow(executableIndex);
@@ -1201,7 +1196,10 @@ FunctionExecutable* VMProgram::executable(uint32_t executableIndex)
     }
     didMaterialize(result);
     m_impl->materializedExecutables.quickSet(executableIndex);
-    m_executables[executableIndex] = result;
+    FunctionExecutable**& chunk = m_executableChunks[executableIndex / executablesPerChunk];
+    if (!chunk)
+        chunk = static_cast<FunctionExecutable**>(fastZeroedMalloc(executablesPerChunk * sizeof(FunctionExecutable*)));
+    chunk[executableIndex % executablesPerChunk] = result;
     return result;
 }
 
@@ -1281,7 +1279,7 @@ void VMProgram::visit(Visitor& visitor, CollectionScope scope)
             visitor.appendUnbarriered(value.asCell());
     }
     m_impl->materializedExecutables.forEachSetBit([&](size_t index) {
-        visitor.appendUnbarriered(m_executables[index]);
+        visitor.appendUnbarriered(executableIfExists(index));
     });
     for (auto* function : m_impl->unlinkedFunctions) {
         if (function)
@@ -1294,6 +1292,8 @@ template void VMProgram::visit(SlotVisitor&, CollectionScope);
 void VMProgram::didFinishCollection()
 {
     m_impl->createdSinceLastCollection.clear();
+    if (m_impl->ownStrings)
+        m_impl->ownStrings->removeDeadRecentPlainStrings(m_vm);
     if (Options::verboseAOTCompilation()) [[unlikely]] {
         UncheckedKeyHashMap<const ClassInfo*, std::pair<size_t, size_t>> byClass;
         auto count = [&](JSCell* cell) {
@@ -1305,7 +1305,7 @@ void VMProgram::didFinishCollection()
             if (JSValue value = JSValue::decode(m_constantValues[i]); m_constantKeys[i] && value.isCell())
                 count(value.asCell());
         }
-        m_impl->materializedExecutables.forEachSetBit([&](size_t index) { count(m_executables[index]); });
+        m_impl->materializedExecutables.forEachSetBit([&](size_t index) { count(executableIfExists(index)); });
         for (auto* function : m_impl->unlinkedFunctions) {
             if (function)
                 count(function);

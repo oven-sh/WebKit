@@ -772,7 +772,17 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
                 if (c <= maxSingleCharacterString)
                     return vm.smallStrings.singleCharacterString(c);
             }
-            return JSString::createHasOtherOwner(vm, createImpl(r));
+            if (!m_recentPlainStrings)
+                m_recentPlainStrings = makeUnique<RecentPlainStrings>();
+            RecentPlainStrings& recent = *m_recentPlainStrings;
+            recent.wasUsedSinceLastCollection = true;
+            unsigned place = ordinal % RecentPlainStrings::size;
+            if (recent.ordinalsPlusOne[place] == ordinal + 1)
+                return recent.cells[place];
+            JSString* string = JSString::createHasOtherOwner(vm, createImpl(r));
+            recent.ordinalsPlusOne[place] = ordinal + 1;
+            recent.cells[place] = string;
+            return string;
         }
         Ref atom = atomFor(vm, ordinal);
         if (atom->length() == 1 && atom.get()[0] <= maxSingleCharacterString)
@@ -836,6 +846,20 @@ void DecoderStringTable::visitStrongReferences(Visitor& visitor, CollectionScope
         visitor.appendUnbarriered(cell(m_slots[m_cellOrdinals[i]]));
     m_visitedCount = m_cellOrdinals.size();
     m_visitedThisCycle = true;
+}
+
+void DecoderStringTable::removeDeadRecentPlainStrings(VM& vm)
+{
+    if (!m_recentPlainStrings)
+        return;
+    if (!std::exchange(m_recentPlainStrings->wasUsedSinceLastCollection, false)) {
+        m_recentPlainStrings = nullptr;
+        return;
+    }
+    for (unsigned i = 0; i < RecentPlainStrings::size; ++i) {
+        if (m_recentPlainStrings->ordinalsPlusOne[i] && !vm.heap.isMarked(m_recentPlainStrings->cells[i]))
+            m_recentPlainStrings->ordinalsPlusOne[i] = 0;
+    }
 }
 
 void DecoderStringTable::didFinishCollection()
