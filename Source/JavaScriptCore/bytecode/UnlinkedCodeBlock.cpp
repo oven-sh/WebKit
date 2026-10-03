@@ -89,8 +89,11 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
 void UnlinkedCodeBlock::initializeLoopHintExecutionCounter()
 {
     ASSERT(Options::returnEarlyFromInfiniteLoopsForFuzzing());
+    auto* instructions = m_instructions.get();
+    if (!instructions || m_hasNoInstructions)
+        return;
     VM& vm = this->vm();
-    for (const auto& instruction : instructions()) {
+    for (const auto& instruction : *instructions) {
         if (instruction->is<OpLoopHint>())
             vm.addLoopHintExecutionCounter(instruction.ptr());
     }
@@ -276,7 +279,7 @@ UnlinkedCodeBlock::~UnlinkedCodeBlock()
     }
 #endif
     if (Options::returnEarlyFromInfiniteLoopsForFuzzing()) [[unlikely]] {
-        if (auto* instructions = m_instructions.get()) {
+        if (auto* instructions = m_instructions.get(); instructions && !m_hasNoInstructions) {
             VM& vm = this->vm();
             for (const auto& instruction : *instructions) {
                 if (instruction->is<OpLoopHint>())

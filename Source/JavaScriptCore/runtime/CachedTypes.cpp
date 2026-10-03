@@ -4652,6 +4652,8 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
 #endif
         codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
     decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+    if (Options::returnEarlyFromInfiniteLoopsForFuzzing() && !(layout.flags & LayoutHasNoCode)) [[unlikely]]
+        codeBlock.initializeLoopHintExecutionCounter();
     if (layout.flags & LayoutHasNoCode) {
         codeBlock.setHasNoInstructions();
         auto decodeNumbers = [&](const Array& array, auto& out) {
@@ -5393,6 +5395,8 @@ CodeBlockType* CachedCodeBlock<CodeBlockType>::createFromParts(VM& vm, const Cod
     codeBlock.m_hasTailCalls = s.hasTailCalls;
     codeBlock.m_hasCheckpoints = s.hasCheckpoints;
     codeBlock.m_instructions = std::unique_ptr<JSInstructionStream>(new JSInstructionStream(parts.instructions, JSInstructionStream::Borrow));
+    if (parts.instructions.data() == absentInstructions(0).data())
+        codeBlock.setHasNoInstructions();
     if (parts.identifiers) {
         codeBlock.m_identifiers = FixedVector<Identifier>(numberOfIdentifiers);
         for (unsigned i = 0; i < numberOfIdentifiers; ++i)

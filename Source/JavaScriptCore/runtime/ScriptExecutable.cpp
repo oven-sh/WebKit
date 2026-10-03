@@ -486,10 +486,10 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
         return;
     }
 
-    if (Options::validateBytecode())
+    bool installedUnlinkedBaselineCode = codeBlock->jitType() == JITType::AOTJIT;
+    if (Options::validateBytecode() && !installedUnlinkedBaselineCode)
         codeBlock->validate();
 
-    bool installedUnlinkedBaselineCode = codeBlock->jitType() == JITType::AOTJIT;
 #if ENABLE(JIT)
     if (RefPtr<BaselineJITCode> baselineRef = installedUnlinkedBaselineCode ? nullptr : codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
         codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
