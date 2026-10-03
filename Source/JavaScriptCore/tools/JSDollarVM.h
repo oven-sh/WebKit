@@ -62,6 +62,7 @@ public:
     }
 
     Structure* objectDoingSideEffectPutWithoutCorrectSlotStatusStructure() { return m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID.get(); }
+    Structure* objectDoingSideEffectPutWithCorrectSlotStatusStructure() { return m_objectDoingSideEffectPutWithCorrectSlotStatusStructureID.get(); }
     Structure* testCustomGetterSetterStructure() { return m_testCustomGetterSetterStructureID.get(); }
 
 #if ENABLE(JIT)
@@ -82,6 +83,7 @@ private:
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
     WriteBarrierStructureID m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID;
+    WriteBarrierStructureID m_objectDoingSideEffectPutWithCorrectSlotStatusStructureID;
     WriteBarrierStructureID m_testCustomGetterSetterStructureID;
 };
 
