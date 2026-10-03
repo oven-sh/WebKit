@@ -509,13 +509,6 @@ bool Lowering::isAtomIfString(Node* node, unsigned depth)
     if (depth > 4)
         return false;
     switch (node->kind) {
-    case NodeKind::ConstantCell: {
-        if (!node->reg.isConstant())
-            return false;
-        JSValue constant = node->codeBlockOfConstant()->getConstant(node->reg);
-        const StringImpl* impl = constant && constant.isString() ? asString(constant)->tryGetValueImpl() : nullptr;
-        return impl && impl->isAtom();
-    }
     case NodeKind::Narrow:
         return isAtomIfString(node->uses[0].node, depth + 1);
     case NodeKind::Phi:
@@ -542,8 +535,6 @@ bool Lowering::isAtomIfShortString(Node* node, unsigned depth)
     if (depth > 4)
         return false;
     switch (node->kind) {
-    case NodeKind::ConstantCell:
-        return isAtomIfString(node, depth);
     case NodeKind::Narrow:
         return isAtomIfShortString(node->uses[0].node, depth + 1);
     case NodeKind::Phi:
