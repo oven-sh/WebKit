@@ -27,6 +27,7 @@
 
 #if ENABLE(DFG_JIT)
 
+#include "DFGOperations.h"
 #include "DFGSlowPathGenerator.h"
 #include "DFGSpeculativeJIT.h"
 #include <wtf/Vector.h>
@@ -67,14 +68,15 @@ private:
     Vector<SilentRegisterSavePlan, 2> m_plans;
 };
 
+// The two generators below are the slow path of SpeculativeJIT::emitAllocateButterfly and of the JSArray cell that
+// follows it. They own the operation: it must take the butterfly from the size class that the inline path asked for.
 class CallArrayAllocatorWithVariableSizeSlowPathGenerator final : public JumpingSlowPathGenerator<MacroAssembler::JumpList> {
     WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(CallArrayAllocatorWithVariableSizeSlowPathGenerator);
 public:
     CallArrayAllocatorWithVariableSizeSlowPathGenerator(
-        MacroAssembler::JumpList from, SpeculativeJIT* jit, P_JITOperation_GStZB function,
+        MacroAssembler::JumpList from, SpeculativeJIT* jit,
         GPRReg resultGPR, JITCompiler::LinkableConstant globalObject, RegisteredStructure contiguousStructure, RegisteredStructure arrayStorageStructure, GPRReg sizeGPR, GPRReg storageGPR)
         : JumpingSlowPathGenerator<MacroAssembler::JumpList>(from, jit)
-        , m_function(function)
         , m_contiguousStructure(contiguousStructure)
         , m_arrayStorageOrContiguousStructure(arrayStorageStructure)
         , m_resultGPR(resultGPR)
@@ -100,9 +102,9 @@ private:
             done.link(jit);
         } else
             jit->move(SpeculativeJIT::TrustedImmPtr(m_contiguousStructure), scratchGPR);
-        jit->setupArguments<decltype(m_function)>(m_globalObject, scratchGPR, m_sizeGPR, m_storageGPR);
-        jit->appendCall(m_function);
-        std::optional<GPRReg> exception = jit->tryHandleOrGetExceptionUnderSilentSpill<decltype(m_function)>(m_plans, m_resultGPR);
+        jit->setupArguments<P_JITOperation_GStZB>(m_globalObject, scratchGPR, m_sizeGPR, m_storageGPR);
+        jit->appendCall(operationNewArrayWithSizeAfterInlineAllocation);
+        std::optional<GPRReg> exception = jit->tryHandleOrGetExceptionUnderSilentSpill<P_JITOperation_GStZB>(m_plans, m_resultGPR);
         jit->setupResults(m_resultGPR);
         jit->silentFill(m_plans);
 
@@ -112,7 +114,6 @@ private:
         jumpTo(jit);
     }
 
-    P_JITOperation_GStZB m_function;
     RegisteredStructure m_contiguousStructure;
     RegisteredStructure m_arrayStorageOrContiguousStructure;
     GPRReg m_resultGPR;
@@ -126,10 +127,9 @@ class CallArrayAllocatorWithVariableStructureVariableSizeSlowPathGenerator final
     WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(CallArrayAllocatorWithVariableStructureVariableSizeSlowPathGenerator);
 public:
     CallArrayAllocatorWithVariableStructureVariableSizeSlowPathGenerator(
-        MacroAssembler::JumpList from, SpeculativeJIT* jit, P_JITOperation_GStZB function,
+        MacroAssembler::JumpList from, SpeculativeJIT* jit,
         GPRReg resultGPR, JITCompiler::LinkableConstant globalObject, GPRReg structureGPR, GPRReg sizeGPR, GPRReg storageGPR)
         : JumpingSlowPathGenerator<MacroAssembler::JumpList>(from, jit)
-        , m_function(function)
         , m_resultGPR(resultGPR)
         , m_globalObject(globalObject)
         , m_structureGPR(structureGPR)
@@ -143,11 +143,10 @@ private:
     void generateInternal(SpeculativeJIT* jit) final
     {
         linkFrom(jit);
-        jit->callOperationWithSilentSpill(m_plans, m_function, m_resultGPR, m_globalObject, m_structureGPR, m_sizeGPR, m_storageGPR);
+        jit->callOperationWithSilentSpill(m_plans, operationNewArrayWithSizeAfterInlineAllocation, m_resultGPR, m_globalObject, m_structureGPR, m_sizeGPR, m_storageGPR);
         jumpTo(jit);
     }
 
-    P_JITOperation_GStZB m_function;
     GPRReg m_resultGPR;
     JITCompiler::LinkableConstant m_globalObject;
     GPRReg m_structureGPR;

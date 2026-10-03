@@ -9638,7 +9638,7 @@ void SpeculativeJIT::compileArraySlice(Node* node)
         mutatorFence(vm());
 
         addSlowPathGenerator(makeUniqueWithoutFastMallocCheck<CallArrayAllocatorWithVariableStructureVariableSizeSlowPathGenerator>(
-            slowCases, this, operationNewArrayWithSize, resultGPR, LinkableConstant::globalObject(*this, node), tempValue, sizeGPR, storageResultGPR));
+            slowCases, this, resultGPR, LinkableConstant::globalObject(*this, node), tempValue, sizeGPR, storageResultGPR));
     }
 
     GPRTemporary temp4(this);
@@ -14310,6 +14310,8 @@ void SpeculativeJIT::compileObjectDefinePropertyFromFields(Node* node)
     noResult(node, UseChildrenCalledExplicitly);
 }
 
+// The slow path of this allocation must take the butterfly from the size class of the byte size computed here, or the
+// free list that this code reads is never refilled. operationNewArrayWithSizeAfterInlineAllocation does that.
 void SpeculativeJIT::emitAllocateButterfly(GPRReg storageResultGPR, GPRReg sizeGPR, GPRReg scratch1, GPRReg scratch2, GPRReg scratch3, JumpList& slowCases)
 {
     RELEASE_ASSERT(RegisterSet(storageResultGPR, sizeGPR, scratch1, scratch2, scratch3).numberOfSetGPRs() == 5);
@@ -16669,7 +16671,7 @@ void SpeculativeJIT::compileAllocateNewArrayWithSize(Node* node, GPRReg resultGP
     mutatorFence(vm());
 
     addSlowPathGenerator(makeUniqueWithoutFastMallocCheck<CallArrayAllocatorWithVariableSizeSlowPathGenerator>(
-        slowCases, this, operationNewArrayWithSize, resultGPR,
+        slowCases, this, resultGPR,
         LinkableConstant::globalObject(*this, node),
         structure,
         shouldConvertLargeSizeToArrayStorage ? m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithArrayStorage)) : structure,

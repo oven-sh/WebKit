@@ -24324,10 +24324,14 @@ IGNORE_CLANG_WARNINGS_END
         LValue slowResultValue = nullptr;
         if (vectorLength == publicLength
             || (staticVectorLengthFromPublicLength && staticVectorLength && staticVectorLength.value() == staticVectorLengthFromPublicLength.value())) {
+            // The slow path must take the butterfly from the size class that the fast path above asked for. A static vector
+            // length has the capacity that operationNewArrayWithSize gives. A run-time one is the length itself.
+            bool fastPathAppliedRuntimeCapacity = !!staticVectorLength;
             slowResultValue = lazySlowPath(
                 [=, &vm] (const Vector<Location>& locations) -> RefPtr<LazySlowPath::Generator> {
                     return createLazyCallGenerator(vm,
-                        operationNewArrayWithSize, locations[0].directGPR(), CCallHelpers::TrustedImmPtr(globalObject),
+                        fastPathAppliedRuntimeCapacity ? operationNewArrayWithSize : operationNewArrayWithSizeAfterInlineAllocation,
+                        locations[0].directGPR(), CCallHelpers::TrustedImmPtr(globalObject),
                         locations[1].directGPR(), locations[2].directGPR(), locations[3].directGPR());
                 },
                 structureValue, publicLength, butterflyValue);
