@@ -753,7 +753,7 @@
 #endif
 
 #if !defined(ENABLE_AOT)
-#if ENABLE(FTL_JIT) && (CPU(ARM64) || CPU(X86_64)) && (OS(DARWIN) || (OS(LINUX) && !OS(ANDROID) && !ASAN_ENABLED) || (OS(WINDOWS) && CPU(X86_64)))
+#if ENABLE(FTL_JIT) && (CPU(ARM64) || CPU(X86_64)) && (OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS))
 #define ENABLE_AOT 1
 #else
 #define ENABLE_AOT 0

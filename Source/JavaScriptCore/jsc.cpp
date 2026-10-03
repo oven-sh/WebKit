@@ -111,6 +111,9 @@
 #if OS(DARWIN)
 #include <mach-o/dyld.h>
 #endif
+#if OS(FREEBSD)
+#include <sys/sysctl.h>
+#endif
 #endif
 #include <sys/types.h>
 #include <type_traits>
@@ -5364,6 +5367,11 @@ extern char** environ;
     char executable[PATH_MAX * 2];
     uint32_t sizeOfPath = sizeof(executable);
     RELEASE_ASSERT(!_NSGetExecutablePath(executable, &sizeOfPath));
+#elif OS(FREEBSD)
+    char executable[PATH_MAX];
+    size_t sizeOfPath = sizeof(executable);
+    int name[] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+    RELEASE_ASSERT(!sysctl(name, std::size(name), executable, &sizeOfPath, nullptr, 0));
 #else
     const char* executable = "/proc/self/exe";
 #endif
@@ -5398,11 +5406,19 @@ extern char** environ;
     RELEASE_ASSERT(!posix_spawn(&builder, executable, nullptr, nullptr, argumentsPlus({ pathBuffer, remarksPathBuffer }).mutableSpan().data(), environ));
     int status = 0;
     while (waitpid(builder, &status, 0) < 0 && errno == EINTR) { }
-    unlink(path);
-    unlink(remarksPath);
-
     struct stat written;
     bool isBuilt = WIFEXITED(status) && !WEXITSTATUS(status) && !fstat(fileDescriptor, &written) && written.st_size;
+#if OS(FREEBSD)
+    snprintf(pathBuffer, sizeof(pathBuffer), "--aotImagePath=%s", path);
+    pid_t runner;
+    RELEASE_ASSERT(!posix_spawn(&runner, executable, nullptr, nullptr, argumentsPlus({ isBuilt ? pathBuffer : "--useAOT=1", remarksPathBuffer }).mutableSpan().data(), environ));
+    while (waitpid(runner, &status, 0) < 0 && errno == EINTR) { }
+    unlink(path);
+    unlink(remarksPath);
+    exit(WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status));
+#else
+    unlink(path);
+    unlink(remarksPath);
     char optionBuffer[64];
     snprintf(optionBuffer, sizeof(optionBuffer), "--aotImagePath=/dev/fd/%d", fileDescriptor);
     char remarksOptionBuffer[64];
@@ -5410,6 +5426,7 @@ extern char** environ;
     auto arguments = argumentsPlus({ isBuilt ? optionBuffer : "--useAOT=1", remarksOptionBuffer });
     execv(executable, arguments.mutableSpan().data());
     RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 #endif
 

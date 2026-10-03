@@ -30,8 +30,7 @@
 #include <wtf/SHA1.h>
 #include <wtf/TZoneMallocInlines.h>
 
-#if OS(DARWIN) || OS(LINUX)
-#include <pthread.h>
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 #include <sys/mman.h>
 #if OS(DARWIN)
 #include <mach/mach.h>
@@ -1954,7 +1953,7 @@ bool registerAOTImage(std::span<const uint8_t> image, const void* code)
     return !!AOT::Image::registerImage(image, code);
 }
 
-#if OS(DARWIN) || OS(LINUX)
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 
 static void* mapCode(int fileDescriptor, int64_t at, size_t size, const char*& failureReason)
 {
@@ -2015,7 +2014,7 @@ static void unmapCode(void* code, size_t)
 
 #endif
 
-#if OS(DARWIN) || OS(LINUX) || OS(WINDOWS)
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS)
 
 template<typename MapCode, typename UnmapCode>
 static AOTFileUse useAOTFile(std::span<const uint8_t> bytes, uint64_t position, const MapCode& mapCode, const UnmapCode& unmapCode)

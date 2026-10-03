@@ -1,8 +1,8 @@
 # Porting the AOT compiler to another CPU
 
-There are two back ends, ARM64 and x86-64. ARM64 runs on macOS and Linux. x86-64 has only been run on macOS under Rosetta; it is also
-enabled on Linux and on Windows, where it has not been compiled yet. On every other target `ENABLE(AOT)` is off and `aot/` compiles to
-nothing.
+There are two back ends, ARM64 and x86-64. `ENABLE(AOT)` is on for both wherever B3 is built and `useAOTFile()` is implemented: macOS, Linux
+(Android included), FreeBSD and Windows. ARM64 has been run on macOS and Linux, and x86-64 on macOS under Rosetta. The rest has not been
+compiled yet. On every other target `aot/` compiles to nothing.
 
 This document says what depends on the CPU, how the two back ends differ, and how to add a third.
 
@@ -51,9 +51,11 @@ The generators are shared. Of the 98 functions that were written for ARM64, 87 n
 | Argument count, and the immediate of a stub (`T9`) | `x9` | `r10` |
 | Callee (`T10`) | `x10` | `r8` |
 | `T11` | `x11` | `r9` |
-| `T12`, `T13` | `x12`, `x13` | `rbx`, `r12` |
+| `T12` (data stubs only on x86-64) | `x12` | `rdi`, which is also `A0` |
+| `T13` | `x13` | `r12` |
 | `T14` (data stubs only) | `x14` | `rcx`, which is also `A3` |
-| `T15`, the index of the calling function on a miss (data stubs only) | `x15` | `rdi` |
+| `T15`, the index of the calling function on a miss (data stubs only) | `x15` | `r10`, which is also `T9` |
+| Survive calls and stubs | `x19`-`x25` | `rbx` |
 | Instance, number tag, not-cell mask | as the JIT tiers | `r13`, `r14`, `r15` |
 
 `numberOfArgumentGPRs` need not equal `GPRInfo::numberOfArgumentRegisters`. Functions with more parameters use `Signature::List`.
@@ -65,7 +67,7 @@ return register of calls, because `GetById` leaves through a call to a getter. O
 x86-64 it is not, so in the generators `R0` names the operand and `A0` only the first argument of a C++ call. The lowering places the
 first operand last on x86-64, so that a result still in `rax` can be moved out of it first.
 
-Where there are few registers, names overlap. On x86-64 `A4` and `A5` are `T10` and `T11`, and `T14` is `A3`. A function may use both
+Where there are few registers, names overlap. On x86-64 `A4` and `A5` are `T10` and `T11`, `T14` is `A3`, `T12` is `A0` and `T15` is `T9`. A function may use both
 names of a pair only one after the other: `prepareMissAtSite()` orders its last moves for this. The functions that need more registers
 than there are give some of them another meaning per CPU at their top (`generateGetByIdWith()`), or keep what does not change in a loop
 on the stack and compare with memory (`MapOrSetLookup`).
@@ -73,7 +75,13 @@ on the stack and compare with memory (`MapOrSetLookup`).
 Front ends (`AOTThunks.cpp`) run in place of a C++ operation, under the C convention. Only `rax` and `r10` are free there, so on x86-64
 they save four registers on entry (`enter()`, `leave()`).
 
-Where a temporary is callee-saved in the C ABI, as `rbx` and `r12` are:
+**One register has to survive stubs and calls**, for the pointer to the function's inline caches. A third of all calls pass the address of
+a cache, and reloading the pointer from the frame for each was 4% of the instructions of x86-64. So no stub uses `rbx`. During a call the
+receiver, the arguments, the callee and the count leave two temporaries, which is why x86-64 has its own `findCalleeCode()`: it compares with
+memory and loads the entry last (`callTargetGPR`, `callTemporaryGPR`). With one such register the allocator has to be told what to keep in
+it, or it gives it to a value for which it only turns a load into a move: `keepDataInRegister()` makes the pointer a fast temporary.
+
+Where a temporary is callee-saved in the C ABI, as `r12` is:
 
 - Calls and data stubs clobber it (`Lowering::registersClobberedByCalls()`).
 - **B3 counts a callee save that a patchpoint clobbers as used**, and would save it in every prologue for no one.
@@ -83,6 +91,8 @@ Where a temporary is callee-saved in the C ABI, as `rbx` and `r12` are:
   it, and `adapt()`, through which the engine enters compiled code, saves and restores it. `adapterSavedRegisters()` tells the unwinder.
 - **A stub that the engine enters must not use it before `adapt()` has saved it.** Those stubs use `entryT12` and `entryT13`, which on
   x86-64 are argument registers: at such an entry the arguments are on the stack.
+- The seventh argument of an operation is passed in it, because a miss writes that argument. The eighth is passed in `rbx`, which is only
+  read.
 
 The adapters around operations must not use a C argument register as a temporary (`operationGPR`). Operations take up to eight integer
 arguments; where the C ABI has fewer registers, `operationArgumentGPR()` names registers for the rest and `callAndCheckException()` pushes
@@ -113,9 +123,9 @@ On ARM64 it is in `lr`; on x86-64 `call` pushes it.
 ### 4. What x86-64 leaves out
 
 - **Entry points for an operand in any register** (`acceptsOperandInAnyRegister()` and the like). Most are a move and a jump: they trade
-  an instruction at each call site for two executed, to make ARM64's code smaller. On x86-64 every stub clobbers every register, so an
+  an instruction at each call site for two executed, to make ARM64's code smaller. On x86-64 a stub clobbers every register but one, so an
   operand usually comes from the frame, and a load can target any register.
-- **Entry points that return in a callee save** (`returnsResultInAnyRegister()`). No register survives a call.
+- **Entry points that return in a callee save** (`returnsResultInAnyRegister()`). The one register that survives a call is taken.
 - **The prologue stub**, see section 3.
 
 How many registers survive a call matters less than it seems. With ARM64's allocator restricted to 4, 2 and 1 callee saves instead of 7,
@@ -211,6 +221,8 @@ in after linking, `adr` (or `adrp` and `add` for a table that regular expression
 - **Mapping.** Both the shell and embedders use `useAOTFile()`. The embedder maps the file read-only at any address and passes the file and
   offset. Only the code is mapped a second time, as executable. There are no other platform requirements: no reserved address ranges, no
   allocator or WTF changes, and no per-thread or per-VM setup.
+- **FreeBSD** has no `/proc/self/exe`, and `/dev/fd` only goes up to 2 unless `fdescfs` is mounted. The shell asks `sysctl()` for its path and
+  runs the image from a temporary file.
 - **Windows.** JIT operations, host functions and the entry points from C++ use the System V convention there (`SYSV_ABI`), so compiled
   code and stubs are the same as on other systems. `useAOTFile()` takes a `HANDLE` that was opened for execution. A view of a file starts
   on the allocation granularity, 64 KB, so the view starts before the code. For an image in a section of the executable, which the loader
