@@ -95,6 +95,8 @@ public:
 
     static bool isProfitable(UnlinkedCodeBlock* callee, const FunctionSummary* summary, bool isCalledInLoop = true)
     {
+        if (summary && !summary->isReached())
+            return false;
         unsigned size = callee->instructionsSize();
         if (summary && summary->isNonEscaping && summary->directCalls.load(std::memory_order_relaxed) == 1)
             return size <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite();
