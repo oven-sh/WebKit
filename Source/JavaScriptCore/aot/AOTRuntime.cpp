@@ -438,11 +438,6 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections->token = Symbol::create(vm);
     loader->setAOTInstance(instance);
     vm.m_aotInstances.append(instance);
-    for (unsigned size = 0; size < Instance::numberOfFrameSymbolTables; ++size) {
-        SymbolTable* table = SymbolTable::create(vm);
-        table->setScopeSize(size);
-        instance->frameSymbolTables[size] = table;
-    }
     return *instance;
 }
 
@@ -1508,8 +1503,6 @@ void Instance::visit(Visitor& visitor, bool newOnly)
         visitor.appendUnbarriered(to);
     for (auto& [from, to] : collections->functionStructuresWithCaptures)
         visitor.appendUnbarriered(to);
-    for (JSCell* table : frameSymbolTables)
-        visitor.appendUnbarriered(table);
     for (auto& ofType : typedArraysWithBuiltinLength) {
         for (auto& typedArray : ofType) {
             visitor.appendUnbarriered(typedArray.prototype);

@@ -112,7 +112,7 @@ bool Lowering::tryLowerAllocation(Node* node)
 
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
         LValue closedOver = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(scope));
-        const KnownFunction* made = programFunctions() ? programFunctions()->function(functionNumberOf(node->type)) : nullptr;
+        const KnownFunction* made = Graph::functionMadeBy(node);
         if (made && made->summary && !made->summary->captures.isEmpty()) {
             RELEASE_ASSERT(kind == FunctionKind::Normal || kind == FunctionKind::Async);
             auto& captures = made->summary->captures;
@@ -495,22 +495,16 @@ bool Lowering::tryLowerAllocation(Node* node)
             LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
             JSValue table = code().codeBlock()->getConstant(bytecode.m_symbolTable);
             for (unsigned i = uncheckedDowncast<SymbolTable>(table.asCell())->scopeSize(); i--;)
-                writePromotedVariable(node, i, initialValue, false);
-            if (node->standIn)
-                setJSValue(node, lowJSValue(node->standIn));
+                writePromotedVariable(node, i, initialValue);
             return true;
         }
         LValue scope = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(bytecode.m_scope));
         unsigned scopeSize = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
-        if (node->extendedFrameSize)
-            scopeSize = node->extendedFrameSize;
-        LValue symbolTable = node->extendedFrameSize ? fixedPointer(Instance::offsetOfFrameSymbolTables() + scopeSize * sizeof(void*)) : lowCell(node->use(bytecode.m_symbolTable));
+        LValue symbolTable = lowCell(node->use(bytecode.m_symbolTable));
         LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
         setJSValue(node, withHelper(Stub::HelperNewActivation, { scope, symbolTable, initialValue, m_out.constInt32(scopeSize) }, [&] {
             return vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_instance, scope, symbolTable, initialValue, m_out.constInt32(scopeSize));
         }));
-        if (Options::useAOTScopesInFrames() && &code() == &m_graph && m_graph.isGeneratorFrame(m_graph.scopeIdentity(node)))
-            noteGeneratorFrame(lowCell(node));
         return true;
     }
     case op_push_with_scope: {

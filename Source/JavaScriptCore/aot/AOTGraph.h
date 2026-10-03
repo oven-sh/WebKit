@@ -223,12 +223,7 @@ struct Node {
     bool isPromoted { false };
     bool isNeverEmpty { false };
     bool accessesLocalEnvironment { false };
-    bool mayBeInFrame { false };
-    Node* standIn { nullptr };
     bool isSharedRegExpLiteral { false };
-    bool isInFrame { false };
-    unsigned firstFrameSlot { 0 };
-    unsigned extendedFrameSize { 0 };
     Node* promotedEnvironment { nullptr };
     unsigned offsetInEnvironment { 0 };
     Node* scopeToStartFrom { nullptr };
@@ -387,10 +382,6 @@ public:
     const FunctionSummary* summaryWithCaptures() const { return summaryOfInlinedFunction ? summaryOfInlinedFunction : m_summary; }
     unsigned dissolvedScopesOutside(unsigned hops) const;
     unsigned dissolvedScopesAbove(const Node* scope, unsigned hops);
-    Node* onlyEnvironmentWithIdentity(const void*);
-    Node* environmentRestoredBy(const Node*, bool evenIfItHasAnObject = false);
-    UncheckedKeyHashMap<const void*, Node*> m_environmentsByIdentity;
-    bool m_hasEnvironmentsByIdentity { false };
     UncheckedKeyHashMap<Node*, Vector<std::pair<Node*, unsigned>, 4>> capturesOfClosures;
     bool isInTailPosition { true };
     bool loopSplittingIsDisabled { false };
@@ -464,6 +455,7 @@ public:
     static uint32_t classRecordedBy(const Node*);
     void noteClassesDefined();
     static uint32_t closedMethodReadBy(const Node*);
+    static const KnownFunction* functionMadeBy(const Node*);
     uint16_t thisLayoutID() const;
     Type thisTypeOnEntry() const;
     static uint32_t typeTagOf(const Node* node) { return node->kind == NodeKind::Bytecode && node->instruction ? node->graph->typeTagAt(node->bytecodeIndex.offset()) : 0; }

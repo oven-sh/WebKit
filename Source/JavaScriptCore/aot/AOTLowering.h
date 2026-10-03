@@ -55,10 +55,7 @@ private:
     LBasicBlock blockFor(Node* branch, int relativeOffset);
     B3::Variable* environmentVariable(Node* environment, unsigned offset);
     LValue readPromotedVariable(Node* environment, unsigned offset);
-    void writePromotedVariable(Node* environment, unsigned offset, LValue, bool mayBeCell);
-    LValue generatorFrame();
-    void noteGeneratorFrame(LValue);
-    B3::Variable* m_generatorFrame { nullptr };
+    void writePromotedVariable(Node* environment, unsigned offset, LValue);
     LValue ancestorScope(Node* scope, unsigned hops);
     UncheckedKeyHashMap<Node*, Vector<B3::Variable*>> m_environmentVariables;
     struct ArrayView {

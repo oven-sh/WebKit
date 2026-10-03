@@ -152,11 +152,9 @@ void VariableSummaries::noteObjectsEscapeIn(const void* scope, ASCIILiteral how)
     }
 }
 
-void VariableSummaries::noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&& closures, std::span<const std::pair<const void*, const void*>> requirements)
+void VariableSummaries::noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&& closures)
 {
     Locker locker { m_scopesLock };
-    for (auto& requirement : requirements)
-        m_scopesThatRequireOthers.append(requirement);
     for (const void* scope : made) {
         if (!m_makersOfScopes.add(scope, maker).isNewEntry || !maker)
             m_scopesThatMustExist.add(scope, maker ? WhyMade::MadeTwice : WhyMade::MakerCannotPromote);
@@ -170,12 +168,6 @@ void VariableSummaries::noteScopes(const FunctionSummary* maker, std::span<const
             readers.append(maker);
     }
     m_closuresMade.appendVector(WTF::move(closures));
-}
-
-unsigned VariableSummaries::originalFrameSize(const void* table, unsigned sizeNow)
-{
-    Locker locker { m_scopesLock };
-    return m_originalFrameSizes.add(table, sizeNow).iterator->value;
 }
 
 unsigned VariableSummaries::dissolveScopes(unsigned& closuresWithCaptures)
@@ -205,13 +197,6 @@ unsigned VariableSummaries::dissolveScopes(unsigned& closuresWithCaptures)
     for (bool changed = true; changed;) {
         changed = false;
         held.clear();
-        for (auto [scope, required] : m_scopesThatRequireOthers) {
-            if (candidates.contains(scope) && !candidates.contains(required)) {
-                count(WhyMade::NeedsParent);
-                candidates.remove(scope);
-                changed = true;
-            }
-        }
         for (auto& [variable, readers] : m_readersFromInside) {
             if (!candidates.contains(variable.first))
                 continue;
@@ -263,7 +248,7 @@ unsigned VariableSummaries::dissolveScopes(unsigned& closuresWithCaptures)
     }
     m_dissolvedScopes = WTF::move(candidates);
     if (Options::verboseAOTCompilation()) [[unlikely]] {
-        static constexpr ASCIILiteral names[] = { "made twice in one function (split loop)"_s, "its function cannot promote (catch, generator, async, top level)"_s, "more than 32 variables"_s, "an access that is not resolved"_s, "the scope is used in another way"_s, "written by an inner function"_s, "read by code without a summary (construct code)"_s, "a closure without a summary is made in it"_s, "eval, with, arguments"_s, "a reader of a kind that holds no captures"_s, "a reader that is made in two places"_s, "a reader whose creation was not seen"_s, "stored to after the closure is made"_s, "not in the scope chain of the closure"_s, "more than 8 captures"_s, "untracked"_s, "lives across a suspension under a scope that is made"_s, "it is the frame of a generator or an async function"_s, "made by top-level code"_s, "made by code without a summary (construct code, class constructors)"_s, "made by the body of an async function or a generator"_s, "made by the wrapper of an async function or a generator"_s, "made by a function with try/catch or registers in its frame"_s, "made by a function of another kind"_s };
+        static constexpr ASCIILiteral names[] = { "made twice in one function (split loop)"_s, "its function cannot promote (catch, generator, async, top level)"_s, "more than 32 variables"_s, "an access that is not resolved"_s, "the scope is used in another way"_s, "written by an inner function"_s, "read by code without a summary (construct code)"_s, "a closure without a summary is made in it"_s, "eval, with, arguments"_s, "a reader of a kind that holds no captures"_s, "a reader that is made in two places"_s, "a reader whose creation was not seen"_s, "stored to after the closure is made"_s, "not in the scope chain of the closure"_s, "more than 8 captures"_s, "untracked"_s, "it is the frame of a generator or an async function"_s, "made by top-level code"_s, "made by code without a summary (construct code, class constructors)"_s, "made by the body of an async function or a generator"_s, "made by the wrapper of an async function or a generator"_s, "made by a function with try/catch or registers in its frame"_s, "made by a function of another kind"_s };
         dataLogLn("AOT: of ", m_makersOfScopes.size(), " scopes, ", m_dissolvedScopes.size(), " are never made. The others:");
         for (size_t i = 0; i < tally.size(); ++i) {
             if (tally[i])

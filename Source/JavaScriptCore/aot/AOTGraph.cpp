@@ -1078,39 +1078,6 @@ const void* Graph::generatorFrameIdentity()
     return result;
 }
 
-Node* Graph::onlyEnvironmentWithIdentity(const void* identity)
-{
-    if (!identity || !isGeneratorOrAsyncFunctionBodyParseMode(m_codeBlock->parseMode()))
-        return nullptr;
-    if (!std::exchange(m_hasEnvironmentsByIdentity, true)) {
-        for (BasicBlock* block : outermost().m_rpo) {
-            for (Node* node : block->nodes) {
-                if (node->graph != this || !node->isBytecode(op_create_lexical_environment))
-                    continue;
-                if (const void* made = scopeIdentity(node)) {
-                    auto result = m_environmentsByIdentity.add(made, node);
-                    if (!result.isNewEntry || block->isInLoop || block->isGeneric)
-                        result.iterator->value = nullptr;
-                }
-            }
-        }
-    }
-    return m_environmentsByIdentity.get(identity);
-}
-
-Node* Graph::environmentRestoredBy(const Node* restore, bool evenIfItHasAnObject)
-{
-    if (restore->graph != this)
-        return restore->graph->environmentRestoredBy(restore, evenIfItHasAnObject);
-    if (!isGeneratorOrAsyncFunctionBodyParseMode(m_codeBlock->parseMode()))
-        return nullptr;
-    Variable variable = variableAccessedBy(restore);
-    if (!variable || !isGeneratorFrame(variable.scope))
-        return nullptr;
-    Node* environment = onlyEnvironmentWithIdentity(scopeIdentity(restore));
-    return environment && (evenIfItHasAnObject || environment->mayBeInFrame) ? environment : nullptr;
-}
-
 unsigned Graph::dissolvedScopesAbove(const Node* scope, unsigned hops)
 {
     if (scope->graph != this)
@@ -1240,40 +1207,24 @@ const void* Graph::scopeIdentity(const Node* scope, unsigned depth)
             Variable restored = variableAccessedBy(scope);
             if (!restored || restored.scope != generatorFrameIdentity())
                 return nullptr;
-            auto suspendsBefore = [&](BasicBlock* block) {
-                return Options::useAOTScopesInFrames() && scope->block && block->bytecodeEnd == scope->block->bytecodeBegin && !block->nodes.isEmpty() && block->nodes.last()->isBytecode(op_ret) && block->nodes.last()->graph == this;
-            };
-            auto savesIn = [&](BasicBlock* block, auto&& function) {
+            const void* result = nullptr;
+            for (BasicBlock* block : outermost().m_rpo) {
                 for (Node* store : block->nodes) {
                     if (!store->isBytecode(op_put_to_scope))
                         continue;
                     Variable saved = variableAccessedBy(store);
-                    if (saved.scope == restored.scope && saved.offset == restored.offset)
-                        function(store->use(store->as<OpPutToScope>().m_value));
-                }
-            };
-            bool isSavedBefore = false;
-            for (BasicBlock* block : outermost().m_rpo) {
-                if (suspendsBefore(block))
-                    savesIn(block, [&](Node*) { isSavedBefore = true; });
-            }
-            const void* result = nullptr;
-            bool isKnown = true;
-            for (BasicBlock* block : outermost().m_rpo) {
-                if (!isKnown)
-                    break;
-                if (isSavedBefore && !suspendsBefore(block))
-                    continue;
-                savesIn(block, [&](Node* value) {
-                    if (!isKnown || value == scope || value->kind == NodeKind::Constant)
-                        return;
+                    if (saved.scope != restored.scope || saved.offset != restored.offset)
+                        continue;
+                    Node* value = store->use(store->as<OpPutToScope>().m_value);
+                    if (value == scope || value->kind == NodeKind::Constant)
+                        continue;
                     const void* identity = scopeIdentity(value, depth + 1);
                     if (!identity || (result && result != identity))
-                        isKnown = false;
+                        return nullptr;
                     result = identity;
-                });
+                }
             }
-            return isKnown ? result : nullptr;
+            return result;
         }
         case op_resolve_scope: {
             ResolveType type = scope->as<OpResolveScope>().m_resolveType;
@@ -2299,6 +2250,32 @@ static UnlinkedFunctionExecutable* functionCreatedBy(const Node* node)
     default:
         return nullptr;
     }
+}
+
+const KnownFunction* Graph::functionMadeBy(const Node* node)
+{
+    if (!programFunctions() || node->kind != NodeKind::Bytecode)
+        return nullptr;
+    UnlinkedCodeBlock* code = node->graph->codeBlock();
+    UnlinkedFunctionExecutable* made = nullptr;
+    switch (node->opcode) {
+    case op_new_func:
+        made = code->functionDecl(node->as<OpNewFunc>().m_functionDecl);
+        break;
+    case op_new_generator_func:
+        made = code->functionDecl(node->as<OpNewGeneratorFunc>().m_functionDecl);
+        break;
+    case op_new_async_func:
+        made = code->functionDecl(node->as<OpNewAsyncFunc>().m_functionDecl);
+        break;
+    case op_new_async_generator_func:
+        made = code->functionDecl(node->as<OpNewAsyncGeneratorFunc>().m_functionDecl);
+        break;
+    default:
+        made = functionCreatedBy(node);
+        break;
+    }
+    return made ? programFunctions()->function(programFunctions()->numberOf(made)) : nullptr;
 }
 
 void Graph::noteClassesDefined()

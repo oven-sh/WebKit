@@ -1362,10 +1362,6 @@ void Lowering::lowerBlock(BasicBlock* block)
 
 void Lowering::lowerNode(Node* node)
 {
-    if (node->standIn && !node->isBytecode(op_create_lexical_environment)) {
-        setJSValue(node, lowJSValue(node->standIn));
-        return;
-    }
     switch (node->kind) {
     case NodeKind::Constant:
     case NodeKind::ConstantCell:
@@ -1424,8 +1420,6 @@ void Lowering::lowerNode(Node* node)
                 break;
             }
         }
-        if (Options::useAOTScopesInFrames() && node->graph == &m_graph && isGeneratorOrAsyncFunctionBodyParseMode(m_graph.codeBlock()->parseMode()) && node->reg == virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Frame)))
-            noteGeneratorFrame(lowJSValue(node));
         return;
     case NodeKind::GetStack:
         setJSValue(node, m_out.load64(addressFor(node->reg)));

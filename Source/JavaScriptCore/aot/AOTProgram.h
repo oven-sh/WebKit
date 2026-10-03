@@ -156,9 +156,8 @@ public:
         const FunctionSummary* maker { nullptr };
         Vector<std::pair<const void*, uint64_t>, 2> scopesAndWhatIsStoredLater;
     };
-    enum class WhyMade : uint8_t { MadeTwice, MakerCannotPromote, TooLarge, UnknownAccess, UsedOtherwise, WrittenFromInside, ReadByUnknownCode, ClosureIsUnknown, Evaluated, ReaderCannotHold, ReaderMadeTwice, ReaderNotMade, StoredLater, NotInChain, TooManyCaptures, Untracked, NeedsParent, GeneratorFrame, MakerIsNotFunction, MakerHasNoSummary, MakerIsBody, MakerIsWrapper, MakerHasCatch, MakerIsOtherKind, Count };
-    void noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&&, std::span<const std::pair<const void*, const void*>> requirements = { });
-    unsigned originalFrameSize(const void* table, unsigned sizeNow);
+    enum class WhyMade : uint8_t { MadeTwice, MakerCannotPromote, TooLarge, UnknownAccess, UsedOtherwise, WrittenFromInside, ReadByUnknownCode, ClosureIsUnknown, Evaluated, ReaderCannotHold, ReaderMadeTwice, ReaderNotMade, StoredLater, NotInChain, TooManyCaptures, Untracked, GeneratorFrame, MakerIsNotFunction, MakerHasNoSummary, MakerIsBody, MakerIsWrapper, MakerHasCatch, MakerIsOtherKind, Count };
+    void noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&&);
     unsigned dissolveScopes(unsigned& closuresWithCaptures);
     bool isDissolved(const void* scope) const { return scope && !m_dissolvedScopes.isEmpty() && m_dissolvedScopes.contains(scope); }
 
@@ -186,8 +185,6 @@ private:
     UncheckedKeyHashMap<const void*, WhyMade> m_scopesThatMustExist;
     UncheckedKeyHashMap<std::pair<const void*, unsigned>, Vector<const FunctionSummary*, 2>> m_readersFromInside;
     Vector<ClosureMade> m_closuresMade;
-    Vector<std::pair<const void*, const void*>> m_scopesThatRequireOthers;
-    UncheckedKeyHashMap<const void*, unsigned> m_originalFrameSizes;
     UncheckedKeyHashSet<const void*> m_dissolvedScopes;
 
     using ReaderSet = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;

@@ -516,18 +516,15 @@ public:
     struct Where {
         Node* base { nullptr };
         unsigned hops { 0 };
-        bool isThroughRestoration { false };
         bool isLocalEnvironment() const { return base && !hops && base->isBytecode(op_create_lexical_environment); }
     };
 
     using PhisBeingLocated = Vector<Node*, 8>;
 
-    static Where lexicallyOut(Where from, unsigned hops, unsigned depth, PhisBeingLocated* beingLocated, bool throughObjects)
+    static Where lexicallyOut(Where from, unsigned hops, unsigned depth, PhisBeingLocated* beingLocated)
     {
         while (hops && from.isLocalEnvironment()) {
-            bool wasThroughRestoration = from.isThroughRestoration;
-            from = lexicalLocationOf(from.base->use(from.base->as<OpCreateLexicalEnvironment>().m_scope), depth + 1, beingLocated, throughObjects);
-            from.isThroughRestoration |= wasThroughRestoration;
+            from = lexicalLocationOf(from.base->use(from.base->as<OpCreateLexicalEnvironment>().m_scope), depth + 1, beingLocated);
             --hops;
         }
         from.hops += hops;
@@ -544,17 +541,10 @@ public:
         return from;
     }
 
-    // The node of an environment that has an object does not dominate what runs after a resumption.
-    static Where locationOf(Node* scope, unsigned depth = 0)
-    {
-        Where where = lexicalLocationOf(scope, depth, nullptr, true);
-        if (where.isThroughRestoration && where.base->isBytecode(op_create_lexical_environment) && !where.base->mayBeInFrame)
-            return lexicalLocationOf(scope, depth, nullptr, false);
-        return where;
-    }
+    static Where locationOf(Node* scope, unsigned depth = 0) { return lexicalLocationOf(scope, depth, nullptr); }
 
     // Without a base: where the phis that are being located are.
-    static Where lexicalLocationOf(Node* scope, unsigned depth, PhisBeingLocated* beingLocated, bool throughObjects)
+    static Where lexicalLocationOf(Node* scope, unsigned depth, PhisBeingLocated* beingLocated)
     {
         if (depth <= 24 && (scope->kind == NodeKind::Phi || scope->kind == NodeKind::Narrow)) {
             if (beingLocated && beingLocated->contains(scope))
@@ -578,7 +568,7 @@ public:
                         worklist.append(use.node);
                     continue;
                 }
-                Where where = lexicalLocationOf(node, depth + 1, &phis, throughObjects);
+                Where where = lexicalLocationOf(node, depth + 1, &phis);
                 if (!where.base) {
                     if (where.hops)
                         return fail();
@@ -586,7 +576,6 @@ public:
                 }
                 if (common && (common->base != where.base || common->hops != where.hops))
                     return fail();
-                where.isThroughRestoration |= common && common->isThroughRestoration;
                 common = where;
             }
             if (!common)
@@ -600,10 +589,10 @@ public:
         switch (scope->opcode) {
         case op_get_scope:
             if (Node* closedOver = scope->graph->closureScope)
-                return lexicalLocationOf(closedOver, depth + 1, beingLocated, throughObjects);
+                return lexicalLocationOf(closedOver, depth + 1, beingLocated);
             return { scope, 0 };
         case op_get_parent_scope:
-            return lexicallyOut(lexicalLocationOf(scope->use(scope->as<OpGetParentScope>().m_scope), depth + 1, beingLocated, throughObjects), 1, depth, beingLocated, throughObjects);
+            return lexicallyOut(lexicalLocationOf(scope->use(scope->as<OpGetParentScope>().m_scope), depth + 1, beingLocated), 1, depth, beingLocated);
         case op_resolve_scope: {
             auto bytecode = scope->as<OpResolveScope>();
             if (scope->graph->resolvedEnvironmentDepth(scope))
@@ -619,52 +608,11 @@ public:
                     return { scope, 0 };
                 hops = variable.depth;
             }
-            return lexicallyOut(lexicalLocationOf(scope->use(bytecode.m_scope), depth + 1, beingLocated, throughObjects), hops, depth, beingLocated, throughObjects);
+            return lexicallyOut(lexicalLocationOf(scope->use(bytecode.m_scope), depth + 1, beingLocated), hops, depth, beingLocated);
         }
-        case op_get_from_scope:
-            if (Options::useAOTScopesInFrames()) {
-                if (Node* environment = scope->graph->environmentRestoredBy(scope, throughObjects))
-                    return { environment, 0, true };
-            }
-            return { scope, 0 };
         default:
             return { scope, 0 };
         }
-    }
-
-    static bool isSaveInFrame(Node* user, const Use& use)
-    {
-        if (!Options::useAOTScopesInFrames() || !user->isBytecode(op_put_to_scope) || use.reg != user->as<OpPutToScope>().m_value)
-            return false;
-        Variable variable = user->graph->variableAccessedBy(user);
-        if (!variable || !user->graph->isGeneratorFrame(variable.scope))
-            return false;
-        Where where = locationOf(use.node);
-        return where.isLocalEnvironment() && where.base->mayBeInFrame && where.base->graph->onlyEnvironmentWithIdentity(where.base->graph->scopeIdentity(where.base)) == where.base;
-    }
-
-    static bool isAnotherNameFor(Node* user, Node* environment)
-    {
-        if (!Options::useAOTScopesInFrames() || (user->kind != NodeKind::Phi && user->kind != NodeKind::Narrow))
-            return false;
-        Where where = locationOf(user);
-        return where.isLocalEnvironment() && where.base == environment;
-    }
-
-    Node* standInFor(Node* environment)
-    {
-        Where above { environment, 0 };
-        for (unsigned depth = 0; above.isLocalEnvironment() && (m_candidates.contains(above.base) || above.base->isPromoted); ++depth) {
-            if (depth > 24)
-                return nullptr;
-            above = out(above, 1, 0);
-        }
-        Node* result = above.base;
-        if (result->kind != NodeKind::Bytecode || result->isElided || (!result->isBytecode(op_get_scope) && !result->isBytecode(op_create_lexical_environment)))
-            return nullptr;
-        if (result->isBytecode(op_create_lexical_environment) && (result->block->isInLoop || result->block != environment->block))
-            return nullptr;
-        return result;
     }
 
     static std::optional<unsigned> offsetAccessedBy(Node* node)
@@ -745,12 +693,8 @@ public:
 
     bool worksWithoutEnvironment(Node* user, const Use& use)
     {
-        if (Node* environment = locationOf(use.node).base; isAnotherNameFor(user, environment))
-            return standInFor(environment);
         if (user->kind != NodeKind::Bytecode || user->guard || user->guarded)
             return false;
-        if (isSaveInFrame(user, use))
-            return true;
         if (auto scope = scopeThatMustBeThere(user))
             return use.reg == *scope && isDissolved(locationOf(use.node).base);
         if (isThisOfCall(user, use))
@@ -806,21 +750,12 @@ public:
 
     void run(bool mayPromote)
     {
-        bool isBody = Options::useAOTScopesInFrames() && mayPromote && m_graph.variableSummaries() && isGeneratorOrAsyncFunctionBodyParseMode(m_graph.codeBlock()->parseMode());
-        for (BasicBlock* block : m_graph.m_rpo) {
-            for (Node* node : block->nodes) {
-                if (node->isBytecode(op_create_lexical_environment))
-                    node->mayBeInFrame = isBody && node->graph == &m_graph && !m_graph.isGeneratorFrame(m_graph.scopeIdentity(node));
-            }
-        }
-        while (!findCandidates(mayPromote)) { }
+        findCandidates(mayPromote);
         rewrite();
     }
 
-    bool findCandidates(bool mayPromote)
+    void findCandidates(bool mayPromote)
     {
-        m_candidates.clear();
-        m_savedInFrame.clear();
         bool& hasDissolvedScopes = m_hasDissolvedScopes;
         hasDissolvedScopes = false;
         for (BasicBlock* block : m_graph.m_rpo) {
@@ -837,19 +772,12 @@ public:
             }
         }
         if (m_candidates.isEmpty() && !hasDissolvedScopes)
-            return true;
+            return;
         for (bool changed = true; changed && !m_candidates.isEmpty();) {
             changed = false;
             forEachUser([&](Node* user) {
                 for (auto& use : user->uses) {
                     Where where = locationOf(use.node);
-                    if (where.isLocalEnvironment() && isSaveInFrame(user, use)) {
-                        m_savedInFrame.add(where.base);
-                        if (Where parent = out(where, 1, 0); m_candidates.contains(where.base) && !parent.base->isBytecode(op_get_scope) && !(parent.isLocalEnvironment() && m_candidates.contains(parent.base))) {
-                            m_candidates.remove(where.base);
-                            changed = true;
-                        }
-                    }
                     if (!where.isLocalEnvironment() || !m_candidates.contains(where.base) || worksWithoutEnvironment(user, use))
                         continue;
                     m_candidates.remove(where.base);
@@ -864,17 +792,6 @@ public:
                 }
             });
         }
-        bool isStable = true;
-        for (BasicBlock* block : m_graph.m_rpo) {
-            for (Node* node : block->nodes) {
-                if (node->isBytecode(op_create_lexical_environment) && node->mayBeInFrame && !m_candidates.contains(node)) {
-                    RELEASE_ASSERT_WITH_MESSAGE(!m_savedInFrame.contains(node) || !isDissolved(node), "A scope that is in no chain lives across a suspension and cannot be in the frame");
-                    node->mayBeInFrame = false;
-                    isStable = false;
-                }
-            }
-        }
-        return isStable;
     }
 
     void rewrite()
@@ -883,64 +800,13 @@ public:
             return;
         for (Node* environment : m_candidates)
             environment->isPromoted = true;
-        auto standsIn = [&](Node* name, Node* environment) {
-            if (!Options::useAOTScopesInFrames())
-                return false;
-            Node* standIn = standInFor(environment);
-            if (!standIn)
-                return false;
-            name->standIn = standIn;
-            name->uses.append({ VirtualRegister(), standIn });
-            return true;
-        };
-        if (Options::useAOTScopesInFrames()) {
-            for (Node* environment : m_candidates)
-                standsIn(environment, environment);
-            forEachUser([&](Node* user) {
-                if (!user->isBytecode(op_get_from_scope))
-                    return;
-                if (Node* environment = user->graph->environmentRestoredBy(user); environment && environment->isPromoted)
-                    RELEASE_ASSERT(standsIn(user, environment));
-            });
-        }
-        if (!m_savedInFrame.isEmpty()) {
-            Node* frame = nullptr;
-            for (BasicBlock* block : m_graph.m_rpo) {
-                for (Node* node : block->nodes) {
-                    if (node->graph == &m_graph && node->isBytecode(op_create_lexical_environment) && m_graph.isGeneratorFrame(m_graph.scopeIdentity(node)))
-                        frame = node;
-                }
-            }
-            RELEASE_ASSERT(frame);
-            auto tableOf = [](Node* node) { return uncheckedDowncast<SymbolTable>(node->graph->codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable).asCell()); };
-            SymbolTable* frameTable = tableOf(frame);
-            unsigned next = frameTable->scopeSize();
-            for (BasicBlock* block : m_graph.m_rpo) {
-                for (Node* node : block->nodes) {
-                    if (!m_savedInFrame.contains(node) || !node->isPromoted)
-                        continue;
-                    node->isInFrame = true;
-                    node->firstFrameSlot = next;
-                    next += tableOf(node)->scopeSize();
-                    m_graph.remark("scope-in-frame"_s, String::number(tableOf(node)->scopeSize()));
-                }
-            }
-            RELEASE_ASSERT_WITH_MESSAGE(next < 256, "The frame of a generator is too large with the scopes that are in it");
-            frame->extendedFrameSize = next;
-        }
         auto isInNoChain = [&](Node* environment) { return environment->isPromoted || isDissolved(environment); };
         forEachUser([&](Node* user) {
             if (user->kind != NodeKind::Bytecode)
                 return;
-            for (auto& use : user->uses) {
-                if (isSaveInFrame(user, use) && locationOf(use.node).base->isPromoted) {
-                    user->isElided = true;
-                    return;
-                }
-            }
             if (auto scope = user->isBytecode(op_create_lexical_environment) && user->isPromoted ? std::nullopt : scopeThatMustBeThere(user)) {
                 Where start = locationOf(user->use(*scope));
-                const KnownFunction* made = programFunctions() && scopeOfNewFunction(user) ? programFunctions()->function(functionNumberOf(user->type)) : nullptr;
+                const KnownFunction* made = Graph::functionMadeBy(user);
                 if (made && made->summary && !made->summary->captures.isEmpty()) {
                     auto& captures = m_graph.outermost().capturesOfClosures.add(user, Vector<std::pair<Node*, unsigned>, 4> { }).iterator->value;
                     for (auto [capturedScope, offset] : made->summary->captures) {
@@ -1006,8 +872,7 @@ public:
                     return;
                 }
                 if (where.isLocalEnvironment() && where.base->isPromoted) {
-                    if (!standsIn(user, where.base))
-                        user->isElided = true;
+                    user->isElided = true;
                     return;
                 }
                 if (user->opcode != op_get_scope) {
@@ -1026,7 +891,6 @@ public:
 private:
     Graph& m_graph;
     UncheckedKeyHashSet<Node*> m_candidates;
-    UncheckedKeyHashSet<Node*> m_savedInFrame;
     bool m_hasDissolvedScopes { false };
 };
 
@@ -1260,7 +1124,6 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
             made.append(scope);
             if (graph.isGeneratorFrame(scope))
                 mustExist.append({ scope, WhyMade::GeneratorFrame });
-            node->mayBeInFrame = Options::useAOTScopesInFrames() && node->isBytecode(op_create_lexical_environment) && isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode()) && !graph.isGeneratorFrame(scope);
             JSValue table = node->isBytecode(op_create_lexical_environment) ? graph.codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable) : JSValue();
             if (!canDoWithout) {
                 SourceParseMode mode = graph.codeBlock()->parseMode();
@@ -1289,7 +1152,6 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
             }
         }
     }
-    UncheckedKeyHashSet<Node*> savedInFrame;
     auto storedLater = [&](Node* environment, Node* closure) {
         uint64_t mask = 0;
         auto scan = [&](BasicBlock* block, unsigned from) {
@@ -1337,15 +1199,9 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
             Where where = Promoter::locationOf(use.node);
             if (!where.isLocalEnvironment())
                 continue;
-            if (Promoter::isAnotherNameFor(user, where.base))
-                continue;
             bool works = user->kind == NodeKind::Bytecode && !user->guard && !user->guarded;
             if (works && Promoter::isThisOfCall(user, use))
                 continue;
-            if (works && Promoter::isSaveInFrame(user, use)) {
-                savedInFrame.add(where.base);
-                continue;
-            }
             if (works) {
                 switch (user->opcode) {
                 case op_get_scope:
@@ -1460,15 +1316,7 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
             }
         }
     }
-    Vector<std::pair<const void*, const void*>, 2> requirements;
-    for (Node* environment : savedInFrame) {
-        Where parent = Promoter::out({ environment, 0 }, 1, 0);
-        if (parent.isLocalEnvironment() && local.get(parent.base))
-            requirements.append({ local.get(environment), local.get(parent.base) });
-        else if (!parent.base->isBytecode(op_get_scope))
-            mustExist.append({ local.get(environment), WhyMade::UsedOtherwise });
-    }
-    summaries.noteScopes(current, made.span(), mustExist.span(), readFromInside.span(), WTF::move(closures), requirements.span());
+    summaries.noteScopes(current, made.span(), mustExist.span(), readFromInside.span(), WTF::move(closures));
 }
 
 NodeUsers::NodeUsers(Graph& graph)

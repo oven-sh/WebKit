@@ -641,9 +641,6 @@ struct Instance {
     uint32_t arraysLackInheritedElements { 0 };
     static constexpr ptrdiff_t offsetOfArraysLackIsConcatSpreadable() { return OBJECT_OFFSETOF(Instance, arraysLackIsConcatSpreadable); }
     static constexpr ptrdiff_t offsetOfArraysLackInheritedElements() { return OBJECT_OFFSETOF(Instance, arraysLackInheritedElements); }
-    static constexpr unsigned numberOfFrameSymbolTables = 256;
-    JSCell* frameSymbolTables[numberOfFrameSymbolTables] { };
-    static constexpr ptrdiff_t offsetOfFrameSymbolTables() { return OBJECT_OFFSETOF(Instance, frameSymbolTables); }
     void* auxiliarySpace { nullptr };
     void* activationSpace { nullptr };
     void* arrayAllocator { nullptr };

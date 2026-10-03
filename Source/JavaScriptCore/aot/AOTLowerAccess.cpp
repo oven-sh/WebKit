@@ -1363,36 +1363,14 @@ B3::Variable* Lowering::environmentVariable(Node* environment, unsigned offset)
     return variables[offset];
 }
 
-void Lowering::noteGeneratorFrame(LValue frame)
-{
-    if (!m_generatorFrame)
-        m_generatorFrame = m_proc.addVariable(Int64);
-    m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_generatorFrame, frame);
-}
-
-LValue Lowering::generatorFrame()
-{
-    RELEASE_ASSERT(m_generatorFrame);
-    return m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), m_generatorFrame);
-}
-
 LValue Lowering::readPromotedVariable(Node* environment, unsigned offset)
 {
-    if (environment->isInFrame)
-        return m_out.load64(generatorFrame(), m_heaps.JSLexicalEnvironment_variables[environment->firstFrameSlot + offset]);
     return m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), environmentVariable(environment, offset));
 }
 
-void Lowering::writePromotedVariable(Node* environment, unsigned offset, LValue value, bool mayBeCell)
+void Lowering::writePromotedVariable(Node* environment, unsigned offset, LValue value)
 {
-    if (!environment->isInFrame) {
-        m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), environmentVariable(environment, offset), value);
-        return;
-    }
-    LValue frame = generatorFrame();
-    m_out.store64(value, frame, m_heaps.JSLexicalEnvironment_variables[environment->firstFrameSlot + offset]);
-    if (mayBeCell)
-        storeBarrier(frame);
+    m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), environmentVariable(environment, offset), value);
 }
 
 LValue Lowering::heldCapture(Graph& graph, const void* scope, unsigned offset)
@@ -1672,7 +1650,7 @@ void Lowering::lowerPutToScope(Node* node)
 {
     auto bytecode = node->as<OpPutToScope>();
     if (node->promotedEnvironment) {
-        writePromotedVariable(node->promotedEnvironment, node->offsetInEnvironment, lowJSValue(node->use(bytecode.m_value)), mayBe(node->use(bytecode.m_value)->type, TCell));
+        writePromotedVariable(node->promotedEnvironment, node->offsetInEnvironment, lowJSValue(node->use(bytecode.m_value)));
         return;
     }
     auto distance = m_graph.accessedEnvironmentDepth(node);

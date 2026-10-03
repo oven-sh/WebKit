@@ -1,4 +1,5 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ run("few-function-numbers", "--maxAOTFunctionNumberInTypesForTesting=3", "--validateAOTInferredTypes=true")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
