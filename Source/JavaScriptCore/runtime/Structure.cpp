@@ -1695,6 +1695,14 @@ bool Structure::canCachePropertyNameEnumerator(VM&) const
     return true;
 }
     
+bool Structure::classInterceptsOwnPropertyStores() const
+{
+    TypeInfo typeInfo = this->typeInfo();
+    if (!typeInfo.isObject() || typeInfo.overridesGetOwnPropertySlot())
+        return false;
+    return typeInfo.overridesPut() || classInfoForCells()->methodTable.defineOwnProperty != JSObject::defineOwnProperty;
+}
+
 bool Structure::canAccessPropertiesQuicklyForEnumeration() const
 {
     if (!isQuickPropertyAccessAllowedForEnumeration())
@@ -1704,6 +1712,9 @@ bool Structure::canAccessPropertiesQuicklyForEnumeration() const
     if (isUncacheableDictionary())
         return false;
     if (typeInfo().overridesGetOwnPropertyNames())
+        return false;
+    // A for-in store in OwnStructureMode (op_enumerator_put_by_val) writes the slot of the property and does not call put().
+    if (classInterceptsOwnPropertyStores())
         return false;
     return true;
 }
