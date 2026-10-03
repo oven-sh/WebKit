@@ -457,6 +457,10 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto error = putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot);
+#if USE(BUN_JSC_ADDITIONS)
+    if (error.characters() == TypedFieldError.characters() && !error.isNull()) [[unlikely]]
+        return typeError(globalObject, scope, slot.isStrictMode(), TypedLayoutTable::describeRejectedStore(vm, structure(), propertyName.uid(), value));
+#endif
     if (!error.isNull())
         return typeError(globalObject, scope, slot.isStrictMode(), error);
     return true;

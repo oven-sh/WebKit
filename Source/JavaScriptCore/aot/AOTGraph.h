@@ -92,6 +92,7 @@ struct NewObjectPlan {
         unsigned identifier;
         bool isDefined;
         bool isStrict;
+        bool isAssigned;
     };
     Vector<Property, 8> properties;
     struct Store {

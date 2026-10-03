@@ -1324,6 +1324,27 @@ void TypedLayoutTable::reportViolation(ASCIILiteral what, uint16_t layoutID, JSV
     dataLogLn("AUDIT\t", out.toString());
 }
 
+String TypedLayoutTable::describeRejectedStore(VM& vm, Structure* structure, UniquedStringImpl* name, JSValue value)
+{
+    uint16_t layoutID = structure->typedLayoutID();
+    const Field* field = findField(vm, layoutID, name);
+    const FieldType* fieldType = field ? fieldTypeOf(*field) : nullptr;
+    if (!fieldType && numberOfSlots(layoutID)) {
+        if (PropertyOffset offset = structure->get(vm, name); isValidOffset(offset))
+            fieldType = fieldTypeInSlot(layoutID, isInlineOffset(offset) ? offset : inlineSlots(layoutID) + (offset - firstOutOfLineOffset));
+    }
+    if (!fieldType || !value || accepts(*fieldType, value))
+        return makeString("Type check failed: property \""_s, StringView(name), "\" is a typed field and must stay a plain data property"_s);
+    return describeMismatch(name, *fieldType, value);
+}
+
+String TypedLayoutTable::describeMismatch(UniquedStringImpl* name, const FieldType& fieldType, JSValue value)
+{
+    if (fieldType.first && value.isObject())
+        return makeString("Type check failed: property \""_s, StringView(name), "\": the object is not of the declared type"_s);
+    return makeString("Type check failed: property \""_s, StringView(name), "\": expected "_s, toString(SoundTypeMaskDump(fieldType.kinds & ~stringsAreAtoms)), ", got "_s, toString(SoundTypeMaskDump(soundTypeTag(value))));
+}
+
 void TypedLayoutTable::setFields(const uint32_t* index, const Field* field, const FieldType* fieldTypes, const uint16_t* fieldLayoutIDs, const uint8_t* inlineSlots, const uint32_t* fieldsStart, const uint32_t* fields, const uint16_t* layoutIDsByFieldID, ConvertFunction convertToTypedLayout, bool isAuditing)
 {
     s_layoutIDByFieldID = layoutIDsByFieldID;

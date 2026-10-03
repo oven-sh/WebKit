@@ -243,6 +243,8 @@ struct TypedLayoutTable {
     static PropertyOffset offsetInLayout(uint16_t typedLayoutID, unsigned slot) { return offsetOfSlot(slot, inlineSlots(typedLayoutID)); }
     static bool isAuditing() { return s_isAuditing; }
     JS_EXPORT_PRIVATE static void reportViolation(ASCIILiteral what, uint16_t layoutID, JSValue);
+    JS_EXPORT_PRIVATE static String describeRejectedStore(VM&, Structure*, UniquedStringImpl* name, JSValue);
+    JS_EXPORT_PRIVATE static String describeMismatch(UniquedStringImpl* name, const FieldType&, JSValue);
     JS_EXPORT_PRIVATE static ASCIILiteral s_lastConversionFailure;
     static bool hasTypedFields() { return s_fields; }
     JS_EXPORT_PRIVATE static const Field* findField(VM&, uint16_t typedLayoutID, UniquedStringImpl*);

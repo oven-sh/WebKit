@@ -966,7 +966,7 @@ void Lowering::lowerPropertyRun(const PropertyRun& stores)
     Vector<uint32_t, 16> words { AllocationPlan::encode(0, count) };
     for (unsigned i = 0; i < count; ++i) {
         auto bytecode = stores[i]->as<OpPutById>();
-        words.append(AllocationPlan::encode(numberOf(*stores[i]->graph, bytecode.m_property), bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict()));
+        words.append(AllocationPlan::encode(numberOf(*stores[i]->graph, bytecode.m_property), bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict(), true));
         m_out.store64(lowJSValue(stores[i]->use(bytecode.m_value)), scratchWord(i));
     }
     m_graph.noteSitePlan(slot, WTF::move(words));

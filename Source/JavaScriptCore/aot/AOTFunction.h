@@ -47,12 +47,13 @@ JS_EXPORT_PRIVATE void setCodec(Compress, Decompress);
 
 struct AllocationPlan {
     static uint32_t encode(unsigned inlineCapacity, unsigned count) { return inlineCapacity << 16 | count; }
-    static uint32_t encode(unsigned identifier, bool isDefined, bool isStrict) { return identifier << 2 | isDefined << 1 | isStrict; }
+    static uint32_t encode(unsigned identifier, bool isDefined, bool isStrict, bool isAssigned) { return identifier << 3 | isAssigned << 2 | isDefined << 1 | isStrict; }
 
     explicit operator bool() const { return !!words; }
     unsigned inlineCapacity() const { return words[0] >> 16; }
     unsigned count() const { return words[0] & 0xffff; }
-    unsigned identifier(unsigned i) const { return words[i + 1] >> 2; }
+    unsigned identifier(unsigned i) const { return words[i + 1] >> 3; }
+    bool isAssigned(unsigned i) const { return words[i + 1] & 4; }
     bool isDefined(unsigned i) const { return words[i + 1] & 2; }
     bool isStrict(unsigned i) const { return words[i + 1] & 1; }
 

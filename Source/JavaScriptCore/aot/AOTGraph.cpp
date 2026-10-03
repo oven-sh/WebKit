@@ -281,10 +281,11 @@ NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructio
                 if (plan.properties.size() == maximumCount)
                     return plan;
                 index = plan.properties.size();
-                plan.properties.append({ bytecode.m_property, bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict() });
-            } else if (!plan.properties[index].isDefined) {
+                plan.properties.append({ bytecode.m_property, bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict(), !bytecode.m_flags.isDirect() });
+            } else if (!plan.properties[index].isDefined)
                 return plan;
-            }
+            else
+                plan.properties[index].isAssigned |= !bytecode.m_flags.isDirect();
             plan.stores.append({ offset, static_cast<unsigned>(index) });
             continue;
         }

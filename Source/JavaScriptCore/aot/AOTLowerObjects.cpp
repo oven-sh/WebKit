@@ -178,7 +178,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 RELEASE_ASSERT(stores.size() >= count);
                 Vector<uint32_t, 16> words { AllocationPlan::encode(node->as<OpNewObject>().m_inlineCapacity, count) };
                 for (unsigned i = 0; i < count; ++i)
-                    words.append(AllocationPlan::encode(numberOf(instructions.at(stores[i])->as<OpPutById>().m_property), true, true));
+                    words.append(AllocationPlan::encode(numberOf(instructions.at(stores[i])->as<OpPutById>().m_property), true, true, true));
                 m_graph.noteSitePlan(slot, WTF::move(words));
             }
             LBasicBlock slowCase = m_out.newBlock();
@@ -238,7 +238,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                     m_graph.noteSiteShape(slot, WTF::move(shape));
                 Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };
                 for (auto& property : plan.properties)
-                    words.append(AllocationPlan::encode(numberOf(property.identifier), property.isDefined, property.isStrict));
+                    words.append(AllocationPlan::encode(numberOf(property.identifier), property.isDefined, property.isStrict, property.isAssigned));
                 m_graph.noteSitePlan(slot, WTF::move(words));
             }
             LBasicBlock slowCase = m_out.newBlock();

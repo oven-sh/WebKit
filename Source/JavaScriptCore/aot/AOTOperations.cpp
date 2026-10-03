@@ -194,7 +194,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
     Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
     if (isDirect && oldStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
         if (!asObject(base)->putDirect(vm, ident, value, slot) && !value.isUndefined()) [[unlikely]]
-            throwTypeError(globalObject, scope, TypedFieldError);
+            throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, oldStructure, ident.impl(), value));
     } else if (isDirect)
         CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(base), ident, value, slot, &oldStructure);
     else
@@ -599,7 +599,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (Instance* in
     if (value.isUndefined() && allowsUndefined)
         OPERATION_RETURN(scope, JSValue::encode(value));
     if (TypedLayoutTable::checkStore(layoutID, slot, value) == TypedLayoutTable::StoreCheck::Rejected) {
-        throwTypeError(globalObject, scope, "Type check failed: the value of a property does not match its declared type"_s);
+        if (auto* fieldType = TypedLayoutTable::fieldTypeInSlot(layoutID, slot))
+            throwTypeError(globalObject, scope, TypedLayoutTable::describeMismatch(uid, *fieldType, value));
+        else
+            throwTypeError(globalObject, scope, "Type check failed: the value of a property does not match its declared type"_s);
         OPERATION_RETURN(scope, encodedJSValue());
     }
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(layoutID, slot, value)));
@@ -643,7 +646,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
     if (value.isUndefined() && allowsUndefined)
         OPERATION_RETURN(scope, JSValue::encode(value));
     if (TypedLayoutTable::checkStore(field, value) == TypedLayoutTable::StoreCheck::Rejected) {
-        throwTypeError(globalObject, scope, "Type check failed: the value of a property does not match its declared type"_s);
+        if (auto* fieldType = TypedLayoutTable::fieldTypeOf(field))
+            throwTypeError(globalObject, scope, TypedLayoutTable::describeMismatch(uid, *fieldType, value));
+        else
+            throwTypeError(globalObject, scope, "Type check failed: the value of a property does not match its declared type"_s);
         OPERATION_RETURN(scope, encodedJSValue());
     }
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(field, value)));
@@ -654,20 +660,32 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance* insta
     AOT_OPERATION_BEGIN(instance);
     uint16_t layoutID = object->structure()->typedLayoutID();
     if (TypedLayoutTable::usesFieldIDs(layoutID)) {
-        bool isRejected = false;
+        UniquedStringImpl* rejected = nullptr;
+        JSValue rejectedValue;
         object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            if (auto* field = TypedLayoutTable::findField(vm, layoutID, entry.key()))
-                isRejected = TypedLayoutTable::checkStore(*field, object->getDirect(entry.offset())) == TypedLayoutTable::StoreCheck::Rejected;
-            return !isRejected;
+            if (auto* field = TypedLayoutTable::findField(vm, layoutID, entry.key()); field && TypedLayoutTable::checkStore(*field, object->getDirect(entry.offset())) == TypedLayoutTable::StoreCheck::Rejected) {
+                rejected = entry.key();
+                rejectedValue = object->getDirect(entry.offset());
+            }
+            return !rejected;
         });
-        if (isRejected)
-            throwTypeError(globalObject, scope, TypedFieldError);
+        if (rejected)
+            throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, object->structure(), rejected, rejectedValue));
         OPERATION_RETURN(scope);
     }
     for (unsigned slot = 0; slot < TypedLayoutTable::numberOfSlots(layoutID); ++slot) {
         JSValue value = object->getDirect(TypedLayoutTable::offsetInLayout(layoutID, slot));
         if (value && TypedLayoutTable::checkStore(layoutID, slot, value) == TypedLayoutTable::StoreCheck::Rejected) {
-            throwTypeError(globalObject, scope, TypedFieldError);
+            UniquedStringImpl* name = nullptr;
+            object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+                if (entry.offset() == TypedLayoutTable::offsetInLayout(layoutID, slot))
+                    name = entry.key();
+                return !name;
+            });
+            if (name)
+                throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, object->structure(), name, value));
+            else
+                throwTypeError(globalObject, scope, TypedFieldError);
             OPERATION_RETURN(scope);
         }
     }

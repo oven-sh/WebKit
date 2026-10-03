@@ -246,7 +246,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
     unsigned inlineCapacityInBytecode;
     if (AllocationPlan plan = caller(instance, callFrame).planOf(cache)) {
         for (unsigned i = 0; i < plan.count(); ++i)
-            properties.append({ plan.identifier(i), plan.isDefined(i), plan.isStrict(i) });
+            properties.append({ plan.identifier(i), plan.isDefined(i), plan.isStrict(i), plan.isAssigned(i) });
         inlineCapacityInBytecode = plan.inlineCapacity();
     } else {
         auto& instructions = callerCode(instance, callFrame)->instructions();
@@ -289,6 +289,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& ident = identifierAt(instance, callFrame, properties[i].identifier);
         PutPropertySlot slot(object, properties[i].isStrict, putByIdContextOf(instance, callFrame));
+        if (hasTypedLayout && (properties[i].isAssigned || !JSValue::decode(values[i]).isUndefined())) {
+            auto* field = TypedLayoutTable::findField(vm, object->structure()->typedLayoutID(), ident.impl());
+            if (field && TypedLayoutTable::checkStore(*field, JSValue::decode(values[i])) == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+                throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, object->structure(), ident.impl(), JSValue::decode(values[i])));
+                OPERATION_RETURN(scope, static_cast<JSObject*>(nullptr));
+            }
+        }
         if (properties[i].isDefined)
             CommonSlowPaths::putDirectWithReify(vm, globalObject, object, ident, JSValue::decode(values[i]), slot);
         else
