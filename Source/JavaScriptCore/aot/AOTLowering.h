@@ -58,6 +58,7 @@ private:
     void writePromotedVariable(Node* environment, unsigned offset, LValue);
     LValue ancestorScope(Node* scope, unsigned hops);
     LValue scopeAbove(Node* scope, unsigned hops);
+    void noteIndexConstant(int32_t);
     UncheckedKeyHashMap<Node*, Vector<B3::Variable*>> m_environmentVariables;
     struct ArrayView {
         LValue butterfly { nullptr };

@@ -914,12 +914,20 @@ LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
     return nullptr;
 }
 
+void Lowering::noteIndexConstant(int32_t index)
+{
+    uint64_t wide = static_cast<uint32_t>(index);
+    for (unsigned shift = 1; shift <= 3; ++shift)
+        m_graph.wideIntegerConstants.add(static_cast<int64_t>(wide << shift));
+}
+
 LValue Lowering::lowRaw(Node* node)
 {
     switch (node->kind) {
     case NodeKind::Constant:
         switch (node->rep()) {
         case Rep::Int32:
+            noteIndexConstant(static_cast<int32_t>(node->constant.asNumber()));
             return m_out.constInt32(static_cast<int32_t>(node->constant.asNumber()));
         case Rep::Int64:
             m_graph.wideIntegerConstants.add(static_cast<int64_t>(node->constant.asNumber()));
@@ -929,6 +937,8 @@ LValue Lowering::lowRaw(Node* node)
         case Rep::Boolean:
             return m_out.constInt32(node->constant.asBoolean());
         case Rep::JSValue:
+            if (node->constant.isInt32())
+                noteIndexConstant(node->constant.asInt32());
             return m_out.constInt64(JSValue::encode(node->constant));
         }
         break;
