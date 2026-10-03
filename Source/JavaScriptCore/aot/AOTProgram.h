@@ -171,10 +171,10 @@ public:
         const FunctionSummary* maker { nullptr };
         Vector<std::pair<const void*, uint64_t>, 2> scopesAndWhatIsStoredLater;
     };
-    enum class WhyMade : uint8_t { MadeTwice, MakerCannotPromote, TooLarge, UnknownAccess, UsedOtherwise, WrittenFromInside, ReadByUnknownCode, ClosureIsUnknown, Evaluated, ReaderCannotHold, ReaderMadeTwice, ReaderNotMade, StoredLater, NotInChain, TooManyCaptures, Untracked, Bisected, MakerIsNotFunction, MakerHasNoSummary, MakerIsBody, MakerIsWrapper, MakerHasCatch, MakerIsOtherKind, Count };
-    void noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&&);
+    enum class WhyMade : uint8_t { MadeTwice, MakerCannotPromote, TooLarge, UnknownAccess, UsedOtherwise, WrittenFromInside, ReadByUnknownCode, ClosureIsUnknown, Evaluated, ReaderCannotHold, ReaderMadeTwice, ReaderNotMade, StoredLater, NotInChain, TooManyCaptures, Untracked, Bisected, NeedsParent, GeneratorFrame, MakerIsNotFunction, MakerHasNoSummary, MakerIsBody, MakerIsWrapper, MakerHasCatch, MakerIsOtherKind, Count };
+    void noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&&, std::span<const std::pair<const void*, const void*>> requirements = { });
+    unsigned originalFrameSize(const void* table, unsigned sizeNow);
     unsigned dissolveScopes(unsigned& closuresWithCaptures);
-    bool mayBeSearchedByName(const void* scope) const { return !scope || !m_makersOfScopes.contains(scope) || m_scopesSearchedByName.contains(scope) || m_untrackedScopes.contains(scope) || m_hasGivenUpOnAllScopes.load(std::memory_order_relaxed); }
     bool isDissolved(const void* scope) const { return scope && !m_dissolvedScopes.isEmpty() && m_dissolvedScopes.contains(scope); }
 
     const ObjectLiteral* constantObjectIn(Variable variable) const
@@ -201,8 +201,9 @@ private:
     UncheckedKeyHashMap<const void*, WhyMade> m_scopesThatMustExist;
     UncheckedKeyHashMap<std::pair<const void*, unsigned>, Vector<const FunctionSummary*, 2>> m_readersFromInside;
     Vector<ClosureMade> m_closuresMade;
+    Vector<std::pair<const void*, const void*>> m_scopesThatRequireOthers;
+    UncheckedKeyHashMap<const void*, unsigned> m_originalFrameSizes;
     UncheckedKeyHashSet<const void*> m_dissolvedScopes;
-    UncheckedKeyHashSet<const void*> m_scopesSearchedByName;
 
     using ReaderSet = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
     struct Cell {

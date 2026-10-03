@@ -679,6 +679,40 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (Instance*
     OPERATION_RETURN(scope, object);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTIsMadeFromFunction, size_t, (Instance* instance, EncodedJSValue encodedCallee, uint32_t number, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(instance);
+    Data* data = callerData(instance, callFrame);
+    JSValue callee = JSValue::decode(encodedCallee);
+    auto* function = callee.isCell() ? dynamicDowncast<JSFunction>(callee.asCell()) : nullptr;
+    Image* image = Image::withCode();
+    auto isMadeFromIt = [&] {
+        if (!function || !image)
+            return false;
+        bool hasWord = function->hasAOTFunctionWord();
+        if (!hasWord && (function->isHostFunction() || !function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)))
+            return false;
+        uint32_t index = hasWord ? function->aotFunctionIndex() : function->jsExecutable()->aotIndexFor(CodeSpecializationKind::CodeForCall);
+        return index < image->header().numberOfFunctions && image->at<uint32_t>(image->header().functionNumbersOffset)[index] == number;
+    };
+    if (isMadeFromIt()) {
+        cacheSiteObject(vm, data, cache, function);
+        OPERATION_RETURN(scope, true);
+    }
+    if (!SharedData::contains(cache))
+        cache->pointer = std::bit_cast<void*>(static_cast<uintptr_t>(1));
+    OPERATION_RETURN(scope, false);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForArgument, JSObject*, (Instance* instance, JSCell* cell, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(instance);
+    RegExpObject* object = RegExpObject::create(vm, globalObject->regExpStructure(), uncheckedDowncast<RegExp>(cell));
+    if (globalObject->regExpPrimordialPropertiesWatchpointSet().state() == IsWatched)
+        cacheSiteObject(vm, callerData(instance, callFrame), cache, object);
+    OPERATION_RETURN(scope, object);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance* instance, JSScope* environment, uint32_t index, uint32_t isExpressionAndOwner, uint32_t kind, Slot* cache))
 {
     AOT_OPERATION_BEGIN(instance);
@@ -1054,6 +1088,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (Instance
 {
     AOT_OPERATION_BEGIN(instance);
     JSValue base = JSValue::decode(encodedBase);
+    if (which == static_cast<unsigned>(WellKnownIdentifier::Length) && base.isCell() && isTypedArrayType(base.asCell()->type()) && instance->typedArrayHasBuiltinLength(base.asCell()))
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(uncheckedDowncast<JSArrayBufferView>(base.asCell())->length())));
     const Identifier& ident = wellKnownIdentifier(vm, which);
     PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
     Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;

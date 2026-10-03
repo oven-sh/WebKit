@@ -153,7 +153,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useAOTTypeCoverageCounters, false, Normal, "When compiling with aotTypeCoveragePath: compiled code counts how often each operation runs and how many calls it makes to stubs and to the runtime. The code is larger and slower: for reports, not for shipping."_s) \
     v(OptionString, aotTypeCoverageCountsPath, nullptr, Normal, "When running code compiled with useAOTTypeCoverageCounters: the counters, an array of uint32_t, are this file mapped into memory, so it is up to date however the process ends, and a second run adds to it. %p stands for the process ID. If unset, the counts are lost."_s) \
     v(Bool, forceAOTVeneers, false, Normal, "For testing. Route every direct call between functions in an image through a veneer, as if the target were out of range."_s) \
-    v(Bool, useAOTDataStubs, true, Normal, "Property access, arithmetic and the like call shared stubs outside hot loops. Only ARM64 has these stubs; turning them off there tests what the other CPUs compile."_s) \
+    v(Bool, useAOTDataStubs, true, Normal, "Property access, arithmetic and the like call shared stubs outside hot loops. ARM64 and x86-64 have these stubs; turning them off tests what other CPUs would compile."_s) \
     v(Unsigned, numberOfAOTStubCopiesForTesting, 0, Normal, "For testing. If nonzero: lay out an image as if calls reached only far enough for it to need about this many copies of the stubs, instead of 96 MB. Calls between functions that are then out of range go through veneers."_s) \
     v(Unsigned, maxAOTFunctionNumberInTypesForTesting, 0, Normal, "For testing. If nonzero: the largest function number that a type can hold, instead of 262,143. A small program then has functions beyond it."_s) \
     v(OptionString, aotImagePath, nullptr, Normal, "jsc shell only. Path to the AOT image written by writeAOTImageTo for the first script or module. Implies useAOT."_s) \
@@ -165,13 +165,14 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useAOTScopeAsCallee, false, Normal, "PROTOTYPE. A nested function that is only called directly has no function object: its value is the environment it closes over."_s) \
     v(Bool, useAOTEnvironmentsOnStack, false, Normal, "PROTOTYPE, with useAOTScopeAsCallee. The environments of a function whose closures all have no object and are only called by name are in its frame."_s) \
     v(Bool, useAOTCapturesByValue, false, Normal, "PROTOTYPE. A variable that is not assigned after the closures that read it are made is copied into them, and a scope with only such variables is never made."_s) \
-    v(Bool, useAOTNamelessScopes, false, Normal, "PROTOTYPE. A scope that no name is looked up in shares a symbol table that has no names with every scope of its size."_s) \
-    v(Unsigned, aotNamelessScopeKinds, 0xffffffff, Normal, "TEMPORARY, to bisect. 1: generator frames. 2: other scopes of bodies of generators and async functions. 4: their wrappers. 8: catch scopes. 16: function name scopes. 32: lexical scopes. 64: var scopes. 128: builtins. 256: inlined."_s) \
     v(Unsigned, aotDissolvedScopesFrom, 0, Normal, "TEMPORARY, to bisect: only scopes whose hash modulo 65536 is at least this are dissolved."_s) \
     v(Unsigned, aotDissolvedScopesBelow, 65536, Normal, "TEMPORARY, to bisect: and below this."_s) \
     v(Bool, useAOTWholeFunctionSplitting, false, Normal, "PROTOTYPE. Emit two copies of a function, not only of its loops: a check that fails in the first continues in the second."_s) \
     v(Unsigned, maximumAOTWholeFunctionSplittingSize, 1000, Normal, "With useAOTWholeFunctionSplitting: only functions with at most this many bytes of bytecode."_s) \
     v(Unsigned, minimumAOTWholeFunctionSplittingGuards, 2, Normal, "With useAOTWholeFunctionSplitting: only functions with at least this many checks."_s) \
+    v(Bool, useAOTSavesAtDefinitions, false, Normal, "PROTOTYPE. A register of a generator or an async function that is only defined outside loops is stored in the frame where it is defined, not at each suspension."_s) \
+    v(Bool, useAOTClearsDeadFrameSlots, false, Normal, "PROTOTYPE. At a suspension, the slots of the frame of a generator or an async function that were live at the last suspension and are not any more are cleared."_s) \
+    v(Bool, useAOTScopesInFrames, false, Normal, "PROTOTYPE, with useAOTCapturesByValue. The variables of a scope of the body of a generator or an async function that lives across a suspension are slots of the generator frame."_s) \
     v(Bool, useAOTLoopSplitting, true, Normal, "The AOT compiler emits two copies of each loop: a fast copy with no slow paths, and a generic copy that the fast copy exits to."_s) \
     v(Bool, useGuardPagesForShortFunctionExecutables, false, Normal, "For testing. Place each short-form FunctionExecutable at the end of a page followed by an unmapped page, so that reading past it crashes."_s) \
     v(OptionString, aotTypeTablePath, nullptr, Normal, "When compiling: path to the program's type table (AOT::TypeTable), which the source refers to by index (see useTypeTags)."_s) \

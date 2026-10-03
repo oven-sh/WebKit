@@ -20,6 +20,7 @@
 #include "BytecodeStructs.h"
 #include "CCallHelpers.h"
 #include "JSCInlines.h"
+#include "JSGenerator.h"
 #include "UnlinkedCodeBlock.h"
 
 namespace JSC { namespace AOT {
@@ -1236,6 +1237,11 @@ void Lowering::emitUpsilons(BasicBlock* block, BasicBlock* successor)
     RELEASE_ASSERT(predecessorIndex != notFound);
     for (Node* phi : successor->phis) {
         Node* input = phi->uses[predecessorIndex].node;
+        if (Options::verboseAOTCompilation() && Options::useAOTScopesInFrames() && (input->standIn || !input->lowered) && input->kind == NodeKind::Bytecode) [[unlikely]] {
+            dataLogLn("AOT: PROTOTYPE: an input of a phi is ", opcodeNames[input->opcode], " bc#", input->bytecodeIndex.offset(), input->lowered ? "" : " WITHOUT A VALUE", input->isElided ? " elided" : "", input->isPromoted ? " promoted" : "", input->mayBeInFrame ? " mayBeInFrame" : "", input->graph == &m_graph ? "" : " inlined", successor->isLoopHeader ? ", at a loop header" : "", " in a function of ", m_graph.codeBlock()->instructionsSize(), " bytes, mode ", static_cast<unsigned>(m_graph.codeBlock()->parseMode()));
+            if (m_graph.codeBlock()->instructionsSize() < 700)
+                m_graph.dump(WTF::dataFile());
+        }
         LValue value = convert(lowRaw(input), input->rep(), input->type, phi->rep());
         m_out.addIncomingToPhi(phi->lowered, m_out.anchor(value));
     }
@@ -1281,7 +1287,10 @@ void Lowering::lowerBlock(BasicBlock* block)
     if (terminal && terminal->kind != NodeKind::Guard && !(terminal->kind == NodeKind::Bytecode && (isBranch(terminal->opcode) || isTerminal(terminal->opcode) || isThrow(terminal->opcode))))
         terminal = nullptr;
 
+    m_scopeWithBarrier = nullptr;
     auto setCurrentNode = [&](Node* node) {
+        if (!node || !node->isBytecode(op_put_to_scope))
+            m_scopeWithBarrier = nullptr;
         m_node = node && node->instruction ? node : nullptr;
         m_code = node ? node->graph : block->graph;
         if (Options::aotTypeCoveragePath()) [[unlikely]]
@@ -1362,6 +1371,10 @@ void Lowering::lowerBlock(BasicBlock* block)
 
 void Lowering::lowerNode(Node* node)
 {
+    if (node->standIn && !node->isBytecode(op_create_lexical_environment)) {
+        setJSValue(node, lowJSValue(node->standIn));
+        return;
+    }
     switch (node->kind) {
     case NodeKind::Constant:
     case NodeKind::ConstantCell:
@@ -1420,6 +1433,8 @@ void Lowering::lowerNode(Node* node)
                 break;
             }
         }
+        if (Options::useAOTScopesInFrames() && node->graph == &m_graph && isGeneratorOrAsyncFunctionBodyParseMode(m_graph.codeBlock()->parseMode()) && node->reg == virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Frame)))
+            noteGeneratorFrame(lowJSValue(node));
         return;
     case NodeKind::GetStack:
         setJSValue(node, m_out.load64(addressFor(node->reg)));

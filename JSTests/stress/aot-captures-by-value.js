@@ -220,6 +220,26 @@ applies(catchesWithoutScope, captures);
 doesNotApply(catchesWithoutScope, makesEnvironment);
 for (const f of [handlerReadsVariable, handlerMakesClosure, finallyRuns])
     noInline(f);
+function looksUpFromRestoredScope(model) {
+    let kept = model;
+    const set = (v) => { kept = v; };
+    const handler = async (A, E) => {
+        let local = 0;
+        const bump = () => { local++; };
+        identity(bump);
+        await null;
+        bump();
+        let viaInlined;
+        {
+            const t = A + 1;
+            const inner = () => t + 1;
+            viaInlined = inner();
+        }
+        return [kept, A, E, local, viaInlined].join();
+    };
+    return [set, handler];
+}
+noInline(looksUpFromRestoredScope);
 function asyncReadsAfterAwait(x) { const awaitsFirst = async (y) => { await null; return x + y; }; return awaitsFirst; }
 function asyncDeclaration(x) { async function declaredAsync() { const before = x; await null; return before + x; } return declaredAsync; }
 function closureInAsync(x) { const makesInAsync = async () => { await null; const inAsync = () => x + 1; return inAsync; }; return makesInAsync; }
@@ -299,6 +319,9 @@ for (let i = 0; i < 100; i++) {
     check(awaits.constructor === AsyncFunction && Object.getPrototypeOf(awaits) === AsyncFunction.prototype && awaits.name === "awaits" && typeof awaits === "function", true, "what it is");
     check(Object.prototype.toString.call(awaits), "[object AsyncFunction]", "what it says it is");
     check(resultOf(asyncReadsAfterAwait(i)(1)), i + 1, "a variable that is read after an await");
+    const [setKept, handler] = looksUpFromRestoredScope("model");
+    setKept("changed" + i);
+    check(resultOf(handler(1, 2)), "changed" + i + ",1,2,1,3", "a variable that is looked up from a scope that was restored, past a scope that is in no chain");
     check(resultOf(asyncWithParameters(i, 2)), i + 2, "the parameters of an async function");
     check(resultOf(asyncWithParameters(Promise.resolve(i), "x")), i + "x", "one of which is a promise");
     check(resultOf(asyncWithParameters(Promise.reject("no"), 1)), "rejected: no", "or is rejected");

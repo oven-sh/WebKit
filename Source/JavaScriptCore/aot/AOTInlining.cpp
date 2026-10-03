@@ -103,6 +103,15 @@ public:
         return size <= (isCalledInLoop ? Options::maximumAOTInlineCandidateBytecodeCostInLoop() : std::min(Options::maximumAOTInlineCandidateBytecodeCost(), Options::maximumAOTInlineCandidateBytecodeCostInLoop()));
     }
 
+    static bool hasLoop(UnlinkedCodeBlock* callee)
+    {
+        for (const auto& instruction : callee->instructions()) {
+            if (instruction->opcodeID() == op_loop_hint)
+                return true;
+        }
+        return false;
+    }
+
     static bool callsParameter(UnlinkedCodeBlock* callee, unsigned parameter)
     {
         VirtualRegister reg = virtualRegisterForArgumentIncludingThis(parameter + 1);
@@ -325,6 +334,7 @@ private:
         Node* closureFunction = nullptr;
         bool closureFunctionIsItsScope = false;
         unsigned guardedIntrinsic = 0;
+        uint32_t likelyFunction = 0;
         bool calleeIsProvenIntrinsic = false;
         bool isArraySpecialization = false;
         bool passesCallback = false;
@@ -365,14 +375,21 @@ private:
         } else {
             bool isExact = false;
             const KnownFunction* known = caller.knownCallee(call, &isExact);
-            if (!known || !isExact || !known->forCall)
+            if (!known || !known->forCall)
                 return false;
-            if (!known->isDeclaration && !Graph::closedMethodReadBy(calleeNode)) {
+            if (!isExact) {
+                uint32_t number = programFunctions() ? programFunctions()->numberOf(known->executable) : 0;
+                const KnownFunction* numbered = number ? programFunctions()->function(number) : nullptr;
+                if (!numbered || !numbered->forCall || (numbered->summary && numbered->summary->takesScopeAsCallee) || !calleeNode->isBytecode(op_get_from_scope) || call->opcode == op_tail_call || call->guard || call->guarded)
+                    return false;
+                known = numbered;
+                likelyFunction = number;
+            } else if (!known->isDeclaration && !Graph::closedMethodReadBy(calleeNode)) {
                 if (!calleeNode->isBytecode(op_get_from_scope) || call->opcode == op_tail_call)
                     return false;
                 checksCalleeIsInitialized = true;
             }
-            if (!caller.passesNoFunctionObject(call))
+            if (likelyFunction || !caller.passesNoFunctionObject(call))
                 closureFunction = calleeNode;
             closureFunctionIsItsScope = known->summary && known->summary->takesScopeAsCallee;
             callee = known->forCall;
@@ -387,9 +404,11 @@ private:
         auto about = m_program.about(callee);
         if (about && about->summary && about->summary->makesDissolvedScopes && call->block->isInLoop && !m_graph.loopSplittingIsDisabled)
             return false;
+        if (call->block->isInLoop && !guardedIntrinsic && !passesCallback && !closureScope && !m_graph.loopSplittingIsDisabled && hasLoop(callee))
+            return false;
         if (guardedIntrinsic && (!about || !canBeInlinedIntoCaller(callee)))
             return declineToInline(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
-        if (!about || !canBeInlinedIntoCaller(callee) || !(closureScope || guardedIntrinsic ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : (passesCallback && (!about->summary || about->summary->isReached())) || isProfitable(callee, about->summary, block->isInLoop || m_graph.isCalledRepeatedly())))
+        if (!about || !canBeInlinedIntoCaller(callee) || !(closureScope || guardedIntrinsic ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : (passesCallback && (!about->summary || about->summary->isReached())) || isProfitable(callee, about->summary, block->isInLoop || likelyFunction || m_graph.isCalledRepeatedly())))
             return guardedIntrinsic ? declineToInline("it is too big"_s) : false;
         if (m_inlinedBytecodeSize + callee->instructionsSize() > Options::maximumAOTInliningCallerBytecodeCost() || m_graph.inlineFrames.size() > PackedSite::maxInlineFrames)
             return guardedIntrinsic ? declineToInline("the caller has taken over enough"_s) : false;
@@ -589,11 +608,12 @@ private:
         block->successors.append(entry);
         entry->predecessors.append(block);
         Node* fallbackCall = nullptr;
-        if ((guardedIntrinsic && !calleeIsProvenIntrinsic) || checksCalleeIsInitialized) {
+        if ((guardedIntrinsic && !calleeIsProvenIntrinsic) || checksCalleeIsInitialized || likelyFunction) {
             Node* guard = m_graph.addNode(NodeKind::Guard);
             guard->graph = block->graph;
-            guard->guardKind = checksCalleeIsInitialized ? GuardKind::KnownCallee : isArraySpecialization ? GuardKind::IsArrayIntrinsic : GuardKind::IsIntrinsic;
+            guard->guardKind = likelyFunction ? GuardKind::IsLikelyFunction : checksCalleeIsInitialized ? GuardKind::KnownCallee : isArraySpecialization ? GuardKind::IsArrayIntrinsic : GuardKind::IsIntrinsic;
             guard->intrinsic = guardedIntrinsic;
+            guard->likelyFunction = likelyFunction;
             guard->opcode = call->opcode;
             guard->instruction = call->instruction;
             guard->bytecodeIndex = call->bytecodeIndex;
@@ -618,6 +638,8 @@ private:
             otherwise->isRarelyExecuted = true;
             fallbackCall->block = otherwise;
             otherwise->nodes.append(fallbackCall);
+            if (likelyFunction)
+                guard->target = fallbackCall;
             block->successors.append(otherwise);
             otherwise->predecessors.append(block);
             if (checksCalleeIsInitialized) {

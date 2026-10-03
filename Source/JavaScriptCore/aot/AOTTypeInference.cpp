@@ -852,10 +852,11 @@ private:
         case BuiltinSignature::Condition::IfFirstArgumentIsNotObject: {
             if (argc < 2)
                 break;
-            Type first = node->use(VirtualRegister(firstArgument + 1))->type;
+            Node* argument = node->use(VirtualRegister(firstArgument + 1));
+            Type first = argument->type;
             if (!first)
                 return TNone;
-            if (!isSubtype(first, TPrimitive))
+            if (!isSubtype(first, TPrimitive) && !argument->isBytecode(op_new_reg_exp))
                 return std::nullopt;
             break;
         }
@@ -1011,6 +1012,10 @@ private:
         case NodeKind::Guard:
             return TNone;
         case NodeKind::Narrow:
+            if (node->speculatedType) {
+                Type value = node->uses[0].node->type;
+                return mayBe(value, node->speculatedType) && !isSubtype(value, TNumber) ? value & node->speculatedType : value;
+            }
             if (node->narrowedTo)
                 return node->uses[0].node->type & node->narrowedTo;
             return node->target ? node->uses[0].node->type & node->target->type : node->uses[0].node->type;
@@ -1405,7 +1410,7 @@ private:
                 return TNone;
             if (isSubtype(base, TString) || node->guard)
                 return TInt32;
-            if (isSubtype(base, TString | TArray | TTypedArray))
+            if (isSubtype(base, TString | TArray))
                 return TNumber;
             return TTop;
         }

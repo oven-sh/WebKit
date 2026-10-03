@@ -570,6 +570,14 @@ public:
         ConcurrentJSLocker locker(m_lock);
         return takeNextScopeOffset(locker);
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    void setScopeSize(unsigned size)
+    {
+        ConcurrentJSLocker locker(m_lock);
+        m_maxScopeOffset = size ? ScopeOffset(size - 1) : ScopeOffset();
+    }
+#endif
     
     template<typename Entry>
     void add(const ConcurrentJSLocker& locker, UniquedStringImpl* key, Entry&& entry)

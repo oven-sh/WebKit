@@ -1363,6 +1363,38 @@ B3::Variable* Lowering::environmentVariable(Node* environment, unsigned offset)
     return variables[offset];
 }
 
+void Lowering::noteGeneratorFrame(LValue frame)
+{
+    if (!m_generatorFrame)
+        m_generatorFrame = m_proc.addVariable(Int64);
+    m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_generatorFrame, frame);
+}
+
+LValue Lowering::generatorFrame()
+{
+    RELEASE_ASSERT(m_generatorFrame);
+    return m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), m_generatorFrame);
+}
+
+LValue Lowering::readPromotedVariable(Node* environment, unsigned offset)
+{
+    if (environment->isInFrame)
+        return m_out.load64(generatorFrame(), m_heaps.JSLexicalEnvironment_variables[environment->firstFrameSlot + offset]);
+    return m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), environmentVariable(environment, offset));
+}
+
+void Lowering::writePromotedVariable(Node* environment, unsigned offset, LValue value, bool mayBeCell)
+{
+    if (!environment->isInFrame) {
+        m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), environmentVariable(environment, offset), value);
+        return;
+    }
+    LValue frame = generatorFrame();
+    m_out.store64(value, frame, m_heaps.JSLexicalEnvironment_variables[environment->firstFrameSlot + offset]);
+    if (mayBeCell)
+        storeBarrier(frame);
+}
+
 LValue Lowering::heldCapture(Graph& graph, const void* scope, unsigned offset, Node* forLog)
 {
     Graph* holder = &graph;
@@ -1405,6 +1437,8 @@ LValue Lowering::ancestorScope(Node* scope, unsigned hops)
 {
     if (scope->isBytecode(op_get_scope) && !scope->graph->closureScope)
         hops -= scope->graph->dissolvedScopesOutside(hops);
+    else if (Options::useAOTCapturesByValue() && !scope->isBytecode(op_get_scope))
+        hops -= scope->graph->dissolvedScopesAbove(scope, hops);
     LValue current = lowCell(scope);
     for (unsigned i = 0; i < hops; ++i)
         current = m_out.loadPtr(current, m_heaps.JSScope_next);
@@ -1537,9 +1571,10 @@ void Lowering::lowerGetFromScope(Node* node)
         }
     }
     if (node->promotedEnvironment) {
-        setJSValue(node, m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), environmentVariable(node->promotedEnvironment, node->offsetInEnvironment)));
+        setJSValue(node, readPromotedVariable(node->promotedEnvironment, node->offsetInEnvironment));
         return;
     }
+
     if (VariableSummaries* summaries = m_graph.variableSummaries(); summaries && Options::useAOTCapturesByValue()) {
         if (Variable variable = m_graph.variableAccessedBy(node); variable && !node->accessesLocalEnvironment && summaries->isDissolved(variable.scope)) {
             m_graph.remark("reads-capture"_s, StringView(code().codeBlock()->identifier(bytecode.m_var).impl()));
@@ -1687,7 +1722,7 @@ void Lowering::lowerPutToScope(Node* node)
         }
     }
     if (node->promotedEnvironment) {
-        m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), environmentVariable(node->promotedEnvironment, node->offsetInEnvironment), lowJSValue(node->use(bytecode.m_value)));
+        writePromotedVariable(node->promotedEnvironment, node->offsetInEnvironment, lowJSValue(node->use(bytecode.m_value)), mayBe(node->use(bytecode.m_value)->type, TCell));
         return;
     }
     auto distance = m_graph.accessedEnvironmentDepth(node);
@@ -1707,8 +1742,14 @@ void Lowering::lowerPutToScope(Node* node)
 
     if (closureOffset) {
         m_out.store64(value, scope, m_heaps.JSLexicalEnvironment_variables[*closureOffset]);
-        if (mayBe(valueNode->type, TCell) && !(node->use(bytecode.m_scope)->isBytecode(op_create_lexical_environment) && node->use(bytecode.m_scope)->graph->environmentsAreOnStack()))
-            storeBarrier(scope);
+        if (mayBe(valueNode->type, TCell) && !(node->use(bytecode.m_scope)->isBytecode(op_create_lexical_environment) && node->use(bytecode.m_scope)->graph->environmentsAreOnStack())) {
+            if (Options::useAOTSavesAtDefinitions() && m_scopeWithBarrier == node->use(bytecode.m_scope))
+                m_graph.remark("shares-write-barrier"_s);
+            else {
+                storeBarrier(scope);
+                m_scopeWithBarrier = node->use(bytecode.m_scope);
+            }
+        }
         return;
     }
 

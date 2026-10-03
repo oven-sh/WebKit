@@ -8,10 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltins.h"
 #include "AOTTypeTable.h"
 #include "BytecodeStructs.h"
 #include "ImmutableIntrinsics.h"
 #include "JSCInlines.h"
+#include "JSGenerator.h"
+#include "RegExp.h"
 #include "SymbolTable.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -513,8 +516,23 @@ public:
     struct Where {
         Node* base { nullptr };
         unsigned hops { 0 };
-        bool isLocalEnvironment() const { return !hops && base->isBytecode(op_create_lexical_environment); }
+        bool isThroughRestoration { false };
+        bool isLocalEnvironment() const { return base && !hops && base->isBytecode(op_create_lexical_environment); }
     };
+
+    using PhisBeingLocated = Vector<Node*, 8>;
+
+    static Where lexicallyOut(Where from, unsigned hops, unsigned depth, PhisBeingLocated* beingLocated, bool throughObjects)
+    {
+        while (hops && from.isLocalEnvironment()) {
+            bool wasThroughRestoration = from.isThroughRestoration;
+            from = lexicalLocationOf(from.base->use(from.base->as<OpCreateLexicalEnvironment>().m_scope), depth + 1, beingLocated, throughObjects);
+            from.isThroughRestoration |= wasThroughRestoration;
+            --hops;
+        }
+        from.hops += hops;
+        return from;
+    }
 
     static Where out(Where from, unsigned hops, unsigned depth)
     {
@@ -526,37 +544,66 @@ public:
         return from;
     }
 
+    // The node of an environment that has an object does not dominate what runs after a resumption.
     static Where locationOf(Node* scope, unsigned depth = 0)
     {
+        Where where = lexicalLocationOf(scope, depth, nullptr, true);
+        if (where.isThroughRestoration && where.base->isBytecode(op_create_lexical_environment) && !where.base->mayBeInFrame)
+            return lexicalLocationOf(scope, depth, nullptr, false);
+        return where;
+    }
+
+    // Without a base: where the phis that are being located are.
+    static Where lexicalLocationOf(Node* scope, unsigned depth, PhisBeingLocated* beingLocated, bool throughObjects)
+    {
         if (depth <= 24 && Options::useAOTCapturesByValue() && (scope->kind == NodeKind::Phi || scope->kind == NodeKind::Narrow)) {
+            if (beingLocated && beingLocated->contains(scope))
+                return { nullptr, 0 };
+            PhisBeingLocated own;
+            PhisBeingLocated& phis = beingLocated ? *beingLocated : own;
+            size_t numberBefore = phis.size();
             Vector<Node*, 8> worklist { scope };
-            UncheckedKeyHashSet<Node*> seen;
             std::optional<Where> common;
+            auto fail = [&] {
+                phis.shrink(numberBefore);
+                return Where { scope, 0 };
+            };
             while (!worklist.isEmpty()) {
                 Node* node = worklist.takeLast();
-                if (!seen.add(node).isNewEntry)
-                    continue;
                 if (node->kind == NodeKind::Phi || node->kind == NodeKind::Narrow) {
+                    if (phis.contains(node))
+                        continue;
+                    phis.append(node);
                     for (auto& use : node->uses)
                         worklist.append(use.node);
                     continue;
                 }
-                Where where = locationOf(node, depth + 1);
+                Where where = lexicalLocationOf(node, depth + 1, &phis, throughObjects);
+                if (!where.base) {
+                    if (where.hops)
+                        return fail();
+                    continue;
+                }
                 if (common && (common->base != where.base || common->hops != where.hops))
-                    return { scope, 0 };
+                    return fail();
+                where.isThroughRestoration |= common && common->isThroughRestoration;
                 common = where;
             }
-            return common && common->base->kind == NodeKind::Bytecode ? *common : Where { scope, 0 };
+            if (!common)
+                return beingLocated ? Where { nullptr, 0 } : fail();
+            if (common->base->kind != NodeKind::Bytecode)
+                return fail();
+            return *common;
         }
         if (depth > 24 || scope->kind != NodeKind::Bytecode)
             return { scope, 0 };
         switch (scope->opcode) {
         case op_get_scope:
             if (Node* closedOver = scope->graph->closureScope)
-                return locationOf(closedOver, depth + 1);
+                return lexicalLocationOf(closedOver, depth + 1, beingLocated, throughObjects);
             return { scope, 0 };
         case op_get_parent_scope:
-            return out(locationOf(scope->use(scope->as<OpGetParentScope>().m_scope), depth + 1), 1, depth);
+            return lexicallyOut(lexicalLocationOf(scope->use(scope->as<OpGetParentScope>().m_scope), depth + 1, beingLocated, throughObjects), 1, depth, beingLocated, throughObjects);
         case op_resolve_scope: {
             auto bytecode = scope->as<OpResolveScope>();
             if (scope->graph->resolvedEnvironmentDepth(scope))
@@ -572,11 +619,52 @@ public:
                     return { scope, 0 };
                 hops = variable.depth;
             }
-            return out(locationOf(scope->use(bytecode.m_scope), depth + 1), hops, depth);
+            return lexicallyOut(lexicalLocationOf(scope->use(bytecode.m_scope), depth + 1, beingLocated, throughObjects), hops, depth, beingLocated, throughObjects);
         }
+        case op_get_from_scope:
+            if (Options::useAOTScopesInFrames()) {
+                if (Node* environment = scope->graph->environmentRestoredBy(scope, throughObjects))
+                    return { environment, 0, true };
+            }
+            return { scope, 0 };
         default:
             return { scope, 0 };
         }
+    }
+
+    static bool isSaveInFrame(Node* user, const Use& use)
+    {
+        if (!Options::useAOTScopesInFrames() || !user->isBytecode(op_put_to_scope) || use.reg != user->as<OpPutToScope>().m_value)
+            return false;
+        Variable variable = user->graph->variableAccessedBy(user);
+        if (!variable || !user->graph->isGeneratorFrame(variable.scope))
+            return false;
+        Where where = locationOf(use.node);
+        return where.isLocalEnvironment() && where.base->mayBeInFrame && where.base->graph->onlyEnvironmentWithIdentity(where.base->graph->scopeIdentity(where.base)) == where.base;
+    }
+
+    static bool isAnotherNameFor(Node* user, Node* environment)
+    {
+        if (!Options::useAOTScopesInFrames() || (user->kind != NodeKind::Phi && user->kind != NodeKind::Narrow))
+            return false;
+        Where where = locationOf(user);
+        return where.isLocalEnvironment() && where.base == environment;
+    }
+
+    Node* standInFor(Node* environment)
+    {
+        Where above { environment, 0 };
+        for (unsigned depth = 0; above.isLocalEnvironment() && (m_candidates.contains(above.base) || above.base->isPromoted); ++depth) {
+            if (depth > 24)
+                return nullptr;
+            above = out(above, 1, 0);
+        }
+        Node* result = above.base;
+        if (result->kind != NodeKind::Bytecode || result->isElided || (!result->isBytecode(op_get_scope) && !result->isBytecode(op_create_lexical_environment)))
+            return nullptr;
+        if (result->isBytecode(op_create_lexical_environment) && (result->block->isInLoop || result->block != environment->block))
+            return nullptr;
+        return result;
     }
 
     static std::optional<unsigned> offsetAccessedBy(Node* node)
@@ -657,8 +745,12 @@ public:
 
     bool worksWithoutEnvironment(Node* user, const Use& use)
     {
+        if (Node* environment = locationOf(use.node).base; isAnotherNameFor(user, environment))
+            return standInFor(environment);
         if (user->kind != NodeKind::Bytecode || user->guard || user->guarded)
             return false;
+        if (isSaveInFrame(user, use))
+            return true;
         if (auto scope = scopeThatMustBeThere(user))
             return use.reg == *scope && isDissolved(locationOf(use.node).base);
         if (Options::useAOTCapturesByValue() && isThisOfCall(user, use))
@@ -727,7 +819,23 @@ public:
 
     void run(bool mayPromote)
     {
-        bool hasDissolvedScopes = false;
+        bool isBody = Options::useAOTScopesInFrames() && mayPromote && m_graph.variableSummaries() && isGeneratorOrAsyncFunctionBodyParseMode(m_graph.codeBlock()->parseMode());
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (node->isBytecode(op_create_lexical_environment))
+                    node->mayBeInFrame = isBody && node->graph == &m_graph && !m_graph.isGeneratorFrame(m_graph.scopeIdentity(node));
+            }
+        }
+        while (!findCandidates(mayPromote)) { }
+        rewrite();
+    }
+
+    bool findCandidates(bool mayPromote)
+    {
+        m_candidates.clear();
+        m_savedInFrame.clear();
+        bool& hasDissolvedScopes = m_hasDissolvedScopes;
+        hasDissolvedScopes = false;
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
                 if (!node->isBytecode(op_create_lexical_environment) || node->isElided)
@@ -742,16 +850,30 @@ public:
             }
         }
         if (m_candidates.isEmpty() && !hasDissolvedScopes)
-            return;
+            return true;
         for (bool changed = true; changed && !m_candidates.isEmpty();) {
             changed = false;
             forEachUser([&](Node* user) {
                 for (auto& use : user->uses) {
                     Where where = locationOf(use.node);
+                    if (where.isLocalEnvironment() && isSaveInFrame(user, use)) {
+                        m_savedInFrame.add(where.base);
+                        if (Where parent = out(where, 1, 0); m_candidates.contains(where.base) && !parent.base->isBytecode(op_get_scope) && !(parent.isLocalEnvironment() && m_candidates.contains(parent.base))) {
+                            m_candidates.remove(where.base);
+                            changed = true;
+                        }
+                    }
                     if (!where.isLocalEnvironment() || !m_candidates.contains(where.base) || worksWithoutEnvironment(user, use))
                         continue;
                     if (Options::verboseAOTCompilation() && isDissolved(where.base)) [[unlikely]]
                         dataLogLn("AOT: PROTOTYPE: a scope that is in no chain is made for ", user->kind == NodeKind::Bytecode ? opcodeNames[user->opcode] : "a node that is no bytecode"_s, " kind ", static_cast<unsigned>(user->kind), " bc#", user->bytecodeIndex.offset(), user->graph != &m_graph ? " (inlined)" : "", where.base->graph != &m_graph ? " (scope of an inlined function)" : "", user->guard ? " guard" : "", user->guarded ? " guarded" : "", user->block && user->block->isGeneric ? " generic" : "", where.base->block->isGeneric ? " (scope is generic)" : "", where.base->block->isInLoop ? " (scope in loop)" : "", " operand ", use.reg.offset(), "; its variables: ", namesIn(where.base));
+                    if (Options::verboseAOTCompilation() && isDissolved(where.base) && user->kind != NodeKind::Bytecode) [[unlikely]] {
+                        for (auto& input : user->uses) {
+                            Where there = locationOf(input.node);
+                            dataLogLn("AOT: PROTOTYPE:   input @", input.node->index, " kind ", static_cast<unsigned>(input.node->kind), " ", input.node->kind == NodeKind::Bytecode ? opcodeNames[input.node->opcode] : ""_s, " bc#", input.node->bytecodeIndex.offset(), input.node->graph != &m_graph ? " (inlined)" : "", " is at @", there.base->index, " kind ", static_cast<unsigned>(there.base->kind), " ", there.base->kind == NodeKind::Bytecode ? opcodeNames[there.base->opcode] : ""_s, " + ", there.hops, there.base->mayBeInFrame ? " mayBeInFrame" : "");
+                        }
+                        dataLogLn("AOT: PROTOTYPE:   the phi is @", user->index, " in block bc#", user->block ? user->block->bytecodeBegin : 0, user->block && user->block->isLoopHeader ? " (loop header)" : "", user->block && user->block->isGeneric ? " (generic)" : "", user->block && user->block->isInLoop ? " (in loop)" : "", "; the scope is @", where.base->index, where.base->mayBeInFrame ? " mayBeInFrame" : " NOT mayBeInFrame");
+                    }
                     m_candidates.remove(where.base);
                     changed = true;
                 }
@@ -764,14 +886,84 @@ public:
                 }
             });
         }
-        if (m_candidates.isEmpty() && !hasDissolvedScopes)
+        bool isStable = true;
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (node->isBytecode(op_create_lexical_environment) && node->mayBeInFrame && !m_candidates.contains(node)) {
+                    if (Options::verboseAOTCompilation() && m_savedInFrame.contains(node) && isDissolved(node)) [[unlikely]] {
+                        dataLogLn("AOT: PROTOTYPE: @", node->index, " is in no chain, lives across a suspension and cannot be in the frame, in a function of ", m_graph.codeBlock()->instructionsSize(), " bytes");
+                        m_graph.dump(WTF::dataFile());
+                    }
+                    RELEASE_ASSERT_WITH_MESSAGE(!m_savedInFrame.contains(node) || !isDissolved(node), "A scope that is in no chain lives across a suspension and cannot be in the frame");
+                    node->mayBeInFrame = false;
+                    isStable = false;
+                }
+            }
+        }
+        return isStable;
+    }
+
+    void rewrite()
+    {
+        if (m_candidates.isEmpty() && !m_hasDissolvedScopes)
             return;
         for (Node* environment : m_candidates)
             environment->isPromoted = true;
+        auto standsIn = [&](Node* name, Node* environment) {
+            if (!Options::useAOTScopesInFrames())
+                return false;
+            Node* standIn = standInFor(environment);
+            if (!standIn)
+                return false;
+            name->standIn = standIn;
+            name->uses.append({ VirtualRegister(), standIn });
+            return true;
+        };
+        if (Options::useAOTScopesInFrames()) {
+            for (Node* environment : m_candidates)
+                standsIn(environment, environment);
+            forEachUser([&](Node* user) {
+                if (!user->isBytecode(op_get_from_scope))
+                    return;
+                if (Node* environment = user->graph->environmentRestoredBy(user); environment && environment->isPromoted)
+                    RELEASE_ASSERT(standsIn(user, environment));
+            });
+        }
+        if (!m_savedInFrame.isEmpty()) {
+            Node* frame = nullptr;
+            for (BasicBlock* block : m_graph.m_rpo) {
+                for (Node* node : block->nodes) {
+                    if (node->graph == &m_graph && node->isBytecode(op_create_lexical_environment) && m_graph.isGeneratorFrame(m_graph.scopeIdentity(node)))
+                        frame = node;
+                }
+            }
+            RELEASE_ASSERT(frame);
+            auto tableOf = [](Node* node) { return uncheckedDowncast<SymbolTable>(node->graph->codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable).asCell()); };
+            SymbolTable* frameTable = tableOf(frame);
+            unsigned next = frameTable->scopeSize();
+            for (BasicBlock* block : m_graph.m_rpo) {
+                for (Node* node : block->nodes) {
+                    if (!m_savedInFrame.contains(node) || !node->isPromoted)
+                        continue;
+                    node->isInFrame = true;
+                    node->firstFrameSlot = next;
+                    next += tableOf(node)->scopeSize();
+                    m_graph.remark("scope-in-frame"_s, String::number(tableOf(node)->scopeSize()));
+                }
+            }
+            RELEASE_ASSERT_WITH_MESSAGE(next < 256, "The frame of a generator is too large with the scopes that are in it");
+            frame->extendedFrameSize = next;
+        }
         auto isInNoChain = [&](Node* environment) { return environment->isPromoted || isDissolved(environment); };
         forEachUser([&](Node* user) {
             if (user->kind != NodeKind::Bytecode)
                 return;
+            for (auto& use : user->uses) {
+                if (isSaveInFrame(user, use) && locationOf(use.node).base->isPromoted) {
+                    user->isElided = true;
+                    return;
+                }
+            }
             if (auto scope = user->isBytecode(op_create_lexical_environment) && user->isPromoted ? std::nullopt : scopeThatMustBeThere(user)) {
                 Where start = locationOf(user->use(*scope));
                 const KnownFunction* made = programFunctions() && scopeOfNewFunction(user) ? programFunctions()->function(functionNumberOf(user->type)) : nullptr;
@@ -848,7 +1040,8 @@ public:
                     return;
                 }
                 if (where.isLocalEnvironment() && where.base->isPromoted) {
-                    user->isElided = true;
+                    if (!standsIn(user, where.base))
+                        user->isElided = true;
                     return;
                 }
                 if (user->opcode != op_get_scope) {
@@ -867,9 +1060,205 @@ public:
 private:
     Graph& m_graph;
     UncheckedKeyHashSet<Node*> m_candidates;
+    UncheckedKeyHashSet<Node*> m_savedInFrame;
+    bool m_hasDissolvedScopes { false };
 };
 
 } // anonymous namespace
+
+void saveRegistersAtDefinitions(Graph& graph)
+{
+    if (!isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode()))
+        return;
+    VirtualRegister frameRegister = virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Frame));
+    if (!graph.isTracked(frameRegister))
+        return;
+    auto slotOf = [&](Node* node) -> std::optional<unsigned> {
+        if (node->graph != &graph || node->isElided)
+            return std::nullopt;
+        Variable variable = graph.variableAccessedBy(node);
+        if (!variable || !graph.isGeneratorFrame(variable.scope))
+            return std::nullopt;
+        return variable.offset;
+    };
+    UncheckedKeyHashMap<unsigned, Vector<Node*, 4>, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> savesBySlot;
+    Node* frame = nullptr;
+    bool hasSeveralFrames = false;
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->graph != &graph)
+                continue;
+            if (node->isBytecode(op_create_lexical_environment) && graph.isGeneratorFrame(graph.scopeIdentity(node))) {
+                hasSeveralFrames |= !!frame;
+                frame = node;
+            }
+            if (!node->isBytecode(op_put_to_scope))
+                continue;
+            if (auto slot = slotOf(node))
+                savesBySlot.add(*slot, Vector<Node*, 4> { }).iterator->value.append(node);
+        }
+    }
+    if (!frame || hasSeveralFrames || frame->block->isInLoop || savesBySlot.isEmpty())
+        return;
+    graph.computeDominators();
+    unsigned frameIndex = graph.registerIndex(frameRegister);
+    unsigned numberOfSavesElided = 0;
+    unsigned numberOfStoresAdded = 0;
+    for (auto& [slot, saves] : savesBySlot) {
+        Vector<Node*, 4> definitions;
+        bool works = true;
+        UncheckedKeyHashSet<Node*> seen;
+        Vector<Node*, 8> worklist;
+        for (Node* save : saves)
+            worklist.append(save->use(save->as<OpPutToScope>().m_value));
+        while (works && !worklist.isEmpty()) {
+            Node* value = worklist.takeLast();
+            if (!seen.add(value).isNewEntry)
+                continue;
+            switch (value->kind) {
+            case NodeKind::Phi:
+            case NodeKind::Narrow:
+                for (auto& use : value->uses)
+                    worklist.append(use.node);
+                break;
+            case NodeKind::Constant:
+            case NodeKind::ConstantCell:
+                definitions.append(value);
+                break;
+            case NodeKind::Bytecode:
+                if (value->isBytecode(op_get_from_scope) && slotOf(value) == std::optional<unsigned> { slot })
+                    break;
+                works = value->block && !value->block->isInLoop && !value->isElided && !value->guard && !value->guarded;
+                definitions.append(value);
+                break;
+            default:
+                works = false;
+                break;
+            }
+        }
+        if (!works || definitions.size() != 1)
+            continue;
+        if (Node* definition = definitions[0]; definition->kind == NodeKind::Bytecode && (definition->graph != &graph || frameIndex >= definition->block->valuesAtTail.size() || !definition->block->valuesAtTail[frameIndex]))
+            continue;
+        Node* like = saves[0];
+        for (Node* definition : definitions) {
+            bool comesBeforeFrame = !definition->block || definition->kind != NodeKind::Bytecode || (definition->block != frame->block && definition->block->dominates(frame->block))
+                || (definition->block == frame->block && frame->block->nodes.find(definition) < frame->block->nodes.find(frame));
+            BasicBlock* block = comesBeforeFrame ? frame->block : definition->block;
+            Node* after = comesBeforeFrame ? frame : definition;
+            Node* frameThere = comesBeforeFrame ? frame : block->valuesAtTail[frameIndex];
+            RELEASE_ASSERT(frameThere);
+            Node* store = graph.addNode(NodeKind::Bytecode);
+            store->opcode = op_put_to_scope;
+            store->instruction = like->instruction;
+            store->bytecodeIndex = like->bytecodeIndex;
+            store->block = block;
+            store->uses.append({ like->as<OpPutToScope>().m_scope, frameThere });
+            store->uses.append({ like->as<OpPutToScope>().m_value, definition });
+            store->type = like->type;
+            size_t index = block->nodes.find(after);
+            RELEASE_ASSERT(index != notFound);
+            while (index + 1 < block->nodes.size() && block->nodes[index + 1]->kind == NodeKind::Proj)
+                ++index;
+            block->nodes.insert(index + 1, store);
+            ++numberOfStoresAdded;
+        }
+        for (Node* save : saves)
+            save->isElided = true;
+        numberOfSavesElided += saves.size();
+    }
+    if (numberOfSavesElided) {
+        graph.remark("saves-at-definition"_s, String::number(numberOfStoresAdded));
+        graph.remark("does-not-save-at-suspension"_s, String::number(numberOfSavesElided));
+    }
+}
+
+void clearDeadFrameSlots(Graph& graph)
+{
+    if (!isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode()))
+        return;
+    auto slotOf = [&](Node* node) -> std::optional<unsigned> {
+        if (node->graph != &graph)
+            return std::nullopt;
+        Variable variable = graph.variableAccessedBy(node);
+        if (!variable || !graph.isGeneratorFrame(variable.scope) || variable.offset >= 1024)
+            return std::nullopt;
+        return variable.offset;
+    };
+    struct Suspension {
+        BitVector saved;
+        BitVector toClear;
+        Node* lastSave { nullptr };
+    };
+    UncheckedKeyHashMap<BasicBlock*, Suspension> suspensions;
+    UncheckedKeyHashMap<BasicBlock*, BitVector> restoredIn;
+    UncheckedKeyHashMap<unsigned, Node*, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> saveOfSlot;
+    BitVector mayHoldCell;
+    for (BasicBlock* block : graph.m_rpo) {
+        Node* terminal = block->nodes.isEmpty() ? nullptr : block->nodes.last();
+        bool returns = terminal && terminal->graph == &graph && terminal->isBytecode(op_ret);
+        for (Node* node : block->nodes) {
+            if (node->isBytecode(op_put_to_scope) && returns) {
+                if (auto slot = slotOf(node)) {
+                    auto& suspension = suspensions.add(block, Suspension { }).iterator->value;
+                    suspension.saved.set(*slot);
+                    suspension.lastSave = node;
+                    saveOfSlot.add(*slot, node);
+                    if (mayBe(node->use(node->as<OpPutToScope>().m_value)->type, TCell))
+                        mayHoldCell.set(*slot);
+                }
+            } else if (node->isBytecode(op_get_from_scope)) {
+                if (auto slot = slotOf(node))
+                    restoredIn.add(block, BitVector { }).iterator->value.set(*slot);
+            }
+        }
+    }
+    if (suspensions.isEmpty() || restoredIn.isEmpty())
+        return;
+    for (auto& [resume, restored] : restoredIn) {
+        Vector<BasicBlock*, 8> worklist { resume };
+        UncheckedKeyHashSet<BasicBlock*> seen;
+        while (!worklist.isEmpty()) {
+            BasicBlock* block = worklist.takeLast();
+            if (!seen.add(block).isNewEntry)
+                continue;
+            if (auto it = suspensions.find(block); it != suspensions.end()) {
+                for (unsigned slot : restored) {
+                    if (!it->value.saved.get(slot) && mayHoldCell.get(slot))
+                        it->value.toClear.set(slot);
+                }
+                continue;
+            }
+            for (BasicBlock* successor : block->successors)
+                worklist.append(successor);
+        }
+    }
+    unsigned numberCleared = 0;
+    for (auto& [block, suspension] : suspensions) {
+        if (suspension.toClear.isEmpty())
+            continue;
+        Node* frameThere = suspension.lastSave->use(suspension.lastSave->as<OpPutToScope>().m_scope);
+        size_t index = block->nodes.find(suspension.lastSave);
+        RELEASE_ASSERT(index != notFound);
+        for (unsigned slot : suspension.toClear) {
+            Node* like = saveOfSlot.get(slot);
+            if (!like)
+                continue;
+            Node* store = graph.addNode(NodeKind::Bytecode);
+            store->opcode = op_put_to_scope;
+            store->instruction = like->instruction;
+            store->bytecodeIndex = suspension.lastSave->bytecodeIndex;
+            store->block = block;
+            store->uses.append({ like->as<OpPutToScope>().m_scope, frameThere });
+            store->uses.append({ like->as<OpPutToScope>().m_value, graph.constant(jsUndefined()) });
+            store->type = like->type;
+            block->nodes.insert(++index, store);
+            ++numberCleared;
+        }
+    }
+    if (numberCleared)
+        graph.remark("clears-dead-frame-slots"_s, String::number(numberCleared));
+}
 
 bool mayPromoteEnvironmentsOf(Graph& graph)
 {
@@ -919,6 +1308,9 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
                 mustExist.append({ scope, WhyMade::MadeTwice });
             local.add(node, scope);
             made.append(scope);
+            if (graph.isGeneratorFrame(scope))
+                mustExist.append({ scope, WhyMade::GeneratorFrame });
+            node->mayBeInFrame = Options::useAOTScopesInFrames() && node->isBytecode(op_create_lexical_environment) && isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode()) && !graph.isGeneratorFrame(scope);
             JSValue table = node->isBytecode(op_create_lexical_environment) ? graph.codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable) : JSValue();
             if (Options::aotDissolvedScopesFrom() || Options::aotDissolvedScopesBelow() < 65536) [[unlikely]] {
                 unsigned hash = graph.codeBlock()->instructionsSize() * 2654435761u + node->bytecodeIndex.offset() * 40503u + graph.codeBlock()->numberOfIdentifiers() * 69069u + graph.codeBlock()->numParameters();
@@ -948,6 +1340,16 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
         if (const DeclaredNamesLink* declaredNames = declaredNamesFor(graph.codeBlock()))
             declaredNames->forEachScope([&](const void* scope) { mustExist.append({ scope, why }); });
     };
+    Vector<BasicBlock*, 8> blocksResumedIn;
+    if (isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode())) {
+        for (BasicBlock* block : graph.m_rpo) {
+            if (!block->bytecodeBegin && !block->nodes.isEmpty() && block->nodes.last()->isBytecode(op_switch_imm)) {
+                for (BasicBlock* successor : block->successors)
+                    blocksResumedIn.append(successor);
+            }
+        }
+    }
+    UncheckedKeyHashSet<Node*> savedInFrame;
     auto storedLater = [&](Node* environment, Node* closure) {
         uint64_t mask = 0;
         auto scan = [&](BasicBlock* block, unsigned from) {
@@ -969,18 +1371,24 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
         UncheckedKeyHashSet<BasicBlock*> seen;
         size_t index = closure->block->nodes.find(closure);
         RELEASE_ASSERT(index != notFound);
-        if (scan(closure->block, index + 1)) {
-            for (BasicBlock* successor : closure->block->successors)
+        auto continueAfter = [&](BasicBlock* block) {
+            for (BasicBlock* successor : block->successors)
                 worklist.append(successor);
-        }
+            if (!block->nodes.isEmpty() && block->nodes.last()->isBytecode(op_ret)) {
+                for (BasicBlock* resumed : blocksResumedIn) {
+                    if (resumed->bytecodeBegin == block->bytecodeEnd)
+                        worklist.append(resumed);
+                }
+            }
+        };
+        if (scan(closure->block, index + 1))
+            continueAfter(closure->block);
         while (!worklist.isEmpty()) {
             BasicBlock* block = worklist.takeLast();
             if (!seen.add(block).isNewEntry)
                 continue;
-            if (scan(block, 0)) {
-                for (BasicBlock* successor : block->successors)
-                    worklist.append(successor);
-            }
+            if (scan(block, 0))
+                continueAfter(block);
         }
         return mask;
     };
@@ -989,9 +1397,15 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
             Where where = Promoter::locationOf(use.node);
             if (!where.isLocalEnvironment())
                 continue;
+            if (Promoter::isAnotherNameFor(user, where.base))
+                continue;
             bool works = user->kind == NodeKind::Bytecode && !user->guard && !user->guarded;
             if (works && Promoter::isThisOfCall(user, use))
                 continue;
+            if (works && Promoter::isSaveInFrame(user, use)) {
+                savedInFrame.add(where.base);
+                continue;
+            }
             if (works) {
                 switch (user->opcode) {
                 case op_get_scope:
@@ -1004,8 +1418,11 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
                         UniquedStringImpl* name = graph.codeBlock()->identifier(bytecode.m_var).impl();
                         for (Where at = where; at.isLocalEnvironment(); at = Promoter::out(at, 1, 0)) {
                             JSValue table = graph.codeBlock()->getConstant(at.base->as<OpCreateLexicalEnvironment>().m_symbolTable);
-                            if (const void* scope = local.get(at.base); scope && (!table || !table.isCell() || uncheckedDowncast<SymbolTable>(table.asCell())->contains(name)))
+                            if (const void* scope = local.get(at.base); scope && (!table || !table.isCell() || uncheckedDowncast<SymbolTable>(table.asCell())->contains(name))) {
+                                if (Options::verboseAOTCompilation()) [[unlikely]]
+                                    dataLogLn("AOT: PROTOTYPE: pass 1: the scope at bc#", at.base->bytecodeIndex.offset(), " (", Promoter::namesIn(at.base), ") is made because the lookup of ", name, " at bc#", user->bytecodeIndex.offset(), " (resolve type ", static_cast<unsigned>(bytecode.m_resolveType), ", depth ", bytecode.m_localScopeDepth, ", operand kind ", static_cast<unsigned>(use.node->kind), ") is not resolved, in a function of ", graph.codeBlock()->instructionsSize(), " bytes");
                                 mustExist.append({ scope, WhyMade::UnknownAccess });
+                            }
                         }
                     }
                     break;
@@ -1039,8 +1456,11 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
             if (works)
                 continue;
             for (Where at = where; at.isLocalEnvironment(); at = Promoter::out(at, 1, 0)) {
-                if (const void* scope = local.get(at.base))
+                if (const void* scope = local.get(at.base)) {
+                    if (Options::verboseAOTCompilation() && !graph.isGeneratorFrame(scope)) [[unlikely]]
+                        dataLogLn("AOT: PROTOTYPE: pass 1: the scope at bc#", at.base->bytecodeIndex.offset(), " (", Promoter::namesIn(at.base), ") is made for ", user->kind == NodeKind::Bytecode ? opcodeNames[user->opcode] : "a node that is no bytecode"_s, " kind ", static_cast<unsigned>(user->kind), " at bc#", user->bytecodeIndex.offset(), ", in a function of ", graph.codeBlock()->instructionsSize(), " bytes");
                     mustExist.append({ scope, WhyMade::UsedOtherwise });
+                }
             }
         }
     };
@@ -1106,7 +1526,15 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
             }
         }
     }
-    summaries.noteScopes(current, made.span(), mustExist.span(), readFromInside.span(), WTF::move(closures));
+    Vector<std::pair<const void*, const void*>, 2> requirements;
+    for (Node* environment : savedInFrame) {
+        Where parent = Promoter::out({ environment, 0 }, 1, 0);
+        if (parent.isLocalEnvironment() && local.get(parent.base))
+            requirements.append({ local.get(environment), local.get(parent.base) });
+        else if (!parent.base->isBytecode(op_get_scope))
+            mustExist.append({ local.get(environment), WhyMade::UsedOtherwise });
+    }
+    summaries.noteScopes(current, made.span(), mustExist.span(), readFromInside.span(), WTF::move(closures), requirements.span());
 }
 
 NodeUsers::NodeUsers(Graph& graph)
@@ -1483,6 +1911,58 @@ void replaceReadsOfConstantObjects(Graph& graph)
                 use.node = resolve(use.node);
         }
     }
+}
+
+void shareRegExpLiterals(Graph& graph)
+{
+    if (!Options::useSharedRegExpLiteralObjects() || !ImmutableIntrinsics::shared())
+        return;
+    Vector<Node*, 4> literals;
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode || (node->opcode != op_call && node->opcode != op_call_ignore_result && node->opcode != op_tail_call))
+                continue;
+            auto operands = Graph::callOperands(node->instruction);
+            if (operands.argc < 2)
+                continue;
+            Node* literal = node->use(operands.argument(1));
+            Type receiver = node->use(operands.argument(0))->type;
+            if (!node->builtinCalled || !literal->isBytecode(op_new_reg_exp) || literal->isElided || !receiver || !isSubtype(receiver, TString))
+                continue;
+            switch (builtinAtIndex(node->builtinCalled)) {
+            case Builtin::StringReplace:
+            case Builtin::StringReplaceAll:
+            case Builtin::StringMatch:
+            case Builtin::StringSearch:
+            case Builtin::StringSplit:
+                break;
+            default:
+                continue;
+            }
+            if (uncheckedDowncast<RegExp>(literal->graph->codeBlock()->getConstant(literal->as<OpNewRegExp>().m_regexp).asCell())->sticky())
+                continue;
+            literals.append(literal);
+        }
+    }
+    if (literals.isEmpty())
+        return;
+    UncheckedKeyHashMap<Node*, unsigned> numberOfUses;
+    for (Node* literal : literals)
+        numberOfUses.add(literal, 0);
+    auto count = [&](Node* user) {
+        for (auto& use : user->uses) {
+            if (auto it = numberOfUses.find(use.node); it != numberOfUses.end())
+                ++it->value;
+        }
+    };
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* phi : block->phis)
+            count(phi);
+        for (Node* node : block->nodes)
+            count(node);
+    }
+    for (auto& [literal, uses] : numberOfUses)
+        literal->isSharedRegExpLiteral = uses == 1;
 }
 
 void analyzeEscapes(Graph& graph)

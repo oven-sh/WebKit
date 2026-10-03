@@ -1140,8 +1140,6 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint32_t> functionNumbers;
     for (auto& function : m_functions)
         functionNumbers.append(function.code.info.numberOfFunction);
-    if (!Options::validateAOTInferredTypes())
-        functionNumbers.clear();
     header.functionNumbersOffset = place(functionNumbers.sizeInBytes());
     header.functionStartsOffset = place(functionStarts.sizeInBytes());
     header.codeGranulesOffset = place(codeGranules.sizeInBytes());

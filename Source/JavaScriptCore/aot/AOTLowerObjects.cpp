@@ -132,7 +132,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             for (unsigned i = 0; i < captures.size(); ++i) {
                 if (knowsLocalOnes && it->value[i].first) {
                     if (it->value[i].first->isPromoted)
-                        values.append(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), environmentVariable(it->value[i].first, it->value[i].second)));
+                        values.append(readPromotedVariable(it->value[i].first, it->value[i].second));
                     else
                         values.append(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), lowCell(it->value[i].first), JSLexicalEnvironment::offsetOfVariables() + it->value[i].second * sizeof(EncodedJSValue))));
                     continue;
@@ -425,9 +425,25 @@ bool Lowering::tryLowerAllocation(Node* node)
     case op_spread:
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTSpread, m_instance, lowJSValue(node->use(node->as<OpSpread>().m_argument))));
         return true;
-    case op_new_reg_exp:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_instance, lowConstantRegister(node->as<OpNewRegExp>().m_regexp)));
+    case op_new_reg_exp: {
+        if (!node->isSharedRegExpLiteral) {
+            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_instance, lowConstantRegister(node->as<OpNewRegExp>().m_regexp)));
+            return true;
+        }
+        m_graph.remark("shares-regexp-literal"_s);
+        unsigned slot = allocateSlot();
+        LBasicBlock make = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue cached = m_out.load64(slotWord(slot, 1));
+        ValueFromBlock found = m_out.anchor(cached);
+        m_out.branch(m_out.notZero64(cached), usually(continuation), rarely(make));
+        m_out.appendTo(make);
+        ValueFromBlock made = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewRegExpForArgument, m_instance, lowConstantRegister(node->as<OpNewRegExp>().m_regexp), slotAddress(slot)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, found, made));
         return true;
+    }
     case op_new_reg_exp_shared: {
         auto bytecode = node->as<OpNewRegExpShared>();
         if (!Options::useSharedRegExpLiteralObjects()) {
@@ -486,7 +502,9 @@ bool Lowering::tryLowerAllocation(Node* node)
             LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
             JSValue table = code().codeBlock()->getConstant(bytecode.m_symbolTable);
             for (unsigned i = uncheckedDowncast<SymbolTable>(table.asCell())->scopeSize(); i--;)
-                m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), environmentVariable(node, i), initialValue);
+                writePromotedVariable(node, i, initialValue, false);
+            if (node->standIn)
+                setJSValue(node, lowJSValue(node->standIn));
             return true;
         }
         LValue scope = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(bytecode.m_scope));
@@ -505,30 +523,15 @@ bool Lowering::tryLowerAllocation(Node* node)
             return true;
         }
         unsigned scopeSize = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
-        VariableSummaries* summaries = m_graph.variableSummaries();
-        bool isNameless = Options::useAOTNamelessScopes() && summaries && scopeSize < Instance::numberOfNamelessSymbolTables && !summaries->mayBeSearchedByName(m_graph.scopeIdentity(node));
-        if (isNameless) {
-            auto* table = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell());
-            SourceParseMode mode = code().codeBlock()->parseMode();
-            unsigned kind = code().isGeneratorFrame(m_graph.scopeIdentity(node)) ? 1
-                : isGeneratorOrAsyncFunctionBodyParseMode(mode) ? 2
-                : isGeneratorOrAsyncFunctionWrapperParseMode(mode) ? 4
-                : table->scopeType() == SymbolTable::CatchScope || table->scopeType() == SymbolTable::CatchScopeWithSimpleParameter ? 8
-                : table->scopeType() == SymbolTable::FunctionNameScope ? 16
-                : table->scopeType() == SymbolTable::LexicalScope ? 32 : 64;
-            if (code().codeBlock()->isBuiltinFunction())
-                kind |= 128;
-            if (&code() != &m_graph)
-                kind |= 256;
-            isNameless = (Options::aotNamelessScopeKinds() & kind) == kind;
-        }
-        if (isNameless)
-            m_graph.remark("nameless-scope"_s);
-        LValue symbolTable = isNameless ? fixedPointer(Instance::offsetOfNamelessSymbolTables() + scopeSize * sizeof(void*)) : lowCell(node->use(bytecode.m_symbolTable));
+        if (node->extendedFrameSize)
+            scopeSize = node->extendedFrameSize;
+        LValue symbolTable = node->extendedFrameSize ? fixedPointer(Instance::offsetOfFrameSymbolTables() + scopeSize * sizeof(void*)) : lowCell(node->use(bytecode.m_symbolTable));
         LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
         setJSValue(node, withHelper(Stub::HelperNewActivation, { scope, symbolTable, initialValue, m_out.constInt32(scopeSize) }, [&] {
             return vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_instance, scope, symbolTable, initialValue, m_out.constInt32(scopeSize));
         }));
+        if (Options::useAOTScopesInFrames() && &code() == &m_graph && m_graph.isGeneratorFrame(m_graph.scopeIdentity(node)))
+            noteGeneratorFrame(lowCell(node));
         return true;
     }
     case op_push_with_scope: {

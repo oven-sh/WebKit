@@ -255,7 +255,7 @@ private:
                 return true;
             constexpr Type byContent = TNumber | TString | TBigInt;
             if (strict)
-                return !mayBe(left, byContent) || !mayBe(right, byContent);
+                return !mayBe(left, byContent) || !mayBe(right, byContent) || !mayBe(left, TString | TBigInt) || !mayBe(right, TString | TBigInt);
             return isSubtype(left | right, TAnyObject | TSymbol);
         };
         if (node->opcode == op_type_tag) {
@@ -509,6 +509,10 @@ private:
                 return guard->as<OpGetById>().m_property == earlier.guard->as<OpGetById>().m_property
                     && resolve(guard->use(guard->as<OpGetById>().m_base)) == resolve(earlier.guard->use(earlier.guard->as<OpGetById>().m_base));
             }
+            if (guard->opcode == op_get_by_val) {
+                return resolve(guard->use(guard->as<OpGetByVal>().m_base)) == resolve(earlier.guard->use(earlier.guard->as<OpGetByVal>().m_base))
+                    && resolve(guard->use(guard->as<OpGetByVal>().m_property)) == resolve(earlier.guard->use(earlier.guard->as<OpGetByVal>().m_property));
+            }
             return guard->as<OpCheckType>().m_mask == earlier.guard->as<OpCheckType>().m_mask
                 && resolve(guard->use(guard->as<OpCheckType>().m_value)) == resolve(earlier.guard->use(earlier.guard->as<OpCheckType>().m_value));
         };
@@ -518,10 +522,15 @@ private:
             if (guard->opcode == op_get_by_id) {
                 if (!applies(guard) || loop.propertiesWritten.contains(guard->as<OpGetById>().m_property))
                     return false;
+            } else if (guard->opcode == op_get_by_val) {
+                if (loop.writesIndexed)
+                    return false;
             } else if (guard->opcode != op_check_type)
                 return false;
             for (auto& earlier : known) {
                 if (isAliasOf(guard, earlier) && earlier.guard->block->dominates(guard->block)) {
+                    if (guard->opcode == op_get_by_val)
+                        m_graph.remark("reuses-guarded-element-read"_s);
                     instruction->replacement = earlier.instruction;
                     replacedAny = true;
                     return true;
@@ -649,6 +658,26 @@ private:
                 if (storage->uses[0].node == base)
                     guard->storage = storage;
             }
+        }
+
+        Vector<Node*, 4> optionalStorages;
+        for (BasicBlock* block : loop.blocks) {
+            Node* guard = block->terminal();
+            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || guard->opcode != op_get_by_val || guard->storage || Graph::typedArrayAccessed(guard))
+                continue;
+            Node* base = guard->use(guard->as<OpGetByVal>().m_base);
+            if (!isInvariant(loop, base) || !mayBe(base->type, typeForTypedArray(Uint8ArrayType)))
+                continue;
+            for (Node* storage : optionalStorages) {
+                if (storage->uses[0].node == base)
+                    guard->storage = storage;
+            }
+            if (guard->storage)
+                continue;
+            Node* storage = addGuardToPreHeader(loop, GuardKind::Uint8ArrayStorageIfAny, guard);
+            storage->uses.append({ VirtualRegister(), base });
+            optionalStorages.append(storage);
+            guard->storage = storage;
         }
 
         Vector<std::pair<Node*, Vector<Node*, 4>>, 8> groups;

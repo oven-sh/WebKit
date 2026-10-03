@@ -348,8 +348,44 @@ static void cachePropertyOfBoundThis(JSGlobalObject* globalObject, Instance& ins
     bound->cachePropertyOfBoundThis(vm, structure, location * 2 + isAccessor);
 }
 
+static void noteLengthOfTypedArray(JSGlobalObject* globalObject, Instance& instance, JSCell* cell, const PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    Structure* structure = cell->structure();
+    JSType type = cell->type();
+    auto* function = dynamicDowncast<JSFunction>(slot.getterSetter()->getter());
+    JSObject* viewPrototype = slot.slotBase();
+    unsigned attributes;
+    if (!isTypedArrayType(type) || !function || !isTypedArrayViewPrototypeLengthGetter(function) || !viewPrototype->inherits<JSTypedArrayViewPrototype>() || viewPrototype->globalObject() != globalObject)
+        return;
+    if (!structure->propertyAccessesAreCacheable() || viewPrototype->structure()->isDictionary() || viewPrototype->structure()->get(vm, vm.propertyNames->length.impl(), attributes) != slot.cachedOffset() || !(attributes & PropertyAttribute::Accessor))
+        return;
+    instance.typedArrayLengthGetter = function;
+    auto prototypeOf = [](Structure* structure) -> JSObject* { return structure->hasMonoProto() && !structure->isDictionary() ? structure->storedPrototypeObject() : nullptr; };
+    JSObject* prototype = prototypeOf(structure);
+    JSObject* secondPrototype = prototype ? prototypeOf(prototype->structure()) : nullptr;
+    if (secondPrototype == viewPrototype)
+        secondPrototype = prototype;
+    if (!secondPrototype || prototypeOf(secondPrototype->structure()) != viewPrototype)
+        return;
+    instance.typedArrayViewPrototype = viewPrototype;
+    instance.typedArrayViewPrototypeStructureID = viewPrototype->structureID().bits();
+    instance.typedArrayLengthAccessor = slot.getterSetter();
+    instance.typedArrayLengthLocation = viewPrototype->locationForOffset(slot.cachedOffset());
+    auto& entry = instance.typedArraysWithBuiltinLength[type - FirstTypedArrayType][structure != globalObject->typedArrayStructure(typedArrayType(type), false)];
+    entry.structureID = 0;
+    entry.prototype = prototype;
+    entry.prototypeStructureID = prototype->structureID().bits();
+    entry.secondPrototype = secondPrototype;
+    entry.secondPrototypeStructureID = secondPrototype->structureID().bits();
+    entry.structureID = structure->id().bits();
+    vm.writeBarrier(instance.globalObject);
+}
+
 static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
 {
+    if (base.isCell() && slot.isCacheableGetter() && ident == globalObject->vm().propertyNames->length && base.asCell()->structure() == structureBefore)
+        noteLengthOfTypedArray(globalObject, *data->instance, base.asCell(), slot);
     uint32_t getterFlag = usesDataStubs() && slot.isCacheableGetter() ? Slot::isGetter : 0;
     if (!base.isCell() || (!slot.isCacheableValue() && !slot.isUnset() && !getterFlag))
         return false;
@@ -370,8 +406,6 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
         if (slot.slotBase()->structure()->get(vm, ident.impl(), attributes) != slot.cachedOffset() || !(attributes & PropertyAttribute::Accessor))
             return false;
         if (auto* function = dynamicDowncast<JSFunction>(slot.getterSetter()->getter())) {
-            if (ident == vm.propertyNames->length && slot.slotBase()->inherits<JSTypedArrayViewPrototype>() && slot.slotBase()->globalObject() == globalObject)
-                data->instance->typedArrayLengthGetter = function;
             if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable()); executable && executable->isGeneratedForCall())
                 executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
             cachePropertyOfBoundThis(globalObject, *data->instance, function);

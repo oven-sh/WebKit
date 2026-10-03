@@ -237,4 +237,11 @@ Structure* JSTypedArrayViewPrototype::createStructure(
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool isTypedArrayViewPrototypeLengthGetter(JSFunction* function)
+{
+    return function->isHostFunction() && function->nativeFunction() == TaggedNativeFunction(typedArrayViewProtoGetterFuncLength);
+}
+#endif
+
 } // namespace JSC

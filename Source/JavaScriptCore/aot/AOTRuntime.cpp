@@ -438,11 +438,10 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections->token = Symbol::create(vm);
     loader->setAOTInstance(instance);
     vm.m_aotInstances.append(instance);
-    for (unsigned size = 0; size < Instance::numberOfNamelessSymbolTables; ++size) {
+    for (unsigned size = 0; size < Instance::numberOfFrameSymbolTables; ++size) {
         SymbolTable* table = SymbolTable::create(vm);
-        for (unsigned i = 0; i < size; ++i)
-            table->takeNextScopeOffset();
-        instance->namelessSymbolTables[size] = table;
+        table->setScopeSize(size);
+        instance->frameSymbolTables[size] = table;
     }
     return *instance;
 }
@@ -1509,8 +1508,16 @@ void Instance::visit(Visitor& visitor, bool newOnly)
         visitor.appendUnbarriered(to);
     for (auto& [from, to] : collections->functionStructuresWithCaptures)
         visitor.appendUnbarriered(to);
-    for (JSCell* table : namelessSymbolTables)
+    for (JSCell* table : frameSymbolTables)
         visitor.appendUnbarriered(table);
+    for (auto& ofType : typedArraysWithBuiltinLength) {
+        for (auto& typedArray : ofType) {
+            visitor.appendUnbarriered(typedArray.prototype);
+            visitor.appendUnbarriered(typedArray.secondPrototype);
+        }
+    }
+    visitor.appendUnbarriered(typedArrayViewPrototype);
+    visitor.appendUnbarriered(typedArrayLengthAccessor);
     visitor.appendUnbarriered(collections->token);
     for (ScriptExecutable* executable : collections->topLevelExecutables.values())
         visitor.appendUnbarriered(executable);

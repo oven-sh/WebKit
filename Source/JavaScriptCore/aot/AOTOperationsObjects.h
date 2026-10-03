@@ -36,6 +36,8 @@ struct Slot;
     v(operationAOTSpread) \
     v(operationAOTNewRegExp) \
     v(operationAOTNewRegExpForReceiver) \
+    v(operationAOTNewRegExpForArgument) \
+    v(operationAOTIsMadeFromFunction) \
     v(operationAOTLinkTimeConstant) \
     v(operationAOTArrayIteratorMethod) \
     v(operationAOTValidateNewObject) \
@@ -171,6 +173,8 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instanc
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayIteratorMethod, EncodedJSValue, (Instance*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance*, uint32_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (Instance*, JSCell* regExp, uint32_t forTest, Slot*));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExpForArgument, JSObject*, (Instance*, JSCell* regExp, Slot*));
+JSC_DECLARE_JIT_OPERATION(operationAOTIsMadeFromFunction, size_t, (Instance*, EncodedJSValue, uint32_t number, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance*, JSScope*, uint32_t index, uint32_t isExpression, uint32_t functionKind, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFunctionWithCaptures, JSObject*, (Instance*, JSScope*, uint32_t index, uint32_t isExpression, EncodedJSValue* captures, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance*, JSObject* function, EncodedJSValue name));

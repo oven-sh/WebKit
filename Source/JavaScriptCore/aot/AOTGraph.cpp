@@ -1078,6 +1078,86 @@ const void* Graph::generatorFrameIdentity()
     return result;
 }
 
+Node* Graph::onlyEnvironmentWithIdentity(const void* identity)
+{
+    if (!identity || !isGeneratorOrAsyncFunctionBodyParseMode(m_codeBlock->parseMode()))
+        return nullptr;
+    if (!std::exchange(m_hasEnvironmentsByIdentity, true)) {
+        for (BasicBlock* block : outermost().m_rpo) {
+            for (Node* node : block->nodes) {
+                if (node->graph != this || !node->isBytecode(op_create_lexical_environment))
+                    continue;
+                if (const void* made = scopeIdentity(node)) {
+                    auto result = m_environmentsByIdentity.add(made, node);
+                    if (!result.isNewEntry || block->isInLoop || block->isGeneric)
+                        result.iterator->value = nullptr;
+                }
+            }
+        }
+    }
+    return m_environmentsByIdentity.get(identity);
+}
+
+Node* Graph::environmentRestoredBy(const Node* restore, bool evenIfItHasAnObject)
+{
+    if (restore->graph != this)
+        return restore->graph->environmentRestoredBy(restore, evenIfItHasAnObject);
+    if (!isGeneratorOrAsyncFunctionBodyParseMode(m_codeBlock->parseMode()))
+        return nullptr;
+    Variable variable = variableAccessedBy(restore);
+    if (!variable || !isGeneratorFrame(variable.scope))
+        return nullptr;
+    Node* environment = onlyEnvironmentWithIdentity(scopeIdentity(restore));
+    return environment && (evenIfItHasAnObject || environment->mayBeInFrame) ? environment : nullptr;
+}
+
+unsigned Graph::dissolvedScopesAbove(const Node* scope, unsigned hops)
+{
+    if (scope->graph != this)
+        return scope->graph->dissolvedScopesAbove(scope, hops);
+    if (!m_variableSummaries || !hops)
+        return 0;
+    const void* identity = scopeIdentity(scope);
+    unsigned count = 0;
+    std::optional<unsigned> frame;
+    for (unsigned i = 0; i < hops && identity; ++i) {
+        const void* parent = nullptr;
+        if (!frame) {
+            for (BasicBlock* block : outermost().m_rpo) {
+                for (Node* node : block->nodes) {
+                    if (node->graph == this && node->isBytecode(op_create_lexical_environment) && scopeIdentity(node) == identity) {
+                        Node* above = node->use(node->as<OpCreateLexicalEnvironment>().m_scope);
+                        parent = scopeIdentity(above);
+                        break;
+                    }
+                }
+                if (parent)
+                    break;
+            }
+        }
+        if (!parent && m_declaredNames) {
+            if (!frame) {
+                for (unsigned index = 0; index < 64; ++index) {
+                    const void* candidate = m_declaredNames->scopeIdentity(index);
+                    if (!candidate)
+                        break;
+                    if (candidate == identity) {
+                        frame = index;
+                        break;
+                    }
+                }
+            }
+            if (frame) {
+                frame = *frame + 1;
+                parent = m_declaredNames->scopeIdentity(*frame);
+            }
+        }
+        identity = parent;
+        count += identity && m_variableSummaries->isDissolved(identity);
+    }
+    return count;
+}
+
 const void* Graph::scopeIdentity(const Node* scope, unsigned depth)
 {
     if (scope->graph != this)
@@ -1160,24 +1240,40 @@ const void* Graph::scopeIdentity(const Node* scope, unsigned depth)
             Variable restored = variableAccessedBy(scope);
             if (!restored || restored.scope != generatorFrameIdentity())
                 return nullptr;
-            const void* result = nullptr;
-            for (BasicBlock* block : m_rpo) {
+            auto suspendsBefore = [&](BasicBlock* block) {
+                return Options::useAOTScopesInFrames() && scope->block && block->bytecodeEnd == scope->block->bytecodeBegin && !block->nodes.isEmpty() && block->nodes.last()->isBytecode(op_ret) && block->nodes.last()->graph == this;
+            };
+            auto savesIn = [&](BasicBlock* block, auto&& function) {
                 for (Node* store : block->nodes) {
                     if (!store->isBytecode(op_put_to_scope))
                         continue;
                     Variable saved = variableAccessedBy(store);
-                    if (saved.scope != restored.scope || saved.offset != restored.offset)
-                        continue;
-                    Node* value = store->use(store->as<OpPutToScope>().m_value);
-                    if (value == scope)
-                        continue;
+                    if (saved.scope == restored.scope && saved.offset == restored.offset)
+                        function(store->use(store->as<OpPutToScope>().m_value));
+                }
+            };
+            bool isSavedBefore = false;
+            for (BasicBlock* block : outermost().m_rpo) {
+                if (suspendsBefore(block))
+                    savesIn(block, [&](Node*) { isSavedBefore = true; });
+            }
+            const void* result = nullptr;
+            bool isKnown = true;
+            for (BasicBlock* block : outermost().m_rpo) {
+                if (!isKnown)
+                    break;
+                if (isSavedBefore && !suspendsBefore(block))
+                    continue;
+                savesIn(block, [&](Node* value) {
+                    if (!isKnown || value == scope || value->kind == NodeKind::Constant)
+                        return;
                     const void* identity = scopeIdentity(value, depth + 1);
                     if (!identity || (result && result != identity))
-                        return nullptr;
+                        isKnown = false;
                     result = identity;
-                }
+                });
             }
-            return result;
+            return isKnown ? result : nullptr;
         }
         case op_resolve_scope: {
             ResolveType type = scope->as<OpResolveScope>().m_resolveType;
@@ -2790,6 +2886,9 @@ void Node::dump(PrintStream& out) const
         case GuardKind::Field:
             out.print("GuardField(", opcode, " bc#", bytecodeIndex.offset(), ", slot ", fieldSlot, " of #", firstLayout, "..", lastLayout, ")");
             break;
+        case GuardKind::Entry:
+            out.print("GuardEntry");
+            break;
         case GuardKind::Reentry:
             out.print("GuardReentry");
             break;
@@ -2814,8 +2913,14 @@ void Node::dump(PrintStream& out) const
         case GuardKind::KnownCallee:
             out.print("GuardKnownCallee(bc#", bytecodeIndex.offset(), ")");
             break;
+        case GuardKind::Uint8ArrayStorageIfAny:
+            out.print("Uint8ArrayStorageIfAny");
+            break;
         case GuardKind::TypedArrayStorage:
             out.print("GuardTypedArrayStorage");
+            break;
+        case GuardKind::IsLikelyFunction:
+            out.print("GuardIsLikelyFunction#", likelyFunction);
             break;
         case GuardKind::IsArrayIntrinsic:
             out.print("IsArrayIntrinsic ", intrinsic, " ");
@@ -4330,6 +4435,35 @@ private:
                 return;
             }
             if (block->isPreHeader) {
+                bool speculates = false;
+                for (const auto& inLoop : m_instructions) {
+                    if (inLoop.offset() < block->bytecodeEnd || !m_inLoop.get(inLoop.offset()))
+                        continue;
+                    VirtualRegister counter;
+                    if (inLoop->is<OpInc>())
+                        counter = inLoop->as<OpInc>().m_srcDst;
+                    else if (inLoop->is<OpDec>())
+                        counter = inLoop->as<OpDec>().m_srcDst;
+                    else
+                        continue;
+                    unsigned index = m_graph.registerIndex(counter);
+                    Node* value = block->valuesAtTail[index];
+                    if (!block->liveIn.get(index) || m_graph.m_frameRegisters.get(index) || !value || (value->kind == NodeKind::Narrow && value->block == block))
+                        continue;
+                    Node* narrow = m_graph.addNode(NodeKind::Narrow);
+                    narrow->reg = counter;
+                    narrow->speculatedType = TInt32;
+                    narrow->uses.append({ VirtualRegister(), value });
+                    append(block, narrow);
+                    block->valuesAtTail[index] = narrow;
+                    speculates = true;
+                }
+                if (speculates) {
+                    Node* entry = m_graph.addNode(NodeKind::Guard);
+                    entry->guardKind = GuardKind::Entry;
+                    entry->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
+                    append(block, entry);
+                }
                 guard->guardKind = GuardKind::Nothing;
                 guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
                 append(block, guard);
@@ -4386,7 +4520,7 @@ private:
     Node* valueLeaving(BasicBlock* from, BasicBlock* to, unsigned index)
     {
         Node* value = from->valuesAtTail[index];
-        if (value && from->isReentry && to != from->successors[0] && value->kind == NodeKind::Narrow && value->block == from)
+        if (value && (from->isReentry || from->isPreHeader) && to != from->successors[0] && value->kind == NodeKind::Narrow && value->block == from)
             return value->uses[0].node;
         return value;
     }

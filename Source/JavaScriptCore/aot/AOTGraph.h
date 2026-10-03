@@ -74,6 +74,7 @@ enum class GuardKind : uint8_t {
     Whole,
     Nothing,
     Reentry,
+    Entry,
     Structure,
     SlotsAgree,
     SlotIsDirect,
@@ -82,8 +83,10 @@ enum class GuardKind : uint8_t {
     Callee,
     KnownCallee,
     TypedArrayStorage,
+    Uint8ArrayStorageIfAny,
     IsArrayIntrinsic,
     IsIntrinsic,
+    IsLikelyFunction,
     Field,
 };
 
@@ -184,6 +187,8 @@ struct Node {
     Node* iteratorMethodRead { nullptr };
     bool checksNarrowedType { false };
     Type narrowedTo { TNone };
+    Type speculatedType { TNone };
+    uint32_t likelyFunction { 0 };
     uint16_t fieldSlot { 0 };
     uint16_t firstLayout { 0 };
     uint16_t lastLayout { 0 };
@@ -232,6 +237,12 @@ struct Node {
     bool isPromoted { false };
     bool isNeverEmpty { false };
     bool accessesLocalEnvironment { false };
+    bool mayBeInFrame { false };
+    Node* standIn { nullptr };
+    bool isSharedRegExpLiteral { false };
+    bool isInFrame { false };
+    unsigned firstFrameSlot { 0 };
+    unsigned extendedFrameSize { 0 };
     Node* promotedEnvironment { nullptr };
     unsigned offsetInEnvironment { 0 };
     Node* scopeToStartFrom { nullptr };
@@ -384,6 +395,11 @@ public:
     const FunctionSummary* summaryOfInlinedFunction { nullptr };
     const FunctionSummary* summaryWithCaptures() const { return summaryOfInlinedFunction ? summaryOfInlinedFunction : m_summary; }
     unsigned dissolvedScopesOutside(unsigned hops) const;
+    unsigned dissolvedScopesAbove(const Node* scope, unsigned hops);
+    Node* onlyEnvironmentWithIdentity(const void*);
+    Node* environmentRestoredBy(const Node*, bool evenIfItHasAnObject = false);
+    UncheckedKeyHashMap<const void*, Node*> m_environmentsByIdentity;
+    bool m_hasEnvironmentsByIdentity { false };
     UncheckedKeyHashMap<Node*, Vector<std::pair<Node*, unsigned>, 4>> capturesOfClosures;
     bool environmentsAreOnStack() const { return inlinedEnvironmentsAreOnStack || (m_summary && m_summary->environmentsAreOnStack); }
     bool isInTailPosition { true };
@@ -693,7 +709,10 @@ void optimizeLoops(Graph&);
 void simplify(Graph&);
 void inlineCalls(Graph&, const ProgramCode&);
 void analyzeEscapes(Graph&);
+void shareRegExpLiterals(Graph&);
 void promoteEnvironments(Graph&);
+void saveRegistersAtDefinitions(Graph&);
+void clearDeadFrameSlots(Graph&);
 bool mayPromoteEnvironmentsOf(Graph&);
 void recordScopes(Graph&, VariableSummaries&, const FunctionSummaryMap&, const FunctionSummary* current);
 void scalarReplaceReadOnlyObjects(Graph&);

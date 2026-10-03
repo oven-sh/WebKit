@@ -174,6 +174,12 @@ void Lowering::emitGuard(Node* guard)
         break;
     case GuardKind::Nothing:
         return;
+    case GuardKind::Entry:
+        for (Node* node : guard->block->nodes) {
+            if (node->kind == NodeKind::Narrow && node->speculatedType && node->useCount && !isSubtype(node->uses[0].node->type, node->type))
+                m_graph.remark("checks-counter-at-loop-entry"_s);
+        }
+        [[fallthrough]];
     case GuardKind::Reentry:
         guardReentry(guard->block);
         return;
@@ -217,6 +223,23 @@ void Lowering::emitGuard(Node* guard)
     case GuardKind::IsIntrinsic:
         exitUnless(m_out.equal(lowJSValue(guard->uses[0].node), m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[guard->intrinsic])));
         return;
+    case GuardKind::IsLikelyFunction: {
+        m_graph.remark("inlines-likely-callee"_s);
+        LValue callee = lowJSValue(guard->uses[0].node);
+        unsigned slot = allocateSlot();
+        LBasicBlock isOther = newColdBlock();
+        LBasicBlock asks = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue cached = m_out.load64(slotWord(slot, 1));
+        m_out.branch(m_out.equal(callee, cached), usually(continuation), rarely(isOther));
+        m_out.appendTo(isOther);
+        m_out.branch(m_out.isZero64(cached), unsure(asks), unsure(m_exit));
+        m_out.appendTo(asks);
+        exitUnless(m_out.notZero64(vmCall(guard->target, Int64, Entry::operationAOTIsMadeFromFunction, m_instance, callee, m_out.constInt32(guard->likelyFunction), slotAddress(slot))));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return;
+    }
     case GuardKind::KnownCallee: {
         const KnownFunction* known = m_graph.knownCallee(guard);
         if (m_graph.calleeIsExact(guard)) {
@@ -225,6 +248,33 @@ void Lowering::emitGuard(Node* guard)
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
+        return;
+    }
+    case GuardKind::Uint8ArrayStorageIfAny: {
+        Node* baseNode = guard->uses[0].node;
+        LValue base = lowJSValue(baseNode);
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock typeCase = m_out.newBlock();
+        LBasicBlock fixedCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 4> lengths;
+        Vector<ValueFromBlock, 4> vectors;
+        auto otherwise = [&](LValue condition, LBasicBlock next) {
+            lengths.append(m_out.anchor(m_out.int64Zero));
+            vectors.append(m_out.anchor(m_out.int64Zero));
+            m_out.branch(condition, unsure(next), unsure(continuation));
+            m_out.appendTo(next);
+        };
+        otherwise(isSubtype(baseNode->type, TCell) ? m_out.booleanTrue : isCell(base), cellCase);
+        otherwise(isCellOfType(base, Uint8ArrayType), typeCase);
+        otherwise(m_out.testIsZero32(m_out.load8ZeroExt32(base, m_heaps.JSArrayBufferView_mode), m_out.constInt32(isResizableOrGrowableSharedMode)), fixedCase);
+        lengths.append(m_out.anchor(m_out.loadPtr(base, m_heaps.JSArrayBufferView_length)));
+        vectors.append(m_out.anchor(m_out.loadPtr(base, m_heaps.JSArrayBufferView_vector)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        guard->loweredLength = m_out.phi(Int64, lengths);
+        guard->lowered = m_out.phi(Int64, vectors);
+        m_graph.remark("hoists-uint8array-storage-if-any"_s);
         return;
     }
     case GuardKind::TypedArrayStorage: {
@@ -609,6 +659,19 @@ void Lowering::guardGetByVal(Node* guard)
     LBasicBlock indexReady = m_out.newBlock();
     LValue index = lowIndex(propertyNode, indexReady, m_exit);
     m_out.appendTo(indexReady);
+    std::optional<ValueFromBlock> byteResult;
+    LBasicBlock afterByte = nullptr;
+    if (guard->storage && !(guard->guarded && isSubtype(guard->guarded->type, TNumber))) {
+        LBasicBlock byteCase = m_out.newBlock();
+        LBasicBlock otherCase = m_out.newBlock();
+        afterByte = m_out.newBlock();
+        LValue wideIndex = m_out.zeroExtPtr(index);
+        m_out.branch(m_out.below(wideIndex, guard->storage->loweredLength), unsure(byteCase), unsure(otherCase));
+        m_out.appendTo(byteCase, otherCase);
+        byteResult = m_out.anchor(boxInt32(m_out.load8ZeroExt32(TypedPointer(m_heaps.TypedArrayProperties, m_out.add(guard->storage->lowered, wideIndex)))));
+        m_out.jump(afterByte);
+        m_out.appendTo(otherCase);
+    }
     if (!isSubtype(baseNode->type, TCell))
         exitUnless(isCell(base));
 
@@ -736,6 +799,12 @@ void Lowering::guardGetByVal(Node* guard)
 
     m_out.appendTo(continuation);
     guard->lowered = m_out.phi(Int64, results);
+    if (byteResult) {
+        ValueFromBlock otherResult = m_out.anchor(guard->lowered);
+        m_out.jump(afterByte);
+        m_out.appendTo(afterByte);
+        guard->lowered = m_out.phi(Int64, *byteResult, otherResult);
+    }
 }
 
 void Lowering::guardPutByVal(Node* guard)
@@ -908,14 +977,28 @@ void Lowering::guardGetLength(Node* guard)
 {
     Node* baseNode = guard->use(guard->as<OpGetLength>().m_base);
     LValue base = lowJSValue(baseNode);
+    auto exitUnlessOriginalTypedArray = [&](LValue type) {
+        auto ofInstance = [&](ptrdiff_t offset) { return m_out.address(m_heaps.root, m_instance, offset); };
+        LValue first = m_out.add(m_instance, m_out.add(m_out.constIntPtr(Instance::offsetOfTypedArraysWithBuiltinLength()), m_out.shl(m_out.zeroExtPtr(m_out.sub(type, m_out.constInt32(FirstTypedArrayType))), m_out.constInt32(6))));
+        LValue structureID = m_out.load32(base, m_heaps.JSCell_structureID);
+        LValue entry = m_out.select(m_out.equal(structureID, m_out.load32(m_out.address(m_heaps.root, first, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, structureID)))), first, m_out.add(first, m_out.constIntPtr(sizeof(Instance::TypedArrayWithBuiltinLength))));
+        exitUnless(m_out.equal(structureID, m_out.load32(m_out.address(m_heaps.root, entry, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, structureID)))));
+        LValue prototype = m_out.loadPtr(m_out.address(m_heaps.root, entry, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, prototype)));
+        exitUnless(m_out.equal(m_out.load32(prototype, m_heaps.JSCell_structureID), m_out.load32(m_out.address(m_heaps.root, entry, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, prototypeStructureID)))));
+        LValue secondPrototype = m_out.loadPtr(m_out.address(m_heaps.root, entry, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, secondPrototype)));
+        exitUnless(m_out.equal(m_out.load32(secondPrototype, m_heaps.JSCell_structureID), m_out.load32(m_out.address(m_heaps.root, entry, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, secondPrototypeStructureID)))));
+        exitUnless(m_out.equal(m_out.load32(m_out.loadPtr(ofInstance(Instance::offsetOfTypedArrayViewPrototype())), m_heaps.JSCell_structureID), m_out.load32(ofInstance(Instance::offsetOfTypedArrayViewPrototypeStructureID()))));
+        exitUnless(m_out.equal(m_out.load64(m_out.address(m_heaps.root, m_out.loadPtr(ofInstance(Instance::offsetOfTypedArrayLengthLocation())), 0)), m_out.load64(ofInstance(Instance::offsetOfTypedArrayLengthAccessor()))));
+    };
     if (isSubtype(baseNode->type, TTypedArray)) {
+        exitUnlessOriginalTypedArray(m_out.load8ZeroExt32(base, m_heaps.JSCell_typeInfoType));
         exitUnless(m_out.testIsZero32(m_out.load8ZeroExt32(base, m_heaps.JSArrayBufferView_mode), m_out.constInt32(isResizableOrGrowableSharedMode)));
         LValue length = m_out.loadPtr(base, m_heaps.JSArrayBufferView_length);
         exitUnless(m_out.belowOrEqual(length, m_out.constInt64(INT32_MAX)));
         guard->lowered = boxInt32(m_out.castToInt32(length));
         return;
     }
-    if (!mayBe(baseNode->type, TArray | TString)) {
+    if (!mayBe(baseNode->type, TArray | TString | TTypedArray)) {
         exitUnless(m_out.booleanFalse);
         guard->lowered = m_out.int64Zero;
         return;
@@ -925,10 +1008,12 @@ void Lowering::guardGetLength(Node* guard)
 
     LBasicBlock arrayCase = m_out.newBlock();
     LBasicBlock notArrayCase = m_out.newBlock();
+    LBasicBlock typedArrayCase = m_out.newBlock();
+    LBasicBlock stringCase = m_out.newBlock();
     LBasicBlock ropeCase = m_out.newBlock();
     LBasicBlock notRopeCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
-    Vector<ValueFromBlock, 3> results;
+    Vector<ValueFromBlock, 4> results;
 
     if (mayBe(baseNode->type, TArray)) {
         LValue indexingType = m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc);
@@ -943,7 +1028,22 @@ void Lowering::guardGetLength(Node* guard)
     results.append(m_out.anchor(boxInt32(arrayLength)));
     m_out.jump(continuation);
 
-    m_out.appendTo(notArrayCase, ropeCase);
+    m_out.appendTo(notArrayCase, typedArrayCase);
+    LValue typeOfBase = m_out.load8ZeroExt32(base, m_heaps.JSCell_typeInfoType);
+    if (mayBe(baseNode->type, TTypedArray))
+        m_out.branch(m_out.below(m_out.sub(typeOfBase, m_out.constInt32(FirstTypedArrayType)), m_out.constInt32(NumberOfTypedArrayTypesExcludingDataView)), unsure(typedArrayCase), unsure(stringCase));
+    else
+        m_out.jump(stringCase);
+
+    m_out.appendTo(typedArrayCase, stringCase);
+    exitUnlessOriginalTypedArray(typeOfBase);
+    exitUnless(m_out.testIsZero32(m_out.load8ZeroExt32(base, m_heaps.JSArrayBufferView_mode), m_out.constInt32(isResizableOrGrowableSharedMode)));
+    LValue typedArrayLength = m_out.loadPtr(base, m_heaps.JSArrayBufferView_length);
+    exitUnless(m_out.belowOrEqual(typedArrayLength, m_out.constInt64(INT32_MAX)));
+    results.append(m_out.anchor(boxInt32(m_out.castToInt32(typedArrayLength))));
+    m_out.jump(continuation);
+
+    m_out.appendTo(stringCase, ropeCase);
     if (!mayBe(baseNode->type, TString))
         m_out.jump(m_exit);
     else {

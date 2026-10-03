@@ -2554,7 +2554,40 @@ static void generateGetLength(CCallHelpers& jit)
 
     notArray.link(&jit);
     noStorage.link(&jit);
-    generic.append(jit.branchIfNotType(R0, StringType));
+    jit.load8(Address(R0, JSCell::typeInfoTypeOffset()), T11);
+    Jump isString = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(StringType));
+    {
+        using Proof = Instance::TypedArrayWithBuiltinLength;
+        constexpr ptrdiff_t proofs = Instance::offsetOfTypedArraysWithBuiltinLength();
+        jit.sub32(TrustedImm32(FirstTypedArrayType), T11);
+        generic.append(jit.branch32(CCallHelpers::AboveOrEqual, T11, TrustedImm32(NumberOfTypedArrayTypesExcludingDataView)));
+        static_assert(sizeof(Proof) == 32);
+        jit.lshiftPtr(TrustedImm32(6), T11);
+        jit.addPtr(instanceGPR, T11);
+        jit.load32(Address(R0, JSCell::structureIDOffset()), T12);
+        Jump isOriginal = jit.branch32(CCallHelpers::Equal, T12, Address(T11, proofs + OBJECT_OFFSETOF(Proof, structureID)));
+        jit.addPtr(TrustedImm32(sizeof(Proof)), T11);
+        generic.append(jit.branch32(CCallHelpers::NotEqual, T12, Address(T11, proofs + OBJECT_OFFSETOF(Proof, structureID))));
+        isOriginal.link(&jit);
+        jit.loadPtr(Address(T11, proofs + OBJECT_OFFSETOF(Proof, prototype)), T12);
+        jit.load32(Address(T12, JSCell::structureIDOffset()), T12);
+        generic.append(jit.branch32(CCallHelpers::NotEqual, T12, Address(T11, proofs + OBJECT_OFFSETOF(Proof, prototypeStructureID))));
+        jit.loadPtr(Address(T11, proofs + OBJECT_OFFSETOF(Proof, secondPrototype)), T12);
+        jit.load32(Address(T12, JSCell::structureIDOffset()), T12);
+        generic.append(jit.branch32(CCallHelpers::NotEqual, T12, Address(T11, proofs + OBJECT_OFFSETOF(Proof, secondPrototypeStructureID))));
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedArrayViewPrototype()), T12);
+        jit.load32(Address(T12, JSCell::structureIDOffset()), T12);
+        generic.append(jit.branch32(CCallHelpers::NotEqual, T12, Address(instanceGPR, Instance::offsetOfTypedArrayViewPrototypeStructureID())));
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedArrayLengthLocation()), T12);
+        jit.load64(Address(T12), T12);
+        generic.append(jit.branch64(CCallHelpers::NotEqual, T12, Address(instanceGPR, Instance::offsetOfTypedArrayLengthAccessor())));
+        generic.append(jit.branchTest8(CCallHelpers::NonZero, Address(R0, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
+        jit.load64(Address(R0, JSArrayBufferView::offsetOfLength()), T12);
+        generic.append(jit.branch64(CCallHelpers::Above, T12, CCallHelpers::TrustedImm64(std::numeric_limits<int32_t>::max())));
+        jit.add64(numberTag, T12, R0);
+        jit.ret();
+    }
+    isString.link(&jit);
     jit.loadPtr(Address(R0, JSString::offsetOfValue()), T11);
     Jump isRope = jit.branchIfRopeStringImpl(T11);
     jit.load32(Address(T11, StringImpl::lengthMemoryOffset()), T11);

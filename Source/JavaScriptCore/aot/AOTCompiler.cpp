@@ -309,6 +309,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         graph.isInTailPosition = false;
     if (!parseBytecode(graph))
         return declined();
+    if (Options::useAOTSavesAtDefinitions())
+        saveRegistersAtDefinitions(graph);
     if (program)
         inlineCalls(graph, *program);
     replaceReadsOfConstantObjects(graph);
@@ -324,8 +326,11 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     graph.sinkIteratorMethodReads();
     graph.findBuiltinsCalled();
     graph.findArgumentLists();
+    if (Options::useAOTClearsDeadFrameSlots())
+        clearDeadFrameSlots(graph);
     promoteEnvironments(graph);
     analyzeEscapes(graph);
+    shareRegExpLiterals(graph);
     if (Options::dumpAOTGraph()) [[unlikely]] {
         static Lock lock;
         Locker locker { lock };
@@ -541,7 +546,7 @@ bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBloc
     if (variableSummaries) {
         graph.recordUntrackableVariableAccesses(*variableSummaries);
         graph.recordObjectsInVariables(*variableSummaries);
-        if (Options::useAOTCapturesByValue() || Options::useAOTNamelessScopes())
+        if (Options::useAOTCapturesByValue())
             recordScopes(graph, *variableSummaries, summariesByExecutable, summary);
     }
     return true;

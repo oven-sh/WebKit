@@ -566,6 +566,36 @@ struct Instance {
     const uint32_t* subsequentFunctionStarts;
     JSCell* typedArrayLengthGetter { nullptr };
     static constexpr ptrdiff_t offsetOfTypedArrayLengthGetter() { return OBJECT_OFFSETOF(Instance, typedArrayLengthGetter); }
+    struct TypedArrayWithBuiltinLength {
+        uint32_t structureID { 0 };
+        uint32_t prototypeStructureID { 0 };
+        uint32_t secondPrototypeStructureID { 0 };
+        uint32_t unused { 0 };
+        JSCell* prototype { nullptr };
+        JSCell* secondPrototype { nullptr };
+    };
+    static_assert(sizeof(TypedArrayWithBuiltinLength) == 32);
+    TypedArrayWithBuiltinLength typedArraysWithBuiltinLength[NumberOfTypedArrayTypesExcludingDataView][2] { };
+    JSCell* typedArrayViewPrototype { nullptr };
+    JSCell* typedArrayLengthAccessor { nullptr };
+    const void* typedArrayLengthLocation { nullptr };
+    uint32_t typedArrayViewPrototypeStructureID { 0 };
+    bool typedArrayHasBuiltinLength(JSCell* typedArray) const
+    {
+        uint32_t structureID = typedArray->structureID().bits();
+        for (auto& entry : typedArraysWithBuiltinLength[typedArray->type() - FirstTypedArrayType]) {
+            if (entry.structureID != structureID)
+                continue;
+            return entry.prototype->structureID().bits() == entry.prototypeStructureID && entry.secondPrototype->structureID().bits() == entry.secondPrototypeStructureID
+                && typedArrayViewPrototype->structureID().bits() == typedArrayViewPrototypeStructureID && *static_cast<JSCell* const*>(typedArrayLengthLocation) == typedArrayLengthAccessor;
+        }
+        return false;
+    }
+    static constexpr ptrdiff_t offsetOfTypedArraysWithBuiltinLength() { return OBJECT_OFFSETOF(Instance, typedArraysWithBuiltinLength); }
+    static constexpr ptrdiff_t offsetOfTypedArrayViewPrototype() { return OBJECT_OFFSETOF(Instance, typedArrayViewPrototype); }
+    static constexpr ptrdiff_t offsetOfTypedArrayLengthAccessor() { return OBJECT_OFFSETOF(Instance, typedArrayLengthAccessor); }
+    static constexpr ptrdiff_t offsetOfTypedArrayLengthLocation() { return OBJECT_OFFSETOF(Instance, typedArrayLengthLocation); }
+    static constexpr ptrdiff_t offsetOfTypedArrayViewPrototypeStructureID() { return OBJECT_OFFSETOF(Instance, typedArrayViewPrototypeStructureID); }
     UniquedStringImpl* const* programIdentifiers;
     uint32_t missLimitPerEightSlots;
     uint32_t remainingMissBudget;
@@ -611,9 +641,9 @@ struct Instance {
     uint32_t arraysLackInheritedElements { 0 };
     static constexpr ptrdiff_t offsetOfArraysLackIsConcatSpreadable() { return OBJECT_OFFSETOF(Instance, arraysLackIsConcatSpreadable); }
     static constexpr ptrdiff_t offsetOfArraysLackInheritedElements() { return OBJECT_OFFSETOF(Instance, arraysLackInheritedElements); }
-    static constexpr unsigned numberOfNamelessSymbolTables = 33;
-    JSCell* namelessSymbolTables[numberOfNamelessSymbolTables] { };
-    static constexpr ptrdiff_t offsetOfNamelessSymbolTables() { return OBJECT_OFFSETOF(Instance, namelessSymbolTables); }
+    static constexpr unsigned numberOfFrameSymbolTables = 256;
+    JSCell* frameSymbolTables[numberOfFrameSymbolTables] { };
+    static constexpr ptrdiff_t offsetOfFrameSymbolTables() { return OBJECT_OFFSETOF(Instance, frameSymbolTables); }
     void* auxiliarySpace { nullptr };
     void* activationSpace { nullptr };
     void* arrayAllocator { nullptr };

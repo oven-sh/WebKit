@@ -5,7 +5,7 @@
 
 The tests are JSTests/stress/aot-*.js and sound-types-*.js. Each runs with the options of its header, three times: as it says; with
 every inferred type checked against the value and the B3 and Air validators on, as in the mode `aot-validate`; and without data stubs,
-which is what every CPU but ARM64 compiles. A `//@ run("name", ...)` in the header is one more run.
+which is what a CPU other than ARM64 and x86-64 would compile. A `//@ run("name", ...)` in the header is one more run.
 
 A test fails if it prints anything or exits with anything but 0. run-javascriptcore-tests runs all of this and much more, in
 the modes `aot` and `aot-validate` among the rest. This is what is quick enough to run after every change.
@@ -27,6 +27,8 @@ def header_of(path):
 
 def run(jsc, options, test):
     """Returns None if the test passed, or a line that says how it did not."""
+    if "-m" in options:
+        options = [option for option in options if option != "-m"] + ["-m"]
     command = [sys.executable, os.path.join(HERE, "capped.py"), "4", "120", jsc, *options, test]
     result = subprocess.run(command, cwd=STRESS, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
     output = [line for line in result.stdout.split("\n") if line and not line.startswith("[capped]")]
