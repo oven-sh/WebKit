@@ -1939,7 +1939,11 @@ void Graph::addRemark(ASCIILiteral what, StringView detail, bool isOnRarePath)
 void Graph::beginCoveredOperation(const Node* node, const BasicBlock* block, bool isElided)
 {
     m_isCoveringOperation = false;
-    if (!node || node->kind != NodeKind::Bytecode || !node->instruction)
+    if (!node || node->kind != NodeKind::Bytecode || !node->instruction || node->instruction->opcodeID() != node->opcode)
+        return;
+    auto& instructions = node->graph->codeBlock()->instructions();
+    size_t ownOffset = reinterpret_cast<uintptr_t>(node->instruction) - reinterpret_cast<uintptr_t>(instructions.at(0).ptr());
+    if (ownOffset >= instructions.size())
         return;
     uint8_t flags = 0;
     if (block->isGeneric)
@@ -1965,7 +1969,7 @@ void Graph::beginCoveredOperation(const Node* node, const BasicBlock* block, boo
                 append(store.offset).outcomes.append("absorbed-into-allocation"_s);
         }
     }
-    append(node->graph->codeBlock()->bytecodeOffset(node->instruction));
+    append(ownOffset);
     m_isCoveringOperation = !isElided;
 }
 

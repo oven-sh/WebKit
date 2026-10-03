@@ -26,6 +26,39 @@ realm (`createGlobalObject().load()`), on another thread (`$.agent.start()`), or
 | Fuzzing (open-ended) | `fuzz.py` mutates `JSTests/stress` and compares the interpreter with compiled code. `minimize.py` reduces a finding. |
 | Limit a runaway compile | `capped.py <GB> <seconds> <command...>` |
 
+## Seeing what the compiler did
+
+| Question | Tool |
+| --- | --- |
+| Where in my program did the compiler fail to specialize, how much, and why? | Type coverage, below |
+| What did this line compile to? | `type-coverage.py <file> --explain <source file>:<line>` |
+| Which optimizations applied to this function? | `--aotRemarksPath=<file>`: function name, tab, remark. In the shell, `aotRemarks(name)`. The tests assert on these, both that an optimization applies and that it does not. |
+| What did whole-program inference conclude, and from what? | `--logAOTTypeInference=1` (lines start with `AOT inference:`) |
+| What exactly happened in this function? | `--dumpAOTGraph=1`, `--dumpAOTB3Graph=1`, `--dumpAOTDisassembly=1`; add `--numberOfAOTCompilerThreads=1` to keep the output in order |
+| Why was a function not compiled, and where does the build time go? | `--verboseAOTCompilation=1` |
+| Which function is this address in, and which property is this cache slot for? | `--aotMapFilePath=<file>` |
+| Is an inferred type wrong? | `--validateAOTInferredTypes=1` checks every one at run time and crashes on the first that is wrong; `--validateGraphAtEachPhase=1` runs the B3 and Air validators |
+| Which values break the declared types, without failing? | `--auditAOTTypedFields=1` logs each violation (`AUDIT` lines) instead of throwing, and compiled code does not rely on the types |
+
+An embedder passes these to the process that compiles. Bun takes them from `BUN_AOT_OPTIONS`, comma separated and without the dashes.
+
+### Type coverage
+
+Like code coverage, except that an operation is covered if the compiler specialized it. `--aotTypeCoveragePath=<file>` writes one
+line for every instruction of every compiled function: where it is, what it is, what it compiled to and, for a property access
+that the type table gives no type, why. It records decisions that are made anyway, so the code is the same with and without it.
+
+```
+jsc --writeAOTImageTo=/tmp/image --aotTypeCoveragePath=/tmp/coverage main.js
+type-coverage.py /tmp/coverage --by property
+type-coverage.py /tmp/coverage --explain main.js:12
+```
+
+For a bundled program, pass the bundler's source maps (`--source-map`) to get positions in the original files, and the type table's
+`reasons.txt` (`--reasons`) to get the reasons in words. `--lcov` writes a tracefile for tools that show code coverage, which can
+hold only hit or miss, and `--fail-under <percent>` makes the exit status usable in CI. The last table of the report compares the
+number of instructions reported with the number in the bytecode: anything but 100% is a bug in the compiler's reporting.
+
 ## Before pushing
 
 1. `run-tests.py <jsc>`

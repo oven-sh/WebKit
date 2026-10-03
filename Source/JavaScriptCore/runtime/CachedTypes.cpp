@@ -6952,8 +6952,10 @@ struct BytecodeLinkEncoder::Impl {
                     }
                 };
                 for (unsigned module = 0; module < modules.size(); ++module) {
-                    if (isProgramModule(module))
-                        file->print("M\t", module, "\t", modules[module].source.provider()->sourceURL(), "\n");
+                    if (!isProgramModule(module))
+                        continue;
+                    SourceProvider& provider = *modules[module].source.provider();
+                    file->print("M\t", module, "\t", provider.sourceURL().isEmpty() ? provider.sourceOrigin().url().string() : provider.sourceURL(), "\n");
                 }
                 for (auto& function : allCoverage) {
                     for (auto& operation : function.operations) {

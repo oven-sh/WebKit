@@ -51,7 +51,7 @@ def main():
                 runs.append((test, options + re.findall(r'"(--?[^"]*)"', also.group(2)), also.group(1)))
         runs.append((test, options, "as it says"))
         if not any("$skipModes << :aot_validate" in line for line in header):
-            runs.append((test, options + ["--validateAOTInferredTypes=true", "--validateGraphAtEachPhase=true"], "validated"))
+            runs.append((test, options + ["--validateAOTInferredTypes=true", "--validateGraphAtEachPhase=true", "--aotTypeCoveragePath="], "validated"))
         runs.append((test, options + ["--useAOTDataStubs=false"], "without data stubs"))
 
     failures = 0
