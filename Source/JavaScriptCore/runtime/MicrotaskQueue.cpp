@@ -122,8 +122,42 @@ void MicrotaskQueue::visitAggregateImpl(Visitor& visitor)
 {
     m_queue.visitAggregate(visitor);
     m_toKeep.visitAggregate(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    for (auto& scope : m_drainScopes)
+        scope->deferred.visitAggregate(visitor);
+#endif
 }
 DEFINE_VISIT_AGGREGATE(MicrotaskQueue);
+
+#if USE(BUN_JSC_ADDITIONS)
+void MicrotaskQueue::beginDrainScope(bool admitLoaderJobs)
+{
+    auto scope = makeUnique<DrainScope>();
+    // Everything queued so far predates the scope. (Order within `deferred` and within
+    // what stays is preserved; kept loader jobs simply run earlier than they would have.)
+    MarkedMicrotaskDeque kept;
+    while (!m_queue.isEmpty()) {
+        QueuedTask task = m_queue.dequeue();
+        if (admitLoaderJobs && isDrainScopeLoaderJob(task.job()))
+            kept.enqueue(WTF::move(task));
+        else
+            scope->deferred.enqueue(WTF::move(task));
+    }
+    m_queue.swap(kept);
+    m_drainScopes.append(WTF::move(scope));
+}
+
+void MicrotaskQueue::endDrainScope()
+{
+    ASSERT(hasOpenDrainScope());
+    // Prepend while the scope is still on the stack, so the deferred tasks are never
+    // unreachable from visitAggregate.
+    auto& deferred = m_drainScopes.last()->deferred;
+    while (!deferred.isEmpty())
+        m_queue.prepend(deferred.takeLast());
+    m_drainScopes.removeLast();
+}
+#endif
 
 void MicrotaskQueue::enqueueSlow(QueuedTask&& task)
 {
