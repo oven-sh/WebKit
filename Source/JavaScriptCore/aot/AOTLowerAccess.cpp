@@ -1405,7 +1405,7 @@ LValue Lowering::heldCapture(Graph& graph, const void* scope, unsigned offset, N
     if (!index) [[unlikely]] {
         dataLogLn("AOT: PROTOTYPE: offset ", offset, " of a scope that is in no chain is read by a function that does not hold it. The reader is ", &graph == &m_graph ? "not inlined" : graph.closureFunction ? "inlined, with its function" : graph.closureScope ? "inlined, with its scope" : "inlined, with neither",
             "; the holder is ", holder == &graph ? "the reader" : holder == &m_graph ? "the outermost function" : "another inlined function", summary ? "; it holds " : "; it has no summary ", summary ? summary->captures.size() : 0,
-            summary && summary->canHoldCaptures ? "" : " (cannot hold)", summary && summary->takesScopeAsCallee ? " (has no object)" : "", "; constructor: ", holder->codeBlock()->isConstructor(), "; mode ", static_cast<unsigned>(holder->codeBlock()->parseMode()), "; identifiers: ", holder->codeBlock()->numberOfIdentifiers() ? holder->codeBlock()->identifier(0).impl() : nullptr);
+            summary && summary->canHoldCaptures ? "" : " (cannot hold)", "; constructor: ", holder->codeBlock()->isConstructor(), "; mode ", static_cast<unsigned>(holder->codeBlock()->parseMode()), "; identifiers: ", holder->codeBlock()->numberOfIdentifiers() ? holder->codeBlock()->identifier(0).impl() : nullptr);
         auto describe = [&](ASCIILiteral what, Node* node) {
             for (unsigned depth = 0; node && depth < 8; ++depth) {
                 dataLogLn("AOT: PROTOTYPE:   ", what, " ", depth, ": kind ", static_cast<unsigned>(node->kind), " ", node->kind == NodeKind::Bytecode ? opcodeNames[node->opcode] : ""_s, node->graph == &m_graph ? " (outermost)" : " (inlined)", node->isElided ? " elided" : "", node->isPromoted ? " promoted" : "", node->block && node->block->isGeneric ? " generic" : "", node->block && node->block->isInLoop ? " in loop" : "",
@@ -1567,15 +1567,6 @@ bool Lowering::isFusedWithGetFromScope(Node* node)
 void Lowering::lowerGetFromScope(Node* node)
 {
     auto bytecode = node->as<OpGetFromScope>();
-    if (Options::useAOTScopeAsCallee() && programFunctions() && !node->promotedEnvironment) {
-        if (const KnownFunction* known = programFunctions()->function(functionNumberOf(node->type)); known && known->summary && known->summary->takesScopeAsCallee && known->isDeclaration) {
-            if (Variable variable = m_graph.variableAccessedBy(node); known->summary->isInOwnVariable(variable.scope, variable.offset)) {
-                auto distance = m_graph.accessedEnvironmentDepth(node);
-                setJSValue(node, distance ? environmentAt(*distance) : lowCell(node->use(bytecode.m_scope)));
-                return;
-            }
-        }
-    }
     if (node->promotedEnvironment) {
         setJSValue(node, readPromotedVariable(node->promotedEnvironment, node->offsetInEnvironment));
         return;
@@ -1719,14 +1710,6 @@ void Lowering::lowerGetFromScope(Node* node)
 void Lowering::lowerPutToScope(Node* node)
 {
     auto bytecode = node->as<OpPutToScope>();
-    if (Node* made = node->use(bytecode.m_value); Options::useAOTScopeAsCallee() && programFunctions() && made->isBytecode(op_new_func) && !node->promotedEnvironment) {
-        if (const KnownFunction* known = programFunctions()->function(functionNumberOf(made->type)); known && known->summary && known->isDeclaration) {
-            if (Variable variable = m_graph.variableAccessedBy(node); known->summary->isInOwnVariable(variable.scope, variable.offset)) {
-                m_graph.remark("function-is-not-stored"_s, known->executable ? known->executable->ecmaName().string() : String());
-                return;
-            }
-        }
-    }
     if (node->promotedEnvironment) {
         writePromotedVariable(node->promotedEnvironment, node->offsetInEnvironment, lowJSValue(node->use(bytecode.m_value)), mayBe(node->use(bytecode.m_value)->type, TCell));
         return;
@@ -1748,7 +1731,7 @@ void Lowering::lowerPutToScope(Node* node)
 
     if (closureOffset) {
         m_out.store64(value, scope, m_heaps.JSLexicalEnvironment_variables[*closureOffset]);
-        if (mayBe(valueNode->type, TCell) && !(node->use(bytecode.m_scope)->isBytecode(op_create_lexical_environment) && node->use(bytecode.m_scope)->graph->environmentsAreOnStack())) {
+        if (mayBe(valueNode->type, TCell)) {
             if (Options::useAOTSavesAtDefinitions() && m_scopeWithBarrier == node->use(bytecode.m_scope))
                 m_graph.remark("shares-write-barrier"_s);
             else {

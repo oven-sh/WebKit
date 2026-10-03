@@ -305,8 +305,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         if (auto about = program->about(unlinkedCodeBlock))
             graph.firstTypeCoverageCounter = about->firstTypeCoverageCounter;
     }
-    if (summary && summary->environmentsAreOnStack)
-        graph.isInTailPosition = false;
     if (!parseBytecode(graph))
         return declined();
     if (Options::useAOTSavesAtDefinitions())

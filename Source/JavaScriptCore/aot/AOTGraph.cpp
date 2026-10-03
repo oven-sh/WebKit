@@ -1977,19 +1977,6 @@ void Graph::recordKnownFunctionUses(const FunctionSummaryMap& summariesByExecuta
             auto* summary = summariesByExecutable.get(executable);
             if (!summary)
                 return;
-            Node* closedOver = use.node->use(use.node->isBytecode(op_new_func) ? use.node->as<OpNewFunc>().m_scope : use.node->as<OpNewFuncExp>().m_scope);
-            Node* storedIn = user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value ? user->use(user->as<OpPutToScope>().m_scope) : nullptr;
-            bool isInSameFrame = storedIn && storedIn != closedOver && storedIn->isBytecode(op_create_lexical_environment) && closedOver->isBytecode(op_create_lexical_environment) && !storedIn->block->isInLoop && !closedOver->block->isInLoop;
-            if (storedIn && (storedIn == closedOver || isInSameFrame)) {
-                if (isInSameFrame)
-                    summary->ownVariableIsInAnotherEnvironment.store(true, std::memory_order_relaxed);
-                Variable variable = variableAccessedBy(user);
-                const void* none = nullptr;
-                if (variable && summary->scopeOfOwnVariable.compare_exchange_strong(none, variable.scope, std::memory_order_relaxed))
-                    summary->offsetOfOwnVariable.store(variable.offset, std::memory_order_relaxed);
-                else
-                    summary->isMadeElsewhereToo.store(true, std::memory_order_relaxed);
-            }
             if (!(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value))
                 summary->valueIsUsed.store(true, std::memory_order_relaxed);
             if (isPerElementCallback(user, use) || (block->isInLoop && calleeRegisterOf(user) == use.reg))

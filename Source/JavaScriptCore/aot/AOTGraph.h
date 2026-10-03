@@ -397,8 +397,6 @@ public:
             function = function->replacement;
         return function;
     }
-    bool closureFunctionIsItsScope { false };
-    bool inlinedEnvironmentsAreOnStack { false };
     const FunctionSummary* summaryOfInlinedFunction { nullptr };
     const FunctionSummary* summaryWithCaptures() const { return summaryOfInlinedFunction ? summaryOfInlinedFunction : m_summary; }
     unsigned dissolvedScopesOutside(unsigned hops) const;
@@ -408,7 +406,6 @@ public:
     UncheckedKeyHashMap<const void*, Node*> m_environmentsByIdentity;
     bool m_hasEnvironmentsByIdentity { false };
     UncheckedKeyHashMap<Node*, Vector<std::pair<Node*, unsigned>, 4>> capturesOfClosures;
-    bool environmentsAreOnStack() const { return inlinedEnvironmentsAreOnStack || (m_summary && m_summary->environmentsAreOnStack); }
     bool isInTailPosition { true };
     bool loopSplittingIsDisabled { false };
     Vector<UnlinkedFunctionExecutable*> functionsCreated;

@@ -162,8 +162,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, resolveAllScopeSlotsStatically, false, Normal, "The bytecode optimizer resolves get_from_scope to a scope slot whenever it can prove the variable's location, even if that widens the instruction."_s) \
     v(Unsigned, numberOfAOTCompilerThreads, 0, Normal, "Number of threads used to compile an image. Zero means one per processor."_s) \
     v(Bool, useAOTInlineFastPathsInLoops, true, Normal, "The AOT compiler emits fast paths inline, instead of calling shared stubs, in loops and in recursive functions. Faster in hot code, at the cost of about 10% more code."_s) \
-    v(Bool, useAOTScopeAsCallee, false, Normal, "PROTOTYPE. A nested function that is only called directly has no function object: its value is the environment it closes over."_s) \
-    v(Bool, useAOTEnvironmentsOnStack, false, Normal, "PROTOTYPE, with useAOTScopeAsCallee. The environments of a function whose closures all have no object and are only called by name are in its frame."_s) \
     v(Bool, useAOTCapturesByValue, false, Normal, "PROTOTYPE. A variable that is not assigned after the closures that read it are made is copied into them, and a scope with only such variables is never made."_s) \
     v(Unsigned, aotDissolvedScopesFrom, 0, Normal, "TEMPORARY, to bisect: only scopes whose hash modulo 65536 is at least this are dissolved."_s) \
     v(Unsigned, aotDissolvedScopesBelow, 65536, Normal, "TEMPORARY, to bisect: and below this."_s) \

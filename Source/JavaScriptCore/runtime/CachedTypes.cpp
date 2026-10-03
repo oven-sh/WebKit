@@ -6686,38 +6686,17 @@ struct BytecodeLinkEncoder::Impl {
             unsigned withCode = 0;
             unsigned closed = 0;
             unsigned isNeverCalled = 0;
-            unsigned withoutObject = 0;
-            unsigned onlyIdentity = 0, onlyTypeTests = 0, identityAndTypeTests = 0, usedAsObject = 0;
             for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
                 const AOT::KnownFunction& function = *programFunctions.function(number);
                 function.summary->isNonEscaping = function.forCall && !function.summary->escapes.load();
-                if (function.summary->isNonEscaping && function.summary->needsObject.load()) {
-                    bool identity = function.summary->isComparedByIdentity.load(), typeTests = function.summary->hasItsTypeTested.load();
-                    if (function.summary->isUsedAsObject.load())
-                        ++usedAsObject;
-                    else if (identity && typeTests)
-                        ++identityAndTypeTests;
-                    else if (identity)
-                        ++onlyIdentity;
-                    else
-                        ++onlyTypeTests;
-                }
-                if (Options::useAOTScopeAsCallee() && function.summary->isNonEscaping && !function.summary->needsObject.load() && !function.forConstruct && function.conventionForCall.signature != AOT::Signature::List && !AOT::readsCallee(function.forCall)) {
-                    SourceParseMode mode = function.forCall->parseMode();
-                    const DeclaredNamesLink* declaredNames = AOT::declaredNamesFor(function.forCall);
-                    function.summary->takesScopeAsCallee = (mode == SourceParseMode::NormalFunctionMode || mode == SourceParseMode::ArrowFunctionMode) && declaredNames && !declaredNames->scopeIsOutermostEnvironment();
-                    withoutObject += function.summary->takesScopeAsCallee;
-                }
                 withCode += !!function.forCall;
                 closed += function.summary->isNonEscaping;
                 isNeverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
             }
-            if (Options::verboseAOTCompilation() && Options::useAOTScopeAsCallee()) [[unlikely]]
-                dataLogLn("AOT: ", withoutObject, " nested functions have no function object. Of the functions that do not escape and need one: ", onlyIdentity, " only for identity, ", onlyTypeTests, " only for tests of their type, ", identityAndTypeTests, " for both, ", usedAsObject, " are used as objects");
             if (Options::useAOTCapturesByValue() && variableSummaries) {
                 for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
                     const AOT::KnownFunction& function = *programFunctions.function(number);
-                    if (!function.forCall || function.summary->takesScopeAsCallee)
+                    if (!function.forCall)
                         continue;
                     SourceParseMode mode = function.forCall->parseMode();
                     function.summary->canHoldCaptures = mode == SourceParseMode::NormalFunctionMode || mode == SourceParseMode::ArrowFunctionMode
@@ -6728,75 +6707,6 @@ struct BytecodeLinkEncoder::Impl {
                 unsigned dissolved = variableSummaries->dissolveScopes(closuresWithCaptures);
                 if (Options::verboseAOTCompilation()) [[unlikely]]
                     dataLogLn("AOT: ", dissolved, " scopes are never made; ", closuresWithCaptures, " functions hold what they capture");
-            }
-            if (Options::useAOTScopeAsCallee() && Options::useAOTEnvironmentsOnStack()) {
-                struct Facts {
-                    bool keepsNoScope { false };
-                    bool makesEnvironments { false };
-                    Vector<const AOT::FunctionSummary*, 4> made;
-                };
-                Vector<Facts> facts(programFunctions.size() + 1);
-                for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                    const AOT::KnownFunction& function = *programFunctions.function(number);
-                    if (!function.forCall)
-                        continue;
-                    SourceParseMode mode = function.forCall->parseMode();
-                    if (mode != SourceParseMode::NormalFunctionMode && mode != SourceParseMode::ArrowFunctionMode && mode != SourceParseMode::MethodMode)
-                        continue;
-                    Facts& fact = facts[number];
-                    fact.keepsNoScope = true;
-                    for (const auto& instruction : function.forCall->instructions()) {
-                        switch (instruction->opcodeID()) {
-                        case op_create_lexical_environment:
-                            fact.makesEnvironments = true;
-                            break;
-                        case op_new_func:
-                            fact.made.append(summariesByExecutable.get(function.forCall->functionDecl(instruction->as<OpNewFunc>().m_functionDecl)));
-                            break;
-                        case op_new_func_exp:
-                            fact.made.append(summariesByExecutable.get(function.forCall->functionExpr(instruction->as<OpNewFuncExp>().m_functionDecl)));
-                            break;
-                        case op_new_generator_func:
-                        case op_new_generator_func_exp:
-                        case op_new_async_func:
-                        case op_new_async_func_exp:
-                        case op_new_async_generator_func:
-                        case op_new_async_generator_func_exp:
-                        case op_create_generator_frame_environment:
-                        case op_call_direct_eval:
-                        case op_push_with_scope:
-                        case op_create_scoped_arguments:
-                        case op_resolve_scope_for_hoisting_func_decl_in_eval:
-                        case op_catch:
-                            fact.keepsNoScope = false;
-                            break;
-                        default:
-                            break;
-                        }
-                    }
-                }
-                for (bool changed = true; changed;) {
-                    changed = false;
-                    for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                        Facts& fact = facts[number];
-                        if (!fact.keepsNoScope)
-                            continue;
-                        for (const AOT::FunctionSummary* made : fact.made) {
-                            if (made && made->takesScopeAsCallee && !made->flowsElsewhere.load() && facts[made->number].keepsNoScope)
-                                continue;
-                            fact.keepsNoScope = false;
-                            changed = true;
-                            break;
-                        }
-                    }
-                }
-                unsigned onStack = 0;
-                for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                    programFunctions.function(number)->summary->environmentsAreOnStack = facts[number].keepsNoScope && facts[number].makesEnvironments;
-                    onStack += programFunctions.function(number)->summary->environmentsAreOnStack;
-                }
-                if (Options::verboseAOTCompilation()) [[unlikely]]
-                    dataLogLn("AOT: ", onStack, " functions have their environments in their frames");
             }
             for (bool changed = true; changed;) {
                 changed = false;

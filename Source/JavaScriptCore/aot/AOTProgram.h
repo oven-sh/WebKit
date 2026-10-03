@@ -38,12 +38,6 @@ struct FunctionSummary {
     mutable Vector<FunctionSummary*> directCallees WTF_GUARDED_BY_LOCK(directCalleesLock);
 
     bool isNonEscaping { false };
-    bool takesScopeAsCallee { false };
-    mutable std::atomic<bool> needsObject { false };
-    mutable std::atomic<bool> isComparedByIdentity { false };
-    mutable std::atomic<bool> hasItsTypeTested { false };
-    mutable std::atomic<bool> isUsedAsObject { false };
-    mutable std::atomic<bool> flowsElsewhere { false };
     bool canHoldCaptures { false };
     mutable bool makesDissolvedScopes { false };
     mutable Vector<std::pair<const void*, unsigned>, 2> captures;
@@ -51,15 +45,6 @@ struct FunctionSummary {
     {
         size_t index = captures.find(std::pair<const void*, unsigned> { scope, offset });
         return index == notFound ? std::nullopt : std::optional<unsigned> { index };
-    }
-    bool environmentsAreOnStack { false };
-    mutable std::atomic<const void*> scopeOfOwnVariable { nullptr };
-    mutable std::atomic<unsigned> offsetOfOwnVariable { 0 };
-    mutable std::atomic<bool> isMadeElsewhereToo { false };
-    mutable std::atomic<bool> ownVariableIsInAnotherEnvironment { false };
-    bool isInOwnVariable(const void* scope, unsigned offset) const
-    {
-        return takesScopeAsCallee && scope && !ownVariableIsInAnotherEnvironment.load(std::memory_order_relaxed) && !isMadeElsewhereToo.load(std::memory_order_relaxed) && scopeOfOwnVariable.load(std::memory_order_relaxed) == scope && offsetOfOwnVariable.load(std::memory_order_relaxed) == offset;
     }
     mutable std::atomic<bool> escapes { false };
     uint32_t number { 0 };

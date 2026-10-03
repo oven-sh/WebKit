@@ -482,33 +482,8 @@ private:
 
     void recordIndirectCall(Type callee) { markEscaping(callee, FunctionSummary::CalledIndirectly); }
 
-    void noteFlowsOfFunctions(Node* user)
-    {
-        if (!programFunctions())
-            return;
-        for (auto& use : user->uses) {
-            uint32_t number = functionNumberOf(use.node->type);
-            if (!number)
-                continue;
-            const KnownFunction* function = programFunctions()->function(number);
-            if (!function || !function->summary)
-                continue;
-            if (user->isBytecode(op_check_tdz))
-                continue;
-            if ((user->isBytecode(op_call) && use.reg == user->as<OpCall>().m_callee) || (user->isBytecode(op_call_ignore_result) && use.reg == user->as<OpCallIgnoreResult>().m_callee) || (user->isBytecode(op_tail_call) && use.reg == user->as<OpTailCall>().m_callee))
-                continue;
-            if (user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value) {
-                Variable variable = m_graph.variableAccessedBy(user);
-                if (variable && !function->summary->isMadeElsewhereToo.load(std::memory_order_relaxed) && function->summary->scopeOfOwnVariable.load(std::memory_order_relaxed) == variable.scope && function->summary->offsetOfOwnVariable.load(std::memory_order_relaxed) == variable.offset)
-                    continue;
-            }
-            function->summary->flowsElsewhere.store(true, std::memory_order_relaxed);
-        }
-    }
-
     void noteEscapesThrough(Node* user)
     {
-        noteFlowsOfFunctions(user);
         switch (user->kind) {
         case NodeKind::Phi:
         case NodeKind::Narrow:
@@ -529,45 +504,10 @@ private:
             markOperandsEscaping(user);
             return;
         }
-        auto needsObject = [&](Type type) {
-            if (uint32_t number = functionNumberOf(type); number && programFunctions()) {
-                if (const KnownFunction* function = programFunctions()->function(number); function && function->summary) {
-                    function->summary->needsObject.store(true, std::memory_order_relaxed);
-                    switch (user->opcode) {
-                    case op_stricteq:
-                    case op_nstricteq:
-                    case op_jstricteq:
-                    case op_jnstricteq:
-                    case op_jeq_ptr:
-                    case op_jneq_ptr:
-                        function->summary->isComparedByIdentity.store(true, std::memory_order_relaxed);
-                        break;
-                    case op_typeof:
-                    case op_typeof_is_undefined:
-                    case op_typeof_is_object:
-                    case op_typeof_is_function:
-                    case op_is_boolean:
-                    case op_is_number:
-                    case op_is_big_int:
-                    case op_is_object:
-                    case op_is_callable:
-                    case op_is_constructor:
-                    case op_is_cell_with_type:
-                        function->summary->hasItsTypeTested.store(true, std::memory_order_relaxed);
-                        break;
-                    default:
-                        function->summary->isUsedAsObject.store(true, std::memory_order_relaxed);
-                        break;
-                    }
-                }
-            }
-        };
         auto markOperandsEscapingExcept = [&](VirtualRegister harmless) {
             for (auto& use : user->uses) {
                 if (use.reg != harmless)
                     markEscaping(use.node->type, usedBy(user));
-                else
-                    needsObject(use.node->type);
             }
         };
         switch (user->opcode) {
@@ -584,7 +524,6 @@ private:
         case op_jnundefined_or_null:
         case op_get_parent_scope:
         case op_check_tdz:
-            return;
         case op_get_by_id:
         case op_get_by_id_direct:
         case op_get_length:
@@ -611,8 +550,6 @@ private:
         case op_jneq_ptr:
         case op_set_function_name:
         case op_instanceof:
-            for (auto& use : user->uses)
-                needsObject(use.node->type);
             return;
         case op_get_from_scope: {
             bool isExact = false;

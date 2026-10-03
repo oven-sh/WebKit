@@ -111,13 +111,6 @@ bool Lowering::tryLowerAllocation(Node* node)
 {
 
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
-        if (auto* functions = programFunctions(); functions && kind == FunctionKind::Normal) {
-            if (const KnownFunction* known = functions->function(functionNumberOf(node->type)); known && known->summary && known->summary->takesScopeAsCallee) {
-                m_graph.remark("no-function-object"_s, known->executable ? known->executable->ecmaName().string() : String());
-                setJSValue(node, node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(scope)));
-                return true;
-            }
-        }
         LValue closedOver = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(scope));
         const KnownFunction* made = Options::useAOTCapturesByValue() && programFunctions() ? programFunctions()->function(functionNumberOf(node->type)) : nullptr;
         if (made && made->summary && !made->summary->captures.isEmpty()) {
@@ -508,20 +501,6 @@ bool Lowering::tryLowerAllocation(Node* node)
             return true;
         }
         LValue scope = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(bytecode.m_scope));
-        if (code().environmentsAreOnStack()) {
-            unsigned size = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
-            LValue initial = lowJSValue(node->use(bytecode.m_initialValue));
-            LValue result = m_out.lockedStackSlot(JSLexicalEnvironment::offsetOfVariables() + size * sizeof(EncodedJSValue));
-            storeHeader(result, fixed32(Instance::offsetOfActivationStructureID()), TypeInfoBlob(NonArray, TypeInfo(LexicalEnvironmentType, JSLexicalEnvironment::StructureFlags)).blob());
-            m_out.storePtr(m_out.intPtrZero, result, m_heaps.JSObject_butterfly);
-            m_out.storePtr(scope, result, m_heaps.JSScope_next);
-            m_out.storePtr(m_out.intPtrZero, result, m_heaps.JSSymbolTableObject_symbolTable);
-            for (unsigned i = 0; i < size; ++i)
-                m_out.store64(initial, result, m_heaps.JSLexicalEnvironment_variables[i]);
-            m_graph.remark("environment-on-stack"_s);
-            setJSValue(node, result);
-            return true;
-        }
         unsigned scopeSize = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
         if (node->extendedFrameSize)
             scopeSize = node->extendedFrameSize;

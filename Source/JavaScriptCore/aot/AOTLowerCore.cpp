@@ -1031,10 +1031,6 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
 {
     if (Options::validateAOTInferredTypes() && rep == Rep::JSValue && (node->wasInferredUnreachable || (node->type && !isSubtype(TAll, node->type)))) [[unlikely]] {
         Type expected = node->wasInferredUnreachable ? TNone : node->type;
-        if (uint32_t number = functionNumberOf(expected); number && programFunctions()) {
-            if (const KnownFunction* known = programFunctions()->function(number); known && known->summary && known->summary->takesScopeAsCallee)
-                expected = (expected & ~TFunction) | TOtherObject;
-        }
         unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
         if (node->kind == NodeKind::Argument)
             which += 100 * node->reg.toArgument();
