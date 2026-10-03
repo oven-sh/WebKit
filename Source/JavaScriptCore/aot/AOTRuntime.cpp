@@ -2061,6 +2061,14 @@ void Instance::finalizeUnconditionally(bool newOnly)
     for (Data* data : collections->filledSinceLastCollection)
         data->hasBeenFilledSinceLastCollection = false;
     collections->filledSinceLastCollection.shrink(0);
+    auto isDead = [&](uint32_t structureID) { return !vm->heap.isMarked(std::bit_cast<StructureID>(structureID).decode()); };
+    bool viewPrototypeHasChanged = typedArrayViewPrototypeStructureID && isDead(typedArrayViewPrototypeStructureID);
+    for (auto& ofType : typedArraysWithBuiltinLength) {
+        for (auto& entry : ofType) {
+            if (entry.structureID && (viewPrototypeHasChanged || isDead(entry.structureID) || isDead(entry.prototypeStructureID) || isDead(entry.secondPrototypeStructureID)))
+                entry.structureID = 0;
+        }
+    }
     collections->propertyRunTargets.removeIf([&](auto& entry) {
         if (!vm->heap.isMarked(entry.key.first) || (entry.value.last && !vm->heap.isMarked(entry.value.last)))
             return true;
