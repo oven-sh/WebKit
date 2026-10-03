@@ -4000,12 +4000,12 @@ private:
         arrayMode = ArrayMode(Array::String, Array::Read);
     }
 
-    void addCheckStructureForOriginalStringObjectUse(UseKind useKind, const NodeOrigin& origin, Node* node)
+    void addCheckStructureForOriginalStringObjectUse(UseKind useKind, const NodeOrigin& origin, Node* child)
     {
         RELEASE_ASSERT(useKind == StringObjectUse || useKind == StringOrStringObjectUse);
 
-        // The realm of the conversion, whose String.prototype canOptimizeStringObjectAccess() has the caller watch. (The node may come
-        // from an inlined function of another realm, whose String.prototype nobody here watches.)
+        // The realm has to be the one canOptimizeStringObjectAccess() was asked about, which is the one whose String.prototype this code
+        // watches. The child's own origin can be in another realm, when it comes from an inlined function.
         StructureSet set;
         set.add(m_graph.globalObjectFor(origin.semantic)->stringObjectStructure());
         if (useKind == StringOrStringObjectUse)
@@ -4013,7 +4013,7 @@ private:
 
         m_insertionSet.insertNode(
             m_indexInBlock, SpecNone, CheckStructure, origin,
-            OpInfo(m_graph.addStructureSet(set)), Edge(node, CellUse));
+            OpInfo(m_graph.addStructureSet(set)), Edge(child, CellUse));
     }
     
     template<UseKind useKind>
