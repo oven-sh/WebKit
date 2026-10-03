@@ -37,7 +37,7 @@ realm (`createGlobalObject().load()`), on another thread (`$.agent.start()`), or
 | Which optimizations applied to this function? | `--aotRemarksPath=<file>`: function name, tab, remark. In the shell, `aotRemarks(name)`. The tests assert on these, both that an optimization applies and that it does not. |
 | What did whole-program inference conclude, and from what? | `--logAOTTypeInference=1` (lines start with `AOT inference:`) |
 | What exactly happened in this function? | `--dumpAOTGraph=1`, `--dumpAOTB3Graph=1`, `--dumpAOTDisassembly=1`; add `--numberOfAOTCompilerThreads=1` to keep the output in order |
-| Why was a function not compiled, and where does the build time go? | `--verboseAOTCompilation=1` |
+| Where does the build time go? | `--verboseAOTCompilation=1` |
 | Which function is this address in, and which property is this cache slot for? | `--aotMapFilePath=<file>` |
 | Is an inferred type wrong? | `--validateAOTInferredTypes=1` checks every one at run time and crashes on the first that is wrong; `--validateGraphAtEachPhase=1` runs the B3 and Air validators |
 | Which values break the declared types, without failing? | `--auditAOTTypedFields=1` logs each violation (`AUDIT` lines) instead of throwing, and compiled code does not rely on the types |

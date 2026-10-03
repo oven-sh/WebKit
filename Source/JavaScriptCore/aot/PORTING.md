@@ -153,8 +153,8 @@ functions (`stubCallReach`). x86-64 needs one copy and no veneers, but the optio
 are byte-identical, so a stub cannot tell which copy it is.
 
 **Nothing is at a fixed address.** No PC-relative reference leaves the code, and neither the code nor the file contains an absolute
-address; `compileForImage()` and `generateHelper()` check every constant. Compiled code reaches everything through the instance
-register. Executables refer to their code by offset (`EntryWord`).
+address; `compileForImage()` and `generateHelper()` check every constant. (The check is by magnitude: an integer that is meant to be
+that large is registered in `Graph::wideIntegerConstants`.) Compiled code reaches everything through the instance register. Executables refer to their code by offset (`EntryWord`).
 
 ### 7. Instances
 
@@ -237,8 +237,8 @@ in after linking, `adr` (or `adrp` and `add` for a table that regular expression
 
 The x86-64 port took these steps: about 520 lines up to step 8, and about 700 for step 9.
 
-1. Enable the gate for the new CPU with no back end. Everything should compile and link. `compileForImage()` rejects every function, so
-   `run-tests.py` runs interpreted and only the tests that require compiled code fail.
+1. Enable the gate for the new CPU with no back end. Everything should compile and link. `compileForImage()` rejects every function, and
+   a function that cannot be compiled fails the build of a program (there is nothing else to run it from), so no test passes yet.
 2. Decide the register assignment (section 2).
 3. Open the gates of `AOTLower*.cpp`, `AOTCompiler.cpp`, the structural part of `AOTStubs.cpp` and `installImageCompiler()`, and fix the build.
 4. Relocations (section 6).

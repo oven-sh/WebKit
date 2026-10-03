@@ -6840,6 +6840,7 @@ struct BytecodeLinkEncoder::Impl {
                 else {
                     Locker locker { declinedLock };
                     declined.add(jobs[index].codeBlock);
+                    dataLogLn("AOT: cannot compile `", jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, ": ", code.whyDeclined);
                 }
             }
         };
@@ -6963,6 +6964,7 @@ struct BytecodeLinkEncoder::Impl {
             });
             if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: omitted ", unreachedFunctions.load(), " unreachable functions (", unreachedBytecodeSize.load(), " bytes of bytecode)");
+            RELEASE_ASSERT(declined.isEmpty());
             if (again) {
                 unreachedFunctions = 0;
                 unreachedBytecodeSize = 0;

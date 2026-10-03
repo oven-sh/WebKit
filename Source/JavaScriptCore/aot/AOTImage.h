@@ -140,6 +140,7 @@ struct CompiledCode {
     CompiledFunctionInfo info;
     Vector<String> remarks;
     Vector<CoveredOperation> coverage;
+    String whyDeclined;
 };
 
 JS_EXPORT_PRIVATE uint64_t imageStamp();

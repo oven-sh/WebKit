@@ -573,8 +573,8 @@ bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode&
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
     bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program);
-    if (!ok && Options::verboseAOTCompilation()) [[unlikely]]
-        dataLogLn("AOT: declined: ", reason, " ", reasonOpcode != op_nop ? opcodeNames[reasonOpcode] : ""_s);
+    if (!ok)
+        result.whyDeclined = reasonOpcode != op_nop ? makeString(reason, ' ', opcodeNames[reasonOpcode]) : String(reason);
     return ok;
 #else
     UNUSED_PARAM(vm);
