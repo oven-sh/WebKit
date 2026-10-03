@@ -323,6 +323,7 @@ private:
         UnlinkedFunctionExecutable* calleeExecutable = nullptr;
         Node* closureScope = nullptr;
         Node* closureFunction = nullptr;
+        bool closureFunctionIsItsScope = false;
         unsigned guardedIntrinsic = 0;
         bool calleeIsProvenIntrinsic = false;
         bool isArraySpecialization = false;
@@ -373,6 +374,7 @@ private:
             }
             if (!caller.passesNoFunctionObject(call))
                 closureFunction = calleeNode;
+            closureFunctionIsItsScope = known->summary && known->summary->takesScopeAsCallee;
             callee = known->forCall;
             calleeExecutable = known->executable;
             if (callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostWithCallback()) {
@@ -383,6 +385,8 @@ private:
             }
         }
         auto about = m_program.about(callee);
+        if (about && about->summary && about->summary->makesDissolvedScopes && call->block->isInLoop && !m_graph.loopSplittingIsDisabled)
+            return false;
         if (guardedIntrinsic && (!about || !canBeInlinedIntoCaller(callee)))
             return declineToInline(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
         if (!about || !canBeInlinedIntoCaller(callee) || !(closureScope || guardedIntrinsic ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : (passesCallback && (!about->summary || about->summary->isReached())) || isProfitable(callee, about->summary, block->isInLoop || m_graph.isCalledRepeatedly())))
@@ -444,7 +448,9 @@ private:
         m_didInline = true;
         m_inlinedBytecodeSize += callee->instructionsSize();
         m_parents.add(inlinee.get(), &caller);
-        inlinee->isInTailPosition = call->opcode == op_tail_call && caller.isInTailPosition;
+        inlinee->summaryOfInlinedFunction = about->summary;
+        inlinee->inlinedEnvironmentsAreOnStack = about->summary && about->summary->environmentsAreOnStack;
+        inlinee->isInTailPosition = call->opcode == op_tail_call && caller.isInTailPosition && !inlinee->inlinedEnvironmentsAreOnStack;
 
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         BasicBlock* entry = inlinee->root;
@@ -536,6 +542,7 @@ private:
 
         if (closureFunction) {
             inlinee->closureFunction = closureFunction;
+            inlinee->closureFunctionIsItsScope = closureFunctionIsItsScope;
             for (BasicBlock* inlineeBlock : inlinee->m_rpo) {
                 for (Node* node : inlineeBlock->nodes) {
                     if (node->isBytecode(op_get_scope))

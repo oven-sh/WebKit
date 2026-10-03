@@ -54,6 +54,11 @@ void Lowering::finishCall(PatchpointValue* patchpoint, CallMode mode, Rep result
 
 LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments, CallMode mode, StubIntrinsic intrinsic)
 {
+    if (Options::useAOTScopeAsCallee() && programFunctions() && (node->isBytecode(op_call) || node->isBytecode(op_call_ignore_result) || node->isBytecode(op_tail_call))) {
+        VirtualRegister calleeRegister = node->isBytecode(op_call) ? node->as<OpCall>().m_callee : node->isBytecode(op_tail_call) ? node->as<OpTailCall>().m_callee : node->as<OpCallIgnoreResult>().m_callee;
+        const KnownFunction* known = programFunctions()->function(functionNumberOf(node->use(calleeRegister)->type));
+        RELEASE_ASSERT_WITH_MESSAGE(!known || !known->summary || !known->summary->takesScopeAsCallee, "A function without an object is called through the generic path");
+    }
     unsigned count = arguments.size() - 1;
     bool inMemory = count > numberOfArgumentGPRs;
     RELEASE_ASSERT(mode != CallMode::TailCall || m_valueRepresentations.result == Rep::JSValue);

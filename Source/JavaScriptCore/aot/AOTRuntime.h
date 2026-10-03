@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFunction.h"
+#include "AOTFunctionWithCaptures.h"
 #include "AOTOperationsBuiltins.h"
 #include "AOTOperationsObjects.h"
 #include "AOTProgramData.h"
@@ -425,6 +426,8 @@ struct Instance {
     Structure* functionStructure(Structure* realmStructure, FunctionExecutable*, JSScope*);
     Structure* functionStructure(Structure* realmStructure);
     JSFunction* tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope*);
+    JSFunctionWithCaptures* tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope*, std::span<const EncodedJSValue> captures);
+    Structure* functionStructureWithCaptures(Structure* realmStructure);
     JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
     StringImpl* retainUntilNextCall(String&&);
     JSArray* templateObjectFor(uint32_t numberOfDescriptor);
@@ -608,6 +611,9 @@ struct Instance {
     uint32_t arraysLackInheritedElements { 0 };
     static constexpr ptrdiff_t offsetOfArraysLackIsConcatSpreadable() { return OBJECT_OFFSETOF(Instance, arraysLackIsConcatSpreadable); }
     static constexpr ptrdiff_t offsetOfArraysLackInheritedElements() { return OBJECT_OFFSETOF(Instance, arraysLackInheritedElements); }
+    static constexpr unsigned numberOfNamelessSymbolTables = 33;
+    JSCell* namelessSymbolTables[numberOfNamelessSymbolTables] { };
+    static constexpr ptrdiff_t offsetOfNamelessSymbolTables() { return OBJECT_OFFSETOF(Instance, namelessSymbolTables); }
     void* auxiliarySpace { nullptr };
     void* activationSpace { nullptr };
     void* arrayAllocator { nullptr };

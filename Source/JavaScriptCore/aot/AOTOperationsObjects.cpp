@@ -712,6 +712,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance* instance
     OPERATION_RETURN(scope, result);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTNewFunctionWithCaptures, JSObject*, (Instance* instance, JSScope* environment, uint32_t index, uint32_t isExpressionAndOwner, EncodedJSValue* captures, uint32_t countAndKind, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(instance);
+    uint32_t count = countAndKind & 0xffff;
+    FunctionKind kind = static_cast<FunctionKind>(countAndKind >> 16);
+    FunctionRef function = callerBytecodeOwner(instance, callFrame, isExpressionAndOwner >> 1);
+    std::span<const EncodedJSValue> values { captures, count };
+    Allocator allocator = vm.heap.cellSpace.allocatorFor(JSFunctionWithCaptures::allocationSize(count), AllocatorForMode::EnsureAllocator);
+    if (auto executableIndex = kind == FunctionKind::Normal ? function.nestedExecutableIndex(isExpressionAndOwner & 1, index) : std::nullopt) {
+        if (JSFunctionWithCaptures* result = instance->tryMakeFunctionWithoutExecutable(*executableIndex, environment, values)) {
+            fillAllocationCache(vm, callerData(instance, callFrame), cache, result->structure(), allocator);
+            if (!SharedData::contains(cache) && cache[0].structureID == result->structureID())
+                cache[0].pointer = std::bit_cast<void*>(*JSFunction::tryEncodeAOTFunctionWord(instance->program->data().executableRow(*executableIndex).entry[0], instance->program->data().executableRow(*executableIndex).index[0]));
+            OPERATION_RETURN(scope, result);
+        }
+    }
+    FunctionExecutable* executable = isExpressionAndOwner & 1 ? function.functionExpr(index) : function.functionDecl(index);
+    Structure* structure = instance->functionStructureWithCaptures(kind == FunctionKind::Async ? globalObject->asyncFunctionStructure() : JSFunction::selectStructureForNewFuncExp(globalObject, executable));
+    JSFunctionWithCaptures* result = JSFunctionWithCaptures::create(vm, environment, structure, std::bit_cast<uintptr_t>(executable), values);
+    fillAllocationCache(vm, callerData(instance, callFrame), cache, structure, allocator, 0, executable);
+    OPERATION_RETURN(scope, result);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (Instance* instance, JSObject* object, EncodedJSValue encodedKey))
 {
     AOT_OPERATION_BEGIN(instance);

@@ -528,6 +528,26 @@ public:
 
     static Where locationOf(Node* scope, unsigned depth = 0)
     {
+        if (depth <= 24 && Options::useAOTCapturesByValue() && (scope->kind == NodeKind::Phi || scope->kind == NodeKind::Narrow)) {
+            Vector<Node*, 8> worklist { scope };
+            UncheckedKeyHashSet<Node*> seen;
+            std::optional<Where> common;
+            while (!worklist.isEmpty()) {
+                Node* node = worklist.takeLast();
+                if (!seen.add(node).isNewEntry)
+                    continue;
+                if (node->kind == NodeKind::Phi || node->kind == NodeKind::Narrow) {
+                    for (auto& use : node->uses)
+                        worklist.append(use.node);
+                    continue;
+                }
+                Where where = locationOf(node, depth + 1);
+                if (common && (common->base != where.base || common->hops != where.hops))
+                    return { scope, 0 };
+                common = where;
+            }
+            return common && common->base->kind == NodeKind::Bytecode ? *common : Where { scope, 0 };
+        }
         if (depth > 24 || scope->kind != NodeKind::Bytecode)
             return { scope, 0 };
         switch (scope->opcode) {
@@ -587,10 +607,62 @@ public:
         return std::nullopt;
     }
 
+    static std::optional<VirtualRegister> scopeOfNewFunction(Node* node)
+    {
+        if (node->kind != NodeKind::Bytecode)
+            return std::nullopt;
+        switch (node->opcode) {
+        case op_new_func:
+            return node->as<OpNewFunc>().m_scope;
+        case op_new_func_exp:
+            return node->as<OpNewFuncExp>().m_scope;
+        case op_new_generator_func:
+            return node->as<OpNewGeneratorFunc>().m_scope;
+        case op_new_generator_func_exp:
+            return node->as<OpNewGeneratorFuncExp>().m_scope;
+        case op_new_async_func:
+            return node->as<OpNewAsyncFunc>().m_scope;
+        case op_new_async_func_exp:
+            return node->as<OpNewAsyncFuncExp>().m_scope;
+        case op_new_async_generator_func:
+            return node->as<OpNewAsyncGeneratorFunc>().m_scope;
+        case op_new_async_generator_func_exp:
+            return node->as<OpNewAsyncGeneratorFuncExp>().m_scope;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    bool isDissolved(Node* environment)
+    {
+        VariableSummaries* summaries = m_graph.variableSummaries();
+        return summaries && summaries->isDissolved(environment->graph->scopeIdentity(environment));
+    }
+
+    std::optional<VirtualRegister> scopeThatMustBeThere(Node* user)
+    {
+        if (auto scope = scopeOfNewFunction(user))
+            return scope;
+        if (user->isBytecode(op_create_lexical_environment) && !m_candidates.contains(user))
+            return user->as<OpCreateLexicalEnvironment>().m_scope;
+        return std::nullopt;
+    }
+
+    static bool isThisOfCall(const Node* user, const Use& use)
+    {
+        if (user->kind != NodeKind::Bytecode || (user->opcode != op_call && user->opcode != op_call_ignore_result && user->opcode != op_tail_call))
+            return false;
+        return use.reg == Graph::callOperands(user->instruction).argument(0);
+    }
+
     bool worksWithoutEnvironment(Node* user, const Use& use)
     {
         if (user->kind != NodeKind::Bytecode || user->guard || user->guarded)
             return false;
+        if (auto scope = scopeThatMustBeThere(user))
+            return use.reg == *scope && isDissolved(locationOf(use.node).base);
+        if (Options::useAOTCapturesByValue() && isThisOfCall(user, use))
+            return true;
         switch (user->opcode) {
         case op_get_scope:
         case op_get_parent_scope:
@@ -608,6 +680,17 @@ public:
         }
     }
 
+    static String namesIn(Node* environment)
+    {
+        StringPrintStream out;
+        auto* table = uncheckedDowncast<SymbolTable>(environment->graph->codeBlock()->getConstant(environment->as<OpCreateLexicalEnvironment>().m_symbolTable).asCell());
+        ConcurrentJSLocker locker(table->m_lock);
+        unsigned count = 0;
+        for (auto it = table->begin(locker), end = table->end(locker); it != end && count < 8; ++it, ++count)
+            out.print(it->key.get(), " ");
+        return out.toString();
+    }
+
     bool keepSearchedEnvironments(Node* resolve)
     {
         if (!resolve->isBytecode(op_resolve_scope) || locationOf(resolve).base != resolve || resolve->graph->resolvedEnvironmentDepth(resolve))
@@ -621,6 +704,8 @@ public:
                 continue;
             JSValue table = environment->graph->codeBlock()->getConstant(environment->as<OpCreateLexicalEnvironment>().m_symbolTable);
             if (uncheckedDowncast<SymbolTable>(table.asCell())->contains(name)) {
+                if (Options::verboseAOTCompilation() && isDissolved(environment)) [[unlikely]]
+                    dataLogLn("AOT: PROTOTYPE: a scope that is in no chain is searched for ", name, "; its variables: ", namesIn(environment));
                 m_candidates.remove(environment);
                 changed = true;
             }
@@ -640,18 +725,23 @@ public:
         }
     }
 
-    void run()
+    void run(bool mayPromote)
     {
+        bool hasDissolvedScopes = false;
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
-                if (!node->isBytecode(op_create_lexical_environment) || node->isElided || block->isGeneric)
+                if (!node->isBytecode(op_create_lexical_environment) || node->isElided)
+                    continue;
+                bool isDissolved = this->isDissolved(node);
+                hasDissolvedScopes |= isDissolved;
+                if (!mayPromote || (block->isGeneric && !isDissolved))
                     continue;
                 JSValue table = node->graph->codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable);
                 if (table && table.isCell() && uncheckedDowncast<SymbolTable>(table.asCell())->scopeSize() <= 32)
                     m_candidates.add(node);
             }
         }
-        if (m_candidates.isEmpty())
+        if (m_candidates.isEmpty() && !hasDissolvedScopes)
             return;
         for (bool changed = true; changed && !m_candidates.isEmpty();) {
             changed = false;
@@ -660,25 +750,78 @@ public:
                     Where where = locationOf(use.node);
                     if (!where.isLocalEnvironment() || !m_candidates.contains(where.base) || worksWithoutEnvironment(user, use))
                         continue;
+                    if (Options::verboseAOTCompilation() && isDissolved(where.base)) [[unlikely]]
+                        dataLogLn("AOT: PROTOTYPE: a scope that is in no chain is made for ", user->kind == NodeKind::Bytecode ? opcodeNames[user->opcode] : "a node that is no bytecode"_s, " kind ", static_cast<unsigned>(user->kind), " bc#", user->bytecodeIndex.offset(), user->graph != &m_graph ? " (inlined)" : "", where.base->graph != &m_graph ? " (scope of an inlined function)" : "", user->guard ? " guard" : "", user->guarded ? " guarded" : "", user->block && user->block->isGeneric ? " generic" : "", where.base->block->isGeneric ? " (scope is generic)" : "", where.base->block->isInLoop ? " (scope in loop)" : "", " operand ", use.reg.offset(), "; its variables: ", namesIn(where.base));
                     m_candidates.remove(where.base);
                     changed = true;
                 }
                 changed |= keepSearchedEnvironments(user);
+                if (auto scope = scopeThatMustBeThere(user)) {
+                    for (Where where = locationOf(user->use(*scope)); where.isLocalEnvironment(); where = out(where, 1, 0)) {
+                        if (!isDissolved(where.base))
+                            changed |= m_candidates.remove(where.base);
+                    }
+                }
             });
         }
-        if (m_candidates.isEmpty())
+        if (m_candidates.isEmpty() && !hasDissolvedScopes)
             return;
         for (Node* environment : m_candidates)
             environment->isPromoted = true;
+        auto isInNoChain = [&](Node* environment) { return environment->isPromoted || isDissolved(environment); };
         forEachUser([&](Node* user) {
             if (user->kind != NodeKind::Bytecode)
                 return;
+            if (auto scope = user->isBytecode(op_create_lexical_environment) && user->isPromoted ? std::nullopt : scopeThatMustBeThere(user)) {
+                Where start = locationOf(user->use(*scope));
+                const KnownFunction* made = programFunctions() && scopeOfNewFunction(user) ? programFunctions()->function(functionNumberOf(user->type)) : nullptr;
+                if (made && made->summary && !made->summary->captures.isEmpty()) {
+                    auto& captures = m_graph.outermost().capturesOfClosures.add(user, Vector<std::pair<Node*, unsigned>, 4> { }).iterator->value;
+                    for (auto [capturedScope, offset] : made->summary->captures) {
+                        Node* environment = nullptr;
+                        for (Where where = start; where.isLocalEnvironment() && !environment; where = out(where, 1, 0)) {
+                            if (where.base->graph->scopeIdentity(where.base) == capturedScope)
+                                environment = where.base;
+                        }
+                        captures.append({ environment, offset });
+                    }
+                }
+                if (start.base->kind == NodeKind::Phi) {
+                    for (auto& use : start.base->uses) {
+                        Where where = locationOf(use.node);
+                        RELEASE_ASSERT_WITH_MESSAGE(!where.isLocalEnvironment() || !isDissolved(where.base), "A scope that is in no chain reaches a closure through a phi");
+                    }
+                }
+                if (!start.isLocalEnvironment() || !isInNoChain(start.base))
+                    return;
+                while (start.isLocalEnvironment() && isInNoChain(start.base))
+                    start = out(start, 1, 0);
+                user->scopeToStartFrom = start.base;
+                user->remainingHops = start.hops;
+                user->uses.append({ VirtualRegister(), start.base });
+                return;
+            }
+            if (Options::useAOTCapturesByValue()) {
+                for (auto& use : user->uses) {
+                    if (!isThisOfCall(user, use))
+                        continue;
+                    if (Where where = locationOf(use.node); where.isLocalEnvironment() && isInNoChain(where.base))
+                        use.node = m_graph.constant(jsUndefined());
+                }
+            }
             switch (user->opcode) {
             case op_get_from_scope:
             case op_put_to_scope: {
                 if (user->graph->accessedEnvironmentDepth(user))
                     return;
                 Where where = locationOf(user->use(user->opcode == op_get_from_scope ? user->as<OpGetFromScope>().m_scope : user->as<OpPutToScope>().m_scope));
+                user->accessesLocalEnvironment = where.isLocalEnvironment();
+                if (Node* operand = user->use(user->opcode == op_get_from_scope ? user->as<OpGetFromScope>().m_scope : user->as<OpPutToScope>().m_scope); Options::verboseAOTCompilation() && where.isLocalEnvironment() && operand->kind != NodeKind::Bytecode) [[unlikely]] {
+                    StringPrintStream out;
+                    for (auto& use : operand->uses)
+                        out.print(" [kind ", static_cast<unsigned>(use.node->kind), " ", use.node->kind == NodeKind::Bytecode ? opcodeNames[use.node->opcode] : ""_s, " bc#", use.node->bytecodeIndex.offset(), use.node->block && use.node->block->isGeneric ? " generic" : "", use.node->block && use.node->block->isInLoop ? " in loop" : "", "]");
+                    dataLogLn("AOT: PROTOTYPE: ", opcodeNames[user->opcode], " bc#", user->bytecodeIndex.offset(), user->block->isGeneric ? " generic" : "", user->block->isInLoop ? " in loop" : "", user->block->isLoopHeader ? " header" : "", user->graph != &m_graph ? " (inlined)" : "", " finds its scope through kind ", static_cast<unsigned>(operand->kind), " in block bc#", operand->block ? operand->block->bytecodeBegin : 0, operand->block && operand->block->isGeneric ? " generic" : "", operand->block && operand->block->isLoopHeader ? " header" : "", " of", out.toString(), "; variables: ", namesIn(where.base));
+                }
                 if (!where.isLocalEnvironment() || !where.base->isPromoted)
                     return;
                 user->promotedEnvironment = where.base;
@@ -728,22 +871,242 @@ private:
 
 } // anonymous namespace
 
-void promoteEnvironments(Graph& graph)
+bool mayPromoteEnvironmentsOf(Graph& graph)
 {
     UnlinkedCodeBlock* code = graph.codeBlock();
+    if (Options::useAOTCapturesByValue())
+        return code->codeType() == FunctionCode;
     if (!graph.catchEntrypoints.isEmpty() || graph.hasFrameRegisters() || code->codeType() != FunctionCode)
-        return;
+        return false;
     switch (code->parseMode()) {
     case SourceParseMode::NormalFunctionMode:
     case SourceParseMode::ArrowFunctionMode:
     case SourceParseMode::MethodMode:
     case SourceParseMode::GetterMode:
     case SourceParseMode::SetterMode:
-        break;
+        return true;
     default:
-        return;
+        return false;
     }
-    Promoter(graph).run();
+}
+
+void promoteEnvironments(Graph& graph)
+{
+    bool mayPromote = mayPromoteEnvironmentsOf(graph);
+    if (mayPromote || Options::useAOTCapturesByValue())
+        Promoter(graph).run(mayPromote);
+}
+
+void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* current)
+{
+    using Where = Promoter::Where;
+    Vector<const void*, 4> made;
+    using WhyMade = VariableSummaries::WhyMade;
+    Vector<std::pair<const void*, WhyMade>, 4> mustExist;
+    Vector<Variable, 8> readFromInside;
+    Vector<VariableSummaries::ClosureMade> closures;
+    UncheckedKeyHashMap<Node*, const void*> local;
+    UncheckedKeyHashSet<const void*> localScopes;
+    bool canDoWithout = current && mayPromoteEnvironmentsOf(graph);
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (!node->isBytecode(op_create_lexical_environment) && !node->isBytecode(op_create_generator_frame_environment))
+                continue;
+            const void* scope = graph.scopeIdentity(node);
+            if (!scope)
+                continue;
+            if (!localScopes.add(scope).isNewEntry)
+                mustExist.append({ scope, WhyMade::MadeTwice });
+            local.add(node, scope);
+            made.append(scope);
+            JSValue table = node->isBytecode(op_create_lexical_environment) ? graph.codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable) : JSValue();
+            if (Options::aotDissolvedScopesFrom() || Options::aotDissolvedScopesBelow() < 65536) [[unlikely]] {
+                unsigned hash = graph.codeBlock()->instructionsSize() * 2654435761u + node->bytecodeIndex.offset() * 40503u + graph.codeBlock()->numberOfIdentifiers() * 69069u + graph.codeBlock()->numParameters();
+                for (unsigned i = 0; i < graph.codeBlock()->numberOfIdentifiers() && i < 12; ++i)
+                    hash = hash * 31 + graph.codeBlock()->identifier(i).impl()->hash();
+                hash = (hash ^ (hash >> 16)) & 0xffff;
+                if (hash < Options::aotDissolvedScopesFrom() || hash >= Options::aotDissolvedScopesBelow())
+                    mustExist.append({ scope, WhyMade::Bisected });
+                else if (Options::aotDissolvedScopesBelow() - Options::aotDissolvedScopesFrom() <= 64)
+                    dataLogLn("AOT: PROTOTYPE: bisection keeps hash ", hash, ": a scope at bc#", node->bytecodeIndex.offset(), " of a function of ", graph.codeBlock()->instructionsSize(), " bytes, mode ", static_cast<unsigned>(graph.codeBlock()->parseMode()), ", ", graph.codeBlock()->numParameters(), " parameters; variables: ", Promoter::namesIn(node));
+            }
+            if (!canDoWithout) {
+                SourceParseMode mode = graph.codeBlock()->parseMode();
+                mustExist.append({ scope, graph.codeBlock()->codeType() != FunctionCode ? WhyMade::MakerIsNotFunction
+                    : !current ? WhyMade::MakerHasNoSummary
+                    : isGeneratorOrAsyncFunctionBodyParseMode(mode) ? WhyMade::MakerIsBody
+                    : isGeneratorOrAsyncFunctionWrapperParseMode(mode) ? WhyMade::MakerIsWrapper
+                    : !graph.catchEntrypoints.isEmpty() || graph.hasFrameRegisters() ? WhyMade::MakerHasCatch : WhyMade::MakerIsOtherKind });
+            }
+            else if (!table || !table.isCell() || uncheckedDowncast<SymbolTable>(table.asCell())->scopeSize() > 32)
+                mustExist.append({ scope, WhyMade::TooLarge });
+        }
+    }
+    auto everyScopeInSightMustExist = [&](WhyMade why) {
+        for (const void* scope : local.values())
+            mustExist.append({ scope, why });
+        if (const DeclaredNamesLink* declaredNames = declaredNamesFor(graph.codeBlock()))
+            declaredNames->forEachScope([&](const void* scope) { mustExist.append({ scope, why }); });
+    };
+    auto storedLater = [&](Node* environment, Node* closure) {
+        uint64_t mask = 0;
+        auto scan = [&](BasicBlock* block, unsigned from) {
+            for (unsigned i = from; i < block->nodes.size(); ++i) {
+                Node* node = block->nodes[i];
+                if (node == environment)
+                    return false;
+                if (!node->isBytecode(op_put_to_scope))
+                    continue;
+                Where where = Promoter::locationOf(node->use(node->as<OpPutToScope>().m_scope));
+                if (!where.isLocalEnvironment() || where.base != environment)
+                    continue;
+                auto offset = Promoter::offsetAccessedBy(node);
+                mask |= offset && *offset < 64 ? 1ull << *offset : ~0ull;
+            }
+            return true;
+        };
+        Vector<BasicBlock*, 8> worklist;
+        UncheckedKeyHashSet<BasicBlock*> seen;
+        size_t index = closure->block->nodes.find(closure);
+        RELEASE_ASSERT(index != notFound);
+        if (scan(closure->block, index + 1)) {
+            for (BasicBlock* successor : closure->block->successors)
+                worklist.append(successor);
+        }
+        while (!worklist.isEmpty()) {
+            BasicBlock* block = worklist.takeLast();
+            if (!seen.add(block).isNewEntry)
+                continue;
+            if (scan(block, 0)) {
+                for (BasicBlock* successor : block->successors)
+                    worklist.append(successor);
+            }
+        }
+        return mask;
+    };
+    auto visit = [&](Node* user) {
+        for (auto& use : user->uses) {
+            Where where = Promoter::locationOf(use.node);
+            if (!where.isLocalEnvironment())
+                continue;
+            bool works = user->kind == NodeKind::Bytecode && !user->guard && !user->guarded;
+            if (works && Promoter::isThisOfCall(user, use))
+                continue;
+            if (works) {
+                switch (user->opcode) {
+                case op_get_scope:
+                case op_get_parent_scope:
+                    break;
+                case op_resolve_scope: {
+                    auto bytecode = user->as<OpResolveScope>();
+                    works = bytecode.m_resolveType != Dynamic;
+                    if (works && Promoter::locationOf(user).base == user && !graph.resolvedEnvironmentDepth(user)) {
+                        UniquedStringImpl* name = graph.codeBlock()->identifier(bytecode.m_var).impl();
+                        for (Where at = where; at.isLocalEnvironment(); at = Promoter::out(at, 1, 0)) {
+                            JSValue table = graph.codeBlock()->getConstant(at.base->as<OpCreateLexicalEnvironment>().m_symbolTable);
+                            if (const void* scope = local.get(at.base); scope && (!table || !table.isCell() || uncheckedDowncast<SymbolTable>(table.asCell())->contains(name)))
+                                mustExist.append({ scope, WhyMade::UnknownAccess });
+                        }
+                    }
+                    break;
+                }
+                case op_get_from_scope:
+                    works = use.reg == user->as<OpGetFromScope>().m_scope && (graph.accessedEnvironmentDepth(user) || Promoter::offsetAccessedBy(user));
+                    break;
+                case op_put_to_scope:
+                    works = use.reg == user->as<OpPutToScope>().m_scope && (graph.accessedEnvironmentDepth(user) || Promoter::offsetAccessedBy(user));
+                    break;
+                case op_create_lexical_environment:
+                    works = use.reg == user->as<OpCreateLexicalEnvironment>().m_scope;
+                    break;
+                case op_new_func:
+                    works = use.reg == user->as<OpNewFunc>().m_scope;
+                    break;
+                case op_new_func_exp:
+                    works = use.reg == user->as<OpNewFuncExp>().m_scope;
+                    break;
+                case op_new_async_func:
+                    works = use.reg == user->as<OpNewAsyncFunc>().m_scope;
+                    break;
+                case op_new_async_func_exp:
+                    works = use.reg == user->as<OpNewAsyncFuncExp>().m_scope;
+                    break;
+                default:
+                    works = false;
+                    break;
+                }
+            }
+            if (works)
+                continue;
+            for (Where at = where; at.isLocalEnvironment(); at = Promoter::out(at, 1, 0)) {
+                if (const void* scope = local.get(at.base))
+                    mustExist.append({ scope, WhyMade::UsedOtherwise });
+            }
+        }
+    };
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* phi : block->phis)
+            visit(phi);
+        for (Node* node : block->nodes) {
+            visit(node);
+            if (node->kind != NodeKind::Bytecode)
+                continue;
+            switch (node->opcode) {
+            case op_get_from_scope:
+            case op_put_to_scope: {
+                if (graph.accessedEnvironmentDepth(node))
+                    break;
+                Variable variable = graph.variableAccessedBy(node);
+                if (!variable) {
+                    ResolveType type = node->opcode == op_get_from_scope ? node->as<OpGetFromScope>().m_getPutInfo.resolveType() : node->as<OpPutToScope>().m_getPutInfo.resolveType();
+                    const DeclaredNamesLink* declaredNames = declaredNamesFor(graph.codeBlock());
+                    unsigned identifier = node->opcode == op_get_from_scope ? node->as<OpGetFromScope>().m_var : node->as<OpPutToScope>().m_var;
+                    auto kind = declaredNames ? declaredNames->resolve(graph.codeBlock()->identifier(identifier).impl()).kind : DeclaredNamesLink::Resolution::Dynamic;
+                    if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar || type == Dynamic || (kind != DeclaredNamesLink::Resolution::Global && kind != DeclaredNamesLink::Resolution::Stable))
+                        everyScopeInSightMustExist(WhyMade::UnknownAccess);
+                    break;
+                }
+                if (localScopes.contains(variable.scope))
+                    break;
+                if (node->opcode == op_put_to_scope || !current)
+                    mustExist.append({ variable.scope, node->opcode == op_put_to_scope ? WhyMade::WrittenFromInside : WhyMade::ReadByUnknownCode });
+                else
+                    readFromInside.append(variable);
+                break;
+            }
+            case op_new_func:
+            case op_new_func_exp:
+            case op_new_async_func:
+            case op_new_async_func_exp: {
+                UnlinkedFunctionExecutable* executable = node->opcode == op_new_func ? graph.codeBlock()->functionDecl(node->as<OpNewFunc>().m_functionDecl)
+                    : node->opcode == op_new_func_exp ? graph.codeBlock()->functionExpr(node->as<OpNewFuncExp>().m_functionDecl)
+                    : node->opcode == op_new_async_func ? graph.codeBlock()->functionDecl(node->as<OpNewAsyncFunc>().m_functionDecl) : graph.codeBlock()->functionExpr(node->as<OpNewAsyncFuncExp>().m_functionDecl);
+                VariableSummaries::ClosureMade closure { summariesByExecutable.get(executable), current, { } };
+                for (Where at = Promoter::locationOf(node->use(*Promoter::scopeOfNewFunction(node))); at.isLocalEnvironment(); at = Promoter::out(at, 1, 0)) {
+                    const void* scope = local.get(at.base);
+                    if (!scope)
+                        break;
+                    if (closure.made)
+                        closure.scopesAndWhatIsStoredLater.append({ scope, storedLater(at.base, node) });
+                    else
+                        mustExist.append({ scope, WhyMade::ClosureIsUnknown });
+                }
+                if (closure.made)
+                    closures.append(WTF::move(closure));
+                break;
+            }
+            case op_call_direct_eval:
+            case op_push_with_scope:
+            case op_create_scoped_arguments:
+            case op_resolve_scope_for_hoisting_func_decl_in_eval:
+                everyScopeInSightMustExist(WhyMade::Evaluated);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    summaries.noteScopes(current, made.span(), mustExist.span(), readFromInside.span(), WTF::move(closures));
 }
 
 NodeUsers::NodeUsers(Graph& graph)

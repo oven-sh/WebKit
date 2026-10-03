@@ -284,7 +284,7 @@ static bool canSkipLoopSplitting(Graph& graph)
 static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
-    triesUnsplitLoops &= Options::preferUnsplitAOTLoops() && !Options::useAOTFunctionSplitting();
+    triesUnsplitLoops &= Options::preferUnsplitAOTLoops() && !Options::useAOTFunctionSplitting() && !Options::useAOTWholeFunctionSplitting();
     graph.loopSplittingIsDisabled = triesUnsplitLoops;
     graph.setCalleeHints(hints);
     graph.setSummary(summary);
@@ -305,6 +305,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         if (auto about = program->about(unlinkedCodeBlock))
             graph.firstTypeCoverageCounter = about->firstTypeCoverageCounter;
     }
+    if (summary && summary->environmentsAreOnStack)
+        graph.isInTailPosition = false;
     if (!parseBytecode(graph))
         return declined();
     if (program)
@@ -539,6 +541,8 @@ bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBloc
     if (variableSummaries) {
         graph.recordUntrackableVariableAccesses(*variableSummaries);
         graph.recordObjectsInVariables(*variableSummaries);
+        if (Options::useAOTCapturesByValue() || Options::useAOTNamelessScopes())
+            recordScopes(graph, *variableSummaries, summariesByExecutable, summary);
     }
     return true;
 }

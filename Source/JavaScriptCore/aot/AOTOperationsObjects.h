@@ -45,6 +45,7 @@ struct Slot;
     v(operationAOTNoteClass) \
     v(operationAOTMakeAtom) \
     v(operationAOTNewFunction) \
+    v(operationAOTNewFunctionWithCaptures) \
     v(operationAOTSetFunctionName) \
     v(operationAOTNewInternalFieldObject) \
     v(operationAOTCreateInternalFieldObject) \
@@ -171,6 +172,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTArrayIteratorMethod, EncodedJSValue, (Inst
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance*, uint32_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (Instance*, JSCell* regExp, uint32_t forTest, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance*, JSScope*, uint32_t index, uint32_t isExpression, uint32_t functionKind, Slot*));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewFunctionWithCaptures, JSObject*, (Instance*, JSScope*, uint32_t index, uint32_t isExpression, EncodedJSValue* captures, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance*, JSObject* function, EncodedJSValue name));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewInternalFieldObject, JSObject*, (Instance*, uint32_t kind));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateInternalFieldObject, JSObject*, (Instance*, JSObject* callee, uint32_t kind));

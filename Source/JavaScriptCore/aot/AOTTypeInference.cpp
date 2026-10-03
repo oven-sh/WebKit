@@ -29,8 +29,95 @@ public:
     {
     }
 
+    static bool isNeverGivenEmptyValues(const Node* user)
+    {
+        if (user->kind != NodeKind::Bytecode)
+            return false;
+        switch (user->opcode) {
+        case op_add:
+        case op_sub:
+        case op_mul:
+        case op_div:
+        case op_mod:
+        case op_pow:
+        case op_bitand:
+        case op_bitor:
+        case op_bitxor:
+        case op_bitnot:
+        case op_lshift:
+        case op_rshift:
+        case op_urshift:
+        case op_inc:
+        case op_dec:
+        case op_negate:
+        case op_to_number:
+        case op_to_numeric:
+        case op_less:
+        case op_lesseq:
+        case op_greater:
+        case op_greatereq:
+        case op_jless:
+        case op_jlesseq:
+        case op_jgreater:
+        case op_jgreatereq:
+        case op_jnless:
+        case op_jnlesseq:
+        case op_jngreater:
+        case op_jngreatereq:
+        case op_stricteq:
+        case op_nstricteq:
+        case op_jstricteq:
+        case op_jnstricteq:
+        case op_eq:
+        case op_neq:
+        case op_jeq:
+        case op_jneq:
+        case op_not:
+        case op_jtrue:
+        case op_jfalse:
+        case op_typeof:
+        case op_get_by_id:
+        case op_get_by_val:
+        case op_put_by_id:
+        case op_put_by_val:
+        case op_call:
+        case op_call_ignore_result:
+        case op_tail_call:
+        case op_construct:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    void findVariablesThatAreNotEmptyWhenRead()
+    {
+        UncheckedKeyHashSet<Node*> mayBeEmpty;
+        auto visit = [&](Node* user) {
+            if (isNeverGivenEmptyValues(user))
+                return;
+            for (auto& use : user->uses) {
+                if (use.node->isBytecode(op_get_from_scope))
+                    mayBeEmpty.add(use.node);
+            }
+        };
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* phi : block->phis)
+                visit(phi);
+            for (Node* node : block->nodes)
+                visit(node);
+        }
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (node->isBytecode(op_get_from_scope))
+                    node->isNeverEmpty = !mayBeEmpty.contains(node);
+            }
+        }
+    }
+
     void run()
     {
+        findVariablesThatAreNotEmptyWhenRead();
         iterateToFixpoint();
         constexpr unsigned maxRounds = 4;
         for (unsigned round = 0; round < maxRounds && narrowTestedValues(); ++round) {
@@ -395,8 +482,33 @@ private:
 
     void recordIndirectCall(Type callee) { markEscaping(callee, FunctionSummary::CalledIndirectly); }
 
+    void noteFlowsOfFunctions(Node* user)
+    {
+        if (!programFunctions())
+            return;
+        for (auto& use : user->uses) {
+            uint32_t number = functionNumberOf(use.node->type);
+            if (!number)
+                continue;
+            const KnownFunction* function = programFunctions()->function(number);
+            if (!function || !function->summary)
+                continue;
+            if (user->isBytecode(op_check_tdz))
+                continue;
+            if ((user->isBytecode(op_call) && use.reg == user->as<OpCall>().m_callee) || (user->isBytecode(op_call_ignore_result) && use.reg == user->as<OpCallIgnoreResult>().m_callee) || (user->isBytecode(op_tail_call) && use.reg == user->as<OpTailCall>().m_callee))
+                continue;
+            if (user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value) {
+                Variable variable = m_graph.variableAccessedBy(user);
+                if (variable && !function->summary->isMadeElsewhereToo.load(std::memory_order_relaxed) && function->summary->scopeOfOwnVariable.load(std::memory_order_relaxed) == variable.scope && function->summary->offsetOfOwnVariable.load(std::memory_order_relaxed) == variable.offset)
+                    continue;
+            }
+            function->summary->flowsElsewhere.store(true, std::memory_order_relaxed);
+        }
+    }
+
     void noteEscapesThrough(Node* user)
     {
+        noteFlowsOfFunctions(user);
         switch (user->kind) {
         case NodeKind::Phi:
         case NodeKind::Narrow:
@@ -417,13 +529,62 @@ private:
             markOperandsEscaping(user);
             return;
         }
+        auto needsObject = [&](Type type) {
+            if (uint32_t number = functionNumberOf(type); number && programFunctions()) {
+                if (const KnownFunction* function = programFunctions()->function(number); function && function->summary) {
+                    function->summary->needsObject.store(true, std::memory_order_relaxed);
+                    switch (user->opcode) {
+                    case op_stricteq:
+                    case op_nstricteq:
+                    case op_jstricteq:
+                    case op_jnstricteq:
+                    case op_jeq_ptr:
+                    case op_jneq_ptr:
+                        function->summary->isComparedByIdentity.store(true, std::memory_order_relaxed);
+                        break;
+                    case op_typeof:
+                    case op_typeof_is_undefined:
+                    case op_typeof_is_object:
+                    case op_typeof_is_function:
+                    case op_is_boolean:
+                    case op_is_number:
+                    case op_is_big_int:
+                    case op_is_object:
+                    case op_is_callable:
+                    case op_is_constructor:
+                    case op_is_cell_with_type:
+                        function->summary->hasItsTypeTested.store(true, std::memory_order_relaxed);
+                        break;
+                    default:
+                        function->summary->isUsedAsObject.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+                }
+            }
+        };
         auto markOperandsEscapingExcept = [&](VirtualRegister harmless) {
             for (auto& use : user->uses) {
                 if (use.reg != harmless)
                     markEscaping(use.node->type, usedBy(user));
+                else
+                    needsObject(use.node->type);
             }
         };
         switch (user->opcode) {
+        case op_is_empty:
+        case op_is_undefined_or_null:
+        case op_eq_null:
+        case op_neq_null:
+        case op_not:
+        case op_jtrue:
+        case op_jfalse:
+        case op_jeq_null:
+        case op_jneq_null:
+        case op_jundefined_or_null:
+        case op_jnundefined_or_null:
+        case op_get_parent_scope:
+        case op_check_tdz:
+            return;
         case op_get_by_id:
         case op_get_by_id_direct:
         case op_get_length:
@@ -434,8 +595,6 @@ private:
         case op_typeof_is_undefined:
         case op_typeof_is_object:
         case op_typeof_is_function:
-        case op_is_empty:
-        case op_is_undefined_or_null:
         case op_is_boolean:
         case op_is_number:
         case op_is_big_int:
@@ -444,25 +603,16 @@ private:
         case op_is_constructor:
         case op_is_cell_with_type:
         case op_has_structure_with_flags:
-        case op_eq_null:
-        case op_neq_null:
-        case op_not:
         case op_stricteq:
         case op_nstricteq:
         case op_jstricteq:
         case op_jnstricteq:
-        case op_jtrue:
-        case op_jfalse:
-        case op_jeq_null:
-        case op_jneq_null:
-        case op_jundefined_or_null:
-        case op_jnundefined_or_null:
         case op_jeq_ptr:
         case op_jneq_ptr:
-        case op_get_parent_scope:
         case op_set_function_name:
         case op_instanceof:
-        case op_check_tdz:
+            for (auto& use : user->uses)
+                needsObject(use.node->type);
             return;
         case op_get_from_scope: {
             bool isExact = false;
@@ -551,8 +701,11 @@ private:
         if (!summaries)
             return;
         auto noteInitialValue = [&](VirtualRegister initialValue) {
-            if (const void* scope = m_graph.scopeIdentity(node))
+            if (const void* scope = m_graph.scopeIdentity(node)) {
+                if (node->graph->isGeneratorFrame(scope))
+                    summaries->noteInitialValueIsNeverRead(scope);
                 summaries->join({ scope, Variable::initialValue }, node->use(initialValue)->type);
+            }
         };
         switch (node->opcode) {
         case op_put_to_scope:
@@ -1285,6 +1438,8 @@ private:
                 if (Variable variable = m_graph.variableAccessedBy(node)) {
                     auto bytecode = node->as<OpGetFromScope>();
                     Type type = summaries->read(variable, node->graph->codeBlock()->identifier(bytecode.m_var).impl(), m_graph.summaryReader());
+                    if (node->isNeverEmpty)
+                        type &= ~TEmpty;
                     return bytecode.m_getPutInfo.resolveType() == ResolvedLazyClosureVar ? type | TFunction : type;
                 }
             }

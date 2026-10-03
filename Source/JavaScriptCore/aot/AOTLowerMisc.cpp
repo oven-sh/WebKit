@@ -669,12 +669,17 @@ bool Lowering::tryLowerMisc(Node* node)
         }
         if (Node* function = code().closureFunction) {
             if (node->useCount)
-                setJSValue(node, m_out.loadPtr(lowCell(function), m_heaps.JSCallee_scope));
+                setJSValue(node, code().closureFunctionIsItsScope ? lowCell(function) : m_out.loadPtr(lowCell(function), m_heaps.JSCallee_scope));
             return true;
         }
         if (code().scopeIsModuleEnvironment()) {
             if (node->useCount)
                 setJSValue(node, environmentAt(code().moduleEnvironmentDepth()));
+            return true;
+        }
+        if (code().summary() && code().summary()->takesScopeAsCallee) {
+            m_graph.remark("scope-is-callee"_s);
+            setJSValue(node, callee());
             return true;
         }
         setJSValue(node, m_out.loadPtr(callee(), m_heaps.JSCallee_scope));

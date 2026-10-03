@@ -238,8 +238,8 @@ async function* keptAcrossBoth(x) {
     yield made.b;
 }
 {
-    doesNotApply(keptAcrossAwait, doesNotAllocate);
-    doesNotApply(keptAcrossYield, doesNotAllocate);
+    applies(keptAcrossAwait, doesNotAllocate, folds + ":a", folds + ":b");
+    applies(keptAcrossYield, doesNotAllocate, folds + ":a", folds + ":b");
     doesNotApply(keptAcrossBoth, doesNotAllocate);
     let awaited, both = [];
     keptAcrossAwait(32).then(value => { awaited = value; });

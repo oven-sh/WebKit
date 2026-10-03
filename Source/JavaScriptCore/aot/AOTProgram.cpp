@@ -152,6 +152,129 @@ void VariableSummaries::noteObjectsEscapeIn(const void* scope, ASCIILiteral how)
     }
 }
 
+void VariableSummaries::noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&& closures)
+{
+    Locker locker { m_scopesLock };
+    for (const void* scope : made) {
+        if (!m_makersOfScopes.add(scope, maker).isNewEntry || !maker)
+            m_scopesThatMustExist.add(scope, maker ? WhyMade::MadeTwice : WhyMade::MakerCannotPromote);
+    }
+    for (auto [scope, why] : mustExist) {
+        m_scopesThatMustExist.add(scope, why);
+        if (why == WhyMade::UnknownAccess || why == WhyMade::Evaluated)
+            m_scopesSearchedByName.add(scope);
+    }
+    for (Variable variable : readFromInside) {
+        auto& readers = m_readersFromInside.add({ variable.scope, variable.offset }, Vector<const FunctionSummary*, 2> { }).iterator->value;
+        if (!readers.contains(maker))
+            readers.append(maker);
+    }
+    m_closuresMade.appendVector(WTF::move(closures));
+}
+
+unsigned VariableSummaries::dissolveScopes(unsigned& closuresWithCaptures)
+{
+    constexpr unsigned maximumNumberOfCaptures = 8;
+    UncheckedKeyHashMap<const FunctionSummary*, const ClosureMade*> whereMade;
+    UncheckedKeyHashSet<const FunctionSummary*> madeInSeveralPlaces;
+    for (auto& closure : m_closuresMade) {
+        if (!whereMade.add(closure.made, &closure).isNewEntry)
+            madeInSeveralPlaces.add(closure.made);
+    }
+    UncheckedKeyHashSet<const void*> candidates;
+    std::array<unsigned, static_cast<size_t>(WhyMade::Count)> tally { };
+    auto count = [&](WhyMade why) { ++tally[static_cast<size_t>(why)]; };
+    for (auto& [scope, maker] : m_makersOfScopes) {
+        if (auto it = m_scopesThatMustExist.find(scope); it != m_scopesThatMustExist.end())
+            count(it->value);
+        else if (!maker)
+            count(WhyMade::MakerCannotPromote);
+        else if (m_untrackedScopes.contains(scope) || m_hasGivenUpOnAllScopes.load(std::memory_order_relaxed))
+            count(WhyMade::Untracked);
+        else
+            candidates.add(scope);
+    }
+    using Captured = std::pair<const void*, unsigned>;
+    UncheckedKeyHashMap<const FunctionSummary*, Vector<Captured, 4>> held;
+    for (bool changed = true; changed;) {
+        changed = false;
+        held.clear();
+        for (auto& [variable, readers] : m_readersFromInside) {
+            if (!candidates.contains(variable.first))
+                continue;
+            const FunctionSummary* makerOfScope = m_makersOfScopes.get(variable.first);
+            bool works = variable.second < 64;
+            WhyMade why = WhyMade::TooLarge;
+            auto require = [&](bool condition, WhyMade otherwise) {
+                if (works && !condition) {
+                    works = false;
+                    why = otherwise;
+                }
+            };
+            for (const FunctionSummary* reader : readers) {
+                for (const FunctionSummary* holder = reader; works; ) {
+                    auto it = holder ? whereMade.find(holder) : whereMade.end();
+                    require(holder, WhyMade::ReadByUnknownCode);
+                    require(holder && holder->canHoldCaptures, WhyMade::ReaderCannotHold);
+                    require(it != whereMade.end(), WhyMade::ReaderNotMade);
+                    require(!madeInSeveralPlaces.contains(holder), WhyMade::ReaderMadeTwice);
+                    if (!works)
+                        break;
+                    auto& captures = held.add(holder, Vector<Captured, 4> { }).iterator->value;
+                    if (!captures.contains(variable))
+                        captures.append(variable);
+                    require(captures.size() <= maximumNumberOfCaptures, WhyMade::TooManyCaptures);
+                    if (it->value->maker != makerOfScope) {
+                        holder = it->value->maker;
+                        continue;
+                    }
+                    bool isInChain = false;
+                    for (auto& [scope, storedLater] : it->value->scopesAndWhatIsStoredLater) {
+                        if (scope == variable.first) {
+                            isInChain = true;
+                            require(!(storedLater & (1ull << variable.second)), WhyMade::StoredLater);
+                        }
+                    }
+                    require(isInChain, WhyMade::NotInChain);
+                    break;
+                }
+                if (!works)
+                    break;
+            }
+            if (!works) {
+                count(why);
+                candidates.remove(variable.first);
+                changed = true;
+            }
+        }
+    }
+    m_dissolvedScopes = WTF::move(candidates);
+    if (Options::verboseAOTCompilation()) [[unlikely]] {
+        static constexpr ASCIILiteral names[] = { "made twice in one function (split loop)"_s, "its function cannot promote (catch, generator, async, top level)"_s, "more than 32 variables"_s, "an access that is not resolved"_s, "the scope is used in another way"_s, "written by an inner function"_s, "read by code without a summary (construct code)"_s, "a closure without a summary is made in it"_s, "eval, with, arguments"_s, "a reader of a kind that holds no captures"_s, "a reader that is made in two places"_s, "a reader whose creation was not seen"_s, "stored to after the closure is made"_s, "not in the scope chain of the closure"_s, "more than 8 captures"_s, "untracked"_s, "left out by the bisection"_s, "made by top-level code"_s, "made by code without a summary (construct code, class constructors)"_s, "made by the body of an async function or a generator"_s, "made by the wrapper of an async function or a generator"_s, "made by a function with try/catch or registers in its frame"_s, "made by a function of another kind"_s };
+        dataLogLn("AOT: of ", m_makersOfScopes.size(), " scopes, ", m_dissolvedScopes.size(), " are never made. The others:");
+        for (size_t i = 0; i < tally.size(); ++i) {
+            if (tally[i])
+                dataLogLn("AOT:   ", tally[i], " ", names[i]);
+        }
+    }
+    if (Options::logAOTTypeInference()) [[unlikely]] {
+        for (const void* scope : m_dissolvedScopes)
+            dataLogLn("AOT inference: scope ", RawPointer(scope), " is never made");
+    }
+    for (const void* scope : m_dissolvedScopes)
+        m_makersOfScopes.get(scope)->makesDissolvedScopes = true;
+    closuresWithCaptures = 0;
+    for (auto& [holder, captures] : held) {
+        for (auto& variable : captures) {
+            if (m_dissolvedScopes.contains(variable.first))
+                holder->captures.append(variable);
+        }
+        std::ranges::sort(holder->captures);
+        closuresWithCaptures += !holder->captures.isEmpty();
+    }
+    return m_dissolvedScopes.size();
+}
+
 unsigned VariableSummaries::finishFindingConstantObjects(unsigned& neverAllocated)
 {
     m_objectsInVariables.removeIf([&](auto& entry) {
@@ -183,12 +306,25 @@ bool VariableSummaries::isUntracked(Variable variable, UniquedStringImpl* name) 
     return m_hasGivenUpOnAllScopes.load(std::memory_order_relaxed) || m_untrackedScopes.contains(variable.scope) || m_untrackedNames.contains(name);
 }
 
+void VariableSummaries::noteInitialValueIsNeverRead(const void* scope)
+{
+    Locker locker { m_scopesWhoseInitialValueIsNeverReadLock };
+    m_scopesWhoseInitialValueIsNeverRead.add(scope);
+}
+
 Type VariableSummaries::read(Variable variable, UniquedStringImpl* name, unsigned reader)
 {
     if (isUntracked(variable, name))
         return TAll;
+    bool initialValueIsNeverRead;
+    {
+        Locker locker { m_scopesWhoseInitialValueIsNeverReadLock };
+        initialValueIsNeverRead = m_scopesWhoseInitialValueIsNeverRead.contains(variable.scope);
+    }
     Type type = 0;
     for (unsigned offset : { variable.offset, Variable::initialValue }) {
+        if (offset == Variable::initialValue && initialValueIsNeverRead)
+            continue;
         Variable which { variable.scope, offset };
         Shard& shard = shardFor(which);
         Locker locker { shard.lock };

@@ -1363,8 +1363,48 @@ B3::Variable* Lowering::environmentVariable(Node* environment, unsigned offset)
     return variables[offset];
 }
 
+LValue Lowering::heldCapture(Graph& graph, const void* scope, unsigned offset, Node* forLog)
+{
+    Graph* holder = &graph;
+    while (!holder->closureFunction && holder->closureScope)
+        holder = holder->closureScope->graph;
+    const FunctionSummary* summary = holder->summaryWithCaptures();
+    auto index = summary ? summary->indexOfCapture(scope, offset) : std::nullopt;
+    if (!index) [[unlikely]] {
+        dataLogLn("AOT: PROTOTYPE: offset ", offset, " of a scope that is in no chain is read by a function that does not hold it. The reader is ", &graph == &m_graph ? "not inlined" : graph.closureFunction ? "inlined, with its function" : graph.closureScope ? "inlined, with its scope" : "inlined, with neither",
+            "; the holder is ", holder == &graph ? "the reader" : holder == &m_graph ? "the outermost function" : "another inlined function", summary ? "; it holds " : "; it has no summary ", summary ? summary->captures.size() : 0,
+            summary && summary->canHoldCaptures ? "" : " (cannot hold)", summary && summary->takesScopeAsCallee ? " (has no object)" : "", "; constructor: ", holder->codeBlock()->isConstructor(), "; mode ", static_cast<unsigned>(holder->codeBlock()->parseMode()), "; identifiers: ", holder->codeBlock()->numberOfIdentifiers() ? holder->codeBlock()->identifier(0).impl() : nullptr);
+        auto describe = [&](ASCIILiteral what, Node* node) {
+            for (unsigned depth = 0; node && depth < 8; ++depth) {
+                dataLogLn("AOT: PROTOTYPE:   ", what, " ", depth, ": kind ", static_cast<unsigned>(node->kind), " ", node->kind == NodeKind::Bytecode ? opcodeNames[node->opcode] : ""_s, node->graph == &m_graph ? " (outermost)" : " (inlined)", node->isElided ? " elided" : "", node->isPromoted ? " promoted" : "", node->block && node->block->isGeneric ? " generic" : "", node->block && node->block->isInLoop ? " in loop" : "",
+                    node->scopeToStartFrom ? " starts from another node" : "", " dissolved: ", m_graph.variableSummaries()->isDissolved(m_graph.scopeIdentity(node)), " same scope: ", m_graph.scopeIdentity(node) == scope, " uses ", node->uses.size());
+                Node* next = nullptr;
+                if (node->isBytecode(op_get_scope))
+                    next = node->graph->closureScope;
+                else if (node->isBytecode(op_resolve_scope))
+                    next = node->use(node->as<OpResolveScope>().m_scope);
+                else if (node->isBytecode(op_get_parent_scope))
+                    next = node->use(node->as<OpGetParentScope>().m_scope);
+                else if (node->isBytecode(op_create_lexical_environment))
+                    next = node->use(node->as<OpCreateLexicalEnvironment>().m_scope);
+                else if (node->isBytecode(op_get_from_scope))
+                    next = node->use(node->as<OpGetFromScope>().m_scope);
+                else if (!node->uses.isEmpty())
+                    next = node->uses[0].node;
+                node = next;
+            }
+        };
+        describe("access"_s, forLog);
+    }
+    RELEASE_ASSERT_WITH_MESSAGE(index, "A variable of a scope that is in no chain is read by a function that does not hold it");
+    LValue function = holder->closureFunction ? lowCell(holder->closureFunction) : callee();
+    return m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), function, JSFunctionWithCaptures::offsetOfCaptures() + *index * sizeof(EncodedJSValue)));
+}
+
 LValue Lowering::ancestorScope(Node* scope, unsigned hops)
 {
+    if (scope->isBytecode(op_get_scope) && !scope->graph->closureScope)
+        hops -= scope->graph->dissolvedScopesOutside(hops);
     LValue current = lowCell(scope);
     for (unsigned i = 0; i < hops; ++i)
         current = m_out.loadPtr(current, m_heaps.JSScope_next);
@@ -1389,10 +1429,16 @@ void Lowering::lowerResolveScope(Node* node)
         setJSValue(node, ancestorScope(node->scopeToStartFrom, node->remainingHops));
         return;
     }
+    if (VariableSummaries* summaries = m_graph.variableSummaries(); summaries && summaries->isDissolved(m_graph.scopeIdentity(node))) {
+        setJSValue(node, lowCell(node->use(bytecode.m_scope)));
+        return;
+    }
     LValue scope = scopeToResolveFrom(node);
 
     auto walk = [&](unsigned depth) {
         RELEASE_ASSERT(depth >= node->skippedEnvironments);
+        if (depth > bytecode.m_localScopeDepth && !code().closureScope)
+            depth -= code().dissolvedScopesOutside(depth - bytecode.m_localScopeDepth);
         LValue current = scope;
         for (unsigned i = node->skippedEnvironments; i < depth; ++i)
             current = m_out.loadPtr(current, m_heaps.JSScope_next);
@@ -1481,9 +1527,25 @@ bool Lowering::isFusedWithGetFromScope(Node* node)
 void Lowering::lowerGetFromScope(Node* node)
 {
     auto bytecode = node->as<OpGetFromScope>();
+    if (Options::useAOTScopeAsCallee() && programFunctions() && !node->promotedEnvironment) {
+        if (const KnownFunction* known = programFunctions()->function(functionNumberOf(node->type)); known && known->summary && known->summary->takesScopeAsCallee && known->isDeclaration) {
+            if (Variable variable = m_graph.variableAccessedBy(node); known->summary->isInOwnVariable(variable.scope, variable.offset)) {
+                auto distance = m_graph.accessedEnvironmentDepth(node);
+                setJSValue(node, distance ? environmentAt(*distance) : lowCell(node->use(bytecode.m_scope)));
+                return;
+            }
+        }
+    }
     if (node->promotedEnvironment) {
         setJSValue(node, m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), environmentVariable(node->promotedEnvironment, node->offsetInEnvironment)));
         return;
+    }
+    if (VariableSummaries* summaries = m_graph.variableSummaries(); summaries && Options::useAOTCapturesByValue()) {
+        if (Variable variable = m_graph.variableAccessedBy(node); variable && !node->accessesLocalEnvironment && summaries->isDissolved(variable.scope)) {
+            m_graph.remark("reads-capture"_s, StringView(code().codeBlock()->identifier(bytecode.m_var).impl()));
+            setJSValue(node, heldCapture(code(), variable.scope, variable.offset, node));
+            return;
+        }
     }
     if (Node* resolveNode = node->use(bytecode.m_scope); isFusedWithGetFromScope(resolveNode)) {
         auto resolve = resolveNode->as<OpResolveScope>();
@@ -1505,6 +1567,8 @@ void Lowering::lowerGetFromScope(Node* node)
         if (!resolveNode->isBytecode(op_resolve_scope))
             return std::nullopt;
         auto resolve = resolveNode->as<OpResolveScope>();
+        if (Options::useAOTCapturesByValue())
+            return std::nullopt;
         if (isStaticClosureVarResolveType(resolve.m_resolveType))
             return resolve.m_localScopeDepth + staticClosureVarHops(resolve.m_resolveType) - resolveNode->skippedEnvironments;
         if (resolve.m_resolveType == Dynamic)
@@ -1614,6 +1678,14 @@ void Lowering::lowerGetFromScope(Node* node)
 void Lowering::lowerPutToScope(Node* node)
 {
     auto bytecode = node->as<OpPutToScope>();
+    if (Node* made = node->use(bytecode.m_value); Options::useAOTScopeAsCallee() && programFunctions() && made->isBytecode(op_new_func) && !node->promotedEnvironment) {
+        if (const KnownFunction* known = programFunctions()->function(functionNumberOf(made->type)); known && known->summary && known->isDeclaration) {
+            if (Variable variable = m_graph.variableAccessedBy(node); known->summary->isInOwnVariable(variable.scope, variable.offset)) {
+                m_graph.remark("function-is-not-stored"_s, known->executable ? known->executable->ecmaName().string() : String());
+                return;
+            }
+        }
+    }
     if (node->promotedEnvironment) {
         m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), environmentVariable(node->promotedEnvironment, node->offsetInEnvironment), lowJSValue(node->use(bytecode.m_value)));
         return;
@@ -1635,7 +1707,7 @@ void Lowering::lowerPutToScope(Node* node)
 
     if (closureOffset) {
         m_out.store64(value, scope, m_heaps.JSLexicalEnvironment_variables[*closureOffset]);
-        if (mayBe(valueNode->type, TCell))
+        if (mayBe(valueNode->type, TCell) && !(node->use(bytecode.m_scope)->isBytecode(op_create_lexical_environment) && node->use(bytecode.m_scope)->graph->environmentsAreOnStack()))
             storeBarrier(scope);
         return;
     }

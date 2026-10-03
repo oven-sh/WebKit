@@ -230,6 +230,8 @@ struct Node {
     bool isReadOnlyForCall { false };
     bool isTrusted { false };
     bool isPromoted { false };
+    bool isNeverEmpty { false };
+    bool accessesLocalEnvironment { false };
     Node* promotedEnvironment { nullptr };
     unsigned offsetInEnvironment { 0 };
     Node* scopeToStartFrom { nullptr };
@@ -377,6 +379,13 @@ public:
     const ModuleLinkage* linkage() const { return m_linkage; }
     Node* closureScope { nullptr };
     Node* closureFunction { nullptr };
+    bool closureFunctionIsItsScope { false };
+    bool inlinedEnvironmentsAreOnStack { false };
+    const FunctionSummary* summaryOfInlinedFunction { nullptr };
+    const FunctionSummary* summaryWithCaptures() const { return summaryOfInlinedFunction ? summaryOfInlinedFunction : m_summary; }
+    unsigned dissolvedScopesOutside(unsigned hops) const;
+    UncheckedKeyHashMap<Node*, Vector<std::pair<Node*, unsigned>, 4>> capturesOfClosures;
+    bool environmentsAreOnStack() const { return inlinedEnvironmentsAreOnStack || (m_summary && m_summary->environmentsAreOnStack); }
     bool isInTailPosition { true };
     bool loopSplittingIsDisabled { false };
     Vector<UnlinkedFunctionExecutable*> functionsCreated;
@@ -502,6 +511,7 @@ public:
     unsigned summaryReader() const { return m_summaryReader; }
     const void* scopeIdentity(const Node*, unsigned depth = 0);
     Variable variableAccessedBy(const Node*);
+    bool isGeneratorFrame(const void* scope) { return scope && scope == generatorFrameIdentity(); }
     void recordUntrackableVariableAccesses(VariableSummaries&);
     Type argumentTypeOnEntry(unsigned indexIncludingThis) const
     {
@@ -631,6 +641,8 @@ private:
     unsigned m_summaryReader { VariableSummaries::nobody };
     UncheckedKeyHashMap<int, Vector<Node*>, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> m_storesToFrameRegisters;
     bool m_hasStoresToFrameRegisters { false };
+    std::optional<const void*> m_generatorFrameIdentity;
+    const void* generatorFrameIdentity();
     const ModuleLinkage* m_linkage { nullptr };
     const DeclaredNamesLink* m_declaredNames { nullptr };
     BitVector m_namesAssignedTo;
@@ -682,6 +694,8 @@ void simplify(Graph&);
 void inlineCalls(Graph&, const ProgramCode&);
 void analyzeEscapes(Graph&);
 void promoteEnvironments(Graph&);
+bool mayPromoteEnvironmentsOf(Graph&);
+void recordScopes(Graph&, VariableSummaries&, const FunctionSummaryMap&, const FunctionSummary* current);
 void scalarReplaceReadOnlyObjects(Graph&);
 void replaceReadsOfConstantObjects(Graph&);
 bool isAbsentFromObjectPrototype(UniquedStringImpl*);

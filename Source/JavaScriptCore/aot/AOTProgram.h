@@ -38,6 +38,29 @@ struct FunctionSummary {
     mutable Vector<FunctionSummary*> directCallees WTF_GUARDED_BY_LOCK(directCalleesLock);
 
     bool isNonEscaping { false };
+    bool takesScopeAsCallee { false };
+    mutable std::atomic<bool> needsObject { false };
+    mutable std::atomic<bool> isComparedByIdentity { false };
+    mutable std::atomic<bool> hasItsTypeTested { false };
+    mutable std::atomic<bool> isUsedAsObject { false };
+    mutable std::atomic<bool> flowsElsewhere { false };
+    bool canHoldCaptures { false };
+    mutable bool makesDissolvedScopes { false };
+    mutable Vector<std::pair<const void*, unsigned>, 2> captures;
+    std::optional<unsigned> indexOfCapture(const void* scope, unsigned offset) const
+    {
+        size_t index = captures.find(std::pair<const void*, unsigned> { scope, offset });
+        return index == notFound ? std::nullopt : std::optional<unsigned> { index };
+    }
+    bool environmentsAreOnStack { false };
+    mutable std::atomic<const void*> scopeOfOwnVariable { nullptr };
+    mutable std::atomic<unsigned> offsetOfOwnVariable { 0 };
+    mutable std::atomic<bool> isMadeElsewhereToo { false };
+    mutable std::atomic<bool> ownVariableIsInAnotherEnvironment { false };
+    bool isInOwnVariable(const void* scope, unsigned offset) const
+    {
+        return takesScopeAsCallee && scope && !ownVariableIsInAnotherEnvironment.load(std::memory_order_relaxed) && !isMadeElsewhereToo.load(std::memory_order_relaxed) && scopeOfOwnVariable.load(std::memory_order_relaxed) == scope && offsetOfOwnVariable.load(std::memory_order_relaxed) == offset;
+    }
     mutable std::atomic<bool> escapes { false };
     uint32_t number { 0 };
     enum EscapeReason : uint32_t {
@@ -103,6 +126,7 @@ public:
     void giveUpOnAllScopes() { m_hasGivenUpOnAllScopes.store(true, std::memory_order_relaxed); }
     void recordDynamicNameRead(UniquedStringImpl*);
     bool isDynamicallyRead(UniquedStringImpl* name) const { return m_dynamicallyReadNames.contains(name); }
+    void noteInitialValueIsNeverRead(const void*);
     void noteModuleScope(const void* scope) { m_moduleScopes.add(scope); }
     bool isModuleScope(const void* scope) const { return m_moduleScopes.contains(scope); }
 
@@ -142,6 +166,17 @@ public:
     void noteObjectEscapes(Variable variable, ASCIILiteral how) { noteObjectsInVariables({ }, { { variable, how } }); }
     void noteObjectsEscapeIn(const void* scope, ASCIILiteral how);
     unsigned finishFindingConstantObjects(unsigned& neverAllocated);
+    struct ClosureMade {
+        const FunctionSummary* made { nullptr };
+        const FunctionSummary* maker { nullptr };
+        Vector<std::pair<const void*, uint64_t>, 2> scopesAndWhatIsStoredLater;
+    };
+    enum class WhyMade : uint8_t { MadeTwice, MakerCannotPromote, TooLarge, UnknownAccess, UsedOtherwise, WrittenFromInside, ReadByUnknownCode, ClosureIsUnknown, Evaluated, ReaderCannotHold, ReaderMadeTwice, ReaderNotMade, StoredLater, NotInChain, TooManyCaptures, Untracked, Bisected, MakerIsNotFunction, MakerHasNoSummary, MakerIsBody, MakerIsWrapper, MakerHasCatch, MakerIsOtherKind, Count };
+    void noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&&);
+    unsigned dissolveScopes(unsigned& closuresWithCaptures);
+    bool mayBeSearchedByName(const void* scope) const { return !scope || !m_makersOfScopes.contains(scope) || m_scopesSearchedByName.contains(scope) || m_untrackedScopes.contains(scope) || m_hasGivenUpOnAllScopes.load(std::memory_order_relaxed); }
+    bool isDissolved(const void* scope) const { return scope && !m_dissolvedScopes.isEmpty() && m_dissolvedScopes.contains(scope); }
+
     const ObjectLiteral* constantObjectIn(Variable variable) const
     {
         if (m_objectsInVariables.isEmpty())
@@ -161,6 +196,13 @@ private:
     Lock m_objectsInVariablesLock;
     UncheckedKeyHashMap<std::pair<const void*, unsigned>, ObjectInVariable> m_objectsInVariables;
     UncheckedKeyHashSet<UniquedStringImpl*> m_namesLookedUpFromUnknownScopes;
+    Lock m_scopesLock;
+    UncheckedKeyHashMap<const void*, const FunctionSummary*> m_makersOfScopes;
+    UncheckedKeyHashMap<const void*, WhyMade> m_scopesThatMustExist;
+    UncheckedKeyHashMap<std::pair<const void*, unsigned>, Vector<const FunctionSummary*, 2>> m_readersFromInside;
+    Vector<ClosureMade> m_closuresMade;
+    UncheckedKeyHashSet<const void*> m_dissolvedScopes;
+    UncheckedKeyHashSet<const void*> m_scopesSearchedByName;
 
     using ReaderSet = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
     struct Cell {
@@ -183,6 +225,8 @@ private:
     UncheckedKeyHashSet<const void*> m_untrackedScopes;
     std::atomic<bool> m_hasGivenUpOnAllScopes { false };
     UncheckedKeyHashSet<const void*> m_moduleScopes;
+    mutable Lock m_scopesWhoseInitialValueIsNeverReadLock;
+    UncheckedKeyHashSet<const void*> m_scopesWhoseInitialValueIsNeverRead;
 };
 
 struct KnownFunction {

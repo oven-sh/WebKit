@@ -111,8 +111,83 @@ bool Lowering::tryLowerAllocation(Node* node)
 {
 
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
+        if (auto* functions = programFunctions(); functions && kind == FunctionKind::Normal) {
+            if (const KnownFunction* known = functions->function(functionNumberOf(node->type)); known && known->summary && known->summary->takesScopeAsCallee) {
+                m_graph.remark("no-function-object"_s, known->executable ? known->executable->ecmaName().string() : String());
+                setJSValue(node, node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(scope)));
+                return true;
+            }
+        }
+        LValue closedOver = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(scope));
+        const KnownFunction* made = Options::useAOTCapturesByValue() && programFunctions() ? programFunctions()->function(functionNumberOf(node->type)) : nullptr;
+        if (made && made->summary && !made->summary->captures.isEmpty()) {
+            RELEASE_ASSERT(kind == FunctionKind::Normal || kind == FunctionKind::Async);
+            auto& captures = made->summary->captures;
+            auto it = m_graph.outermost().capturesOfClosures.find(node);
+            bool knowsLocalOnes = it != m_graph.outermost().capturesOfClosures.end();
+            RELEASE_ASSERT(!knowsLocalOnes || it->value.size() == captures.size());
+            m_graph.functionsCreated.append(isExpression ? code().codeBlock()->functionExpr(index) : code().codeBlock()->functionDecl(index));
+            m_graph.remark("captures-by-value"_s, String::number(captures.size()));
+            Vector<LValue, 4> values;
+            for (unsigned i = 0; i < captures.size(); ++i) {
+                if (knowsLocalOnes && it->value[i].first) {
+                    if (it->value[i].first->isPromoted)
+                        values.append(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), environmentVariable(it->value[i].first, it->value[i].second)));
+                    else
+                        values.append(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), lowCell(it->value[i].first), JSLexicalEnvironment::offsetOfVariables() + it->value[i].second * sizeof(EncodedJSValue))));
+                    continue;
+                }
+                values.append(heldCapture(code(), captures[i].first, captures[i].second));
+            }
+            unsigned slot = allocateSlots(2);
+            LBasicBlock slowCase = m_out.newBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            auto orElse = [&](LValue condition) {
+                LBasicBlock next = m_out.newBlock();
+                m_out.branch(condition, usually(next), rarely(slowCase));
+                m_out.appendTo(next);
+            };
+            LValue structureID = m_out.castToInt32(m_out.load64(slotWord(slot, 0)));
+            orElse(m_out.notZero32(structureID));
+            LValue word = m_out.loadPtr(slotWord(slot, 1));
+            orElse(m_out.notNull(word));
+            LValue allocator = m_out.loadPtr(slotWord(slot + 1, 1));
+            PatchpointValue* allocation = m_out.patchpoint(pointerType());
+            allocation->append(ConstrainedValue(allocator, ValueRep::SomeRegister));
+            allocation->numGPScratchRegisters = 1;
+            allocation->resultConstraints = { ValueRep::SomeEarlyRegister };
+            allocation->clobber(RegisterSet::macroClobberedGPRs());
+            allocation->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                CCallHelpers::JumpList outOfSpace;
+                jit.emitAllocateWithNonNullAllocator(params[0].gpr(), JITAllocator::variable(), params[1].gpr(), params.gpScratch(0), outOfSpace, CCallHelpers::SlowAllocationResult::ClearToNull);
+                outOfSpace.link(&jit);
+            });
+            LValue function = allocation;
+            orElse(m_out.notNull(function));
+            m_out.store64(m_out.bitOr(m_out.zeroExt(structureID, Int64), m_out.load64(slotWord(slot + 1, 0))), m_out.address(m_heaps.root, function, 0));
+            m_out.storePtr(m_out.intPtrZero, function, m_heaps.JSObject_butterfly);
+            m_out.storePtr(closedOver, function, m_heaps.JSCallee_scope);
+            m_out.storePtr(word, function, m_heaps.JSFunction_executableOrRareData);
+            m_out.store64(m_out.constInt64(values.size()), m_out.address(m_heaps.properties.atAnyNumber(), function, JSFunctionWithCaptures::offsetOfCount()));
+            for (unsigned i = 0; i < values.size(); ++i)
+                m_out.store64(values[i], m_out.address(m_heaps.properties.atAnyNumber(), function, JSFunctionWithCaptures::offsetOfCaptures() + i * sizeof(EncodedJSValue)));
+            mutatorFence();
+            ValueFromBlock fastResult = m_out.anchor(function);
+            m_out.jump(continuation);
+            m_out.appendTo(slowCase, continuation);
+            LValue list = m_out.lockedStackSlot(values.size() * sizeof(EncodedJSValue));
+            for (unsigned i = 0; i < values.size(); ++i)
+                m_out.store64(values[i], m_out.address(m_heaps.variables.atAnyIndex(), list, i * sizeof(EncodedJSValue)));
+            ValueFromBlock slowResult = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewFunctionWithCaptures, m_instance, closedOver,
+                m_out.constInt32(index), m_out.constInt32(isExpression | bytecodeOwner(node) << 1), list, m_out.constInt32(values.size() | static_cast<uint32_t>(kind) << 16), slotAddress(slot)));
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            setJSValue(node, m_out.phi(pointerType(), fastResult, slowResult));
+            return true;
+        }
         m_graph.functionsCreated.append(isExpression ? code().codeBlock()->functionExpr(index) : code().codeBlock()->functionDecl(index));
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewFunction, m_instance, lowCell(node->use(scope)),
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewFunction, m_instance, closedOver,
             m_out.constInt32(index), m_out.constInt32(isExpression | bytecodeOwner(node) << 1), m_out.constInt32(static_cast<uint32_t>(kind)), slotAddress(allocateSlots(2))));
         return true;
     };
@@ -414,10 +489,43 @@ bool Lowering::tryLowerAllocation(Node* node)
                 m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), environmentVariable(node, i), initialValue);
             return true;
         }
-        LValue scope = lowCell(node->use(bytecode.m_scope));
-        LValue symbolTable = lowCell(node->use(bytecode.m_symbolTable));
-        LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
+        LValue scope = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(bytecode.m_scope));
+        if (code().environmentsAreOnStack()) {
+            unsigned size = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
+            LValue initial = lowJSValue(node->use(bytecode.m_initialValue));
+            LValue result = m_out.lockedStackSlot(JSLexicalEnvironment::offsetOfVariables() + size * sizeof(EncodedJSValue));
+            storeHeader(result, fixed32(Instance::offsetOfActivationStructureID()), TypeInfoBlob(NonArray, TypeInfo(LexicalEnvironmentType, JSLexicalEnvironment::StructureFlags)).blob());
+            m_out.storePtr(m_out.intPtrZero, result, m_heaps.JSObject_butterfly);
+            m_out.storePtr(scope, result, m_heaps.JSScope_next);
+            m_out.storePtr(m_out.intPtrZero, result, m_heaps.JSSymbolTableObject_symbolTable);
+            for (unsigned i = 0; i < size; ++i)
+                m_out.store64(initial, result, m_heaps.JSLexicalEnvironment_variables[i]);
+            m_graph.remark("environment-on-stack"_s);
+            setJSValue(node, result);
+            return true;
+        }
         unsigned scopeSize = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
+        VariableSummaries* summaries = m_graph.variableSummaries();
+        bool isNameless = Options::useAOTNamelessScopes() && summaries && scopeSize < Instance::numberOfNamelessSymbolTables && !summaries->mayBeSearchedByName(m_graph.scopeIdentity(node));
+        if (isNameless) {
+            auto* table = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell());
+            SourceParseMode mode = code().codeBlock()->parseMode();
+            unsigned kind = code().isGeneratorFrame(m_graph.scopeIdentity(node)) ? 1
+                : isGeneratorOrAsyncFunctionBodyParseMode(mode) ? 2
+                : isGeneratorOrAsyncFunctionWrapperParseMode(mode) ? 4
+                : table->scopeType() == SymbolTable::CatchScope || table->scopeType() == SymbolTable::CatchScopeWithSimpleParameter ? 8
+                : table->scopeType() == SymbolTable::FunctionNameScope ? 16
+                : table->scopeType() == SymbolTable::LexicalScope ? 32 : 64;
+            if (code().codeBlock()->isBuiltinFunction())
+                kind |= 128;
+            if (&code() != &m_graph)
+                kind |= 256;
+            isNameless = (Options::aotNamelessScopeKinds() & kind) == kind;
+        }
+        if (isNameless)
+            m_graph.remark("nameless-scope"_s);
+        LValue symbolTable = isNameless ? fixedPointer(Instance::offsetOfNamelessSymbolTables() + scopeSize * sizeof(void*)) : lowCell(node->use(bytecode.m_symbolTable));
+        LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
         setJSValue(node, withHelper(Stub::HelperNewActivation, { scope, symbolTable, initialValue, m_out.constInt32(scopeSize) }, [&] {
             return vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_instance, scope, symbolTable, initialValue, m_out.constInt32(scopeSize));
         }));

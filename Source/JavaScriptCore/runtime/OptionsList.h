@@ -162,6 +162,16 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, resolveAllScopeSlotsStatically, false, Normal, "The bytecode optimizer resolves get_from_scope to a scope slot whenever it can prove the variable's location, even if that widens the instruction."_s) \
     v(Unsigned, numberOfAOTCompilerThreads, 0, Normal, "Number of threads used to compile an image. Zero means one per processor."_s) \
     v(Bool, useAOTInlineFastPathsInLoops, true, Normal, "The AOT compiler emits fast paths inline, instead of calling shared stubs, in loops and in recursive functions. Faster in hot code, at the cost of about 10% more code."_s) \
+    v(Bool, useAOTScopeAsCallee, false, Normal, "PROTOTYPE. A nested function that is only called directly has no function object: its value is the environment it closes over."_s) \
+    v(Bool, useAOTEnvironmentsOnStack, false, Normal, "PROTOTYPE, with useAOTScopeAsCallee. The environments of a function whose closures all have no object and are only called by name are in its frame."_s) \
+    v(Bool, useAOTCapturesByValue, false, Normal, "PROTOTYPE. A variable that is not assigned after the closures that read it are made is copied into them, and a scope with only such variables is never made."_s) \
+    v(Bool, useAOTNamelessScopes, false, Normal, "PROTOTYPE. A scope that no name is looked up in shares a symbol table that has no names with every scope of its size."_s) \
+    v(Unsigned, aotNamelessScopeKinds, 0xffffffff, Normal, "TEMPORARY, to bisect. 1: generator frames. 2: other scopes of bodies of generators and async functions. 4: their wrappers. 8: catch scopes. 16: function name scopes. 32: lexical scopes. 64: var scopes. 128: builtins. 256: inlined."_s) \
+    v(Unsigned, aotDissolvedScopesFrom, 0, Normal, "TEMPORARY, to bisect: only scopes whose hash modulo 65536 is at least this are dissolved."_s) \
+    v(Unsigned, aotDissolvedScopesBelow, 65536, Normal, "TEMPORARY, to bisect: and below this."_s) \
+    v(Bool, useAOTWholeFunctionSplitting, false, Normal, "PROTOTYPE. Emit two copies of a function, not only of its loops: a check that fails in the first continues in the second."_s) \
+    v(Unsigned, maximumAOTWholeFunctionSplittingSize, 1000, Normal, "With useAOTWholeFunctionSplitting: only functions with at most this many bytes of bytecode."_s) \
+    v(Unsigned, minimumAOTWholeFunctionSplittingGuards, 2, Normal, "With useAOTWholeFunctionSplitting: only functions with at least this many checks."_s) \
     v(Bool, useAOTLoopSplitting, true, Normal, "The AOT compiler emits two copies of each loop: a fast copy with no slow paths, and a generic copy that the fast copy exits to."_s) \
     v(Bool, useGuardPagesForShortFunctionExecutables, false, Normal, "For testing. Place each short-form FunctionExecutable at the end of a page followed by an unmapped page, so that reading past it crashes."_s) \
     v(OptionString, aotTypeTablePath, nullptr, Normal, "When compiling: path to the program's type table (AOT::TypeTable), which the source refers to by index (see useTypeTags)."_s) \

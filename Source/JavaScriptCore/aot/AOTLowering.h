@@ -129,6 +129,7 @@ private:
         static_cast<B3::MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
         return result;
     }
+    LValue heldCapture(Graph&, const void* scope, unsigned offset, Node* forLog = nullptr);
     LValue callee()
     {
         RELEASE_ASSERT(m_calleeSlot);

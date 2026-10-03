@@ -61,6 +61,32 @@
 #include <execinfo.h>
 #endif
 
+namespace JSC {
+
+const ClassInfo JSFunctionWithCaptures::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFunctionWithCaptures) };
+
+JSFunctionWithCaptures* JSFunctionWithCaptures::create(VM& vm, JSScope* scope, Structure* structure, uintptr_t executableOrFunctionWord, std::span<const EncodedJSValue> values)
+{
+    static_assert(sizeof(JSFunctionWithCaptures) <= static_cast<size_t>(offsetOfCaptures()));
+    auto* function = new (NotNull, allocateCell<JSFunctionWithCaptures>(vm, allocationSize(values.size()))) JSFunctionWithCaptures(vm, std::bit_cast<FunctionExecutable*>(executableOrFunctionWord), scope, structure, values.size());
+    for (unsigned i = 0; i < values.size(); ++i)
+        function->captures()[i].setWithoutWriteBarrier(JSValue::decode(values[i]));
+    function->finishCreation(vm);
+    return function;
+}
+
+template<typename Visitor>
+void JSFunctionWithCaptures::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSFunctionWithCaptures>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.appendValuesHidden(thisObject->captures(), thisObject->count());
+}
+
+DEFINE_VISIT_CHILDREN(JSFunctionWithCaptures);
+
+} // namespace JSC
+
 namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RuntimeTable);
@@ -211,6 +237,7 @@ struct Instance::Collections {
     UncheckedKeyHashMap<uint32_t, Structure*> emptyStructures;
     JSModuleLoader* loader { nullptr };
     Vector<std::pair<Structure*, Structure*>, 12> functionStructures;
+    Vector<std::pair<Structure*, Structure*>, 6> functionStructuresWithCaptures;
     UncheckedKeyHashMap<uint32_t, ScriptExecutable*> topLevelExecutables;
     String retainedString;
     UncheckedKeyHashMap<uint32_t, JSArray*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> templateObjects;
@@ -411,6 +438,12 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections->token = Symbol::create(vm);
     loader->setAOTInstance(instance);
     vm.m_aotInstances.append(instance);
+    for (unsigned size = 0; size < Instance::numberOfNamelessSymbolTables; ++size) {
+        SymbolTable* table = SymbolTable::create(vm);
+        for (unsigned i = 0; i < size; ++i)
+            table->takeNextScopeOffset();
+        instance->namelessSymbolTables[size] = table;
+    }
     return *instance;
 }
 
@@ -446,6 +479,48 @@ Structure* Instance::functionStructure(Structure* realmStructure)
     result->setAOTInstance(this);
     collections->functionStructures.append({ realmStructure, result });
     return result;
+}
+
+Structure* Instance::functionStructureWithCaptures(Structure* realmStructure)
+{
+    for (auto& [from, to] : collections->functionStructuresWithCaptures) {
+        if (from == realmStructure)
+            return to;
+    }
+    DeferGC deferGC(*vm);
+    Structure* result = Structure::create(*vm, globalObject, realmStructure->storedPrototype(), realmStructure->typeInfo(), JSFunctionWithCaptures::info());
+    result->setAOTInstance(this);
+    collections->functionStructuresWithCaptures.append({ realmStructure, result });
+    return result;
+}
+
+JSFunctionWithCaptures* Instance::tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope* scope, std::span<const EncodedJSValue> captures)
+{
+    const ExecutableRow& row = program->data().executableRow(executableIndex);
+    Structure* realmStructure = nullptr;
+    switch (static_cast<FunctionStructureKind>(row.functionStructureKind)) {
+    case FunctionStructureKind::None:
+        return nullptr;
+    case FunctionStructureKind::Arrow:
+        realmStructure = globalObject->arrowFunctionStructure(false);
+        break;
+    case FunctionStructureKind::StrictFunction:
+        realmStructure = globalObject->strictFunctionStructure(false);
+        break;
+    case FunctionStructureKind::StrictMethod:
+        realmStructure = globalObject->strictMethodStructure(false);
+        break;
+    case FunctionStructureKind::SloppyFunction:
+        realmStructure = globalObject->sloppyFunctionStructure(false);
+        break;
+    case FunctionStructureKind::SloppyMethod:
+        realmStructure = globalObject->sloppyMethodStructure(false);
+        break;
+    }
+    auto word = JSFunction::tryEncodeAOTFunctionWord(row.entry[0], row.index[0]);
+    if (!word)
+        return nullptr;
+    return JSFunctionWithCaptures::create(*vm, scope, functionStructureWithCaptures(realmStructure), *word, captures);
 }
 
 JSFunction* Instance::tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope* scope)
@@ -1432,6 +1507,10 @@ void Instance::visit(Visitor& visitor, bool newOnly)
     }
     for (auto& [from, to] : collections->functionStructures)
         visitor.appendUnbarriered(to);
+    for (auto& [from, to] : collections->functionStructuresWithCaptures)
+        visitor.appendUnbarriered(to);
+    for (JSCell* table : namelessSymbolTables)
+        visitor.appendUnbarriered(table);
     visitor.appendUnbarriered(collections->token);
     for (ScriptExecutable* executable : collections->topLevelExecutables.values())
         visitor.appendUnbarriered(executable);

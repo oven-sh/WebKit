@@ -18,6 +18,7 @@
 #include "BytecodeUseDef.h"
 #include "ImmutableIntrinsics.h"
 #include "JSCInlines.h"
+#include "JSGenerator.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "PreciseJumpTargetsInlines.h"
 #include "UnlinkedCodeBlock.h"
@@ -1039,6 +1040,44 @@ void Graph::elideUnpassedCalleeReads()
     }
 }
 
+unsigned Graph::dissolvedScopesOutside(unsigned hops) const
+{
+    if (!m_variableSummaries || !m_declaredNames)
+        return 0;
+    unsigned count = 0;
+    for (unsigned i = 0; i < hops; ++i) {
+        if (const void* scope = m_declaredNames->scopeIdentity(i); scope && m_variableSummaries->isDissolved(scope))
+            ++count;
+    }
+    return count;
+}
+
+const void* Graph::generatorFrameIdentity()
+{
+    if (m_generatorFrameIdentity)
+        return *m_generatorFrameIdentity;
+    m_generatorFrameIdentity = nullptr;
+    if (!isGeneratorOrAsyncFunctionBodyParseMode(m_codeBlock->parseMode()))
+        return nullptr;
+    VirtualRegister frame = virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Frame));
+    const void* result = nullptr;
+    for (const auto& instruction : m_codeBlock->instructions()) {
+        VirtualRegister table;
+        if (instruction->opcodeID() == op_create_lexical_environment && instruction->as<OpCreateLexicalEnvironment>().m_dst == frame)
+            table = instruction->as<OpCreateLexicalEnvironment>().m_symbolTable;
+        else if (instruction->opcodeID() == op_create_generator_frame_environment && instruction->as<OpCreateGeneratorFrameEnvironment>().m_dst == frame)
+            table = instruction->as<OpCreateGeneratorFrameEnvironment>().m_symbolTable;
+        else
+            continue;
+        JSValue constant = table.isConstant() ? m_codeBlock->getConstant(table) : JSValue();
+        if (result || !constant || !constant.isCell())
+            return nullptr;
+        result = constant.asCell();
+    }
+    m_generatorFrameIdentity = result;
+    return result;
+}
+
 const void* Graph::scopeIdentity(const Node* scope, unsigned depth)
 {
     if (scope->graph != this)
@@ -1088,6 +1127,13 @@ const void* Graph::scopeIdentity(const Node* scope, unsigned depth)
             }
             case NodeKind::Constant:
                 break;
+            case NodeKind::Argument: {
+                const void* identity = node->reg == virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Frame)) ? generatorFrameIdentity() : nullptr;
+                if (!identity || (result && result != identity))
+                    return nullptr;
+                result = identity;
+                break;
+            }
             case NodeKind::Bytecode: {
                 const void* identity = scopeIdentity(node, depth + 1);
                 if (!identity || (result && result != identity))
@@ -1110,6 +1156,29 @@ const void* Graph::scopeIdentity(const Node* scope, unsigned depth)
             return tableFor(scope->as<OpCreateGeneratorFrameEnvironment>().m_symbolTable);
         case op_get_scope:
             return fromOutside(0);
+        case op_get_from_scope: {
+            Variable restored = variableAccessedBy(scope);
+            if (!restored || restored.scope != generatorFrameIdentity())
+                return nullptr;
+            const void* result = nullptr;
+            for (BasicBlock* block : m_rpo) {
+                for (Node* store : block->nodes) {
+                    if (!store->isBytecode(op_put_to_scope))
+                        continue;
+                    Variable saved = variableAccessedBy(store);
+                    if (saved.scope != restored.scope || saved.offset != restored.offset)
+                        continue;
+                    Node* value = store->use(store->as<OpPutToScope>().m_value);
+                    if (value == scope)
+                        continue;
+                    const void* identity = scopeIdentity(value, depth + 1);
+                    if (!identity || (result && result != identity))
+                        return nullptr;
+                    result = identity;
+                }
+            }
+            return result;
+        }
         case op_resolve_scope: {
             ResolveType type = scope->as<OpResolveScope>().m_resolveType;
             if (isStaticClosureVarResolveType(type))
@@ -1812,6 +1881,19 @@ void Graph::recordKnownFunctionUses(const FunctionSummaryMap& summariesByExecuta
             auto* summary = summariesByExecutable.get(executable);
             if (!summary)
                 return;
+            Node* closedOver = use.node->use(use.node->isBytecode(op_new_func) ? use.node->as<OpNewFunc>().m_scope : use.node->as<OpNewFuncExp>().m_scope);
+            Node* storedIn = user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value ? user->use(user->as<OpPutToScope>().m_scope) : nullptr;
+            bool isInSameFrame = storedIn && storedIn != closedOver && storedIn->isBytecode(op_create_lexical_environment) && closedOver->isBytecode(op_create_lexical_environment) && !storedIn->block->isInLoop && !closedOver->block->isInLoop;
+            if (storedIn && (storedIn == closedOver || isInSameFrame)) {
+                if (isInSameFrame)
+                    summary->ownVariableIsInAnotherEnvironment.store(true, std::memory_order_relaxed);
+                Variable variable = variableAccessedBy(user);
+                const void* none = nullptr;
+                if (variable && summary->scopeOfOwnVariable.compare_exchange_strong(none, variable.scope, std::memory_order_relaxed))
+                    summary->offsetOfOwnVariable.store(variable.offset, std::memory_order_relaxed);
+                else
+                    summary->isMadeElsewhereToo.store(true, std::memory_order_relaxed);
+            }
             if (!(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value))
                 summary->valueIsUsed.store(true, std::memory_order_relaxed);
             if (isPerElementCallback(user, use) || (block->isInLoop && calleeRegisterOf(user) == use.reg))
@@ -3315,8 +3397,9 @@ private:
             if (count < std::max(1u, Options::minimumTypedAccessesForAOTFunctionSplitting()))
                 fieldAccesses.clearAll();
         }
+        bool splitsWholeFunction = Options::useAOTWholeFunctionSplitting() && !m_graph.loopSplittingIsDisabled && m_codeBlock->codeType() == FunctionCode && size <= Options::maximumAOTWholeFunctionSplittingSize()
+            && !m_codeBlock->numberOfExceptionHandlers() && !isGeneratorOrAsyncFunctionBodyParseMode(m_codeBlock->parseMode());
         bool isFullyDuplicated = !fieldAccesses.isEmpty() && !m_graph.loopSplittingIsDisabled;
-        m_graph.isFullyDuplicated = isFullyDuplicated;
         struct BlockInfo {
             Vector<unsigned, 8> guards;
             bool benefitsFromFastCopy { false };
@@ -3325,7 +3408,7 @@ private:
         };
         Vector<BlockInfo> blockInfos(m_graph.blocks.size());
         for (BasicBlock* block : m_graph.m_rpo) {
-            if (!block->isInLoop)
+            if ((!block->isInLoop && !splitsWholeFunction) || block == m_graph.root)
                 continue;
             BlockInfo& blockInfo = blockInfos[block->index];
             m_recentProperties.shrink(0);
@@ -3435,6 +3518,16 @@ private:
         }
         if (m_graph.loopSplittingIsDisabled)
             return false;
+        if (splitsWholeFunction) {
+            unsigned count = 0;
+            for (auto& info : blockInfos)
+                count += info.guards.size();
+            splitsWholeFunction = count >= Options::minimumAOTWholeFunctionSplittingGuards();
+            if (splitsWholeFunction)
+                m_graph.remark("split-function"_s);
+        }
+        isFullyDuplicated |= splitsWholeFunction;
+        m_graph.isFullyDuplicated = isFullyDuplicated;
 
         bool found = false;
         for (BasicBlock* block : m_graph.m_rpo) {
@@ -3457,7 +3550,7 @@ private:
                     found = true;
                 }
             }
-            if (!isInSplitLoop)
+            if (!isInSplitLoop && !splitsWholeFunction)
                 continue;
             for (unsigned offset : blockInfos[block->index].guards) {
                 m_guards.set(offset);
