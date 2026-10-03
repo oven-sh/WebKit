@@ -667,7 +667,7 @@ bool Lowering::tryLowerMisc(Node* node)
             setJSValue(node, lowJSValue(scope));
             return true;
         }
-        if (Node* function = code().closureFunction) {
+        if (Node* function = code().currentClosureFunction()) {
             if (node->useCount)
                 setJSValue(node, code().closureFunctionIsItsScope ? lowCell(function) : m_out.loadPtr(lowCell(function), m_heaps.JSCallee_scope));
             return true;

@@ -390,6 +390,13 @@ public:
     const ModuleLinkage* linkage() const { return m_linkage; }
     Node* closureScope { nullptr };
     Node* closureFunction { nullptr };
+    Node* currentClosureFunction() const
+    {
+        Node* function = closureFunction;
+        while (function && function->replacement)
+            function = function->replacement;
+        return function;
+    }
     bool closureFunctionIsItsScope { false };
     bool inlinedEnvironmentsAreOnStack { false };
     const FunctionSummary* summaryOfInlinedFunction { nullptr };

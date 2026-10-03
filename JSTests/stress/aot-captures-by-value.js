@@ -220,6 +220,24 @@ applies(catchesWithoutScope, captures);
 doesNotApply(catchesWithoutScope, makesEnvironment);
 for (const f of [handlerReadsVariable, handlerMakesClosure, finallyRuns])
     noInline(f);
+const keptClosures = [];
+function makesWalker() {
+    function mapLike(array, f) { const result = []; for (let i = 0; i < array.length; i++) result.push(f(array[i], i)); return result; }
+    let outermost = "first";
+    function setOutermost(v) { outermost = v; }
+    function hasDissolvedScope(copied, list, alsoCopied = copied) {
+        let count = 0;
+        return enters(list);
+        function enters(list) { count++; return hasRealScope(alsoCopied, list); }
+        function hasRealScope(own, list) {
+            keptClosures.push(() => own);
+            const result = mapLike(list, item => item + own + outermost);
+            own = own;
+            return result.join() + count;
+        }
+    }
+    return { hasDissolvedScope, setOutermost };
+}
 function looksUpFromRestoredScope(model) {
     let kept = model;
     const set = (v) => { kept = v; };
@@ -332,6 +350,11 @@ for (let i = 0; i < 100; i++) {
     check(handlerReadsVariable(i, false) + ":" + handlerReadsVariable(i, true), (i + 1) + ":" + (i + 100), "a handler that reads what a closure captures");
     check(handlerMakesClosure(i, false) + ":" + handlerMakesClosure(i, true), (i + 1) + ":" + i + "thrown", "a handler that makes a closure");
     check(finallyRuns(i, false) + ";" + finallyRuns(i, true), "try" + i + ",finally" + i + ";try" + i + ",catch" + i + ",finally" + i, "try, catch and finally");
+    {
+        const walker = makesWalker();
+        walker.setOutermost("second");
+        check(walker.hasDissolvedScope("-", ["a", "b"]), "a-second,b-second1", "an inlined closure that reads a variable beyond a scope that is never made");
+    }
     check(resultOf(asyncDeclaration(i)()), i + i, "an async function that is declared");
     check(resultOf(closureInAsync(i)())(), i + 1, "a closure that is made in an async function after an await");
 }

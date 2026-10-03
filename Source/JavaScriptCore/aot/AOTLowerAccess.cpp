@@ -1429,16 +1429,22 @@ LValue Lowering::heldCapture(Graph& graph, const void* scope, unsigned offset, N
         describe("access"_s, forLog);
     }
     RELEASE_ASSERT_WITH_MESSAGE(index, "A variable of a scope that is in no chain is read by a function that does not hold it");
-    LValue function = holder->closureFunction ? lowCell(holder->closureFunction) : callee();
+    LValue function = holder->closureFunction ? lowCell(holder->currentClosureFunction()) : callee();
     return m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), function, JSFunctionWithCaptures::offsetOfCaptures() + *index * sizeof(EncodedJSValue)));
+}
+
+static unsigned dissolvedScopesWithin(Node* scope, unsigned hops)
+{
+    while (scope->isBytecode(op_get_scope) && scope->graph->closureScope)
+        scope = scope->graph->closureScope;
+    if (scope->isBytecode(op_get_scope))
+        return scope->graph->dissolvedScopesOutside(hops);
+    return Options::useAOTCapturesByValue() ? scope->graph->dissolvedScopesAbove(scope, hops) : 0;
 }
 
 LValue Lowering::ancestorScope(Node* scope, unsigned hops)
 {
-    if (scope->isBytecode(op_get_scope) && !scope->graph->closureScope)
-        hops -= scope->graph->dissolvedScopesOutside(hops);
-    else if (Options::useAOTCapturesByValue() && !scope->isBytecode(op_get_scope))
-        hops -= scope->graph->dissolvedScopesAbove(scope, hops);
+    hops -= dissolvedScopesWithin(scope, hops);
     LValue current = lowCell(scope);
     for (unsigned i = 0; i < hops; ++i)
         current = m_out.loadPtr(current, m_heaps.JSScope_next);
@@ -1471,8 +1477,8 @@ void Lowering::lowerResolveScope(Node* node)
 
     auto walk = [&](unsigned depth) {
         RELEASE_ASSERT(depth >= node->skippedEnvironments);
-        if (depth > bytecode.m_localScopeDepth && !code().closureScope)
-            depth -= code().dissolvedScopesOutside(depth - bytecode.m_localScopeDepth);
+        if (depth > bytecode.m_localScopeDepth)
+            depth -= code().closureScope ? dissolvedScopesWithin(code().closureScope, depth - bytecode.m_localScopeDepth) : code().dissolvedScopesOutside(depth - bytecode.m_localScopeDepth);
         LValue current = scope;
         for (unsigned i = node->skippedEnvironments; i < depth; ++i)
             current = m_out.loadPtr(current, m_heaps.JSScope_next);

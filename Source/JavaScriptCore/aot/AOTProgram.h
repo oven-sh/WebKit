@@ -90,7 +90,7 @@ struct FunctionSummary {
     mutable AtomicType returnType;
     mutable Vector<const FunctionSummary*> knownTailCallees;
     mutable bool returnsBoxed { false };
-    static constexpr unsigned maxReturnValues = 8;
+    static constexpr unsigned maxReturnValues = std::min<unsigned>(8, numberOfArgumentGPRs);
     mutable std::array<AtomicType, maxReturnValues> returnValueTypes { };
     mutable std::atomic<bool> needsReturnObject { false };
     mutable std::atomic<bool> returnValueTypesChanged { false };
