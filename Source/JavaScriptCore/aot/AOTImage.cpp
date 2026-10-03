@@ -473,6 +473,22 @@ Vector<uint8_t> ImageBuilder::finish()
         uint16_t layoutID { 0 };
         uint16_t reserved { 0 };
         uint16_t inlineSlots { 0 };
+        int32_t locationOf(unsigned i) const
+        {
+            unsigned at = slots.isEmpty() ? i : slots[i];
+            unsigned inObject = layoutID ? inlineSlots : inlineCapacity;
+            if (at < inObject || !inObject)
+                return static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + at);
+            return -static_cast<int32_t>(at - inObject) - 2;
+        }
+        bool fitsInDispatchTable() const
+        {
+            for (unsigned i = 0; i < names.size(); ++i) {
+                if (!ImageDispatchEntry::fits(locationOf(i)))
+                    return false;
+            }
+            return true;
+        }
     };
     Vector<Shape> shapes(1 + (TypeTable::shared() ? TypeTable::shared()->numberOfLayouts() : 0));
     UncheckedKeyHashMap<String, uint32_t> numberOfShape;
@@ -532,7 +548,7 @@ Vector<uint8_t> ImageBuilder::finish()
             String key { std::span { reinterpret_cast<const Latin1Character*>(words.span().data()), words.size() * sizeof(uint32_t) } };
             if (auto it = numberOfShape.find(key); it != numberOfShape.end())
                 constant = it->value;
-            else if (shapes.size() > std::numeric_limits<uint16_t>::max())
+            else if (shapes.size() > std::numeric_limits<uint16_t>::max() || !shape.fitsInDispatchTable())
                 constant = 0;
             else {
                 shapes.append(WTF::move(shape));
@@ -553,12 +569,7 @@ Vector<uint8_t> ImageBuilder::finish()
             for (unsigned i = 0; i < shape.names.size(); ++i) {
                 if (!selectorIsRead.get(shape.names[i]))
                     continue;
-                unsigned at = shape.slots.isEmpty() ? i : shape.slots[i];
-                unsigned inObject = shape.layoutID ? shape.inlineSlots : shape.inlineCapacity;
-                int32_t location = at < inObject || !inObject
-                    ? static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + at)
-                    : -static_cast<int32_t>(at - inObject) - 2;
-                rows[shape.names[i]].append({ number, location });
+                rows[shape.names[i]].append({ number, shape.locationOf(i) });
             }
         }
         Vector<uint32_t> order;

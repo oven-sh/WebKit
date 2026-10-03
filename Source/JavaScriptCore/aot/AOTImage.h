@@ -127,7 +127,12 @@ struct ImageSelector {
 
 struct ImageDispatchEntry {
     static constexpr unsigned locationBits = 12;
-    static uint32_t encode(uint32_t selector, int32_t location) { return selector << locationBits | (static_cast<uint32_t>(location) & ((1u << locationBits) - 1)); }
+    static bool fits(int32_t location) { return location >= -(1 << (locationBits - 1)) && location < (1 << (locationBits - 1)); }
+    static uint32_t encode(uint32_t selector, int32_t location)
+    {
+        RELEASE_ASSERT(fits(location));
+        return selector << locationBits | (static_cast<uint32_t>(location) & ((1u << locationBits) - 1));
+    }
 };
 
 struct ImageEnvironment {
