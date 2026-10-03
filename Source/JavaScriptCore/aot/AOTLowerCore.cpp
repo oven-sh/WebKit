@@ -391,7 +391,11 @@ LValue Lowering::wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool 
 Lowering::OwnData Lowering::ownData()
 {
     LValue state = wordByIndex(nullptr, Instance::offsetOfStates(), sizeof(uint32_t), true);
-    return { m_out.aboveOrEqual(state, m_out.constIntPtr(Instance::minStateWithData)), m_out.add(m_instance, m_out.shl(state, m_out.constInt32(Instance::stateWithDataShift))) };
+    LValue distance = m_out.shl(state, m_out.constInt32(Instance::stateWithDataShift));
+    LValue hasAny = isX86_64()
+        ? m_out.aboveOrEqual(distance, m_out.constIntPtr(static_cast<uintptr_t>(Instance::minStateWithData) << Instance::stateWithDataShift))
+        : m_out.aboveOrEqual(state, m_out.constIntPtr(Instance::minStateWithData));
+    return { hasAny, m_out.add(m_instance, distance) };
 }
 
 LValue Emitter::registerOnEntry(Reg reg)

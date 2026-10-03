@@ -2156,6 +2156,9 @@ private:
             UseDefCost cost(0);
             Reg preferred;
             bool hasColdUse = false;
+#if USE(BUN_JSC_ADDITIONS)
+            bool hasFastTmp = false;
+#endif
             for (Tmp member : group.members()) {
                 m_stats[bank].numGroupTmpsCoalesced++;
                 if (isConstDef<bank>(member))
@@ -2167,6 +2170,9 @@ private:
                 if (!preferred)
                     preferred = memberData.preferredReg;
                 hasColdUse |= memberData.hasColdUse;
+#if USE(BUN_JSC_ADDITIONS)
+                hasFastTmp |= memberData.spillability == TmpData::Spillability::FastTmp;
+#endif
                 memberData.stage = Stage::Coalesced;
             }
             m_tmpWidth.setWidths(representative, useWidth, defWidth);
@@ -2177,6 +2183,10 @@ private:
             representativeData.liveRange = group.buildLiveRange();
             representativeData.preferredReg = preferred;
             representativeData.hasColdUse = hasColdUse;
+#if USE(BUN_JSC_ADDITIONS)
+            if (hasFastTmp && m_code.keepsFastTmpsFastWhenCoalesced())
+                representativeData.spillability = TmpData::Spillability::FastTmp;
+#endif
             representativeData.validate();
 
             group.m_representative = representative;

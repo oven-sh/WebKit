@@ -79,7 +79,8 @@ they save four registers on entry (`enter()`, `leave()`).
 a cache, and reloading the pointer from the frame for each was 4% of the instructions of x86-64. So no stub uses `rbx`. During a call the
 receiver, the arguments, the callee and the count leave two temporaries, which is why x86-64 has its own `findCalleeCode()`: it compares with
 memory and loads the entry last (`callTargetGPR`, `callTemporaryGPR`). With one such register the allocator has to be told what to keep in
-it, or it gives it to a value for which it only turns a load into a move: `keepDataInRegister()` makes the pointer a fast temporary.
+it, or it gives it to a value for which it only turns a load into a move: `keepDataInRegister()` makes the pointer a fast temporary, and
+asks that the group it is coalesced into stays one, because the pointer is a phi wherever a function may have to be linked first.
 
 Where a temporary is callee-saved in the C ABI, as `r12` is:
 

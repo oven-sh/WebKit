@@ -114,6 +114,7 @@ static void usePinnedRegistersDirectly(B3::Air::Code& code)
 #if CPU(X86_64)
 static void keepDataInRegister(const Graph& graph, B3::Air::Code& code)
 {
+    code.setKeepsFastTmpsFastWhenCoalesced();
     for (B3::Air::BasicBlock* block : code) {
         for (B3::Air::Inst& inst : *block) {
             if (inst.kind.opcode != B3::Air::Patch || !inst.origin || !graph.patchpointsTakingData.contains(inst.origin))
