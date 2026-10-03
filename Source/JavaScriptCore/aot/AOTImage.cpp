@@ -966,7 +966,7 @@ Vector<uint8_t> ImageBuilder::finish()
             if (regExp.pattern.is8Bit())
                 regExpText.append(asBytes(regExp.pattern.span8()));
             else {
-                regExpText.grow(WTF::roundUpToMultipleOf<2>(regExpText.size()));
+                regExpText.insertFill(regExpText.size(), 0, regExpText.size() % 2);
                 imageRegExps.last().text = safeCast<uint32_t>(regExpText.size());
                 regExpText.append(asBytes(regExp.pattern.span16()));
             }

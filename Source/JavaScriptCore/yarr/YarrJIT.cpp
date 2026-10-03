@@ -9690,7 +9690,7 @@ public:
                     continue;
                 }
                 uint32_t at = placed.ensure(reference.table.data(), [&] {
-                    bytes.grow(WTF::roundUpToMultipleOf<8>(bytes.size()));
+                    bytes.insertFill(bytes.size(), 0, WTF::roundUpToMultipleOf<8>(bytes.size()) - bytes.size());
                     uint32_t result = bytes.size();
                     bytes.append(reference.table);
                     return result;
