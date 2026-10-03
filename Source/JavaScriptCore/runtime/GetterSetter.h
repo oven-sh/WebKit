@@ -114,6 +114,15 @@ public:
         return OBJECT_OFFSETOF(GetterSetter, m_getter);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr uintptr_t getterShortcutIsCode = 1;
+    static constexpr ptrdiff_t offsetOfGetterShortcut() { return OBJECT_OFFSETOF(GetterSetter, m_getterShortcut); }
+    uintptr_t getterShortcut() const { return m_getterShortcut; }
+    bool getterReturnsVariable() const { return m_getterShortcut && !(m_getterShortcut & getterShortcutIsCode); }
+    void setVariableReturnedByGetter(WriteBarrierBase<Unknown>* variable) { m_getterShortcut = std::bit_cast<uintptr_t>(variable); }
+    void setCodeOfGetter(const void* code) { m_getterShortcut = std::bit_cast<uintptr_t>(code) | getterShortcutIsCode; }
+#endif
+
     static constexpr ptrdiff_t offsetOfSetter()
     {
         return OBJECT_OFFSETOF(GetterSetter, m_setter);
@@ -131,6 +140,13 @@ public:
 private:
     WriteBarrier<JSObject> m_getter;
     WriteBarrier<JSObject> m_setter;  
+#if USE(BUN_JSC_ADDITIONS)
+    uintptr_t m_getterShortcut { 0 };
+#endif
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+static_assert(sizeof(GetterSetter) <= 32);
+#endif
 
 } // namespace JSC

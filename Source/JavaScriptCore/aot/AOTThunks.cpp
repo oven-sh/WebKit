@@ -491,14 +491,9 @@ void generateFrontEndNewFunction(CCallHelpers& jit)
     tailCall(jit, Entry::RawNewFunction);
 }
 
-void generateFrontEndInById(CCallHelpers& jit)
+static void returnIfInHasCache(CCallHelpers& jit, JumpList& slowCases)
 {
     using HasEntry = MegamorphicCache::HasEntry;
-    JumpList slowCases;
-    enter(jit);
-    branchIfNotObjectValue(jit, argument1, slowCases);
-    loadIdentifier(jit, argument2, scratch0);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
     loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
     jit.load32(Address(argument1, JSCell::structureIDOffset()), scratch1);
 #if CPU(X86_64)
@@ -527,8 +522,38 @@ void generateFrontEndInById(CCallHelpers& jit)
     slowCases.append(jit.branch32WithMemory16(CCallHelpers::NotEqual, Address(scratch3, HasEntry::offsetOfEpoch()), scratch2));
     jit.load16(Address(scratch3, HasEntry::offsetOfResult()), scratch2);
     returnValue(jit, scratch2);
+}
+
+void generateFrontEndInById(CCallHelpers& jit)
+{
+    JumpList slowCases;
+    enter(jit);
+    branchIfNotObjectValue(jit, argument1, slowCases);
+    loadIdentifier(jit, argument2, scratch0);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
+    returnIfInHasCache(jit, slowCases);
     slowCases.link(&jit);
     tailCall(jit, Entry::RawInById);
+}
+
+void generateFrontEndInByVal(CCallHelpers& jit)
+{
+    JumpList slowCases;
+    enter(jit);
+    branchIfNotObjectValue(jit, argument1, slowCases);
+    slowCases.append(jit.branchIfNotCell(argument2));
+    Jump isSymbol = jit.branchIfSymbol(argument2);
+    slowCases.append(jit.branchIfNotString(argument2));
+    jit.loadPtr(Address(argument2, JSString::offsetOfValue()), scratch0);
+    slowCases.append(jit.branchIfRopeStringImpl(scratch0));
+    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch0, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+    Jump nameIsReady = jit.jump();
+    isSymbol.link(&jit);
+    jit.loadPtr(Address(argument2, Symbol::offsetOfSymbolImpl()), scratch0);
+    nameIsReady.link(&jit);
+    returnIfInHasCache(jit, slowCases);
+    slowCases.link(&jit);
+    tailCall(jit, Entry::RawInByVal);
 }
 
 void installOperationFrontEnds(VM& vm, void** entries)
@@ -544,6 +569,7 @@ void installOperationFrontEnds(VM& vm, void** entries)
     AOT_INSTALL_FRONT_END(PutById)
     AOT_INSTALL_FRONT_END(PutByVal)
     AOT_INSTALL_FRONT_END(InById)
+    AOT_INSTALL_FRONT_END(InByVal)
     AOT_INSTALL_FRONT_END(NewObject)
     AOT_INSTALL_FRONT_END(NewObjectLiteral)
     AOT_INSTALL_FRONT_END(CreateThis)

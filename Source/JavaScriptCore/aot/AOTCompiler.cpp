@@ -82,6 +82,77 @@ static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
     return true;
 }
 
+static bool isGetByValOnThis(UnlinkedCodeBlock* unlinkedCodeBlock)
+{
+    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->numParameters() != 2)
+        return false;
+    VirtualRegister thisRegister = virtualRegisterForArgumentIncludingThis(0);
+    std::optional<VirtualRegister> result;
+    for (const auto& instruction : unlinkedCodeBlock->instructions()) {
+        switch (instruction->opcodeID()) {
+        case op_enter:
+            break;
+        case op_to_this:
+            if (result || instruction->as<OpToThis>().m_srcDst != thisRegister)
+                return false;
+            break;
+        case op_get_by_val: {
+            auto bytecode = instruction->as<OpGetByVal>();
+            if (result || bytecode.m_base != thisRegister || bytecode.m_property != virtualRegisterForArgumentIncludingThis(1))
+                return false;
+            result = bytecode.m_dst;
+            break;
+        }
+        case op_ret:
+            return result && instruction->as<OpRet>().m_value == *result;
+        default:
+            return false;
+        }
+    }
+    return false;
+}
+
+static bool mayReturnScopeVariable(UnlinkedCodeBlock* unlinkedCodeBlock)
+{
+    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->numParameters() != 1)
+        return false;
+    VirtualRegister scope = unlinkedCodeBlock->scopeRegister();
+    std::optional<VirtualRegister> result;
+    bool hasResolvedScope = false;
+    for (const auto& instruction : unlinkedCodeBlock->instructions()) {
+        switch (instruction->opcodeID()) {
+        case op_enter:
+            break;
+        case op_get_scope:
+            if (hasResolvedScope || result || instruction->as<OpGetScope>().m_dst != scope)
+                return false;
+            break;
+        case op_resolve_scope:
+            if (hasResolvedScope || result)
+                return false;
+            hasResolvedScope = true;
+            scope = instruction->as<OpResolveScope>().m_dst;
+            break;
+        case op_get_from_scope: {
+            auto bytecode = instruction->as<OpGetFromScope>();
+            if (result || bytecode.m_scope != scope)
+                return false;
+            result = bytecode.m_dst;
+            break;
+        }
+        case op_check_tdz:
+            if (!result || instruction->as<OpCheckTdz>().m_targetVirtualRegister != *result)
+                return false;
+            break;
+        case op_ret:
+            return result && instruction->as<OpRet>().m_value == *result;
+        default:
+            return false;
+        }
+    }
+    return false;
+}
+
 static void usePinnedRegistersDirectly(B3::Air::Code& code)
 {
     using namespace B3::Air;
@@ -220,6 +291,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     graph.setVariableSummaries(variableSummaries);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     graph.startsCold = mayStartCold(unlinkedCodeBlock);
+    graph.isGetByValOnThis = isGetByValOnThis(unlinkedCodeBlock);
+    graph.mayReturnScopeVariable = mayReturnScopeVariable(unlinkedCodeBlock);
+    if (graph.isGetByValOnThis)
+        graph.remark("get-by-val-on-this"_s);
     auto declined = [&] {
         reason = graph.failureReason();
         reasonOpcode = graph.failureOpcode();
@@ -396,6 +471,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.shapes = WTF::move(graph.shapes);
     info.usesStaticImports = graph.usesStaticImports;
     info.startsCold = graph.startsCold;
+    info.isGetByValOnThis = graph.isGetByValOnThis;
+    info.returnedVariable = graph.returnedVariable;
     RELEASE_ASSERT(!info.startsCold || info.numSlots <= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots));
     info.calleeSaveRegisters = proc.calleeSaveRegisterAtOffsetList();
     for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i)

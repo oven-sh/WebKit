@@ -26,6 +26,7 @@ void cacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefo
 
 void noteCustomGetter(JSGlobalObject*, Instance&, JSObject* base, const Identifier&, const PropertySlot&);
 void cachePrivateName(VM&, Data*, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset>);
+void cacheInstanceOf(JSGlobalObject*, Data*, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype);
 
 void makePrototypeChainWatchable(VM&, JSCell* base);
 

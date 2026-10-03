@@ -1255,7 +1255,27 @@ void Lowering::lowerGetFromScope(Node* node)
     LValue scope = distance ? environmentAt(*distance) : lowCell(node->use(bytecode.m_scope));
     ResolveType type = bytecode.m_getPutInfo.resolveType();
 
+    auto hopsToEnvironment = [&]() -> std::optional<unsigned> {
+        Node* resolveNode = node->use(bytecode.m_scope);
+        if (resolveNode->isBytecode(op_get_scope))
+            return 0;
+        if (!resolveNode->isBytecode(op_resolve_scope))
+            return std::nullopt;
+        auto resolve = resolveNode->as<OpResolveScope>();
+        if (isStaticClosureVarResolveType(resolve.m_resolveType))
+            return resolve.m_localScopeDepth + staticClosureVarHops(resolve.m_resolveType) - resolveNode->skippedEnvironments;
+        if (resolve.m_resolveType == Dynamic)
+            return std::nullopt;
+        StaticVariable variable = resolveStatically(resolve.m_var, resolve.m_localScopeDepth, resolve.m_resolveType);
+        if (variable.kind != StaticVariable::Closure)
+            return std::nullopt;
+        return variable.depth - resolveNode->skippedEnvironments;
+    };
     auto loadClosureVariable = [&](unsigned offset, bool mayBeLazy) {
+        if (auto hops = m_graph.mayReturnScopeVariable ? hopsToEnvironment() : std::nullopt) {
+            m_graph.returnedVariable = { *hops, offset };
+            m_graph.remark("returns-scope-variable"_s);
+        }
         LValue value = m_out.load64(scope, m_heaps.JSLexicalEnvironment_variables[offset]);
         if (!mayBeLazy) {
             setJSValue(node, value);

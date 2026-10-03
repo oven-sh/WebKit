@@ -30,6 +30,7 @@ namespace AOT {
     v(CompareStrictEq) \
     v(CompareEq) \
     v(InById) \
+    v(InByVal) \
 
 #define FOR_EACH_AOT_STUB_INTRINSIC(v) \
     v(CharCodeAt, "charCodeAt", 1, Any) \
@@ -107,6 +108,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(ReturnFromCallWithList) \
     v(Call) \
     v(Construct) \
+    v(CallCached) \
     v(CallList) \
     v(ConstructList) \
     v(CallVarargs) \
@@ -217,6 +219,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(PutToScope) \
     v(GetByIdWellKnown) \
     v(InstanceOf) \
+    v(InstanceOfCached) \
     v(IteratorNext) \
     v(IteratorOpen) \
     v(IteratorCloseCheck) \
@@ -238,6 +241,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(FrontEndCompareStrictEq) \
     v(FrontEndCompareEq) \
     v(FrontEndInById) \
+    v(FrontEndInByVal) \
     FOR_EACH_AOT_HELPER(v) \
     v(NewArrayWithFastPath) \
     v(NewArrayBufferWithFastPath) \

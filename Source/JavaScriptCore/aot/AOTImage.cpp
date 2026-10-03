@@ -819,7 +819,7 @@ Vector<uint8_t> ImageBuilder::finish()
     size_t codeSize = 0;
     for (size_t functionIndex = 0; functionIndex < m_functions.size(); ++functionIndex) {
         auto& function = m_functions[functionIndex];
-        recordsSize += sizeof(ImageFunction) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + (identifierIndices ? 0 : sizeof(uint32_t))) + function.code.info.knownCallees.size() * sizeof(uint32_t) + function.code.info.plans.sizeInBytes();
+        recordsSize += sizeof(ImageFunction) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + (identifierIndices ? 0 : sizeof(uint32_t))) + function.code.info.knownCallees.size() * sizeof(uint32_t) + function.code.info.plans.sizeInBytes() + (function.code.info.returnedVariable ? 2 * sizeof(uint32_t) : 0);
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
         if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(functionIndex) - stubsAt.last() > reach)) {
@@ -1297,6 +1297,8 @@ Vector<uint8_t> ImageBuilder::finish()
         record.hasSiteConstants = !identifierIndices;
         record.usesStaticImports = info.usesStaticImports;
         record.startsCold = info.startsCold;
+        record.isGetByValOnThis = info.isGetByValOnThis;
+        record.returnsScopeVariable = !!info.returnedVariable;
         record.quotes = functionQuotes[index];
 
         ImageKey key = function.key;
@@ -1343,6 +1345,11 @@ Vector<uint8_t> ImageBuilder::finish()
             ImageCatchEntrypoint entrypoint { bytecodeOffset, codeOffset };
             memcpy(records + recordAt, &entrypoint, sizeof(entrypoint));
             recordAt += sizeof(entrypoint);
+        }
+        if (info.returnedVariable) {
+            uint32_t words[2] = { info.returnedVariable->first, info.returnedVariable->second };
+            memcpy(records + recordAt, words, sizeof(words));
+            recordAt += sizeof(words);
         }
         memcpy(records + recordAt, info.plans.span().data(), info.plans.sizeInBytes());
         recordAt += info.plans.sizeInBytes();

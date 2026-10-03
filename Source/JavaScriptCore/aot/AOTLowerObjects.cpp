@@ -702,6 +702,13 @@ bool Lowering::tryLowerConversion(Node* node)
         Node* constructorNode = node->use(bytecode.m_constructor);
         LValue value = lowJSValue(valueNode);
         LValue constructor = lowJSValue(constructorNode);
+        if (usesDataStubs()) {
+            m_graph.remark("cached-instanceof"_s);
+            LValue isInstance = callStub(Stub::InstanceOfCached, Int64, { { value, firstStubOperandGPR }, { constructor, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, 0)), GPRInfo::argumentGPR2 } }, { });
+            setProj(node, bytecode.m_dst, m_out.notZero64(isInstance), Rep::Boolean);
+            setProj(node, bytecode.m_hasInstanceOrPrototype, m_out.constInt64(JSValue::encode(jsUndefined())));
+            return true;
+        }
         LBasicBlock constructorIsObject = m_out.newBlock();
         LBasicBlock constructorIsNotObject = newColdBlock();
         LBasicBlock isCustom = newColdBlock();

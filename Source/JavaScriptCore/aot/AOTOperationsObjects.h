@@ -41,6 +41,7 @@ struct Slot;
     v(operationAOTValidateNewObject) \
     v(operationAOTNewTypedObject) \
     v(operationAOTCloneObject) \
+    v(operationAOTTryCopyDataProperties) \
     v(operationAOTNoteClass) \
     v(operationAOTMakeAtom) \
     v(operationAOTNewFunction) \
@@ -69,6 +70,7 @@ struct Slot;
     v(operationAOTGetPrototypeOf) \
     v(operationAOTInstanceof) \
     v(operationAOTInstanceofCustom) \
+    v(operationAOTInstanceofAndCache) \
     v(operationAOTDefaultHasInstance) \
     v(operationAOTThrowTDZError) \
     v(operationAOTThrowThisTDZError) \
@@ -118,6 +120,7 @@ struct Slot;
     v(operationAOTLinkFunction) \
     v(operationAOTConstructViaCall) \
     v(operationAOTNoteFilled) \
+    v(operationAOTCacheCallee) \
     v(operationAOTHasOwnProperty) \
     v(operationAOTEnsureData) \
     v(operationAOTCallDirectEval) \
@@ -148,6 +151,7 @@ enum class InternalFieldObjectKind : uint32_t {
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObject, JSObject*, (Instance*, uint32_t inlineCapacity, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewTypedObject, JSObject*, (Instance*, uint32_t layoutID, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (Instance*, EncodedJSValue source, uint32_t layoutID));
+JSC_DECLARE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance*, EncodedJSValue target, EncodedJSValue source, EncodedJSValue excludedSetIndex, uint32_t whose));
 JSC_DECLARE_JIT_OPERATION(operationAOTNoteClass, void, (Instance*, EncodedJSValue constructor, EncodedJSValue prototype, uint32_t layoutID));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Instance*, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot*));
@@ -192,6 +196,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTIsConstructor, size_t, (EncodedJS
 JSC_DECLARE_JIT_OPERATION(operationAOTStrcat, EncodedJSValue, (Instance*, const EncodedJSValue* values, uint32_t count));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetPrototypeOf, EncodedJSValue, (Instance*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTInstanceof, size_t, (Instance*, EncodedJSValue value, EncodedJSValue constructor));
+JSC_DECLARE_JIT_OPERATION(operationAOTInstanceofAndCache, size_t, (Instance*, EncodedJSValue value, EncodedJSValue constructor, uint32_t, Slot* cache, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationAOTInstanceofCustom, size_t, (Instance*, EncodedJSValue value, JSObject* constructor, EncodedJSValue hasInstance));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (Instance*, EncodedJSValue value, EncodedJSValue prototype));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowTDZError, void, (Instance*));
@@ -247,6 +252,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTLoadVarargs, void, (Instance*, EncodedJSVa
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructViaCall, UGPRPair, (CallFrame*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance*, void* addressInFunction));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCacheCallee, void, (Instance*, Slot* cache, JSCell* callee, uint64_t entryWord, uint32_t count));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (Instance*, JSObject*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance*, uint32_t index));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (Instance*, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));

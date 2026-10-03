@@ -94,6 +94,12 @@ public:
     static constexpr ptrdiff_t offsetOfBoundThis() { return OBJECT_OFFSETOF(JSBoundFunction, m_boundThis); }
     static constexpr ptrdiff_t offsetOfBoundArgs() { return OBJECT_OFFSETOF(JSBoundFunction, m_boundArgs); }
     static constexpr ptrdiff_t offsetOfBoundArgsLength() { return OBJECT_OFFSETOF(JSBoundFunction, m_boundArgsLength); }
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr ptrdiff_t offsetOfCachedStructureOfBoundThis() { return offsetOfBoundArgs() + sizeof(WriteBarrier<Unknown>); }
+    static constexpr ptrdiff_t offsetOfCachedLocationInBoundThis() { return offsetOfBoundArgs() + 2 * sizeof(WriteBarrier<Unknown>); }
+    void cachePropertyOfBoundThis(VM&, Structure*, int32_t location);
+    void clearCachedPropertyOfBoundThis();
+#endif
     static constexpr ptrdiff_t offsetOfNameMayBeNull() { return OBJECT_OFFSETOF(JSBoundFunction, m_nameMayBeNull); }
     static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(JSBoundFunction, m_length); }
     static constexpr ptrdiff_t offsetOfCanConstruct() { return OBJECT_OFFSETOF(JSBoundFunction, m_canConstruct); }

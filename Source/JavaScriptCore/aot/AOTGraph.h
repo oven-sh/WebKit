@@ -566,6 +566,9 @@ public:
     void setLinkage(const ModuleLinkage*, const DeclaredNamesLink*);
     bool usesStaticImports { false };
     bool startsCold { false };
+    bool isGetByValOnThis { false };
+    bool mayReturnScopeVariable { false };
+    std::optional<std::pair<uint32_t, uint32_t>> returnedVariable;
     bool m_needsFunctionObject { true };
     bool m_scopeIsModuleEnvironment { false };
     BitVector m_frameRegisters;

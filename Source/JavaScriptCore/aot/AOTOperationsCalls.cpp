@@ -372,6 +372,25 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data* data))
         data->noteFilled();
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheCallee, void, (Instance* instance, Slot* cache, JSCell* callee, uint64_t entryWord, uint32_t count))
+{
+    Slot& target = cache[1];
+    bool takesList = entryWord & 1ULL << EntryWord::isListBit;
+    uint32_t numberOfParameters = entryWord >> EntryWord::numberOfParametersShift & ((1u << EntryWord::numberOfParametersBits) - 1);
+    if (takesList || numberOfParameters > count || target.offset >= CalleeCache::maxAttempts * CalleeCache::attempt) {
+        cache[0].clear();
+        target.offset = CalleeCache::hasGivenUp;
+        return;
+    }
+    instance->noteCalleeCacheFilled(cache);
+    cache[0].structureID = StructureID();
+    cache[0].offset = Slot::isIndirect | Slot::pointerIsCell;
+    cache[0].pointer = callee;
+    target.pointer = std::bit_cast<void*>(static_cast<uintptr_t>(entryWord & EntryWord::addressMask));
+    target.offset += CalleeCache::attempt;
+    cache[0].structureID = callee->structureID();
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance* instance, uint32_t index))
 {
     instance->ensureData(index);

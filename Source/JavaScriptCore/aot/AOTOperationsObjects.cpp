@@ -111,6 +111,44 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (Instance* instance
     OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source, Instance::newObjectOf(vm, instance->emptyStructureForLayout(safeCast<uint16_t>(layoutID)))));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedSource, EncodedJSValue encodedExcludedSetIndex, uint32_t whose))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSObject* target = asObject(JSValue::decode(encodedTarget));
+    JSValue sourceValue = JSValue::decode(encodedSource);
+    if (sourceValue.isUndefinedOrNull())
+        OPERATION_RETURN(scope, true);
+    if (!sourceValue.isObject() || target->type() != FinalObjectType)
+        OPERATION_RETURN(scope, false);
+    JSObject* source = asObject(sourceValue);
+    Structure* targetStructure = target->structure();
+    Structure* sourceStructure = source->structure();
+    if (targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto() || (targetStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()))
+        OPERATION_RETURN(scope, false);
+    if (!sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
+        OPERATION_RETURN(scope, false);
+    const IdentifierSet* excluded = nullptr;
+    if (JSValue index = JSValue::decode(encodedExcludedSetIndex))
+        excluded = &callerBytecodeOwner(instance, callFrame, whose).constantIdentifierSet(index.asUInt32AsAnyInt());
+
+    DeferGC deferGC(vm);
+    auto& copied = instance->copiedProperties(targetStructure, sourceStructure, excluded);
+    Structure* last = copied.last;
+    if (!last)
+        OPERATION_RETURN(scope, false);
+    size_t oldCapacity = targetStructure->outOfLineCapacity();
+    size_t newCapacity = last->outOfLineCapacity();
+    if (oldCapacity != newCapacity) {
+        Butterfly* butterfly = target->allocateMoreOutOfLineStorage(vm, oldCapacity, newCapacity);
+        target->nukeStructureAndSetButterfly(vm, targetStructure->id(), butterfly);
+    }
+    for (auto [from, to] : copied.offsets)
+        target->putDirectOffset(vm, to, source->getDirect(from));
+    if (last != targetStructure || oldCapacity != newCapacity)
+        target->setStructure(vm, last);
+    OPERATION_RETURN(scope, true);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, Slot* cache))
 {
     AOT_OPERATION_BEGIN(instance);
@@ -888,6 +926,37 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceof, size_t, (Instance* instance, En
     OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, value, prototype));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTInstanceofAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor, uint32_t, Slot* cache, uint32_t))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue value = JSValue::decode(encodedValue);
+    JSValue constructor = JSValue::decode(encodedConstructor);
+    if (!constructor.isObject()) {
+        throwException(globalObject, scope, createTypeError(globalObject, "Right hand side of instanceof is not an object"_s));
+        OPERATION_RETURN(scope, false);
+    }
+
+    JSObject* constructorObject = asObject(constructor);
+    Structure* structureBefore = constructorObject->structure();
+    PropertySlot hasInstanceSlot(constructorObject, PropertySlot::InternalMethodType::Get);
+    bool hasHasInstance = constructorObject->getPropertySlot(globalObject, vm.propertyNames->hasInstanceSymbol, hasInstanceSlot);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    JSValue hasInstance = hasHasInstance ? hasInstanceSlot.getValue(globalObject, vm.propertyNames->hasInstanceSymbol) : jsUndefined();
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    if (hasInstance != globalObject->functionProtoHasInstanceSymbolFunction() || !constructorObject->structure()->typeInfo().implementsDefaultHasInstance())
+        OPERATION_RETURN(scope, constructorObject->hasInstance(globalObject, value, hasInstance));
+    if (!value.isObject())
+        OPERATION_RETURN(scope, false);
+    PropertySlot prototypeSlot(constructorObject, PropertySlot::InternalMethodType::Get);
+    bool hasPrototype = constructorObject->getPropertySlot(globalObject, vm.propertyNames->prototype, prototypeSlot);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    JSValue prototype = hasPrototype ? prototypeSlot.getValue(globalObject, vm.propertyNames->prototype) : jsUndefined();
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    if (hasPrototype)
+        cacheInstanceOf(globalObject, callerData(instance, callFrame), cache, constructorObject, structureBefore, hasInstanceSlot, prototypeSlot);
+    OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, value, prototype));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTInstanceofCustom, size_t, (Instance* instance, EncodedJSValue encodedValue, JSObject* constructor, EncodedJSValue encodedHasInstance))
 {
     AOT_OPERATION_BEGIN(instance);
@@ -1116,6 +1185,39 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetAdd, void, (Instance* instance, JSCell* 
     OPERATION_RETURN(scope);
 }
 
+static bool hasPropertyAndCache(JSGlobalObject* globalObject, JSObject* baseObject, UniquedStringImpl* uid)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (parseIndex(*uid) || !vm.megamorphicCache() || uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto)
+        RELEASE_AND_RETURN(scope, baseObject->hasProperty(globalObject, uid));
+
+    PropertySlot slot(baseObject, PropertySlot::InternalMethodType::HasProperty);
+    JSObject* object = baseObject;
+    bool cacheable = true;
+    while (true) {
+        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != ArrayType && object->type() != JSFunctionType && object != globalObject->arrayPrototype()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, object->getNonIndexPropertySlot(globalObject, uid, slot));
+        Structure* structure = object->structure();
+        bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
+        structure = object->structure();
+        cacheable &= structure->propertyAccessesAreCacheable();
+        if (hasProperty) {
+            if (cacheable && slot.isCacheable() && (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary()))
+                vm.megamorphicCache()->initAsHasHit(baseObject->structureID(), uid);
+            return true;
+        }
+        cacheable &= structure->propertyAccessesAreCacheableForAbsence() && structure->hasMonoProto();
+        JSValue prototype = object->getPrototypeDirect();
+        if (!prototype.isObject()) {
+            if (cacheable && !baseObject->structure()->isDictionary())
+                vm.megamorphicCache()->initAsHasMiss(baseObject->structureID(), uid);
+            return false;
+        }
+        object = asObject(prototype);
+    }
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTInById, size_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t identifierIndex))
 {
     AOT_OPERATION_BEGIN(instance);
@@ -1124,42 +1226,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInById, size_t, (Instance* instance, Encode
         throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
         OPERATION_RETURN(scope, false);
     }
-    const Identifier& identifier = identifierAt(instance, callFrame, identifierIndex);
-    UniquedStringImpl* uid = identifier.impl();
-    JSObject* baseObject = asObject(base);
-    if (parseIndex(*uid) || !vm.megamorphicCache() || uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto)
-        OPERATION_RETURN(scope, baseObject->hasProperty(globalObject, identifier));
-
-    PropertySlot slot(base, PropertySlot::InternalMethodType::HasProperty);
-    JSObject* object = baseObject;
-    bool cacheable = true;
-    while (true) {
-        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != ArrayType && object->type() != JSFunctionType && object != globalObject->arrayPrototype()) [[unlikely]]
-            OPERATION_RETURN(scope, object->getNonIndexPropertySlot(globalObject, uid, slot));
-        Structure* structure = object->structure();
-        bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
-        structure = object->structure();
-        cacheable &= structure->propertyAccessesAreCacheable();
-        if (hasProperty) {
-            if (cacheable && slot.isCacheable() && (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary()))
-                vm.megamorphicCache()->initAsHasHit(baseObject->structureID(), uid);
-            OPERATION_RETURN(scope, true);
-        }
-        cacheable &= structure->propertyAccessesAreCacheableForAbsence() && structure->hasMonoProto();
-        JSValue prototype = object->getPrototypeDirect();
-        if (!prototype.isObject()) {
-            if (cacheable && !baseObject->structure()->isDictionary())
-                vm.megamorphicCache()->initAsHasMiss(baseObject->structureID(), uid);
-            OPERATION_RETURN(scope, false);
-        }
-        object = asObject(prototype);
-    }
+    OPERATION_RETURN(scope, hasPropertyAndCache(globalObject, asObject(base), identifierAt(instance, callFrame, identifierIndex).impl()));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTInByVal, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue property))
+JSC_DEFINE_JIT_OPERATION(operationAOTInByVal, size_t, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
     AOT_OPERATION_BEGIN(instance);
-    OPERATION_RETURN(scope, CommonSlowPaths::opInByVal(globalObject, JSValue::decode(base), JSValue::decode(property)));
+    JSValue base = JSValue::decode(encodedBase);
+    JSValue property = JSValue::decode(encodedProperty);
+    if (base.isObject()) {
+        UniquedStringImpl* uid = nullptr;
+        if (property.isSymbol())
+            uid = &asSymbol(property)->privateName().uid();
+        else if (property.isString()) {
+            if (const StringImpl* impl = asString(property)->tryGetValueImpl(); impl && impl->isAtom())
+                uid = static_cast<UniquedStringImpl*>(const_cast<StringImpl*>(impl));
+        }
+        if (uid)
+            OPERATION_RETURN(scope, hasPropertyAndCache(globalObject, asObject(base), uid));
+    }
+    OPERATION_RETURN(scope, CommonSlowPaths::opInByVal(globalObject, base, property));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDelById, size_t, (Instance* instance, EncodedJSValue base, uint32_t identifierIndex, uint32_t isStrict))

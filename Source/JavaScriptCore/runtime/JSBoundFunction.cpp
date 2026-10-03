@@ -428,6 +428,23 @@ bool JSBoundFunction::canSkipNameAndLengthMaterialization(JSGlobalObject* global
     return false;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSBoundFunction::cachePropertyOfBoundThis(VM& vm, Structure* structure, int32_t location)
+{
+    static_assert(maxEmbeddedArgs == 3);
+    RELEASE_ASSERT(m_boundArgsLength == 1);
+    m_boundArgs[1].clear();
+    m_boundArgs[2].set(vm, this, jsNumber(location));
+    m_boundArgs[1].set(vm, this, structure);
+}
+
+void JSBoundFunction::clearCachedPropertyOfBoundThis()
+{
+    RELEASE_ASSERT(m_boundArgsLength == 1);
+    m_boundArgs[1].clear();
+}
+#endif
+
 template<typename Visitor>
 void JSBoundFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

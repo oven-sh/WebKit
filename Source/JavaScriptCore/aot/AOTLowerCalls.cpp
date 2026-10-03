@@ -63,10 +63,18 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
     }
     LValue list = inMemory ? storeArgumentsToScratch(arguments) : nullptr;
     LValue countInMemory = inMemory ? m_out.constIntPtr(count) : nullptr;
+    bool isCached = usesDataStubs() && !inMemory && mode != CallMode::Construct && (intrinsic != StubIntrinsic::None || m_graph.codeBlock()->codeType() == FunctionCode);
+    if (!isCached)
+        intrinsic = StubIntrinsic::None;
+    LValue cache = isCached ? slotAddress(allocateSlots(CalleeCache::numberOfSlots)) : nullptr;
 
     PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
     patchpoint->append(ConstrainedValue(callee, ValueRep::reg(calleeGPR)));
     patchpoint->append(ConstrainedValue(arguments[0], ValueRep::reg(thisGPR)));
+    if (isCached) {
+        patchpoint->append(ConstrainedValue(cache, ValueRep::reg(countGPR)));
+        m_graph.remark("cached-call"_s);
+    }
     if (inMemory) {
         patchpoint->append(ConstrainedValue(countInMemory, ValueRep::reg(argumentGPR(0))));
         patchpoint->append(ConstrainedValue(list, ValueRep::reg(argumentGPR(1))));
@@ -76,7 +84,7 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
     }
     finishCall(patchpoint, mode);
     CallSite site { mode == CallMode::TailCall && !inMemory ? StubCall::noCallSite : callSiteBitsOf(node) };
-    patchpoint->setGenerator([graph = &m_graph, count, inMemory, mode, intrinsic, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([graph = &m_graph, count, inMemory, mode, intrinsic, isCached, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         StubCalls& stubCalls = graph->stubCalls;
         if (inMemory && mode == CallMode::TailCall) {
@@ -89,7 +97,7 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
             stubCalls.call(jit, mode == CallMode::Construct ? Stub::ConstructList : Stub::CallList, site);
             return;
         }
-        Stub stub = intrinsic != StubIntrinsic::None ? Stub::CallIntrinsic : mode == CallMode::Construct ? Stub::Construct : Stub::Call;
+        Stub stub = intrinsic != StubIntrinsic::None ? Stub::CallIntrinsic : mode == CallMode::Construct ? Stub::Construct : isCached ? Stub::CallCached : Stub::Call;
         uint32_t which = intrinsic != StubIntrinsic::None ? static_cast<uint32_t>(intrinsic) : count;
         if (mode != CallMode::TailCall) {
             stubCalls.call(jit, stub, which, site);
@@ -283,6 +291,15 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     }
     LBasicBlock afterBuiltin = nullptr;
     Vector<ValueFromBlock, 2> builtinResults;
+    if (mode == CallMode::Call && (argc == 2 || argc == 3) && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::copyDataProperties) {
+        LValue isCopied = vmCall(node, pointerType(), Entry::operationAOTTryCopyDataProperties, m_instance, arguments[0], arguments[1], argc == 3 ? arguments[2] : m_out.constInt64(JSValue::encode(JSValue())), m_out.constInt32(bytecodeOwner(node)));
+        m_graph.remark("copies-data-properties"_s);
+        afterBuiltin = m_out.newBlock();
+        LBasicBlock otherwise = newColdBlock();
+        builtinResults.append(m_out.anchor(arguments[0]));
+        m_out.branch(m_out.notZero64(isCopied), usually(afterBuiltin), rarely(otherwise));
+        m_out.appendTo(otherwise);
+    } else
     if (node->builtinCalled && mode != CallMode::Construct && lowerBuiltinCall(node, calleeNode, argc, argv, arguments, hasResult, afterBuiltin, builtinResults)) {
         if (!afterBuiltin)
             return;

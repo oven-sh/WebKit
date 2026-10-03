@@ -183,6 +183,7 @@ struct Instance::Collections {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Collections);
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
+    Vector<Slot*> calleeCachesFilledSinceLastCollection;
     bool hasFieldAdditions { false };
     AssumptionWatchpoint arraysLackIsConcatSpreadable;
     AssumptionWatchpoint arraysLackInheritedElements;
@@ -194,6 +195,7 @@ struct Instance::Collections {
     UncheckedKeyHashMap<Structure*, Structure*> copyStructures;
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> convertedStructures;
     UncheckedKeyHashMap<std::pair<Structure*, const uint32_t*>, Instance::PropertyRunTarget> propertyRunTargets;
+    UncheckedKeyHashMap<std::tuple<Structure*, Structure*, const IdentifierSet*>, Instance::CopiedProperties> copiedProperties;
     struct LayoutConversionPlan {
         Vector<std::pair<PropertyOffset, uint16_t>> moves;
         Vector<const TypedLayoutTable::Field*> fields;
@@ -325,6 +327,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         receiverStructureID(Receiver::WeakSet) = idOf(globalObject->weakSetStructure());
         receiverStructureID(Receiver::RegExp) = idOf(globalObject->regExpStructure());
         receiverStructureID(Receiver::Date) = idOf(globalObject->dateStructure());
+        instance->boundFunctionStructureID = idOf(globalObject->boundFunctionStructure());
         for (IndexingType type : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
             instance->originalArrayStructureIDs[(type & (IndexingShapeMask | CopyOnWrite)) >> Instance::arrayKindShift] = idOf(globalObject->originalArrayStructureForIndexingType(type));
         if (!globalObject->isHavingABadTime()) {
@@ -1115,6 +1118,7 @@ void Data::destroy(Data* data)
     auto belongsToThisData = [&](Slot* slot) { return slot >= data->slots && slot < data->slots + data->numSlots; };
     instance.collections->transitions.removeAllMatching(belongsToThisData);
     instance.collections->transitionsSinceLastCollection.removeAllMatching(belongsToThisData);
+    instance.collections->calleeCachesFilledSinceLastCollection.removeAllMatching(belongsToThisData);
     auto removeFrom = [&](Vector<Data*>& list, unsigned Data::*index) {
         RELEASE_ASSERT(list[data->*index] == data);
         Data* last = list.takeLast();
@@ -1766,6 +1770,50 @@ Structure* Instance::literalStructure(Structure* empty, std::span<UniquedStringI
 template void Instance::visit(AbstractSlotVisitor&, bool);
 template void Instance::visit(SlotVisitor&, bool);
 
+const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.copiedProperties(target, source, excluded);
+    std::tuple key { target, source, excluded };
+    if (auto it = collections->copiedProperties.find(key); it != collections->copiedProperties.end())
+        return it->value;
+    constexpr unsigned maxSize = 4096;
+    if (collections->copiedProperties.size() >= maxSize)
+        collections->copiedProperties.clear();
+
+    CopiedProperties result;
+    Vector<UniquedStringImpl*, 16> names;
+    Structure* last = target;
+    source->forEachProperty(*vm, [&](const PropertyTableEntry& entry) {
+        if (PropertyName(entry.key()).isPrivateName() || (entry.attributes() & PropertyAttribute::DontEnum))
+            return true;
+        if (excluded && excluded->contains(entry.key()))
+            return true;
+        names.append(entry.key());
+        result.offsets.append({ entry.offset(), invalidOffset });
+        return true;
+    });
+    for (unsigned i = 0; last && i < names.size(); ++i) {
+        unsigned attributes;
+        if (isValidOffset(last->get(*vm, names[i], attributes))) {
+            if (attributes)
+                last = nullptr;
+            continue;
+        }
+        PropertyOffset offset;
+        Structure* next = Structure::addPropertyTransitionToExistingStructure(last, names[i], 0, offset);
+        if (!next) {
+            DeferredStructureTransitionWatchpointFire deferred(*vm, last);
+            next = Structure::addNewPropertyTransition(*vm, last, names[i], 0, offset, PutPropertySlot::UnknownContext, &deferred);
+        }
+        last = next->isDictionary() ? nullptr : next;
+    }
+    for (unsigned i = 0; last && i < names.size(); ++i)
+        result.offsets[i].second = last->get(*vm, names[i]);
+    result.last = last;
+    return collections->copiedProperties.add(key, WTF::move(result)).iterator->value;
+}
+
 JSObject* Instance::tryCopySlotsForSpread(JSObject* source)
 {
     if (Instance& realmStructure = ensure(globalObject); &realmStructure != this)
@@ -1818,8 +1866,18 @@ void Instance::noteFieldAddition(Structure* before, unsigned slot, Structure* af
     collections->hasFieldAdditions = true;
 }
 
+void Instance::noteCalleeCacheFilled(Slot* cache)
+{
+    collections->calleeCachesFilledSinceLastCollection.append(cache);
+}
+
 void Instance::finalizeUnconditionally(bool newOnly)
 {
+    for (Slot* cache : collections->calleeCachesFilledSinceLastCollection) {
+        if (cache->structureID && !vm->heap.isMarked(static_cast<JSCell*>(cache->pointer)))
+            cache->clear();
+    }
+    collections->calleeCachesFilledSinceLastCollection.shrink(0);
     if (std::exchange(collections->hasFieldAdditions, false))
         zeroSpan(std::span { fieldAdditions });
     zeroSpan(std::span { customGetters });
@@ -1838,6 +1896,10 @@ void Instance::finalizeUnconditionally(bool newOnly)
         if (!vm->heap.isMarked(entry.key.first) || (entry.value.last && !vm->heap.isMarked(entry.value.last)))
             return true;
         return std::ranges::any_of(entry.value.prototypeStructures, [&](StructureID id) { return !vm->heap.isMarked(id.decode()); });
+    });
+    collections->copiedProperties.removeIf([&](auto& entry) {
+        auto& [target, source, excluded] = entry.key;
+        return !vm->heap.isMarked(target) || !vm->heap.isMarked(source) || (entry.value.last && !vm->heap.isMarked(entry.value.last));
     });
     collections->transitions.appendVector(collections->transitionsSinceLastCollection);
     collections->transitionsSinceLastCollection.shrink(0);

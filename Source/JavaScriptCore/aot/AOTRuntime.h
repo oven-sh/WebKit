@@ -221,6 +221,7 @@ namespace AOT {
     v(RawCompareStrictEq) \
     v(RawCompareEq) \
     v(RawInById) \
+    v(RawInByVal) \
     v(NewArraySlowPath) \
     v(NewArrayBufferSlowPath) \
     v(NewArrayWithSpreadSlowPath) \
@@ -441,6 +442,7 @@ struct Instance {
 
     template<typename Visitor> void visit(Visitor&, bool newOnly);
     void finalizeUnconditionally(bool newOnly);
+    void noteCalleeCacheFilled(Slot*);
 
     static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Instance, runtimeTable); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Instance, vm); }
@@ -511,6 +513,11 @@ struct Instance {
         Vector<StructureID, 4> prototypeStructures;
     };
     const PropertyRunTarget& propertyRunTarget(Structure*, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames);
+    struct CopiedProperties {
+        Structure* last { nullptr };
+        Vector<std::pair<PropertyOffset, PropertyOffset>, 8> offsets;
+    };
+    const CopiedProperties& copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded);
     static PropertyOffset offsetAfter(PropertyOffset offset, unsigned inlineCapacity)
     {
         if (offset == invalidOffset)
@@ -721,6 +728,13 @@ struct FunctionMetadata {
     uint32_t flagsAndInstructionsSize;
 };
 
+struct CalleeCache {
+    static constexpr uint32_t hasGivenUp = 1;
+    static constexpr uint32_t attempt = 2;
+    static constexpr uint32_t maxAttempts = 5;
+    static constexpr unsigned numberOfSlots = 2;
+};
+
 struct SharedData {
     static constexpr unsigned maxSlots = 8192;
     static constexpr size_t size = sizeof(Data) + maxSlots * sizeof(Slot);
@@ -764,6 +778,8 @@ struct CompiledFunctionInfo {
     unsigned numSlots { 0 };
     bool usesStaticImports { false };
     bool startsCold { false };
+    bool isGetByValOnThis { false };
+    std::optional<std::pair<uint32_t, uint32_t>> returnedVariable;
     RegisterAtOffsetList calleeSaveRegisters;
     Vector<std::pair<unsigned, unsigned>> catchEntrypoints;
     Vector<StubCall> stubCalls;
@@ -813,6 +829,8 @@ struct ImageFunction {
     uint8_t hasSiteConstants : 1;
     uint8_t usesStaticImports : 1;
     uint8_t startsCold : 1;
+    uint8_t isGetByValOnThis : 1;
+    uint8_t returnsScopeVariable : 1;
 
     Convention convention() const { return { takesList ? Signature::List : Signature::Registers, numberOfParameters, true }; }
 #if CPU(ARM64)
@@ -834,7 +852,8 @@ struct ImageFunction {
     const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
     const uint32_t* knownCallees() const { return siteConstants() + (hasSiteConstants ? numSlots : 0); }
     const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(knownCallees() + numberOfKnownCallees); }
-    const uint32_t* plans() const { return reinterpret_cast<const uint32_t*>(catchEntrypoints() + numberOfCatchEntrypoints); }
+    const uint32_t* returnedVariable() const { return reinterpret_cast<const uint32_t*>(catchEntrypoints() + numberOfCatchEntrypoints); }
+    const uint32_t* plans() const { return returnedVariable() + (returnsScopeVariable ? 2 : 0); }
     static constexpr uint32_t noSuchFunction = std::numeric_limits<uint32_t>::max();
 };
 
