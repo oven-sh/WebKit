@@ -2212,6 +2212,20 @@ std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
     return typedBaseField(node->use(base), name);
 }
 
+std::optional<TypeTable::FieldType> Graph::fieldTypeReadFromLayout(const Node* read, uint32_t layoutID)
+{
+    if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
+        return std::nullopt;
+    UniquedStringImpl* name = read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl();
+    if (uint32_t tag = typeTagOf(read)) {
+        if (auto field = TypeTable::shared()->fieldOf(tag, name))
+            return field->fieldType;
+    }
+    if (auto field = TypeTable::shared()->layoutField(layoutID, name))
+        return field->fieldType;
+    return std::nullopt;
+}
+
 std::optional<TypeTable::Field> Graph::typedBaseField(const Node* base, UniquedStringImpl* name)
 {
     if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || !base->type || !isSubtype(base->type, TFinalObject))

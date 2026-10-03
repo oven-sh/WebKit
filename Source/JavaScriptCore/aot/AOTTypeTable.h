@@ -58,6 +58,18 @@ public:
                 result &= ~TShortOtherString;
             return result;
         }
+        Type typeOfStored(Type value) const
+        {
+            Type held = type();
+            Type result = value & held;
+            if (mayBe(value, TInt32))
+                result |= held & TDouble;
+            if (mayBe(value, TShortOtherString))
+                result |= held & TAtomString;
+            if (first && mayBe(value, TFinalObject))
+                result |= held & TFinalObject;
+            return result;
+        }
     };
 
     struct Field {

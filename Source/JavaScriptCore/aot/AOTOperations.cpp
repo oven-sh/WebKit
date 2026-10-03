@@ -655,6 +655,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(field, value)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTToFieldValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue, uint64_t packedFieldType, uint32_t identifierIndex))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue value = JSValue::decode(encodedValue);
+    TypedLayoutTable::FieldType fieldType { static_cast<uint16_t>(packedFieldType), static_cast<uint16_t>(packedFieldType >> 16), static_cast<uint16_t>(packedFieldType >> 32), 0 };
+    if (!TypedLayoutTable::accepts(fieldType, value)) {
+        throwTypeError(globalObject, scope, TypedLayoutTable::describeMismatch(identifierAt(instance, callFrame, identifierIndex).impl(), fieldType, value));
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
+    OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(&fieldType, value)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance* instance, JSObject* object))
 {
     AOT_OPERATION_BEGIN(instance);

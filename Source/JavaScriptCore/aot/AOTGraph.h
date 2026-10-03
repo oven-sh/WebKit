@@ -200,6 +200,8 @@ struct Node {
     Node* iteratorMethodRead { nullptr };
     bool checksNarrowedType { false };
     Type narrowedTo { TNone };
+    Node* fieldRead { nullptr };
+    TypeTable::FieldType fieldType;
     Type speculatedType { TNone };
     uint32_t likelyFunction { 0 };
     uint16_t firstLayout { 0 };
@@ -463,6 +465,7 @@ public:
     static CallOperands callOperands(const JSInstruction*);
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
     static std::optional<TypeTable::Field> typedFieldAccessedBy(const Node*);
+    static std::optional<TypeTable::FieldType> fieldTypeReadFromLayout(const Node* read, uint32_t layoutID);
     static bool isEscapingFunctionThis(const Node*);
     static std::optional<TypeTable::Field> typedBaseField(const Node* base, UniquedStringImpl* name);
     static uint16_t newObjectLayoutID(const Node*);

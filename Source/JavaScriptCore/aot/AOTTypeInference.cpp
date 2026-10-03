@@ -953,6 +953,8 @@ private:
         case NodeKind::Guard:
             return TNone;
         case NodeKind::Narrow:
+            if (node->fieldRead)
+                return node->fieldType.typeOfStored(node->uses[0].node->type);
             if (node->speculatedType) {
                 Type value = node->uses[0].node->type;
                 return mayBe(value, node->speculatedType) && !isSubtype(value, TNumber) ? value & node->speculatedType : value;

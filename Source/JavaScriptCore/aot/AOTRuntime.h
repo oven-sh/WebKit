@@ -84,6 +84,7 @@ namespace AOT {
     v(operationAOTLatin1StringEqualTo) \
     v(operationAOTGetFieldSlow) \
     v(operationAOTReadField) \
+    v(operationAOTToFieldValue) \
     v(operationAOTGetLengthSlow) \
     v(operationAOTValidateTypedObject) \
     v(operationAOTVerifyInferredType) \

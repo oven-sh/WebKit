@@ -1533,11 +1533,14 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
     for (bool changed = true; changed;) {
         changed = false;
         std::optional<NodeUsers> users;
+        Vector<Node*, 8> valuesInFields;
         for (BasicBlock* block : graph.m_rpo) {
             for (Node* node : block->nodes) {
                 if (!node->isBytecode(op_new_object) || !node->numberOfLiteralProperties || node->isElided)
                     continue;
-                if (Graph::newObjectLayoutID(node) && TypeTable::hasTypedFields())
+                uint32_t layoutID = Graph::newObjectLayoutID(node);
+                bool hasTypedFields = layoutID && TypeTable::hasTypedFields();
+                if (hasTypedFields && Options::auditAOTTypedFields())
                     continue;
                 auto& instructions = node->graph->codeBlock()->instructions();
                 auto& stores = node->graph->literalStores(node->bytecodeIndex.offset());
@@ -1559,6 +1562,18 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
                 for (auto [read, index] : onlyRead->reads) {
                     read->replacement = node->use(NewObjectPlan::registerOf(index));
                     read->isElided = true;
+                    auto fieldType = hasTypedFields ? Graph::fieldTypeReadFromLayout(read, layoutID) : std::nullopt;
+                    if (!fieldType)
+                        continue;
+                    Node* inField = graph.addNode(NodeKind::Narrow);
+                    inField->graph = read->graph;
+                    inField->bytecodeIndex = read->bytecodeIndex;
+                    inField->block = read->block;
+                    inField->fieldRead = read;
+                    inField->fieldType = *fieldType;
+                    inField->uses.append({ VirtualRegister(), read->replacement });
+                    read->replacement = inField;
+                    valuesInFields.append(inField);
                 }
                 graph.remark("scalar-replaced-object"_s);
                 for (Node* read : onlyRead->absentReads) {
@@ -1579,6 +1594,12 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
         }
         if (!changed)
             break;
+        for (Node* inField : valuesInFields) {
+            auto& nodes = inField->block->nodes;
+            size_t at = nodes.find(inField->fieldRead);
+            RELEASE_ASSERT(at != notFound);
+            nodes.insert(at, inField);
+        }
         for (BasicBlock* block : graph.m_rpo) {
             for (Node* phi : block->phis) {
                 for (auto& use : phi->uses)
