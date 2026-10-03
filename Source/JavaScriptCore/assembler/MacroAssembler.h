@@ -542,7 +542,7 @@ public:
     static constexpr unsigned BlindingModulus = 64;
     bool shouldConsiderBlinding()
     {
-        return !(random() & (BlindingModulus - 1));
+        return blindsConstants() && !(random() & (BlindingModulus - 1));
     }
 
     void move(Address src, Address dest, RegisterID scratch)

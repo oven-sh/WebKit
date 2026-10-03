@@ -10314,6 +10314,7 @@ std::optional<YarrCodeForImage> jitCompileForImage(YarrPattern& pattern, StringV
 {
 #if CPU(ARM64) || CPU(X86_64)
     CCallHelpers masm;
+    masm.disableConstantBlinding();
     YarrCodeForImage result;
     YarrCodeBlock codeBlock(nullptr);
     YarrJITDefaultRegisters jitRegisters;
