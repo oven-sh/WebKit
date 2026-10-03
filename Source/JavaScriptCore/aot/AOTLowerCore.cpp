@@ -1407,7 +1407,7 @@ void Lowering::lowerNode(Node* node)
         emitGuard(node);
         return;
     case NodeKind::Narrow:
-        if (Node* read = node->fieldRead) {
+        if (Node* origin = node->fieldOrigin) {
             Node* valueNode = node->uses[0].node;
             TypeTable::FieldType fieldType = node->fieldType;
             LValue value = lowJSValue(valueNode);
@@ -1428,7 +1428,7 @@ void Lowering::lowerNode(Node* node)
             m_out.appendTo(otherwise);
             uint64_t packedFieldType = static_cast<uint64_t>(fieldType.packedKinds()) | static_cast<uint64_t>(fieldType.first) << 16 | static_cast<uint64_t>(fieldType.last) << 32;
             m_graph.wideIntegerConstants.add(static_cast<int64_t>(packedFieldType));
-            ValueFromBlock converted = m_out.anchor(vmCall(read, Int64, Entry::operationAOTToFieldValue, m_instance, value, m_out.constInt64(packedFieldType), m_out.constInt32(numberOf(read, read->as<OpGetById>().m_property))));
+            ValueFromBlock converted = m_out.anchor(vmCall(origin, Int64, Entry::operationAOTToFieldValue, m_instance, value, m_out.constInt64(packedFieldType), m_out.constInt32(numberOf(origin, node->fieldIdentifier))));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             setJSValue(node, m_out.phi(Int64, inField, converted));

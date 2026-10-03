@@ -1417,6 +1417,29 @@ std::optional<NodeUsers::OnlyRead> NodeUsers::isOnlyRead(Node* object, std::span
     return result;
 }
 
+static Node* addValueInField(Graph& graph, Node* origin, unsigned identifier, TypeTable::FieldType fieldType, Node* value)
+{
+    Node* inField = graph.addNode(NodeKind::Narrow);
+    inField->graph = origin->graph;
+    inField->bytecodeIndex = origin->bytecodeIndex;
+    inField->block = origin->block;
+    inField->fieldOrigin = origin;
+    inField->fieldIdentifier = identifier;
+    inField->fieldType = fieldType;
+    inField->uses.append({ VirtualRegister(), value });
+    return inField;
+}
+
+static void insertBeforeOrigins(const Vector<Node*, 8>& valuesInFields)
+{
+    for (Node* inField : valuesInFields) {
+        auto& nodes = inField->block->nodes;
+        size_t at = nodes.find(inField->fieldOrigin);
+        RELEASE_ASSERT(at != notFound);
+        nodes.insert(at, inField);
+    }
+}
+
 static std::optional<MultiValueReturnTable::Names> literalNames(Node* node)
 {
     auto& instructions = node->graph->codeBlock()->instructions();
@@ -1453,6 +1476,15 @@ void recordReturnedLiterals(Graph& graph)
             Node* object = node->use(node->as<OpRet>().m_value);
             if (!object->isBytecode(op_new_object) || !object->numberOfLiteralProperties || object->numberOfLiteralProperties > FunctionSummary::maxReturnValues)
                 return;
+            if (Graph::newObjectLayoutID(object) && TypeTable::hasTypedFields()) {
+                if (Options::auditAOTTypedFields())
+                    return;
+                auto* handlerOfReturn = code->handlerForBytecodeIndex(node->bytecodeIndex);
+                for (unsigned store : graph.literalStores(object->bytecodeIndex.offset())) {
+                    if (code->handlerForBytecodeIndex(BytecodeIndex(store)) != handlerOfReturn)
+                        return;
+                }
+            }
             if (!users)
                 users.emplace(graph);
             if (users->of(object).size() != 1)
@@ -1472,6 +1504,7 @@ void planMultiValueReturns(Graph& graph)
     if (!multiValueReturnTable())
         return;
     if (auto* names = registerReturnValuesOf(graph.codeBlock(), graph.summary())) {
+        Vector<Node*, 8> valuesInFields;
         for (BasicBlock* block : graph.m_rpo) {
             for (Node* node : block->nodes) {
                 if (!node->isBytecode(op_ret) || node->graph != &graph)
@@ -1479,8 +1512,24 @@ void planMultiValueReturns(Graph& graph)
                 Node* object = node->use(node->as<OpRet>().m_value);
                 RELEASE_ASSERT(object->isBytecode(op_new_object) && object->numberOfLiteralProperties == names->size());
                 object->isElided = true;
+                auto& instructions = graph.codeBlock()->instructions();
+                auto& stores = graph.literalStores(object->bytecodeIndex.offset());
+                for (unsigned i = 0; i < names->size(); ++i) {
+                    auto fieldType = Graph::fieldTypeInLayout(Graph::newObjectLayoutID(object), names->at(i));
+                    if (!fieldType)
+                        continue;
+                    for (auto& use : object->uses) {
+                        if (use.reg != NewObjectPlan::registerOf(i))
+                            continue;
+                        Node* inField = addValueInField(graph, node, instructions.at(stores[i])->as<OpPutById>().m_property, *fieldType, use.node);
+                        inField->type = fieldType->typeOfStored(use.node->type);
+                        use.node = inField;
+                        valuesInFields.append(inField);
+                    }
+                }
             }
         }
+        insertBeforeOrigins(valuesInFields);
         graph.numberOfRegisterReturnValues = names->size();
     }
     std::optional<NodeUsers> users;
@@ -1565,15 +1614,8 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
                     auto fieldType = hasTypedFields ? Graph::fieldTypeReadFromLayout(read, layoutID) : std::nullopt;
                     if (!fieldType)
                         continue;
-                    Node* inField = graph.addNode(NodeKind::Narrow);
-                    inField->graph = read->graph;
-                    inField->bytecodeIndex = read->bytecodeIndex;
-                    inField->block = read->block;
-                    inField->fieldRead = read;
-                    inField->fieldType = *fieldType;
-                    inField->uses.append({ VirtualRegister(), read->replacement });
-                    read->replacement = inField;
-                    valuesInFields.append(inField);
+                    read->replacement = addValueInField(graph, read, read->as<OpGetById>().m_property, *fieldType, read->replacement);
+                    valuesInFields.append(read->replacement);
                 }
                 graph.remark("scalar-replaced-object"_s);
                 for (Node* read : onlyRead->absentReads) {
@@ -1594,12 +1636,7 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
         }
         if (!changed)
             break;
-        for (Node* inField : valuesInFields) {
-            auto& nodes = inField->block->nodes;
-            size_t at = nodes.find(inField->fieldRead);
-            RELEASE_ASSERT(at != notFound);
-            nodes.insert(at, inField);
-        }
+        insertBeforeOrigins(valuesInFields);
         for (BasicBlock* block : graph.m_rpo) {
             for (Node* phi : block->phis) {
                 for (auto& use : phi->uses)

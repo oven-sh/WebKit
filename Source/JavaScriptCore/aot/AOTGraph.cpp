@@ -2226,6 +2226,15 @@ std::optional<TypeTable::FieldType> Graph::fieldTypeReadFromLayout(const Node* r
     return std::nullopt;
 }
 
+std::optional<TypeTable::FieldType> Graph::fieldTypeInLayout(uint32_t layoutID, UniquedStringImpl* name)
+{
+    if (!layoutID || !Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
+        return std::nullopt;
+    if (auto field = TypeTable::shared()->layoutField(layoutID, name))
+        return field->fieldType;
+    return std::nullopt;
+}
+
 std::optional<TypeTable::Field> Graph::typedBaseField(const Node* base, UniquedStringImpl* name)
 {
     if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || !base->type || !isSubtype(base->type, TFinalObject))

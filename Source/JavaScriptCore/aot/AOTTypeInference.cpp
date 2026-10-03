@@ -921,6 +921,8 @@ private:
         RELEASE_ASSERT(object->isBytecode(op_new_object) && object->numberOfLiteralProperties == names->size());
         for (unsigned i = 0; i < names->size(); ++i) {
             Type type = object->use(NewObjectPlan::registerOf(i))->type;
+            if (auto fieldType = Graph::fieldTypeInLayout(Graph::newObjectLayoutID(object), names->at(i)))
+                type = fieldType->typeOfStored(type);
             Type old = summary->returnValueTypes[i].join(type);
             if ((old | type) != old)
                 summary->returnValueTypesChanged.store(true, std::memory_order_relaxed);
@@ -1050,7 +1052,7 @@ private:
         case NodeKind::Guard:
             return TNone;
         case NodeKind::Narrow:
-            if (node->fieldRead)
+            if (node->fieldOrigin)
                 return node->fieldType.typeOfStored(node->uses[0].node->type);
             if (node->speculatedType) {
                 Type value = node->uses[0].node->type;
