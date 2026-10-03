@@ -1537,6 +1537,8 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
             for (Node* node : block->nodes) {
                 if (!node->isBytecode(op_new_object) || !node->numberOfLiteralProperties || node->isElided)
                     continue;
+                if (Graph::newObjectLayoutID(node) && TypeTable::hasTypedFields())
+                    continue;
                 auto& instructions = node->graph->codeBlock()->instructions();
                 auto& stores = node->graph->literalStores(node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= node->numberOfLiteralProperties);
