@@ -4004,8 +4004,10 @@ private:
     {
         RELEASE_ASSERT(useKind == StringObjectUse || useKind == StringOrStringObjectUse);
 
+        // The realm of the conversion, whose String.prototype canOptimizeStringObjectAccess() has the caller watch. (The node may come
+        // from an inlined function of another realm, whose String.prototype nobody here watches.)
         StructureSet set;
-        set.add(m_graph.globalObjectFor(node->origin.semantic)->stringObjectStructure());
+        set.add(m_graph.globalObjectFor(origin.semantic)->stringObjectStructure());
         if (useKind == StringOrStringObjectUse)
             set.add(vm().stringStructure.get());
 
