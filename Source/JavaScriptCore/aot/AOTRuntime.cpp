@@ -625,7 +625,7 @@ SUPPRESS_ASAN std::optional<FrameAndPC> innermostFrame(void* machineFrame, void*
         return stack.contains(const_cast<FrameRecord*>(record)) && !(std::bit_cast<uintptr_t>(record) % sizeof(void*));
     };
     auto* record = static_cast<const FrameRecord*>(machineFrame);
-    if (machineLinkRegister && machineFrame != topCallFrame && isValid(record) && removeCodePtrTag(record->returnAddress) != machineLinkRegister
+    if (machineLinkRegister && isValid(record) && removeCodePtrTag(record->returnAddress) != machineLinkRegister
         && classifyAddress(machineLinkRegister).kind != ImageAddressInfo::NotInImage)
         return FrameAndPC { machineFrame, machineLinkRegister };
     void* pc = machinePC;

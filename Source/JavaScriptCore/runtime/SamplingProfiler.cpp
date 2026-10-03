@@ -486,7 +486,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 
             void* framePC = machinePC;
 #if ENABLE(AOT)
-            if (callFrame != machineFrame && AOT::hasCode()) {
+            if (AOT::hasCode() && (callFrame != machineFrame || AOT::classifyAddress(machinePC).kind == AOT::ImageAddressInfo::NotInImage)) {
                 if (auto innermost = AOT::innermostFrame(machineFrame, machinePC, machineLinkRegister, callFrame, m_jscExecutionThread->stack())) {
                     callFrame = static_cast<CallFrame*>(innermost->frame);
                     framePC = innermost->pc;
@@ -697,6 +697,25 @@ void SamplingProfiler::processUnverifiedStackTraces()
 
             if (alreadyHasExecutable)
                 return;
+
+#if ENABLE(AOT)
+            if (auto* function = uncheckedDowncast<JSFunction>(calleeCell); function->hasAOTFunctionWord()) {
+                AOT::FunctionRef compiled;
+                if (!m_vm.m_aotInstances.isEmpty())
+                    compiled = AOT::FunctionRef { m_vm.m_aotInstances[0], function->aotFunctionIndex() };
+                if (!compiled || !compiled.hasExecutable()) {
+                    stackFrame.frameType = FrameType::Unknown;
+                    return;
+                }
+                stackFrame.frameType = FrameType::Executable;
+                stackFrame.unresolvedAOTFunction = compiled;
+                if (compiled.executableIfExists())
+                    resolveAOTFrame(stackFrame);
+                else
+                    m_hasUnresolvedAOTFrames = true;
+                return;
+            }
+#endif
 
             ExecutableBase* executable = uncheckedDowncast<JSFunction>(calleeCell)->executable();
             if (!executable) {
