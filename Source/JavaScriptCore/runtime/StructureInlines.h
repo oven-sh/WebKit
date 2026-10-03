@@ -251,7 +251,8 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     ASSERT(!JSC::isValidOffset(get(vm, propertyName)));
 
     checkConsistency();
-    if (attributes & PropertyAttribute::DontEnum || propertyName.isSymbol())
+    bool isSymbol = propertyName.isSymbol();
+    if (attributes & PropertyAttribute::DontEnum || isSymbol)
         setIsQuickPropertyAccessAllowedForEnumeration(false);
     if (attributes & PropertyAttribute::ReadOnly)
         setContainsReadOnlyProperties();
@@ -279,7 +280,12 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     ASSERT_UNUSED(offset, offset == newOffset);
     UNUSED_VARIABLE(attribute);
     auto newMaxOffset = std::max(newOffset, maxOffset());
-    
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (isSymbol) [[unlikely]]
+        didAddSymbolKey(vm, static_cast<SymbolImpl&>(*rep));
+#endif
+
     func(locker, newOffset, newMaxOffset);
     
     ASSERT(maxOffset() == newMaxOffset);
@@ -411,7 +417,8 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     ASSERT(!JSC::isValidOffset(get(vm, propertyName)));
 
     checkConsistency();
-    if (newAttributes & PropertyAttribute::DontEnum || propertyName.isSymbol())
+    bool isSymbol = propertyName.isSymbol();
+    if (newAttributes & PropertyAttribute::DontEnum || isSymbol)
         setIsQuickPropertyAccessAllowedForEnumeration(false);
     if (newAttributes & PropertyAttribute::ReadOnly)
         setContainsReadOnlyProperties();
@@ -437,6 +444,11 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     ASSERT_UNUSED(offset, offset == newOffset);
     UNUSED_VARIABLE(attributes);
     auto newMaxOffset = std::max(newOffset, maxOffset());
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (isSymbol) [[unlikely]]
+        didAddSymbolKey(vm, static_cast<SymbolImpl&>(*rep));
+#endif
 
     func(locker, newOffset, newMaxOffset);
 
@@ -481,7 +493,7 @@ inline void Structure::pin(const AbstractLocker&, VM& vm, PropertyTable* table)
     setIsPinnedPropertyTable(true);
     setPropertyTable(vm, table);
     clearPreviousID();
-    m_transitionPropertyName = nullptr;
+    setTransitionPropertyName(nullptr);
 }
 
 ALWAYS_INLINE bool Structure::shouldConvertToPolyProto(const Structure* a, const Structure* b)

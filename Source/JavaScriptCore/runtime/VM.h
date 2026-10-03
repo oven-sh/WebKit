@@ -150,6 +150,9 @@ class DeferredWorkTimer;
 class PinballCompletion;
 class RegExp;
 class RegExpCache;
+#if USE(BUN_JSC_ADDITIONS)
+class SymbolPropertyKeys;
+#endif
 class Register;
 #if ENABLE(SAMPLING_PROFILER)
 class SamplingProfiler;
@@ -974,6 +977,9 @@ public:
     CrossTaskToken* crossTaskToken() const { return m_crossTaskToken.get(); }
     JS_EXPORT_PRIVATE void setCrossTaskToken(RefPtr<CrossTaskToken>&&);
     std::unique_ptr<RegExpCache> m_regExpCache;
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<SymbolPropertyKeys> m_symbolPropertyKeys;
+#endif
     BumpPointerAllocator m_regExpAllocator;
     ConcurrentJSLock m_regExpAllocatorLock;
 
@@ -1014,6 +1020,9 @@ public:
     JS_EXPORT_PRIVATE bool hasLanguageChange();
 
     RegExpCache* regExpCache() LIFETIME_BOUND { return m_regExpCache.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    SymbolPropertyKeys& symbolPropertyKeys() LIFETIME_BOUND { return *m_symbolPropertyKeys; }
+#endif
 
     bool isCollectorBusyOnCurrentThread() { return heap.currentThreadIsDoingGCWork(); }
 

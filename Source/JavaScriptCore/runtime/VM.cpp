@@ -136,6 +136,9 @@
 #include "StructureInlines.h"
 #include "SubspaceInlines.h"
 #include "SymbolInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "SymbolPropertyKeys.h"
+#endif
 #include "SymbolTableInlines.h"
 #include "TerminationDeadline.h"
 #include "TestRunnerUtils.h"
@@ -278,6 +281,9 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     , wasmGCStructureMap(*this)
 #endif
     , m_regExpCache(makeUnique<RegExpCache>())
+#if USE(BUN_JSC_ADDITIONS)
+    , m_symbolPropertyKeys(makeUnique<SymbolPropertyKeys>())
+#endif
     , m_compactVariableMap(adoptRef(*new CompactTDZEnvironmentMap))
     , m_syncResumeCallCache(makeUniqueRef<MicrotaskCallCache>())
     , m_codeCache(makeUnique<CodeCache>())
@@ -712,6 +718,9 @@ VM::~VM()
 
     delete clientData;
     m_regExpCache.reset();
+#if USE(BUN_JSC_ADDITIONS)
+    m_symbolPropertyKeys.reset();
+#endif
 
 #if ENABLE(DFG_JIT)
     for (unsigned i = 0; i < m_scratchBuffers.size(); ++i)

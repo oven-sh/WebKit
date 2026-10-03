@@ -33,6 +33,9 @@
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
 #include "PropertyTable.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "SymbolPropertyKeys.h"
+#endif
 #include "WebAssemblyGCStructure.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/NeverDestroyed.h>
@@ -602,7 +605,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     }
 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
-    transition->m_transitionPropertyName = propertyName.uid();
+    transition->setTransitionPropertyName(propertyName.uid());
     transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyAddition);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
@@ -699,7 +702,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     }
 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
-    transition->m_transitionPropertyName = propertyName.uid();
+    transition->setTransitionPropertyName(propertyName.uid());
     transition->setTransitionKind(TransitionKind::PropertyDeletion);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
     transition->setMaxOffset(vm, structure->maxOffset());
@@ -844,7 +847,7 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
     }
 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
-    transition->m_transitionPropertyName = propertyName.uid();
+    transition->setTransitionPropertyName(propertyName.uid());
     transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyAttributeChange);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
@@ -1145,8 +1148,19 @@ void Structure::pinForCaching(const AbstractLocker&, VM& vm, PropertyTable* tabl
 {
     setIsPinnedPropertyTable(true);
     setPropertyTable(vm, table);
-    m_transitionPropertyName = nullptr;
+    setTransitionPropertyName(nullptr);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Structure::didAddSymbolKey(VM& vm, SymbolImpl& uid)
+{
+    // An eden collection visits this structure again only if it is remembered, and visitChildren
+    // is what roots the symbol keys of a pinned table. A young Symbol cell added as a key of an
+    // old dictionary would otherwise die in the next eden collection.
+    vm.writeBarrier(this);
+    vm.symbolPropertyKeys().noteKey(vm, uid);
+}
+#endif
 
 void Structure::allocateRareData(VM& vm)
 {
@@ -1455,10 +1469,28 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     visitor.append(thisObject->m_previousOrRareData);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A symbol key is held as its SymbolImpl; the Symbol cell behind it lives as long as a live
+    // structure holds the key (see SymbolPropertyKeys.h). The key of the transition is the one
+    // the chain rebuilds the table from; a pinned table is the only holder of its keys.
+    if (thisObject->transitionPropertyNameIsSymbol()) [[unlikely]]
+        visitor.addOpaqueRoot(thisObject->m_transitionPropertyName.get());
+#endif
+
     if (thisObject->isPinnedPropertyTable() || thisObject->protectPropertyTableWhileTransitioning()) {
         // NOTE: This can interleave in pin(), in which case it may see a null property table.
         // That's fine, because then the barrier will fire and we will scan this again.
         visitor.append(thisObject->m_propertyTableUnsafe);
+#if USE(BUN_JSC_ADDITIONS)
+        // The table is only mutated under this structure's lock, which is held here.
+        if (PropertyTable* table = thisObject->m_propertyTableUnsafe.get(); table && table->hasSymbolKeys()) [[unlikely]] {
+            table->forEachProperty([&](auto& entry) {
+                if (entry.key()->isSymbol())
+                    visitor.addOpaqueRoot(entry.key());
+                return IterationStatus::Continue;
+            });
+        }
+#endif
     } else if (visitor.vm().isAnalyzingHeap())
         visitor.append(thisObject->m_propertyTableUnsafe);
     else if (thisObject->m_propertyTableUnsafe)
@@ -1749,7 +1781,7 @@ Structure* Structure::setBrandTransition(VM& vm, Structure* structure, Symbol* b
 
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory());
-    transition->m_transitionPropertyName = &brand->uid();
+    transition->setTransitionPropertyName(&brand->uid());
     transition->setTransitionPropertyAttributes(0);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
     transition->setMaxOffset(vm, structure->maxOffset());

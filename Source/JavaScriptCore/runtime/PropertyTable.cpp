@@ -79,6 +79,9 @@ PropertyTable::PropertyTable(VM& vm, const PropertyTable& other)
     , m_indexVector(allocateIndexVector(other.isCompact(), other.m_indexSize))
     , m_keyCount(other.m_keyCount)
     , m_deletedCount(other.m_deletedCount)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_hasSymbolKeys(other.m_hasSymbolKeys)
+#endif
 {
     ASSERT(isPowerOfTwo(m_indexSize));
     ASSERT(isCompact() == other.isCompact());
@@ -102,6 +105,9 @@ PropertyTable::PropertyTable(VM& vm, unsigned initialCapacity, const PropertyTab
     , m_indexVector()
     , m_keyCount(0)
     , m_deletedCount(0)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_hasSymbolKeys(other.m_hasSymbolKeys)
+#endif
 {
     ASSERT(isPowerOfTwo(m_indexSize));
     ASSERT(initialCapacity >= other.m_keyCount);
