@@ -230,6 +230,7 @@ private:
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
     AOT::Instance* m_aotInstance { nullptr };
+    AOT::Instance* m_onlyAOTInstance { nullptr };
     CallFrame* m_aotAdapterSkippedAtTop { nullptr };
     bool m_topEntryFrameIsEmpty { false };
 };

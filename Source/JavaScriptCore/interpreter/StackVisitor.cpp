@@ -88,6 +88,8 @@ static CallFrame* skipStubFrames(CallFrame* callFrame, EntryFrame*& entryFrame, 
 
 StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 {
+    if (vm.m_aotInstances.size() == 1)
+        m_onlyAOTInstance = vm.m_aotInstances[0];
     CallFrame* topFrame = nullptr;
     if (startFrame) {
         ASSERT(!vm.topCallFrame || static_cast<void*>(vm.topCallFrame) != vm.topEntryFrame);
@@ -299,7 +301,7 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
 #endif
     m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
     if (!m_aotInstance)
-        m_aotInstance = AOT::instanceForFrame(callFrame);
+        m_aotInstance = m_onlyAOTInstance ? m_onlyAOTInstance : AOT::instanceForFrame(callFrame);
     m_frame.m_frameAOTFunction = { m_aotInstance, index };
     auto location = m_frame.m_frameAOTFunction.locationForReturnAddress(returnPC);
     m_frame.m_aotFunction = location.function;
