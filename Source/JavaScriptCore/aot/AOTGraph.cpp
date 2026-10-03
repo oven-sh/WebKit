@@ -1292,6 +1292,219 @@ bool Graph::methodMayBeOverridden(ASCIILiteral className, Node* read)
     return all.get()->contains(makeString(className, '.', text)) || all.get()->contains(makeString(className, ".*"_s));
 }
 
+PropertyEffect Graph::propertyEffectOf(const Node* node)
+{
+    switch (node->kind) {
+    case NodeKind::Constant:
+    case NodeKind::ConstantCell:
+    case NodeKind::Intrinsic:
+    case NodeKind::LinkTimeConstant:
+    case NodeKind::Argument:
+    case NodeKind::Phi:
+    case NodeKind::Proj:
+    case NodeKind::GetStack:
+    case NodeKind::SetStack:
+    case NodeKind::Narrow:
+        return PropertyEffect::None;
+    case NodeKind::Guard:
+        return PropertyEffect::Arbitrary;
+    case NodeKind::Bytecode:
+        break;
+    }
+    if (node->guard)
+        return PropertyEffect::Arbitrary;
+    auto isVariable = [](ResolveType type) {
+        return type == ClosureVar || type == ResolvedClosureVar || type == LazyClosureVar || type == ResolvedLazyClosureVar || type == ModuleVar || type == GlobalLexicalVar;
+    };
+    auto unlessOperandMayBeObject = [&] {
+        for (auto& use : node->uses) {
+            if (!use.node->type || mayBe(use.node->type, TAnyObject))
+                return PropertyEffect::OnSlowPathOnly;
+        }
+        return PropertyEffect::None;
+    };
+    switch (node->opcode) {
+    case op_enter:
+    case op_nop:
+    case op_mov:
+    case op_type_tag:
+    case op_check_type:
+    case op_check_tdz:
+    case op_check_traps:
+    case op_loop_hint:
+    case op_get_scope:
+    case op_get_parent_scope:
+    case op_argument_count:
+    case op_get_argument:
+    case op_to_this:
+    case op_typeof:
+    case op_typeof_is_undefined:
+    case op_typeof_is_object:
+    case op_typeof_is_function:
+    case op_not:
+    case op_unsigned:
+    case op_stricteq:
+    case op_nstricteq:
+    case op_jstricteq:
+    case op_jnstricteq:
+    case op_below:
+    case op_beloweq:
+    case op_jbelow:
+    case op_jbeloweq:
+    case op_jmp:
+    case op_jtrue:
+    case op_jfalse:
+    case op_jeq_null:
+    case op_jneq_null:
+    case op_jundefined_or_null:
+    case op_jnundefined_or_null:
+    case op_jeq_ptr:
+    case op_jneq_ptr:
+    case op_eq_null:
+    case op_neq_null:
+    case op_is_undefined_or_null:
+    case op_is_boolean:
+    case op_is_number:
+    case op_is_big_int:
+    case op_is_object:
+    case op_is_callable:
+    case op_is_constructor:
+    case op_is_cell_with_type:
+    case op_is_empty:
+    case op_switch_imm:
+    case op_switch_char:
+    case op_switch_string:
+    case op_new_object:
+    case op_new_array:
+    case op_new_array_buffer:
+    case op_new_func:
+    case op_new_func_exp:
+    case op_new_reg_exp:
+    case op_create_lexical_environment:
+    case op_create_rest:
+    case op_throw:
+    case op_throw_static_error:
+    case op_ret:
+        return PropertyEffect::None;
+    case op_resolve_scope:
+        return isVariable(node->as<OpResolveScope>().m_resolveType) ? PropertyEffect::None : PropertyEffect::OnSlowPathOnly;
+    case op_get_from_scope:
+        return isVariable(node->as<OpGetFromScope>().m_getPutInfo.resolveType()) ? PropertyEffect::None : PropertyEffect::OnSlowPathOnly;
+    case op_put_to_scope:
+        return isVariable(node->as<OpPutToScope>().m_getPutInfo.resolveType()) ? PropertyEffect::None : PropertyEffect::Arbitrary;
+    case op_add:
+    case op_sub:
+    case op_mul:
+    case op_div:
+    case op_mod:
+    case op_pow:
+    case op_negate:
+    case op_inc:
+    case op_dec:
+    case op_bitand:
+    case op_bitor:
+    case op_bitxor:
+    case op_bitnot:
+    case op_lshift:
+    case op_rshift:
+    case op_urshift:
+    case op_less:
+    case op_lesseq:
+    case op_greater:
+    case op_greatereq:
+    case op_jless:
+    case op_jlesseq:
+    case op_jgreater:
+    case op_jgreatereq:
+    case op_jnless:
+    case op_jnlesseq:
+    case op_jngreater:
+    case op_jngreatereq:
+    case op_eq:
+    case op_neq:
+    case op_jeq:
+    case op_jneq:
+        return unlessOperandMayBeObject();
+    case op_get_by_id:
+    case op_get_length:
+    case op_get_by_val:
+    case op_in_by_id:
+    case op_in_by_val:
+    case op_instanceof:
+    case op_create_this:
+        return PropertyEffect::OnSlowPathOnly;
+    case op_put_by_val: {
+        Type key = node->use(node->as<OpPutByVal>().m_property)->type;
+        return key && isSubtype(key, TInt32) ? PropertyEffect::OnSlowPathOnly : PropertyEffect::Arbitrary;
+    }
+    case op_put_by_id:
+        return PropertyEffect::StoresNamedProperty;
+    case op_call:
+    case op_call_ignore_result:
+    case op_tail_call:
+        return PropertyEffect::Call;
+    default:
+        return PropertyEffect::Arbitrary;
+    }
+}
+
+const FunctionSummary::PropertyEffects* Graph::propertyEffectsOfCall(const Node* node) const
+{
+    bool isExact = false;
+    const KnownFunction* known = knownCallee(node, &isExact);
+    if (!known || !isExact || !known->forCall || !known->summary || known->summary->propertyEffects.isArbitrary)
+        return nullptr;
+    return &known->summary->propertyEffects;
+}
+
+void Graph::recordPropertyEffects() const
+{
+    if (!m_summary || m_codeBlock->isConstructor())
+        return;
+    FunctionSummary::PropertyEffects effects;
+    effects.isArbitrary = false;
+    const Node* culprit = nullptr;
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes) {
+            if (effects.isArbitrary)
+                break;
+            culprit = node;
+            switch (propertyEffectOf(node)) {
+            case PropertyEffect::None:
+            case PropertyEffect::OnSlowPathOnly:
+                break;
+            case PropertyEffect::StoresNamedProperty: {
+                UniquedStringImpl* name = node->graph->codeBlock()->identifier(node->as<OpPutById>().m_property).impl();
+                if (!effects.storedNames.contains(name))
+                    effects.storedNames.append(name);
+                break;
+            }
+            case PropertyEffect::Call: {
+                bool isExact = false;
+                const KnownFunction* known = knownCallee(node, &isExact);
+                if (!known || !isExact || !known->forCall || !known->summary)
+                    effects.isArbitrary = true;
+                else if (known->summary != m_summary && !effects.callees.contains(known->summary))
+                    effects.callees.append(known->summary);
+                break;
+            }
+            case PropertyEffect::Arbitrary:
+                effects.isArbitrary = true;
+                break;
+            }
+        }
+    }
+    if (effects.storedNames.size() > FunctionSummary::PropertyEffects::maxStoredNames)
+        effects.isArbitrary = true;
+    if (Options::logAOTTypeInference()) [[unlikely]] {
+        if (effects.isArbitrary && culprit)
+            dataLogLn("AOT inference: `", m_nameForLog, "` may change any property: ", culprit->kind == NodeKind::Bytecode ? opcodeNames[culprit->opcode] : "a guard"_s, " bc#", culprit->bytecodeIndex.offset());
+        else
+            dataLogLn("AOT inference: `", m_nameForLog, "` itself stores to ", effects.storedNames.size(), " names and calls ", effects.callees.size(), " functions");
+    }
+    m_summary->propertyEffects = WTF::move(effects);
+}
+
 void Graph::recordKnownFunctionUses(const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* currentSummary)
 {
     auto calleeRegisterOf = [](Node* user) -> std::optional<VirtualRegister> {

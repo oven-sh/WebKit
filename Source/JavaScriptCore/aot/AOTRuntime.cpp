@@ -196,6 +196,8 @@ struct Instance::Collections {
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> convertedStructures;
     UncheckedKeyHashMap<std::pair<Structure*, const uint32_t*>, Instance::PropertyRunTarget> propertyRunTargets;
     UncheckedKeyHashMap<std::tuple<Structure*, Structure*, const IdentifierSet*>, Instance::CopiedProperties> copiedProperties;
+    UncheckedKeyHashMap<Structure*, JSFunction*> constructorsByFirstStructure;
+    UncheckedKeyHashMap<JSFunction*, unsigned> learnedInlineCapacities;
     struct LayoutConversionPlan {
         Vector<std::pair<PropertyOffset, uint16_t>> moves;
         Vector<const TypedLayoutTable::Field*> fields;
@@ -374,6 +376,10 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     if (Image* image = Image::withShapes()) {
         instance->dispatch = image->at<uint32_t>(image->header().dispatchOffset);
         instance->selectorRows = image->at<uint32_t>(image->header().selectorRowsOffset);
+        if (uint32_t count = image->header().numberOfNamesWithLikelySlots) {
+            instance->idsOfNamesWithLikelySlots = static_cast<uint16_t*>(fastMalloc(count * sizeof(uint16_t)));
+            std::fill_n(instance->idsOfNamesWithLikelySlots, count, propertyNameIDNotLearned);
+        }
         RELEASE_ASSERT(!image->header().intrinsicHash || image->header().intrinsicHash == ImmutableIntrinsics::shared()->hash());
         instance->objectPrototype = globalObject->objectPrototype();
         if (JSValue call = globalObject->linkTimeConstant(LinkTimeConstant::callFunction); call.isCell()) {
@@ -587,6 +593,7 @@ void Instance::destroy(Instance* instance)
     delete instance->collections;
     OSAllocator::decommitAndRelease(instance->fieldsWithObservableReads, sizeOfFieldsWithObservableReads);
     fastFree(instance->selectorsOnObjectPrototype);
+    fastFree(instance->idsOfNamesWithLikelySlots);
     OSAllocator::decommitAndRelease(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
 }
 
@@ -1458,6 +1465,8 @@ const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* struct
             last = Structure::addPropertiesTransition(*vm, last, names.subspan(followed), &deferred);
         }
     }
+    if (last)
+        noteRunOfProperties(structure, last);
     PropertyOffset offset = structure->maxOffset();
     for (unsigned i = 0; last && i < names.size(); ++i) {
         offset = offsetAfter(offset, structure->inlineCapacity());
@@ -1770,6 +1779,68 @@ Structure* Instance::literalStructure(Structure* empty, std::span<UniquedStringI
 template void Instance::visit(AbstractSlotVisitor&, bool);
 template void Instance::visit(SlotVisitor&, bool);
 
+unsigned Instance::inlineCapacityFor(JSFunction* constructor, unsigned inlineCapacityInBytecode)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.inlineCapacityFor(constructor, inlineCapacityInBytecode);
+    auto it = collections->learnedInlineCapacities.find(constructor);
+    return it == collections->learnedInlineCapacities.end() ? inlineCapacityInBytecode : std::max(inlineCapacityInBytecode, it->value);
+}
+
+void Instance::noteFirstStructure(Structure* first, JSFunction* constructor)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.noteFirstStructure(first, constructor);
+    if (first->inlineCapacity() < maxLearnedInlineCapacity && !first->previousID())
+        collections->constructorsByFirstStructure.set(first, constructor);
+}
+
+void Instance::noteOutOfLineProperty(Structure* structure)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.noteOutOfLineProperty(structure);
+    if (structure->inlineCapacity() >= maxLearnedInlineCapacity)
+        return;
+    if (JSFunction* constructor = constructorOfObjectsWith(structure))
+        learnInlineCapacity(constructor, structure);
+}
+
+void Instance::noteRunOfProperties(Structure* from, Structure* to)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.noteRunOfProperties(from, to);
+    if (to->inlineCapacity() >= maxLearnedInlineCapacity)
+        return;
+    JSFunction* constructor = constructorOfObjectsWith(from);
+    if (!constructor)
+        return;
+    if (to->outOfLineSize())
+        learnInlineCapacity(constructor, to);
+    else if (!to->previousID())
+        collections->constructorsByFirstStructure.set(to, constructor);
+}
+
+JSFunction* Instance::constructorOfObjectsWith(Structure* structure)
+{
+    if (collections->constructorsByFirstStructure.isEmpty())
+        return nullptr;
+    while (Structure* previous = structure->previousID())
+        structure = previous;
+    return collections->constructorsByFirstStructure.get(structure);
+}
+
+void Instance::learnInlineCapacity(JSFunction* constructor, Structure* structure)
+{
+    unsigned inlineCapacity = structure->inlineCapacity();
+    unsigned wanted = std::min(maxLearnedInlineCapacity, std::max(2 * inlineCapacity, inlineCapacity + structure->outOfLineSize() + 2));
+    unsigned& learned = collections->learnedInlineCapacities.add(constructor, 0).iterator->value;
+    if (wanted <= learned)
+        return;
+    learned = wanted;
+    if (FunctionRareData* rareData = constructor->rareData())
+        rareData->clear("Objects get properties outside their inline storage");
+}
+
 const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded)
 {
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
@@ -1896,6 +1967,12 @@ void Instance::finalizeUnconditionally(bool newOnly)
         if (!vm->heap.isMarked(entry.key.first) || (entry.value.last && !vm->heap.isMarked(entry.value.last)))
             return true;
         return std::ranges::any_of(entry.value.prototypeStructures, [&](StructureID id) { return !vm->heap.isMarked(id.decode()); });
+    });
+    collections->constructorsByFirstStructure.removeIf([&](auto& entry) {
+        return !vm->heap.isMarked(entry.key) || !vm->heap.isMarked(entry.value);
+    });
+    collections->learnedInlineCapacities.removeIf([&](auto& entry) {
+        return !vm->heap.isMarked(entry.key);
     });
     collections->copiedProperties.removeIf([&](auto& entry) {
         auto& [target, source, excluded] = entry.key;

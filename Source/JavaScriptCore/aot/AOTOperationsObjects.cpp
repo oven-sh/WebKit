@@ -260,9 +260,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
     JSFunction* constructor = dynamicDowncast<JSFunction>(callee);
     bool cacheable = false;
     if (constructor && constructor->canUseAllocationProfiles()) {
-        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, inlineCapacityInBytecode)->objectAllocationProfile();
+        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, instance->inlineCapacityFor(constructor, inlineCapacityInBytecode))->objectAllocationProfile();
         OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
         Structure* structure = allocationProfile->structure();
+        instance->noteFirstStructure(structure, constructor);
         object = Instance::newObjectOf(vm, structure);
         if (structure->hasPolyProto()) {
             JSObject* prototype = allocationProfile->prototype();
@@ -446,9 +447,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance* instance,
     AOT_OPERATION_BEGIN(instance);
     JSFunction* constructor = dynamicDowncast<JSFunction>(callee);
     if (constructor && constructor->canUseAllocationProfiles()) {
-        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, inlineCapacity)->objectAllocationProfile();
+        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, instance->inlineCapacityFor(constructor, inlineCapacity))->objectAllocationProfile();
         OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
         Structure* structure = allocationProfile->structure();
+        instance->noteFirstStructure(structure, constructor);
         JSObject* result = Instance::newObjectOf(vm, structure);
         if (structure->hasPolyProto()) {
             JSObject* prototype = allocationProfile->prototype();
@@ -1016,6 +1018,13 @@ static ALWAYS_INLINE const Identifier& wellKnownIdentifier(VM& vm, uint32_t whic
         return vm.propertyNames->prototype;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTLearnPropertyName, void, (Instance* instance, JSCell* base, uint32_t identifierIndex, uint32_t index))
+{
+    AOT_OPERATION_BEGIN(instance);
+    learnPropertyName(vm, *instance, base, identifierAt(instance, callFrame, identifierIndex).impl(), index);
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, Slot* cache))

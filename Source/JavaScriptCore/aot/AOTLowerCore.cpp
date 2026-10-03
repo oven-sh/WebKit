@@ -438,14 +438,22 @@ LValue Lowering::argumentPassedOrUndefined(unsigned index)
     return m_out.phi(Int64, isNot, is);
 }
 
+LValue Lowering::dataHere()
+{
+    if (!m_dataOnEntry || !m_block || m_block->isGeneric || m_block->isRarelyExecuted || m_out.m_block->frequency() > coldFrequency)
+        return m_data;
+    OwnData own = ownData();
+    return m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+}
+
 TypedPointer Lowering::slotWord(unsigned slot, unsigned word)
 {
-    return m_out.address(m_data, m_heaps.AOTData_slotWords[slot * 2 + word]);
+    return m_out.address(dataHere(), m_heaps.AOTData_slotWords[slot * 2 + word]);
 }
 
 LValue Lowering::slotAddress(unsigned slot)
 {
-    return m_out.add(m_data, m_out.constIntPtr(Data::offsetOfSlots() + slot * sizeof(Slot)));
+    return m_out.add(dataHere(), m_out.constIntPtr(Data::offsetOfSlots() + slot * sizeof(Slot)));
 }
 
 TypedPointer Lowering::scratchWord(unsigned index)
@@ -1214,31 +1222,13 @@ void Lowering::lowerBlock(BasicBlock* block)
         if (auto available = m_availableFieldsAtEndOf.find(block->predecessors[0]); available != m_availableFieldsAtEndOf.end())
             m_availableFields = available->value;
     }
-    m_availableReads.shrink(0);
-    m_effectEpochBeforeStore = nullptr;
-    if (!block->isCatchEntrypoint && !block->isGeneric && block != m_graph.root) {
-        bool isFirst = true;
-        for (BasicBlock* predecessor : block->predecessors) {
-            auto available = m_availableReadsAtEndOf.find(predecessor);
-            if (available == m_availableReadsAtEndOf.end()) {
-                m_availableReads.shrink(0);
-                break;
-            }
-            if (std::exchange(isFirst, false))
-                m_availableReads = available->value;
-            else {
-                m_availableReads.removeAllMatching([&](auto& read) {
-                    return !available->value.contains(read);
-                });
-            }
-        }
-    }
     m_out.setFrequency(block->isGeneric || block->isRarelyExecuted ? coldFrequency : 1);
     if (block->loweredAhead)
         hoistArrayStorageLoadsAheadOf(block);
     m_out.appendTo(block->lowered);
     for (Node* phi : block->phis)
         m_out.m_block->append(phi->lowered);
+    findReadsAvailableAtHeadOf(block);
     if (m_dataOnEntry) {
         m_data = m_dataOnEntry;
         if (block->isInLoop && m_dataInLoops) {
@@ -1292,8 +1282,7 @@ void Lowering::lowerBlock(BasicBlock* block)
         m_availableFields.shrink(0);
     if (terminal)
         forgetReadsChangedBy(terminal);
-    if (!m_availableReads.isEmpty())
-        m_availableReadsAtEndOf.set(block, m_availableReads);
+    publishAvailableReads(block);
     if (!m_availableFields.isEmpty())
         m_availableFieldsAtEndOf.set(block, m_availableFields);
     if (terminal && terminal->kind == NodeKind::Guard) {

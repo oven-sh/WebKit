@@ -111,6 +111,8 @@ LValue Lowering::loadEffectEpoch()
 
 void Lowering::recordAvailableRead(Node* base, UniquedStringImpl* name, LValue value, LValue effectEpoch)
 {
+    if (m_isOnOnePathOnly)
+        return;
     base = skipAliases(base);
     m_availableReads.removeAllMatching([&](auto& read) {
         return read.base == base && read.name == name;
@@ -123,7 +125,12 @@ void Lowering::recordAvailableRead(Node* base, UniquedStringImpl* name, LValue v
 void Lowering::forgetReadsChangedBy(Node* node)
 {
     LValue effectEpochBeforeStore = std::exchange(m_effectEpochBeforeStore, nullptr);
-    if (node->kind == NodeKind::Bytecode && node->opcode == op_put_by_id && !node->guard) {
+    bool keepsReads = std::exchange(m_nodeKeepsReads, false);
+    switch (Graph::propertyEffectOf(node)) {
+    case PropertyEffect::None:
+    case PropertyEffect::OnSlowPathOnly:
+        return;
+    case PropertyEffect::StoresNamedProperty: {
         auto bytecode = node->as<OpPutById>();
         UniquedStringImpl* name = node->graph->codeBlock()->identifier(bytecode.m_property).impl();
         m_availableReads.removeAllMatching([&](auto& read) {
@@ -133,43 +140,150 @@ void Lowering::forgetReadsChangedBy(Node* node)
             recordAvailableRead(node->use(bytecode.m_base), name, lowJSValue(node->use(bytecode.m_value)), effectEpochBeforeStore);
         return;
     }
-    if (m_availableReads.isEmpty() || preservesFields(node))
-        return;
-    if (node->kind == NodeKind::Bytecode && !node->guard) {
-        switch (node->opcode) {
-        case op_get_by_id:
-        case op_add:
-        case op_sub:
-        case op_mul:
-        case op_div:
-        case op_mod:
-        case op_bitand:
-        case op_bitor:
-        case op_bitxor:
-        case op_lshift:
-        case op_rshift:
-        case op_less:
-        case op_lesseq:
-        case op_greater:
-        case op_greatereq:
-        case op_jless:
-        case op_jlesseq:
-        case op_jgreater:
-        case op_jgreatereq:
-        case op_jnless:
-        case op_jnlesseq:
-        case op_jngreater:
-        case op_jngreatereq:
-        case op_eq:
-        case op_neq:
-        case op_jeq:
-        case op_jneq:
+    case PropertyEffect::Call:
+        if (keepsReads)
             return;
-        default:
-            break;
+        if (auto* effects = m_graph.propertyEffectsOfCall(node)) {
+            m_availableReads.removeAllMatching([&](auto& read) {
+                return effects->storedNames.contains(read.name);
+            });
+            if (!m_availableReads.isEmpty())
+                m_graph.remark("call-keeps-property-reads"_s);
+            return;
         }
+        RELEASE_ASSERT(!m_graph.summary() || m_graph.codeBlock()->isConstructor() || m_graph.summary()->propertyEffects.isArbitrary);
+        break;
+    case PropertyEffect::Arbitrary:
+        break;
     }
     m_availableReads.shrink(0);
+}
+
+auto Lowering::variablesFor(const AvailableRead& read) -> ReadVariables
+{
+    return m_readVariables.ensure({ read.base, read.name }, [&] {
+        return ReadVariables { m_proc.addVariable(Int64), m_proc.addVariable(Int32) };
+    }).iterator->value;
+}
+
+void Lowering::publishAvailableReads(BasicBlock* block)
+{
+    if (m_availableReads.isEmpty())
+        return;
+    m_availableReadsAtEndOf.set(block, m_availableReads);
+    bool pathsMeetAfterwards = false;
+    for (BasicBlock* successor : block->successors)
+        pathsMeetAfterwards |= successor->predecessors.size() > 1 && !successor->isGeneric && !successor->isCatchEntrypoint;
+    if (!pathsMeetAfterwards)
+        return;
+    for (auto& read : m_availableReads) {
+        ReadVariables variables = variablesFor(read);
+        m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), variables.value, read.value);
+        m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), variables.effectEpoch, read.effectEpoch);
+    }
+}
+
+void Lowering::forgetReadsChangedInLoop(BasicBlock* header)
+{
+    BitVector isInLoop;
+    Vector<BasicBlock*, 16> worklist;
+    isInLoop.set(header->index);
+    for (BasicBlock* predecessor : header->predecessors) {
+        if (predecessor->rpoIndex >= header->rpoIndex)
+            worklist.append(predecessor);
+    }
+    Vector<BasicBlock*, 16> body { header };
+    while (!worklist.isEmpty()) {
+        BasicBlock* block = worklist.takeLast();
+        if (isInLoop.set(block->index))
+            continue;
+        body.append(block);
+        worklist.appendVector(block->predecessors);
+    }
+    for (BasicBlock* block : body) {
+        if (block->isGeneric || block->isCatchEntrypoint || block == m_graph.root) {
+            m_availableReads.shrink(0);
+            return;
+        }
+        for (Node* node : block->nodes) {
+            if (m_availableReads.isEmpty())
+                return;
+            if (node->isElided)
+                continue;
+            switch (Graph::propertyEffectOf(node)) {
+            case PropertyEffect::None:
+            case PropertyEffect::OnSlowPathOnly:
+                continue;
+            case PropertyEffect::StoresNamedProperty: {
+                UniquedStringImpl* name = node->graph->codeBlock()->identifier(node->as<OpPutById>().m_property).impl();
+                m_availableReads.removeAllMatching([&](auto& read) {
+                    return read.name == name;
+                });
+                continue;
+            }
+            case PropertyEffect::Call:
+                if (auto* effects = m_graph.propertyEffectsOfCall(node)) {
+                    m_availableReads.removeAllMatching([&](auto& read) {
+                        return effects->storedNames.contains(read.name);
+                    });
+                    continue;
+                }
+                break;
+            case PropertyEffect::Arbitrary:
+                break;
+            }
+            m_availableReads.shrink(0);
+            return;
+        }
+    }
+}
+
+void Lowering::findReadsAvailableAtHeadOf(BasicBlock* block)
+{
+    m_availableReads.shrink(0);
+    m_effectEpochBeforeStore = nullptr;
+    m_nodeKeepsReads = false;
+    if (block->isCatchEntrypoint || block->isGeneric || block->isReentry || block == m_graph.root)
+        return;
+    bool isFirst = true;
+    bool allAgree = true;
+    for (BasicBlock* predecessor : block->predecessors) {
+        if (block->isLoopHeader && predecessor->rpoIndex >= block->rpoIndex) {
+            allAgree = false;
+            continue;
+        }
+        auto available = m_availableReadsAtEndOf.find(predecessor);
+        if (available == m_availableReadsAtEndOf.end()) {
+            m_availableReads.shrink(0);
+            return;
+        }
+        if (std::exchange(isFirst, false)) {
+            m_availableReads = available->value;
+            continue;
+        }
+        m_availableReads.removeAllMatching([&](auto& read) {
+            size_t index = available->value.findIf([&](auto& other) {
+                return other.base == read.base && other.name == read.name;
+            });
+            if (index == notFound)
+                return true;
+            allAgree &= available->value[index] == read;
+            return false;
+        });
+    }
+    if (isFirst) {
+        m_availableReads.shrink(0);
+        return;
+    }
+    if (block->isLoopHeader)
+        forgetReadsChangedInLoop(block);
+    if (allAgree)
+        return;
+    for (auto& read : m_availableReads) {
+        ReadVariables variables = variablesFor(read);
+        read.value = m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), variables.value);
+        read.effectEpoch = m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), variables.effectEpoch);
+    }
 }
 
 auto Lowering::availableField(Node* base, const TypeTable::Field& field) const -> const AvailableField*
@@ -651,8 +765,51 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     auto throughStub = [&]() -> LValue {
         return callStub(*stub, Int64, { { base, firstStubOperandGPR }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { });
     };
-    if (stub && isCompact())
-        return throughStub();
+    if (stub && isCompact()) {
+        const ProgramClasses::LikelySlots* likely = stub == Stub::GetById && programClasses() && m_graph.codeBlock()->codeType() == FunctionCode && !m_block->isGeneric && !m_block->isRarelyExecuted
+            ? programClasses()->likelySlotsOf(code().codeBlock()->identifier(functionIdentifier).impl()) : nullptr;
+        if (!likely)
+            return throughStub();
+        m_graph.remark("looks-in-likely-slots"_s, code().codeBlock()->identifier(functionIdentifier).string());
+        LBasicBlock isElsewhere = newColdBlock();
+        LBasicBlock learns = newColdBlock();
+        LBasicBlock otherwise = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 3> results;
+        if (!isSubtype(baseType, TCell)) {
+            LBasicBlock cellCase = m_out.newBlock();
+            m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
+            m_out.appendTo(cellCase);
+        }
+        LValue structure = structureOf(base);
+        LValue ids = m_out.loadPtr(m_out.address(m_heaps.root, m_instance, Instance::offsetOfIDsOfNamesWithLikelySlots()));
+        LValue id = m_out.load16ZeroExt32(m_out.address(m_heaps.root, ids, likely->index * sizeof(uint16_t)));
+        Vector<LValue, ProgramClasses::LikelySlots::maxCount> idsInSlots;
+        for (unsigned i = 0; i < likely->count; ++i) {
+            unsigned slot = likely->slots[i];
+            LBasicBlock isThere = m_out.newBlock();
+            LBasicBlock next = i + 1 < likely->count ? m_out.newBlock() : isElsewhere;
+            LValue idInSlot = m_out.load16ZeroExt32(m_out.address(m_heaps.root, structure, Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t)));
+            idsInSlots.append(idInSlot);
+            m_out.branch(m_out.equal(idInSlot, id), i ? unsure(isThere) : usually(isThere), i + 1 < likely->count ? unsure(next) : rarely(next));
+            m_out.appendTo(isThere);
+            results.append(m_out.anchor(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)))));
+            m_out.jump(continuation);
+            m_out.appendTo(next);
+        }
+        LValue hasSomethingToLearn = m_out.equal(id, m_out.constInt32(Instance::propertyNameIDNotLearned));
+        for (LValue idInSlot : idsInSlots)
+            hasSomethingToLearn = m_out.bitOr(hasSomethingToLearn, m_out.isZero32(idInSlot));
+        m_out.branch(hasSomethingToLearn, unsure(learns), unsure(otherwise));
+        m_out.appendTo(learns);
+        vmCall(node, Void, Entry::operationAOTLearnPropertyName, m_instance, base, m_out.constInt32(identifier), m_out.constInt32(likely->index));
+        m_out.jump(otherwise);
+        m_out.appendTo(otherwise);
+        results.append(m_out.anchor(throughStub()));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return m_out.phi(Int64, results);
+    }
 
     LBasicBlock cellCase = m_out.newBlock();
     LBasicBlock rightStructure = m_out.newBlock();

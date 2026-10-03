@@ -66,6 +66,7 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
     bool isCached = usesDataStubs() && !inMemory && mode != CallMode::Construct && (intrinsic != StubIntrinsic::None || m_graph.codeBlock()->codeType() == FunctionCode);
     if (!isCached)
         intrinsic = StubIntrinsic::None;
+    m_nodeKeepsReads = intrinsic != StubIntrinsic::None && mode == CallMode::Call;
     LValue cache = isCached ? slotAddress(allocateSlots(CalleeCache::numberOfSlots)) : nullptr;
 
     PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
@@ -317,6 +318,7 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     }
     LValue result = emitCall(node, callee, arguments, mode, intrinsic);
     if (afterBuiltin) {
+        m_nodeKeepsReads = false;
         builtinResults.append(m_out.anchor(result));
         m_out.jump(afterBuiltin);
         m_out.appendTo(afterBuiltin);

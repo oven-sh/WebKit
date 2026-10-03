@@ -62,6 +62,14 @@ enum class CallIntrinsic : uint8_t { None, MathSqrt, MathAbs, MathFloor, MathCei
 inline bool hasNoEffects(CallIntrinsic intrinsic) { return intrinsic != CallIntrinsic::ArrayPush; }
 CallIntrinsic callIntrinsicFor(UniquedStringImpl* propertyName, unsigned argumentCountIncludingThis);
 
+enum class PropertyEffect : uint8_t {
+    None,
+    OnSlowPathOnly,
+    StoresNamedProperty,
+    Call,
+    Arbitrary,
+};
+
 enum class GuardKind : uint8_t {
     Whole,
     Nothing,
@@ -458,6 +466,9 @@ public:
     void findBuiltinsCalled();
     bool isFullyDuplicated { false };
     void recordKnownFunctionUses(const FunctionSummaryMap&, const FunctionSummary* currentSummary);
+    static PropertyEffect propertyEffectOf(const Node*);
+    const FunctionSummary::PropertyEffects* propertyEffectsOfCall(const Node*) const;
+    void recordPropertyEffects() const;
     void noteFieldsComparedWithStrings();
     void findArgumentLists();
     static Node* argumentListFor(const Node*);

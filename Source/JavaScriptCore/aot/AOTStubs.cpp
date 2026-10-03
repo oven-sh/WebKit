@@ -4688,8 +4688,11 @@ const StubBlob& stubBlob()
                 generateCallIntrinsic(jit, intrinsic, labels[static_cast<unsigned>(Stub::OperationVoidWithInstance)], hasAnotherReceiver, otherwise);
                 otherwise.link(&jit);
                 static_assert(functionCallStubs[0] == Stub::Call && functionCallStubs[2] == Stub::CallCached);
+                jit.add32(TrustedImm32(1), Address(instanceGPR, Instance::offsetOfEffectEpoch()));
                 jit.jump().linkTo(thunkLabels[firstCallThunk + argumentCountOf(intrinsic)], &jit);
-                hasAnotherReceiver.linkTo(thunkLabels[firstCallThunk + 2 * numberOfCountsWithThunk + argumentCountOf(intrinsic)], &jit);
+                hasAnotherReceiver.link(&jit);
+                jit.add32(TrustedImm32(1), Address(instanceGPR, Instance::offsetOfEffectEpoch()));
+                jit.jump().linkTo(thunkLabels[firstCallThunk + 2 * numberOfCountsWithThunk + argumentCountOf(intrinsic)], &jit);
             }
 #if CPU(ARM64)
             static_assert(!static_cast<unsigned>(ARM64Registers::x0));

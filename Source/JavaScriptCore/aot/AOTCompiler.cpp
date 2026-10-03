@@ -532,6 +532,7 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
     }
     scalarReplaceReadOnlyObjects(graph);
     Type result = inferTypes(graph, &calleesRead, &calleesWithWidenedInputs) & TTop;
+    graph.recordPropertyEffects();
     escapingParameters = summary ? AOT::escapingParameters(graph, &calleesRead) : std::numeric_limits<uint32_t>::max();
     return result;
 }

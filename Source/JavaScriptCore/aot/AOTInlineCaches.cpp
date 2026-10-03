@@ -100,7 +100,7 @@ static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
     auto result = table.ids.add(uid, 0);
     if (!result.isNewEntry)
         return result.iterator->value;
-    if (table.next >= Structure::firstReservedPropertyNameID) {
+    if (table.next >= Instance::propertyNameIDCannotBeLearned) {
         table.ids.remove(result.iterator);
         return 0;
     }
@@ -154,6 +154,16 @@ static bool fillPropertyNameTable(VM& vm, Structure* structure)
             structure->setPropertyNameIDInInlineSlot(slot, ids[slot]);
     }
     return true;
+}
+
+void learnPropertyName(VM& vm, Instance& instance, JSCell* base, UniquedStringImpl* name, uint32_t index)
+{
+    uint16_t& id = instance.idsOfNamesWithLikelySlots[index];
+    if (id == Instance::propertyNameIDNotLearned) {
+        uint16_t learned = propertyNameID(vm, name);
+        id = learned ? learned : Instance::propertyNameIDCannotBeLearned;
+    }
+    fillPropertyNameTable(vm, base->structure());
 }
 
 static bool cacheByName(VM& vm, PolymorphicSlots* several, JSCell* base, Structure* structure, const PropertySlot& slot)
@@ -513,6 +523,8 @@ static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* old
 void cachePutById(Instance* instance, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
     JSGlobalObject* globalObject = instance->globalObject;
+    if (slot.type() == PutPropertySlot::NewProperty && slot.isCacheablePut() && base.isCell() && slot.base() == base.asCell() && !isInlineOffset(slot.cachedOffset()))
+        instance->noteOutOfLineProperty(base.asCell()->structure());
     if (slot.type() == PutPropertySlot::NewTypedField && base.isCell() && slot.base() == base.asCell() && isInlineOffset(slot.cachedOffset())) {
         Structure* newStructure = base.asCell()->structure();
         if (newStructure->previousID() == oldStructure && !newStructure->isDictionary() && !oldStructure->mayBePrototype() && oldStructure->outOfLineCapacity() == newStructure->outOfLineCapacity())

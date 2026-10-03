@@ -23,6 +23,7 @@
 #include "LinkTimeConstant.h"
 #include "Opcode.h"
 #include "RegisterAtOffsetList.h"
+#include "Structure.h"
 #include "StructureID.h"
 #include <wtf/TZoneMalloc.h>
 
@@ -518,6 +519,13 @@ struct Instance {
         Vector<std::pair<PropertyOffset, PropertyOffset>, 8> offsets;
     };
     const CopiedProperties& copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded);
+    static constexpr unsigned maxLearnedInlineCapacity = Structure::numberOfSlotsWithFieldIDs;
+    unsigned inlineCapacityFor(JSFunction* constructor, unsigned inlineCapacityInBytecode);
+    void noteFirstStructure(Structure*, JSFunction* constructor);
+    void noteOutOfLineProperty(Structure*);
+    void noteRunOfProperties(Structure* from, Structure* to);
+    JSFunction* constructorOfObjectsWith(Structure*);
+    void learnInlineCapacity(JSFunction* constructor, Structure*);
     static PropertyOffset offsetAfter(PropertyOffset offset, unsigned inlineCapacity)
     {
         if (offset == invalidOffset)
@@ -569,6 +577,10 @@ struct Instance {
     uint32_t boundFunctionStructureID { 0 };
     uint32_t effectEpoch { 0 };
     static constexpr ptrdiff_t offsetOfEffectEpoch() { return OBJECT_OFFSETOF(Instance, effectEpoch); }
+    static constexpr uint16_t propertyNameIDNotLearned = Structure::firstReservedPropertyNameID;
+    static constexpr uint16_t propertyNameIDCannotBeLearned = Structure::firstReservedPropertyNameID - 1;
+    uint16_t* idsOfNamesWithLikelySlots { nullptr };
+    static constexpr ptrdiff_t offsetOfIDsOfNamesWithLikelySlots() { return OBJECT_OFFSETOF(Instance, idsOfNamesWithLikelySlots); }
     static constexpr ptrdiff_t offsetOfFunctionPrototypeCall() { return OBJECT_OFFSETOF(Instance, functionPrototypeCall); }
     static constexpr ptrdiff_t offsetOfBoundFunctionStructureID() { return OBJECT_OFFSETOF(Instance, boundFunctionStructureID); }
     uint8_t* selectorsOnObjectPrototype;

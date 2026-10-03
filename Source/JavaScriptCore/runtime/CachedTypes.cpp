@@ -6368,6 +6368,9 @@ struct BytecodeLinkEncoder::Impl {
         AOT::ProgramClasses programClasses;
         AOT::setProgramClasses(&programClasses);
         auto forgetProgramClasses = makeScopeExit([] { AOT::setProgramClasses(nullptr); });
+        for (auto& job : jobs)
+            programClasses.noteNewObjectsIn(job.codeBlock);
+        programClasses.chooseLikelySlots();
         AOT::MultiValueReturnTable multiValueReturnTable;
         AOT::setMultiValueReturnTable(&multiValueReturnTable);
         auto forgetFunctionReturnValues = makeScopeExit([] { AOT::setMultiValueReturnTable(nullptr); });
@@ -6680,6 +6683,7 @@ struct BytecodeLinkEncoder::Impl {
         }
 
         AOT::ImageBuilder builder;
+        builder.setNumberOfNamesWithLikelySlots(programClasses.numberOfNamesWithLikelySlots());
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
         std::atomic<size_t> next { 0 };
         Lock declinedLock;
@@ -6704,6 +6708,7 @@ struct BytecodeLinkEncoder::Impl {
             UncheckedKeyHashMap<UnlinkedCodeBlock*, About> all;
             const Vector<UnlinkedFunctionExecutable*>* builtins { nullptr };
         };
+        AOT::closePropertyEffects(functionSummaries.span());
         LinkedProgramCode programCode;
         programCode.builtins = &engineBuiltins;
         for (auto& job : jobs)

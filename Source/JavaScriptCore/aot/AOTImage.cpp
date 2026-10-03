@@ -1133,6 +1133,7 @@ Vector<uint8_t> ImageBuilder::finish()
     header.quoteBlockSize = quoteBlockSize;
     header.numberOfProgramIdentifiers = m_numberOfProgramIdentifiers;
     header.numberOfProgramConstants = m_numberOfProgramConstants;
+    header.numberOfNamesWithLikelySlots = m_numberOfNamesWithLikelySlots;
     header.regExpsOffset = place(imageRegExps.sizeInBytes());
     header.numberOfRegExps = imageRegExps.size();
     header.regExpTextOffset = place(regExpText.size());

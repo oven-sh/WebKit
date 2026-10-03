@@ -178,6 +178,17 @@ private:
     Vector<AvailableRead> m_availableReads;
     UncheckedKeyHashMap<BasicBlock*, Vector<AvailableRead>> m_availableReadsAtEndOf;
     LValue m_effectEpochBeforeStore { nullptr };
+    bool m_nodeKeepsReads { false };
+    bool m_isOnOnePathOnly { false };
+    struct ReadVariables {
+        B3::Variable* value { nullptr };
+        B3::Variable* effectEpoch { nullptr };
+    };
+    UncheckedKeyHashMap<std::pair<Node*, UniquedStringImpl*>, ReadVariables> m_readVariables;
+    ReadVariables variablesFor(const AvailableRead&);
+    void findReadsAvailableAtHeadOf(BasicBlock*);
+    void publishAvailableReads(BasicBlock*);
+    void forgetReadsChangedInLoop(BasicBlock* header);
     LValue loadEffectEpoch();
     void recordAvailableRead(Node* base, UniquedStringImpl* name, LValue value, LValue effectEpoch);
     void forgetReadsChangedBy(Node*);
@@ -199,6 +210,7 @@ private:
     OwnData ownData();
     TypedPointer slotWord(unsigned slot, unsigned word);
     LValue slotAddress(unsigned slot);
+    LValue dataHere();
     unsigned allocateSlot() { return m_graph.numICSlots++; }
     uint32_t callSiteBitsOf(Node*);
     uint32_t siteOf(Node*);

@@ -87,7 +87,10 @@ void Lowering::lowerBuiltinRead(Node* node, Node* baseNode)
         ValueFromBlock quick = m_out.anchor(known);
         m_out.branch(isExpectedReceiver, unsure(continuation), unsure(otherwise));
         m_out.appendTo(otherwise);
-        lowerGetById(node);
+        {
+            SetForScope isOnOnePathOnly(m_isOnOnePathOnly, true);
+            lowerGetById(node);
+        }
         ValueFromBlock found = m_out.anchor(lowJSValue(node));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
