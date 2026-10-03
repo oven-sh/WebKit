@@ -3430,10 +3430,10 @@ sub GenerateHeader
     }
 
     if ($interface->extendedAttributes->{GenerateForEachEventHandlerContentAttribute}) {
-        push(@headerContent, "    static void forEachEventHandlerContentAttribute(const Function<void(const AtomString& attributeName, const AtomString& eventName)>&);\n\n");
+        push(@headerContent, "    static void forEachEventHandlerContentAttribute(NOESCAPE const Function<void(const AtomString& attributeName, const AtomString& eventName)>&);\n\n");
     }
     if ($interface->extendedAttributes->{GenerateForEachWindowEventHandlerContentAttribute}) {
-        push(@headerContent, "    static void forEachWindowEventHandlerContentAttribute(const Function<void(const AtomString& attributeName, const AtomString& eventName)>&);\n\n");
+        push(@headerContent, "    static void forEachWindowEventHandlerContentAttribute(NOESCAPE const Function<void(const AtomString& attributeName, const AtomString& eventName)>&);\n\n");
     }
 
     my $numCustomOperations = 0;
@@ -5709,10 +5709,16 @@ sub GenerateImplementation
         my $vtableRefGnu = GetGnuVTableRefForInterface($interface);
         my $vtableRefWin = GetWinVTableRefForInterface($interface);
 
+        my $hasChildInterfaces = 0;
+        unless ($interface->extendedAttributes->{IgnoreSubclassesWhenGeneratingToJSObject}) {
+            $codeGenerator->ForEachChildInterface($interface, sub { $hasChildInterfaces = 1; });
+        }
+
         # We use a templated verifyVTable function here to force the type
         # being checked to be a dependent type so we can rely on `if constexpr`
-        # not causing errors when evaluated.
-        push(@implContent, <<END) if $vtableNameGnu;
+        # not causing errors when evaluated. It is only called when there are
+        # no child interfaces, so only emit it in that case.
+        push(@implContent, <<END) if $vtableNameGnu and not $hasChildInterfaces;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
@@ -5753,11 +5759,9 @@ END
         } else {
             push(@implContent, "    UNUSED_PARAM(lexicalGlobalObject);\n");
         }
-        my $hasChildInterfaces = 0;
         unless ($interface->extendedAttributes->{IgnoreSubclassesWhenGeneratingToJSObject}) {
             $codeGenerator->ForEachChildInterface($interface, sub {
                 my $childInterface = shift;
-                $hasChildInterfaces = 1;
                 my $childImplType = GetImplClassName($childInterface);
                 my $conditional = $childInterface->extendedAttributes->{Conditional};
                 if ($conditional) {
@@ -5856,7 +5860,7 @@ sub GenerateForEachEventHandlerContentAttribute
 {
     my ($outputArray, $interface, $className, $functionName, $eventHandlerExtendedAttributeName) = @_;
     AddToImplIncludes("HTMLNames.h");
-    push(@$outputArray, "void ${className}::${functionName}(const Function<void(const AtomString& attributeName, const AtomString& eventName)>& function)\n");
+    push(@$outputArray, "void ${className}::${functionName}(NOESCAPE const Function<void(const AtomString& attributeName, const AtomString& eventName)>& function)\n");
     push(@$outputArray, "{\n");
     push(@$outputArray, "    static constexpr std::array table {\n");
     foreach my $attribute (@{$interface->attributes}) {
@@ -6406,7 +6410,7 @@ sub GenerateOperationTrampolineDefinition
 
     push(@$outputArray, "JSC_DEFINE_HOST_FUNCTION(${functionName}, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))\n");
     push(@$outputArray, "{\n");
-    push(@$outputArray, "    return ${idlOperationType}<${className}>::${callFunctionName}<" . join(", ", @callFunctionTemplateArguments) . ">(*lexicalGlobalObject, *callFrame, \"" . $operation->name . "\");\n");
+    push(@$outputArray, "    return ${idlOperationType}<${className}>::${callFunctionName}<" . join(", ", @callFunctionTemplateArguments) . ">(*lexicalGlobalObject, *callFrame, \"" . $operation->name . "\"_s);\n");
     push(@$outputArray, "}\n\n");
 }
 
@@ -6716,7 +6720,7 @@ sub GenerateDefaultToJSONOperationDefinition
     my $interfaceName = $interface->type->name;
     push(@$outputArray, "JSC_DEFINE_HOST_FUNCTION(${functionName}, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))\n");
     push(@$outputArray, "{\n");
-    push(@$outputArray, "    return IDLOperation<JS${interfaceName}>::call<${functionName}Body>(*lexicalGlobalObject, *callFrame, \"toJSON\");\n");
+    push(@$outputArray, "    return IDLOperation<JS${interfaceName}>::call<${functionName}Body>(*lexicalGlobalObject, *callFrame, \"toJSON\"_s);\n");
     push(@$outputArray, "}\n");
     push(@$outputArray, "\n");
 }
@@ -7455,8 +7459,18 @@ sub GenerateCallbackImplementationOperationBody
 
         push(@$contentRef, "    auto throwScope = DECLARE_THROW_SCOPE(vm);\n");
         push(@$contentRef, "    auto returnValue = ${nativeValue};\n");
-        push(@$contentRef, "    if (returnValue.hasException(throwScope)) [[unlikely]]\n");
-        push(@$contentRef, "        return CallbackResultType::ExceptionThrown;\n");
+        if ($codeGenerator->IsPromiseType($operation->type)) {
+            push(@$contentRef, "    if (returnValue.hasException(throwScope)) [[unlikely]] {\n");
+            push(@$contentRef, "        auto exceptionValue = throwScope.exception()->value();\n");
+            push(@$contentRef, "        TRY_CLEAR_EXCEPTION(throwScope, CallbackResultType::ExceptionThrown);\n");
+            push(@$contentRef, "        auto* jsPromise = JSC::JSPromise::create(vm, globalObject.promiseStructure());\n");
+            push(@$contentRef, "        jsPromise->rejectAsHandled(vm, exceptionValue);\n");
+            push(@$contentRef, "        return { DOMPromise::create(globalObject, *jsPromise) };\n");
+            push(@$contentRef, "    }\n");
+        } else {
+            push(@$contentRef, "    if (returnValue.hasException(throwScope)) [[unlikely]]\n");
+            push(@$contentRef, "        return CallbackResultType::ExceptionThrown;\n");
+        }
         push(@$contentRef, "    return { returnValue.releaseReturnValue() };\n");
     }
 
@@ -7847,7 +7861,7 @@ END
         push(@implContent,  <<END);
 JSC_DEFINE_HOST_FUNCTION(${functionName}, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    return IDLOperation<${className}>::call<${functionName}Caller>(*lexicalGlobalObject, *callFrame, "${propertyName}");
+    return IDLOperation<${className}>::call<${functionName}Caller>(*lexicalGlobalObject, *callFrame, "${propertyName}"_s);
 }
 
 END

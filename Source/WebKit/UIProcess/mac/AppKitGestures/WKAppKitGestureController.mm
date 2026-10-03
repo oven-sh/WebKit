@@ -71,6 +71,7 @@
 #import <wtf/CheckedPtr.h>
 #import <wtf/MainThread.h>
 #import <wtf/Markable.h>
+#import <wtf/MathExtras.h>
 #import <wtf/MonotonicTime.h>
 #import <wtf/RefCounted.h>
 #import <wtf/RefPtr.h>
@@ -140,19 +141,25 @@ static bool representsSelectableContent(const WebKit::InteractionInformationAtPo
 
 static bool prefersDirectManipulation(const WebKit::InteractionInformationAtPosition& info)
 {
-    bool prefersInteraction = info.isRangeInput || info.isARIASlider || info.hasDirectionalResizeCursor || info.isInResizeControl;
+    bool prefersInteraction = info.isRangeInput || info.isARIASlider || info.hasDirectionalResizeCursor || info.isInResizeControl || info.isCustomSlider;
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE)
     prefersInteraction = prefersInteraction || info.isInteractiveModel;
 #endif
     return prefersInteraction;
 }
 
-static bool representsSecondaryClickableElement(const WebKit::InteractionInformationAtPosition& info)
+static bool representsSecondaryClickableElement(const WebKit::InteractionInformationAtPosition& info, bool isDisplayingStandaloneImageDocument)
 {
     if (prefersDirectManipulation(info))
         return false;
 
     if (representsSelectableContent(info))
+        return true;
+
+    if (info.shouldTreatLongClickAsSecondaryClickQuirk)
+        return true;
+
+    if (info.isImage && isDisplayingStandaloneImageDocument)
         return true;
 
     return info.isOverVideo && info.selectability != WebKit::InteractionInformationAtPosition::Selectability::UnselectableDueToFocusableElement;
@@ -266,13 +273,16 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
     WeakObjCPtr<WKMouseTrackingGestureRecognizer> _activeMouseTrackingGestureRecognizer;
     bool _mouseTrackingHasSentMouseDown;
     WebCore::FloatPoint _mouseTrackingStartLocationInWindow;
+    bool _mouseTrackingIsSuppressedForTransformGesture;
+    bool _contentDeclinedTransformGesture;
+    MonotonicTime _lastTransformGestureDriveTime;
 
     RetainPtr<WKPressGestureRecognizer> _dragPressGestureRecognizer;
     RetainPtr<NSDraggingSession> _gestureDraggingSession;
     BlockPtr<void(NSDraggingSession *)> _textSelectionDragCompletionHandler;
     bool _dragGestureHasSentMouseDown;
 
-    RetainPtr<NSPressGestureRecognizer> _imageAnalysisGestureRecognizer;
+    RetainPtr<WKPressGestureRecognizer> _imageAnalysisGestureRecognizer;
     RetainPtr<WKDeferringGestureRecognizer> _imageAnalysisTextSelectionDeferringGestureRecognizer;
     RetainPtr<WKDeferringGestureRecognizer> _imageAnalysisDragAndContextMenuDeferringGestureRecognizer;
 
@@ -292,6 +302,8 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
     // These variables track the last reported value so that we can forward deltas.
     double _lastCumulativeMagnification;
     double _lastCumulativeRotation;
+
+    BOOL _everMagnifiedDuringCurrentGesture;
 }
 
 #if __has_include(<WebKitAdditions/WKAppKitGestureControllerAdditionsImpl.mm>)
@@ -436,6 +448,7 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
 {
     _imageAnalysisGestureRecognizer = adoptNS([[WKPressGestureRecognizer alloc] initWithTarget:self action:@selector(imageAnalysisGestureRecognized:)]);
     [self configureForImageAnalysis:_imageAnalysisGestureRecognizer];
+    [_imageAnalysisGestureRecognizer setRefusesToBeFailureRequirement:YES];
     [_imageAnalysisGestureRecognizer setDelegate:self];
     [_imageAnalysisGestureRecognizer setName:@"WKImageAnalysisGesture"];
 }
@@ -796,6 +809,91 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     return NO;
 }
 
+- (BOOL)_isRecognizingTransformGesture
+{
+    auto isRecognizing = [](NSGestureRecognizer *gesture) {
+        auto state = [gesture state];
+        return state == NSGestureRecognizerStateBegan || state == NSGestureRecognizerStateChanged;
+    };
+
+    bool isRecognizingTransformGesture = isRecognizing(_magnificationGestureRecognizer);
+
+#if ENABLE(MAC_GESTURE_EVENTS)
+    isRecognizingTransformGesture |= isRecognizing(_rotationGestureRecognizer);
+#endif
+
+    return isRecognizingTransformGesture;
+}
+
+- (BOOL)_shouldSuppressMouseTrackingForTransformGesture
+{
+    static constexpr Seconds transformGestureDriveTimeout = 50_ms;
+
+    if (!_contentDeclinedTransformGesture || ![self _isRecognizingTransformGesture])
+        return NO;
+
+    return MonotonicTime::now() - _lastTransformGestureDriveTime < transformGestureDriveTimeout;
+}
+
+- (void)transformGestureWasNotHandledByContent
+{
+    if (![self _isRecognizingTransformGesture])
+        return;
+
+    _contentDeclinedTransformGesture = true;
+    [self _transformGestureDidDrive];
+}
+
+- (void)_transformGestureDidEnd
+{
+    if (![self _isRecognizingTransformGesture])
+        _contentDeclinedTransformGesture = false;
+}
+
+- (void)_transformGestureDidDrive
+{
+    _lastTransformGestureDriveTime = MonotonicTime::now();
+
+    if (!_contentDeclinedTransformGesture || !_mouseTrackingHasSentMouseDown)
+        return;
+
+    RetainPtr webView = _view.get();
+    if (!webView)
+        return;
+
+    CheckedPtr impl = [webView _impl];
+    if (impl->ignoresAllEvents())
+        return;
+
+    RetainPtr activeMouseTrackingGesture = _activeMouseTrackingGestureRecognizer.get();
+
+    NSEventModifierFlags modifierFlags = 0;
+    NSPoint locationInWindow = _mouseTrackingStartLocationInWindow;
+
+ALLOW_NEW_API_WITHOUT_GUARDS_BEGIN
+    if (activeMouseTrackingGesture) {
+        modifierFlags = [activeMouseTrackingGesture modifierFlags];
+        locationInWindow = [activeMouseTrackingGesture mouseLocationInWindow];
+    }
+ALLOW_NEW_API_WITHOUT_GUARDS_END
+
+    RetainPtr mouseUp = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+        location:locationInWindow
+        modifierFlags:modifierFlags
+        timestamp:GetCurrentEventTime()
+        windowNumber:impl->windowNumber()
+        context:nil
+        eventNumber:0
+        clickCount:1
+        pressure:0.0];
+    if (activeMouseTrackingGesture)
+        mouseUp = [activeMouseTrackingGesture eventReportingMovement:mouseUp atWindowLocation:locationInWindow];
+    impl->mouseUp(mouseUp.get(), WebKit::WebEventInputSource::Automation, WebCore::PlatformMouseEvent::CanInitiateDrag::No);
+
+    _mouseTrackingHasSentMouseDown = false;
+    _mouseTrackingIsSuppressedForTransformGesture = true;
+}
+
 - (void)mouseTrackingGestureRecognized:(NSGestureRecognizer *)gesture
 {
     RetainPtr webView = _view.get();
@@ -848,6 +946,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 
     switch (gesture.state) {
     case NSGestureRecognizerStateBegan:
+        _mouseTrackingIsSuppressedForTransformGesture = false;
         _activeMouseTrackingGestureRecognizer = mouseTrackingGesture.get();
         if (_mouseTrackingHasSentMouseDown)
             [mouseTrackingGesture beginTrackingMouseInheritedFromWindowLocation:_mouseTrackingStartLocationInWindow];
@@ -858,6 +957,11 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     case NSGestureRecognizerStateChanged: {
         if (_activeMouseTrackingGestureRecognizer.get() != mouseTrackingGesture)
             break;
+
+        if ([self _shouldSuppressMouseTrackingForTransformGesture]) {
+            _mouseTrackingIsSuppressedForTransformGesture = true;
+            break;
+        }
 
         if (!_mouseTrackingHasSentMouseDown) {
             // Either the synthetic single-click path or this mouse-tracking path delivers a mouse
@@ -873,8 +977,16 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
             if (std::abs(movementInWindow.width) <= allowableMovement && std::abs(movementInWindow.height) <= allowableMovement)
                 break;
 
+            bool isResumingAfterTransformGesture = std::exchange(_mouseTrackingIsSuppressedForTransformGesture, false);
+            auto mouseDownLocation = isResumingAfterTransformGesture
+                ? [mouseTrackingGesture mouseLocationInWindow]
+                : [mouseTrackingGesture startLocationInWindow];
+
+            if (isResumingAfterTransformGesture)
+                [mouseTrackingGesture beginReportingMovementFromWindowLocation:mouseDownLocation];
+
             RetainPtr mouseDown = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
-                location:[self _adjustedMouseDownLocationInWindow:[mouseTrackingGesture startLocationInWindow]]
+                location:[self _adjustedMouseDownLocationInWindow:mouseDownLocation]
                 modifierFlags:modifierFlags
                 timestamp:timestamp
                 windowNumber:windowNumber
@@ -1105,6 +1217,15 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     if (!webView)
         return NO;
 
+    // An event that catches a decelerating scroll only stops the scroll (and may continue it as a new pan),
+    // so it must never begin a text selection or any other deferred gesture, no matter how long it's held
+    // before moving.
+    if (_caughtDeceleratingScroll) {
+        WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "deferral resolved: event caught a decelerating scroll; preventing deferred gestures");
+        [deferringGestureRecognizer endDeferralShouldPreventGestures:YES];
+        return YES;
+    }
+
     NSPoint locationInView = [webView convertPoint:[event locationInWindow] fromView:nil];
 
     const auto isInScrollbar = [self _isPointInScrollbar:locationInView];
@@ -1247,12 +1368,16 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 
 - (BOOL)_secondaryClickShouldBeginAtLocation:(NSPoint)locationInViewCoordinates
 {
+    RetainPtr webView = _view.get();
+    if (!webView)
+        return NO;
+
     int radius = static_cast<int>(std::ceil([_secondaryClickGestureRecognizer allowableMovement]));
 
     const auto& information = _positionInformationManager->currentInformation();
 
     bool requestIsValid = [self _positionInformationRequestIsValidAtLocation:locationInViewCoordinates withRadius:radius];
-    bool isSecondaryClickable = representsSecondaryClickableElement(information);
+    bool isSecondaryClickable = representsSecondaryClickableElement(information, [webView _isDisplayingStandaloneImageDocument]);
     bool isOverSelectableText = information.isOverSelectableText;
 
     // The secondary click owns points that are not over selectable text (e.g. the page background
@@ -1659,6 +1784,12 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     };
 
     CheckedPtr impl = [webView _impl];
+
+    if (phase == WebKit::WebWheelEvent::Phase::Began)
+        _everMagnifiedDuringCurrentGesture = NO;
+    if (!WTF::areEssentiallyEqual(impl->magnification(), 1.0))
+        _everMagnifiedDuringCurrentGesture = YES;
+
     bool forwardToGestureController = impl->allowsBackForwardNavigationGestures() && [self prefersForwardingToGestureController:gesture];
     if (forwardToGestureController && protect(impl->ensureGestureController())->handleScrollWheelEvent(makeWheelEvent(gestureDelta))) {
         WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "View gesture controller handled gesture");
@@ -1666,6 +1797,11 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     }
 
     [webView _protectedPage]->handleNativeWheelEvent(makeWheelEvent(gestureDelta));
+}
+
+- (BOOL)everMagnifiedDuringCurrentGesture
+{
+    return _everMagnifiedDuringCurrentGesture;
 }
 
 #pragma mark - Momentum Handling
@@ -1766,6 +1902,8 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     _caughtDeceleratingScroll = true;
     _suppressNextPanScrollDelta = true;
 
+    _positionInformationManager->invalidate();
+
     RefPtr page = [webView _protectedPage];
     page->interruptSyntheticMomentumScrolling();
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(page->logIdentifier(), "Interrupted momentum scrolling");
@@ -1797,7 +1935,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     using enum WebKit::WebEventPhase;
     if (phase == Began)
         _lastCumulativeMagnification = 0;
-    auto currentMagnification = magnification - _lastCumulativeMagnification;
+    auto currentMagnification = (1 + magnification) / (1 + _lastCumulativeMagnification) - 1;
     _lastCumulativeMagnification = magnification;
     return currentMagnification;
 }
@@ -1822,6 +1960,11 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 
     auto phase = toWebEventPhase(gesture.state);
     auto magnification = [self currentMagnification:gesture.magnification atPhase:phase];
+
+    if (phase == WebKit::WebEventPhase::Began || phase == WebKit::WebEventPhase::Changed)
+        [self _transformGestureDidDrive];
+    else
+        [self _transformGestureDidEnd];
 
     WebKit::NativeWebGestureEvent::Init init {
         .kind = WebKit::NativeWebGestureEvent::Kind::Magnification,
@@ -1871,6 +2014,11 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
         return;
 
     auto phase = toWebEventPhase(gesture.state);
+
+    if (phase == WebKit::WebEventPhase::Began || phase == WebKit::WebEventPhase::Changed)
+        [self _transformGestureDidDrive];
+    else
+        [self _transformGestureDidEnd];
 
     WebKit::NativeWebGestureEvent::Init init {
         .kind = WebKit::NativeWebGestureEvent::Kind::Rotation,
@@ -1939,6 +2087,9 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     [self _handleClickCancelled];
     _activeMouseTrackingGestureRecognizer = nil;
     _mouseTrackingHasSentMouseDown = false;
+    _mouseTrackingIsSuppressedForTransformGesture = false;
+    _contentDeclinedTransformGesture = false;
+    _lastTransformGestureDriveTime = MonotonicTime();
     _isMomentumActive = false;
     [self _resetCaughtDeceleratingScroll];
     [self resetDOMDoubleClickGestureRecognizer];
@@ -1967,6 +2118,14 @@ static inline bool isBuiltInScrollViewMagnificationGestureRecognizer(NSGestureRe
 static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NSGestureRecognizer *x, NSGestureRecognizer *y)
 {
     return (a == x && b == y) || (b == x && a == y);
+}
+
+static NSPoint startLocationInView(NSPanGestureRecognizer *gesture, NSView *view)
+{
+    if ([gesture respondsToSelector:@selector(_startLocationInView:)])
+        return [gesture _startLocationInView:view];
+
+    return [gesture locationInView:view];
 }
 
 - (BOOL)_shouldRecognizeSimultaneouslyWithMouseTrackingGesture:(NSGestureRecognizer *)gesture
@@ -2102,7 +2261,12 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "Gesture: %@", gestureLogDescription(gestureRecognizer));
 
-    NSPoint locationInViewCoordinates = [gestureRecognizer locationInView:webView];
+    NSPoint locationInViewCoordinates = gestureRecognizer == _panGestureRecognizer
+        ? startLocationInView(_panGestureRecognizer, webView)
+        : [gestureRecognizer locationInView:webView];
+
+    if ([gestureRecognizer isKindOfClass:WKDeferringGestureRecognizer.class])
+        return YES;
 
     // While catching a decelerating scroll, only select gestures are allowed to begin:
     // - single click, so it can reset the interruption state
@@ -2115,9 +2279,6 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
         if (gestureRecognizer != _panGestureRecognizer)
             return NO;
     }
-
-    if ([gestureRecognizer isKindOfClass:WKDeferringGestureRecognizer.class])
-        return YES;
 
     // An event over a scrollbar is a scrollbar interaction; only a mouse-tracking gesture (which drives
     // `Scrollbar::mouseDown` -> thumb drag) should handle it. The AppKit text-selection/context-menu gestures

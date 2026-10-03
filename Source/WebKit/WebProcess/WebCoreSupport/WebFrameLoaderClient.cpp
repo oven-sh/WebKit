@@ -104,18 +104,11 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
 
     auto originator = webPage->takeMainFrameNavigationInitiator();
 
-    bool originatingFrameIsMain = navigationAction.initiatedByMainFrame() == InitiatedByMainFrame::Yes;
-    if (!originatingFrameIsMain) {
-        if (RefPtr originatingFrame = WebProcess::singleton().webFrame(originatingFrameID))
-            originatingFrameIsMain = originatingFrame->isMainFrame();
-    }
-
     std::optional<WebPageProxyIdentifier> originatingPageID;
     if (RefPtr webPage = requester.pageID ? WebProcess::singleton().webPage(*requester.pageID) : nullptr)
         originatingPageID = webPage->webPageProxyIdentifier();
 
     auto originatingFrameInfoData = originator ? FrameInfoData { WTF::move(*originator) } : FrameInfoData {
-        originatingFrameIsMain,
         FrameType::Local,
         ResourceRequest { URL { requester.url } },
         requester.securityOrigin->data(),
@@ -123,7 +116,6 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         { },
         WTF::move(originatingFrameID),
         originatingPageID,
-        WTF::move(parentFrameID),
         document ? std::optional { document->identifier() } : std::nullopt,
         getCurrentProcessID(),
         requestingFrame ? requestingFrame->isFocused() : false

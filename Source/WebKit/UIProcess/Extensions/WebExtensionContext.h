@@ -652,6 +652,7 @@ public:
     void didFinishDocumentLoad(WebViewClass *);
     void didFailNavigation(WebViewClass *, RefPtr<API::Error>);
     void webViewWebContentProcessDidTerminate(WebViewClass *);
+    void webViewDidClose(WebViewClass *);
 
 #if PLATFORM(MAC)
     void runOpenPanel(WKWebView *, WKOpenPanelParameters *, void (^)(NSArray *));
@@ -692,7 +693,7 @@ public:
     void addExtensionTabPage(WebPageProxy&, WebExtensionTab&);
     void addPopupPage(WebPageProxy&, WebExtensionAction&);
 
-    void enumerateExtensionPages(NOESCAPE Function<void(WebPageProxy&, bool& stop)>&&);
+    void enumerateExtensionPages(NOESCAPE const Function<void(WebPageProxy&, bool& stop)>&);
 
     WebViewClass *relatedWebView();
     String processDisplayName();
@@ -719,7 +720,7 @@ public:
         return processes(WTF::move(typeSet), ContentWorldTypeSet { contentWorldType });
     }
 
-    HashSet<Ref<WebProcessProxy>> processes(EventListenerTypeSet&&, ContentWorldTypeSet&&, Function<bool(WebProcessProxy&, WebPageProxy&, WebFrameProxy&)>&& predicate = nullptr) const;
+    HashSet<Ref<WebProcessProxy>> processes(EventListenerTypeSet&&, ContentWorldTypeSet&&, NOESCAPE const Function<bool(WebProcessProxy&, WebPageProxy&, WebFrameProxy&)>& predicate = nullptr) const;
 
     const UserContentControllerProxySet& NODELETE userContentControllers() const LIFETIME_BOUND;
 
@@ -810,7 +811,7 @@ private:
 #if ENABLE(INSPECTOR_EXTENSIONS)
     URL inspectorBackgroundPageURL() const;
 
-    InspectorTabVector openInspectors(Function<bool(WebExtensionTab&, WebInspectorUIProxy&)>&& = nullptr) const;
+    InspectorTabVector openInspectors(NOESCAPE const Function<bool(WebExtensionTab&, WebInspectorUIProxy&)>& = nullptr) const;
     InspectorTabVector loadedInspectors() const;
 
     bool isInspectorBackgroundPage(WKWebView *) const;
@@ -984,7 +985,11 @@ private:
     // Notifications APIs
     bool isNotificationsMessageAllowed(IPC::Decoder&);
 
-    void notificationsCreate(const WebExtensionNotificationParameters&, CompletionHandler<void()>&&);
+    void notificationsCreate(const WebExtensionNotificationParameters&, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
+    void notificationsUpdate(const String& identifier, const WebExtensionNotificationParameters&, CompletionHandler<void(std::expected<bool, WebExtensionError>&&)>&&);
+    void notificationsClear(const String& identifier, CompletionHandler<void(std::expected<bool, WebExtensionError>&&)>&&);
+    void notificationsGetAll(CompletionHandler<void(Vector<String>&&)>&&);
+    void notificationsGetPermissionLevel(CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&&);
 #endif
 
 #if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
@@ -1150,7 +1155,7 @@ private:
     String m_uniqueIdentifier = WTF::UUID::createVersion4().toString();
     bool m_customUniqueIdentifier { false };
 
-    RefPtr<WebExtensionLocalization> m_localization;
+    const RefPtr<WebExtensionLocalization> m_localization;
 
     bool m_inspectable { false };
 
@@ -1201,7 +1206,7 @@ private:
 #endif
 #endif
 
-    RetainPtr<_WKWebExtensionContextDelegate> m_delegate;
+    const RetainPtr<_WKWebExtensionContextDelegate> m_delegate;
 #elif ENABLE(2022_GLIB_API)
     GRefPtr<WebKitWebView> m_backgroundWebView;
     GWeakPtr<WebKitWebExtensionContext> m_delegate;
@@ -1258,7 +1263,7 @@ private:
     PopupPageActionMap m_popupPageActionMap;
 
 #if PLATFORM(COCOA)
-    RetainPtr<NSMapTable> m_tabDelegateToIdentifierMap;
+    const RetainPtr<NSMapTable> m_tabDelegateToIdentifierMap;
 #endif
 
     CommandsVector m_commands;

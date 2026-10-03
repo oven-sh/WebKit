@@ -9,30 +9,40 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-# Mirror Xcode's "Embed Testing.framework" phase
+# Mirror Xcode's "Embed Testing.framework" phase. ditto merges into whatever is already there;
+# use a stamp to record a rewrite in case of $_testing_platform_id change
 set(_testing_staged)
+set(_testing_stamp_dir "${CMAKE_BINARY_DIR}/DerivedSources/TestWebKitAPI")
+string(MD5 _testing_platform_id "${_platform_dir}")
 foreach (_fw Testing _Testing_AppKit _Testing_CoreGraphics _Testing_CoreImage
         _Testing_CoreTransferable _Testing_Foundation _Testing_UIKit)
     set(_src "${_platform_dir}/Developer/Library/Frameworks/${_fw}.framework")
     set(_dst "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/${_fw}.framework")
+    set(_stamp "${_testing_stamp_dir}/staged-${_fw}-${_testing_platform_id}.stamp")
 
     if (EXISTS "${_src}")
-        add_custom_command(OUTPUT "${_dst}"
+        add_custom_command(OUTPUT "${_stamp}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_testing_stamp_dir}"
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${_dst}"
             COMMAND ditto "${_src}" "${_dst}"
+            COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
             COMMENT "Staging ${_fw}.framework"
             VERBATIM
         )
-        list(APPEND _testing_staged "${_dst}")
+        list(APPEND _testing_staged "${_stamp}")
     endif ()
 endforeach ()
-if (EXISTS "${_platform_dir}/Developer/usr/lib/lib_TestingInterop.dylib")
-    add_custom_command(OUTPUT "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib"
-        COMMAND ditto "${_platform_dir}/Developer/usr/lib/lib_TestingInterop.dylib"
-            "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib"
+set(_src "${_platform_dir}/Developer/usr/lib/lib_TestingInterop.dylib")
+set(_dst "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib")
+if (EXISTS "${_src}")
+    add_custom_command(OUTPUT "${_dst}"
+        DEPENDS "${_src}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_src}" "${_dst}"
         VERBATIM
     )
-    list(APPEND _testing_staged "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib")
+    list(APPEND _testing_staged "${_dst}")
 endif ()
 add_custom_target(TestWebKitAPIStageTesting DEPENDS ${_testing_staged})
 
@@ -262,17 +272,6 @@ list(APPEND TestWebKit_UNIFIED_SOURCE_LIST_FILES
     "SourcesMac.txt"
 )
 
-# Test files that reference ObjC classes from Swift-only helpers or private
-# frameworks unavailable in the CMake build
-set(TestWebKit_UNIFIED_SOURCE_EXCLUDES
-    "DrawingToPDF\\.mm"
-    "PDFSnapshot\\.mm"
-    "SOAuthorizationTests\\.mm"
-    "UnifiedPDFTests\\.mm"
-    "WKWebViewPrintFormatter\\.mm"
-    "WritingTools\\.mm"
-)
-
 # Files compiled outside unified sources (Xcode membershipExceptions).
 list(APPEND TestWebKit_SOURCES
     ${TOOLS_DIR}/TestRunnerShared/mac/SyntheticNSEvent.mm
@@ -445,6 +444,7 @@ list(APPEND TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
 )
 
 list(APPEND TestWebKit_LIBRARIES
+    "-framework AuthKit"
     "-framework AuthenticationServices"
     "-framework HID"
     "-framework LocalAuthentication"
@@ -456,6 +456,11 @@ list(APPEND TestWebKit_LIBRARIES
     WebCoreTestSupport
     WebKitLegacy
     ${CARBON_LIBRARY}
+)
+
+target_link_options(TestWebKit PRIVATE
+    "LINKER:-weak_framework,WritingTools"
+    "LINKER:-weak_framework,WritingToolsUI"
 )
 
 set_source_files_properties(
@@ -663,13 +668,18 @@ add_library(TestWebKitAPILibrary OBJECT
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/WebPage+JavaScriptExpression.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/WebPageConfiguration+Extras.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/WKWebView+Extras.swift
+
+    ${TESTWEBKITAPI_DIR}/InjectedBundle/cocoa/WebProcessPlugIn/WebProcessPlugInWithInternals.mm
 )
 WEBKIT_TEST_SWIFT_HELPER_LIBRARY(TestWebKitAPILibrary TestWebKit)
 # The helpers import the WebKit framework built here for its @_spi declarations.
-# WebKit_StageSwiftModuleMac is deliberately kept out of WebKit_DEPENDENCIES, so
+# WebKit_StageSwiftModule is deliberately kept out of WebKit_DEPENDENCIES, so
 # without naming it the Swift importer can run before the swiftmodule is staged
 # and fall back to the SDK's copy, which does not have them.
-add_dependencies(TestWebKitAPILibrary WebKit WebKit_StageSwiftModuleMac)
+add_dependencies(TestWebKitAPILibrary WebKit WebKit_StageSwiftModule)
+# WebProcessPlugInWithInternals.mm includes <WebCoreTestSupport/WebCoreTestSupport.h>. An OBJECT
+# library doesn't inherit TestWebKit's link libraries, so it needs its own header dependency.
+target_link_libraries(TestWebKitAPILibrary PRIVATE WebKit::WebCoreTestSupport)
 target_include_directories(TestWebKitAPILibrary PRIVATE
     ${TestWebKit_PRIVATE_INCLUDE_DIRECTORIES}
 )
@@ -678,18 +688,34 @@ webkit_target_add_swift_options(TestWebKitAPILibrary
 )
 
 list(APPEND TestWebKit_SOURCES
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/AppKitGesturesTestsSupport.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/BasicAppKitGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/DoubleClickGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/EmbeddedAppKitGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/InactiveWindowAppKitGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/RefreshControlGesturesTests.swift"
+
     Tests/WebKit/WKWebView/CodingTests.swift
+    Tests/WebKit/WKWebView/HTTP2Server.swift
+    Tests/WebKit/WKWebView/HTTP3Server.swift
     Tests/WebKit/WKWebView/TextExtractionTests.swift
     Tests/WebKit/WKWebView/TextFragments.swift
+    Tests/WebKit/WKWebView/TextManipulation.swift
     Tests/WebKit/WKWebView/TextPlaceholderTests.swift
     Tests/WebKit/WKWebView/TextSize.swift
     Tests/WebKit/WKWebView/TextWidth.swift
     Tests/WebKit/WKWebView/TimeZoneOverride.swift
+    Tests/WebKit/WKWebView/WKBackForwardListTests.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIAction.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIAlarms.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPICommands.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPICookies.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIEvent.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIOffscreen.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIWindows.swift
+    Tests/WebKit/WKWebView/WKWebExtensionControllerConfiguration.swift
+    Tests/WebKit/WKWebView/WKWebExtensionDataRecord.swift
+    Tests/WebKit/WKWebView/WKWebExtensionMatchPattern.swift
     Tests/WebKit/WKWebView/WKWebExtensionTab.swift
     Tests/WebKit/WKWebView/WKWebExtensionWindow.swift
     Tests/WebKit/WKWebView/WKWebViewSwiftOverlayTests.swift
@@ -704,10 +730,17 @@ list(APPEND TestWebKit_SOURCES
     Tests/WebKit/WebPage/SimulateClickOverTextTests.swift
     Tests/WebKit/WebPage/URLSchemeHandlerTests.swift
     Tests/WebKit/WebPage/UserContentControllerTests.swift
+    Tests/WebKit/WebPage/WebPageMouseEventsTests.swift
     Tests/WebKit/WebPage/WebPageNavigationTests.swift
+    Tests/WebKit/WebPage/WebPageScrollbarTests.swift
+    Tests/WebKit/WebPage/WebPageTests.swift
+    Tests/WebKit/WebPage/WebPageTransferableTests.swift
+    Tests/WebKit/WebPage/WebViewTests.swift
 )
 
-# FIXME: Support WebKitAdditions and tests which need the _WebKit_SwiftUI cross-import overlay linked.
+# Tests importing both WebKit and SwiftUI load the _WebKit_SwiftUI cross-import
+# overlay; ensure it builds first.
+list(APPEND TestWebKit_FRAMEWORKS _WebKit_SwiftUI)
 
 # TestWebKitAPIBase needs framework headers for config.h includes.
 target_include_directories(TestWebKitAPIBase PRIVATE ${_testapi_framework_headers})
@@ -885,6 +918,8 @@ target_link_libraries(TestWebKitAPIWebProcessPlugIn PRIVATE
     "-framework Foundation"
 )
 
+_WEBKIT_ADD_DSYM(TestWebKitAPIWebProcessPlugIn)
+
 # TestWebKit loads this bundle via NSBundle lookup at runtime, so it must be
 # built and staged next to the TestWebKitAPI executable.
 add_dependencies(TestWebKit TestWebKitAPIWebProcessPlugIn)
@@ -1043,7 +1078,7 @@ set_target_properties(TestWebKit PROPERTIES
 
 set(_twkapi_bundle_id "org.webkit.TestWebKitAPI")
 
-if (WEBKIT_SDK_TARGET_OS STREQUAL "ios")
+if (USE_EXTENSIONKIT)
     add_dependencies(TestWebKit WebContentExtension NetworkingExtension)
     if (ENABLE_GPU_PROCESS)
         add_dependencies(TestWebKit GPUExtension)

@@ -61,7 +61,7 @@ public:
     void setSelectedForBindings(bool);
 
     WEBCORE_EXPORT HTMLSelectElement* NODELETE ownerSelectElement() const;
-    bool belongsToBaseAppearancePicker() const;
+    bool isRenderedWithBaseAppearance() const;
 
     WEBCORE_EXPORT String label() const;
     WEBCORE_EXPORT String displayLabel() const;
@@ -86,14 +86,17 @@ private:
     HTMLOptionElement(const QualifiedName&, Document&);
 
     NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void postConnectionSteps() final;
     void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
-    void movingSteps(IsSubtreeRoot, ContainerNode&) final;
+    void movingSteps(MovingType, ContainerNode&) final;
 
     bool supportsFocus() const final;
+    bool isKeyboardFocusable(const FocusEventData&) const final;
     bool isFocusable() const final;
     bool matchesDefaultPseudoClass() const final { return m_isDefault; }
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
+    void parseDisabledAttribute(const AtomString&);
 
     void didAddUserAgentShadowRoot(ShadowRoot&) final;
 

@@ -167,7 +167,7 @@ public:
     WEBCORE_EXPORT void pauseAnimation(const String& animationName, double timeOffset) override;
     WEBCORE_EXPORT void removeAnimation(const String& animationName, std::optional<AnimatedProperty>) override;
     WEBCORE_EXPORT void transformRelatedPropertyDidChange() override;
-    WEBCORE_EXPORT void setContentsToImage(Image*) override;
+    WEBCORE_EXPORT void setContentsToNativeImage(NativeImage*) override;
     WEBCORE_EXPORT void setContentsToImageBuffer(ImageBuffer*) override;
 #if PLATFORM(IOS_FAMILY)
     WEBCORE_EXPORT PlatformLayer* contentsLayerForMedia() const override;
@@ -199,7 +199,7 @@ public:
 
     WEBCORE_EXPORT void setDebugBackgroundColor(const Color&) override;
     WEBCORE_EXPORT void setDebugBorder(const Color&, float borderWidth) override;
-    WEBCORE_EXPORT void setShowFrameProcessBorders(bool, unsigned frameDepth = 0) override;
+    WEBCORE_EXPORT void setShowFrameProcessBorders(bool, unsigned frameDepth, FrameIdentifier) override;
 
     WEBCORE_EXPORT void setCustomAppearance(CustomAppearance) override;
 
@@ -298,6 +298,7 @@ private:
 #endif
 
     WEBCORE_EXPORT void setAllowsBackingStoreDetaching(bool) override;
+    WEBCORE_EXPORT void setAnimationExtent(std::optional<FloatRect>) override;
     bool allowsBackingStoreDetaching() const override { return m_allowsBackingStoreDetaching; }
 
     WEBCORE_EXPORT String displayListAsText(OptionSet<DisplayList::AsTextFlag>) const override;
@@ -707,7 +708,7 @@ private:
     RefPtr<PlatformCALayer> m_layer; // The main layer
     RefPtr<PlatformCALayer> m_structuralLayer; // A layer used for structural reasons, like preserves-3d or replica-flattening. Is the parent of m_layer.
     RefPtr<PlatformCALayer> m_contentsClippingLayer; // A layer used to clip inner content
-    RefPtr<PlatformCALayer> m_shapeMaskLayer; // Used to clip with non-trivial corner radii.
+    const RefPtr<PlatformCALayer> m_shapeMaskLayer; // Used to clip with non-trivial corner radii.
     RefPtr<PlatformCALayer> m_backdropClippingLayer; // Used to clip the backdrop layer with corner radii.
     RefPtr<PlatformCALayer> m_contentsLayer; // A layer used for inner content, like image and video
     RefPtr<PlatformCALayer> m_contentsShapeMaskLayer; // Used to clip the content layer with non-trivial corner radii.
@@ -729,7 +730,7 @@ private:
     std::unique_ptr<LayerClones> m_layerClones;
 
 #ifdef VISIBLE_TILE_WASH
-    RefPtr<PlatformCALayer> m_visibleTileWashLayer;
+    const RefPtr<PlatformCALayer> m_visibleTileWashLayer;
 #endif
     std::unique_ptr<FrameProcessIndicators> m_frameProcessIndicators;
     FloatRect m_visibleRect;

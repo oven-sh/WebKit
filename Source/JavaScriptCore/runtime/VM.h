@@ -40,7 +40,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/Integrity.h>
 #include <JavaScriptCore/Interpreter.h>
 #include <JavaScriptCore/JSDateMath.h>
-#include <JavaScriptCore/JSONAtomStringCache.h>
 #include <JavaScriptCore/KeyAtomStringCache.h>
 #include <JavaScriptCore/NativeFunction.h>
 #include <JavaScriptCore/NumericStrings.h>
@@ -137,6 +136,7 @@ class JSPropertyNameEnumerator;
 class JITSizeStatistics;
 class JITThunks;
 class MegamorphicCache;
+class JSONCache;
 class MicrotaskCallCache;
 class MicrotaskQueue;
 class NativeExecutable;
@@ -320,7 +320,7 @@ public:
     Integrity::Random& integrityRandom() LIFETIME_BOUND { return m_integrityRandom; }
 
     template<typename Type, typename Functor>
-    Type& ensureSideData(void* key, const Functor&);
+    Type& ensureSideData(void* key, NOESCAPE const Functor&);
 
     bool hasTerminationRequest() const { return m_hasTerminationRequest; }
     void clearHasTerminationRequest()
@@ -421,6 +421,8 @@ public:
     EntryFrame* topEntryFrame { nullptr };
     void* maybeReturnPC { nullptr };
     JSPIContext* topJSPIContext { nullptr };
+    WriteBarrier<JSSentinel> m_fastArraySentinel;
+    WriteBarrier<JSSentinel> m_fastStringSentinel;
 private:
 
     struct EntryScopeServicesBits {
@@ -621,13 +623,11 @@ public:
     WriteBarrier<JSSentinel> m_fastArrayValuesSentinel;
     WriteBarrier<JSSentinel> m_fastArrayKeysSentinel;
     WriteBarrier<JSSentinel> m_fastArrayEntriesSentinel;
-    WriteBarrier<JSSentinel> m_fastArrayUnboxedSentinel;
     WriteBarrier<JSSentinel> m_fastMapKeysSentinel;
     WriteBarrier<JSSentinel> m_fastMapValuesSentinel;
     WriteBarrier<JSSentinel> m_fastMapEntriesSentinel;
     WriteBarrier<JSSentinel> m_fastSetValuesSentinel;
     WriteBarrier<JSSentinel> m_fastSetEntriesSentinel;
-    WriteBarrier<JSSentinel> m_fastStringValuesSentinel;
     WriteBarrier<JSSentinel> m_fastAsyncGeneratorSentinel;
 
     WriteBarrier<JSCell> m_cachedSortScratch;
@@ -655,7 +655,6 @@ public:
     WriteBarrier<JSString> lastCachedString;
     Ref<StringImpl> lastAtomizedIdentifierStringImpl { *StringImpl::empty() };
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
-    JSONAtomStringCache jsonAtomStringCache;
     KeyAtomStringCache keyAtomStringCache;
     // Bytecode-cache decode: one lazy [class(c0)<<6|class(c1)] -> atom table for the bulk of minified identifiers, shared by every Decoder. The 64 classes are the ASCII identifier characters (Decoder::atomForInlineString).
     static constexpr unsigned cachedBytecodeTwoCharacterAtomsSize = 64 * 64;
@@ -705,13 +704,13 @@ public:
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
     JSSentinel* fastArrayKeysSentinel() { return m_fastArrayKeysSentinel.get(); }
     JSSentinel* fastArrayEntriesSentinel() { return m_fastArrayEntriesSentinel.get(); }
-    JSSentinel* fastArrayUnboxedSentinel() { return m_fastArrayUnboxedSentinel.get(); }
+    JSSentinel* fastArraySentinel() { return m_fastArraySentinel.get(); }
     JSSentinel* fastMapKeysSentinel() { return m_fastMapKeysSentinel.get(); }
     JSSentinel* fastMapValuesSentinel() { return m_fastMapValuesSentinel.get(); }
     JSSentinel* fastMapEntriesSentinel() { return m_fastMapEntriesSentinel.get(); }
     JSSentinel* fastSetValuesSentinel() { return m_fastSetValuesSentinel.get(); }
     JSSentinel* fastSetEntriesSentinel() { return m_fastSetEntriesSentinel.get(); }
-    JSSentinel* fastStringValuesSentinel() { return m_fastStringValuesSentinel.get(); }
+    JSSentinel* fastStringSentinel() { return m_fastStringSentinel.get(); }
     JSSentinel* fastAsyncGeneratorSentinel() { return m_fastAsyncGeneratorSentinel.get(); }
 
     inline JSPropertyNameEnumerator* emptyPropertyNameEnumerator();
@@ -991,6 +990,9 @@ public:
     ALWAYS_INLINE StringSplitCache* stringSplitCache() { return m_stringSplitCache.getIfExists(); }
     StringSplitCache& ensureStringSplitCache() { return m_stringSplitCache.get(*this); }
 
+    const UniqueRef<JSONCache> m_jsonCache;
+    JSONCache& jsonCache() { return m_jsonCache.get(); }
+
     const UniqueRef<MicrotaskCallCache> m_syncResumeCallCache;
     MicrotaskCallCache& syncResumeCallCache() { return m_syncResumeCallCache.get(); }
     void clearMicrotaskCallCaches();
@@ -1208,7 +1210,7 @@ public:
 #endif
     
     template<typename Func>
-    void logEvent(CodeBlock*, const char* summary, const Func& func);
+    void logEvent(CodeBlock*, const char* summary, NOESCAPE const Func&);
 
     inline std::optional<RefPtr<Thread>> ownerThread() const; // Defined in VMInlines.h
     inline std::optional<uint64_t> ownerThreadUID() const; // Defined in VMInlines.h
@@ -1292,7 +1294,7 @@ public:
     void NODELETE addDebugger(Debugger&);
     void NODELETE removeDebugger(Debugger&);
     template<typename Func>
-    void forEachDebugger(const Func&);
+    void forEachDebugger(NOESCAPE const Func&);
 
     void changeNumberOfActiveJITPlans(int64_t value)
     {

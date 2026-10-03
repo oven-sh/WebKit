@@ -107,6 +107,7 @@ namespace WebKit {
 class DownloadProxy;
 class DownloadProxyMap;
 class ListDataObserver;
+class WebCompiledContentRuleList;
 class WebPageProxy;
 class WebUserContentControllerProxy;
 
@@ -264,6 +265,8 @@ public:
 
 #if ENABLE(CONTENT_EXTENSIONS)
     void didDestroyWebUserContentControllerProxy(WebUserContentControllerProxy&);
+
+    static void requestTrackingPreventionContentRuleList();
 #endif
 
     enum class SendParametersToNetworkProcess : bool { No, Yes };
@@ -294,7 +297,7 @@ public:
     void receivedQualifiedServerTrust(WebKit::WebPageProxyIdentifier, WebCore::CertificateInfo&&, WebCore::CertificateInfo&&);
 
     // The network process brokers MessagePort delivery but has no GPU process connection.
-    void authorizeImageBufferTransfers(Vector<WebCore::ImageBufferTransferIdentifier>&&, WebCore::ProcessIdentifier destinationProcess, CompletionHandler<void()>&&);
+    void handOverTransferredImageBuffers(Vector<WebCore::ImageBufferTransferIdentifier>&&, WebCore::ProcessIdentifier destinationProcess);
 
     void resourceLoadDidSendRequest(WebPageProxyIdentifier, ResourceLoadInfo&&, WebCore::ResourceRequest&&, std::optional<IPC::FormDataReference>&&);
     void resourceLoadDidPerformHTTPRedirection(WebPageProxyIdentifier, ResourceLoadInfo&&, WebCore::ResourceResponse&&, WebCore::ResourceRequest&&);
@@ -417,6 +420,8 @@ private:
 
     // Message handlers
     void didReceiveAuthenticationChallenge(PAL::SessionID, WebPageProxyIdentifier, const std::optional<WebCore::SecurityOriginData>&, WebCore::AuthenticationChallenge&&, bool, AuthenticationChallengeIdentifier);
+    void requestLocalNetworkAccessPermission(PAL::SessionID, WebPageProxyIdentifier, WebCore::ClientOrigin&&, WebCore::IPAddressSpace, CompletionHandler<void(WebCore::PermissionState)>&&);
+    void queryLocalNetworkAccessPermission(PAL::SessionID, std::optional<WebPageProxyIdentifier>, WebCore::ClientOrigin&&, WebCore::IPAddressSpace, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&&);
     void negotiatedLegacyTLS(WebPageProxyIdentifier);
     void didNegotiateModernTLS(WebPageProxyIdentifier, const URL&);
     void didBlockLoadToKnownTracker(WebPageProxyIdentifier, const URL&);
@@ -429,6 +434,11 @@ private:
 
 #if ENABLE(CONTENT_EXTENSIONS)
     void contentExtensionRules(UserContentControllerIdentifier);
+
+    static void loadTrackingPreventionContentRuleList();
+    void setTrackingPreventionContentRuleList(WebCompiledContentRuleList*);
+    static void platformLoadTrackingPreventionContentRuleList(CompletionHandler<void(RefPtr<WebCompiledContentRuleList>)>&&);
+    static void platformObserveTrackingPreventionContentRuleListUpdates();
 #endif
 
 #if USE(RUNNINGBOARD)
@@ -447,7 +457,7 @@ private:
 
     void terminateWebProcess(WebCore::ProcessIdentifier, IPC::MessageName);
 
-    void considerProcessSwapForNavigationResponse(WebPageProxyIdentifier, WebCore::NavigationIdentifier, WebCore::BrowsingContextGroupSwitchDecision, WebCore::NavigationResponseProcessSwapReason, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(bool success)>&&);
+    void considerProcessSwapForNavigationResponse(WebPageProxyIdentifier, WebCore::NavigationIdentifier, WebCore::BrowsingContextGroupSwitchDecision, WebCore::NavigationResponseProcessSwapReason, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(std::optional<WebCore::ProcessIdentifier> destinationWebProcess)>&&);
 
     void requestStorageSpace(PAL::SessionID, const WebCore::ClientOrigin&, uint64_t quota, uint64_t currentSize, uint64_t spaceRequired, CompletionHandler<void(std::optional<uint64_t> quota)>&&);
     void increaseQuota(PAL::SessionID, const WebCore::ClientOrigin&, QuotaIncreaseRequestIdentifier, uint64_t currentQuota, uint64_t currentUsage, uint64_t spaceRequested);
@@ -475,7 +485,7 @@ private:
 
     const std::unique_ptr<DownloadProxyMap> m_downloadProxyMap;
 
-    UniqueRef<API::CustomProtocolManagerClient> m_customProtocolManagerClient;
+    const UniqueRef<API::CustomProtocolManagerClient> m_customProtocolManagerClient;
 #if ENABLE(LEGACY_CUSTOM_PROTOCOL_MANAGER)
     LegacyCustomProtocolManagerProxy m_customProtocolManagerProxy;
 #endif
@@ -483,7 +493,7 @@ private:
     RefPtr<ProcessThrottler::Activity> m_activityFromWebProcesses;
 
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    RefPtr<ListDataObserver> m_storageAccessPromptQuirksDataUpdateObserver;
+    const RefPtr<ListDataObserver> m_storageAccessPromptQuirksDataUpdateObserver;
 #endif
 
     struct UploadActivity {
@@ -521,8 +531,8 @@ private:
 #endif
 
 #if PLATFORM(IOS_FAMILY)
-    RetainPtr<id> m_backgroundObserver;
-    RetainPtr<id> m_foregroundObserver;
+    const RetainPtr<id> m_backgroundObserver;
+    const RetainPtr<id> m_foregroundObserver;
 #endif
 };
 

@@ -618,6 +618,8 @@ const ArrayStorageShape        = constexpr ArrayStorageShape
 const SlowPutArrayStorageShape = constexpr SlowPutArrayStorageShape
 const CopyOnWrite              = constexpr CopyOnWrite
 const ArrayWithUndecided       = constexpr ArrayWithUndecided
+const ArrayWithInt32           = constexpr ArrayWithInt32
+const ArrayWithContiguous      = constexpr ArrayWithContiguous
 
 # Type constants.
 const StructureType = constexpr StructureType
@@ -1421,7 +1423,6 @@ macro skipIfIsRememberedOrInEden(cell, slowPath)
 .done:
 end
 
-# setData is the address of an InlineWatchpointSet's m_data.
 macro branchIfInlineWatchpointSetIsStillValid(setData, scratch, stillValid)
     loadp setData, scratch
     bpeq scratch, InlineWatchpointSetThinInvalidated, .invalidated

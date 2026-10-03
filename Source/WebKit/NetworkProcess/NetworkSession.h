@@ -86,7 +86,9 @@ class NetworkBroadcastChannelRegistry;
 class NetworkDataTask;
 class NetworkLoadScheduler;
 class NetworkProcess;
+class NetworkConnectionToWebProcess;
 class NetworkResourceLoader;
+struct NetworkResourceLoadParameters;
 class NetworkSocketChannel;
 class NetworkStorageManager;
 class ServiceWorkerFetchTask;
@@ -149,7 +151,6 @@ public:
     bool NODELETE isTrackingPreventionEnabled() const;
     static WebCore::IsKnownCrossSiteTracker isRequestToKnownCrossSiteTracker(const WebCore::ResourceRequest&);
     static WebCore::IsKnownCrossSiteTracker isResourceFromKnownCrossSiteTracker(const URL& firstParty, const URL& resource);
-    static bool isRequestBlockable(const WebCore::ResourceRequest&);
     void deleteAndRestrictWebsiteDataForRegistrableDomains(OptionSet<WebsiteDataType>, RegistrableDomainsToDeleteOrRestrictWebsiteDataFor&&, CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&&);
     void registrableDomainsWithWebsiteData(OptionSet<WebsiteDataType>, CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&&);
     bool enableResourceLoadStatisticsLogTestingEvent() const { return m_enableResourceLoadStatisticsLogTestingEvent; }
@@ -170,12 +171,10 @@ public:
     void resetFirstPartyDNSData();
     void destroyResourceLoadStatistics(CompletionHandler<void()>&&);
 
-    WebCore::PermissionState requestLocalNetworkAccessPermission(const WebCore::ClientOrigin&, WebCore::IPAddressSpace, bool canPrompt);
-    void setLocalNetworkAccessPermissionForTesting(WebCore::ClientOrigin&&, WebCore::IPAddressSpace, WebCore::PermissionState);
-    WebCore::PermissionState localNetworkAccessPermission(const WebCore::ClientOrigin&, WebCore::IPAddressSpace) const;
-    void removeLocalNetworkAccessPermissions(const WebCore::SecurityOriginData& topOrigin);
-    void clearLocalNetworkAccessPermissionsForTesting();
-    
+    void requestLocalNetworkAccessPermission(WebPageProxyIdentifier, const WebCore::ClientOrigin&, WebCore::IPAddressSpace, CompletionHandler<void(WebCore::PermissionState)>&&);
+
+    WebCore::IPAddressSpace classifyConnectionAddressSpace(const std::optional<WebCore::IPAddress>&, const URL&) const;
+
 #if ENABLE(APP_BOUND_DOMAINS)
     virtual bool hasAppBoundSession() const { return false; }
     virtual void clearAppBoundSession() { }
@@ -205,8 +204,37 @@ public:
     void removeKeptAliveLoad(NetworkResourceLoader&);
 
     void addLoaderAwaitingWebProcessTransfer(Ref<NetworkResourceLoader>&&);
+    void setParkedLoaderDestinationAndResolvePendingClaims(NetworkResourceLoadIdentifier, WebCore::ProcessIdentifier destinationWebProcess);
     void removeLoaderWaitingWebProcessTransfer(NetworkResourceLoadIdentifier);
-    RefPtr<NetworkResourceLoader> takeLoaderAwaitingWebProcessTransfer(NetworkResourceLoadIdentifier);
+
+    enum class LoaderAwaitingWebProcessTransferOutcome : uint8_t {
+        Success, // loader returned in claim.loader
+        NotFound, // no parked loader for this identifier (legitimate fallthrough to fresh load)
+        Pending, // parked loader exists, destination not yet known from UIProcess (caller should queue)
+        WrongCaller, // parked loader exists, destination known, caller is not it (call site MESSAGE_CHECKs)
+    };
+    struct LoaderAwaitingWebProcessTransferClaim {
+        RefPtr<NetworkResourceLoader> loader;
+        LoaderAwaitingWebProcessTransferOutcome outcome { LoaderAwaitingWebProcessTransferOutcome::NotFound };
+    };
+    LoaderAwaitingWebProcessTransferClaim takeLoaderAwaitingWebProcessTransfer(NetworkResourceLoadIdentifier, WebCore::ProcessIdentifier callerWebProcess);
+
+    // Unchecked take for the trusted in-NetworkProcess Enhanced Security return-to-sender path, where a
+    // declined process swap resumes the load in the original process. There is no untrusted caller to
+    // validate here (and the declined loader never had a destination recorded), so this bypasses the
+    // ownership check used by the ScheduleResourceLoad IPC path above.
+    RefPtr<NetworkResourceLoader> takeParkedLoaderForOriginalProcess(NetworkResourceLoadIdentifier);
+
+    // Returns false if the per-identifier pending-claim queue is full (caller should MESSAGE_CHECK kill).
+    bool queuePendingLoaderClaim(NetworkResourceLoadIdentifier, WeakPtr<NetworkConnectionToWebProcess>, NetworkResourceLoadParameters&&);
+
+#if ENABLE(IPC_TESTING_API)
+    // Insert a synthetic parked entry without a real NetworkResourceLoader. Returns false if an entry
+    // for `identifier` is already parked. Used by tests to deterministically drive the bind-to-claimant
+    // ownership check in takeLoaderAwaitingWebProcessTransfer.
+    bool addSyntheticLoaderAwaitingWebProcessTransferForTesting(NetworkResourceLoadIdentifier, std::optional<WebCore::ProcessIdentifier> destination);
+    void removeSyntheticLoaderAwaitingWebProcessTransferForTesting(NetworkResourceLoadIdentifier);
+#endif
 
     NetworkCache::Cache* cache() { return m_cache.get(); }
 
@@ -372,14 +400,34 @@ protected:
         WTF_MAKE_TZONE_ALLOCATED(CachedNetworkResourceLoader);
     public:
         static Ref<CachedNetworkResourceLoader> create(Ref<NetworkResourceLoader>&&);
+#if ENABLE(IPC_TESTING_API)
+        static Ref<CachedNetworkResourceLoader> createForTesting();
+#endif
+        ~CachedNetworkResourceLoader();
         RefPtr<NetworkResourceLoader> takeLoader();
+
+        std::optional<WebCore::ProcessIdentifier> destinationWebProcess() const { return m_destinationWebProcess; }
+        void setDestinationWebProcess(WebCore::ProcessIdentifier destination) { m_destinationWebProcess = destination; }
+
+        struct PendingClaim;
+        // Cap the number of pending claims to prevent the WebContent process from
+        // allocating many claims in the NetworkProcess. This limit on claims covers
+        // claims from all processes.
+        static constexpr size_t maxPendingClaims = 4;
+        bool addPendingClaim(WeakPtr<NetworkConnectionToWebProcess>, NetworkResourceLoadParameters&&);
+        Vector<std::unique_ptr<PendingClaim>> takePendingClaims();
 
     private:
         explicit CachedNetworkResourceLoader(Ref<NetworkResourceLoader>&&);
+#if ENABLE(IPC_TESTING_API)
+        CachedNetworkResourceLoader();
+#endif
         void expirationTimerFired();
 
         WebCore::Timer m_expirationTimer;
         RefPtr<NetworkResourceLoader> m_loader;
+        std::optional<WebCore::ProcessIdentifier> m_destinationWebProcess;
+        Vector<std::unique_ptr<PendingClaim>> m_pendingClaims;
     };
     HashMap<NetworkResourceLoadIdentifier, Ref<CachedNetworkResourceLoader>> m_loadersAwaitingWebProcessTransfer;
 
@@ -423,10 +471,15 @@ protected:
 #endif
 
     HashMap<WebPageProxyIdentifier, String> m_attributedBundleIdentifierFromPageIdentifiers;
-    // Keyed on the origin pair as well as the space, so a grant does not follow the same origin embedded
-    // in an unrelated site. Nothing writes it yet; the grant and revocation paths land with the
-    // permission store. See https://bugs.webkit.org/show_bug.cgi?id=319907
-    HashMap<std::pair<WebCore::ClientOrigin, WebCore::IPAddressSpace>, WebCore::PermissionState> m_localNetworkAccessPermissions;
+
+    void setIPAddressSpaceOverridesForTesting(const String&);
+
+    struct IPAddressSpaceOverrideForTesting {
+        WebCore::IPAddress address;
+        uint16_t port;
+        WebCore::IPAddressSpace space;
+    };
+    Vector<IPAddressSpaceOverrideForTesting> m_ipAddressSpaceOverridesForTesting;
 
     Vector<WebCore::SecurityOriginData> m_mockPushSubscriptionOriginsForTesting;
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)

@@ -380,7 +380,7 @@ private:
                 node->setOp(ArithBitRShift);
                 break;
             default:
-                DFG_CRASH(m_graph, node, "Unexpected node during ValueBit operation fixup");
+                DFG_CRASH(m_graph, node, "Unexpected node during ValueBit operation fixup"_s);
                 break;
             }
 
@@ -922,8 +922,8 @@ private:
                 } else {
                     node->setResult(NodeResultDouble);
                     node->setArithRoundingMode(Arith::RoundingMode::Double);
+                    node->clearFlags(NodeMustGenerate);
                 }
-                node->clearFlags(NodeMustGenerate);
             } else
                 fixEdge<UntypedUse>(node->child1());
             break;
@@ -1068,6 +1068,23 @@ private:
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
+
+            // A string loosely equals only a string or nothing at all when the other side is null or undefined,
+            // so this is exactly CompareStrictEq.
+            auto tryConvertStringAndStringOrOther = [&](Edge& stringEdge, Edge& stringOrOtherEdge) {
+                if (!stringEdge->shouldSpeculateString())
+                    return false;
+                if (!stringOrOtherEdge->shouldSpeculateStringOrOther() || stringOrOtherEdge->shouldSpeculateOther())
+                    return false;
+                m_insertionSet.insertNode(m_indexInBlock, SpecNone, Check, node->origin, Edge(stringOrOtherEdge.node(), StringOrOtherUse));
+                fixEdge<StringUse>(stringEdge);
+                node->setOpAndDefaultFlags(CompareStrictEq);
+                return true;
+            };
+            if (tryConvertStringAndStringOrOther(node->child1(), node->child2()))
+                break;
+            if (tryConvertStringAndStringOrOther(node->child2(), node->child1()))
+                break;
 
             // If either child can be proved to be Null or Undefined, comparing them is greatly simplified.
             bool oneArgumentIsUsedAsSpecOther = false;
@@ -1708,7 +1725,7 @@ private:
                         node->setResult(NodeResultDouble);
                         break;
                     default:
-                        DFG_CRASH(m_graph, node, "Bad use kind");
+                        DFG_CRASH(m_graph, node, "Bad use kind"_s);
                         break;
                     }
                 } else {
@@ -2954,7 +2971,7 @@ private:
             // These are just nodes that we don't currently expect to see during fixup.
             // If we ever wanted to insert them prior to fixup, then we just have to create
             // fixup rules for them.
-            DFG_CRASH(m_graph, node, "Unexpected node during fixup");
+            DFG_CRASH(m_graph, node, "Unexpected node during fixup"_s);
             break;
 
         case PutGlobalVariable: {
@@ -3806,7 +3823,7 @@ private:
                 RELEASE_ASSERT_NOT_REACHED();
             }
 #else
-            DFG_CRASH(m_graph, node, "Unexpected node type");
+            DFG_CRASH(m_graph, node, "Unexpected node type"_s);
 #endif
             break;
         }
@@ -4596,6 +4613,8 @@ private:
     {
         bool atLeastOneString = false;
         bool goodToGo = true;
+        // String.prototype.concat must throw for a null or undefined |this|, so it cannot stringify it.
+        bool canConvertOther = !(node->op() == StrCat && node->intrinsic() == StringPrototypeConcatIntrinsic);
         m_graph.doToChildren(
             node,
             [&] (Edge& edge) {
@@ -4606,6 +4625,8 @@ private:
                 if (edge->shouldSpeculateInt32())
                     return;
                 if (edge->shouldSpeculateNumber())
+                    return;
+                if (canConvertOther && edge->shouldSpeculateStringOrOther())
                     return;
                 if (m_graph.canOptimizeStringObjectAccess(node->origin.semantic)) {
                     if (edge->shouldSpeculateStringObject()) {
@@ -4639,6 +4660,10 @@ private:
                 }
                 if (edge->shouldSpeculateNumber()) {
                     convertStringAddUse<DoubleRepUse>(node, edge);
+                    return;
+                }
+                if (canConvertOther && edge->shouldSpeculateStringOrOther()) {
+                    convertStringAddUse<StringOrOtherUse>(node, edge);
                     return;
                 }
                 if (edge->op() == ToPrimitive) {

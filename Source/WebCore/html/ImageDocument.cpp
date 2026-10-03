@@ -52,6 +52,7 @@
 #include "Page.h"
 #include "RawDataDocumentParser.h"
 #include "RenderElement.h"
+#include "RenderImage.h"
 #include "Settings.h"
 #include "UserScriptTypes.h"
 #include <pal/text/TextEncoding.h>
@@ -146,7 +147,8 @@ LayoutSize ImageDocument::imageSize()
     RefPtr cachedImage = imageElement->cachedImage();
     if (!cachedImage)
         return { };
-    return cachedImage->imageSizeForRenderer(protect(imageElement->renderer()).get(), frame() ? frame()->pageZoomFactor() : 1);
+    float zoom = frame() ? frame()->pageZoomFactor() : 1;
+    return CachedImage::clampForZoom(RenderImage::imageSizeAsRendered(*cachedImage, protect(imageElement->renderer()).get(), zoom), zoom);
 }
 
 void ImageDocument::updateDuringParsing()
@@ -191,7 +193,7 @@ void ImageDocument::finishedParsing()
         // Report the natural image size in the page title, regardless of zoom level.
         // At a zoom level of 1 the image is guaranteed to have an integer size.
         updateStyleIfNeeded();
-        IntSize size = flooredIntSize(cachedImage->imageSizeForRenderer(protect(imageElement->renderer()).get(), 1));
+        IntSize size = flooredIntSize(LayoutSize { RenderImage::imageSizeAsRendered(*cachedImage, protect(imageElement->renderer()).get()) });
         if (size.width()) {
             // Compute the title. We use the decoded filename of the resource, falling
             // back on the hostname if there is no path.
@@ -245,8 +247,8 @@ Ref<DocumentParser> ImageDocument::createParser()
 void ImageDocument::createDocumentStructure()
 {
     Ref rootElement = HTMLHtmlElement::create(*this);
+    rootElement->setAttribute(styleAttr, "color-scheme: light dark; height: 100%"_s);
     appendChild(rootElement);
-    rootElement->setInlineStyleProperty(CSSPropertyHeight, 100, CSSUnitType::Percentage);
 
     if (RefPtr localFrame = frame())
         localFrame->injectUserScripts(UserScriptInjectionTime::DocumentStart);

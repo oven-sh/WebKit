@@ -36,6 +36,7 @@
 #include <string>
 #include <vector>
 #include <wtf/RefCounted.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
@@ -79,8 +80,8 @@ public:
     void clearBackForwardList();
     void clearPersistentUserStyleSheet();
     bool callShouldCloseOnWebView();
-    JSRetainPtr<JSStringRef> copyDecodedHostName(JSStringRef name);
-    JSRetainPtr<JSStringRef> copyEncodedHostName(JSStringRef name);
+    RefPtr<OpaqueJSString> copyDecodedHostName(JSStringRef name);
+    RefPtr<OpaqueJSString> copyEncodedHostName(JSStringRef name);
     void dispatchPendingLoadRequests();
     void display();
     void displayAndTrackRepaints();
@@ -97,7 +98,7 @@ public:
     int numberOfPendingGeolocationPermissionRequests();
     bool isGeolocationProviderActive();
     void overridePreference(JSStringRef key, JSStringRef value);
-    JSRetainPtr<JSStringRef> pathToLocalResource(JSContextRef, JSStringRef url);
+    RefPtr<OpaqueJSString> pathToLocalResource(JSContextRef, JSStringRef url);
     void queueBackNavigation(int howFarBackward);
     void queueForwardNavigation(int howFarForward);
     void queueLoad(JSStringRef url, JSStringRef target);
@@ -139,7 +140,7 @@ public:
     void setShouldInvertColors(bool);
 #endif
 
-    void setPageVisibility(const char*);
+    void setPageVisibility(UTF8CStringView);
     void resetPageVisibility();
 
     static void setAllowsAnySSLCertificate(bool);
@@ -328,7 +329,7 @@ public:
     void showWebInspector();
     void closeWebInspector();
     void evaluateInWebInspector(JSStringRef script);
-    JSRetainPtr<JSStringRef> inspectorTestStubURL();
+    RefPtr<OpaqueJSString> inspectorTestStubURL();
 
     void evaluateScriptInIsolatedWorld(unsigned worldID, JSObjectRef globalObject, JSStringRef script);
     void evaluateScriptInIsolatedWorldAndReturnValue(unsigned worldID, JSObjectRef globalObject, JSStringRef script);

@@ -127,7 +127,7 @@ DragData::DragData(DragDataRef data, const IntPoint& clientPosition, const IntPo
     , m_dragDestinationActionMask(destinationActionMask)
     , m_pageID(pageID)
 #if PLATFORM(MAC)
-    , m_pasteboardName([[m_platformDragData draggingPasteboard] name])
+    , m_pasteboardName([[data draggingPasteboard] name])
 #else
     , m_pasteboardName(Pasteboard::nameOfDragPasteboard())
 #endif
@@ -137,7 +137,6 @@ DragData::DragData(DragDataRef data, const IntPoint& clientPosition, const IntPo
 DragData::DragData(const String& dragStorageName, const IntPoint& clientPosition, const IntPoint& globalPosition, OptionSet<DragOperation> sourceOperationMask, OptionSet<DragApplicationFlags> flags, OptionSet<DragDestinationAction> destinationActionMask, std::optional<PageIdentifier> pageID)
     : m_clientPosition(clientPosition)
     , m_globalPosition(globalPosition)
-    , m_platformDragData(0)
     , m_draggingSourceOperationMask(sourceOperationMask)
     , m_applicationFlags(flags)
     , m_dragDestinationActionMask(destinationActionMask)
@@ -332,7 +331,7 @@ String DragData::asURL(FilenameConversionPolicy, String* title) const
     Vector<String> types;
     platformStrategies()->pasteboardStrategy()->getTypes(types, m_pasteboardName, context.get());
     if (types.contains(String(legacyFilesPromisePasteboardTypeSingleton())) && fileNames().size() == 1)
-        return [URLByCanonicalizingURL([NSURL fileURLWithPath:fileNames()[0].createNSString().get()]) absoluteString];
+        return [protect(URLByCanonicalizingURL([NSURL fileURLWithPath:fileNames()[0].createNSString().get()])) absoluteString];
 #endif
 
     return { };

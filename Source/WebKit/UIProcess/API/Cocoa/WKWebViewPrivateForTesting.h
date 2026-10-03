@@ -78,6 +78,7 @@ typedef NSVisualEffectView _WKPlatformVisualEffectView;
 
 - (void)_setContinuousSpellCheckingEnabledForTesting:(BOOL)enabled;
 - (void)_setGrammarCheckingEnabledForTesting:(BOOL)enabled;
+- (void)_setUseDarkAppearanceForTesting:(BOOL)useDarkAppearance;
 - (NSDictionary *)_contentsOfUserInterfaceItem:(NSString *)userInterfaceItem;
 
 - (void)_requestActiveNowPlayingSessionInfo:(void(^)(BOOL, BOOL, NSString*, double, double, NSInteger, NSUInteger))callback;
@@ -94,6 +95,8 @@ typedef NSVisualEffectView _WKPlatformVisualEffectView;
 // Highest end time of the seekable ranges the playback controls manager knows about, NaN when it
 // has none. An empty range here is what leaves the fullscreen scrubber disabled.
 @property (nonatomic, readonly) double _maximumSeekableTime;
+
+@property (nonatomic, readonly) CGRect _lastVideoPresentationSetupRectForTesting;
 
 - (void)_setIndexOfGetDisplayMediaDeviceSelectedForTesting:(nullable NSNumber *)index;
 - (void)_setSystemCanPromptForGetDisplayMediaForTesting:(BOOL)canPrompt;

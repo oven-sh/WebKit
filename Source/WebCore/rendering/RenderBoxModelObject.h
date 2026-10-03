@@ -45,6 +45,7 @@ class BorderShape;
 class GraphicsContext;
 class Image;
 class ImageBuffer;
+class ImageSizingContext;
 class RenderTextFragment;
 class StickyPositionViewportConstraints;
 class TransformationMatrix;
@@ -85,8 +86,8 @@ public:
     // to return the remaining width on a given line (and the height of a single line).
     virtual LayoutUnit offsetLeft() const;
     virtual LayoutUnit offsetTop() const;
-    virtual LayoutUnit offsetWidth() const = 0;
-    virtual LayoutUnit offsetHeight() const = 0;
+    virtual LayoutUnit offsetWidth() const { return borderBoxRectInContainer().width(); }
+    virtual LayoutUnit offsetHeight() const { return borderBoxRectInContainer().height(); }
 
     void updateFromStyle() override;
 
@@ -220,7 +221,7 @@ public:
     void clearFirstLetterRemainingText();
 
     enum class ScaleByUsedZoom : bool { No, Yes };
-    LayoutSize calculateImageIntrinsicDimensions(Style::Image*, const LayoutSize& scaledPositioningAreaSize, ScaleByUsedZoom) const;
+    LayoutSize calculateImageIntrinsicDimensions(const Style::Image&, const ImageSizingContext&, ScaleByUsedZoom) const;
 
     RenderBlock* containingBlockForAutoHeightDetection(const Style::PreferredSize& logicalHeight) const;
     RenderBlock* containingBlockForAutoHeightDetection(const Style::MinimumSize& logicalHeight) const;
@@ -236,6 +237,7 @@ protected:
     void willBeDestroyed() override;
 
     void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) override;
+    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
     LayoutPoint adjustedPositionRelativeToOffsetParent(const LayoutPoint&) const;
 
@@ -250,8 +252,6 @@ protected:
     virtual RepaintRects computeVisibleRectsUsingPaintOffset(const RepaintRects&) const;
 
 private:
-    virtual LayoutRect frameRectForStickyPositioning() const = 0;
-
     RenderBlock* containingBlockForAutoHeightDetectionGeneric(const auto& logicalHeight) const;
 };
 

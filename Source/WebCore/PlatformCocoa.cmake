@@ -422,7 +422,6 @@ list(APPEND WebCore_SOURCES
 
     platform/graphics/ca/FrameProcessIndicators.cpp
     platform/graphics/ca/GraphicsLayerCA.cpp
-    platform/graphics/ca/LayerPool.cpp
     platform/graphics/ca/PlatformCAAnimation.cpp
     platform/graphics/ca/PlatformCALayer.mm
     platform/graphics/ca/TileController.cpp
@@ -520,7 +519,7 @@ list(APPEND WebCore_SOURCES
 
     platform/network/cf/CertificateInfoCFNet.cpp
     platform/network/cf/CookieStorageSessionCFNet.cpp
-    platform/network/cf/DNSResolveQueueCFNet.cpp
+    platform/network/cf/DNSResolveQueueCFNet.mm
     platform/network/cf/FormDataStreamCFNet.mm
     platform/network/cf/ResourceRequestCFNet.cpp
 
@@ -811,6 +810,7 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/WebGPU/GPUVertexState.h
     Modules/WebGPU/GPUVertexStepMode.h
 
+    Modules/WebGPU/Implementation/WebGPUAPIUtilities.h
     Modules/WebGPU/Implementation/WebGPUAdapterImpl.h
     Modules/WebGPU/Implementation/WebGPUBindGroupImpl.h
     Modules/WebGPU/Implementation/WebGPUBindGroupLayoutImpl.h
@@ -1321,7 +1321,6 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/graphics/ca/FrameProcessIndicators.h
     platform/graphics/ca/GraphicsLayerCA.h
-    platform/graphics/ca/LayerPool.h
     platform/graphics/ca/PlatformCAAnimation.h
     platform/graphics/ca/PlatformCAFilters.h
     platform/graphics/ca/PlatformCALayer.h
@@ -1482,8 +1481,8 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/network/ios/LegacyPreviewLoaderClient.h
     platform/network/ios/WebCoreURLResponseIOS.h
 
+    platform/video-codecs/cocoa/GPUVideoDecoder.h
     platform/video-codecs/cocoa/GPUVideoEncoder.h
-    platform/video-codecs/cocoa/WebRTCVideoDecoder.h
 
     platform/xr/cocoa/PlatformXRPose.h
 

@@ -1525,7 +1525,7 @@ static id handlePopupValueAttribute(WebAccessibilityObjectWrapper*, AXCoreObject
 
 static id handleInvalidAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return backingObject.invalidStatus().createNSString().autorelease();
+    return backingObject.invalidStatusIncludingInferred().createNSString().autorelease();
 }
 
 static id handleHasPopupAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
@@ -2249,7 +2249,7 @@ static id handleBrailleRoleDescriptionAttribute(WebAccessibilityObjectWrapper*, 
 
 static id handleErrorMessageElementsAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    if (backingObject.invalidStatus() == "false"_s)
+    if (backingObject.invalidStatusIncludingInferred() == "false"_s)
         return nil;
     return makeNSArray(backingObject.errorMessageObjects());
 }
@@ -3652,6 +3652,17 @@ struct ParameterizedAttributeHandlerEntry {
 static id handleUIElementsForSearchPredicateAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject, const ParameterizedAttributeContext& context)
 {
     auto criteria = accessibilitySearchCriteriaForSearchPredicate(backingObject, context.dictionary);
+
+    // * Important site-isolation workaround for older OS versions *
+    //
+    // Due to a bug in AppKit in older OS versions, a client can't pass an element in another process
+    // as the start element, so VoiceOver passes its nearest ancestor in this process instead. For an element
+    // inside an out-of-process frame, that's the frame's host. If the host is also the element being
+    // searched, the frame is its only content, and returning it would return the element the client
+    // started from, leaving it stuck there. Return nothing so the client moves on to the host's container.
+    if (criteria.startObject == &backingObject && backingObject.hasRemoteFrameChild())
+        return @[];
+
     RetainPtr<NSArray> widgetChildren;
     if (isMatchingPlugin(backingObject, criteria)) {
         if (RetainPtr renderChildren = renderWidgetChildren(backingObject)) {

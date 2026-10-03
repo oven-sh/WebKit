@@ -67,8 +67,6 @@ public:
 
     bool equals(const CSSImageValue&) const;
 
-    bool knownToBeOpaque(const RenderElement&) const;
-
     RefPtr<Style::Image> createStyleImage(const Style::BuilderState&) const;
 
     bool NODELETE isLoadedFromOpaqueSource() const;
@@ -90,7 +88,7 @@ private:
     CSS::URL m_location;
     AtomString m_initiatorType;
     std::optional<CachedResourceHandle<CachedImage>> m_cachedImage;
-    RefPtr<CSSImageValue> m_unresolvedValue;
+    const RefPtr<CSSImageValue> m_unresolvedValue;
     bool m_isInvalid { false };
 };
 

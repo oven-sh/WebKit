@@ -571,7 +571,7 @@ FloatRect TileController::adjustTileCoverageRectForScrolling(const FloatRect& co
             return;
 
         if (!m_historicalVelocityData)
-            m_historicalVelocityData = makeUnique<HistoricalVelocityData>();
+            lazyInitialize(m_historicalVelocityData, makeUnique<HistoricalVelocityData>());
 
         m_velocity = m_historicalVelocityData->velocityForNewData(scrollOffset, contentsScale, currentTime);
     };
@@ -788,7 +788,7 @@ IntRect TileController::tileCoverageRect() const
 PlatformCALayer* TileController::tiledScrollingIndicatorLayer()
 {
     if (!m_coverageMap)
-        m_coverageMap = makeUnique<TileCoverageMap>(*this);
+        lazyInitialize(m_coverageMap, makeUnique<TileCoverageMap>(*this));
 
     return &m_coverageMap->layer();
 }
@@ -863,7 +863,7 @@ Ref<PlatformCALayer> TileController::createTileLayer(const IntRect& tileRect, Ti
     float temporaryScaleFactor = owningGraphicsLayer()->platformCALayerContentsScaleMultiplierForNewTiles(tileCacheLayer.get());
     m_hasTilesWithTemporaryScaleFactor |= temporaryScaleFactor != 1;
 
-    auto layer = tileCacheLayer->createCompatibleLayerOrTakeFromPool(PlatformCALayer::LayerType::LayerTypeTiledBackingTileLayer, &grid, tileRect.size());
+    auto layer = tileCacheLayer->createCompatibleLayerWithSize(PlatformCALayer::LayerType::LayerTypeTiledBackingTileLayer, &grid, tileRect.size());
     layer->setAnchorPoint(FloatPoint3D());
     layer->setPosition(tileRect.location());
     layer->setBorderColor(m_tileDebugBorderColor);

@@ -190,7 +190,7 @@ auto DocumentScope::collectResolverScopes() -> ResolverScopes
 }
 
 template <typename TestFunction>
-void DocumentScope::evaluateMediaQueries(TestFunction&& testFunction)
+void DocumentScope::evaluateMediaQueries(NOESCAPE const TestFunction& testFunction)
 {
     bool hadChanges = false;
 
@@ -482,10 +482,8 @@ MatchResultCache& DocumentScope::matchResultCache()
 
 EnvironmentVariables& DocumentScope::environmentVariables() const
 {
-    if (!m_environmentVariables) {
-        auto& thisScope = const_cast<DocumentScope&>(*this);
-        thisScope.m_environmentVariables = makeUnique<EnvironmentVariables>(m_document.get());
-    }
+    if (!m_environmentVariables)
+        lazyInitialize(m_environmentVariables, makeUnique<EnvironmentVariables>(m_document.get()));
     return *m_environmentVariables;
 }
 

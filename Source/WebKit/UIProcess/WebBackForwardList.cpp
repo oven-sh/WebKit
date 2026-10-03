@@ -92,7 +92,7 @@ WebBackForwardList::~WebBackForwardList()
     ASSERT((!m_page && !m_currentIndex) || !m_page->hasRunningProcess());
 }
 
-WebBackForwardListItem* WebBackForwardList::itemForID(BackForwardItemIdentifier identifier)
+RefPtr<WebBackForwardListItem> WebBackForwardList::itemForID(BackForwardItemIdentifier identifier)
 {
     if (!m_page)
         return nullptr;
@@ -269,7 +269,7 @@ void WebBackForwardList::goToItem(WebBackForwardListItem& item)
     page->didChangeBackForwardList(nullptr, WTF::move(removedItems));
 }
 
-WebBackForwardListItem* WebBackForwardList::currentItem() const
+RefPtr<WebBackForwardListItem> WebBackForwardList::currentItem() const
 {
     ASSERT(!m_currentIndex || *m_currentIndex < m_entries.size());
 
@@ -545,7 +545,7 @@ void WebBackForwardList::clear()
     page->didChangeBackForwardList(nullptr, WTF::move(removedItems));
 }
 
-BackForwardListState WebBackForwardList::backForwardListState(WTF::Function<bool (WebBackForwardListItem&)>&& filter) const
+BackForwardListState WebBackForwardList::backForwardListState(NOESCAPE const WTF::Function<bool(WebBackForwardListItem&)>& filter) const
 {
     ASSERT(!m_currentIndex || *m_currentIndex < m_entries.size());
 
@@ -600,7 +600,7 @@ void WebBackForwardList::setItemsAsRestoredFromSession()
     });
 }
 
-void WebBackForwardList::setItemsAsRestoredFromSessionIf(NOESCAPE Function<bool(WebBackForwardListItem&)>&& functor)
+void WebBackForwardList::setItemsAsRestoredFromSessionIf(NOESCAPE const Function<bool(WebBackForwardListItem&)>& functor)
 {
     for (auto& entry : m_entries) {
         if (functor(entry))
@@ -935,8 +935,22 @@ void WebBackForwardList::backForwardGoToItemShared(IPC::Connection& connection, 
     goToItem(*item);
 }
 
+// Not a message check: a subframe process may name the main frame, which it does not host, and a
+// frame can be destroyed while a synchronous request naming it is in flight.
+static RefPtr<WebFrameProxy> frameOnPage(FrameIdentifier frameID, WebPageProxy& page)
+{
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    if (!frame || frame->page() != &page)
+        return nullptr;
+    return frame;
+}
+
 void WebBackForwardList::backForwardAllItems(FrameIdentifier frameID, CompletionHandler<void(Vector<Ref<FrameState>>&&)>&& completionHandler)
 {
+    RefPtr page = m_page.get();
+    if (!page || !frameOnPage(frameID, *page))
+        return completionHandler({ });
+
     auto frameItems = WTF::compactMap(entries(), [frameID](const auto& item) -> RefPtr<WebBackForwardListFrameItem> {
         return item->mainFrameItem().childItemForFrameID(frameID);
     });
@@ -950,13 +964,26 @@ void WebBackForwardList::backForwardItemAtIndexForWebContent(IPC::Connection& co
 {
     MESSAGE_CHECK_COMPLETION_BASE(delta != std::numeric_limits<int32_t>::min(), connection, completionHandler(nullptr));
 
-    // FIXME: This should verify that the web process requesting the item hosts the specified frame.
-    if (RefPtr item = itemAtDeltaFromCurrentIndex(delta, AllowSkippingBackForwardItems::No)) {
-        if (RefPtr frameItem = item->mainFrameItem().childItemForFrameID(frameID))
-            return completionHandler(frameItem->copyFrameStateWithChildren());
-        completionHandler(item->copyMainFrameStateWithChildren());
-    } else
-        completionHandler(nullptr);
+    RefPtr page = m_page.get();
+    if (!page)
+        return completionHandler(nullptr);
+
+    RefPtr frame = frameOnPage(frameID, *page);
+    if (!frame)
+        return completionHandler(nullptr);
+
+    RefPtr item = itemAtDeltaFromCurrentIndex(delta, AllowSkippingBackForwardItems::No);
+    if (!item)
+        return completionHandler(nullptr);
+
+    if (RefPtr frameItem = item->mainFrameItem().childItemForFrameID(frameID))
+        return completionHandler(frameItem->copyFrameStateWithChildren());
+
+    // Entries can lack the main frame's current ID (after session restore or a process swap).
+    if (!frame->isMainFrame())
+        return completionHandler(nullptr);
+
+    completionHandler(item->copyMainFrameStateWithChildren());
 }
 
 void WebBackForwardList::backForwardListCounts(CompletionHandler<void(WebBackForwardListCounts&&)>&& completionHandler)
@@ -964,7 +991,7 @@ void WebBackForwardList::backForwardListCounts(CompletionHandler<void(WebBackFor
     completionHandler(rawCounts());
 }
 
-FrameState* WebBackForwardList::findFrameStateInItem(WebCore::BackForwardItemIdentifier itemID, WebCore::FrameIdentifier parentFrameID, WebCore::FrameIdentifier childFrameID, uint64_t childFrameIndex, const String& childFrameName)
+RefPtr<FrameState> WebBackForwardList::findFrameStateInItem(WebCore::BackForwardItemIdentifier itemID, WebCore::FrameIdentifier parentFrameID, WebCore::FrameIdentifier childFrameID, uint64_t childFrameIndex, const String& childFrameName)
 {
     RefPtr targetItem = itemForID(itemID);
     if (!targetItem)
@@ -1035,7 +1062,7 @@ WebBackForwardListMessageForwarder& WebBackForwardListWrapper::messageReceiver()
     return m_messageForwarder.get();
 }
 
-WebBackForwardListItem* WebBackForwardListWrapper::currentItem() const
+RefPtr<WebBackForwardListItem> WebBackForwardListWrapper::currentItem() const
 {
     return m_impl->currentItem();
 }

@@ -34,6 +34,7 @@
 #include "RenderObjectDocument.h"
 #include "StyleCachedImage.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "StyleImageDrawingExtras.h"
 #include "StyleInvalidImage.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -145,11 +146,11 @@ bool RenderImageResource::currentFrameIsComplete() const
     return protect(m_styleImage)->currentFrameIsComplete(m_renderer.get());
 }
 
-void RenderImageResource::setContainerContext(const IntSize& imageContainerSize, const URL& url)
+Style::ImageDrawingExtras RenderImageResource::drawingExtras(const URL& url) const
 {
     if (!m_styleImage || !m_renderer)
-        return;
-    protect(m_styleImage)->setContainerContextForRenderer(*m_renderer, imageContainerSize, m_renderer->style().usedZoom(), url);
+        return { };
+    return protect(m_styleImage)->drawingExtrasForRenderer(*m_renderer, url);
 }
 
 LayoutSize RenderImageResource::imageSize(float multiplier, CachedImage::SizeType type) const

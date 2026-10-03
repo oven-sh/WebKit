@@ -34,9 +34,8 @@
 
 namespace JSC {
 
-ALWAYS_INLINE bool RegExpObject::isSymbolMatchFastAndNonObservable()
+ALWAYS_INLINE bool RegExpObject::isSymbolMatchFastAndNonObservable(JSGlobalObject* globalObject)
 {
-    JSGlobalObject* globalObject = this->realm();
     if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
         return false;
 
@@ -62,9 +61,8 @@ ALWAYS_INLINE bool RegExpObject::isSymbolMatchFastAndNonObservable()
     return true;
 }
 
-ALWAYS_INLINE bool RegExpObject::isSymbolSearchFastAndNonObservable()
+ALWAYS_INLINE bool RegExpObject::isSymbolSearchFastAndNonObservable(JSGlobalObject* globalObject)
 {
-    JSGlobalObject* globalObject = this->realm();
     if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
         return false;
 
@@ -97,9 +95,8 @@ ALWAYS_INLINE bool RegExpObject::isSymbolSearchFastAndNonObservable()
     return true;
 }
 
-ALWAYS_INLINE bool RegExpObject::isSymbolMatchAllFastAndNonObservable()
+ALWAYS_INLINE bool RegExpObject::isSymbolMatchAllFastAndNonObservable(JSGlobalObject* globalObject)
 {
-    JSGlobalObject* globalObject = this->realm();
     if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
         return false;
 
@@ -153,9 +150,8 @@ inline RegExpObject* RegExpObject::copyOfSharedLiteral(VM& vm)
     return create(vm, realm()->regExpStructure(), regExp());
 }
 
-ALWAYS_INLINE bool RegExpObject::isSymbolReplaceFastAndNonObservable()
+ALWAYS_INLINE bool RegExpObject::isSymbolReplaceFastAndNonObservable(JSGlobalObject* globalObject)
 {
-    JSGlobalObject* globalObject = this->realm();
     if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
         return false;
 
@@ -181,9 +177,8 @@ ALWAYS_INLINE bool RegExpObject::isSymbolReplaceFastAndNonObservable()
     return true;
 }
 
-ALWAYS_INLINE bool RegExpObject::isSymbolSplitFastAndNonObservable()
+ALWAYS_INLINE bool RegExpObject::isSymbolSplitFastAndNonObservable(JSGlobalObject* globalObject)
 {
-    JSGlobalObject* globalObject = this->realm();
     if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
         return false;
 
@@ -335,7 +330,7 @@ inline uint64_t NODELETE advanceStringIndex(StringView str, unsigned strSize, ui
 }
 
 template<typename FixEndFunc>
-JSValue collectMatches(VM& vm, JSGlobalObject* globalObject, JSString* string, StringView s, RegExp* regExp, const FixEndFunc& fixEnd)
+JSValue collectMatches(VM& vm, JSGlobalObject* globalObject, JSString* string, StringView s, RegExp* regExp, NOESCAPE const FixEndFunc& fixEnd)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 

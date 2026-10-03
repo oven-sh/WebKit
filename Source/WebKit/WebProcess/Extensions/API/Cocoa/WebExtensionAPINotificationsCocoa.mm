@@ -46,7 +46,9 @@ namespace WebKit {
 
 #if ENABLE(WK_WEB_EXTENSIONS_NOTIFICATIONS)
 
-static bool parseNotificationOptions(NSDictionary *options, WebExtensionNotificationParameters& parameters, NSString **outExceptionString)
+enum class ForUpdate : bool { No, Yes };
+
+static bool parseNotificationOptions(NSDictionary *options, ForUpdate forUpdate, WebExtensionNotificationParameters& parameters, NSString **outExceptionString)
 {
     static NSArray<NSString *> *requiredKeys = @[
         messageKey,
@@ -63,7 +65,7 @@ static bool parseNotificationOptions(NSDictionary *options, WebExtensionNotifica
         buttonsKey: @[ NSDictionary.class ],
     };
 
-    if (!validateDictionary(options, @"options", requiredKeys, types, outExceptionString))
+    if (!validateDictionary(options, @"options", forUpdate == ForUpdate::Yes ? nil : requiredKeys, types, outExceptionString))
         return false;
 
     if (NSString *title = objectForKey<NSString>(options, titleKey))
@@ -106,13 +108,79 @@ void WebExtensionAPINotifications::createNotification(const String& identifier, 
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/notifications/create
 
     WebExtensionNotificationParameters parameters;
-    if (!parseNotificationOptions(options, parameters, outExceptionString))
+    if (!parseNotificationOptions(options, ForUpdate::No, parameters, outExceptionString))
         return;
 
     parameters.identifier = !identifier.isEmpty() ? identifier : createVersion4UUIDString();
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::NotificationsCreate(parameters), [protectedThis = Ref { *this }, callback = WTF::move(callback), identifier = parameters.identifier]() {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::NotificationsCreate(parameters), [protectedThis = Ref { *this }, callback = WTF::move(callback), identifier = parameters.identifier](std::expected<void, WebExtensionError>&& result) {
+        if (!result) {
+            callback->reportError(result.error().createNSString().get());
+            return;
+        }
+
         callback->call(toJSValueRef(callback->globalContext(), identifier));
+    }, extensionContext().identifier());
+}
+
+void WebExtensionAPINotifications::update(const String& identifier, NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/notifications/update
+
+    WebExtensionNotificationParameters parameters;
+    if (!parseNotificationOptions(options, ForUpdate::Yes, parameters, outExceptionString))
+        return;
+
+    parameters.identifier = identifier;
+
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::NotificationsUpdate(identifier, parameters), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<bool, WebExtensionError>&& result) {
+        if (!result) {
+            callback->reportError(result.error().createNSString().get());
+            return;
+        }
+
+        callback->call(JSValueMakeBoolean(callback->globalContext(), result.value()));
+    }, extensionContext().identifier());
+}
+
+void WebExtensionAPINotifications::clear(const String& identifier, Ref<WebExtensionCallbackHandler>&& callback)
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/notifications/clear
+
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::NotificationsClear(identifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<bool, WebExtensionError>&& result) {
+        if (!result) {
+            callback->reportError(result.error().createNSString().get());
+            return;
+        }
+
+        callback->call(JSValueMakeBoolean(callback->globalContext(), result.value()));
+    }, extensionContext().identifier());
+}
+
+void WebExtensionAPINotifications::getAll(Ref<WebExtensionCallbackHandler>&& callback)
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/notifications/getAll
+
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::NotificationsGetAll(), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Vector<String> identifiers) {
+        NSMutableDictionary *result = [NSMutableDictionary dictionaryWithCapacity:identifiers.size()];
+        for (auto& identifier : identifiers)
+            result[identifier.createNSString().get()] = @YES;
+
+        callback->call(toJSValueRef(callback->globalContext(), result));
+    }, extensionContext().identifier());
+}
+
+void WebExtensionAPINotifications::getPermissionLevel(Ref<WebExtensionCallbackHandler>&& callback)
+{
+    // Documentation: https://developer.chrome.com/docs/extensions/reference/api/notifications#method-getPermissionLevel
+
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::NotificationsGetPermissionLevel(), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<String, WebExtensionError>&& result) {
+        if (!result) {
+            callback->reportError(result.error().createNSString().get());
+            return;
+        }
+
+        callback->call(toJSValueRef(callback->globalContext(), result.value()));
     }, extensionContext().identifier());
 }
 
@@ -123,7 +191,7 @@ WebExtensionAPIEvent& WebExtensionAPINotifications::onClicked()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/notifications/onClicked
 
     if (!m_onClicked)
-        m_onClicked = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::NotificationsOnClicked);
+        lazyInitialize(m_onClicked, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::NotificationsOnClicked));
 
     return *m_onClicked;
 }
@@ -133,7 +201,7 @@ WebExtensionAPIEvent& WebExtensionAPINotifications::onButtonClicked()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/notifications/onButtonClicked
 
     if (!m_onButtonClicked)
-        m_onButtonClicked = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::NotificationsOnButtonClicked);
+        lazyInitialize(m_onButtonClicked, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::NotificationsOnButtonClicked));
 
     return *m_onButtonClicked;
 }

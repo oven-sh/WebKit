@@ -198,6 +198,16 @@ AccessHandleEnabled:
     default: false
     WebKitLegacy: false
 
+AccessibilityFormErrorDetectionEnabled:
+  type: bool
+  status: internal
+  defaultsOverridable: true
+  humanReadableName: "Form Error Detection"
+  humanReadableDescription: "Detect and report form submissions that may have failed validation"
+  defaultValue:
+    "ENABLE(ACCESSIBILITY_FORM_ERROR_DETECTION)": true
+    default: false
+
 AccessibilityTextStitchingEnabled:
   type: bool
   status: embedder
@@ -864,6 +874,14 @@ CSSCornerShapeEnabled:
   humanReadableDescription: "Enable support for CSS corner-shape property"
   defaultValue: true
 
+CSSCornersShorthandEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS corner shorthands"
+  humanReadableDescription: "Enable support for the CSS corner and corner-* shorthands"
+  defaultValue: false
+
 CSSCounterStyleAtRuleImageSymbolsEnabled:
   type: bool
   status: testable
@@ -1006,11 +1024,11 @@ CSSLineFitEdgeEnabled:
 
 CSSLinkParametersEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS Linked Parameters"
   humanReadableDescription: "Enable passing CSS link parameters to linked resources"
-  defaultValue: false
+  defaultValue: true
 
 CSSMarkerContentEnabled:
   type: bool
@@ -1104,6 +1122,14 @@ CSSScrollAnchoringEnabled:
   humanReadableName: "CSS Scroll Anchoring"
   humanReadableDescription: "Enable CSS Scroll Anchoring"
   defaultValue: true
+
+CSSScrollAxisLockEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS Scroll Axis Lock"
+  humanReadableDescription: "Enable scroll-axis-lock property"
+  defaultValue: false
 
 CSSScrollStateContainerQueriesEnabled:
   type: bool
@@ -1335,6 +1361,16 @@ CacheAPIEnabled:
     WebKit: true
   disableInLockdownMode: true
   richJavaScript: true
+
+CachedAssemblerDataCapacityLimitEnabled:
+  type: bool
+  status: internal
+  humanReadableName: "Limit Cached JIT Assembler Buffer Size"
+  humanReadableDescription: "Do not keep per-thread JIT assembler buffers larger than maximumCachedAssemblerDataCapacity cached for reuse"
+  jscOptionName: useCachedAssemblerDataCapacityLimit
+  sharedPreferenceForWebProcess: true
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: false
 
 CanvasColorSpaceEnabled:
   type: bool
@@ -1871,6 +1907,15 @@ DeviceOrientationPermissionAPIEnabled:
     WebKit: defaultDeviceOrientationPermissionAPIEnabled()
   sharedPreferenceForWebProcess: true
   richJavaScript: true
+
+DevicePostureAPIEnabled:
+  type: bool
+  status: testable
+  category: dom
+  defaultsOverridable: true
+  humanReadableName: "Device Posture API"
+  humanReadableDescription: "Enable the Device Posture API"
+  defaultValue: false
 
 DeviceWidth:
   type: uint32_t
@@ -2602,7 +2647,7 @@ HTMLEnhancedSelectEnabled:
 
 HTMLEnhancedSelectMultipleAndListBoxEnabled:
   type: bool
-  status: unstable
+  status: testable
   category: dom
   humanReadableName: "Enhanced HTML select element for multiple and list box"
   humanReadableDescription: "Enable enhanced HTML select element for the multiple attribute and for list box rendering"
@@ -3738,6 +3783,14 @@ MathFontFamily:
   webcoreImplementation: custom
   defaultValue: '""_str'
 
+MathMLAnchorElementEnabled:
+  type: bool
+  defaultValue: false
+  status: testable
+  category: dom
+  humanReadableName: "MathML <a> element"
+  humanReadableDescription: "Enable support for the MathML <a> element and IDL interface."
+
 MathMLDisableHrefOnNonAnchorElement:
   type: bool
   status: testable
@@ -3947,6 +4000,16 @@ MediaRecorderEnabledWebM:
       default: false
   sharedPreferenceForWebProcess: true
 
+MediaResourceLoadTimeoutForTesting:
+  type: uint32_t
+  status: internal
+  category: media
+  condition: PLATFORM(COCOA)
+  webcoreDeprecatedGlobalSettings: true
+  humanReadableName: "Media Resource Load Timeout For Testing"
+  humanReadableDescription: "Test override for the timeout applied to each media resource load serviced by WebKit, in milliseconds (0 means use production default)"
+  defaultValue: 0
+
 MediaSessionCaptureToggleAPIEnabled:
   type: bool
   status: stable
@@ -4144,6 +4207,13 @@ MockScrollbarsEnabled:
   excludeFrom: [ WebCore ]
   defaultValue: false
 
+MockVolumetricSceneEnabled:
+  type: bool
+  status: embedder
+  condition: ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: false
+
 ModelDocumentEnabled:
   type: bool
   status: testable
@@ -4247,8 +4317,7 @@ MultiProcessBackForwardCacheEnabled:
 
 MutationEventsEnabled:
   type: bool
-  status: testable
-  category: dom
+  status: embedder
   humanReadableName: "DOM mutation events"
   defaultValue:
     default: WebKit::defaultMutationEventsEnabled()
@@ -5055,6 +5124,13 @@ RequiresUserGestureToLoadVideo:
       "PLATFORM(IOS_FAMILY)": true
       default: false
 
+RequiresUserGestureToStartAudiblePlaybackWhenHidden:
+  type: bool
+  status: embedder
+  defaultValue:
+    default: false
+    WebKit: defaultRequiresUserGestureToStartAudiblePlaybackWhenHidden()
+
 ResourceLoadSchedulingEnabled:
   type: bool
   status: internal
@@ -5780,7 +5856,7 @@ SpatialPortalEnabled:
   type: bool
   status: testable
   category: css
-  condition: ENABLE(SPATIAL_PORTAL)
+  condition: ENABLE(SPATIAL_PORTAL) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
   humanReadableName: "Spatial CSS Portals"
   humanReadableDescription: "Enable the spatial: portal CSS property"
   defaultValue: false
@@ -6186,12 +6262,14 @@ ThreadedTimeBasedAnimationsAtHighFrameRateEnabled:
 
 ThreadedTimeBasedAnimationsEnabled:
   type: bool
-  status: preview
+  status: stable
   category: animation
   humanReadableName: "Threaded Time-based Animations"
   humanReadableDescription: "Run qualifying time-based animations on a separate thread"
   condition: ENABLE(THREADED_ANIMATIONS)
-  defaultValue: false
+  defaultValue:
+    default: true
+    WebKitLegacy: false
 
 # FIXME: This is not relevant for WebKitLegacy, so it should be excluded from WebKitLegacy entirely.
 TiledScrollingIndicatorVisible:
@@ -6367,16 +6445,6 @@ UseAppKitGesturesForGestureEvents:
   status: internal
   humanReadableName: "AppKit gestures for gesture events"
   humanReadableDescription: "Use AppKit gestures to drive gesture event synthesis"
-  condition: PLATFORM(MAC)
-  defaultValue:
-    default: false
-    WebKit: defaultUseAppKitGestures()
-
-UseAppKitGesturesForManipulationSurfaces:
-  type: bool
-  status: internal
-  humanReadableName: "AppKit gestures for manipulation surfaces"
-  humanReadableDescription: "Use AppKit gestures to drive manipulation surfaces"
   condition: PLATFORM(MAC)
   defaultValue:
     default: false
@@ -6823,14 +6891,14 @@ WasmTailCallsEnabled:
 
 WasmWideArithmeticEnabled:
   type: bool
-  status: testable
+  status: stable
   category: javascript
   humanReadableName: "WebAssembly Wide Arithmetic"
   humanReadableDescription: "Allow the wide arithmetic instructions from the wasm wide-arithmetic spec."
   jscOptionName: useWasmWideArithmetic
   sharedPreferenceForWebProcess: true
   excludeFrom: [ WebKitLegacy, WebCore ]
-  defaultValue: false
+  defaultValue: true
 
 WebAPIStatisticsEnabled:
   type: bool
@@ -7344,12 +7412,12 @@ WebRTCVP9Profile2CodecEnabled:
 
 WebRTCWebCoreVideoCodecsEnabled:
   type: bool
-  status: testable
+  status: stable
   category: media
   humanReadableName: "WebRTC WebCore Video Codecs"
   humanReadableDescription: "Use WebCore's native video codecs instead of libwebrtc's for WebRTC codecs that support it"
   condition: ENABLE(WEB_RTC)
-  defaultValue: false
+  defaultValue: true
   sharedPreferenceForWebProcess: true
 
 WebSQLEnabled:

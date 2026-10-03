@@ -38,8 +38,10 @@
 #import "WKFullScreenWindowController.h"
 #import "WKWebViewIOS.h"
 #import "WebPageProxy.h"
+#import "WebPageProxyTesting.h"
 #import "WebProcessProxy.h"
 #import "_WKActivatedElementInfoInternal.h"
+#import "_WKFrameHandleInternal.h"
 #import "_WKTextInputContextInternal.h"
 #import <WebCore/ColorCocoa.h>
 #import <WebCore/ColorSerialization.h>
@@ -479,6 +481,11 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
     [_contentView _simulateLongPressActionAtLocation:location];
 }
 
+- (void)_simulateDoubleClickAtLocation:(CGPoint)location
+{
+    [_contentView _simulateDoubleClickAtLocation:location];
+}
+
 - (void)_simulateTextEntered:(NSString *)text
 {
     [_contentView _simulateTextEntered:text];
@@ -567,6 +574,18 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
 - (CGRect)_fixedClippingViewBoundsForTesting
 {
     return [_contentView _fixedClippingViewBoundsForTesting];
+}
+
+- (void)_screenIsBeingCapturedForFrame:(_WKFrameHandle *)frameHandle completionHandler:(void (^)(BOOL))completionHandler
+{
+    RefPtr pageForTesting = _page->pageForTesting();
+    auto frameID = frameHandle->_frameHandle->frameID();
+    if (!pageForTesting || !frameID)
+        return completionHandler(NO);
+
+    pageForTesting->screenIsBeingCaptured(*frameID, [completionHandler = makeBlockPtr(completionHandler)](bool captured) {
+        completionHandler(captured);
+    });
 }
 
 @end

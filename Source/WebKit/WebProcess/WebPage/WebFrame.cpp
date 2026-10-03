@@ -320,7 +320,6 @@ FrameInfoData WebFrame::info() const
     }
 
     return {
-        isMainFrame(),
         frameType,
         // FIXME: This should use the full request.
         ResourceRequest(url()),
@@ -329,7 +328,6 @@ FrameInfoData WebFrame::info() const
         coreFrame ? coreFrame->tree().specifiedName().string() : String(),
         frameID(),
         page ? std::optional { page->webPageProxyIdentifier() } : std::nullopt,
-        parent ? std::optional { parent->frameID() } : std::nullopt,
         document ? std::optional { document->identifier() } : std::nullopt,
         getCurrentProcessID(),
         isFocused(),
@@ -514,7 +512,7 @@ void WebFrame::createProvisionalFrame(ProvisionalFrameCreationParameters&& param
     auto clientCreator = [this, protectedThis = Ref { *this }] (auto& localFrame, auto& frameLoader) mutable {
         return makeUniqueRefWithoutRefCountedCheck<WebLocalFrameLoaderClient>(localFrame, frameLoader, WTF::move(protectedThis), makeInvalidator());
     };
-    auto localFrame = parent ? LocalFrame::createProvisionalSubframe(*corePage, WTF::move(clientCreator), m_frameID, parameters.effectiveSandboxFlags, parameters.effectiveReferrerPolicy, parameters.scrollingMode, *parent, Ref { remoteFrame->frameTreeSyncData() }) : LocalFrame::createMainFrame(*corePage, WTF::move(clientCreator), m_frameID, parameters.effectiveSandboxFlags, parameters.effectiveReferrerPolicy, nullptr, Ref { remoteFrame->frameTreeSyncData() });
+    auto localFrame = parent ? LocalFrame::createProvisionalSubframe(*corePage, WTF::move(clientCreator), m_frameID, parameters.effectiveSandboxFlags, parameters.effectiveReferrerPolicy, parameters.scrollingMode, *parent, Ref { remoteFrame->frameTreeSyncData() }, parameters.pageZoomFactor, parameters.textZoomFactor) : LocalFrame::createMainFrame(*corePage, WTF::move(clientCreator), m_frameID, parameters.effectiveSandboxFlags, parameters.effectiveReferrerPolicy, nullptr, Ref { remoteFrame->frameTreeSyncData() }, parameters.pageZoomFactor, parameters.textZoomFactor);
     ASSERT(!m_provisionalFrame);
     m_provisionalFrame = localFrame.ptr();
     m_frameIDBeforeProvisionalNavigation = parameters.frameIDBeforeProvisionalNavigation;
@@ -552,6 +550,14 @@ void WebFrame::destroyProvisionalFrame()
         frame->setView(nullptr);
         m_frameIDBeforeProvisionalNavigation = std::nullopt;
     }
+}
+
+void WebFrame::updateSandboxFlags(SandboxFlags sandboxFlags)
+{
+    if (RefPtr localFrame = coreLocalFrame())
+        localFrame->updateSandboxFlags(sandboxFlags, Frame::NotifyUIProcess::No);
+    if (RefPtr provisionalFrame = m_provisionalFrame)
+        provisionalFrame->updateSandboxFlags(sandboxFlags, Frame::NotifyUIProcess::No);
 }
 
 void WebFrame::commitProvisionalFrame()
@@ -629,6 +635,9 @@ void WebFrame::removeFromTree()
 
     if (RefPtr client = localFrameLoaderClient())
         client->removeStorageAccess();
+
+    if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*coreFrame))
+        localFrame->loader().closeURL();
 
     // Instrumentation is added in createSubframe()/createProvisionalFrame() and normally removed in
     // detachedFromParent2(). This removal path (a remote parent removing the frame ->
@@ -728,7 +737,7 @@ void WebFrame::didReceivePolicyDecision(PolicyListenerIdentifier listenerID, Pol
     // any other, and m_policyDocumentLoader is its own. A new window skips it too, since its navigation state
     // belongs to the window being opened rather than to this frame.
     if (policyDecision.policyAction != PolicyAction::Download && policyCheck.kind != PolicyCheckKind::NewWindow) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_coreFrame.get())) {
+        if (RefPtr localFrame = m_provisionalFrame ? m_provisionalFrame.get() : coreLocalFrame()) {
             auto& loader = localFrame->loader();
             if (RefPtr policyDocumentLoader = loader.policyDocumentLoader()) {
                 if (policyDecision.navigationID)
@@ -1395,7 +1404,7 @@ void WebFrame::updateLocalFrameRect(WebCore::LocalFrame& localFrame, WebCore::In
         frameView->setExposedContentRect(FloatRect { { }, frameView->size() });
 #endif
 
-    if (!rectChanged)
+    if (oldRect.size() == newRect.size())
         return;
 
     if (RefPtr drawingArea = m_page ? m_page->drawingArea() : nullptr) {
@@ -1872,7 +1881,7 @@ void WebFrame::takeSnapshotOfNode(JSHandleIdentifier identifier, CompletionHandl
 CheckedRef<FrameInspectorTarget> WebFrame::ensureInspectorTarget()
 {
     if (!m_inspectorTarget)
-        m_inspectorTarget = makeUnique<FrameInspectorTarget>(*this);
+        lazyInitialize(m_inspectorTarget, makeUnique<FrameInspectorTarget>(*this));
     return *m_inspectorTarget;
 }
 

@@ -467,7 +467,7 @@ GraphicsLayerCA::~GraphicsLayerCA()
         protect(m_contentsShapeMaskLayer)->setOwner(nullptr);
 
     if (m_shapeMaskLayer)
-        protect(m_shapeMaskLayer)->setOwner(nullptr);
+        m_shapeMaskLayer->setOwner(nullptr);
 
     if (m_structuralLayer)
         protect(m_structuralLayer)->setOwner(nullptr);
@@ -781,10 +781,14 @@ void GraphicsLayerCA::setTonemappingEnabled(bool tonemappingEnabled)
 
 void GraphicsLayerCA::setNeedsDisplayIfEDRHeadroomExceeds(float headroom)
 {
-    if (protect(m_layer)->setNeedsDisplayIfEDRHeadroomExceeds(headroom)) {
-        if (!!m_uncommittedChanges)
-            client().notifyFlushRequired(this);
-    }
+    if (beingDestroyed())
+        return;
+
+    if (!protect(m_layer)->setNeedsDisplayIfEDRHeadroomExceeds(headroom))
+        return;
+
+    if (!m_uncommittedChanges)
+        client().notifyFlushRequired(this);
 }
 #endif
 
@@ -1347,17 +1351,13 @@ void GraphicsLayerCA::setContentsToSolidColor(const Color& color)
     noteLayerPropertyChanged(ContentsColorLayerChanged);
 }
 
-void GraphicsLayerCA::setContentsToImage(Image* image)
+void GraphicsLayerCA::setContentsToNativeImage(NativeImage* image)
 {
     if (image) {
-        auto newImage = image->currentNativeImage();
-        if (!newImage)
+        if (m_pendingContentsImage == image)
             return;
 
-        if (m_pendingContentsImage == newImage)
-            return;
-
-        m_pendingContentsImage = WTF::move(newImage);
+        m_pendingContentsImage = image;
         m_contentsLayerPurpose = ContentsLayerPurpose::Image;
         if (!m_contentsLayer)
             noteSublayersChanged();
@@ -1997,7 +1997,7 @@ void GraphicsLayerCA::recursiveCommitChanges(CommitState& commitState, const Tra
         constexpr auto washFillColor = Color::red.colorWithAlphaByte(50);
         constexpr auto washBorderColor = Color::red.colorWithAlphaByte(100);
         
-        m_visibleTileWashLayer = createPlatformCALayer(PlatformCALayer::LayerTypeLayer, this);
+        lazyInitialize(m_visibleTileWashLayer, createPlatformCALayer(PlatformCALayer::LayerTypeLayer, this));
         m_visibleTileWashLayer->setName(makeString("Visible Tile Wash Layer 0x"_s, hex(reinterpret_cast<uintptr_t>(m_visibleTileWashLayer->platformLayer()), Lowercase)));
         m_visibleTileWashLayer->setAnchorPoint(FloatPoint3D(0, 0, 0));
         m_visibleTileWashLayer->setBorderColor(washBorderColor);
@@ -4498,12 +4498,12 @@ void GraphicsLayerCA::setShowRepaintCounter(bool showCounter)
     noteLayerPropertyChanged(DebugIndicatorsChanged);
 }
 
-void GraphicsLayerCA::setShowFrameProcessBorders(bool showBorders, unsigned frameDepth)
+void GraphicsLayerCA::setShowFrameProcessBorders(bool showBorders, unsigned frameDepth, FrameIdentifier frameID)
 {
     if (showBorders == m_showFrameProcessBorders && frameDepth == m_frameProcessIndicatorDepth)
         return;
 
-    GraphicsLayer::setShowFrameProcessBorders(showBorders, frameDepth);
+    GraphicsLayer::setShowFrameProcessBorders(showBorders, frameDepth, frameID);
     noteLayerPropertyChanged(DebugIndicatorsChanged);
 }
 
@@ -4521,6 +4521,17 @@ void GraphicsLayerCA::setAllowsBackingStoreDetaching(bool allowDetaching)
         return;
 
     m_allowsBackingStoreDetaching = allowDetaching;
+    noteLayerPropertyChanged(CoverageRectChanged);
+}
+
+void GraphicsLayerCA::setAnimationExtent(std::optional<FloatRect> animationExtent)
+{
+    auto oldAnimationExtent = this->animationExtent();
+    GraphicsLayer::setAnimationExtent(animationExtent);
+    if (this->animationExtent() == oldAnimationExtent)
+        return;
+
+    // Whether the layer needs backing store depends on the extent, so re-evaluate it at the next flush.
     noteLayerPropertyChanged(CoverageRectChanged);
 }
 

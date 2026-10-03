@@ -147,7 +147,7 @@ static RetainPtr<NSFileWrapper> fileWrapperForElement(const HTMLImageElement& el
     if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer)) {
         RefPtr image = renderImage->cachedImage();
         if (image && !image->errorOccurred()) {
-            RetainPtr<NSFileWrapper> wrapper = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:(__bridge NSData *)protect(protect(image->imageForRenderer(renderer))->adapter().tiffRepresentation()).get()]);
+            RetainPtr<NSFileWrapper> wrapper = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:(__bridge NSData *)protect(protect(image->image())->adapter().tiffRepresentation()).get()]);
             [wrapper setPreferredFilename:@"image.tiff"];
             return wrapper;
         }
@@ -258,7 +258,7 @@ static bool hasAncestorQualifyingForWritingToolsPreservation(Element* ancestor, 
 }
 #endif // ENABLE(WRITING_TOOLS)
 
-static RefPtr<Element> enclosingElement(const Node& node, ElementCache<RefPtr<Element>>& cache, Function<bool(Element *)>&& predicate)
+static RefPtr<Element> enclosingElement(const Node& node, ElementCache<RefPtr<Element>>& cache, NOESCAPE const Function<bool(Element*)>& predicate)
 {
     Vector<Ref<Element>> ancestors;
     RefPtr<Element> result;
@@ -378,7 +378,7 @@ static void updateAttributes(const Node* node, const Style::ComputedStyle& style
 #if PLATFORM(IOS_FAMILY)
         PlatformFont *platformFont = [PlatformFontClass systemFontOfSize:size];
 #else
-        PlatformFont *platformFont = [[NSFontManager sharedFontManager] convertFont:protect(WebDefaultFont()) toSize:size];
+        RetainPtr platformFont = [[NSFontManager sharedFontManager] convertFont:protect(WebDefaultFont()) toSize:size];
 #endif
         [attributes setObject:platformFont forKey:NSFontAttributeName];
     }

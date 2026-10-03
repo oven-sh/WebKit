@@ -314,9 +314,9 @@ ImageDecoderCG::ImageDecoderCG(FragmentedSharedBuffer& data, AlphaOption, GammaA
         const void* key = kCGImageSourceTypeIdentifierHint;
         const void* value = utiHint.get();
         auto options = adoptCF(CFDictionaryCreate(kCFAllocatorDefault, &key, &value, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
-        m_nativeDecoder = adoptCF(CGImageSourceCreateIncremental(options.get()));
+        lazyInitialize(m_nativeDecoder, adoptCF(CGImageSourceCreateIncremental(options.get())));
     } else
-        m_nativeDecoder = adoptCF(CGImageSourceCreateIncremental(nullptr));
+        lazyInitialize(m_nativeDecoder, adoptCF(CGImageSourceCreateIncremental(nullptr)));
 }
 
 size_t ImageDecoderCG::bytesDecodedToDetermineProperties() const
@@ -614,11 +614,12 @@ bool ImageDecoderCG::fetchFrameMetaDataAtIndex(size_t index, SubsamplingLevel su
     if (!properties)
         return false;
 
+    frame.m_naturalSize = frameSizeFromProperties(properties.get());
     if (options.hasSizeForDrawing()) {
         ASSERT(frame.hasNativeImage(options.decodingDestination()));
         frame.m_size = frame.nativeImage(options.decodingDestination())->size();
     } else
-        frame.m_size = frameSizeFromProperties(properties.get());
+        frame.m_size = frame.m_naturalSize;
 
     frame.m_density = frameDensityFromProperties(properties.get());
 

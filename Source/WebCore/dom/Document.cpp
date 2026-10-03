@@ -573,10 +573,7 @@ static bool canAccessAncestor(const SecurityOrigin& activeSecurityOrigin, Frame*
         return false;
 
     const bool isLocalActiveOrigin = activeSecurityOrigin.isLocal();
-    for (RefPtr<Frame> ancestorFrame = targetFrame; ancestorFrame; ancestorFrame = ancestorFrame->tree().parent()) {
-        RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestorFrame.get());
-        if (!localAncestor)
-            continue;
+    for (Ref localAncestor : inclusiveAncestorFrames<LocalFrame>(*targetFrame)) {
         RefPtr ancestorDocument = localAncestor->document();
         // FIXME: Should be an ASSERT? Frames should alway have documents.
         if (!ancestorDocument)
@@ -1079,13 +1076,13 @@ CachedResourceLoader& Document::ensureCachedResourceLoader()
 {
     ASSERT(m_constructionDidFinish);
     ASSERT(!m_cachedResourceLoader);
-    m_cachedResourceLoader = [&]() -> Ref<CachedResourceLoader> {
+    lazyInitialize(m_cachedResourceLoader, [&]() -> Ref<CachedResourceLoader> {
         if (auto* frame = this->frame()) {
             if (auto* loader = frame->loader().activeDocumentLoader())
                 return loader->cachedResourceLoader();
         }
         return CachedResourceLoader::create(nullptr);
-    }();
+    }());
     m_cachedResourceLoader->setDocument(this);
     return *m_cachedResourceLoader;
 }
@@ -1393,7 +1390,7 @@ ExceptionOr<SelectorQuery&> Document::selectorQueryForString(const String& selec
 MediaQueryMatcher& Document::mediaQueryMatcher()
 {
     if (!m_mediaQueryMatcher)
-        m_mediaQueryMatcher = MediaQueryMatcher::create(*this);
+        lazyInitialize(m_mediaQueryMatcher, MediaQueryMatcher::create(*this));
     return *m_mediaQueryMatcher;
 }
 
@@ -3977,7 +3974,7 @@ HighlightRegistry& Document::appHighlightRegistry()
 AppHighlightStorage& Document::appHighlightStorage()
 {
     if (!m_appHighlightStorage)
-        m_appHighlightStorage = makeUnique<AppHighlightStorage>(*this);
+        lazyInitialize(m_appHighlightStorage, makeUnique<AppHighlightStorage>(*this));
     return *m_appHighlightStorage;
 }
 #endif
@@ -4168,7 +4165,7 @@ bool Document::isFullyActive() const
     // The document is fully active only if the ancestor chain reaches the main frame. A
     // RemoteFrame ancestor lives in another process, but if it became parentless without
     // being the main frame, its iframe was removed there and the chain was severed.
-    for (RefPtr ancestor = frame->tree().parent(); ancestor; ancestor = ancestor->tree().parent()) {
+    for (Ref ancestor : ancestorFrames(*frame)) {
         if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor.get())) {
             if (!localAncestor->document() || localAncestor->document()->frame() != localAncestor)
                 return false;
@@ -5875,7 +5872,7 @@ Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, cons
 StyleSheetList& Document::styleSheets()
 {
     if (!m_styleSheetList)
-        m_styleSheetList = StyleSheetList::create(*this);
+        lazyInitialize(m_styleSheetList, StyleSheetList::create(*this));
     return *m_styleSheetList;
 }
 
@@ -6504,9 +6501,9 @@ void Document::hoveredElementDidDetach(Element& element)
     if (!m_hoveredElement || &element != m_hoveredElement)
         return;
 
-    m_hoveredElement = element.parentElement();
+    m_hoveredElement = element.parentElementInComposedTree();
     while (m_hoveredElement && !m_hoveredElement->renderer())
-        m_hoveredElement = m_hoveredElement->parentElement();
+        m_hoveredElement = m_hoveredElement->parentElementInComposedTree();
     if (RefPtr frame = this->frame())
         frame->eventHandler().scheduleHoverStateUpdate();
 }
@@ -6516,9 +6513,9 @@ void Document::elementInActiveChainDidDetach(Element& element)
     if (!m_activeElement || &element != m_activeElement)
         return;
 
-    m_activeElement = element.parentElement();
+    m_activeElement = element.parentElementInComposedTree();
     while (m_activeElement && !m_activeElement->renderer())
-        m_activeElement = m_activeElement->parentElement();
+        m_activeElement = m_activeElement->parentElementInComposedTree();
 }
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
@@ -8125,8 +8122,8 @@ RefPtr<Document> Document::sameOriginTopLevelTraversable() const
         return nullptr;
 
     RefPtr<Frame> topLevelAncestorFrame = m_frame;
-    for (RefPtr<Frame> parent = topLevelAncestorFrame->tree().parent(); parent; parent = parent->tree().parent())
-        topLevelAncestorFrame = parent;
+    for (Ref ancestor : ancestorFrames(*m_frame))
+        topLevelAncestorFrame = ancestor.ptr();
 
     RefPtr localTopAncestor = dynamicDowncast<LocalFrame>(topLevelAncestorFrame);
     if (!localTopAncestor)
@@ -8187,7 +8184,7 @@ ExceptionOr<Ref<Attr>> Document::createAttributeNS(const AtomString& namespaceUR
 SVGDocumentExtensions& Document::svgExtensions()
 {
     if (!m_svgExtensions)
-        m_svgExtensions = makeUnique<SVGDocumentExtensions>(*this);
+        lazyInitialize(m_svgExtensions, makeUnique<SVGDocumentExtensions>(*this));
     return *m_svgExtensions;
 }
 
@@ -8429,21 +8426,21 @@ String Document::originIdentifierForPasteboard() const
 ExceptionOr<Ref<XPathExpression>> Document::createExpression(const String& expression, RefPtr<XPathNSResolver>&& resolver)
 {
     if (!m_xpathEvaluator)
-        m_xpathEvaluator = XPathEvaluator::create();
+        lazyInitialize(m_xpathEvaluator, XPathEvaluator::create());
     return m_xpathEvaluator->createExpression(expression, WTF::move(resolver));
 }
 
 Ref<XPathNSResolver> Document::createNSResolver(Node& nodeResolver)
 {
     if (!m_xpathEvaluator)
-        m_xpathEvaluator = XPathEvaluator::create();
+        lazyInitialize(m_xpathEvaluator, XPathEvaluator::create());
     return m_xpathEvaluator->createNSResolver(nodeResolver);
 }
 
 ExceptionOr<Ref<XPathResult>> Document::evaluate(const String& expression, Node& contextNode, RefPtr<XPathNSResolver>&& resolver, unsigned short type, XPathResult* result)
 {
     if (!m_xpathEvaluator)
-        m_xpathEvaluator = XPathEvaluator::create();
+        lazyInitialize(m_xpathEvaluator, XPathEvaluator::create());
     return m_xpathEvaluator->evaluate(expression, contextNode, WTF::move(resolver), type, result);
 }
 
@@ -8661,8 +8658,8 @@ bool Document::isSecureContext() const
     if (page() && page()->isServiceWorkerPage())
         return true;
 
-    for (RefPtr frame = m_frame->tree().parent(); frame; frame = frame->tree().parent()) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame)) {
+    for (Ref frame : ancestorFrames(*m_frame)) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame.get())) {
             Ref<Document> ancestorDocument = *localFrame->document();
             if (!isDocumentSecure(ancestorDocument))
                 return false;
@@ -8872,7 +8869,7 @@ EventLoopTaskGroup& Document::eventLoop()
 {
     ASSERT(isMainThread());
     if (!m_documentTaskGroup) [[unlikely]] {
-        m_documentTaskGroup = makeUnique<EventLoopTaskGroup>(windowEventLoop());
+        lazyInitialize(m_documentTaskGroup, makeUnique<EventLoopTaskGroup>(windowEventLoop()));
         m_documentTaskGroup->setScriptExecutionContext(*this);
         if (activeDOMObjectsAreStopped())
             m_documentTaskGroup->markAsReadyToStop();
@@ -9414,7 +9411,7 @@ void Document::processInternalResourceLinks(Element* element)
 int Document::requestIdleCallback(Ref<IdleRequestCallback>&& callback, Seconds timeout)
 {
     if (!m_idleCallbackController)
-        m_idleCallbackController = makeUnique<IdleCallbackController>(*this);
+        lazyInitialize(m_idleCallbackController, makeUnique<IdleCallbackController>(*this));
     return m_idleCallbackController->queueIdleCallback(WTF::move(callback), timeout);
 }
 
@@ -9970,13 +9967,29 @@ void Document::updateHoverActiveState(const HitTestRequest& request, Element* in
 
     m_hoveredElement = newHoveredElement;
 
+    auto isInForeignTopLayer = [](Element* candidate) {
+        for (RefPtr element = candidate; element; element = element->parentElementInComposedTree()) {
+            if (element->isInTopLayer())
+                return !element->isInActiveChain();
+        }
+        return false;
+    };
+    bool clearMustBeInActiveChain = mustBeInActiveChain;
+    bool setMustBeInActiveChain = mustBeInActiveChain;
+    if (mustBeInActiveChain && hasTopLayerElement()) {
+        clearMustBeInActiveChain = !isInForeignTopLayer(oldHoveredElement.get());
+        setMustBeInActiveChain = !isInForeignTopLayer(newHoveredElement.get());
+    }
+
     RefPtr commonAncestor = findNearestCommonComposedAncestorForHover(oldHoveredElement.get(), newHoveredElement.get());
+    if (commonAncestor && !commonAncestor->hovered())
+        commonAncestor = nullptr;
 
     if (oldHoveredElement != newHoveredElement) {
         for (CheckedPtr element = oldHoveredElement.get(); element; element = element->parentElementInComposedTree()) {
             if (element.get() == commonAncestor.get())
                 break;
-            if (mustBeInActiveChain && !element->isInActiveChain())
+            if (clearMustBeInActiveChain && !element->isInActiveChain())
                 continue;
             elementsToClearHover.append(*element);
             if (element->isInTopLayer())
@@ -9992,7 +10005,7 @@ void Document::updateHoverActiveState(const HitTestRequest& request, Element* in
     bool sawCommonAncestor = false;
     for (RefPtr element = newHoveredElement; element; element = element->parentElementInComposedTree()) {
         bool atTopLayerBoundary = element->isInTopLayer();
-        if (mustBeInActiveChain && !element->isInActiveChain()) {
+        if (setMustBeInActiveChain && !element->isInActiveChain()) {
             if (atTopLayerBoundary)
                 break;
             continue;
@@ -10286,7 +10299,9 @@ Element* Document::activeElement()
 {
     if (Element* element = treeScope().focusedElementInScope())
         return element;
-    return bodyOrFrameset();
+    if (Element* body = bodyOrFrameset())
+        return body;
+    return documentElement();
 }
 
 bool Document::hasFocus() const
@@ -10350,12 +10365,12 @@ void Document::showPlaybackTargetPicker(MediaPlaybackTargetClient& client, bool 
     if (it == m_clientToIDMap.end())
         return;
 
-    RefPtr localRootView = frame()->rootFrame().view();
-    if (!localRootView)
+    RefPtr view = frame()->view();
+    if (!view)
         return;
 
-    auto position = localRootView->contentsToRootView(localRootView->windowToContents(flooredIntPoint(frame()->eventHandler().lastKnownMousePosition())));
-    page->showPlaybackTargetPicker(it->value, frame()->rootFrame().frameID(), position, isVideo, routeSharingPolicy, routingContextUID);
+    auto positionInMainFrameView = view->contentsToMainFrameView(view->windowToContents(flooredIntPoint(frame()->eventHandler().lastKnownMousePosition())));
+    page->showPlaybackTargetPicker(it->value, positionInMainFrameView, isVideo, routeSharingPolicy, routingContextUID);
 }
 
 void Document::playbackTargetPickerClientStateDidChange(MediaPlaybackTargetClient& client, MediaProducerMediaStateFlags state)
@@ -11850,7 +11865,7 @@ DOMTimerHoldingTank& Document::domTimerHoldingTank()
 {
     if (m_domTimerHoldingTank)
         return *m_domTimerHoldingTank;
-    m_domTimerHoldingTank = makeUnique<DOMTimerHoldingTank>();
+    lazyInitialize(m_domTimerHoldingTank, makeUnique<DOMTimerHoldingTank>());
     return *m_domTimerHoldingTank;
 }
 
@@ -12232,7 +12247,7 @@ std::optional<uint64_t> Document::noiseInjectionHashSalt() const
 ContentVisibilityDocumentState& Document::contentVisibilityDocumentState()
 {
     if (!m_contentVisibilityDocumentState)
-        m_contentVisibilityDocumentState = makeUnique<ContentVisibilityDocumentState>();
+        lazyInitialize(m_contentVisibilityDocumentState, makeUnique<ContentVisibilityDocumentState>());
     return *m_contentVisibilityDocumentState;
 }
 
@@ -12458,7 +12473,7 @@ ResourceMonitor& Document::resourceMonitor()
     ASSERT(!frame()->isMainFrame());
 
     if (!m_resourceMonitor) {
-        m_resourceMonitor = ResourceMonitor::create(*frame());
+        lazyInitialize(m_resourceMonitor, ResourceMonitor::create(*frame()));
         DOCUMENT_RELEASE_LOG(ResourceMonitoring, "ResourceMonitor is created for the document.");
     }
     return *m_resourceMonitor.get();

@@ -52,11 +52,9 @@
 #include <JavaScriptCore/JSClassRef.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/JSValueRef.h>
 #include <JavaScriptCore/JavaScript.h>
-#include <JavaScriptCore/OpaqueJSString.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <WebCore/DOMWrapperWorld.h>
 #include <WebCore/JSDOMGlobalObject.h>
@@ -245,7 +243,7 @@ private:
     static JSValueRef waitForAsyncReplyAndDispatchImmediately(JSContextRef, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
 
     WeakPtr<JSIPC> m_jsIPC;
-    RefPtr<IPC::StreamClientConnection> m_streamConnection;
+    const RefPtr<IPC::StreamClientConnection> m_streamConnection;
 
     // Current tests expect that actions and their induced messages are waited on during same
     // run loop invocation (in JS). This means that messages of interest do not ever enter here.
@@ -270,7 +268,7 @@ private:
     private:
         WeakRef<JSIPCStreamClientConnection> m_connection;
     };
-    UniqueRef<MessageReceiver> m_dummyMessageReceiver;
+    const UniqueRef<MessageReceiver> m_dummyMessageReceiver;
 };
 
 class JSIPCStreamServerConnectionHandle : public RefCounted<JSIPCStreamServerConnectionHandle> {
@@ -448,6 +446,7 @@ private:
     static JSValueRef vmPageSize(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef visitedLinkStoreID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef webPageProxyID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
+    static JSValueRef webPageProxyIdentifierForMessageArguments(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef sessionID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef pageID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef frameID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
@@ -1921,6 +1920,7 @@ const JSStaticValue* JSIPC::staticValues()
         { "pageID", pageID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "sessionID", sessionID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "webPageProxyID", webPageProxyID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
+        { "webPageProxyIdentifierForMessageArguments", webPageProxyIdentifierForMessageArguments, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "messages", messages, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "serializedTypeInfo", serializedTypeInfo, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "serializedEnumInfo", serializedEnumInfo, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
@@ -2934,6 +2934,15 @@ JSValueRef JSIPC::webPageProxyID(JSContextRef context, JSObjectRef thisObject, J
 {
     return retrieveID(context, thisObject, exception, [](JSIPC& wrapped) {
         return wrapped.m_webPage->webPageProxyID();
+    });
+}
+
+// Unlike webPageProxyID, which is the destination ID for messages to the WebPageProxy (the WebCore::PageIdentifier),
+// this is the WebPageProxyIdentifier the WebContent process supplies in message arguments, e.g. NetworkResourceLoadParameters::webPageProxyID.
+JSValueRef JSIPC::webPageProxyIdentifierForMessageArguments(JSContextRef context, JSObjectRef thisObject, JSStringRef, JSValueRef* exception)
+{
+    return retrieveID(context, thisObject, exception, [](JSIPC& wrapped) {
+        return wrapped.m_webPage->webPageProxyIdentifier().toUInt64();
     });
 }
 

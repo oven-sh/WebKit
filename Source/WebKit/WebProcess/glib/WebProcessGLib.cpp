@@ -50,6 +50,7 @@
 
 #include <WebCore/ApplicationGLib.h>
 #include <WebCore/MemoryCache.h>
+#include <wtf/SetForScope.h>
 
 #if USE(WPE_RENDERER)
 #include <WebCore/PlatformDisplayLibWPE.h>
@@ -92,7 +93,7 @@
 
 #if USE(VULKAN)
 #include <WebCore/VulkanUtilities.h>
-#include <wtf/text/CStringView.h>
+#include <wtf/text/UTF8CStringView.h>
 #endif
 
 #define RELEASE_LOG_SESSION_ID (m_sessionID ? m_sessionID->toUInt64() : 0)
@@ -105,6 +106,11 @@ using namespace WebCore;
 
 void WebProcess::stopRunLoop()
 {
+    // Closing the last page terminates the process, which calls back here.
+    if (m_isStoppingRunLoop)
+        return;
+    SetForScope isStoppingRunLoop(m_isStoppingRunLoop, true);
+
     // Pages are normally closed after Close message is received from the UI
     // process, but it can happen that the connection is closed before the
     // Close message is processed because the UI process close the socket
@@ -114,8 +120,7 @@ void WebProcess::stopRunLoop()
     for (auto& webPage : copyToVector(m_pageMap.values()))
         webPage->close([] { });
 
-    if (auto* display = PlatformDisplay::sharedDisplayIfExists())
-        display->clearGLContexts();
+    PlatformDisplay::destroySharedDisplay();
 
 #if USE(ATSPI)
     AccessibilityAtspi::singleton().disconnect();
@@ -189,7 +194,7 @@ void WebProcess::initializeVulkanIfNeeded()
 {
 #if USE(VULKAN)
     bool useVulkan = false;
-    if (const auto envValue = CStringView::unsafeFromUTF8(getenv("WEBKIT_VULKAN_ENABLED")))
+    if (const auto envValue = UTF8CStringView::unsafeFromUTF8(getenv("WEBKIT_VULKAN_ENABLED")))
         useVulkan = (envValue == "1"_s && envValue != "0"_s);
 
     if (!useVulkan)
@@ -224,19 +229,16 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     m_rendererBufferTransportMode = parameters.rendererBufferTransportMode;
 #if PLATFORM(WPE)
 #if USE(WPE_RENDERER)
-    if (!parameters.isServiceWorkerProcess) {
-        if (m_rendererBufferTransportMode.isEmpty()) {
-            auto& implementationLibraryName = parameters.implementationLibraryName;
-            if (!implementationLibraryName.isNull() && implementationLibraryName.data()[0] != u8'\0')
-                wpe_loader_init(implementationLibraryName.legacyCStringPointer());
-            PlatformDisplay::setSharedDisplay(PlatformDisplayLibWPE::create(parameters.hostClientFileDescriptor.release()));
-        } else
-            initializePlatformDisplayIfNeeded();
+    if (!parameters.isServiceWorkerProcess && m_rendererBufferTransportMode.isEmpty()) {
+        auto& implementationLibraryName = parameters.implementationLibraryName;
+        if (!implementationLibraryName.isNull() && implementationLibraryName.data()[0] != u8'\0')
+            wpe_loader_init(implementationLibraryName.legacyCStringPointer());
+        PlatformDisplay::setSharedDisplay(PlatformDisplayLibWPE::create(parameters.hostClientFileDescriptor.release()));
     }
-#else
-    initializePlatformDisplayIfNeeded();
 #endif
+#if !ENABLE(WPE_PLATFORM)
     initializeVulkanIfNeeded();
+#endif
 #endif // PLATFORM(WPE)
 
     m_availableInputDevices = parameters.availableInputDevices;

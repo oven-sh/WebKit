@@ -145,10 +145,10 @@ void* JSFFICallback::nativeEntrypoint() const
     return untagCFunctionPtr<void*, JITThunkPtrTag>(m_entryCode.code().taggedPtr());
 }
 
-const char* JSFFICallback::setReturnCString(const CString& string)
+const char* JSFFICallback::setReturnCString(const UTF8CString& string)
 {
     m_returnCString.clear();
-    m_returnCString.append(string.span());
+    m_returnCString.append(byteCast<char>(string.span()));
     m_returnCString.append('\0');
     return m_returnCString.begin();
 }

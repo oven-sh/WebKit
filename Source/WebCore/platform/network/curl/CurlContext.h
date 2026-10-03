@@ -37,6 +37,7 @@
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if OS(WINDOWS)
 #include <windows.h>
@@ -143,7 +144,7 @@ private:
     CurlProxySettings m_proxySettings;
     CurlShareHandle m_shareHandle;
     CurlSSLHandle m_sslHandle;
-    std::unique_ptr<CurlRequestScheduler> m_scheduler;
+    const std::unique_ptr<CurlRequestScheduler> m_scheduler;
 
     bool m_isAltSvcEnabled { false };
     bool m_isHttp2Enabled { false };
@@ -206,8 +207,7 @@ public:
         }
     }
 
-    void append(const char* str) { m_list = curl_slist_append(m_list, str); }
-    void append(const String& str) { append(str.utf8().legacyCStringPointer()); }
+    void append(UTF8CStringView str) { m_list = curl_slist_append(m_list, str.utf8()); }
 
 private:
     struct curl_slist* m_list { nullptr };
@@ -277,7 +277,7 @@ public:
     void setHttpAuthUserPass(const String&, const String&, long authType = CURLAUTH_ANY);
 
     void disableServerTrustEvaluation();
-    void setCACertPath(const char*);
+    void setCACertPath(UTF8CStringView);
     void setCACertBlob(void*, size_t);
     void setSslVerifyPeer(VerifyPeer);
     void setSslVerifyHost(VerifyHost);
@@ -343,8 +343,8 @@ private:
     CurlSList m_requestHeaders;
     CurlSList m_proxyRequestHeaders;
 
-    std::unique_ptr<CurlSSLVerifier> m_sslVerifier;
-    std::unique_ptr<TLSConnectionInfo> m_tlsConnectionInfo;
+    const std::unique_ptr<CurlSSLVerifier> m_sslVerifier;
+    const std::unique_ptr<TLSConnectionInfo> m_tlsConnectionInfo;
     mutable std::unique_ptr<CertificateInfo> m_certificateInfo;
 };
 

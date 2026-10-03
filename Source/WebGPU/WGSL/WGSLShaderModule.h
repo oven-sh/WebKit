@@ -300,6 +300,16 @@ public:
         m_overrideValidations.append(WTF::move(validator));
     }
 
+    size_t currentOverrideValidationsSize() const
+    {
+        return m_overrideValidations.size();
+    }
+
+    void revertOverrideValidations(size_t size)
+    {
+        m_overrideValidations.shrink(size);
+    }
+
     std::optional<Error> validateOverrides(const PrepareResult&, HashMap<String, ConstantValue>&);
 
     const OverloadedDeclaration* lookupOverload(const String&) const;

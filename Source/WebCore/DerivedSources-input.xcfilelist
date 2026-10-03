@@ -448,6 +448,9 @@ $(PROJECT_DIR)/Modules/credentialmanagement/FederatedCredentialRequestOptions.id
 $(PROJECT_DIR)/Modules/credentialmanagement/IdentityCredentialRequestOptions.idl
 $(PROJECT_DIR)/Modules/credentialmanagement/Navigator+Credentials.idl
 $(PROJECT_DIR)/Modules/credentialmanagement/OTPCredentialRequestOptions.idl
+$(PROJECT_DIR)/Modules/device-posture/DevicePosture.idl
+$(PROJECT_DIR)/Modules/device-posture/DevicePostureType.idl
+$(PROJECT_DIR)/Modules/device-posture/Navigator+DevicePosture.idl
 $(PROJECT_DIR)/Modules/encryptedmedia/MediaKeyEncryptionScheme.idl
 $(PROJECT_DIR)/Modules/encryptedmedia/MediaKeyMessageEvent.idl
 $(PROJECT_DIR)/Modules/encryptedmedia/MediaKeyMessageEventInit.idl
@@ -1051,6 +1054,7 @@ $(PROJECT_DIR)/Modules/webcodecs/AvcEncoderConfig.idl
 $(PROJECT_DIR)/Modules/webcodecs/BitrateMode.idl
 $(PROJECT_DIR)/Modules/webcodecs/FlacEncoderConfig.idl
 $(PROJECT_DIR)/Modules/webcodecs/HardwareAcceleration.idl
+$(PROJECT_DIR)/Modules/webcodecs/HevcEncoderConfig.idl
 $(PROJECT_DIR)/Modules/webcodecs/LatencyMode.idl
 $(PROJECT_DIR)/Modules/webcodecs/OpusEncoderConfig.idl
 $(PROJECT_DIR)/Modules/webcodecs/PlaneLayout.idl
@@ -1202,7 +1206,12 @@ $(PROJECT_DIR)/Modules/webxr/XRVisibilityState.idl
 $(PROJECT_DIR)/Modules/webxr/XRWebGLBinding.idl
 $(PROJECT_DIR)/Modules/webxr/XRWebGLLayerInit.idl
 $(PROJECT_DIR)/Modules/webxr/XRWebGLSubImage.idl
+$(PROJECT_DIR)/Scripts/GenerateQuirkBehaviors.rb
 $(PROJECT_DIR)/Scripts/GenerateSettings.rb
+$(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDefinitions.h.erb
+$(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.h.erb
+$(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.cpp.erb
+$(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.h.erb
 $(PROJECT_DIR)/Scripts/SettingsTemplates/InternalSettingsGenerated.cpp.erb
 $(PROJECT_DIR)/Scripts/SettingsTemplates/InternalSettingsGenerated.h.erb
 $(PROJECT_DIR)/Scripts/SettingsTemplates/InternalSettingsGenerated.idl.erb
@@ -1501,6 +1510,7 @@ $(PROJECT_DIR)/dom/Element+Fullscreen.idl
 $(PROJECT_DIR)/dom/Element+PointerEvents.idl
 $(PROJECT_DIR)/dom/Element+PointerLock.idl
 $(PROJECT_DIR)/dom/Element+Typedom.idl
+$(PROJECT_DIR)/dom/Element+VolumetricScene.idl
 $(PROJECT_DIR)/dom/Element.idl
 $(PROJECT_DIR)/dom/ElementContentEditable.idl
 $(PROJECT_DIR)/dom/ElementCreationOptions.idl
@@ -1894,6 +1904,7 @@ $(PROJECT_DIR)/inspector/RTCLogsCallback.idl
 $(PROJECT_DIR)/loader/COEPInheritenceViolationReportBody.idl
 $(PROJECT_DIR)/loader/CORPViolationReportBody.idl
 $(PROJECT_DIR)/make-hash-tools.pl
+$(PROJECT_DIR)/mathml/MathMLAnchorElement.idl
 $(PROJECT_DIR)/mathml/MathMLElement.idl
 $(PROJECT_DIR)/mathml/MathMLMathElement.idl
 $(PROJECT_DIR)/mathml/mathattrs.in
@@ -1971,6 +1982,7 @@ $(PROJECT_DIR)/page/PerformanceResourceTiming.idl
 $(PROJECT_DIR)/page/PerformanceServerTiming.idl
 $(PROJECT_DIR)/page/PerformanceTiming.idl
 $(PROJECT_DIR)/page/PostMessageOptions.idl
+$(PROJECT_DIR)/page/QuirkBehaviors.yaml
 $(PROJECT_DIR)/page/ResizeObserver.idl
 $(PROJECT_DIR)/page/ResizeObserverBoxOptions.idl
 $(PROJECT_DIR)/page/ResizeObserverCallback.idl

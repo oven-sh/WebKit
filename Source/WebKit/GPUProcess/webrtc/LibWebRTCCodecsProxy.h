@@ -34,12 +34,12 @@
 #include "VideoDecoderIdentifier.h"
 #include "VideoEncoderIdentifier.h"
 #include "WorkQueueMessageReceiver.h"
+#include <WebCore/GPUVideoDecoder.h>
 #include <WebCore/GPUVideoEncoder.h>
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/SharedMemory.h>
 #include <WebCore/VideoCodecType.h>
 #include <WebCore/VideoEncoderScalabilityMode.h>
-#include <WebCore/WebRTCVideoDecoder.h>
 #include <atomic>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadAssertions.h>
@@ -80,7 +80,7 @@ private:
     explicit LibWebRTCCodecsProxy(GPUConnectionToWebProcess&, SharedPreferencesForWebProcess&);
     void initialize();
     auto createDecoderCallback(VideoDecoderIdentifier, bool useRemoteFrames, bool enableAdditionalLogging);
-    std::unique_ptr<WebCore::WebRTCVideoDecoder> createLocalDecoder(VideoDecoderIdentifier, WebCore::VideoCodecType, bool useRemoteFrames, bool enableAdditionalLogging, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride);
+    std::unique_ptr<WebCore::GPUVideoDecoder> createLocalDecoder(VideoDecoderIdentifier, WebCore::VideoCodecType, bool useRemoteFrames, bool enableAdditionalLogging, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride);
     WorkQueue& workQueue() const { return m_queue; }
 
     // IPC::WorkQueueMessageReceiver overrides.
@@ -108,11 +108,11 @@ private:
     void notifyDecoderResult(VideoDecoderIdentifier, bool);
 
     struct Decoder {
-        std::unique_ptr<WebCore::WebRTCVideoDecoder> webrtcDecoder;
+        std::unique_ptr<WebCore::GPUVideoDecoder> webrtcDecoder;
         std::unique_ptr<WebCore::FrameRateMonitor> frameRateMonitor;
         Deque<CompletionHandler<void(bool)>> decodingCallbacks;
     };
-    void doDecoderTask(VideoDecoderIdentifier, NOESCAPE Function<void(Decoder&)>&&);
+    void doDecoderTask(VideoDecoderIdentifier, NOESCAPE const Function<void(Decoder&)>&);
 
     struct Encoder {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(Encoder);
@@ -135,7 +135,7 @@ private:
     HashMap<VideoEncoderIdentifier, UniqueRef<Encoder>> m_encoders WTF_GUARDED_BY_CAPABILITY(workQueue());
     std::atomic<bool> m_hasEncodersOrDecoders { false };
 
-    std::unique_ptr<WebCore::PixelBufferConformerCV> m_pixelBufferConformer;
+    const std::unique_ptr<WebCore::PixelBufferConformerCV> m_pixelBufferConformer;
 };
 
 }

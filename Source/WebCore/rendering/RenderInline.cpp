@@ -80,19 +80,6 @@ RenderInline::RenderInline(Type type, Document& document, Style::ComputedStyle&&
 
 RenderInline::~RenderInline() = default;
 
-void RenderInline::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
-{
-    RenderBoxModelObject::styleDidChange(diff, oldStyle);
-
-    propagateStyleToAnonymousChildren(StylePropagationType::AllChildren);
-}
-
-void RenderInline::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-{
-    if (auto* lineLayout = LayoutIntegration::LineLayout::containing(*this))
-        lineLayout->paint(paintInfo, paintOffset, this);
-}
-
 ASCIILiteral RenderInline::renderName() const
 {
     if (isRelativelyPositioned())
@@ -103,15 +90,6 @@ ASCIILiteral RenderInline::renderName() const
     if (isPseudoElement() || isAnonymous())
         return "RenderInline (generated)"_s;
     return "RenderInline"_s;
-}
-
-bool RenderInline::nodeAtPoint(const HitTestRequest& request, HitTestResult& result,
-    const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
-{
-    ASSERT(layer());
-    if (auto* lineLayout = LayoutIntegration::LineLayout::containing(*this))
-        return lineLayout->hitTest(request, result, locationInContainer, accumulatedOffset, hitTestAction, this);
-    return false;
 }
 
 void RenderInline::imageChanged(WrappedImagePtr image, const IntRect*)

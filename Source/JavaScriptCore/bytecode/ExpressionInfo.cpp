@@ -26,7 +26,6 @@
 #include "config.h"
 #include "ExpressionInfo.h"
 
-#include "SourceProvider.h"
 #include "VM.h"
 #include <numeric>
 #include <wtf/DataLog.h>
@@ -37,10 +36,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 /*
-    Since ExpressionInfo is only used to get source position info (e.g. line and column)
-    for error messages / stacks and debugging, it need not be fast. However, empirical data
-    shows that there is a lot of it on websites that are especially memory hungry. So, it
-    behooves us to reduce this memory burden.
+    ExpressionInfo maps bytecode to source positions for error messages, stack traces and
+    debugging. Empirical data shows that there is a lot of it on websites that are especially
+    memory hungry, so it is stored compressed, and decoding an entry is slow. That matters for
+    code that builds many stack traces from the same call sites.
 
     ExpressionInfo is a data structure that contains:
        a. EncodedInfo entries.
@@ -50,8 +49,7 @@ namespace JSC {
           This is just an optimization aid to speed up reconstruction of expression info
           from the EncodedInfo.
 
-       c. A LineColumnMap cache.
-          This is to speed up look up of LineColumn values we have looked up before.
+       c. A cache of decoded entries, keyed by InstPC, filled by entryForInstPC().
 
     Encoding of EncodedInfo words
     =============================
@@ -198,13 +196,13 @@ namespace JSC {
 
     Backing Store and Shape
     =======================
-    The ExpressionInfo and its backing store (with the exception of the contents of the
-    LineColumnMap cache) is allocated as a contiguous slab. We first compute the size of the slab,
-    then allocate it, and lastly use placement new to instantiate the ExpressionInfo.
+    The ExpressionInfo and its backing store is allocated as a contiguous slab. We first compute
+    the size of the slab, then allocate it, and lastly use placement new to instantiate the
+    ExpressionInfo. The decoded entry cache's table is allocated separately.
 
     The shape of ExpressionInfo looks like this:
 
-            ExpressionInfo: [ m_cachedLineColumns             ]
+            ExpressionInfo: [ m_cachedEntries                 ]
                             [ m_numberOfChapters              ]
                             [ m_numberOfEncodedInfo           ]
                             [ m_numberOfEncodedInfoExtensions ]
@@ -885,7 +883,14 @@ auto ExpressionInfo::findChapterEncodedInfoJustBelow(InstPC instPC) const -> Enc
     return &encodedInfo()[startIndex];
 }
 
-auto ExpressionInfo::entryForInstPC(InstPC instPC) -> Entry
+auto ExpressionInfo::entryForInstPC(const ConcurrentJSLocker&, InstPC instPC) -> Entry
+{
+    return m_cachedEntries.ensure(instPC, [&] {
+        return decodeEntryForInstPC(instPC);
+    }).iterator->value;
+}
+
+auto ExpressionInfo::decodeEntryForInstPC(InstPC instPC) -> Entry
 {
     Decoder decoder(*this);
 
@@ -893,13 +898,6 @@ auto ExpressionInfo::entryForInstPC(InstPC instPC) -> Entry
     decoder.setNextInfo(chapterStart);
     while (decoder.decode(instPC) != IterationStatus::Done) { }
     return decoder.entry();
-}
-
-LineColumn ExpressionInfo::lineColumnInTextForInstPC(InstPC instPC, SourceProvider& provider, unsigned sourceOffset)
-{
-    return m_cachedLineColumns.ensure(instPC, [&] {
-        return provider.lineColumnInTextForOffset(sourceOffset + entryForInstPC(instPC).divot);
-    }).iterator->value;
 }
 
 template<unsigned bitCount>

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/DoublePoint.h>
 #include <WebCore/HTMLFormControlElement.h>
 #include <WebCore/HTMLOptionElement.h>
 #include <WebCore/PopupMenuClient.h>
@@ -41,6 +42,8 @@
 namespace WebCore {
 
 class HTMLOptionsCollection;
+class HTMLSelectedContentElement;
+class MouseEvent;
 class SelectPopoverElement;
 class ShadowRoot;
 
@@ -63,7 +66,7 @@ public:
     ~HTMLSelectElement();
 
     enum class ExcludeOptGroup : bool { No, Yes };
-    enum class PickerScrollMode : uint8_t { Nearest, AlignTop, AlignBottom };
+    enum class OptionScrollMode : uint8_t { Nearest, AlignTop, AlignBottom };
     static HTMLSelectElement* NODELETE findOwnerSelect(ContainerNode*, ExcludeOptGroup);
 
     WEBCORE_EXPORT int selectedIndex() const;
@@ -199,24 +202,36 @@ public:
     bool isDevolvableWidget() const override { return true; }
 
     void updateSelectedContent(HTMLOptionElement* = nullptr) const;
+    void updateSelectedContent(HTMLSelectedContentElement&) const;
+    void queueSelectedContentUpdate();
+    RefPtr<HTMLOptionElement> selectedOptionForSelectedContent() const;
+    void resetSelectedness(HTMLOptionElement* oldSelectedOption);
 
     void NODELETE registerSelectedContentElement();
     void NODELETE unregisterSelectedContentElement();
+    bool hasSelectedContentDescendants() const { return m_selectedContentDescendantCount; }
 
-    WEBCORE_EXPORT bool usesBaseAppearancePicker() const;
+    bool usesBaseAppearancePicker() const;
+    WEBCORE_EXPORT bool optionsAreRenderedWithBaseAppearance() const;
+    Element* NODELETE optionContainer() const;
     SelectPopoverElement* NODELETE pickerPopoverElement() const;
     void openPickerForUserInteraction(std::optional<bool> focusVisible = std::nullopt);
     void hidePickerPopoverElement();
-    void queuePickerCloseForAppearanceChange();
+    void clearPickerOpeningMouseLocation() { m_pickerOpeningMouseLocation = { }; }
+    bool consumePickerOpeningPress(const MouseEvent&);
+    enum class PickerCloseReason : bool { Appearance, PickerSupport };
+    void queuePickerClose(PickerCloseReason);
 
     struct NavigationKeyIdentifiers {
         ASCIILiteral next;
         ASCIILiteral previous;
         WritingMode writingMode { };
     };
-    NavigationKeyIdentifiers pickerNavigationKeyIdentifiers() const;
+    NavigationKeyIdentifiers optionNavigationKeyIdentifiers() const;
     int computeNavigationIndex(const String& keyIdentifier, int currentListIndex, NavigationKeyIdentifiers) const;
-    void focusOptionAtIndex(int listIndex, std::optional<bool> focusVisible = std::nullopt, PickerScrollMode = PickerScrollMode::Nearest);
+    bool handleNavigationKeydown(KeyboardEvent&, int currentListIndex);
+    bool handleTypeAheadKeypress(KeyboardEvent&);
+    void focusOptionAtIndex(int listIndex, std::optional<bool> focusVisible = std::nullopt, OptionScrollMode = OptionScrollMode::Nearest);
     int typeAheadMatchIndex(KeyboardEvent&);
 
 protected:
@@ -250,6 +265,7 @@ private:
     bool hasPresentationalHintsForAttribute(const QualifiedName&) const final;
 
     bool childShouldCreateRenderer(const Node&) const final;
+    bool NODELETE supportsBaseAppearance(StyleAppearance) const final;
     RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
     bool appendFormData(DOMFormData&) final;
 
@@ -277,6 +293,7 @@ private:
         DeselectOtherOptions = 1 << 0,
         DispatchChangeEvent = 1 << 1,
         UserDriven = 1 << 2,
+        SkipSelectedContentUpdate = 1 << 3,
     };
     void selectOption(int optionIndex, OptionSet<SelectOptionFlag> = { });
     void deselectItemsWithoutValidation(HTMLElement* elementToExclude = nullptr);
@@ -284,6 +301,13 @@ private:
     int lastSelectedListIndex() const;
     void updateSelectedState(int listIndex, bool multi, bool shift);
     void menuListDefaultEventHandler(Event&);
+    void baseAppearanceListBoxDefaultEventHandler(Event&);
+    void updateSelectedContentIfEnabled(HTMLOptionElement* = nullptr) const;
+    RefPtr<HTMLOptionElement> firstSelectedOption() const;
+    void closePickerIfNoLongerSupported(bool hadOpenPicker);
+    void updateOptionSlotIfNeeded(bool usedListBoxSlot);
+    void optionDeselectedByUser(HTMLOptionElement&);
+    bool handleImplicitSubmissionKeypress(KeyboardEvent&);
     bool platformHandleKeydownEvent(KeyboardEvent*);
     void listBoxDefaultEventHandler(Event&);
     void setOptionsChangedOnRenderer();
@@ -330,16 +354,19 @@ private:
     bool m_isCapturingMouseEvents { false };
     mutable bool m_shouldRecalcListItems;
     unsigned m_selectedContentDescendantCount { 0 };
+    bool m_hasQueuedSelectedContentUpdate { false };
 
     std::optional<int> m_lastActiveIndex;
 
     WeakPtr<HTMLSlotElement, WeakPtrImplWithEventTargetData> m_buttonSlot;
+    WeakPtr<HTMLSlotElement, WeakPtrImplWithEventTargetData> m_listBoxSlot;
     WeakPtr<SelectPopoverElement, WeakPtrImplWithEventTargetData> m_popover;
 
 #if !PLATFORM(IOS_FAMILY)
     RefPtr<PopupMenu> m_popup;
 #endif
     std::optional<FloatPoint> m_lastPopupLocationForTesting;
+    std::optional<DoublePoint> m_pickerOpeningMouseLocation;
     bool m_popupIsVisible { false };
     bool m_wasBaseAppearance { false };
     bool m_buttonTextNeedsUpdate { false };

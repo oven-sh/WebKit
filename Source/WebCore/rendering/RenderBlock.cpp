@@ -2353,6 +2353,17 @@ void RenderBlock::computeIntrinsicLogicalWidthContributions()
         m_maxContentLogicalWidthContribution = std::max(0_lu, computeLogicalWidthFromAspectRatio() - borderAndPaddingLogicalWidth());
         m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
         applyAutomaticContentBasedMinimumSize(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
+    } else if (logicalWidth.isCalcSize() && !logicalWidth.isAuto()) {
+        // A calc-size() contributes the result of its calculation, not the size of its basis. An
+        // `auto` basis has no intrinsic width to stand for, so it is left to the content based branch.
+        auto [minContentLogicalWidth, maxContentLogicalWidth] = computeIntrinsicLogicalWidths();
+        if (logicalWidth.isMinContent())
+            maxContentLogicalWidth = minContentLogicalWidth;
+        else if (logicalWidth.isMaxContent())
+            minContentLogicalWidth = maxContentLogicalWidth;
+
+        m_minContentLogicalWidthContribution = resolveCalcSizeLogicalWidth(logicalWidth.calcSize(), minContentLogicalWidth, 0_lu);
+        m_maxContentLogicalWidthContribution = resolveCalcSizeLogicalWidth(logicalWidth.calcSize(), maxContentLogicalWidth, 0_lu);
     } else if (logicalWidth.isMinContent() || logicalWidth.isMaxContent()) {
         // Either keyword makes both contributions that one size, so the box neither shrinks below it
         // nor grows past it. Both sit behind the aspect-ratio branch: a ratio transfers the block size
@@ -3124,7 +3135,9 @@ std::optional<LayoutUnit> RenderBlock::availableLogicalHeightForPercentageComput
             // blockSizeFromAspectRatio() derives the block size from logicalWidth(). A shrink-to-fit box has
             // no inline size until it is laid out, so during a preferred-width pass logicalWidth() still
             // carries the previous layout's value and feeding it back here grows the box on every relayout.
-            if (hasInvalidContentLogicalWidths() && !style.logicalWidth().isSpecified() && (isRenderGrid() || sizesLogicalWidthToFitContent()))
+            // A flex item whose main axis is its inline axis gets its inline size from the flex container only during layout, so logicalWidth() is current.
+            bool hasInlineSizeFromFlexContainer = isFlexItem() && FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(*this) && overridingBorderBoxLogicalWidth();
+            if (hasInvalidContentLogicalWidths() && !style.logicalWidth().isSpecified() && (isRenderGrid() || (sizesLogicalWidthToFitContent() && !hasInlineSizeFromFlexContainer)))
                 return { };
             return blockSizeFromAspectRatio(
                 horizontalBorderAndPaddingExtent(),

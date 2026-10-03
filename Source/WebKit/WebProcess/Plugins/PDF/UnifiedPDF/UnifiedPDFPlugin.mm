@@ -113,6 +113,7 @@
 #include <WebCore/Settings.h>
 #include <WebCore/ShadowRoot.h>
 #include <WebCore/StyleColorOptions.h>
+#include <WebCore/TranslationContextMenuInfo.h>
 #include <WebCore/VoidCallback.h>
 #include <WebCore/WheelEventDeltaFilter.h>
 #include <algorithm>
@@ -252,7 +253,7 @@ UnifiedPDFPlugin::UnifiedPDFPlugin(HTMLPlugInElement& element)
 
     if (shouldSizeToFitContent()) {
         if (RefPtr frameView = frame->coreLocalFrame()->view())
-            m_prohibitScrollingDueToContentSizeChanges = frameView->prohibitScrollingWhenChangingContentSizeForScope();
+            lazyInitialize(m_prohibitScrollingDueToContentSizeChanges, frameView->prohibitScrollingWhenChangingContentSizeForScope());
     }
 }
 
@@ -276,7 +277,7 @@ void UnifiedPDFPlugin::installAnnotationContainer()
         existingShadowRoot->removeChildren();
 
     Ref shadowRoot = element->ensureUserAgentShadowRoot();
-    m_shadowRoot = shadowRoot.copyRef();
+    lazyInitialize(m_shadowRoot, shadowRoot.copyRef());
     shadowRoot->appendChild(*annotationContainer);
     if (auto* renderer = dynamicDowncast<RenderEmbeddedObject>(element->renderer()))
         renderer->setHasShadowContent();
@@ -620,7 +621,7 @@ void UnifiedPDFPlugin::ensureLayers()
     RefPtr scrollContainerLayer = m_scrollContainerLayer;
     if (!scrollContainerLayer) {
         scrollContainerLayer = createGraphicsLayer("UnifiedPDFPlugin scroll container"_s, GraphicsLayer::Type::ScrollContainer);
-        m_scrollContainerLayer = scrollContainerLayer.copyRef();
+        lazyInitialize(m_scrollContainerLayer, Ref { *scrollContainerLayer });
         scrollContainerLayer->setAnchorPoint({ });
         scrollContainerLayer->setMasksToBounds(true);
         rootLayer->addChild(*scrollContainerLayer);
@@ -629,14 +630,14 @@ void UnifiedPDFPlugin::ensureLayers()
     RefPtr scrolledContentsLayer = m_scrolledContentsLayer;
     if (!scrolledContentsLayer) {
         scrolledContentsLayer = createGraphicsLayer("UnifiedPDFPlugin scrolled contents"_s, GraphicsLayer::Type::ScrolledContents);
-        m_scrolledContentsLayer = scrolledContentsLayer.copyRef();
+        lazyInitialize(m_scrolledContentsLayer, Ref { *scrolledContentsLayer });
         scrolledContentsLayer->setAnchorPoint({ });
         scrollContainerLayer->addChild(*scrolledContentsLayer);
     }
 
     if (!m_overflowControlsContainer) {
         RefPtr overflowControlsContainer = createGraphicsLayer("Overflow controls container"_s, GraphicsLayer::Type::Normal);
-        m_overflowControlsContainer = overflowControlsContainer.copyRef();
+        lazyInitialize(m_overflowControlsContainer, Ref { *overflowControlsContainer });
         overflowControlsContainer->setAnchorPoint({ });
         rootLayer->addChild(*overflowControlsContainer);
     }
@@ -707,9 +708,8 @@ void UnifiedPDFPlugin::createScrollingNodeIfNecessary()
     m_scrollingNodeID = scrollingCoordinator->uniqueScrollingNodeID();
     scrollingCoordinator->createNode(m_frame->coreLocalFrame()->rootFrame().frameID(), ScrollingNodeType::PluginScrolling, *m_scrollingNodeID);
 
-    RefPtr scrollContainerLayer = m_scrollContainerLayer;
 #if ENABLE(SCROLLING_THREAD)
-    scrollContainerLayer->setScrollingNodeID(*m_scrollingNodeID);
+    m_scrollContainerLayer->setScrollingNodeID(*m_scrollingNodeID);
 
     if (RefPtr layer = layerForHorizontalScrollbar())
         layer->setScrollingNodeID(*m_scrollingNodeID);
@@ -727,7 +727,7 @@ void UnifiedPDFPlugin::createScrollingNodeIfNecessary()
 
     WebCore::ScrollingCoordinator::NodeLayers nodeLayers;
     nodeLayers.layer = m_rootLayer.get();
-    nodeLayers.scrollContainerLayer = scrollContainerLayer.get();
+    nodeLayers.scrollContainerLayer = m_scrollContainerLayer.get();
     nodeLayers.scrolledContentsLayer = m_scrolledContentsLayer.get();
     nodeLayers.horizontalScrollbarLayer = layerForHorizontalScrollbar();
     nodeLayers.verticalScrollbarLayer = layerForVerticalScrollbar();
@@ -741,12 +741,11 @@ void UnifiedPDFPlugin::updateLayerHierarchy()
 
     // The protect(graphicsLayer())'s position is set in RenderLayerBacking::updateAfterWidgetResize().
     protect(graphicsLayer())->setSize(size());
-    protect(m_overflowControlsContainer)->setSize(size());
+    m_overflowControlsContainer->setSize(size());
 
     auto scrollContainerRect = availableContentsRect();
-    Ref scrollContainerLayer = *m_scrollContainerLayer;
-    scrollContainerLayer->setPosition(scrollContainerRect.location());
-    scrollContainerLayer->setSize(scrollContainerRect.size());
+    m_scrollContainerLayer->setPosition(scrollContainerRect.location());
+    m_scrollContainerLayer->setSize(scrollContainerRect.size());
 
     protect(m_presentationController)->updateLayersOnLayoutChange(documentSize(), centeringOffset(), m_scaleFactor);
     updateSnapOffsets();
@@ -777,11 +776,11 @@ void UnifiedPDFPlugin::didChangeSettings()
     if (RefPtr rootLayer = m_rootLayer)
         propagateSettingsToLayer(*rootLayer);
 
-    if (RefPtr scrollContainerLayer = m_scrollContainerLayer)
-        propagateSettingsToLayer(*scrollContainerLayer);
+    if (m_scrollContainerLayer)
+        propagateSettingsToLayer(*m_scrollContainerLayer);
 
-    if (RefPtr scrolledContentsLayer = m_scrolledContentsLayer)
-        propagateSettingsToLayer(*scrolledContentsLayer);
+    if (m_scrolledContentsLayer)
+        propagateSettingsToLayer(*m_scrolledContentsLayer);
 
     if (RefPtr layerForHorizontalScrollbar = m_layerForHorizontalScrollbar)
         propagateSettingsToLayer(*layerForHorizontalScrollbar);
@@ -1584,9 +1583,9 @@ void UnifiedPDFPlugin::releaseMemory()
 void UnifiedPDFPlugin::didChangeScrollOffset()
 {
     if (this->currentScrollType() == ScrollType::User)
-        protect(m_scrollContainerLayer)->syncBoundsOrigin(IntPoint(m_scrollOffset));
+        m_scrollContainerLayer->syncBoundsOrigin(IntPoint(m_scrollOffset));
     else
-        protect(m_scrollContainerLayer)->setBoundsOrigin(IntPoint(m_scrollOffset));
+        m_scrollContainerLayer->setBoundsOrigin(IntPoint(m_scrollOffset));
 
 #if PLATFORM(MAC)
     if (RefPtr activeAnnotation = m_activeAnnotation)
@@ -1649,7 +1648,7 @@ bool UnifiedPDFPlugin::updateOverflowControlsLayers(bool needsHorizontalScrollba
             layer->setScrollingNodeID(m_scrollingNodeID);
 #endif
 
-            protect(m_overflowControlsContainer)->addChild(*layer);
+            m_overflowControlsContainer->addChild(*layer);
         } else
             GraphicsLayer::unparentAndClear(layer);
 
@@ -1864,14 +1863,13 @@ void UnifiedPDFPlugin::updateScrollingExtents()
     if (!renderer)
         return;
 
-    RefPtr scrollContainerLayer = m_scrollContainerLayer;
-    if (!scrollContainerLayer)
+    if (!m_scrollContainerLayer)
         return;
 
     EventRegion eventRegion;
     auto eventRegionContext = eventRegion.makeContext();
     eventRegionContext.unite(FloatRoundedRect(FloatRect({ }, size())), *renderer, protect(renderer->style()).get());
-    scrollContainerLayer->setEventRegion(WTF::move(eventRegion));
+    m_scrollContainerLayer->setEventRegion(WTF::move(eventRegion));
 }
 
 bool UnifiedPDFPlugin::requestScrollToPosition(const ScrollPosition& position, const ScrollPositionChangeOptions& options)
@@ -2552,6 +2550,8 @@ ContextMenuAction UnifiedPDFPlugin::contextMenuActionFromTag(ContextMenuItemTag 
         return ContextMenuItemTagCopy;
     case ContextMenuItemTag::CopyLink:
         return ContextMenuItemTagCopyLinkToClipboard;
+    case ContextMenuItemTag::Translate:
+        return ContextMenuItemTagTranslate;
     case ContextMenuItemTag::DictionaryLookup:
         return ContextMenuItemTagLookUpInDictionary;
     case ContextMenuItemTag::Invalid:
@@ -2587,6 +2587,7 @@ auto UnifiedPDFPlugin::toContextMenuItemTag(int tagValue) -> ContextMenuItemTag
     static constexpr std::array regularContextMenuItemTags {
         ContextMenuItemTag::AutoSize,
         ContextMenuItemTag::WebSearch,
+        ContextMenuItemTag::Translate,
         ContextMenuItemTag::DictionaryLookup,
         ContextMenuItemTag::Copy,
         ContextMenuItemTag::CopyLink,
@@ -2687,6 +2688,8 @@ String UnifiedPDFPlugin::titleForContextMenuItemTag(ContextMenuItemTag tag) cons
         return contextMenuItemPDFAutoSize();
     case ContextMenuItemTag::WebSearch:
         return contextMenuItemTagSearchWeb();
+    case ContextMenuItemTag::Translate:
+        return contextMenuItemTagTranslate(selectionString());
     case ContextMenuItemTag::DictionaryLookup:
         return contextMenuItemTagLookUpInDictionary(selectionString());
     case ContextMenuItemTag::Copy:
@@ -2759,11 +2762,11 @@ Vector<PDFContextMenuItem> UnifiedPDFPlugin::selectionContextMenuItems(const Int
     if (allowsCopying)
         items.append(contextMenuItem(ContextMenuItemTag::Copy));
 
-    bool shouldPresentLookupAndSearchOptions = !isInBaseSystem();
-    if (shouldPresentLookupAndSearchOptions) {
+    bool shouldPresentTextServiceOptions = !isInBaseSystem();
+    if (shouldPresentTextServiceOptions) {
         items.insertVector(0, Vector<PDFContextMenuItem> {
             contextMenuItem(ContextMenuItemTag::DictionaryLookup),
-            separatorContextMenuItem(),
+            contextMenuItem(ContextMenuItemTag::Translate),
             contextMenuItem(ContextMenuItemTag::WebSearch),
             separatorContextMenuItem(),
         });
@@ -2826,7 +2829,11 @@ void UnifiedPDFPlugin::performContextMenuAction(ContextMenuItemTag tag, const In
     case ContextMenuItemTag::WebSearch:
         performWebSearch(selectionString());
         break;
-    case ContextMenuItemTag::DictionaryLookup: {
+    case ContextMenuItemTag::Translate: {
+        RetainPtr selection = m_currentSelection;
+        showTranslationUIForSelection(selection);
+        break;
+    } case ContextMenuItemTag::DictionaryLookup: {
         RetainPtr selection = m_currentSelection;
         showDefinitionForSelection(selection.get());
         break;
@@ -3354,7 +3361,7 @@ String UnifiedPDFPlugin::selectionString() const
 {
     if (!hasSelection())
         return { };
-    return m_currentSelection.get().string;
+    return [m_currentSelection string];
 }
 
 std::pair<String, String> UnifiedPDFPlugin::stringsBeforeAndAfterSelection(int characterCount) const
@@ -3967,6 +3974,24 @@ std::pair<String, RetainPtr<PDFSelection>> UnifiedPDFPlugin::textForImmediateAct
 
     return { { }, wordSelection };
 }
+
+#if HAVE(TRANSLATION_UI_SERVICES) && ENABLE(CONTEXT_MENUS)
+void UnifiedPDFPlugin::showTranslationUIForSelection(PDFSelection *selection)
+{
+    RefPtr frame = m_frame.get();
+    if (!frame)
+        return;
+
+    RefPtr page = frame->page();
+    if (!page)
+        return;
+
+    auto rectForSelectionInRootView = this->rectForSelectionInRootView(selection);
+    auto pluginFrameInRootView = convertFromPluginToRootView(IntRect { IntPoint { }, size() });
+    TranslationContextMenuInfo info { selection.string, WebCore::IntRect { rectForSelectionInRootView }, pluginFrameInRootView.location() };
+    protect(page)->send(Messages::WebPageProxy::HandleContextMenuTranslation { info });
+}
+#endif
 
 #if PLATFORM(MAC)
 void UnifiedPDFPlugin::accessibilityScrollToPage(PDFDocumentLayout::PageIndex pageIndex)

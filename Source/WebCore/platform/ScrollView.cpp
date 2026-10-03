@@ -144,6 +144,8 @@ void ScrollView::setScrollbarModes(ScrollbarMode horizontalMode, ScrollbarMode v
         platformSetScrollbarModes();
     else
         updateScrollbars(scrollPosition());
+
+    scrollbarModesDidChange();
 }
 
 void ScrollView::scrollbarModes(ScrollbarMode& horizontalMode, ScrollbarMode& verticalMode) const
@@ -1332,7 +1334,10 @@ void ScrollView::setFrameRect(const IntRect& newRect)
     Widget::setFrameRect(newRect);
     frameRectsChanged();
 
-    if (!m_useFixedLayout && oldRect.size() != newRect.size())
+    if (oldRect.size() == newRect.size())
+        return;
+
+    if (!m_useFixedLayout)
         availableContentSizeChanged(AvailableSizeChangeReason::AreaSizeChanged);
     else
         updateScrollbars(scrollPosition());

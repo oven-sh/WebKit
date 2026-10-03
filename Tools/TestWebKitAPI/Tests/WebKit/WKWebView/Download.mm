@@ -3492,6 +3492,7 @@ TEST(WKDownload, OriginatingFrameAndUserGesture)
         EXPECT_WK_STREQ(download.originatingFrame.securityOrigin.host, "");
         EXPECT_NOT_NULL(download.originatingFrame.request);
         EXPECT_WK_STREQ(download.originatingFrame.request.URL.absoluteString, "about:blank");
+        EXPECT_TRUE(download.originatingFrame.isMainFrame);
         EXPECT_TRUE(download.isUserInitiated);
         checkedDownload = true;
     }];
@@ -3799,6 +3800,34 @@ TEST(WKDownload, SuggestedFilenameCorrectedByContentType)
     Util::run(&downloadDestinationDecided);
 
     EXPECT_WK_STREQ("video.mp4", receivedSuggestedFilename.get());
+}
+
+static void runScriptNavigationToDataURLAndWaitForDownload(NSString *dataURL)
+{
+    RetainPtr webView = adoptNS([TestWKWebView new]);
+    [webView synchronouslyLoadHTMLString:@"<body>test</body>" baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:navigationDelegate.get()];
+
+    __block bool didBecomeDownload = false;
+    navigationDelegate.get().decidePolicyForNavigationResponse = ^(WKNavigationResponse *, void (^completionHandler)(WKNavigationResponsePolicy)) {
+        completionHandler(WKNavigationResponsePolicyDownload);
+    };
+    navigationDelegate.get().navigationResponseDidBecomeDownload = ^(WKNavigationResponse *, WKDownload *download) {
+        [download cancel:nil];
+        didBecomeDownload = true;
+    };
+
+    [webView evaluateJavaScript:[NSString stringWithFormat:@"location.href = '%@'", dataURL] completionHandler:nil];
+    Util::run(&didBecomeDownload);
+}
+
+TEST(WKDownload, ScriptNavigationToDataURLBecomesDownload)
+{
+    runScriptNavigationToDataURLAndWaitForDownload(@"data:application/octet-stream;base64,aGVsbG8=");
+    runScriptNavigationToDataURLAndWaitForDownload(@"data:application/vnd.apple.pkpass;base64,aGVsbG8=");
+    runScriptNavigationToDataURLAndWaitForDownload(@"data:text/calendar;base64,aGVsbG8=");
 }
 
 #if PLATFORM(MAC)

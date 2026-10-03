@@ -755,7 +755,11 @@ imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customiz
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-base-overflow.html [ ImageOnlyFailure ]
 
 # List boxes/<select multiple>.
-imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-listbox/ [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-appearance-focused.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-appearance-grid.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-appearance.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-sizing.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-listbox/listbox-hr-appearance.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-appearance.tentative.html [ ImageOnlyFailure ]
 
 ## -- General <select> tests -- ##
@@ -1990,6 +1994,8 @@ imported/w3c/web-platform-tests/css/css-grid/grid-lanes/item-placement/row-auto-
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/item-placement/row-negative-margin-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/item-placement/row-negative-margin-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/item-placement/row-negative-margin-004.html [ ImageOnlyFailure ]
+# Grid lanes does not use the limited min-content contribution for items spanning flexible tracks under a min-content constraint.
+imported/w3c/web-platform-tests/css/css-grid/grid-lanes/items/column-flex-spanning-items.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/items/column-item-percentage-sizes-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/items/column-item-percentage-sizes-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/items/column-item-percentage-sizes-003.html [ ImageOnlyFailure ]
@@ -2812,12 +2818,10 @@ fast/webgpu/regression/webkit.svg [ Skip ]
 
 fast/webgpu/nocrash/fuzz-282937.html [ Failure ]
 fast/webgpu/nocrash/fuzz-283196.html [ Failure ]
-fast/webgpu/nocrash/fuzz-283943.html [ Failure ]
 fast/webgpu/nocrash/fuzz-283989.html [ Failure ]
 fast/webgpu/nocrash/fuzz-283998.html [ Failure ]
 fast/webgpu/nocrash/fuzz-284090.html [ Failure ]
 fast/webgpu/nocrash/fuzz-284126.html [ Failure ]
-fast/webgpu/nocrash/fuzz-284326.html [ Failure ]
 fast/webgpu/nocrash/fuzz-284335.html [ Failure ]
 fast/webgpu/nocrash/fuzz-284390.html [ Failure ]
 fast/webgpu/nocrash/fuzz-285311.html [ Failure ]
@@ -2969,9 +2973,6 @@ imported/w3c/web-platform-tests/svg/text/reftests/text-font-face-load-image.html
 # x/y attribute still produces per-chunk div-by-zero and silently drops
 # textLength. Pinned here until the spacing-mode follow-up patch lands.
 imported/w3c/web-platform-tests/svg/text/reftests/textLength-list-y-spacing.svg [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/css-linked-parameters-precedence-1.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-url-fragment-identifiers-1.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-url-fragment-identifiers-2.html [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/svg/animations/scripted/syncbase-after-removal.html [ Skip ]
 imported/w3c/web-platform-tests/svg/animations/media-fragment-override-animation.html [ ImageOnlyFailure ]
@@ -4203,11 +4204,25 @@ webkit.org/b/206748 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/
 webkit.org/b/324326 imported/w3c/web-platform-tests/css/css-overflow/scroll-axis-lock-none-touch.html [ Skip ]
 webkit.org/b/324326 imported/w3c/web-platform-tests/css/css-overflow/scroll-axis-lock-none-wheel.html  [ Skip ]
 
+# Tests that failed on the 2026-09-24 import of css-overflow
+imported/w3c/web-platform-tests/css/css-overflow/scroll-markers/scroll-buttons-contents-appearance.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-overflow/scroll-markers/scroll-buttons-counter-appearance.html [ ImageOnlyFailure ]
+webkit.org/b/206748 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-floats-008.html [ ImageOnlyFailure ]
+webkit.org/b/206748 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-floats-009.html [ ImageOnlyFailure ]
+webkit.org/b/206748 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-floats-013.html [ ImageOnlyFailure ]
+webkit.org/b/206748 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-floats-014.html [ ImageOnlyFailure ]
+webkit.org/b/206748 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-text-overflow-string-006.html [ ImageOnlyFailure ]
+webkit.org/b/206748 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-text-overflow-string-007.html [ ImageOnlyFailure ]
+webkit.org/b/206748 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-text-overflow-string-009.html [ ImageOnlyFailure ]
+webkit.org/b/324326 imported/w3c/web-platform-tests/css/css-overflow/scroll-axis-lock-dynamic-change.html [ Skip ]
+webkit.org/b/324326 imported/w3c/web-platform-tests/css/css-overflow/scroll-axis-lock-none-touch-viewport.html [ Skip ]
+webkit.org/b/324326 imported/w3c/web-platform-tests/css/css-overflow/scroll-axis-lock-none-wheel-viewport.html [ Skip ]
+webkit.org/b/324326 imported/w3c/web-platform-tests/css/css-overflow/scroll-axis-lock-not-propagated-from-body-quirks.html [ Skip ]
+
 # Tests that failed on the 2026-02-02 import of css-overflow
 imported/w3c/web-platform-tests/css/css-overflow/clip-008.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/column-style-change-triggers-relayout.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-001.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-004.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-011.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-012.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-013.html [ ImageOnlyFailure ]
@@ -4237,7 +4252,6 @@ imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-009.html 
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-019.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-021.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-030.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-034.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-036.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-037.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-038.html [ ImageOnlyFailure ]
@@ -4794,14 +4808,10 @@ webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/calc-size/cal
 webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-min-max-sizes-001.html [ ImageOnlyFailure ]
 webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-min-max-sizes-002.html [ ImageOnlyFailure ]
 webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-min-max-sizes-003.html [ ImageOnlyFailure ]
-webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-min-max-sizes-004.html [ ImageOnlyFailure ]
-webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-min-max-sizes-005.html [ ImageOnlyFailure ]
-webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-min-max-sizes-006.html [ ImageOnlyFailure ]
 webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/viewport-units-scrollbars-auto-vhw-001.html [ ImageOnlyFailure ]
 webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/viewport-units-scrollbars-scroll-vhw-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-values/calc-min-height-block-1.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-values/calc-min-width-block-intrinsic-1.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-values/calc-size/calc-size-no-body-height-quirk-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-values/ch-unit-019.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-values/resolution-with-percentage-without-context.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-values/viewport-units-scrollbars-scroll-vw-001.html [ ImageOnlyFailure ]
@@ -5201,7 +5211,6 @@ webkit.org/b/299914 imported/w3c/web-platform-tests/css/css-backgrounds/backgrou
 webkit.org/b/299909 imported/w3c/web-platform-tests/css/css-backgrounds/background-origin/origin-content-box_with_radius.html [ ImageOnlyFailure ]
 webkit.org/b/299909 imported/w3c/web-platform-tests/css/css-backgrounds/background-origin/origin-padding-box_with_radius.html [ ImageOnlyFailure ]
 
-imported/w3c/web-platform-tests/css/css-backgrounds/border-image-repeat-002.htm [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-backgrounds/border-radius-clip-002.htm [ ImageOnlyFailure ]
 
 webkit.org/b/207262 imported/w3c/web-platform-tests/web-animations/timing-model/animations/sync-start-times.html [ Pass ImageOnlyFailure ]
@@ -5377,7 +5386,6 @@ imported/w3c/web-platform-tests/html/canvas/element/compositing/2d.composite.gri
 imported/w3c/web-platform-tests/html/canvas/element/compositing/2d.composite.grid.no_filter.shadow.pattern.html [ ImageOnlyFailure ]
 
 webkit.org/b/209460 imported/w3c/web-platform-tests/css/css-grid/abspos/descendant-static-position-002.html [ ImageOnlyFailure ]
-webkit.org/b/212246 imported/w3c/web-platform-tests/css/css-grid/alignment/grid-baseline-align-cycles-001.html [ ImageOnlyFailure ]
 webkit.org/b/212246 imported/w3c/web-platform-tests/css/css-grid/alignment/grid-item-content-baseline-001.html [ ImageOnlyFailure ]
 webkit.org/b/212246 imported/w3c/web-platform-tests/css/css-grid/alignment/grid-item-content-baseline-002.html [ ImageOnlyFailure ]
 webkit.org/b/212246 imported/w3c/web-platform-tests/css/css-grid/alignment/grid-item-content-baseline-003.html [ ImageOnlyFailure ]
@@ -6250,7 +6258,6 @@ imported/w3c/web-platform-tests/trusted-types/should-trusted-type-policy-creatio
 # Needs moveBefore support
 webkit.org/b/281223 imported/w3c/web-platform-tests/dom/nodes/moveBefore/fieldset-child-date-input-blur-event.html [ Skip ]
 webkit.org/b/281223 imported/w3c/web-platform-tests/dom/nodes/moveBefore/role-updates-after-move.html [ Skip ]
-webkit.org/b/281223 imported/w3c/web-platform-tests/dom/nodes/moveBefore/select-option-optgroup.html [ Skip ]
 webkit.org/b/281223 imported/w3c/web-platform-tests/dom/nodes/moveBefore/selection-preserve.html [ Skip ]
 webkit.org/b/281223 imported/w3c/web-platform-tests/dom/nodes/moveBefore/moveBefore-iframe-crash.html [ Skip ]
 webkit.org/b/281223 imported/w3c/web-platform-tests/dom/nodes/moveBefore/moveBefore-legend-input-crash.html [ Skip ]
@@ -6763,7 +6770,6 @@ webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-outline-auto-with-border.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-outline-auto.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-outline-double-path.html [ ImageOnlyFailure ]
-webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shorthand-rendering.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-outline-double-shape.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-outline-offset.html [ ImageOnlyFailure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/border-shape/border-shape-outline-with-border-double-ellipse.html [ ImageOnlyFailure ]
@@ -7662,12 +7668,15 @@ imported/w3c/web-platform-tests/dom/events/scrolling/wheel-event-transactions-ta
 imported/w3c/web-platform-tests/dom/events/scrolling/wheel-event-transactions-target-resize.html?include=passive-false [ Skip ]
 imported/w3c/web-platform-tests/dom/events/scrolling/wheel-event-transactions-target-resize.html?include=passive-true [ Skip ]
 
-imported/w3c/web-platform-tests/css/css-color/deprecated-sameas-002.html [ ImageOnlyFailure ]
-
 http/tests/ipc/write-web-archive-frame-ancestry-check.html [ Skip ]
 
 http/tests/site-isolation/touch-events [ Skip ]
 http/tests/site-isolation/ios [ Skip ]
+
+# The UIScriptController method used by these tests is only implemented on macOS (for now)
+# webkit.org/b/324206
+http/tests/site-isolation/date-time-picker-in-cross-origin-iframe-001.html [ Skip ]
+http/tests/site-isolation/date-time-picker-in-cross-origin-iframe-002.html [ Skip ]
 
 # CSS syntax
 imported/w3c/web-platform-tests/css/css-shadow/scoped-reference-animation-002.html [ ImageOnlyFailure ]
@@ -8093,7 +8102,6 @@ imported/w3c/web-platform-tests/css/CSS2/linebox/vertical-align-super-001.xht [ 
 imported/w3c/web-platform-tests/css/CSS2/box-display/block-in-inline-relpos-002.xht [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/CSS2/box-display/root-box-003.xht [ ImageOnlyFailure ]
 
-webkit.org/b/302820 imported/w3c/web-platform-tests/css/CSS2/normal-flow/crashtests/block-in-inline-ax-crash.html [ Timeout ]
 imported/w3c/web-platform-tests/css/CSS2/normal-flow/block-in-inline-float-between-001.xht [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/CSS2/normal-flow/block-in-inline-float-in-layer-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/CSS2/normal-flow/cross-domain-iframe-paint-order.sub.html [ ImageOnlyFailure ]
@@ -8197,6 +8205,7 @@ imported/w3c/web-platform-tests/html/semantics/embedded-content/the-iframe-eleme
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-object-element/object-allowed-schemas.sub.window.html [ Skip ] # Timeout
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-video-element/video-loading-lazy-autoplay-when-visible.html [ Skip ] # Timeout
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-video-element/video-loading-lazy-in-viewport.html [ Skip ] # Timeout
+imported/w3c/web-platform-tests/html/semantics/embedded-content/the-video-element/video-loading-lazy-resume-on-loading-attribute-change.html [ Skip ] # Timeout
 webkit.org/b/200128 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-video-element/video_timeupdate_on_seek.html [ Skip ]
 imported/w3c/web-platform-tests/cookies/samesite/sandbox-allow-same-site-none-cookies-value.tentative.https.html [ Skip ] # Different result on each platform for subtest
 
@@ -8313,7 +8322,7 @@ imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/ca
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/captureElementImage.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/changes-in-paint-event.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/changing-size-in-paint-event.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/clips-overflow.tentative.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/child-overflow.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/compositing-op-basic.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/compositing-op-non-opaque-element.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/containment.tentative.html [ Skip ]
@@ -8340,7 +8349,6 @@ imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/dr
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/draw-element-image-display-none.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/draw-element-image-empty.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/draw-element-image-get-image-data.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/draw-element-image-returned-matrix.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/draw-element-image-scale-variant.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/drawElementImage-zero-size.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/drawing-display-none-fails.tentative.html [ Skip ]
@@ -8360,14 +8368,16 @@ imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/hi
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/iframe-local.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/iframe.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/ink-overflow.tentative.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/inline-drawable.tentative.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/inline-fixed-containment.tentative.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/inline-fragments-drawable.tentative.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/inline-size-change.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/intersection-observer-visibility.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/invalidation-during-onpaint.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/layout-canvas-children.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/moved-nested-layoutsubtree-canvas.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/nested-canvas-invalidation.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/nested-canvas-reset.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/nested-div-layoutsubtree-canvas.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/nested-layoutsubtree-canvas.tentative.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/nested-drawable.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/non-opaque-element.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/onpaint-after-scroll-2.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/onpaint-after-scroll.tentative.html [ Skip ]
@@ -8420,18 +8430,13 @@ imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/pr
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/subframe-cross-origin-background-image.tentative.https.sub.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/subframe-cross-origin-frame.tentative.https.sub.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/subframe-cross-origin-html-images.tentative.https.sub.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg-images-ignored.tentative.https.sub.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg-mask-filter.tentative.https.sub.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg-pattern-cross-origin-image.tentative.https.sub.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg-pattern-with-feImage-cross-origin-image.tentative.https.sub.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg-use-ignored.tentative.https.sub.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg/svg-images-ignored.tentative.https.sub.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg/svg-mask-filter.tentative.https.sub.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg/svg-pattern-cross-origin-image.tentative.https.sub.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg/svg-pattern-with-feImage-cross-origin-image.tentative.https.sub.html [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/svg/svg-use-ignored.tentative.https.sub.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/target-text-ignored-overlay-path.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/video-ignored.tentative.https.sub.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/visited-link-color-ignored.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/visited-link-currentcolor-ignored.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/visited-link-decoration-color-ignored.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/visited-link-slotted-color-ignored.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/visited-link-svg-fill-stroke-color-ignored.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/requestPaint.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/scale.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/scroller-crash.tentative.html [ Skip ]
@@ -8443,10 +8448,8 @@ imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/sh
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/svg-foreign-object.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/svg-rect.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/top-layer-not-painted-in-canvas.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/triple-nested-layoutsubtree-canvas.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/video.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/draw-element-image/animated-gif-worker.tentative.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/offscreen/manual/draw-element-image/drawElementImage-returned-matrix-worker.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/draw-element-image/ink-overflow-worker.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/draw-element-image/offscreenCanvas-drawElementImage-worker.tentative.html [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/draw-element-image/offscreenCanvas-drawElementImage.tentative.html [ Skip ]

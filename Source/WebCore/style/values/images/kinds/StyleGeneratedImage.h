@@ -53,12 +53,12 @@ protected:
 
     FloatSize imageSize(const RenderElement*, float multiplier, WebCore::CachedImage::SizeType = WebCore::CachedImage::UsedSize) const final;
     void computeIntrinsicDimensions(const RenderElement*, float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio) final;
+    NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const override;
     bool imageHasRelativeWidth() const final { return !m_fixedSize; }
     bool imageHasRelativeHeight() const final { return !m_fixedSize; }
-    bool usesImageContainerSize() const final { return !m_fixedSize; }
-    void setContainerContextForRenderer(const RenderElement&, const FloatSize& containerSize, float, const WTF::URL& = WTF::URL()) final { m_containerSize = containerSize; }
-    bool imageHasNaturalDimensions() const final { return !usesImageContainerSize(); }
-    bool imageHasNaturalAspectRatio() const final { return !usesImageContainerSize(); }
+    void setContainerSizeForRenderer(const RenderElement&, const FloatSize& containerSize) final { m_containerSize = containerSize; }
+    bool imageHasNaturalDimensions() const final { return m_fixedSize; }
+    bool imageHasNaturalAspectRatio() const final { return m_fixedSize; }
 
     void addClient(RenderElement&) final;
     void removeClient(RenderElement&) final;

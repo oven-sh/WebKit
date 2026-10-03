@@ -872,13 +872,6 @@ String AXCoreObject::autoCompleteValue() const
     return explicitValue.isEmpty() ? "none"_s : explicitValue;
 }
 
-String AXCoreObject::invalidStatus() const
-{
-    auto explicitValue = explicitInvalidStatus();
-    // "false" is the default if no invalid status is explicitly provided (e.g. via aria-invalid).
-    return explicitValue.isEmpty() ? "false"_s : explicitValue;
-}
-
 AXCoreObject::AccessibilityChildrenVector AXCoreObject::contents()
 {
     if (isTabList())
@@ -1010,9 +1003,9 @@ bool AXCoreObject::canHaveSelectedChildren() const
     case AccessibilityRole::Tree:
     case AccessibilityRole::TreeGrid:
     case AccessibilityRole::List:
-    // These roles are containers whose children are treated as selected by assistive
-    // technologies. We can get the "selected" item via aria-activedescendant or the
-    // focused element.
+    // A combobox's selected child is its aria-activedescendant. Menus can have selected children
+    // too (e.g. a base-appearance select's picker), and ATSPI treats their focused or active menu
+    // item as selected.
     case AccessibilityRole::Menu:
     case AccessibilityRole::MenuBar:
     case AccessibilityRole::ComboBox:
@@ -1049,19 +1042,23 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::selectedChildren()
         return selectedListItems();
     case AccessibilityRole::Menu:
     case AccessibilityRole::MenuBar:
-        if (Accessibility::findAncestor(*this, /* includeSelf */ false, [] (const auto& ancestor) {
+#if USE(ATSPI)
+        // Outside of a pop-up button's menu (e.g. a base-appearance select's picker), ATSPI treats the focused
+        // or active menu item as the selected one, matching AccessibilityObject::isSelected().
+        if (!Accessibility::findAncestor(*this, /* includeSelf */ false, [] (const auto& ancestor) {
             return ancestor.isPopUpButton();
         })) {
-            for (const auto& child : unignoredChildren()) {
-                if (child->isSelected())
-                    return { { child } };
-            }
+            if (RefPtr descendant = activeDescendant())
+                return { { descendant.releaseNonNull() } };
+            if (RefPtr focusedElement = focusedUIElement())
+                return { { focusedElement.releaseNonNull() } };
             break;
         }
-        if (RefPtr descendant = activeDescendant())
-            return { { descendant.releaseNonNull() } };
-        if (RefPtr focusedElement = focusedUIElement())
-            return { { focusedElement.releaseNonNull() } };
+#endif // USE(ATSPI)
+        for (const auto& child : unignoredChildren()) {
+            if (child->isSelected())
+                return { { child } };
+        }
         break;
     case AccessibilityRole::MenuListPopup: {
         AccessibilityChildrenVector selectedItems;

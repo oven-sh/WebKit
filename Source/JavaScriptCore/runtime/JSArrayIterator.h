@@ -29,6 +29,8 @@
 
 namespace JSC {
 
+class JSArray;
+
 class JSArrayIterator final : public JSInternalFieldObjectImpl<3> {
 public:
     using Base = JSInternalFieldObjectImpl<3>;
@@ -75,13 +77,8 @@ public:
     // Returns the index to load from the iterated array, advancing the iterator, or std::nullopt once
     // it is exhausted. Only valid when the iterated object is a JSArray.
     inline std::optional<uint32_t> nextWithAdvance();
+    static inline std::optional<uint32_t> nextWithAdvance(JSArray*, int64_t& index);
     inline bool next(JSGlobalObject*, JSValue&);
-
-    // The same steps as next() for a kind "value" iterator over a JSArray whose only state, the next index
-    // to visit (doneIndex once exhausted), lives in indexValue instead of in an iterator object.
-    // The two are read back from frame registers: that they still are what op_iterator_open put there is checked, not assumed.
-    static inline bool nextValueWithIndexInFrame(JSGlobalObject*, JSValue iterable, JSValue& indexValue, JSValue& value);
-    static inline int64_t validatedIndexInFrame(JSValue indexValue);
 
     JS_EXPORT_PRIVATE static JSArrayIterator* create(VM&, Structure*, JSObject* iteratedObject, JSValue kind);
     static JSArrayIterator* create(VM& vm, Structure* structure, JSObject* iteratedObject, IterationKind kind)

@@ -31,6 +31,7 @@
 #include <wtf/MainThread.h>
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
@@ -1595,7 +1596,7 @@ static void testJSCObject()
 typedef struct _Foo Foo;
 struct _Foo {
     int foo;
-    HashMap<CString, int> properties;
+    HashMap<UTF8CString, int> properties;
     Foo* sibling;
 };
 
@@ -1695,13 +1696,13 @@ static void multiplyFooV(Foo* foo, GPtrArray* multipliers)
 
 static int fooGetProperty(Foo* foo, const char* name)
 {
-    auto addResult = foo->properties.add(name, 0);
+    auto addResult = foo->properties.add(UTF8CString::unsafeFromUTF8(name), 0);
     return addResult.iterator->value;
 }
 
 static void fooSetProperty(Foo* foo, const char* name, int value)
 {
-    auto addResult = foo->properties.add(name, value);
+    auto addResult = foo->properties.add(UTF8CString::unsafeFromUTF8(name), value);
     if (!addResult.isNewEntry)
         addResult.iterator->value = value;
 }
@@ -1814,11 +1815,7 @@ static JSCClassVTable fooVTable = {
         }
 
         auto* foo = static_cast<Foo*>(instance);
-        if (!foo->properties.contains(name))
-            return FALSE;
-
-        foo->properties.remove(name);
-        return TRUE;
+        return foo->properties.remove(UTF8CString::unsafeFromUTF8(name));
     },
     // enumerate_properties
     [](JSCClass* jscClass, JSCContext* context, gpointer instance) -> char** {
@@ -1827,11 +1824,11 @@ static JSCClassVTable fooVTable = {
 
         auto* foo = static_cast<Foo*>(instance);
         GRefPtr<GPtrArray> properties = adoptGRef(g_ptr_array_new_with_free_func(g_free));
-        Vector<CString> names = copyToVector(foo->properties.keys());
+        Vector<UTF8CString> names = copyToVector(foo->properties.keys());
         std::sort(names.begin(), names.end());
         for (const auto& name : names) {
-            if (g_str_has_prefix(name.data(), "prop_enum_"))
-                g_ptr_array_add(properties.get(), g_strdup(name.data()));
+            if (g_str_has_prefix(name.legacyCStringPointer(), "prop_enum_"))
+                g_ptr_array_add(properties.get(), gStrdup(name));
         }
         if (!properties->len)
             return nullptr;
@@ -3674,6 +3671,38 @@ static void testJSCExceptions()
         g_assert_cmpstr(errorString.get(), ==, "ReferenceError: Can't find variable: baz");
         GUniquePtr<char> reportString(jsc_exception_report(exception));
         g_assert_cmpstr(reportString.get(), ==, "file:///foo/script.js:3:16 ReferenceError: Can't find variable: baz\n  foo@file:///foo/script.js:3:16\n  bar@file:///foo/script.js:8:15\n  global code@file:///foo/script.js:10:12\n");
+
+        jsc_context_clear_exception(context.get());
+        g_assert_null(jsc_context_get_exception(context.get()));
+    }
+
+    {
+        LeakChecker checker;
+        GRefPtr<JSCContext> context = adoptGRef(jsc_context_new());
+        checker.watch(context.get());
+        g_assert_false(jsc_context_get_exception(context.get()));
+
+        GRefPtr<JSCValue> result = adoptGRef(jsc_context_evaluate_with_source_uri(context.get(),
+            "function fünf() {\n"
+            "    throw new Error('Größe ✓');\n"
+            "}\n"
+            "fünf();\n",
+            -1, "file:///skript/größe.js", 1));
+        checker.watch(result.get());
+
+        g_assert_true(jsc_value_is_undefined(result.get()));
+        auto* exception = jsc_context_get_exception(context.get());
+        g_assert_true(JSC_IS_EXCEPTION(exception));
+        checker.watch(exception);
+        g_assert_cmpstr(jsc_exception_get_message(exception), ==, "Größe ✓");
+        // The source URI is a URL, so it comes back percent-encoded; the function name and message stay UTF-8.
+        g_assert_cmpstr(jsc_exception_get_source_uri(exception), ==, "file:///skript/gr%C3%B6%C3%9Fe.js");
+        g_assert_cmpuint(jsc_exception_get_line_number(exception), ==, 2);
+        g_assert_true(g_str_has_prefix(jsc_exception_get_backtrace_string(exception), "fünf@file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        GUniquePtr<char> reportString(jsc_exception_report(exception));
+        g_assert_true(g_str_has_prefix(reportString.get(), "file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        g_assert_nonnull(g_strstr_len(reportString.get(), -1, " Error: Größe ✓\n  fünf@file:///skript/gr%C3%B6%C3%9Fe.js:2:"));
+        g_assert_nonnull(g_strstr_len(reportString.get(), -1, "\n  global code@file:///skript/gr%C3%B6%C3%9Fe.js:4:"));
 
         jsc_context_clear_exception(context.get());
         g_assert_null(jsc_context_get_exception(context.get()));

@@ -470,7 +470,7 @@ def serialized_identifiers():
         'WebCore::OpaqueOriginIdentifier',
         'WebCore::PendingNavigateEventIdentifier',
         'WebCore::PageIdentifier',
-        'WebCore::ImageBufferTransferIdentifierID',
+        'WebCore::PlaceholderFrameIdentifier',
         'WebCore::PlatformLayerIdentifierID',
         'WebCore::PlaybackTargetClientContextID',
         'WebCore::NonSerializedDataIdentifier',
@@ -660,6 +660,9 @@ def types_that_cannot_be_forward_declared():
         'WebCore::PathDataQuadCurve',
         'WebCore::PatternParameters',
         'WebCore::ImageBufferTransferIdentifier',
+        'WebCore::PlaceholderFrameIdentifier',
+        'WebCore::PlaceholderRenderingContextIdentifier',
+        'WebCore::RemotePlaceholderRenderingContextIdentifier',
         'WebCore::PlatformLayerIdentifier',
         'WebCore::PlatformMediaError',
         'WebCore::PlaybackTargetClientContextIdentifier',
@@ -955,7 +958,7 @@ def generate_messages_header(receiver):
         result.append('    ' + forwarder_class + '(' + handler_namespace + '::' + weak_ref_class + '* _Nonnull);\n')
         result.append('    std::unique_ptr<' + handler_namespace + '::' + class_name + '> getMessageTarget();\n')
         result.append('    std::unique_ptr<' + handler_namespace + '::' + weak_ref_class + '> m_handler;\n')
-        result.append('} SWIFT_SHARED_REFERENCE(.ref, .deref);\n\n')
+        result.append('} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);\n\n')
         result.append('}\n')
         result.append('\n')
         result.append('using %s = Ref<WebKit::%s>;\n' % (ref_forwarder_class, forwarder_class))
@@ -1518,7 +1521,9 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::LineJoin': ['<WebCore/GraphicsTypes.h>'],
         'WebCore::PackedColor::RGBA': ['<WebCore/ColorTypes.h>'],
         'WebCore::PaginationMode': ['<WebCore/Pagination.h>'],
-        'WebCore::ImageBufferTransferIdentifierID': ['"GeneratedSerializers.h"'],
+        'WebCore::ImageBufferTransferIdentifier': ['<WebCore/ImageBufferTransferIdentifier.h>'],
+        'WebCore::PlaceholderRenderingContextIdentifier': ['<WebCore/PlaceholderRenderingContextIdentifier.h>'],
+        'WebCore::RemotePlaceholderRenderingContextIdentifier': ['<WebCore/PlaceholderRenderingContextIdentifier.h>'],
         'WebCore::PlatformLayerIdentifierID': ['"GeneratedSerializers.h"'],
         'WebCore::PlatformMediaSessionRemoteControlCommandType': ['<WebCore/PlatformMediaSession.h>'],
         'WebCore::PlatformMediaSessionRemoteCommandArgument': ['<WebCore/PlatformMediaSession.h>'],
@@ -1554,6 +1559,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::MessagePortChannelProvider::HasActivity': ['<WebCore/MessagePortChannelProvider.h>'],
         'WebCore::ModalContainerControlType': ['<WebCore/ModalContainerTypes.h>'],
         'WebCore::ModalContainerDecision': ['<WebCore/ModalContainerTypes.h>'],
+        'WebCore::ModelSceneGraphAsTextOptions': ['<WebCore/ModelPlayer.h>'],
         'WebCore::MouseEventPolicy': ['<WebCore/DocumentLoader.h>'],
         'WebCore::NetworkTransactionInformation': ['<WebCore/NetworkLoadInformation.h>'],
         'WebCore::NavigationUpgradeToHTTPSBehavior': ['<WebCore/FrameLoaderTypes.h>'],
@@ -2369,7 +2375,8 @@ def generate_swift_message_handler(receiver):
         if not generates_swift_trampoline(receiver, message):
             continue
 
-        parameters = ['connection: IPC.Connection']
+        connection_type = 'IPC.StreamServerConnection' if receiver.has_attribute(STREAM_ATTRIBUTE) else 'IPC.Connection'
+        parameters = ['connection: %s' % connection_type]
         arguments = ['connection: connection']
         for parameter in message.parameters:
             parameters.append('%s: %s' % (parameter.name, swift_type_name(parameter.type)))

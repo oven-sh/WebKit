@@ -46,6 +46,7 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
     bool isColorInput,
     bool isRangeInput,
     bool isARIASlider,
+    bool isCustomSlider,
     bool hasDirectionalResizeCursor,
     bool isInResizeControl,
     bool isOverVideo,
@@ -82,6 +83,7 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
 #if PLATFORM(IOS_FAMILY)
     bool needsPointerTouchCompatibilityQuirk,
 #endif
+    bool shouldTreatLongClickAsSecondaryClickQuirk,
     WebCore::FloatPoint&& adjustedPointForNodeRespondingToClickEvents,
     std::optional<WebCore::IntPoint>&& automationAdjustedInteractionLocation,
     URL&& url,
@@ -121,6 +123,7 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
     , isColorInput(isColorInput)
     , isRangeInput(isRangeInput)
     , isARIASlider(isARIASlider)
+    , isCustomSlider(isCustomSlider)
     , hasDirectionalResizeCursor(hasDirectionalResizeCursor)
     , isInResizeControl(isInResizeControl)
     , isOverVideo(isOverVideo)
@@ -157,6 +160,7 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
 #if PLATFORM(IOS_FAMILY)
     , needsPointerTouchCompatibilityQuirk(needsPointerTouchCompatibilityQuirk)
 #endif
+    , shouldTreatLongClickAsSecondaryClickQuirk(shouldTreatLongClickAsSecondaryClickQuirk)
     , adjustedPointForNodeRespondingToClickEvents(WTF::move(adjustedPointForNodeRespondingToClickEvents))
     , automationAdjustedInteractionLocation(WTF::move(automationAdjustedInteractionLocation))
     , url(WTF::move(url))

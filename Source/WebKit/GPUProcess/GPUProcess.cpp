@@ -302,6 +302,11 @@ CoreAudioCaptureUnit::defaultSingleton().setStatusBarWasTappedCallback([weakProc
 
 void GPUProcess::updateGPUProcessPreferences(GPUProcessPreferences&& preferences)
 {
+#if PLATFORM(COCOA)
+    if (preferences.mediaResourceLoadTimeoutForTesting != std::exchange(m_preferences.mediaResourceLoadTimeoutForTesting, preferences.mediaResourceLoadTimeoutForTesting))
+        WebCore::DeprecatedGlobalSettings::setMediaResourceLoadTimeoutForTesting(m_preferences.mediaResourceLoadTimeoutForTesting.value_or(0));
+#endif
+
 #if ENABLE(VP9)
     if (updatePreference(m_preferences.vp9DecoderEnabled, preferences.vp9DecoderEnabled)) {
         VP9TestingOverrides::singleton().setShouldEnableVP9Decoder(*m_preferences.vp9DecoderEnabled);
@@ -555,108 +560,53 @@ void GPUProcess::updateSandboxAccess(const Vector<SandboxExtension::Handle>& ext
         SandboxExtension::consumePermanently(extension);
 }
 
-void GPUProcess::authorizeImageBufferTransfers(Vector<WebCore::ImageBufferTransferIdentifier>&& identifiers, WebCore::ProcessIdentifier destinationProcess, CompletionHandler<void()>&& completionHandler)
-{
-    {
-        Locker locker(m_globalResourceLocker);
-        HashSet<WebCore::ImageBufferTransferIdentifier> awaitingDeposit;
-        for (auto identifier : identifiers) {
-            // The entry need not exist yet: the deposit runs on the depositing process's rendering
-            // backend work queue and can still be in flight. Recording the new owner up front means
-            // the deposit lands in an already-handed-over entry instead of being missed.
-            auto& transferred = m_transferredImageBuffers.add(identifier, TransferredImageBuffer { }).iterator->value;
-            transferred.owner = destinationProcess;
-            if (!transferred.imageBuffer)
-                awaitingDeposit.add(identifier);
-        }
-        if (!awaitingDeposit.isEmpty()) {
-            m_pendingImageBufferTransferAuthorizations.append(PendingImageBufferTransferAuthorization {
-                WTF::move(awaitingDeposit), WTF::move(completionHandler)
-            });
-            return;
-        }
-    }
-    // Replied to so the broker can hold the message back until the handover has happened. The
-    // recipient's claims arrive on its own connection and could otherwise overtake it.
-    completionHandler();
-}
-
-Vector<CompletionHandler<void()>> GPUProcess::takeSettledImageBufferTransferAuthorizations(NOESCAPE const Function<void(HashSet<WebCore::ImageBufferTransferIdentifier>&)>& prune)
-{
-    Vector<CompletionHandler<void()>> settled;
-    m_pendingImageBufferTransferAuthorizations.removeAllMatching([&](auto& authorization) {
-        prune(authorization.awaitingDeposit);
-        if (!authorization.awaitingDeposit.isEmpty())
-            return false;
-        settled.append(WTF::move(authorization.completionHandler));
-        return true;
-    });
-    return settled;
-}
-
-bool GPUProcess::depositTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier identifier, WebCore::ProcessIdentifier owner, Ref<WebCore::ImageBuffer>&& imageBuffer)
-{
-    Vector<CompletionHandler<void()>> settledAuthorizations;
-    {
-        Locker locker(m_globalResourceLocker);
-        auto& transferred = m_transferredImageBuffers.add(identifier, TransferredImageBuffer { }).iterator->value;
-        if (transferred.imageBuffer)
-            return false;
-        // An authorization that arrived first has already handed the buffer on; the depositing
-        // process only owns it until then.
-        if (!transferred.owner)
-            transferred.owner = owner;
-        transferred.imageBuffer = WTF::move(imageBuffer);
-        settledAuthorizations = takeSettledImageBufferTransferAuthorizations([&](auto& awaitingDeposit) {
-            awaitingDeposit.remove(identifier);
-        });
-    }
-    // Deposits arrive on a rendering backend work queue, but the reply belongs to a message this
-    // process received on the main run loop.
-    for (auto& completionHandler : settledAuthorizations)
-        ensureOnMainRunLoop([completionHandler = WTF::move(completionHandler)] mutable { completionHandler(); });
-    return true;
-}
-
-RefPtr<WebCore::ImageBuffer> GPUProcess::takeTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier identifier, WebCore::ProcessIdentifier claimingProcess)
+void GPUProcess::handOverTransferredImageBuffers(Vector<WebCore::ImageBufferTransferIdentifier>&& identifiers, WebCore::ProcessIdentifier destinationProcess)
 {
     Locker locker(m_globalResourceLocker);
-    auto iterator = m_transferredImageBuffers.find(identifier);
-    if (iterator == m_transferredImageBuffers.end())
-        return nullptr;
-    if (iterator->value.owner != claimingProcess)
-        return nullptr;
-    RefPtr imageBuffer = WTF::move(iterator->value.imageBuffer);
-    m_transferredImageBuffers.remove(iterator);
-    return imageBuffer;
+    // Not waited for, so the destination may already have claimed some of them.
+    for (auto identifier : identifiers) {
+        auto iterator = m_transferredImageBuffers.find(identifier);
+        if (iterator != m_transferredImageBuffers.end())
+            iterator->value.owner = destinationProcess;
+    }
+}
+
+WebCore::ImageBufferTransferIdentifier GPUProcess::depositTransferredImageBuffer(WebCore::ProcessIdentifier owner, Ref<WebCore::ImageBuffer>&& imageBuffer)
+{
+    Locker locker(m_globalResourceLocker);
+    auto identifier = WebCore::ImageBufferTransferIdentifier::createVersion4();
+    auto result = m_transferredImageBuffers.add(identifier, TransferredImageBuffer { owner, WTF::move(imageBuffer) });
+    RELEASE_ASSERT(result.isNewEntry);
+    return identifier;
+}
+
+RefPtr<WebCore::ImageBuffer> GPUProcess::takeTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier identifier)
+{
+    Locker locker(m_globalResourceLocker);
+    return m_transferredImageBuffers.take(identifier).imageBuffer;
+}
+
+void GPUProcess::releaseTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier identifier)
+{
+    Locker locker(m_globalResourceLocker);
+    m_transferredImageBuffers.remove(identifier);
+}
+
+void GPUProcess::releaseTransferredImageBuffers(Vector<WebCore::ImageBufferTransferIdentifier>&& identifiers)
+{
+    Locker locker(m_globalResourceLocker);
+    for (auto identifier : identifiers)
+        m_transferredImageBuffers.remove(identifier);
 }
 
 void GPUProcess::removeTransferredImageBuffersForProcess(WebCore::ProcessIdentifier processIdentifier)
 {
-    Vector<CompletionHandler<void()>> abandonedAuthorizations;
-    {
-        Locker locker(m_globalResourceLocker);
-        m_transferredImageBuffers.removeIf([&](auto& entry) {
-            // Keyed on the owner: once ownership has moved on, the depositing process going away
-            // must not take the buffer from the process it was handed to.
-            if (entry.value.owner == processIdentifier)
-                return true;
-            // A deposit this process still owed will never arrive now, so the placeholder an
-            // authorization left behind would otherwise be kept forever.
-            return !entry.value.imageBuffer && entry.key.processIdentifier() == processIdentifier;
-        });
-
-        // Stop holding authorizations back on deposits that can no longer arrive, so the broker
-        // delivers the message rather than never replying to it. The recipient's claim then fails
-        // and it sees a null ImageBitmap.
-        abandonedAuthorizations = takeSettledImageBufferTransferAuthorizations([&](auto& awaitingDeposit) {
-            awaitingDeposit.removeIf([&](auto identifier) {
-                return identifier.processIdentifier() == processIdentifier;
-            });
-        });
-    }
-    for (auto& completionHandler : abandonedAuthorizations)
-        completionHandler();
+    Locker locker(m_globalResourceLocker);
+    // Keyed on the owner: once ownership has moved on, the depositing process going away must not
+    // take the buffer from the process it was handed to.
+    m_transferredImageBuffers.removeIf([&](auto& entry) {
+        return entry.value.owner == processIdentifier;
+    });
 }
 
 Ref<RemoteSnapshot> GPUProcess::getOrCreateSnapshot(RemoteSnapshotIdentifier snapshotIdentifier)
@@ -898,7 +848,7 @@ const String& GPUProcess::mediaKeysStorageDirectory(PAL::SessionID sessionID) co
 WebCore::NowPlayingManager& GPUProcess::nowPlayingManager()
 {
     if (!m_nowPlayingManager)
-        m_nowPlayingManager = makeUnique<WebCore::NowPlayingManager>();
+        lazyInitialize(m_nowPlayingManager, makeUnique<WebCore::NowPlayingManager>());
     return *m_nowPlayingManager;
 }
 
@@ -915,7 +865,7 @@ RemoteAudioSessionProxyManager& GPUProcess::audioSessionManager() const
 WorkQueue& GPUProcess::videoMediaStreamTrackRendererQueue()
 {
     if (!m_videoMediaStreamTrackRendererQueue)
-        m_videoMediaStreamTrackRendererQueue = WorkQueue::create("RemoteVideoMediaStreamTrackRenderer"_s, WorkQueue::QOS::UserInitiated);
+        lazyInitialize(m_videoMediaStreamTrackRendererQueue, WorkQueue::create("RemoteVideoMediaStreamTrackRenderer"_s, WorkQueue::QOS::UserInitiated));
     return *m_videoMediaStreamTrackRendererQueue;
 }
 #endif
@@ -924,7 +874,7 @@ WorkQueue& GPUProcess::videoMediaStreamTrackRendererQueue()
 WorkQueue& GPUProcess::libWebRTCCodecsQueue()
 {
     if (!m_libWebRTCCodecsQueue)
-        m_libWebRTCCodecsQueue = WorkQueue::create("LibWebRTCCodecsQueue"_s, WorkQueue::QOS::UserInitiated);
+        lazyInitialize(m_libWebRTCCodecsQueue, WorkQueue::create("LibWebRTCCodecsQueue"_s, WorkQueue::QOS::UserInitiated));
     return *m_libWebRTCCodecsQueue;
 }
 #endif

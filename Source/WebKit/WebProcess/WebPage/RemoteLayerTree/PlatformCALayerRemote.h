@@ -29,6 +29,7 @@
 #include "RemoteLayerTreeContext.h"
 #include "RemoteLayerTreeTransaction.h"
 #include <WebCore/HTMLMediaElementIdentifier.h>
+#include <WebCore/PlaceholderFrameIdentifier.h>
 #include <WebCore/PlatformCALayer.h>
 #include <WebCore/PlatformCALayerDelegatedContents.h>
 #include <WebCore/PlatformLayer.h>
@@ -36,7 +37,6 @@
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
-class LayerPool;
 #if ENABLE(THREADED_ANIMATIONS)
 class AcceleratedEffect;
 struct AcceleratedEffectValues;
@@ -54,7 +54,7 @@ using LayerHostingContextID = uint32_t;
 struct PlatformCALayerRemoteDelegatedContents {
     ImageBufferBackendHandle surface;
     RefPtr<WebCore::PlatformCALayerDelegatedContentsFence> finishedFence;
-    std::optional<WebCore::RenderingResourceIdentifier> surfaceIdentifier;
+    std::optional<WebCore::PlaceholderFrameIdentifier> frameIdentifier;
 };
 
 class PlatformCALayerRemote : public WebCore::PlatformCALayer, public CanMakeWeakPtr<PlatformCALayerRemote> {
@@ -300,15 +300,13 @@ private:
     void updateBackingStore();
     void removeSublayer(PlatformCALayerRemote*);
 
-    WebCore::ColorSpace displayColorSpace() const;
+    WebCore::ColorSpace displayColorSpace(WebCore::ContentsFormat) const;
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     WebCore::IncludeDynamicContentScalingDisplayList shouldIncludeDisplayListInBackingStore() const;
 #endif
 
     bool NODELETE requiresCustomAppearanceUpdateOnBoundsChange() const;
-
-    WebCore::LayerPool* layerPool() override;
 
     LayerProperties m_properties;
     WebCore::PlatformCALayerList m_children;

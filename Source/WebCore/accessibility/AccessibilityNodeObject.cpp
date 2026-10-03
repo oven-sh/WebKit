@@ -3222,7 +3222,7 @@ bool AccessibilityNodeObject::isTable() const
 AccessibilityObject* AccessibilityNodeObject::controlForLabelElement() const
 {
     RefPtr labelElement = labelElementContainer();
-    return labelElement ? axObjectCache()->getOrCreate(Accessibility::controlForLabelElement(*labelElement).get()) : nullptr;
+    return labelElement ? protect(axObjectCache())->getOrCreate(Accessibility::controlForLabelElement(*labelElement).get()) : nullptr;
 }
 
 String AccessibilityNodeObject::ariaAccessibilityDescription() const
@@ -3562,7 +3562,7 @@ void AccessibilityNodeObject::visibleText(Vector<AccessibilityText>& textOrder) 
 
         // Base-appearance select options can have interactive content (buttons, links) whose text
         // should be included in the menu item's title for VoiceOver to read.
-        if (RefPtr optionElement = dynamicDowncast<HTMLOptionElement>(node.get()); optionElement && optionElement->belongsToBaseAppearancePicker())
+        if (RefPtr optionElement = dynamicDowncast<HTMLOptionElement>(node.get()); optionElement && optionElement->isRenderedWithBaseAppearance())
             mode.includeFocusableContent = true;
 
         // Track nodes referenced via aria-labelledby to avoid double-counting them
@@ -4208,7 +4208,7 @@ Vector<AXStitchGroup> AccessibilityNodeObject::stitchGroups() const
                 context.lastRenderer = box->renderer();
             });
 
-            if (listMarkerIsDisclosure(dynamicDowncast<RenderElement>(box->renderer())) || listMarkerIsDisclosure(box->renderer().parent())) {
+            if (listMarkerIsDisclosure(protect(dynamicDowncast<RenderElement>(box->renderer()))) || listMarkerIsDisclosure(protect(box->renderer().parent()))) {
                 finalizeCurrentGroup();
                 continue;
             }

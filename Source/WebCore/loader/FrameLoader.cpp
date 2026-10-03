@@ -74,6 +74,7 @@
 #include "FloatRect.h"
 #include "FormState.h"
 #include "FormSubmission.h"
+#include "Frame.h"
 #include "FrameInlines.h"
 #include "FrameLoadRequest.h"
 #include "FrameNetworkingContext.h"
@@ -724,7 +725,7 @@ static inline bool shouldClearWindowName(const LocalFrame& frame, const Document
     return !protect(newDocument.securityOrigin())->isSameOriginAs(protect(protect(frame.document())->securityOrigin()));
 }
 
-void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperties, bool clearScriptObjects, bool clearFrameView, Function<void()>&& handleDOMWindowCreation)
+void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperties, bool clearScriptObjects, bool clearFrameView, NOESCAPE const Function<void()>& handleDOMWindowCreation)
 {
     bool neededClear = m_needsClear;
     m_needsClear = false;
@@ -981,10 +982,7 @@ bool FrameLoader::allChildrenAreComplete() const
 
 bool FrameLoader::allAncestorsAreComplete() const
 {
-    for (Frame* ancestor = m_frame.ptr(); ancestor; ancestor = ancestor->tree().parent()) {
-        auto* localAncestor = dynamicDowncast<LocalFrame>(*ancestor);
-        if (!localAncestor)
-            continue;
+    for (Ref localAncestor : inclusiveAncestorFrames<LocalFrame>(m_frame.get())) {
         if (!localAncestor->loader().m_isComplete)
             return false;
     }
@@ -1305,16 +1303,11 @@ void FrameLoader::updateFirstPartyForCookies()
 void FrameLoader::setFirstPartyForCookies(const URL& url)
 {
     Ref frame = m_frame.get();
-    for (RefPtr<Frame> descendantFrame = frame.ptr(); descendantFrame; descendantFrame = descendantFrame->tree().traverseNext(frame.ptr())) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*descendantFrame))
-            protect(localFrame->document())->setFirstPartyForCookies(url);
-    }
+    for (Ref localFrame : inclusiveDescendantFrames<LocalFrame>(frame))
+        protect(localFrame->document())->setFirstPartyForCookies(url);
 
     RegistrableDomain registrableDomain(url);
-    for (RefPtr<Frame> descendantFrame = frame.ptr(); descendantFrame; descendantFrame = descendantFrame->tree().traverseNext(frame.ptr())) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(*descendantFrame);
-        if (!localFrame)
-            continue;
+    for (Ref localFrame : inclusiveDescendantFrames<LocalFrame>(frame)) {
         if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(protect(localFrame->document())->url())) {
             if (RefPtr parent = dynamicDowncast<LocalFrame>(localFrame->tree().parent()))
                 protect(localFrame->document())->setSiteForCookies(parent->document()->siteForCookies());
@@ -1476,7 +1469,7 @@ void FrameLoader::completed()
 {
     Ref frame = m_frame.get();
 
-    for (RefPtr descendant = frame->tree().traverseNext(frame.ptr()); descendant; descendant = descendant->tree().traverseNext(frame.ptr()))
+    for (Ref descendant : descendantFrames(frame))
         protect(descendant->navigationScheduler())->startTimer();
 
     if (RefPtr parent = frame->tree().parent()) {
@@ -1490,17 +1483,15 @@ void FrameLoader::completed()
 
 void FrameLoader::started()
 {
-    for (Frame* frame = m_frame.ptr(); frame; frame = frame->tree().parent()) {
-        if (auto* localFrame = dynamicDowncast<LocalFrame>(*frame))
-            localFrame->loader().m_isComplete = false;
-    }
+    for (Ref localFrame : inclusiveAncestorFrames<LocalFrame>(m_frame.get()))
+        localFrame->loader().m_isComplete = false;
 }
 
 void FrameLoader::prepareForLoadStart()
 {
     FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderPrepareForLoadStart);
 
-    m_progressTracker->progressStarted();
+    protect(m_progressTracker)->progressStarted();
     m_client->dispatchDidStartProvisionalLoad();
 
     if (AXObjectCache::accessibilityEnabled()) {
@@ -1891,7 +1882,7 @@ void FrameLoader::loadWithNavigationAction(ResourceRequest&& request, Navigation
     if (request.url().protocolIsJavaScript() && !action.isInitialFrameSrcLoad()) {
         if (auto requester = action.requester(); requester && requester->documentIdentifier) {
             if (RefPtr requestingDocument = Document::allDocumentsMap().get(requester->documentIdentifier); requestingDocument && requestingDocument->contentSecurityPolicy()) {
-                if (!requestingDocument->contentSecurityPolicy()->allowJavaScriptURLs(protect(m_frame->document())->url().string(), { }, request.url().string(), nullptr))
+                if (!protect(requestingDocument->contentSecurityPolicy())->allowJavaScriptURLs(protect(m_frame->document())->url().string(), { }, request.url().string(), nullptr))
                     return completionHandler();
             }
         }
@@ -2330,17 +2321,17 @@ void FrameLoader::stopForUserCancel(bool deferCheckLoadComplete)
 
     stopAllLoaders();
 
-    if (m_frame->document()->settings().navigationAPIEnabled()) {
-        RefPtr window = m_frame->document()->window();
-        protect(window->navigation())->abortOngoingNavigationIfNeeded();
+    if (frame->document()->settings().navigationAPIEnabled()) {
+        if (RefPtr window = frame->document()->window())
+            protect(window->navigation())->abortOngoingNavigationIfNeeded();
     }
 
 #if PLATFORM(IOS_FAMILY)
     // Lay out immediately when stopping to immediately clear the old page if we just committed this one
     // but haven't laid out/painted yet.
     // FIXME: Is this behavior specific to iOS? Or should we expose a setting to toggle this behavior?
-    if (frame->view() && !frame->view()->didFirstLayout())
-        protect(frame->view())->layoutContext().layout();
+    if (RefPtr view = frame->view(); view && !view->didFirstLayout())
+        protect(view->layoutContext())->layout();
 #endif
 
     if (deferCheckLoadComplete)
@@ -2559,7 +2550,7 @@ void FrameLoader::commitProvisionalLoad()
     if (!cachedPage && !m_stateMachine.creatingInitialEmptyDocument())
         m_client->makeRepresentation(pdl.get());
 
-    transitionToCommitted(cachedPage.get());
+    transitionToCommitted(protect(cachedPage));
 
     if (pdl && m_documentLoader) {
         // Check if the destination page is allowed to access the previous page's timing information.
@@ -3147,7 +3138,7 @@ void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess
         if (m_stateMachine.creatingInitialEmptyDocument() || !m_stateMachine.committedFirstRealDocumentLoad())
             return;
 
-        m_progressTracker->progressCompleted(FrameProgressTracker::LoadCompletionStatus::Success);
+        protect(m_progressTracker)->progressCompleted(FrameProgressTracker::LoadCompletionStatus::Success);
         if (RefPtr page = m_frame->page()) {
             if (m_frame->isMainFrame()) {
                 tracePoint(MainResourceLoadDidEnd, PAGE_ID);
@@ -3197,7 +3188,7 @@ void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess
         // Don't assume 'page' is still available to use.
         if (m_frame->isMainFrame() && m_frame->page()) {
             ASSERT(&m_frame->page()->mainFrame() == m_frame.ptr());
-            protect(m_frame->page())->diagnosticLoggingClient().logDiagnosticMessageWithResult(DiagnosticLoggingKeys::pageLoadedKey(), emptyString(), error.isNull() ? DiagnosticLoggingResultPass : DiagnosticLoggingResultFail, ShouldSample::Yes);
+            protect(protect(m_frame->page())->diagnosticLoggingClient())->logDiagnosticMessageWithResult(DiagnosticLoggingKeys::pageLoadedKey(), emptyString(), error.isNull() ? DiagnosticLoggingResultPass : DiagnosticLoggingResultFail, ShouldSample::Yes);
         }
 
         m_shouldSkipHTTPSUpgradeForSameSiteNavigation = isHTTPFallbackInProgressOrUpgradeDisabled();
@@ -4531,12 +4522,10 @@ bool FrameLoader::shouldInterruptLoadForXFrameOptions(const String& content, con
         Ref origin = SecurityOrigin::create(url);
         if (!topFrame || !origin->isSameSchemeHostPort(protect(protect(topFrame->document())->securityOrigin())))
             return true;
-        for (RefPtr frame = m_frame->tree().parent(); frame; frame = frame->tree().parent()) {
-            RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame);
-            if (!localFrame || !origin->isSameSchemeHostPort(protect(protect(localFrame->document())->securityOrigin())))
-                return true;
-        }
-        return false;
+        return std::ranges::any_of(ancestorFrames(m_frame.get()), [&](Frame& frame) {
+            RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
+            return !localFrame || !origin->isSameSchemeHostPort(protect(protect(localFrame->document())->securityOrigin()));
+        });
     }
     case XFrameOptionsDisposition::Deny:
         return true;

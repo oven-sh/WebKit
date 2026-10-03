@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include "CSSLinkParameter.h"
 #include "CachedImage.h"
 #include "CachedResourceHandle.h"
 #include "StyleImage.h"
@@ -71,8 +72,9 @@ public:
     bool imageHasRelativeHeight() const final;
     bool imageHasNaturalAspectRatio() const final;
     void computeIntrinsicDimensions(const RenderElement*, float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio) final;
-    bool usesImageContainerSize() const final;
-    void setContainerContextForRenderer(const RenderElement&, const FloatSize&, float, const WTF::URL& = WTF::URL()) final;
+    NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
+    void setContainerSizeForRenderer(const RenderElement&, const FloatSize&) final;
+    ImageDrawingExtras drawingExtrasForRenderer(const RenderElement&, const WTF::URL& = WTF::URL()) const final;
     void addClient(RenderElement&) final;
     void removeClient(RenderElement&) final;
     bool hasClient(RenderElement&) const final;
@@ -87,6 +89,8 @@ public:
 
 private:
     CachedImage(URL&&, Ref<CSSImageValue>&&, float);
+
+    Vector<CSS::ParamFunction> urlLinkParameters(const CSSParserContext&, StringView fragment) const;
 
     LegacyRenderSVGResourceContainer* uncheckedRenderSVGResource(TreeScope&, const AtomString& fragment) const;
     LegacyRenderSVGResourceContainer* uncheckedRenderSVGResource(const RenderElement*) const;

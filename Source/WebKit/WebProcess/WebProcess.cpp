@@ -79,6 +79,9 @@
 #include "WebPermissionController.h"
 #include "WebPlatformStrategies.h"
 #include "WebProcessCreationParameters.h"
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+#include <WebCore/PlaceholderRenderingContextSource.h>
+#endif
 #if ENABLE(GPU_PROCESS)
 #include "RemoteImageBufferProxy.h"
 #endif
@@ -193,7 +196,9 @@
 #endif
 
 #if ENABLE(GPU_PROCESS)
+#include "GPUConnectionToWebProcessMessages.h"
 #include "GPUProcessConnection.h"
+#include "RemoteRenderingBackendProxy.h"
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -266,6 +271,7 @@
 #endif
 
 #if PLATFORM(MAC)
+#import <WebCore/LocalDefaultSystemAppearance.h>
 #import <wtf/spi/darwin/SandboxSPI.h>
 #endif
 
@@ -450,7 +456,7 @@ void WebProcess::initializeConnection(IPC::Connection* connection)
     AuxiliaryProcess::initializeConnection(connection);
 
 // Do not call exit in background queue for GTK and WPE because we need to ensure
-// atexit handlers are called in the main thread to cleanup resources like EGL displays.
+// resources like EGL displays are released in the main thread before exiting.
 // Unless the main thread doesn't exit after 10 senconds to avoid leaking the process.
 #if PLATFORM(GTK) || PLATFORM(WPE)
     IPC::Connection::DidCloseOnConnectionWorkQueueCallback callExitCallback = crashAfter10Seconds;
@@ -499,6 +505,14 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
         setWebsiteDataStoreParameters(WTF::move(*parameters.websiteDataStoreParameters));
 
     setLegacyPresentingApplicationPID(parameters.presentingApplicationPID);
+
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+    WebCore::PlaceholderRenderingContextSource::setPlaceholderLifetimeHandlers([](WebCore::PlaceholderRenderingContextIdentifier identifier) {
+        WebProcess::singleton().send(Messages::WebProcessProxy::OffscreenCanvasPlaceholderCreated(identifier), 0);
+    }, [](WebCore::PlaceholderRenderingContextIdentifier identifier) {
+        WebProcess::singleton().send(Messages::WebProcessProxy::OffscreenCanvasPlaceholderDestroyed(identifier), 0);
+    });
+#endif
 
 #if OS(LINUX)
     MemoryPressureHandler::ReliefLogger::setLoggingEnabled(parameters.shouldEnableMemoryPressureReliefLogging);
@@ -718,6 +732,10 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
 #define WEBKIT_APPLY_JSC_OPTION_FROM_SHARED_PREFERENCE(jscOption, preferenceField) JSC::Options::jscOption() = jscOptions.preferenceField;
         FOR_EACH_JSC_OPTION_SHARED_PREFERENCE(WEBKIT_APPLY_JSC_OPTION_FROM_SHARED_PREFERENCE)
 #undef WEBKIT_APPLY_JSC_OPTION_FROM_SHARED_PREFERENCE
+#if PLATFORM(GTK) || PLATFORM(WPE)
+        if (parameters.crossOriginMode == WebCore::CrossOriginMode::Isolated)
+            JSC::Options::useSharedArrayBuffer() = true;
+#endif
         JSC::Options::notifyOptionsChanged();
     }
 
@@ -921,6 +939,10 @@ void WebProcess::prewarmGlobally()
         return;
     }
     WebCore::ProcessWarming::prewarmGlobally();
+
+#if PLATFORM(MAC)
+    WebCore::LocalDefaultSystemAppearance appearance(false);
+#endif
 }
 
 void WebProcess::prewarmWithDomainInformation(WebCore::PrewarmInformation&& prewarmInformation)
@@ -967,8 +989,7 @@ void WebProcess::registerURLSchemeAsDisplayIsolated(const String& urlScheme) con
 
 void WebProcess::registerURLSchemeAsCORSEnabled(const String& urlScheme)
 {
-    if (LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(urlScheme) == LegacySchemeRegistry::SchemeRegisteredForTheFirstTime::No)
-        return;
+    LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(urlScheme);
     protect(ensureNetworkProcessConnection())->connection().send(Messages::NetworkConnectionToWebProcess::RegisterURLSchemesAsCORSEnabled({ urlScheme }), 0);
 }
 
@@ -1594,7 +1615,7 @@ void WebProcess::gpuProcessConnectionDidBecomeUnresponsive()
 LibWebRTCCodecs& WebProcess::libWebRTCCodecs()
 {
     if (!m_libWebRTCCodecs)
-        m_libWebRTCCodecs = LibWebRTCCodecs::create();
+        lazyInitialize(m_libWebRTCCodecs, LibWebRTCCodecs::create());
     return *m_libWebRTCCodecs;
 }
 #endif
@@ -1603,7 +1624,7 @@ LibWebRTCCodecs& WebProcess::libWebRTCCodecs()
 AudioMediaStreamTrackRendererInternalUnitManager& WebProcess::audioMediaStreamTrackRendererInternalUnitManager()
 {
     if (!m_audioMediaStreamTrackRendererInternalUnitManager)
-        m_audioMediaStreamTrackRendererInternalUnitManager = makeUnique<AudioMediaStreamTrackRendererInternalUnitManager>();
+        lazyInitialize(m_audioMediaStreamTrackRendererInternalUnitManager, makeUnique<AudioMediaStreamTrackRendererInternalUnitManager>());
     return *m_audioMediaStreamTrackRendererInternalUnitManager;
 }
 #endif
@@ -2762,6 +2783,31 @@ void WebProcess::contentWorldDestroyed(ContentWorldIdentifier identifier)
 {
     WebUserContentController::removeContentWorld(identifier);
 }
+
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+void WebProcess::commitOffscreenCanvasPlaceholderFrame(WebCore::PlaceholderRenderingContextIdentifier identifier, WebCore::ImageBufferTransferHandle&& transferHandle, WebCore::PlaceholderFrameIdentifier frame, bool originClean, bool opaque, CompletionHandler<void(bool)>&& completionHandler)
+{
+    // Always true, only false if this processed crashed.
+    completionHandler(true);
+
+    if (WebCore::PlaceholderRenderingContextSource::commitFrameFromAnotherProcess(identifier, transferHandle, frame, originClean, opaque))
+        return;
+
+    if (!m_pageMap.isEmpty()) {
+        Ref page = m_pageMap.begin()->value;
+        if (protect(page->ensureRemoteRenderingBackendProxy())->takeTransferredBuffer(transferHandle))
+            return;
+    }
+    releaseTransferredImageBuffer(transferHandle.identifier);
+}
+
+void WebProcess::releaseTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier identifier)
+{
+    // The buffer went with the GPU process if there is no connection to it.
+    if (RefPtr gpuProcessConnection = existingGPUProcessConnection())
+        gpuProcessConnection->connection().send(Messages::GPUConnectionToWebProcess::ReleaseTransferredImageBuffer(identifier), 0);
+}
+#endif
 
 } // namespace WebKit
 

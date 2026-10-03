@@ -41,6 +41,7 @@
 #include "RenderBlockFlow.h"
 #include "RenderBox.h"
 #include "RenderElementInlines.h"
+#include "RenderImage.h"
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerInlines.h"
@@ -50,7 +51,6 @@
 #include "RenderSVGImage.h"
 #include "RenderText.h"
 #include "RenderView.h"
-#include "VisibleRectContext.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/Ref.h>
 #include <wtf/text/TextStream.h>
@@ -129,7 +129,7 @@ std::optional<float> LargestContentfulPaintData::effectiveVisualArea(const Eleme
         auto intersectingContentRect = intersection(absoluteContentRect, intersectionRect);
         area = intersectingContentRect.area();
 
-        auto naturalSize = image->imageSizeForRenderer(renderer.get(), 1);
+        auto naturalSize = LayoutSize { RenderImage::imageSizeAsRendered(*image, renderer.get()) };
         if (naturalSize.isEmpty())
             return { };
 
@@ -270,7 +270,6 @@ RefPtr<LargestContentfulPaint> LargestContentfulPaintData::generateLargestConten
     return std::exchange(m_pendingEntry, nullptr);
 }
 
-// This is a simplified version of IntersectionObserver::computeIntersectionState(). Some code should be shared.
 FloatRect LargestContentfulPaintData::computeViewportIntersectionRect(Element& element, FloatRect localRect)
 {
     RefPtr frameView = element.document().view();
@@ -281,31 +280,12 @@ FloatRect LargestContentfulPaintData::computeViewportIntersectionRect(Element& e
     if (!targetRenderer)
         return { };
 
-    if (targetRenderer->isSkippedContent())
+    auto clippedBounds = targetRenderer->computeClippedRectInContentCoordinates(LayoutRect { localRect });
+    if (!clippedBounds)
         return { };
 
-    CheckedPtr rootRenderer = frameView->renderView();
-    auto layoutViewport = frameView->layoutViewportRect();
-
-    auto localTargetBounds = LayoutRect { localRect };
-    auto absoluteRects = targetRenderer->computeVisibleRectsInContainer(
-        { localTargetBounds },
-        &protect(targetRenderer->view()).get(),
-        {
-            .options = {
-                VisibleRectContext::Option::UseEdgeInclusiveIntersection,
-                VisibleRectContext::Option::ApplyCompositedClips,
-                VisibleRectContext::Option::ApplyCompositedContainerScrolls
-            },
-        },
-        { }
-    );
-
-    if (!absoluteRects)
-        return { };
-
-    auto intersectionRect = layoutViewport;
-    intersectionRect.edgeInclusiveIntersect(absoluteRects->clippedOverflowRect);
+    auto intersectionRect = frameView->layoutViewportRect();
+    intersectionRect.edgeInclusiveIntersect(*clippedBounds);
     return intersectionRect;
 }
 

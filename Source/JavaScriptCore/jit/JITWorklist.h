@@ -78,7 +78,7 @@ public:
 
     // Only called on the main thread after suspending all threads.
     template<typename Visitor>
-    void visitWeakReferences(Visitor&);
+    void visitWeakReferences(VM&, Visitor&);
 
     template<typename Visitor>
     void iterateCodeBlocksForGC(Visitor&, VM&, NOESCAPE const Function<void(CodeBlock*)>&);
@@ -99,7 +99,7 @@ private:
     void waitUntilAllPlansForVMAreReady(VM&);
 
     template<typename MatchFunction>
-    void removeMatchingPlansForVM(VM&, const MatchFunction&);
+    void removeMatchingPlansForVM(VM&, NOESCAPE const MatchFunction&);
 
     State removeAllReadyPlansForVM(VM&, Vector<Ref<JITPlan>, 8>&, JITCompilationKey);
 

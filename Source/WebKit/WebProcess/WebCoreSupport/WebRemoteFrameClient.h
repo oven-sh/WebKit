@@ -25,12 +25,14 @@
 
 #pragma once
 
+#include "PendingPostMessages.h"
 #include "WebFrame.h"
 #include "WebFrameLoaderClient.h"
 #include <WebCore/MessageWithMessagePorts.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/RemoteFrameClient.h>
 #include <WebCore/SecurityOriginData.h>
+#include <wtf/RefCounted.h>
 
 namespace WebKit {
 
@@ -76,6 +78,8 @@ private:
 
     void didNotifyUserActivation(MonotonicTime) final;
     void didConsumeUserActivation() final;
+
+    const RefPtr<PendingPostMessages> m_pendingPostMessages;
 };
 
 }

@@ -79,6 +79,7 @@
 
 - (void)_simulateElementAction:(_WKElementActionType)actionType atLocation:(CGPoint)location;
 - (void)_simulateLongPressActionAtLocation:(CGPoint)location;
+- (void)_simulateDoubleClickAtLocation:(CGPoint)location;
 - (void)_simulateTextEntered:(NSString *)text;
 
 - (void)_doAfterReceivingEditDragSnapshotForTesting:(dispatch_block_t)action;
@@ -113,6 +114,8 @@
 
 @property (nonatomic, readonly) BOOL _hasPendingVisibleContentRectUpdateTimerForTesting;
 @property (nonatomic, readonly) CGRect _fixedClippingViewBoundsForTesting;
+
+- (void)_screenIsBeingCapturedForFrame:(_WKFrameHandle *)frameHandle completionHandler:(void (^)(BOOL))completionHandler;
 
 @end
 

@@ -33,14 +33,14 @@
 namespace WebCore {
 
 GradientImage::GradientImage(Gradient& generator, const FloatSize& size)
-    : m_gradient(generator)
+    : GeneratedImage(size)
+    , m_gradient(generator)
 {
-    setContainerSize(size);
 }
 
 GradientImage::~GradientImage() = default;
 
-ImageDrawResult GradientImage::draw(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+ImageDrawResult GradientImage::draw(GraphicsContext& destContext, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options, const ImageDrawingExtras*)
 {
     GraphicsContextStateSaver stateSaver(destContext);
     destContext.setCompositeOperation(options.compositeOperator(), options.blendMode());
@@ -53,8 +53,8 @@ ImageDrawResult GradientImage::draw(GraphicsContext& destContext, const FloatRec
     return ImageDrawResult::DidDraw;
 }
 
-void GradientImage::drawPattern(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform,
-    const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void GradientImage::drawPattern(GraphicsContext& destContext, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform,
+    const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, const ImageDrawingExtras*)
 {
     // Allow the generator to provide visually-equivalent tiling parameters for better performance.
     FloatSize adjustedSize = size();
@@ -83,7 +83,7 @@ void GradientImage::drawPattern(GraphicsContext& destContext, const FloatRect& d
         m_cachedAdjustedSize = adjustedSize;
         m_cachedScaleFactor = destContext.scaleFactor();
 
-        if (destContext.drawLuminanceMask())
+        if (options.drawLuminanceMask() == DrawLuminanceMask::Yes)
             imageBuffer->convertToLuminanceMask();
 
         m_cachedImage = WTF::move(imageBuffer);
@@ -91,7 +91,6 @@ void GradientImage::drawPattern(GraphicsContext& destContext, const FloatRect& d
             return;
     }
 
-    destContext.setDrawLuminanceMask(false);
     destContext.drawPattern(Ref { *m_cachedImage }, destRect, adjustedSrcRect, adjustedPatternCTM, phase, spacing, options);
 
 }

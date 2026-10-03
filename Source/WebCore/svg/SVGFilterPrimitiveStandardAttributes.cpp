@@ -40,8 +40,8 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFilterPrimitiveStandardAttributes);
 
-SVGFilterPrimitiveStandardAttributes::SVGFilterPrimitiveStandardAttributes(const QualifiedName& tagName, Document& document, UniqueRef<SVGPropertyRegistry>&& propertyRegistry)
-    : SVGElement(tagName, document, WTF::move(propertyRegistry))
+SVGFilterPrimitiveStandardAttributes::SVGFilterPrimitiveStandardAttributes(const QualifiedName& tagName, Document& document, const SVGPropertyRegistry& propertyRegistry)
+    : SVGElement(tagName, document, propertyRegistry)
 {
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
@@ -151,12 +151,12 @@ void SVGFilterPrimitiveStandardAttributes::markFilterEffectForRepaint()
     if (!renderer)
         return;
 
-    if (auto* filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
+    if (CheckedPtr filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRepaint(m_effect);
         return;
     }
 
-    if (auto* filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
+    if (CheckedPtr filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRepaint(m_effect);
         return;
     }
@@ -172,12 +172,12 @@ void SVGFilterPrimitiveStandardAttributes::markFilterEffectForRebuild()
     if (!renderer)
         return;
 
-    if (auto* filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
+    if (CheckedPtr filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRebuild();
         return;
     }
 
-    if (auto* filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
+    if (CheckedPtr filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRebuild();
         return;
     }

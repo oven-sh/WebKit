@@ -22,10 +22,26 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 
 private import CxxStdlib
+import WebGPU_Internal.Adapter
+import WebGPU_Internal.BindGroup
+import WebGPU_Internal.BindGroupLayout
 import WebGPU_Internal.Buffer
+import WebGPU_Internal.ComputePipeline
+import WebGPU_Internal.ExternalTexture
+import WebGPU_Internal.PipelineLayout
+import WebGPU_Internal.PresentationContext
+import WebGPU_Internal.RenderBundle
+import WebGPU_Internal.RenderBundleEncoder
+import WebGPU_Internal.RenderPipeline
+import WebGPU_Internal.Sampler
+import WebGPU_Internal.ShaderModule
+import WebGPU_Internal.XRBinding
+import WebGPU_Internal.XRProjectionLayer
+import WebGPU_Internal.XRSubImage
+import WebGPU_Internal.XRView
 import WebGPU_Private.CxxBridgingPublic
 
-extension WebGPU.Buffer {
+extension WebGPU.Metal.Buffer {
     func copy(from source: Span<UInt8>, offset: Int) {
         // FIXME (rdar://161274084): Swift doesn't have a lifetime-safe way to return a borrowed value from a refcounted object yet.
         let bufferContents = unsafe MutableSpan(_unsafeCxxSpan: getBufferContents())
@@ -36,12 +52,12 @@ extension WebGPU.Buffer {
 }
 
 @_expose(Cxx)
-func bufferCopyFrom(_ buffer: WebGPU.Buffer, from data: WebGPU.SpanConstUInt8, offset: Int) {
+func bufferCopyFrom(_ buffer: WebGPU.Metal.Buffer, from data: WebGPU.SpanConstUInt8, offset: Int) {
     buffer.copy(from: unsafe Span<UInt8>(_unsafeCxxSpan: data), offset: offset)
 }
 
 @_expose(Cxx)
-func bufferGetMappedRange(_ buffer: WebGPU.Buffer, offset: Int, size: Int) -> WebGPU.SpanUInt8 {
+func bufferGetMappedRange(_ buffer: WebGPU.Metal.Buffer, offset: Int, size: Int) -> WebGPU.SpanUInt8 {
     unsafe buffer.getMappedRange(offset: offset, size: size)
 }
 
@@ -55,7 +71,7 @@ extension WebGPU.SpanUInt8 {
     }
 }
 
-extension WebGPU.Buffer {
+extension WebGPU.Metal.Buffer {
     func getMappedRange(offset: Int, size: Int) -> WebGPU.SpanUInt8 {
         if !isValid() {
             return .empty

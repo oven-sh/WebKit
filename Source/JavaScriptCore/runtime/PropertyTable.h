@@ -107,8 +107,8 @@ public:
 
     // Constructor is passed an initial capacity, a PropertyTable to copy, or both.
     static PropertyTable* create(VM&, unsigned initialCapacity);
-    static PropertyTable* clone(VM&, const PropertyTable&);
-    static PropertyTable* clone(VM&, unsigned initialCapacity, const PropertyTable&);
+    JS_EXPORT_PRIVATE static PropertyTable* clone(VM&, const PropertyTable&);
+    JS_EXPORT_PRIVATE static PropertyTable* clone(VM&, unsigned initialCapacity, const PropertyTable&);
     ~PropertyTable();
 
     // Find a value in the table.
@@ -163,7 +163,7 @@ public:
 #endif
 
     template<typename Functor>
-    void forEachProperty(const Functor&) const;
+    void forEachProperty(NOESCAPE const Functor&) const;
 
     static constexpr unsigned EmptyEntryIndex = 0;
 
@@ -222,7 +222,7 @@ private:
     bool isCompact() const { return m_indexVector & isCompactFlag; }
 
     template<typename Functor>
-    void forEachPropertyMutable(const Functor&);
+    void forEachPropertyMutable(NOESCAPE const Functor&);
 
     // The table of values lies after the hash index.
     static CompactPropertyTableEntry* tableFromIndexVector(uint8_t* index, unsigned indexSize)
@@ -269,7 +269,7 @@ private:
     static void destroyIndexVector(uintptr_t indexVector);
 
     template<typename Func>
-    static ALWAYS_INLINE auto withIndexVector(uintptr_t indexVector, Func&& function) -> decltype(auto)
+    static ALWAYS_INLINE auto withIndexVector(uintptr_t indexVector, NOESCAPE const Func& function) -> decltype(auto)
     {
         if (indexVector & isCompactFlag)
             return function(std::bit_cast<uint8_t*>(indexVector & indexVectorMask));
@@ -277,9 +277,9 @@ private:
     }
 
     template<typename Func>
-    ALWAYS_INLINE auto withIndexVector(Func&& function) const -> decltype(auto)
+    ALWAYS_INLINE auto withIndexVector(NOESCAPE const Func& function) const -> decltype(auto)
     {
-        return withIndexVector(m_indexVector, std::forward<Func>(function));
+        return withIndexVector(m_indexVector, function);
     }
 
     static constexpr uintptr_t isCompactFlag = 0x1;
@@ -646,7 +646,7 @@ inline bool PropertyTable::canInsert(const ValueType& entry)
 }
 
 template<typename Functor>
-inline void PropertyTable::forEachProperty(const Functor& functor) const
+inline void PropertyTable::forEachProperty(NOESCAPE const Functor& functor) const
 {
     withIndexVector([&](const auto* vector) {
         const auto* cursor = tableFromIndexVector(vector);

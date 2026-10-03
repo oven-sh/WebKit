@@ -668,21 +668,14 @@ ScopedFlexBasisAsFlexItemMainSize::ScopedFlexBasisAsFlexItemMainSize(const FlexL
     : m_flexItem(flexLayoutItem.renderer)
     , m_mainAxisIsInlineAxis(flexLayoutItem.mainAxisIsInlineAxis)
 {
-    if (flexBasis.isAuto())
-        return;
-
     if (m_mainAxisIsInlineAxis)
         m_flexItem->setOverridingBorderBoxLogicalWidthForFlexBasisComputation(WTF::move(flexBasis));
     else
         m_flexItem->setOverridingBorderBoxLogicalHeightForFlexBasisComputation(WTF::move(flexBasis));
-    m_didOverride = true;
 }
 
 ScopedFlexBasisAsFlexItemMainSize::~ScopedFlexBasisAsFlexItemMainSize()
 {
-    if (!m_didOverride)
-        return;
-
     if (m_mainAxisIsInlineAxis)
         m_flexItem->clearOverridingLogicalWidthForFlexBasisComputation();
     else
@@ -727,7 +720,13 @@ FlexItemDefiniteCrossSizeScope::FlexItemDefiniteCrossSizeScope(RenderBox& flexIt
     }
 
     auto crossSize = FlexFormattingUtils::innerCrossSizeForFlexItem(flexItem);
-    FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(flexItem) ? saveAndSetBlockSize(crossSize) : saveAndSetInlineSize(crossSize);
+    if (FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(flexItem)) {
+        saveAndSetInlineSize({ });
+        saveAndSetBlockSize(crossSize);
+    } else {
+        saveAndSetInlineSize(crossSize);
+        saveAndSetBlockSize({ });
+    }
 
     if (invalidateContentWidths == InvalidateContentWidths::Yes) {
         flexItem.invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);

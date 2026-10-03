@@ -183,11 +183,12 @@ public:
     RefPtr<RemoteSnapshot> snapshot(RemoteSnapshotIdentifier);
 
     // Hands an ImageBuffer from one web process's rendering backend to another's. Unlike
-    // m_snapshots, a buffer is claimable only by its current owner, so an identifier alone is not
-    // enough to obtain one. A depositing process cannot name its successor: it owns the buffer until
-    // the process brokering delivery hands ownership on.
-    bool depositTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier, WebCore::ProcessIdentifier owner, Ref<WebCore::ImageBuffer>&&);
-    RefPtr<WebCore::ImageBuffer> takeTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier, WebCore::ProcessIdentifier claimingProcess);
+    // m_snapshots, the identifier is minted here and unguessable, so only a process it was given
+    // can claim the buffer. The depositing process owns an unclaimed buffer until the process
+    // brokering delivery hands it on, which only decides whose exit discards it.
+    WebCore::ImageBufferTransferIdentifier depositTransferredImageBuffer(WebCore::ProcessIdentifier owner, Ref<WebCore::ImageBuffer>&&);
+    RefPtr<WebCore::ImageBuffer> takeTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier);
+    void releaseTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier);
     void removeTransferredImageBuffersForProcess(WebCore::ProcessIdentifier);
 
 #if PLATFORM(VISION) && ENABLE(MODEL_PROCESS)
@@ -207,7 +208,9 @@ public:
 
     void terminateWebProcess(WebCore::ProcessIdentifier, IPC::MessageName);
 
-    void authorizeImageBufferTransfers(Vector<WebCore::ImageBufferTransferIdentifier>&&, WebCore::ProcessIdentifier destinationProcess, CompletionHandler<void()>&&);
+    void handOverTransferredImageBuffers(Vector<WebCore::ImageBufferTransferIdentifier>&&, WebCore::ProcessIdentifier destinationProcess);
+    // For buffers the UI process was relaying and will not deliver.
+    void releaseTransferredImageBuffers(Vector<WebCore::ImageBufferTransferIdentifier>&&);
 
 private:
     GPUProcess();
@@ -220,6 +223,9 @@ private:
     void initializeSandbox(const AuxiliaryProcessInitializationParameters&, SandboxInitializationParameters&) override;
     Thread::QOS connectionReceiveQueueQOS() const override { return Thread::QOS::UserInteractive; }
     bool shouldTerminate() override;
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    void stopRunLoop() override;
+#endif
 
     void tryExitIfUnused();
     bool canExitUnderMemoryPressure() const;
@@ -305,12 +311,12 @@ private:
     };
     HashMap<WebCore::ProcessIdentifier, MediaCaptureAccess> m_mediaCaptureAccessMap;
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
-    RefPtr<WorkQueue> m_videoMediaStreamTrackRendererQueue;
+    const RefPtr<WorkQueue> m_videoMediaStreamTrackRendererQueue;
 #endif
     WebCore::IntDegrees m_orientation { 0 };
 #endif
 #if USE(LIBWEBRTC) && PLATFORM(COCOA)
-    RefPtr<WorkQueue> m_libWebRTCCodecsQueue;
+    const RefPtr<WorkQueue> m_libWebRTCCodecsQueue;
 #endif
 
 #if USE(GRAPHICS_LAYER_WC)
@@ -329,18 +335,6 @@ private:
     };
     HashMap<WebCore::ImageBufferTransferIdentifier, TransferredImageBuffer> m_transferredImageBuffers WTF_GUARDED_BY_LOCK(m_globalResourceLocker);
 
-    // An authorization can arrive before the buffers it names have been deposited: a deposit travels
-    // on the depositing process's rendering backend work queue while the authorization arrives on the
-    // UI process's connection, so neither orders against the other. The reply is held back until
-    // every named buffer has landed, which is what lets the broker guarantee the recipient's claim
-    // cannot overtake the handover.
-    struct PendingImageBufferTransferAuthorization {
-        HashSet<WebCore::ImageBufferTransferIdentifier> awaitingDeposit;
-        CompletionHandler<void()> completionHandler;
-    };
-    Vector<PendingImageBufferTransferAuthorization> m_pendingImageBufferTransferAuthorizations WTF_GUARDED_BY_LOCK(m_globalResourceLocker);
-    Vector<CompletionHandler<void()>> takeSettledImageBufferTransferAuthorizations(NOESCAPE const Function<void(HashSet<WebCore::ImageBufferTransferIdentifier>&)>& prune) WTF_REQUIRES_LOCK(m_globalResourceLocker);
-
     struct GPUSession {
         String mediaCacheDirectory;
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA) || ENABLE(ENCRYPTED_MEDIA)
@@ -349,7 +343,7 @@ private:
     };
     HashMap<PAL::SessionID, GPUSession> m_sessions;
     WebCore::Timer m_idleExitTimer;
-    std::unique_ptr<WebCore::NowPlayingManager> m_nowPlayingManager;
+    const std::unique_ptr<WebCore::NowPlayingManager> m_nowPlayingManager;
     SecurityFlags m_securityFlags;
     struct NowPlayingOwner {
         WebCore::ProcessIdentifier process;

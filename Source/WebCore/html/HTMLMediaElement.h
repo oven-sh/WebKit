@@ -466,7 +466,7 @@ public:
 
     // TextTrackClient
     void textTrackKindChanged(TextTrack&) final;
-    void textTrackModeChanged(TextTrack&) final;
+    void textTrackModeChanged(TextTrack&, TextTrack::ModeChangeType) final;
     void textTrackLabelChanged(TextTrack&) final;
     void textTrackLanguageChanged(TextTrack&) final;
     void textTrackAddCues(TextTrack&, const TextTrackCueList&) final;
@@ -1032,6 +1032,8 @@ private:
     void pauseInternal(bool dispatchPauseEvent = true);
     void completePlayInternal();
 
+    void playIfPermitted(MediaElementSession::ForAutoplay);
+
     enum class IsExplicitLoad : bool { No, Yes };
     void prepareForLoad(IsExplicitLoad = IsExplicitLoad::No);
     void allowVideoRendering();
@@ -1423,7 +1425,7 @@ private:
     Vector<Ref<TextTrack>> m_textTracksWhenResourceSelectionBegan;
 
     struct CueData;
-    std::unique_ptr<CueData> m_cueData;
+    const std::unique_ptr<CueData> m_cueData;
 
     RefPtr<TextTrack> m_findCaptionTrack;
     std::optional<TextTrack::Mode> m_findCaptionTrackPreviousMode;

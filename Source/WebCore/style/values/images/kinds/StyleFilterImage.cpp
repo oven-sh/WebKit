@@ -162,7 +162,7 @@ RefPtr<WebCore::Image> FilterImage::image(const RenderElement* renderElement, co
         return &WebCore::Image::nullImage();
 
     auto filteredImage = sourceImage->filteredNativeImage(*cssFilter, [&](GraphicsContext& context) {
-        context.drawImage(*image, sourceImageRect);
+        context.drawImage(*image, ConcreteObjectSize::fixed(image->size()), sourceImageRect);
     });
     if (!filteredImage)
         return &WebCore::Image::nullImage();
@@ -179,6 +179,13 @@ FloatSize FilterImage::fixedSize(const RenderElement& renderer) const
     if (RefPtr image = m_image)
         return image->imageSize(&renderer, 1);
     return { };
+}
+
+NaturalDimensions FilterImage::naturalDimensions(const RenderElement& renderer, const ImageSizingContext& context) const
+{
+    if (RefPtr image = m_image)
+        return image->naturalDimensions(renderer, context);
+    return NaturalDimensions::zero();
 }
 
 void FilterImage::imageChanged(WebCore::CachedImage*, const IntRect*)

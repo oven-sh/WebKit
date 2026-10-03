@@ -31,6 +31,7 @@
 #import "Logging.h"
 #import <string.h>
 #import <wtf/FileSystem.h>
+#import <wtf/posix/POSIXExtras.h>
 #import <wtf/spi/darwin/SandboxSPI.h>
 #import <wtf/text/CString.h>
 
@@ -63,7 +64,7 @@ SandboxExtensionImpl::~SandboxExtensionImpl()
     return !sandbox_check(getpid(), 0, SANDBOX_FILTER_NONE);
 #else
     if (m_handle == -1) {
-        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%s', errno = %d", m_token.legacyCStringPointer(), errno);
+        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%s', errno = %d", m_token, errno);
         return false;
     }
     return true;
@@ -116,7 +117,7 @@ UTF8CString SandboxExtensionImpl::sandboxExtensionForType(const UTF8CString& pat
         }
     }();
 
-    return UTF8CString { byteCast<char8_t>(sandboxExtension.get()) };
+    return UTF8CString::unsafeFromUTF8(sandboxExtension.get());
 }
 
 SandboxExtensionImpl::SandboxExtensionImpl(const UTF8CString& path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
@@ -153,7 +154,7 @@ RefPtr<SandboxExtension> SandboxExtension::create(Handle&& handle)
 String stringByResolvingSymlinksInPath(StringView path)
 {
     char resolvedPath[PATH_MAX] = { 0 };
-    realpath(path.utf8().legacyCStringPointer(), resolvedPath);
+    posixRealpath(path.utf8(), resolvedPath);
     return String::fromUTF8(resolvedPath);
 }
 
@@ -201,7 +202,7 @@ auto SandboxExtension::createHandle(StringView path, Type type) -> std::optional
     return createHandleWithoutResolvingPath(resolvePathForSandboxExtension(path), type);
 }
 
-template<typename Collection, typename Function> static Vector<SandboxExtension::Handle> createHandlesForResources(const Collection& resources, const Function& createFunction)
+template<typename Collection, typename Function> static Vector<SandboxExtension::Handle> createHandlesForResources(const Collection& resources, NOESCAPE const Function& createFunction)
 {
     return WTF::compactMap(resources, [&](auto& resource) -> std::optional<SandboxExtension::Handle> {
         if (auto handle = createFunction(resource))

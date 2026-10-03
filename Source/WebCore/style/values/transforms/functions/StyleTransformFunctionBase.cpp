@@ -46,7 +46,7 @@ TextStream& operator<<(TextStream& ts, TransformFunctionBase::Type type)
     case TransformFunctionBase::Type::SkewY: ts << "skewY"_s; break;
     case TransformFunctionBase::Type::Skew: ts << "skew"_s; break;
     case TransformFunctionBase::Type::Matrix: ts << "matrix"_s; break;
-    case TransformFunctionBase::Type::ScaleZ: ts << "scaleX"_s; break;
+    case TransformFunctionBase::Type::ScaleZ: ts << "scaleZ"_s; break;
     case TransformFunctionBase::Type::Scale3D: ts << "scale3d"_s; break;
     case TransformFunctionBase::Type::TranslateZ: ts << "translateZ"_s; break;
     case TransformFunctionBase::Type::Translate3D: ts << "translate3d"_s; break;

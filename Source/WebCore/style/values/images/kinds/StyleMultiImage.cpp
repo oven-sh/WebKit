@@ -144,16 +144,25 @@ void MultiImage::computeIntrinsicDimensions(const RenderElement* element, float&
     protect(m_selectedImage)->computeIntrinsicDimensions(element, intrinsicWidth, intrinsicHeight, intrinsicRatio);
 }
 
-bool MultiImage::usesImageContainerSize() const
+NaturalDimensions MultiImage::naturalDimensions(const RenderElement& renderer, const ImageSizingContext& context) const
 {
-    return m_selectedImage && protect(m_selectedImage)->usesImageContainerSize();
+    if (!m_selectedImage)
+        return NaturalDimensions::none();
+    return protect(m_selectedImage)->naturalDimensions(renderer, context);
 }
 
-void MultiImage::setContainerContextForRenderer(const RenderElement& renderer, const FloatSize& containerSize, float containerZoom, const WTF::URL& url)
+ImageDrawingExtras MultiImage::drawingExtrasForRenderer(const RenderElement& renderer, const WTF::URL& url) const
+{
+    if (!m_selectedImage)
+        return { };
+    return protect(m_selectedImage)->drawingExtrasForRenderer(renderer, url);
+}
+
+void MultiImage::setContainerSizeForRenderer(const RenderElement& renderer, const FloatSize& containerSize)
 {
     if (!m_selectedImage)
         return;
-    protect(m_selectedImage)->setContainerContextForRenderer(renderer, containerSize, containerZoom, url);
+    protect(m_selectedImage)->setContainerSizeForRenderer(renderer, containerSize);
 }
 
 void MultiImage::addClient(RenderElement& renderer)

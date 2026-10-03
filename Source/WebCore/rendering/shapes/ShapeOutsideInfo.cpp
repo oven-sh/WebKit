@@ -43,6 +43,7 @@
 #include "RenderView.h"
 #include "StyleImage.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
+#include "StyleShapeOutsideSizing.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -270,8 +271,8 @@ Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox& renderer)
             ASSERT(shapeImage.isValid());
 
             Ref styleImage = shapeImage.image.value;
-            auto logicalImageSize = renderer.calculateImageIntrinsicDimensions(styleImage.ptr(), boxSize, RenderImage::ScaleByUsedZoom::Yes);
-            styleImage->setContainerContextForRenderer(renderer, logicalImageSize, style.usedZoom());
+            auto logicalImageSize = renderer.calculateImageIntrinsicDimensions(styleImage.get(), Style::ShapeOutsideSizing { boxSize }, RenderImage::ScaleByUsedZoom::Yes);
+            styleImage->setContainerSizeForRenderer(renderer, logicalImageSize);
 
             auto logicalMarginRect = shapeImageMarginRect(renderer, boxSize);
             auto* renderImage = dynamicDowncast<RenderImage>(renderer);
@@ -281,7 +282,14 @@ Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox& renderer)
             auto physicalImageSize = writingMode.isHorizontal() ? logicalImageSize : logicalImageSize.transposedSize();
 
             RefPtr image = styleImage->image(const_cast<RenderBox*>(&renderer), physicalImageSize, NullGraphicsContext());
-            return LayoutShape::createRasterShape(image.get(), shapeImageThreshold.value, logicalImageRect, logicalMarginRect, writingMode, logicalMargin);
+
+            auto usedZoom = style.usedZoom();
+            auto drawsSVG = image && image->drawsSVGImage();
+            auto sourceSize = drawsSVG ? FloatSize(roundedIntSize(logicalImageSize)) : (image ? image->size() : FloatSize { });
+            auto concreteObjectSize = drawsSVG
+                ? ConcreteObjectSize::fixed(FloatSize(logicalImageSize) / usedZoom, usedZoom)
+                : ConcreteObjectSize::fixed(sourceSize);
+            return LayoutShape::createRasterShape(image.get(), shapeImageThreshold.value, logicalImageRect, logicalMarginRect, writingMode, logicalMargin, concreteObjectSize, sourceSize);
         },
         [&](const Style::ShapeOutside::ShapeBox&) {
             auto geometry = computeGeometryForBoxShape(shapeOutside.effectiveCSSBox(), renderer);

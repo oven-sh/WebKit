@@ -184,12 +184,10 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
 
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    return expressionInfo().entryForInstPC(bytecodeIndex.offset());
-}
-
-LineColumn UnlinkedCodeBlock::lineColumnInTextForBytecodeIndex(BytecodeIndex bytecodeIndex, SourceProvider& provider, unsigned sourceOffset)
-{
-    return expressionInfo().lineColumnInTextForInstPC(bytecodeIndex.offset(), provider, sourceOffset);
+    // expressionInfo() takes m_lock itself the first time, for code out of a persistent bytecode cache.
+    ExpressionInfo& expressionInfo = this->expressionInfo();
+    ConcurrentJSLocker locker(m_lock);
+    return expressionInfo.entryForInstPC(locker, bytecodeIndex.offset());
 }
 
 #ifndef NDEBUG

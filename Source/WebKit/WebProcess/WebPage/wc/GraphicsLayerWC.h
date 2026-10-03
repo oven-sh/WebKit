@@ -89,7 +89,7 @@ public:
     void setContentsToPlatformLayer(PlatformLayer*, ContentsLayerPurpose) override;
     void setContentsToPlatformLayerHost(WebCore::LayerHostingContextIdentifier) override;
     void setContentsDisplayDelegate(RefPtr<WebCore::GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose) override;
-    bool shouldDirectlyCompositeImage(WebCore::Image*) const override { return false; }
+    bool canDirectlyCompositeNativeImage() const override { return false; }
     bool usesContentsLayer() const override;
     void setShowDebugBorder(bool) override;
     void setDebugBorder(const WebCore::Color&, float width) override;
@@ -128,7 +128,7 @@ private:
     GraphicsLayerWC* m_next;
     WebCore::PlatformLayerIdentifier m_layerID { WebCore::PlatformLayerIdentifier::generate() };
     Observer* m_observer;
-    std::unique_ptr<WCTiledBacking> m_tiledBacking;
+    const std::unique_ptr<WCTiledBacking> m_tiledBacking;
     PlatformLayer* m_platformLayer { nullptr };
     Markable<WebCore::LayerHostingContextIdentifier> m_hostIdentifier;
     WebCore::Color m_solidColor;

@@ -152,6 +152,9 @@ public:
     static bool consumeFontSynthesisShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeTextDecorationSkipShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeBorderSpacingShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeCornerSingleShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeCornerPairShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeCornerQuadShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeBorderRadiusShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeWebkitBorderRadiusShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeBorderImageShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
@@ -736,6 +739,135 @@ inline bool PropertyParserCustom::consumeWebkitBorderRadiusShorthand(CSSParserTo
     result.addPropertyForCurrentShorthand(state, CSSPropertyBorderTopRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->topRight()));
     result.addPropertyForCurrentShorthand(state, CSSPropertyBorderBottomRightRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomRight()));
     result.addPropertyForCurrentShorthand(state, CSSPropertyBorderBottomLeftRadius, WebCore::CSS::createCSSValue(state.pool, borderRadius->bottomLeft()));
+    return true;
+}
+
+// MARK: - Corner / Corner-* shorthands (combined border-radius + corner-shape)
+//
+// Grammar (per corner): normal | <corner-shape>? <border-radius-corner> <corner-shape>?
+// Multiple corners are separated by '/' and follow the standard 1-to-N expansion.
+
+namespace CornerShorthandHelpers {
+
+inline Ref<CSSValue> zeroRadius()
+{
+    auto zero = CSSPrimitiveValue::create(0, CSSUnitType::Px);
+    return CSSValuePair::create(zero.copyRef(), WTF::move(zero));
+}
+
+inline Ref<CSSValue> roundShape()
+{
+    return CSSKeywordValue::create(CSSValueRound);
+}
+
+inline bool consumeOneCorner(CSSParserTokenRange& range, PropertyParserState& state, CSSPropertyID radiusProperty, CSSPropertyID shapeProperty, RefPtr<CSSValue>& radiusOut, RefPtr<CSSValue>& shapeOut)
+{
+    if (range.peek().id() == CSSValueNormal) {
+        range.consumeIncludingWhitespace();
+        radiusOut = zeroRadius();
+        shapeOut = roundShape();
+        return true;
+    }
+    shapeOut = CSSPropertyParsing::parseStylePropertyLonghand(range, shapeProperty, state);
+    radiusOut = CSSPropertyParsing::parseStylePropertyLonghand(range, radiusProperty, state);
+    if (!radiusOut)
+        return false;
+    if (!shapeOut)
+        shapeOut = CSSPropertyParsing::parseStylePropertyLonghand(range, shapeProperty, state);
+    return shapeOut != nullptr;
+}
+
+} // namespace CornerShorthandHelpers
+
+inline bool PropertyParserCustom::consumeCornerSingleShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    ASSERT(shorthand.length() == 2);
+    auto longhands = shorthand.properties();
+    RefPtr<CSSValue> radius;
+    RefPtr<CSSValue> shape;
+    if (!CornerShorthandHelpers::consumeOneCorner(range, state, longhands[0], longhands[1], radius, shape))
+        return false;
+    if (!range.atEnd())
+        return false;
+
+    result.addPropertyForCurrentShorthand(state, longhands[0], radius.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, longhands[1], shape.releaseNonNull());
+    return true;
+}
+
+inline bool PropertyParserCustom::consumeCornerPairShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    // Two-corner side shorthand: longhands are [radius0, shape0, radius1, shape1].
+    ASSERT(shorthand.length() == 4);
+    auto longhands = shorthand.properties();
+    std::array<RefPtr<CSSValue>, 2> radii;
+    std::array<RefPtr<CSSValue>, 2> shapes;
+
+    size_t count = 0;
+    for (size_t i = 0; i < 2; ++i) {
+        if (!CornerShorthandHelpers::consumeOneCorner(range, state, longhands[i * 2], longhands[i * 2 + 1], radii[i], shapes[i]))
+            return false;
+        ++count;
+        if (i == 1)
+            break;
+        if (!consumeSlashIncludingWhitespace(range))
+            break;
+    }
+    if (!range.atEnd() || !count)
+        return false;
+
+    if (count < 2) {
+        radii[1] = radii[0];
+        shapes[1] = shapes[0];
+    }
+
+    for (size_t i = 0; i < 2; ++i) {
+        result.addPropertyForCurrentShorthand(state, longhands[i * 2], radii[i].releaseNonNull());
+        result.addPropertyForCurrentShorthand(state, longhands[i * 2 + 1], shapes[i].releaseNonNull());
+    }
+    return true;
+}
+
+inline bool PropertyParserCustom::consumeCornerQuadShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    // Master `corner`: longhands are [radius0, shape0, radius1, shape1, radius2, shape2, radius3, shape3]
+    // in order top-left, top-right, bottom-right, bottom-left.
+    ASSERT(shorthand.length() == 8);
+    auto longhands = shorthand.properties();
+    std::array<RefPtr<CSSValue>, 4> radii;
+    std::array<RefPtr<CSSValue>, 4> shapes;
+
+    size_t count = 0;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!CornerShorthandHelpers::consumeOneCorner(range, state, longhands[i * 2], longhands[i * 2 + 1], radii[i], shapes[i]))
+            return false;
+        ++count;
+        if (i == 3)
+            break;
+        if (!consumeSlashIncludingWhitespace(range))
+            break;
+    }
+    if (!range.atEnd() || !count)
+        return false;
+
+    // 1-to-4 expansion (mirrors complete4Sides on a CSS quad).
+    if (count < 2) {
+        radii[1] = radii[0];
+        shapes[1] = shapes[0];
+    }
+    if (count < 3) {
+        radii[2] = radii[0];
+        shapes[2] = shapes[0];
+    }
+    if (count < 4) {
+        radii[3] = radii[1];
+        shapes[3] = shapes[1];
+    }
+
+    for (size_t i = 0; i < 4; ++i) {
+        result.addPropertyForCurrentShorthand(state, longhands[i * 2], radii[i].releaseNonNull());
+        result.addPropertyForCurrentShorthand(state, longhands[i * 2 + 1], shapes[i].releaseNonNull());
+    }
     return true;
 }
 
@@ -1920,40 +2052,67 @@ inline bool PropertyParserCustom::consumeListStyleShorthand(CSSParserTokenRange&
     return range.atEnd();
 }
 
-inline bool PropertyParserCustom::consumeLineClampShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
+bool PropertyParserCustom::consumeLineClampShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
 {
-    ASSERT(state.context.propertySettings.cssLineClampEnabled);
+    bool isLegacyLineClamp = shorthand.id() == CSSPropertyWebkitLineClamp;
+    ASSERT(state.context.propertySettings.cssLineClampEnabled || isLegacyLineClamp);
 
     if (range.peek().id() == CSSValueNone) {
         // Sets max-lines to none, continue to auto, and block-ellipsis to none.
-        result.addPropertyForCurrentShorthand(state, CSSPropertyMaxLines, CSSKeywordValue::create(CSSValueNone));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyMaxLines, CSSKeywordValue::create(CSSValueAuto));
         result.addPropertyForCurrentShorthand(state, CSSPropertyContinue, CSSKeywordValue::create(CSSValueAuto));
         result.addPropertyForCurrentShorthand(state, CSSPropertyBlockEllipsis, CSSKeywordValue::create(CSSValueNoEllipsis));
         consumeIdent(range);
         return range.atEnd();
     }
 
-    RefPtr<CSSValue> maxLines;
+    RefPtr<CSSValue> numLines;
     RefPtr<CSSValue> blockEllipsis;
+    RefPtr<CSSKeywordValue> autoKeyword;
+    RefPtr<CSSValue> webkitLegacy;
 
-    for (unsigned propertiesParsed = 0; propertiesParsed < 2 && !range.atEnd(); ++propertiesParsed) {
-        if (!maxLines && (maxLines = CSSPropertyParsing::consumeMaxLines(range, state)))
+    do {
+        if (!webkitLegacy && (webkitLegacy = consumeIdent<CSSValueWebkitLegacy>(range)))
+            break;
+        if (!autoKeyword && (autoKeyword = consumeIdent<CSSValueAuto>(range))) {
+            if (blockEllipsis && numLines)
+                return false;
             continue;
+        }
         if (!blockEllipsis && (blockEllipsis = CSSPropertyParsing::consumeBlockEllipsis(range)))
             continue;
-        // There has to be at least one valid longhand.
+        if (!numLines && (numLines = CSSPrimitiveValueResolver<CSS::Integer<CSS::Range { 1, CSS::Range::infinity } >>::consumeAndResolve(range, state))) {
+            if (blockEllipsis && autoKeyword)
+                return false;
+            continue;
+        }
+        break;
+    } while (!range.atEnd());
+
+    if (isLegacyLineClamp && (autoKeyword || blockEllipsis || webkitLegacy))
         return false;
-    }
+    if (!numLines && !autoKeyword && !blockEllipsis)
+        return false;
+
+    RefPtr<CSSValue> maxLines;
+    if (numLines && autoKeyword) {
+        CSSValueListBuilder list;
+        list.append(numLines.releaseNonNull());
+        list.append(autoKeyword.releaseNonNull());
+        maxLines = CSSValueList::createSpaceSeparated(WTF::move(list));
+    } else if (numLines)
+        maxLines = numLines;
+    else if (autoKeyword)
+        maxLines = autoKeyword;
+    else
+        maxLines = CSSKeywordValue::create(CSSValueAuto);
 
     if (!blockEllipsis)
-        blockEllipsis = CSSKeywordValue::create(CSSValueAuto);
-
-    if (!maxLines)
-        maxLines = CSSKeywordValue::create(CSSValueNone);
+        blockEllipsis = CSSKeywordValue::create(CSSValueEllipsis);
 
     result.addPropertyForCurrentShorthand(state, CSSPropertyMaxLines, WTF::move(maxLines));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyContinue, CSSKeywordValue::create(CSSValueDiscard));
     result.addPropertyForCurrentShorthand(state, CSSPropertyBlockEllipsis, WTF::move(blockEllipsis));
+    result.addPropertyForCurrentShorthand(state, CSSPropertyContinue, CSSKeywordValue::create(isLegacyLineClamp || webkitLegacy ? CSSValueWebkitLegacy : CSSValueDiscard));
     return range.atEnd();
 }
 

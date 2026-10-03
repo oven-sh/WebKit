@@ -52,6 +52,7 @@
 #import <wtf/Scope.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/cocoa/VectorCocoa.h>
 
 #if USE(APPLE_INTERNAL_SDK)
 #import <ApplicationServices/ApplicationServicesPriv.h>
@@ -427,6 +428,26 @@ void AXObjectCache::postPlatformLiveRegionNotification(AccessibilityObject& obje
     }
 }
 
+void AXObjectCache::postPlatformPossibleFormValidationErrorNotification(AccessibilityObject& object, const PossibleFormValidationErrorData& formData)
+{
+    AX_ASSERT(isMainThread());
+
+    processQueuedIsolatedNodeUpdates();
+
+    RetainPtr unannouncedText = createNSArray(formData.unannouncedText, [] (const String& text) {
+        return text.createNSString();
+    });
+    NSDictionary *userInfo = @{
+        NSAccessibilityFormValidationUnannouncedTextKey: unannouncedText.get(),
+        NSAccessibilityFormValidationErrorFieldCountKey: @(formData.errorFieldCount),
+    };
+
+    NSAccessibilityPostNotificationWithUserInfo(object.wrapper(), NSAccessibilityPossibleFormValidationErrorNotification, userInfo);
+
+    if (gShouldRepostNotificationsForTests) [[unlikely]]
+        [object.wrapper() accessibilityPostedNotification:NSAccessibilityPossibleFormValidationErrorNotification userInfo:userInfo];
+}
+
 void AXObjectCache::onDocumentRenderTreeCreation(const Document& document)
 {
     m_deferredDocumentsWithNewRenderTrees.append(document);
@@ -594,13 +615,11 @@ void AXObjectCache::postTextSelectionChangePlatformNotification(AccessibilityObj
     // (child) tree identifiers, so the announced selection resolves correctly cross-frame.
     RefPtr document = this->document();
     RefPtr frame = document ? document->frame() : nullptr;
-    for (RefPtr<Frame> ancestor = frame ? frame->tree().parent() : nullptr; ancestor; ancestor = ancestor->tree().parent()) {
-        if (RefPtr localAncestorFrame = dynamicDowncast<LocalFrame>(ancestor.get())) {
-            RefPtr ancestorDocument = localAncestorFrame->document();
-            CheckedPtr ancestorCache = ancestorDocument ? ancestorDocument->existingAXObjectCache() : nullptr;
-            if (RefPtr ancestorRoot = ancestorCache ? ancestorCache->rootWebArea() : nullptr)
-                AXPostNotificationWithUserInfo(ancestorRoot->wrapper(), NSAccessibilitySelectedTextChangedNotification, userInfo.get());
-        }
+    for (Ref localAncestorFrame : ancestorFrames<LocalFrame>(frame.get())) {
+        RefPtr ancestorDocument = localAncestorFrame->document();
+        CheckedPtr ancestorCache = ancestorDocument ? ancestorDocument->existingAXObjectCache() : nullptr;
+        if (RefPtr ancestorRoot = ancestorCache ? ancestorCache->rootWebArea() : nullptr)
+            AXPostNotificationWithUserInfo(ancestorRoot->wrapper(), NSAccessibilitySelectedTextChangedNotification, userInfo.get());
     }
 #endif // ENABLE(ACCESSIBILITY_LOCAL_FRAME)
 }

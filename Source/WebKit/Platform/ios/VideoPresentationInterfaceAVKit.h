@@ -85,7 +85,7 @@ private:
     bool shouldCreateWindow() const final { return false; }
 
     RetainPtr<WKSExperienceController> m_experienceController;
-    RetainPtr<WKExperienceControllerDelegate> m_experienceControllerDelegate;
+    const RetainPtr<WKExperienceControllerDelegate> m_experienceControllerDelegate;
     RetainPtr<WebAVPlayerLayerView> m_fullscreenPlayerLayerView;
 };
 

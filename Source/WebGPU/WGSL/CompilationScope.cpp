@@ -34,6 +34,7 @@ CompilationScope::CompilationScope(ShaderModule& shaderModule)
     : m_shaderModule(shaderModule)
     , m_builderState(shaderModule.astBuilder().saveCurrentState())
     , m_replacementsSize(shaderModule.currentReplacementSize())
+    , m_overrideValidationsSize(shaderModule.currentOverrideValidationsSize())
 {
 }
 
@@ -41,6 +42,7 @@ CompilationScope::CompilationScope(CompilationScope&& other)
     : m_shaderModule(other.m_shaderModule)
     , m_builderState(other.m_builderState)
     , m_replacementsSize(other.m_replacementsSize)
+    , m_overrideValidationsSize(other.m_overrideValidationsSize)
 {
     other.m_invalidated = true;
 }
@@ -49,6 +51,7 @@ CompilationScope::~CompilationScope()
 {
     if (m_invalidated)
         return;
+    m_shaderModule.revertOverrideValidations(m_overrideValidationsSize);
     m_shaderModule.revertReplacements(m_replacementsSize);
     m_shaderModule.astBuilder().restore(WTF::move(m_builderState));
 }

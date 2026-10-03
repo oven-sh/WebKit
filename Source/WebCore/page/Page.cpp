@@ -63,6 +63,7 @@
 #include "DebugOverlayRegions.h"
 #include "DebugPageOverlays.h"
 #include "DeviceOrientationAndMotionAccessController.h"
+#include "DevicePosture.h"
 #include "DiagnosticLoggingClient.h"
 #include "DiagnosticLoggingKeys.h"
 #include "DisplayRefreshMonitorManager.h"
@@ -133,6 +134,7 @@
 #include "NavigationScheduler.h"
 #include "Navigator.h"
 #include "NavigatorAudioSession.h"
+#include "NavigatorDevicePosture.h"
 #include "NavigatorGamepad.h"
 #include "NavigatorMediaSession.h"
 #include "OpportunisticTaskScheduler.h"
@@ -713,11 +715,12 @@ void Page::setOverrideViewportArguments(const std::optional<ViewportArguments>& 
 ScrollingCoordinator* Page::scrollingCoordinator()
 {
     if (!m_scrollingCoordinator && m_settings->scrollingCoordinatorEnabled()) {
-        m_scrollingCoordinator = chrome().client().createScrollingCoordinator(*this);
-        if (!m_scrollingCoordinator)
-            m_scrollingCoordinator = ScrollingCoordinator::create(this);
+        RefPtr scrollingCoordinator = chrome().client().createScrollingCoordinator(*this);
+        if (!scrollingCoordinator)
+            scrollingCoordinator = ScrollingCoordinator::create(this);
+        lazyInitialize(m_scrollingCoordinator, scrollingCoordinator.releaseNonNull());
 
-        protect(m_scrollingCoordinator)->windowScreenDidChange(m_displayID, m_displayNominalFramesPerSecond);
+        m_scrollingCoordinator->windowScreenDidChange(m_displayID, m_displayNominalFramesPerSecond);
     }
 
     return m_scrollingCoordinator;
@@ -1205,10 +1208,7 @@ bool Page::showAllPlugins() const
 
 inline std::optional<std::pair<WeakRef<MediaCanStartListener>, WeakRef<Document, WeakPtrImplWithEventTargetData>>>  Page::takeAnyMediaCanStartListener()
 {
-    for (RefPtr frame = mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame);
-        if (!localFrame)
-            continue;
+    for (Ref localFrame : inclusiveDescendantFrames<LocalFrame>(mainFrame())) {
         RefPtr document = localFrame->document();
         if (!document)
             continue;
@@ -1575,7 +1575,7 @@ void Page::setEditableRegionEnabled(bool enabled)
     if (!frameView)
         return;
     if (CheckedPtr renderView = frameView->renderView())
-        renderView->compositor().invalidateEventRegionForAllLayers();
+        protect(renderView->compositor())->invalidateEventRegionForAllLayers();
 }
 
 #endif
@@ -1682,10 +1682,8 @@ void Page::setDefersLoading(bool defers)
     }
 
     m_defersLoading = defers;
-    for (RefPtr frame = mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame))
-            localFrame->loader().setDefersLoading(defers);
-    }
+    for (Ref localFrame : inclusiveDescendantFrames<LocalFrame>(mainFrame()))
+        localFrame->loader().setDefersLoading(defers);
 }
 
 void Page::clearUndoRedoOperations()
@@ -1881,6 +1879,10 @@ void Page::windowScreenDidChange(PlatformDisplayID displayID, std::optional<Fram
     forEachDocument([&] (Document& document) {
         document.windowScreenDidChange(displayID);
     });
+
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    updateDisplayEDRHeadroom();
+#endif
 
     updateScreenSupportedContentsFormats();
 
@@ -2277,12 +2279,10 @@ void Page::syncLocalFrameInfoToRemote()
         if (!frameView)
             return;
 
-        frame.loader().client().broadcastFrameViewportInfoToOtherProcesses({
-            frameView->layoutViewportRect(),
-            frameView->scrollPosition()
-        });
-
+        auto layoutViewportRect = frameView->layoutViewportRect();
+        bool hasOnScreenRemoteDescendant = false;
         HashMap<FrameIdentifier, Ref<RemoteFrameLayoutInfo>> childrenFrameLayoutInfo;
+
         auto windowClipRectInContentCoordinates = [&frameView, rect = std::optional<LayoutRect> { }]() mutable {
             if (!rect)
                 rect = LayoutRect { frameView->windowToContents(frameView->windowClipRect()) };
@@ -2311,6 +2311,15 @@ void Page::syncLocalFrameInfoToRemote()
             };
 
             auto visibleRectInParent = frameView->visibleRectOfChild(*child.get());
+
+            if (visibleRectInParent) {
+                auto onScreenRectInParent = *visibleRectInParent;
+
+                // Use edgeInclusiveIntersect instead of intersects with layoutViewportRect to match
+                // how IntersectionObserver performs intersections.
+                if (onScreenRectInParent.edgeInclusiveIntersect(layoutViewportRect))
+                    hasOnScreenRemoteDescendant = true;
+            }
 
             auto onScreenRectInChildView = [&] {
                 if (!visibleRectInParent)
@@ -2354,6 +2363,11 @@ void Page::syncLocalFrameInfoToRemote()
                 frameView->appearanceOfOwnerElementOfChildFrame(*child)
             ));
         }
+
+        frame.loader().client().broadcastFrameViewportInfoToOtherProcessesIfNeeded({
+            layoutViewportRect,
+            frameView->scrollPosition()
+        }, hasOnScreenRemoteDescendant);
 
         if (childrenFrameLayoutInfo.isEmpty()) {
             ASSERT(!frame.tree().containsRemoteFrame());
@@ -3091,6 +3105,23 @@ void Page::userAgentChanged()
             if (RefPtr navigator = window->optionalNavigator())
                 navigator->userAgentChanged();
         }
+    });
+}
+
+void Page::devicePostureTypeChanged()
+{
+    forEachDocument([] (Document& document) {
+        if (RefPtr window = document.window()) {
+            if (RefPtr navigator = window->optionalNavigator()) {
+                Ref devicePosture = NavigatorDevicePosture::devicePosture(*navigator);
+                devicePosture->typeChanged();
+            }
+        }
+
+        document.styleScope().didChangeStyleSheetEnvironment();
+        document.styleScope().evaluateMediaQueriesForAppearanceChange();
+        document.updateElementsAffectedByMediaQueries();
+        document.scheduleRenderingUpdate(RenderingUpdateStep::MediaQueryEvaluation);
     });
 }
 
@@ -3853,6 +3884,14 @@ void Page::clearSampledPageTopColor()
         chrome().client().sampledPageTopColorChanged();
 }
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+void Page::invalidateColorsSampledFromPaintedContent()
+{
+    clearSampledPageTopColor();
+    chrome().client().setNeedsFixedContainerEdgesUpdate();
+}
+#endif
+
 #if HAVE(APP_ACCENT_COLORS) && PLATFORM(MAC)
 void NODELETE Page::setAppUsesCustomAccentColor(bool appUsesCustomAccentColor)
 {
@@ -4271,18 +4310,17 @@ void Page::removePlaybackTargetPickerClient(PlaybackTargetClientContextIdentifie
     chrome().client().removePlaybackTargetPickerClient(contextId);
 }
 
-void Page::showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier contextId, FrameIdentifier frameID, const WebCore::IntPoint& location, bool isVideo, RouteSharingPolicy routeSharingPolicy, const String& routingContextUID)
+void Page::showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier contextId, const WebCore::IntPoint& positionInMainFrameView, bool isVideo, RouteSharingPolicy routeSharingPolicy, const String& routingContextUID)
 {
 #if PLATFORM(IOS_FAMILY)
     // FIXME: refactor iOS implementation.
     UNUSED_PARAM(contextId);
-    UNUSED_PARAM(frameID);
-    UNUSED_PARAM(location);
+    UNUSED_PARAM(positionInMainFrameView);
     chrome().client().showPlaybackTargetPicker(isVideo, routeSharingPolicy, routingContextUID);
 #else
     UNUSED_PARAM(routeSharingPolicy);
     UNUSED_PARAM(routingContextUID);
-    chrome().client().showPlaybackTargetPicker(contextId, frameID, location, isVideo);
+    chrome().client().showPlaybackTargetPicker(contextId, positionInMainFrameView, isVideo);
 #endif
 }
 
@@ -4715,7 +4753,7 @@ void Page::didChangeMainDocument(Document* newDocument)
 RenderingUpdateScheduler& Page::renderingUpdateScheduler()
 {
     if (!m_renderingUpdateScheduler)
-        m_renderingUpdateScheduler = RenderingUpdateScheduler::create(*this);
+        lazyInitialize(m_renderingUpdateScheduler, RenderingUpdateScheduler::create(*this));
     return *m_renderingUpdateScheduler;
 }
 
@@ -4748,14 +4786,14 @@ void Page::forEachDocument(NOESCAPE const Function<void(Document&)>& functor) co
 DeviceOrientationAndMotionAccessController& Page::deviceOrientationAndMotionAccessController()
 {
     if (!m_deviceOrientationAndMotionAccessController)
-        m_deviceOrientationAndMotionAccessController = makeUnique<DeviceOrientationAndMotionAccessController>(*this);
+        lazyInitialize(m_deviceOrientationAndMotionAccessController, makeUnique<DeviceOrientationAndMotionAccessController>(*this));
     return *m_deviceOrientationAndMotionAccessController;
 }
 
 void Page::clearDeviceOrientationAndMotionPermissions()
 {
     if (m_deviceOrientationAndMotionAccessController)
-        protect(m_deviceOrientationAndMotionAccessController)->clearPermissions();
+        m_deviceOrientationAndMotionAccessController->clearPermissions();
 }
 #endif
 
@@ -5730,6 +5768,22 @@ std::optional<std::pair<uint16_t, uint16_t>> Page::portsForUpgradingInsecureSche
     return m_portsForUpgradingInsecureSchemeForTesting;
 }
 
+void Page::setQuirksSubframeURLForTesting(URL&& url)
+{
+    if (m_quirksSubframeURLForTesting == url)
+        return;
+
+    m_quirksSubframeURLForTesting = WTF::move(url);
+
+    forEachDocument([](Document& document) {
+        if (document.isTopDocument())
+            return;
+
+        document.quirks().determineRelevantQuirks();
+        document.scheduleFullStyleRebuild();
+    });
+}
+
 #if USE(ATSPI)
 AccessibilityRootAtspi* Page::accessibilityRootObject() const
 {
@@ -6177,12 +6231,13 @@ RefPtr<MediaSessionManagerInterface> Page::mediaSessionManager()
             };
         }
 
-        m_mediaSessionManager = m_mediaSessionManagerFactory.value()(*m_identifier);
-        if (!m_mediaSessionManager)
+        RefPtr mediaSessionManager = m_mediaSessionManagerFactory.value()(*m_identifier);
+        if (!mediaSessionManager)
             return nullptr;
+        lazyInitialize(m_mediaSessionManager, mediaSessionManager.releaseNonNull());
 
 #if USE(AUDIO_SESSION)
-        Ref { *m_mediaSessionManager }->setShouldDeactivateAudioSession(true);
+        m_mediaSessionManager->setShouldDeactivateAudioSession(true);
 #endif
 
         PlatformMediaEngineConfigurationFactory::setMediaSessionManagerProvider([](PageIdentifier identifier) {

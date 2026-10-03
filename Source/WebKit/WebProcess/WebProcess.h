@@ -36,6 +36,11 @@
 #include "TextCheckerState.h"
 #include "WebInspectorInterruptDispatcher.h"
 #include "WebPageProxyIdentifier.h"
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+#include <WebCore/ImageBuffer.h>
+#include <WebCore/PlaceholderFrameIdentifier.h>
+#include <WebCore/PlaceholderRenderingContextIdentifier.h>
+#endif
 #include "WebSocketChannelManager.h"
 #include <WebCore/ActivityState.h>
 #include <WebCore/BackForwardFrameItemIdentifier.h>
@@ -256,6 +261,12 @@ public:
     bool fullKeyboardAccessEnabled() const { return m_fullKeyboardAccessEnabled; }
 
     void contentWorldDestroyed(ContentWorldIdentifier);
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+    void commitOffscreenCanvasPlaceholderFrame(WebCore::PlaceholderRenderingContextIdentifier, WebCore::ImageBufferTransferHandle&&, WebCore::PlaceholderFrameIdentifier, bool originClean, bool opaque, CompletionHandler<void(bool)>&&);
+    // For a transferred buffer this process owns but has no use for; it is otherwise kept until this
+    // process exits.
+    void releaseTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier);
+#endif
 
 #if HAVE(MOUSE_DEVICE_OBSERVATION)
     bool hasMouseDevice() const { return m_hasMouseDevice; }
@@ -543,8 +554,6 @@ public:
     void remoteAudioSessionConfigurationChanged(const RemoteAudioSessionConfiguration&);
 #endif
 
-    void registerURLSchemeAsCORSEnabled(const String&);
-
 private:
     WebProcess();
     ~WebProcess();
@@ -586,6 +595,7 @@ private:
     void registerURLSchemeAsNoAccess(const String&) const;
 #endif
     void registerURLSchemeAsDisplayIsolated(const String&) const;
+    void registerURLSchemeAsCORSEnabled(const String&);
     void registerURLSchemeAsAlwaysRevalidated(const String&) const;
     void registerURLSchemeAsCachePartitioned(const String&) const;
     void registerURLSchemeAsCanDisplayOnlyIfCanRequest(const String&) const;
@@ -824,13 +834,13 @@ private:
 #if ENABLE(GPU_PROCESS)
     RefPtr<GPUProcessConnection> m_gpuProcessConnection;
 #if PLATFORM(COCOA) && USE(LIBWEBRTC)
-    RefPtr<LibWebRTCCodecs> m_libWebRTCCodecs;
+    const RefPtr<LibWebRTCCodecs> m_libWebRTCCodecs;
 #if ENABLE(WEB_CODECS)
     RemoteVideoCodecFactory m_remoteVideoCodecFactory;
 #endif
 #endif
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
-    std::unique_ptr<AudioMediaStreamTrackRendererInternalUnitManager> m_audioMediaStreamTrackRendererInternalUnitManager;
+    const std::unique_ptr<AudioMediaStreamTrackRendererInternalUnitManager> m_audioMediaStreamTrackRendererInternalUnitManager;
 #endif
 #endif
 
@@ -880,7 +890,7 @@ private:
     bool m_loggedProcessLimitCriticalMemoryStatistics { false };
     bool m_wasVisibleSinceLastProcessSuspensionEvent { false };
 #if PLATFORM(MAC)
-    std::unique_ptr<WebCore::CPUMonitor> m_cpuMonitor;
+    const std::unique_ptr<WebCore::CPUMonitor> m_cpuMonitor;
     std::optional<double> m_cpuLimit;
 
     String m_uiProcessName;
@@ -900,6 +910,7 @@ private:
 #if PLATFORM(GTK) || PLATFORM(WPE)
     OptionSet<RendererBufferTransportMode> m_rendererBufferTransportMode;
     OptionSet<AvailableInputDevices> m_availableInputDevices;
+    bool m_isStoppingRunLoop { false };
 #endif
 
     bool m_hasSuspendedPageProxy { false };
@@ -934,7 +945,7 @@ private:
 #if PLATFORM(COCOA)
     HashCountedSet<String> m_pendingPasteboardWriteCounts;
     std::optional<audit_token_t> m_auditTokenForSelf;
-    RetainPtr<NSMutableDictionary> m_accessibilityRemoteFrameTokenCache;
+    const RetainPtr<NSMutableDictionary> m_accessibilityRemoteFrameTokenCache;
 #endif
 
     bool m_childProcessDebuggabilityEnabled { false };

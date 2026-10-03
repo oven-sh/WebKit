@@ -346,13 +346,13 @@ WebProcessPool::WebProcessPool(API::ProcessPoolConfiguration& configuration)
     Ref storageAccessUserAgentStringQuirkController = StorageAccessUserAgentStringQuirkController::sharedSingleton();
     Ref storageAccessPromptQuirkController = StorageAccessPromptQuirkController::sharedSingleton();
 
-    m_storageAccessUserAgentStringQuirksDataUpdateObserver = storageAccessUserAgentStringQuirkController->observeUpdates([weakThis = WeakPtr { *this }] {
+    lazyInitialize(m_storageAccessUserAgentStringQuirksDataUpdateObserver, storageAccessUserAgentStringQuirkController->observeUpdates([weakThis = WeakPtr { *this }] {
         // FIXME: Filter by process's site when site isolation is enabled
         if (RefPtr protectedThis = weakThis.get())
             protectedThis->sendToAllProcesses(Messages::WebProcess::UpdateStorageAccessUserAgentStringQuirks(StorageAccessUserAgentStringQuirkController::sharedSingleton().cachedListData()));
-    });
+    }));
 
-    m_storageAccessPromptQuirksDataUpdateObserver = storageAccessPromptQuirkController->observeUpdates([weakThis = WeakPtr { *this }] {
+    lazyInitialize(m_storageAccessPromptQuirksDataUpdateObserver, storageAccessPromptQuirkController->observeUpdates([weakThis = WeakPtr { *this }] {
         if (RefPtr protectedThis = weakThis.get()) {
             HashSet<WebCore::RegistrableDomain> domainSet;
             for (auto&& entry : StorageAccessPromptQuirkController::sharedSingleton().cachedListData()) {
@@ -366,7 +366,7 @@ WebProcessPool::WebProcessPool(API::ProcessPoolConfiguration& configuration)
             }
             protectedThis->sendToAllProcesses(Messages::WebProcess::UpdateDomainsWithStorageAccessQuirks(domainSet));
         }
-    });
+    }));
     storageAccessPromptQuirkController->initializeIfNeeded();
     storageAccessUserAgentStringQuirkController->initializeIfNeeded();
 #endif // ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
@@ -1074,6 +1074,10 @@ void WebProcessPool::initializeNewWebProcess(WebProcessProxy& process, WebsiteDa
     parameters.crossOriginMode = process.crossOriginMode();
     parameters.jscOptions = jscOptions;
 
+    // FIXME(rdar://188839922): this should be enabled for all configs, not just when Site Isolation is enabled.
+    if (hasAnyProcessPoolUsedSiteIsolation())
+        parameters.jscOptions.cachedAssemblerDataCapacityLimitEnabled = true;
+
 #if ENABLE(SERVICE_CONTROLS)
     auto& serviceController = ServicesController::singleton();
     parameters.hasImageServices = serviceController.hasImageServices();
@@ -1320,7 +1324,7 @@ Ref<WebProcessProxy> WebProcessPool::processForSite(WebsiteDataStore& websiteDat
         }
 
         // RefPtr if we have a suspended page for the given registrable domain and use its process if we do, for performance reasons.
-        if (RefPtr process = SuspendedPageProxy::findReusableSuspendedPageProcess(*this, site->domain(), websiteDataStore, lockdownMode, enhancedSecurity, pageConfiguration)) {
+        if (RefPtr process = SuspendedPageProxy::findReusableSuspendedPageProcess(*this, *site, websiteDataStore, lockdownMode, enhancedSecurity, pageConfiguration)) {
             WEBPROCESSPOOL_RELEASE_LOG(ProcessSwapping, "processForSite: Using WebProcess from a SuspendedPage (process=%p, PID=%i)", process.get(), process->processID());
             ASSERT(m_processes.containsIf([&](auto& item) { return item.ptr() == process; }));
             return process.releaseNonNull();
@@ -1493,6 +1497,11 @@ void WebProcessPool::pageBeginUsingWebsiteDataStore(WebPageProxy& page, WebsiteD
     auto result = m_sessionToPageIDsMap.add(dataStore.sessionID(), HashSet<WebPageProxyIdentifier>()).iterator->value.add(page.identifier());
     ASSERT_UNUSED(result, result.isNewEntry);
     dataStore.addPage(page);
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    if (protect(page.preferences())->scriptTrackingPrivacyNetworkRequestBlockingEnabled())
+        NetworkProcessProxy::requestTrackingPreventionContentRuleList();
+#endif
 }
 
 void WebProcessPool::pageEndUsingWebsiteDataStore(WebPageProxy& page, WebsiteDataStore& dataStore)
@@ -2270,7 +2279,7 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
     }
 
     if (siteIsolationEnabled && !site.isEmpty()) {
-        ASSERT(frameInfo.isMainFrame ? site == mainFrameSite : Site(URL(protect(page.pageLoadState())->activeURL())) == mainFrameSite);
+        ASSERT(frame.isMainFrame() ? site == mainFrameSite : Site(URL(protect(page.pageLoadState())->activeURL())) == mainFrameSite);
         if (!frame.isMainFrame() && site == mainFrameSite) {
             Ref mainFrameProcess = Ref { page.mainFrame()->process() };
             if (!mainFrameProcess->isInProcessCache())
@@ -2382,10 +2391,12 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
     if (processSwapRequestedByClient == ProcessSwapRequestedByClient::Yes)
         return { createNewProcess(), nullptr, "Process swap was requested by the client"_s };
 
-    if (!m_configuration->processSwapsOnNavigation())
+    bool siteIsolationEnabled = protect(page.preferences())->siteIsolationEnabled();
+
+    if (!m_configuration->processSwapsOnNavigation() && !siteIsolationEnabled)
         return { WTF::move(sourceProcess), nullptr, "Feature is disabled"_s };
 
-    if (m_automationSession && !protect(page.preferences())->siteIsolationEnabled())
+    if (m_automationSession && !siteIsolationEnabled)
         return { WTF::move(sourceProcess), nullptr, "An automation session is active"_s };
 
     // Redirects to a different scheme for which the client has registered their own custom handler.
@@ -2393,8 +2404,6 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
     // that the app's scheme handler gets used (rdar://117891282).
     if (navigation.currentRequestIsRedirect() && navigation.originalRequest().url().protocol() != targetURL.protocol() && page.urlSchemeHandlerForScheme(targetURL.protocol()))
         return { createNewProcess(), nullptr, "Redirect to a different scheme for which the app registered a custom handler"_s };
-
-    bool siteIsolationEnabled = protect(page.preferences())->siteIsolationEnabled();
 
     if (siteIsolationEnabled && &browsingContextGroup != &page.browsingContextGroup()) {
         // Only main frame navigation can swap browsing context group.
@@ -2860,14 +2869,14 @@ void WebProcessPool::observeScriptTrackingPrivacyUpdatesIfNeeded()
         return;
 
     Ref controller = ScriptTrackingPrivacyController::sharedSingleton();
-    m_scriptTrackingPrivacyDataUpdateObserver = controller->observeUpdates([weakThis = WeakPtr { *this }] {
+    lazyInitialize(m_scriptTrackingPrivacyDataUpdateObserver, controller->observeUpdates([weakThis = WeakPtr { *this }] {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
 
         if (auto data = ScriptTrackingPrivacyController::sharedSingleton().cachedListData(); !data.isEmpty())
             protectedThis->sendToAllProcesses(Messages::WebProcess::UpdateScriptTrackingPrivacyFilter(WTF::move(data)));
-    });
+    }));
     controller->initializeIfNeeded();
 }
 
@@ -2877,14 +2886,14 @@ void WebProcessPool::observeConsistentQueryParameterFilteringQuirkUpdatesIfNeede
         return;
 
     Ref controller = ConsistentPrivacyQuirkController::sharedSingleton();
-    m_consistentPrivacyQuirkDataUpdateObserver = controller->observeUpdates([weakThis = WeakPtr { *this }] {
+    lazyInitialize(m_consistentPrivacyQuirkDataUpdateObserver, controller->observeUpdates([weakThis = WeakPtr { *this }] {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
 
         if (auto data = ConsistentPrivacyQuirkController::sharedSingleton().cachedListData(); !data.isEmpty())
             protectedThis->sendToAllProcesses(Messages::WebProcess::UpdateConsistentPrivacyQuirkFilter(WTF::move(data)));
-    });
+    }));
     controller->initializeIfNeeded();
 }
 

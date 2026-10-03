@@ -60,9 +60,9 @@
 #import <wtf/spi/darwin/DataVaultSPI.h>
 #import <wtf/spi/darwin/SandboxSPI.h>
 #import <wtf/text/Base64.h>
-#import <wtf/text/CStringView.h>
 #import <wtf/text/MakeString.h>
 #import <wtf/text/StringBuilder.h>
+#import <wtf/text/UTF8CStringView.h>
 #import <wtf/text/cf/StringConcatenateCF.h>
 
 #if USE(APPLE_INTERNAL_SDK)
@@ -391,7 +391,7 @@ static SandboxProfilePtr compileAndCacheSandboxProfile(const SandboxInfo& info)
         return nullptr;
     SandboxProfilePtr sandboxProfile { info.isProfilePath ? sandbox_compile_file(profileOrProfilePath.legacyCStringPointer(), info.sandboxParameters.get(), &error) : sandbox_compile_string(profileOrProfilePath.legacyCStringPointer(), info.sandboxParameters.get(), &error) };
     if (!sandboxProfile) {
-        SAFE_WTFLOGALWAYS("%s: Could not compile WebContent sandbox: %s\n", FileSystem::currentExecutableName(), CStringView::unsafeFromUTF8(error));
+        SAFE_WTFLOGALWAYS("%s: Could not compile WebContent sandbox: %s\n", FileSystem::currentExecutableName(), UTF8CStringView::unsafeFromUTF8(error));
         return nullptr;
     }
 
@@ -538,9 +538,9 @@ static bool compileAndApplySandboxSlowCase(const String& profileOrProfilePath, b
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     if (sandbox_init_with_parameters(temp.legacyCStringPointer(), flags, parameters.namedParameterVector().span().data(), &errorBuf)) {
 ALLOW_DEPRECATED_DECLARATIONS_END
-        SAFE_WTFLOGALWAYS("%s: Could not initialize sandbox profile [%s], error '%s'\n", FileSystem::currentExecutableName(), temp, CStringView::unsafeFromUTF8(errorBuf));
+        SAFE_WTFLOGALWAYS("%s: Could not initialize sandbox profile [%s], error '%s'\n", FileSystem::currentExecutableName(), temp, UTF8CStringView::unsafeFromUTF8(errorBuf));
         for (size_t i = 0, count = parameters.count(); i != count; ++i) {
-            SAFE_WTFLOGALWAYS("%s=%s\n", parameters.name(i), CStringView::unsafeFromUTF8(parameters.value(i)));
+            SAFE_WTFLOGALWAYS("%s=%s\n", parameters.name(i), UTF8CStringView::unsafeFromUTF8(parameters.value(i)));
         }
         return false;
     }
@@ -659,22 +659,22 @@ static void populateSandboxInitializationParameters(SandboxInitializationParamet
     if (isRelocatedFramework)
         bundlePath = webKit2BundleSingleton().bundlePath.stringByDeletingLastPathComponent;
 
-    sandboxParameters.addPathParameter("WEBKIT2_FRAMEWORK_DIR"_s, bundlePath.utf8().legacyCStringPointer());
-    sandboxParameters.addParameter("WK_FRAMEWORKS_ARE_RELOCATED"_s, isRelocatedFramework ? "YES"_span : "NO"_span);
+    sandboxParameters.addPathParameter("WEBKIT2_FRAMEWORK_DIR"_s, bundlePath.utf8());
+    sandboxParameters.addParameter("WK_FRAMEWORKS_ARE_RELOCATED"_s, isRelocatedFramework ? "YES"_s : "NO"_s);
     sandboxParameters.addConfDirectoryParameter("DARWIN_USER_TEMP_DIR"_s, _CS_DARWIN_USER_TEMP_DIR);
     sandboxParameters.addConfDirectoryParameter("DARWIN_USER_CACHE_DIR"_s, _CS_DARWIN_USER_CACHE_DIR);
 
     std::optional<String> homeDirectory = FileSystem::homeDirectory();
     RELEASE_ASSERT(homeDirectory);
     
-    sandboxParameters.addPathParameter("HOME_DIR"_s, homeDirectory->utf8().legacyCStringPointer());
+    sandboxParameters.addPathParameter("HOME_DIR"_s, homeDirectory->utf8());
     String path = FileSystem::pathByAppendingComponents(*homeDirectory, std::initializer_list<StringView>({ "Library"_s, "Preferences"_s }));
-    sandboxParameters.addPathParameter("HOME_LIBRARY_PREFERENCES_DIR"_s, FileSystem::fileSystemRepresentation(path).legacyCStringPointer());
+    sandboxParameters.addPathParameter("HOME_LIBRARY_PREFERENCES_DIR"_s, FileSystem::fileSystemRepresentation(path));
 
 #if CPU(X86_64)
-    sandboxParameters.addParameter("CPU"_s, "x86_64"_span);
+    sandboxParameters.addParameter("CPU"_s, "x86_64"_s);
 #elif CPU(ARM64)
-    sandboxParameters.addParameter("CPU"_s, "arm64"_span);
+    sandboxParameters.addParameter("CPU"_s, "arm64"_s);
 #else
 #error "Unknown architecture."
 #endif
@@ -701,7 +701,7 @@ void AuxiliaryProcess::initializeSandbox(const AuxiliaryProcessInitializationPar
 #if HAVE(SANDBOX_MESSAGE_FILTERING)
     enableMessageFilter = WTF::processHasEntitlement("com.apple.private.security.message-filter"_s);
 #endif
-    sandboxParameters.addParameter("ENABLE_SANDBOX_MESSAGE_FILTER"_s, enableMessageFilter ? "YES"_span : "NO"_span);
+    sandboxParameters.addParameter("ENABLE_SANDBOX_MESSAGE_FILTER"_s, enableMessageFilter ? "YES"_s : "NO"_s);
 
     if (sandboxParameters.userDirectorySuffix().isNull())
         sandboxParameters.setUserDirectorySuffix(getUserDirectorySuffix(parameters));

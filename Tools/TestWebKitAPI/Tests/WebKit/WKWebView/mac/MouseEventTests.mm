@@ -39,7 +39,6 @@
 #import <WebKit/_WKProcessPoolConfiguration.h>
 #import <wtf/RunLoop.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
-#import <wtf/text/MakeString.h>
 
 @interface OverrideMouseLocation : NSObject
 + (NSPoint)overrideMouseLocation;
@@ -165,13 +164,13 @@ TEST(MouseEventTests, ProcessSwapWithDeferredMouseMoveEventCompletion)
             return respond(task, "<body>Hello world</body>");
 
         if ([host isEqualToString:@"webkit.org"]) {
-            return respond(task, makeString("<body style='width: 100%; height: 100%;'>"_s,
-                "<script>"_s,
-                "    document.body.addEventListener('mousemove', () => {"_s,
-                "        location.href = 'pson://www.apple.com/index.html';"_s,
-                "    });"_s,
-                "</script>"_s,
-                "</body>"_s).utf8().legacyCStringPointer());
+            return respond(task, "<body style='width: 100%; height: 100%;'>"
+                "<script>"
+                "    document.body.addEventListener('mousemove', () => {"
+                "        location.href = 'pson://www.apple.com/index.html';"
+                "    });"
+                "</script>"
+                "</body>");
         }
     }];
     [configuration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];
@@ -402,32 +401,19 @@ TEST(MouseEventTests, WindowChangeShouldNotCauseMouseLeaveEvent)
     runDispatchMouseLeaveEventOnWindowMoveTest(NSMakePoint(250, 50), NSMakeRect(0, 0, 400, 400), NSMakeRect(100, 0, 400, 400), 0);
 }
 
-TEST(MouseEventTests, AutoscrollOnMouseDragBelowWindow)
-{
-    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 400, 400)]);
-    [webView synchronouslyLoadHTMLString:@"<!DOCTYPE html>"
-        "<html>"
-        "<head>"
-        "<style>"
-        "    body, html { margin: 0; width: 100%; height: 100%; }"
-        "    .tall { height: 5000px; line-height: 1.5; }"
-        "</style>"
-        "</head>"
-        "<body>"
-        "<div class='tall'>Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "Line of text. Line of text. Line of text. Line of text. Line of text. "
-        "</div>"
-        "</body>"
-        "</html>"];
+static NSString *tallDocumentLines = @"Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. "
+    "Line of text. Line of text. Line of text. Line of text. Line of text. ";
 
+static int scrollOffsetAfterDraggingSelectionBelowWindow(TestWKWebView *webView)
+{
     EXPECT_EQ([[webView stringByEvaluatingJavaScript:@"window.scrollY"] intValue], 0);
 
     ClassMethodSwizzler swizzler([NSEvent class], @selector(pressedMouseButtons), imp_implementationWithBlock(^NSUInteger(id) {
@@ -437,14 +423,55 @@ TEST(MouseEventTests, AutoscrollOnMouseDragBelowWindow)
     [webView mouseEnterAtPoint:NSMakePoint(200, 380)];
     [webView mouseDownAtPoint:NSMakePoint(200, 380) simulatePressure:NO];
     [webView waitForPendingMouseEvents];
+    [webView mouseDragToPoint:NSMakePoint(200, 200)];
+    [webView waitForPendingMouseEvents];
 
     RetainPtr exitEvent = [NSEvent enterExitEventWithType:NSEventTypeMouseExited location:NSMakePoint(200, -50) modifierFlags:0 timestamp:[webView eventTimestamp] windowNumber:[[webView window] windowNumber] context:nil eventNumber:0 trackingNumber:1 userData:nil];
     [webView _simulateMouseExit:exitEvent.get()];
 
     Util::runFor(100_ms);
 
-    int scrollY = [[webView stringByEvaluatingJavaScript:@"window.scrollY"] intValue];
-    EXPECT_GT(scrollY, 0);
+    return [[webView stringByEvaluatingJavaScript:@"window.scrollY"] intValue];
+}
+
+TEST(MouseEventTests, AutoscrollOnMouseDragBelowWindow)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 400, 400)]);
+    [webView synchronouslyLoadHTMLString:[NSString stringWithFormat:@"<!DOCTYPE html>"
+        "<html>"
+        "<head>"
+        "<style>"
+        "    body, html { margin: 0; width: 100%%; height: 100%%; }"
+        "    .tall { height: 5000px; line-height: 1.5; }"
+        "</style>"
+        "</head>"
+        "<body>"
+        "<div class='tall'>%@</div>"
+        "</body>"
+        "</html>", tallDocumentLines]];
+
+    EXPECT_GT(scrollOffsetAfterDraggingSelectionBelowWindow(webView.get()), 0);
+}
+
+TEST(MouseEventTests, AutoscrollOnMouseDragBelowWindowFromFixedContainer)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 400, 400)]);
+    [webView synchronouslyLoadHTMLString:[NSString stringWithFormat:@"<!DOCTYPE html>"
+        "<html>"
+        "<head>"
+        "<style>"
+        "    body, html { margin: 0; width: 100%%; height: 100%%; }"
+        "    .fixed { position: fixed; top: 0; left: 0; width: 100%%; height: 100%%; line-height: 1.5; }"
+        "    .spacer { height: 5000px; }"
+        "</style>"
+        "</head>"
+        "<body>"
+        "<div class='fixed'>%@</div>"
+        "<div class='spacer'></div>"
+        "</body>"
+        "</html>", tallDocumentLines]];
+
+    EXPECT_GT(scrollOffsetAfterDraggingSelectionBelowWindow(webView.get()), 0);
 }
 
 static NSString *overlappingWebViewsHTML = @"<!DOCTYPE html>"

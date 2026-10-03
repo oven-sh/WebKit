@@ -86,7 +86,7 @@ public:
     static Ref<CoreAudioCaptureUnit> createNonVPIOUnit();
     ~CoreAudioCaptureUnit();
 
-    WEBCORE_EXPORT static void forEach(NOESCAPE Function<void(CoreAudioCaptureUnit&)>&&);
+    WEBCORE_EXPORT static void forEach(NOESCAPE const Function<void(CoreAudioCaptureUnit&)>&);
     static void forNewUnit(Function<void(CoreAudioCaptureUnit&)>&&);
 
     using CreationCallback = Function<std::expected<UniqueRef<InternalUnit>, OSStatus>(bool enableEchoCancellation)>;
@@ -219,9 +219,9 @@ private:
 
     std::atomic<uint64_t> m_microphoneProcsCalled { 0 };
     uint64_t m_microphoneProcsCalledLastTime { 0 };
-    std::unique_ptr<Timer> m_verifyCapturingTimer;
+    const std::unique_ptr<Timer> m_verifyCapturingTimer;
 
-    std::unique_ptr<Timer> m_updateMutedStateTimer;
+    const std::unique_ptr<Timer> m_updateMutedStateTimer;
 
     std::optional<size_t> m_minimumMicrophoneSampleFrames;
     bool m_isReconfiguring { false };

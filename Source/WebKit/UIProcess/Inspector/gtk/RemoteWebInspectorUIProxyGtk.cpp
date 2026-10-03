@@ -42,11 +42,11 @@
 namespace WebKit {
 using namespace WebCore;
 
-void RemoteWebInspectorUIProxy::updateWindowTitle(const CString& targetName)
+void RemoteWebInspectorUIProxy::updateWindowTitle(const UTF8CString& targetName)
 {
     if (!m_window)
         return;
-    webkitInspectorWindowSetSubtitle(WEBKIT_INSPECTOR_WINDOW(m_window.get()), !targetName.isNull() ? targetName.data() : nullptr);
+    webkitInspectorWindowSetSubtitle(WEBKIT_INSPECTOR_WINDOW(m_window.get()), targetName);
 }
 
 static void remoteInspectorViewDestroyed(RemoteWebInspectorUIProxy* inspectorProxy)
@@ -64,6 +64,8 @@ WebPageProxy* RemoteWebInspectorUIProxy::platformCreateFrontendPageAndWindow()
     preferences->setDeveloperExtrasEnabled(true);
     preferences->setLogsPageMessagesToSystemConsoleEnabled(true);
 #endif
+    // The Find banner and Search sidebar use the legacy results=N attribute for recent searches.
+    preferences->setSearchInputResultsAttributeEnabled(true);
 
     // If hardware acceleration is available and not forced already, force it always for the remote inspector view.
     const auto& hardwareAccelerationManager = HardwareAccelerationManager::singleton();
@@ -144,7 +146,7 @@ void RemoteWebInspectorUIProxy::platformSave(Vector<InspectorFrontendClient::Sav
         return;
 
     Vector<uint8_t> dataVector;
-    CString dataString;
+    UTF8CString dataString;
     if (saveDatas[0].base64Encoded) {
         auto decodedData = base64Decode(saveDatas[0].content, { Base64DecodeOption::ValidatePadding });
         if (!decodedData)
@@ -154,7 +156,7 @@ void RemoteWebInspectorUIProxy::platformSave(Vector<InspectorFrontendClient::Sav
     } else
         dataString = saveDatas[0].content.utf8();
 
-    const char* data = !dataString.isNull() ? dataString.data() : reinterpret_cast<const char*>(dataVector.span().data());
+    const char* data = !dataString.isNull() ? dataString.legacyCStringPointer() : reinterpret_cast<const char*>(dataVector.span().data());
     size_t dataLength = !dataString.isNull() ? dataString.length() : dataVector.size();
     GRefPtr<GFile> file = adoptGRef(gtk_file_chooser_get_file(chooser));
     GUniquePtr<char> path(g_file_get_path(file.get()));

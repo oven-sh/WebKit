@@ -31,6 +31,7 @@
 
 #include "ExecutableAllocator.h"
 #include "JITCompilationEffort.h"
+#include <JavaScriptCore/Options.h>
 #include "SecureARM64EHashPinsInlines.h"
 #include <stdint.h>
 #include <string.h>
@@ -185,6 +186,11 @@ namespace JSC {
 
         ~AssemblerDataImpl()
         {
+            if (Options::useCachedAssemblerDataCapacityLimit() && m_capacity > Options::maximumCachedAssemblerDataCapacity()) {
+                clear();
+                return;
+            }
+
             // A one-off huge compile would otherwise pin its scratch buffer to this thread forever.
             unsigned cacheLimit = Options::maximumCachedAssemblerBufferSize();
             if (!cacheLimit || m_capacity <= cacheLimit) {

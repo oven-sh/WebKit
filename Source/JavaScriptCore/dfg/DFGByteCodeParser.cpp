@@ -471,7 +471,7 @@ private:
 
     // Helper for min and max.
     template<typename ChecksFunctor>
-    void handleMinMax(Operand result, NodeType op, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& insertChecks);
+    void handleMinMax(Operand result, NodeType op, int registerOffset, int argumentCountIncludingThis, NOESCAPE const ChecksFunctor& insertChecks);
     
     void refineStatically(CallLinkStatus&, Node* callTarget);
     // Blocks can either be targetable (i.e. in the m_blockLinkingTargets of one InlineStackEntry) with a well-defined bytecodeBegin,
@@ -499,7 +499,7 @@ private:
     void emitArgumentPhantoms(int registerOffset, int argumentCountIncludingThis);
     Node* getArgumentCount();
     template<typename ChecksFunctor>
-    bool handleRecursiveTailCall(Node* callTargetNode, CallVariant, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& emitFunctionCheckIfNeeded);
+    bool handleRecursiveTailCall(Node* callTargetNode, CallVariant, int registerOffset, int argumentCountIncludingThis, NOESCAPE const ChecksFunctor& emitFunctionCheckIfNeeded);
     std::tuple<unsigned, InlineAttribute> inliningCost(CallVariant, int argumentCountIncludingThis, InlineCallFrame::Kind); // Return UINT_MAX if it's not an inlining candidate. By convention, intrinsics have a cost of 1.
     // Handle inlining. Return true if it succeeded, false if we need to plant a call.
     bool handleVarargsInlining(Node* callTargetNode, Operand result, const CallLinkStatus&, int registerOffset, VirtualRegister thisArgument, VirtualRegister argumentsArgument, unsigned argumentsOffset, NodeType callOp, InlineCallFrame::Kind);
@@ -508,20 +508,20 @@ private:
     CallOptimizationResult handleCallVariant(Node* callTargetNode, Operand result, CallVariant, int registerOffset, VirtualRegister thisArgument, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind, SpeculatedType prediction, Node* newTarget, unsigned& inliningBalance, BasicBlock* continuationBlock, bool needsToCheckCallee);
     CallOptimizationResult handleInlining(Node* callTargetNode, Operand result, const CallLinkStatus&, int registerOffset, VirtualRegister thisArgument, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind, SpeculatedType prediction, Node* newTarget, ECMAMode);
     template<typename ChecksFunctor>
-    void inlineCall(Node* callTargetNode, Operand result, CallVariant, int registerOffset, int argumentCountIncludingThis, InlineCallFrame::Kind, BasicBlock* continuationBlock, const ChecksFunctor& insertChecks);
+    void inlineCall(Node* callTargetNode, Operand result, CallVariant, int registerOffset, int argumentCountIncludingThis, InlineCallFrame::Kind, BasicBlock* continuationBlock, NOESCAPE const ChecksFunctor& insertChecks);
     // Handle intrinsic functions. Return true if it succeeded, false if we need to plant a call.
     template<typename ChecksFunctor>
-    CallOptimizationResult handleIntrinsicCall(Node* callee, Operand result, CallVariant, Intrinsic, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind, CodeSpecializationKind, SpeculatedType prediction, const ChecksFunctor& insertChecks);
+    CallOptimizationResult handleIntrinsicCall(Node* callee, Operand result, CallVariant, Intrinsic, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind, CodeSpecializationKind, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor, typename SetResultFunctor>
-    CallOptimizationResult handleArraySort(Node* callee, Operand result, CallVariant, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, SpeculatedType prediction, const ChecksFunctor& insertChecks, const SetResultFunctor&);
+    CallOptimizationResult handleArraySort(Node* callee, Operand result, CallVariant, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks, NOESCAPE const SetResultFunctor&);
     template<typename ChecksFunctor>
-    bool handleDOMJITCall(Node* callee, Operand result, const DOMJIT::Signature*, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, const ChecksFunctor& insertChecks);
+    bool handleDOMJITCall(Node* callee, Operand result, const DOMJIT::Signature*, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor>
-    bool handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& intrinsicVariant, Node* thisNode, Node* unwrapped, const ChecksFunctor& insertChecks);
+    bool handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& intrinsicVariant, Node* thisNode, Node* unwrapped, NOESCAPE const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor>
-    bool handleTypedArrayConstructor(Operand result, JSObject*, int registerOffset, int argumentCountIncludingThis, TypedArrayType, const ChecksFunctor& insertChecks, CodeSpecializationKind);
+    bool handleTypedArrayConstructor(Operand result, JSObject*, int registerOffset, int argumentCountIncludingThis, TypedArrayType, NOESCAPE const ChecksFunctor& insertChecks, CodeSpecializationKind);
     template<typename ChecksFunctor>
-    bool handleConstantFunction(Node* callTargetNode, Operand result, JSObject*, int registerOffset, int argumentCountIncludingThis, CodeSpecializationKind, SpeculatedType, Node* newTarget, const ChecksFunctor& insertChecks);
+    bool handleConstantFunction(Node* callTargetNode, Operand result, JSObject*, int registerOffset, int argumentCountIncludingThis, CodeSpecializationKind, SpeculatedType, Node* newTarget, NOESCAPE const ChecksFunctor& insertChecks);
     Node* handlePutByOffset(Node* base, unsigned identifier, PropertyOffset, Node* value);
     Node* handleGetByOffset(SpeculatedType, Node* base, unsigned identifierNumber, PropertyOffset, NodeType = GetByOffset);
     bool handleDOMJITGetter(Operand result, const GetByVariant&, Node* thisNode, Node* unwrapped, unsigned identifierNumber, SpeculatedType prediction);
@@ -592,8 +592,6 @@ private:
 
     void handleIteratorOpen(const JSInstruction* pc, BytecodeIndex osrExitIndex);
     void handleIteratorNext(const JSInstruction* pc, BytecodeIndex osrExitIndex);
-    Terminality handleIteratorCloseCheck(const JSInstruction* pc, int relativeTargetOffset);
-    Node* newValuesArrayIterator(JSGlobalObject*, Node* array, Node* index);
     void handleAsyncIteratorOpen(const JSInstruction* pc, BytecodeIndex osrExitIndex);
     void handleAsyncIteratorNext(const JSInstruction* pc, BytecodeIndex osrExitIndex);
 
@@ -929,7 +927,7 @@ private:
     }
 
     template<typename AddFlushDirectFunc>
-    void flushImpl(InlineCallFrame* inlineCallFrame, const AddFlushDirectFunc& addFlushDirect)
+    void flushImpl(InlineCallFrame* inlineCallFrame, NOESCAPE const AddFlushDirectFunc& addFlushDirect)
     {
         int numArguments;
         if (inlineCallFrame) {
@@ -950,7 +948,7 @@ private:
     }
 
     template<typename AddFlushDirectFunc, typename AddPhantomLocalDirectFunc>
-    void flushForTerminalImpl(CodeOrigin origin, const AddFlushDirectFunc& addFlushDirect, const AddPhantomLocalDirectFunc& addPhantomLocalDirect)
+    void flushForTerminalImpl(CodeOrigin origin, NOESCAPE const AddFlushDirectFunc& addFlushDirect, NOESCAPE const AddPhantomLocalDirectFunc& addPhantomLocalDirect)
     {
         bool isCallerOrigin = false;
         origin.walkUpInlineStack(
@@ -1919,7 +1917,7 @@ void ByteCodeParser::emitArgumentPhantoms(int registerOffset, int argumentCountI
 }
 
 template<typename ChecksFunctor>
-bool ByteCodeParser::handleRecursiveTailCall(Node* callTargetNode, CallVariant callVariant, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& emitFunctionCheckIfNeeded)
+bool ByteCodeParser::handleRecursiveTailCall(Node* callTargetNode, CallVariant callVariant, int registerOffset, int argumentCountIncludingThis, NOESCAPE const ChecksFunctor& emitFunctionCheckIfNeeded)
 {
     if (!Options::optimizeRecursiveTailCalls()) [[unlikely]]
         return false;
@@ -2123,7 +2121,7 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
 }
 
 template<typename ChecksFunctor>
-void ByteCodeParser::inlineCall(Node* callTargetNode, Operand result, CallVariant callee, int registerOffset, int argumentCountIncludingThis, InlineCallFrame::Kind kind, BasicBlock* continuationBlock, const ChecksFunctor& insertChecks)
+void ByteCodeParser::inlineCall(Node* callTargetNode, Operand result, CallVariant callee, int registerOffset, int argumentCountIncludingThis, InlineCallFrame::Kind kind, BasicBlock* continuationBlock, NOESCAPE const ChecksFunctor& insertChecks)
 {
     const JSInstruction* savedCurrentInstruction = m_currentInstruction;
     CodeSpecializationKind specializationKind = InlineCallFrame::specializationKindFor(kind);
@@ -2872,7 +2870,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
 }
 
 template<typename ChecksFunctor>
-void ByteCodeParser::handleMinMax(Operand resultOperand, NodeType op, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& insertChecks)
+void ByteCodeParser::handleMinMax(Operand resultOperand, NodeType op, int registerOffset, int argumentCountIncludingThis, NOESCAPE const ChecksFunctor& insertChecks)
 {
     ASSERT(op == ArithMin || op == ArithMax);
 
@@ -2911,7 +2909,7 @@ static bool calleeMayBeCrossRealm(CallVariant variant, JSGlobalObject* globalObj
 }
 
 template<typename ChecksFunctor>
-auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, CallVariant variant, Intrinsic intrinsic, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind kind, CodeSpecializationKind specializationKind, SpeculatedType prediction, const ChecksFunctor& insertChecks) -> CallOptimizationResult
+auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, CallVariant variant, Intrinsic intrinsic, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind kind, CodeSpecializationKind specializationKind, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks) -> CallOptimizationResult
 {
     VERBOSE_LOG("       The intrinsic is ", intrinsic, "\n");
     UNUSED_PARAM(callOp);
@@ -3701,6 +3699,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
+                return CallOptimizationResult::DidNothing;
+
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
@@ -3722,6 +3723,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case StringPrototypeMatchIntrinsic: {
             if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
                 return CallOptimizationResult::DidNothing;
 
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
@@ -3746,6 +3750,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case StringPrototypeSearchIntrinsic: {
             if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
                 return CallOptimizationResult::DidNothing;
 
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
@@ -3991,6 +3998,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
 
@@ -4044,6 +4054,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
 
@@ -4097,6 +4110,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
 
@@ -4149,6 +4165,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
 
@@ -4375,6 +4394,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+            if (calleeMayBeCrossRealm(variant, globalObject))
+                return CallOptimizationResult::DidNothing;
+
             if (!globalObject->stringSymbolReplaceWatchpointSet().isStillValid() || !globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
 
@@ -5892,6 +5914,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
+                return CallOptimizationResult::DidNothing;
+
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
@@ -5928,6 +5953,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
+                return CallOptimizationResult::DidNothing;
+
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
@@ -5962,6 +5990,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case PromisePrototypeThenIntrinsic: {
             if (argumentCountIncludingThis < 1)
+                return CallOptimizationResult::DidNothing;
+
+            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
                 return CallOptimizationResult::DidNothing;
 
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
@@ -6056,7 +6087,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 }
 
 template<typename ChecksFunctor>
-bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DOMJIT::Signature* signature, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, const ChecksFunctor& insertChecks)
+bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DOMJIT::Signature* signature, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks)
 {
     if (argumentCountIncludingThis != static_cast<int>(1 + signature->argumentCount))
         return false;
@@ -6075,7 +6106,7 @@ bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DO
 
 
 template<typename ChecksFunctor>
-bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& variant, Node* thisNode, Node* unwrapped, const ChecksFunctor& insertChecks)
+bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& variant, Node* thisNode, Node* unwrapped, NOESCAPE const ChecksFunctor& insertChecks)
 {
     if (thisNode != unwrapped)
         return false;
@@ -6601,7 +6632,7 @@ bool ByteCodeParser::handleIndexedProxyObjectIn(VirtualRegister destination, Nod
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleTypedArrayConstructor(
     Operand result, JSObject* function, int registerOffset,
-    int argumentCountIncludingThis, TypedArrayType type, const ChecksFunctor& insertChecks, CodeSpecializationKind kind)
+    int argumentCountIncludingThis, TypedArrayType type, NOESCAPE const ChecksFunctor& insertChecks, CodeSpecializationKind kind)
 {
     if (!isTypedView(type))
         return false;
@@ -6670,7 +6701,7 @@ bool ByteCodeParser::handleTypedArrayConstructor(
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleConstantFunction(
     Node* callTargetNode, Operand result, JSObject* function, int registerOffset,
-    int argumentCountIncludingThis, CodeSpecializationKind kind, SpeculatedType prediction, Node* newTarget, const ChecksFunctor& insertChecks)
+    int argumentCountIncludingThis, CodeSpecializationKind kind, SpeculatedType prediction, Node* newTarget, NOESCAPE const ChecksFunctor& insertChecks)
 {
     VERBOSE_LOG("    Handling constant function ", JSValue(function), "\n");
     UNUSED_PARAM(newTarget);
@@ -10408,8 +10439,44 @@ void ByteCodeParser::parseBlock(unsigned limit)
         }
 
         case op_iterator_close_check: {
-            if (handleIteratorCloseCheck(currentInstruction, jumpTarget(currentInstruction->as<OpIteratorCloseCheck>().m_targetLabel)) == Terminal)
-                LAST_OPCODE(op_iterator_close_check);
+            auto bytecode = currentInstruction->as<OpIteratorCloseCheck>();
+            auto& metadata = bytecode.metadata(codeBlock);
+            JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObjectFor(currentCodeOrigin());
+            Node* iterator = get(bytecode.m_iterator);
+            addToGraph(Phantom, get(bytecode.m_next));
+            addToGraph(Phantom, get(bytecode.m_iterable));
+
+            Node* hasNothingToClose = nullptr;
+            auto addSentinel = [&](IterationMode mode, InlineWatchpointSet& watchpointSet, JSSentinel* sentinel) {
+                if (!(metadata.m_seenModes & mode) || !watchpointSet.isStillValid())
+                    return;
+                m_graph.watchpoints().addLazily(watchpointSet);
+                Node* isSentinel = addToGraph(CompareEqPtr, OpInfo(m_graph.freeze(sentinel)), iterator);
+                hasNothingToClose = hasNothingToClose ? addToGraph(ArithBitOr, hasNothingToClose, isSentinel) : isSentinel;
+            };
+            addSentinel(IterationMode::FastArray, globalObject->arrayIteratorProtocolWatchpointSet(), m_vm->fastArraySentinel());
+            addSentinel(IterationMode::FastString, globalObject->stringIteratorProtocolWatchpointSet(), m_vm->fastStringSentinel());
+
+            if (hasNothingToClose) {
+                emitExitOK();
+
+                BasicBlock* nothingToCloseBlock = allocateUntargetableBlock();
+                BasicBlock* closeBlock = allocateUntargetableBlock();
+                BranchData* branchData = m_graph.m_branchData.add();
+                branchData->taken = BranchTarget(nothingToCloseBlock);
+                branchData->notTaken = BranchTarget(closeBlock);
+                addToGraph(Branch, OpInfo(branchData), hasNothingToClose);
+
+                m_currentBlock = nothingToCloseBlock;
+                clearCaches();
+                addJumpTo(m_currentIndex.offset() + jumpTarget(bytecode.m_targetLabel));
+
+                m_currentBlock = closeBlock;
+                clearCaches();
+                keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
+            }
+
+            addToGraph(Check, Edge(get(bytecode.m_iterator), ObjectUse));
             NEXT_OPCODE(op_iterator_close_check);
         }
 
@@ -12015,18 +12082,6 @@ void ByteCodeParser::handleCreateInternalFieldObject(const ClassInfo* classInfo,
     set(VirtualRegister(bytecode.m_dst), addToGraph(createOp, callee));
 }
 
-// A new Array Iterator of kind "value" over array, at index if there is one and at the start otherwise.
-Node* ByteCodeParser::newValuesArrayIterator(JSGlobalObject* globalObject, Node* array, Node* index)
-{
-    Node* kindNode = jsConstant(jsNumber(static_cast<uint32_t>(IterationKind::Values)));
-    Node* iterator = addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(globalObject->arrayIteratorStructure())));
-    addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::IteratedObject)), iterator, array);
-    addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::Kind)), iterator, kindNode);
-    if (index)
-        addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::Index)), iterator, index);
-    return iterator;
-}
-
 void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction, BytecodeIndex osrExitIndex)
 {
     CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
@@ -12112,18 +12167,8 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
             keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
         }
 
-        if (Options::useUnboxedFastArrayIteration()) {
-            // No iterator object. op_iterator_next takes the Array from its iterable operand and keeps the index in m_next; the sentinel in
-            // m_iterator is how it, op_iterator_close_check and the lower tiers tell.
-            set(bytecode.m_iterator, jsConstant(m_vm->fastArrayUnboxedSentinel()));
-            set(bytecode.m_next, jsConstant(jsNumber(0)));
-        } else {
-            Node* next = jsConstant(m_vm->fastArrayValuesSentinel());
-            set(bytecode.m_iterator, newValuesArrayIterator(globalObject, get(bytecode.m_iterable), nullptr));
-
-            // Set m_next to the FastArrayValues sentinel so if we exit between here and iterator_next instruction it knows we are in the fast case.
-            set(bytecode.m_next, next);
-        }
+        set(bytecode.m_iterator, jsConstant(m_vm->fastArraySentinel()));
+        set(bytecode.m_next, jsConstant(jsNumber(0)));
 
         // Do our set locals. We don't want to exit backwards so move our exit to the next bytecode.
         m_currentIndex = osrExitIndex;
@@ -12162,7 +12207,7 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
             failedBlock = allocateUntargetableBlock();
 
             Node* isKnownIterFunction = addToGraph(CompareEqPtr, OpInfo(frozenSymbolIteratorFunction), get(bytecode.m_symbolIterator));
-            // Unlike FastArray / FastMap / FastSet, FastArrayValues / Keys / Entries reuses the
+            // Unlike FastMap / FastSet, FastArrayValues / Keys / Entries reuses the
             // input iterator (m_iterator = m_iterable) instead of constructing a fresh one. The
             // iterator therefore carries the iterable's realm, so we need our realm's
             // arrayIteratorStructure for the per-realm arrayIteratorProtocolWatchpointSet to apply
@@ -12572,12 +12617,8 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
             keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
         }
 
-        Node* next = jsConstant(m_vm->fastStringValuesSentinel());
-        Node* iterator = addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(globalObject->stringIteratorStructure())));
-        addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSStringIterator::Field::IteratedString)), iterator, get(bytecode.m_iterable));
-        set(bytecode.m_iterator, iterator);
-
-        set(bytecode.m_next, next);
+        set(bytecode.m_iterator, jsConstant(m_vm->fastStringSentinel()));
+        set(bytecode.m_next, jsConstant(jsNumber(0)));
 
         m_currentIndex = osrExitIndex;
         m_exitOK = true;
@@ -12674,14 +12715,10 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
     JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObjectFor(currentCodeOrigin());
 
     if (!globalObject->arrayIteratorProtocolWatchpointSet().isStillValid()) {
-        // Not FastArray: stepping an Array whose index is in the frame (see below) depends on nothing the watchpoint covers. Frames that
-        // entered that state before the watchpoint fired keep running it, as they do in the lower tiers.
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastArrayValues);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastArrayKeys);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastArrayEntries);
     }
-    if (!globalObject->stringIteratorProtocolWatchpointSet().isStillValid())
-        seenModes &= ~static_cast<uint32_t>(IterationMode::FastString);
     if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid()) {
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMap);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMapKeys);
@@ -12713,19 +12750,44 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
 
     BytecodeIndex startIndex = m_currentIndex;
 
-    // The steps of an Array Iterator. Where the Array and the index are kept depends on the mode: in the fields of the iterator object in
-    // m_iterator (guarded by the sentinel that op_iterator_open left in m_next), or, when op_iterator_open made no object, in m_iterable and
-    // m_next themselves (guarded by the sentinel in m_iterator).
-    auto emitFastArrayIteratorNext = [&](IterationKind kind, VirtualRegister guardOperand, JSSentinel* sentinelCell, bool indexIsKnownInt32, const auto& loadArray, const auto& loadIndex, const auto& storeIndex) {
+    auto speculatedGet = [&](VirtualRegister operand, SpeculatedType type, UseKind useKind) {
+        Node* node = addToGraph(IdentityWithProfile, OpInfo(type), get(operand));
+        addToGraph(Check, Edge(node, useKind));
+        return node;
+    };
+
+    auto emitFastArrayIteratorNext = [&](IterationKind kind, JSSentinel* sentinelCell) {
+        bool hasIterator = sentinelCell != m_vm->fastArraySentinel();
+        VirtualRegister sentinelOperand = hasIterator ? bytecode.m_next : bytecode.m_iterator;
+        if (hasIterator)
+            m_graph.watchpoints().addLazily(globalObject->arrayIteratorProtocolWatchpointSet());
+
+        auto getIteratedObject = [&] {
+            if (hasIterator)
+                return addToGraph(GetInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::IteratedObject)), OpInfo(SpecObject), get(bytecode.m_iterator));
+            return speculatedGet(bytecode.m_iterable, SpecArray, ArrayUse);
+        };
+        auto getIndex = [&] {
+            if (hasIterator)
+                return addToGraph(GetInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::Index)), OpInfo(SpecInt32Only), get(bytecode.m_iterator));
+            return speculatedGet(bytecode.m_next, SpecInt32Only, Int32Use);
+        };
+        auto setIndex = [&](Node* index) {
+            if (hasIterator)
+                addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::Index)), get(bytecode.m_iterator), index);
+            else
+                set(bytecode.m_next, index);
+        };
+
         numberOfRemainingModes--;
 
         connectFailedBlock();
 
         FrozenValue* frozenSentinel = m_graph.freeze(sentinelCell);
         if (!numberOfRemainingModes)
-            addToGraph(CheckIsConstant, OpInfo(frozenSentinel), get(guardOperand));
+            addToGraph(CheckIsConstant, OpInfo(frozenSentinel), get(sentinelOperand));
         else {
-            Node* isFastSentinel = addToGraph(CompareEqPtr, OpInfo(frozenSentinel), get(guardOperand));
+            Node* isFastSentinel = addToGraph(CompareEqPtr, OpInfo(frozenSentinel), get(sentinelOperand));
 
             emitExitOK();
 
@@ -12749,45 +12811,34 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
         auto prediction = getPredictionWithoutOSRExit(BytecodeIndex(m_currentIndex.offset(), OpIteratorNext::getValue));
 
         {
-            Node* index = loadIndex();
-            Node* iteratedObject = loadArray();
+            // FIXME: doneIndex is -1 so it seems like we should be able to do CompareBelow(index, length). See: https://bugs.webkit.org/show_bug.cgi?id=210927
+            Node* doneIndex = jsConstant(jsNumber(JSArrayIterator::doneIndex));
+            Node* index = getIndex();
+            Node* isDone = addToGraph(CompareStrictEq, index, doneIndex);
+
+            Node* iteratedObject = getIteratedObject();
             Node* butterfly = addToGraph(GetButterfly, iteratedObject);
             Node* length = addToGraph(GetArrayLength, OpInfo(arrayMode.asWord()), Edge(iteratedObject), Edge(butterfly, KnownStorageUse));
             // GetArrayLength is pessimized prior to fixup.
             emitExitOK();
+            Node* isOutOfBounds = addToGraph(CompareGreaterEq, Edge(index, Int32Use), Edge(length, Int32Use));
+
+            isDone = addToGraph(ArithBitOr, isDone, isOutOfBounds);
+            // The above compare doesn't produce effects since we know the values are booleans. We don't set UseKinds because Fixup likes to add edges.
+            emitExitOK();
 
             BranchData* branchData = m_graph.m_branchData.add();
-            if (indexIsKnownInt32) {
-                // doneIndex is -1: as an unsigned number it is not below any length, so one comparison answers both "finished before" and "at the end".
-                static_assert(JSArrayIterator::doneIndex == -1);
-                Node* hasNext = addToGraph(CompareBelow, Edge(index, Int32Use), Edge(length, Int32Use));
-                emitExitOK();
-                branchData->taken = BranchTarget(doLoadBlock);
-                branchData->notTaken = BranchTarget(isDoneBlock);
-                addToGraph(Branch, OpInfo(branchData), hasNext);
-            } else {
-                // FIXME: doneIndex is -1 so it seems like we should be able to do CompareBelow(index, length). See: https://bugs.webkit.org/show_bug.cgi?id=210927
-                Node* doneIndex = jsConstant(jsNumber(JSArrayIterator::doneIndex));
-                Node* isDone = addToGraph(CompareStrictEq, index, doneIndex);
-                Node* isOutOfBounds = addToGraph(CompareGreaterEq, Edge(index, Int32Use), Edge(length, Int32Use));
-
-                isDone = addToGraph(ArithBitOr, isDone, isOutOfBounds);
-                // The above compare doesn't produce effects since we know the values are booleans. We don't set UseKinds because Fixup likes to add edges.
-                emitExitOK();
-
-                branchData->taken = BranchTarget(isDoneBlock);
-                branchData->notTaken = BranchTarget(doLoadBlock);
-                addToGraph(Branch, OpInfo(branchData), isDone);
-            }
+            branchData->taken = BranchTarget(isDoneBlock);
+            branchData->notTaken = BranchTarget(doLoadBlock);
+            addToGraph(Branch, OpInfo(branchData), isDone);
         }
 
         {
             m_currentBlock = doLoadBlock;
             clearCaches();
             keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
-            Node* index = loadIndex();
+            Node* index = getIndex();
             Node* one = jsConstant(jsNumber(1));
-            // Before the load, which can call a getter: an overflow exit must not run that twice.
             Node* newIndex = makeSafe(addToGraph(ArithAdd, index, one));
             Node* falseNode = jsConstant(jsBoolean(false));
 
@@ -12795,7 +12846,7 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
             if (kind == IterationKind::Keys)
                 value = index;
             else {
-                Node* iteratedObjectInLoad = loadArray();
+                Node* iteratedObjectInLoad = getIteratedObject();
                 // FIXME: We could consider making this not vararg, since it only uses three child slots.
                 // https://bugs.webkit.org/show_bug.cgi?id=184192
                 addVarArgChild(iteratedObjectInLoad);
@@ -12812,9 +12863,9 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
                     value = element;
             }
 
-            storeIndex(newIndex);
             set(bytecode.m_value, value);
             set(bytecode.m_done, falseNode);
+            setIndex(newIndex);
 
             // Do our set locals. We don't want to run our getByVal again so we move to the next bytecode.
             m_currentIndex = osrExitIndex;
@@ -12835,9 +12886,9 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
             Node* doneIndex = jsConstant(jsNumber(-1));
             Node* bottomNode = jsConstant(m_graph.bottomValueMatchingSpeculation(prediction));
 
-            storeIndex(doneIndex);
             set(bytecode.m_value, bottomNode);
             set(bytecode.m_done, trueNode);
+            setIndex(doneIndex);
 
             // Do our set locals. We don't want to run this again so we have to move the exit origin forward.
             m_currentIndex = osrExitIndex;
@@ -12851,41 +12902,17 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
         generatedCase = true;
     };
 
-    auto emitFastArrayIteratorNextWithIteratorObject = [&](IterationKind kind, JSSentinel* sentinelCell) {
-        m_graph.watchpoints().addLazily(globalObject->arrayIteratorProtocolWatchpointSet());
-        emitFastArrayIteratorNext(kind, bytecode.m_next, sentinelCell, false,
-            [&] { return addToGraph(GetInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::IteratedObject)), OpInfo(SpecObject), get(bytecode.m_iterator)); },
-            [&] { return addToGraph(GetInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::Index)), OpInfo(SpecInt32Only), get(bytecode.m_iterator)); },
-            [&](Node* index) { addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::Index)), get(bytecode.m_iterator), index); });
-    };
-
-    // What this mode left in a frame register, as a node of its own that predicts and checks what that is. The register's own prediction is
-    // of no use at a site that also sees other modes (m_next is an index here and a sentinel cell there, which would make every GetByVal on it
-    // generic), and array mode checks made directly on a GetLocal are votes, in DFGTypeCheckHoistingPhase, for moving them to the variable's
-    // SetLocal as CheckStructureOrEmpty: that loses the proof of non-emptiness LICM needs to hoist the loads of a loop-invariant Array.
-    auto speculatedLocal = [&](VirtualRegister operand, SpeculatedType type, UseKind useKind) {
-        Node* node = addToGraph(IdentityWithProfile, OpInfo(type), get(operand));
-        addToGraph(Check, Edge(node, useKind));
-        return node;
-    };
-
-    if (seenModes & IterationMode::FastArray) {
-        // No iterator object. What comes out of the two frame registers is speculated on, not trusted. Stepping does not depend on the
-        // watchpoint set: the spec fixed "next" when the loop was opened, and op_iterator_close_check deals with "return".
-        emitFastArrayIteratorNext(IterationKind::Values, bytecode.m_iterator, m_vm->fastArrayUnboxedSentinel(), true,
-            [&] { return speculatedLocal(bytecode.m_iterable, SpecArray, ArrayUse); },
-            [&] { return speculatedLocal(bytecode.m_next, SpecInt32Only, Int32Use); },
-            [&](Node* index) { set(bytecode.m_next, index); });
-    }
+    if (seenModes & IterationMode::FastArray)
+        emitFastArrayIteratorNext(IterationKind::Values, m_vm->fastArraySentinel());
 
     if (seenModes & IterationMode::FastArrayValues)
-        emitFastArrayIteratorNextWithIteratorObject(IterationKind::Values, m_vm->fastArrayValuesSentinel());
+        emitFastArrayIteratorNext(IterationKind::Values, m_vm->fastArrayValuesSentinel());
 
     if (seenModes & IterationMode::FastArrayKeys)
-        emitFastArrayIteratorNextWithIteratorObject(IterationKind::Keys, m_vm->fastArrayKeysSentinel());
+        emitFastArrayIteratorNext(IterationKind::Keys, m_vm->fastArrayKeysSentinel());
 
     if (seenModes & IterationMode::FastArrayEntries)
-        emitFastArrayIteratorNextWithIteratorObject(IterationKind::Entries, m_vm->fastArrayEntriesSentinel());
+        emitFastArrayIteratorNext(IterationKind::Entries, m_vm->fastArrayEntriesSentinel());
 
     auto emitFastMapIteratorNext = [&](IterationKind kind, JSSentinel* sentinelCell) {
         m_graph.watchpoints().addLazily(globalObject->mapIteratorProtocolWatchpointSet());
@@ -13200,17 +13227,15 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
         emitFastSetIteratorNext(IterationKind::Entries, m_vm->fastSetEntriesSentinel());
 
     if (seenModes & IterationMode::FastString) {
-        auto& stringIteratorProtocolWatchpointSet = globalObject->stringIteratorProtocolWatchpointSet();
-        m_graph.watchpoints().addLazily(stringIteratorProtocolWatchpointSet);
         numberOfRemainingModes--;
 
         connectFailedBlock();
 
-        FrozenValue* frozenSentinel = m_graph.freeze(m_vm->fastStringValuesSentinel());
+        FrozenValue* frozenSentinel = m_graph.freeze(m_vm->fastStringSentinel());
         if (!numberOfRemainingModes)
-            addToGraph(CheckIsConstant, OpInfo(frozenSentinel), get(bytecode.m_next));
+            addToGraph(CheckIsConstant, OpInfo(frozenSentinel), get(bytecode.m_iterator));
         else {
-            Node* isFastSentinel = addToGraph(CompareEqPtr, OpInfo(frozenSentinel), get(bytecode.m_next));
+            Node* isFastSentinel = addToGraph(CompareEqPtr, OpInfo(frozenSentinel), get(bytecode.m_iterator));
 
             emitExitOK();
 
@@ -13231,13 +13256,9 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
             m_exitOK = true;
             keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
 
-            Node* iterator = get(bytecode.m_iterator);
-            Node* index = addToGraph(GetInternalField, OpInfo(static_cast<uint32_t>(JSStringIterator::Field::Index)), OpInfo(SpecInt32Only), iterator);
-            Node* string = addToGraph(GetInternalField, OpInfo(static_cast<uint32_t>(JSStringIterator::Field::IteratedString)), OpInfo(SpecString), iterator);
+            Node* index = speculatedGet(bytecode.m_next, SpecInt32Only, Int32Use);
+            Node* string = speculatedGet(bytecode.m_iterable, SpecString, StringUse);
 
-            // Fold the whole next() computation into a single tuple-returning node. It consumes only
-            // the string and the position, so the iterator is referenced solely by the surrounding
-            // GetInternalField/PutInternalField pair, letting ObjectAllocationSinking eliminate it.
             Node* tuple = addToGraph(StringIteratorNext, Edge(string), Edge(index));
             Node* value = addToGraph(ExtractFromTuple, OpInfo(0), tuple);
             value->setResult(NodeResultJS);
@@ -13249,7 +13270,7 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
 
             set(bytecode.m_value, value);
             set(bytecode.m_done, done);
-            addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSStringIterator::Field::Index)), iterator, nextPosition);
+            set(bytecode.m_next, nextPosition);
 
             // Do our set locals. We don't want to run this again so we have to move the exit origin forward.
             m_currentIndex = osrExitIndex;
@@ -13267,9 +13288,10 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
         connectFailedBlock();
 
         // Our profiling could have been incorrect when we got here. For instance, if we LoopHint OSR enter the first time we would
-        // have seen a fast path, m_next holds a fast-iteration sentinel cell. When that happens we need to OSR exit since the
-        // sentinel is not a callable.
+        // have seen a fast path, m_next holds a fast-iteration sentinel cell or index. When that happens we need to OSR exit since
+        // it is not a callable.
         addToGraph(Check, Edge(get(bytecode.m_next), ObjectUse));
+        addToGraph(Check, Edge(get(bytecode.m_iterator), ObjectUse));
 
         Terminality terminality = handleCall<OpIteratorNext>(currentInstruction, Call, CallMode::Regular, nextCheckpoint(), nullptr);
         ASSERT_UNUSED(terminality, terminality == NonTerminal);
@@ -13377,70 +13399,6 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
 
     m_currentBlock = continuation;
     clearCaches();
-}
-
-auto ByteCodeParser::handleIteratorCloseCheck(const JSInstruction* currentInstruction, int relativeTargetOffset) -> Terminality
-{
-    auto bytecode = currentInstruction->as<OpIteratorCloseCheck>();
-    JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObjectFor(currentCodeOrigin());
-    unsigned fallThroughOffset = m_currentIndex.offset() + currentInstruction->size();
-
-    if (!Options::useUnboxedFastArrayIteration()) {
-        // Nothing in this process leaves an iterator register without an object: falls through.
-        addToGraph(Phantom, get(bytecode.m_iterator));
-        addToGraph(Phantom, get(bytecode.m_next));
-        addToGraph(Phantom, get(bytecode.m_iterable));
-        return NonTerminal;
-    }
-
-    FrozenValue* frozenSentinel = m_graph.freeze(m_vm->fastArrayUnboxedSentinel());
-    Node* hasNoIteratorObject = addToGraph(CompareEqPtr, OpInfo(frozenSentinel), get(bytecode.m_iterator));
-    if (globalObject->arrayIteratorProtocolWatchpointSet().isStillValid()) {
-        // No "return" property on the prototype chain of this realm's Array Iterator objects: nothing to close when there is no object.
-        m_graph.watchpoints().addLazily(globalObject->arrayIteratorProtocolWatchpointSet());
-        // Nothing here reads these two, but the bytecode does and the lower tiers will after an exit.
-        addToGraph(Phantom, get(bytecode.m_next));
-        addToGraph(Phantom, get(bytecode.m_iterable));
-        addToGraph(Branch, OpInfo(branchData(m_currentIndex.offset() + relativeTargetOffset, fallThroughOffset)), hasNoIteratorObject);
-        return Terminal;
-    }
-
-    // IteratorClose is observable now, so this never jumps. A frame that opened its iterator before the watchpoint fired can still get here
-    // without an iterator object: make the one that the Array in m_iterable and the index in m_next stand for.
-    BasicBlock* materializeBlock = allocateUntargetableBlock();
-    BasicBlock* continuation = allocateUntargetableBlock();
-    BytecodeIndex startIndex = m_currentIndex;
-
-    emitExitOK();
-    BranchData* branchData = m_graph.m_branchData.add();
-    branchData->taken = BranchTarget(materializeBlock);
-    branchData->notTaken = BranchTarget(continuation);
-    addToGraph(Branch, OpInfo(branchData), hasNoIteratorObject);
-    flushForTerminal();
-
-    {
-        m_currentBlock = materializeBlock;
-        clearCaches();
-        keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
-
-        Node* array = get(bytecode.m_iterable);
-        addToGraph(Check, Edge(array, ArrayUse));
-        Node* index = get(bytecode.m_next);
-        addToGraph(Check, Edge(index, Int32Use));
-        set(bytecode.m_iterator, newValuesArrayIterator(globalObject, array, index));
-
-        // The object is in place before anything can exit to the instruction that follows.
-        m_currentIndex = BytecodeIndex(fallThroughOffset);
-        m_exitOK = true;
-        processSetLocalQueue();
-
-        addJumpTo(continuation);
-        m_currentIndex = startIndex;
-    }
-
-    m_currentBlock = continuation;
-    clearCaches();
-    return NonTerminal;
 }
 
 void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruction, BytecodeIndex osrExitIndex)
@@ -13860,7 +13818,7 @@ void ByteCodeParser::handleAsyncIteratorNext(const JSInstruction* currentInstruc
 }
 
 template<typename ChecksFunctor, typename SetResultFunctor>
-auto ByteCodeParser::handleArraySort(Node* callee, Operand resultOperand, CallVariant variant, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, SpeculatedType prediction, const ChecksFunctor& insertChecks, const SetResultFunctor& setResult) -> CallOptimizationResult
+auto ByteCodeParser::handleArraySort(Node* callee, Operand resultOperand, CallVariant variant, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks, NOESCAPE const SetResultFunctor& setResult) -> CallOptimizationResult
 {
     // Inline Array.prototype.sort(comparator) when:
     //   - receiver is an original-structure JSArray with Undecided / Int32 / Contiguous indexing, and

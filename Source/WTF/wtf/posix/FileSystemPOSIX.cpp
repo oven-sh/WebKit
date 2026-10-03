@@ -37,6 +37,7 @@
 #include <unistd.h>
 #include <wtf/FileHandle.h>
 #include <wtf/SafeStrerror.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -89,20 +90,20 @@ FileHandle openFile(const String& path, FileOpenMode mode, FileAccessPermission 
     else if (permission == FileAccessPermission::All)
         permissionFlag |= (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
 
-    return FileHandle::adopt(open(fsRep.legacyCStringPointer(), platformFlag, permissionFlag), lockMode);
+    return FileHandle::adopt(posixOpen(fsRep, platformFlag, permissionFlag), lockMode);
 }
 
 std::optional<WallTime> fileCreationTime(const String& path)
 {
 #if (OS(LINUX) && HAVE(STATX)) || OS(DARWIN) || OS(OPENBSD) || OS(NETBSD) || OS(FREEBSD)
     auto fsRep = fileSystemRepresentation(path);
-    if (!fsRep.legacyCStringPointer() || fsRep.legacyCStringPointer()[0] == '\0')
+    if (fsRep.isEmpty())
         return std::nullopt;
 
 #if OS(LINUX) && HAVE(STATX)
     struct statx fileInfo;
 
-    if (statx(-1, fsRep.legacyCStringPointer(), 0, STATX_BTIME, &fileInfo) == -1)
+    if (posixStatx(-1, fsRep, 0, STATX_BTIME, &fileInfo) == -1)
         return std::nullopt;
 
     return WallTime::fromRawSeconds(fileInfo.stx_btime.tv_sec);
@@ -128,19 +129,19 @@ bool fileIDsAreEqual(std::optional<PlatformFileID> a, std::optional<PlatformFile
 std::optional<uint32_t> volumeFileBlockSize(const String& path)
 {
     struct statvfs fileStat;
-    if (!statvfs(fileSystemRepresentation(path).legacyCStringPointer(), &fileStat))
+    if (!posixStatvfs(fileSystemRepresentation(path), &fileStat))
         return fileStat.f_frsize;
 
     return std::nullopt;
 }
 
 #if !USE(CF)
-String stringFromFileSystemRepresentation(const char* path)
+String stringFromFileSystemRepresentation(UTF8CStringView path)
 {
-    if (!path)
+    if (path.isNull())
         return String();
 
-    return String::fromUTF8(path);
+    return String::fromUTF8(path.span());
 }
 
 UTF8CString fileSystemRepresentation(const String& path)
@@ -210,13 +211,13 @@ std::optional<int32_t> getFileDeviceId(const String& path)
 
 bool fileExists(const String& path)
 {
-    return access(fileSystemRepresentation(path).legacyCStringPointer(), F_OK) != -1;
+    return posixAccess(fileSystemRepresentation(path), F_OK) != -1;
 }
 
 bool deleteFile(const String& path)
 {
     // unlink(...) returns 0 on successful deletion of the path and non-zero in any other case (including invalid permissions or non-existent file)
-    bool unlinked = !unlink(fileSystemRepresentation(path).legacyCStringPointer());
+    bool unlinked = !posixUnlink(fileSystemRepresentation(path));
     if (!unlinked && errno != ENOENT)
         LOG_ERROR("File failed to delete. Error message: %s", safeStrerror(errno));
 
@@ -230,7 +231,7 @@ bool makeAllDirectories(const String& path)
     if (!length)
         return false;
 
-    if (!access(fullPath.legacyCStringPointer(), F_OK))
+    if (!posixAccess(fullPath, F_OK))
         return true;
 
     auto p = byteCast<char>(fullPath.mutableSpanIncludingNullTerminator()).subspan(1);
@@ -239,15 +240,15 @@ bool makeAllDirectories(const String& path)
     for (; p[0]; skip(p, 1)) {
         if (p[0] == '/') {
             p[0] = '\0';
-            if (access(fullPath.legacyCStringPointer(), F_OK)) {
-                if (mkdir(fullPath.legacyCStringPointer(), S_IRWXU))
+            if (posixAccess(fullPath, F_OK)) {
+                if (posixMkdir(fullPath, S_IRWXU))
                     return false;
             }
             p[0] = '/';
         }
     }
-    if (access(fullPath.legacyCStringPointer(), F_OK)) {
-        if (mkdir(fullPath.legacyCStringPointer(), S_IRWXU))
+    if (posixAccess(fullPath, F_OK)) {
+        if (posixMkdir(fullPath, S_IRWXU))
             return false;
     }
 

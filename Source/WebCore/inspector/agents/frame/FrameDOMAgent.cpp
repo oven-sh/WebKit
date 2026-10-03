@@ -383,6 +383,8 @@ Ref<Inspector::Protocol::DOM::Node> FrameDOMAgent::buildObjectForNode(Node* node
         }
     } else if (RefPtr document = dynamicDowncast<Document>(*node)) {
         value->setDocumentURL(InspectorDOMAgent::documentURLString(document.get()));
+        value->setBaseURL(InspectorDOMAgent::documentBaseURLString(document.get()));
+        value->setXmlVersion(document->xmlVersion());
         // FIXME: <https://webkit.org/b/298980> Set frameId for frame targets to enable frontend frame-to-target association.
     } else if (RefPtr doctype = dynamicDowncast<DocumentType>(*node)) {
         value->setPublicId(doctype->publicId());
@@ -1483,7 +1485,7 @@ public:
     }
 
 private:
-    RefPtr<Node> m_node;
+    const RefPtr<Node> m_node;
 };
 
 } // namespace
@@ -1720,7 +1722,7 @@ Ref<Inspector::Protocol::DOM::AccessibilityProperties> FrameDOMAgent::buildObjec
             ignored = axObject->isIgnored();
             ignoredByDefault = axObject->isIgnoredByDefault();
 
-            String invalidValue = axObject->invalidStatus();
+            String invalidValue = axObject->invalidStatusIncludingInferred();
             if (invalidValue == "false"_s)
                 invalid = Inspector::Protocol::DOM::AccessibilityProperties::Invalid::False;
             else if (invalidValue == "grammar"_s)

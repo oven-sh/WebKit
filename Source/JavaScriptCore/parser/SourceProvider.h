@@ -43,6 +43,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCountedFixedVector.h>
+#include <wtf/ScopedLambda.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
@@ -54,6 +56,7 @@ namespace JSC {
 
 class SourceCode;
 class SourceCodeKey;
+class SourceProvider;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionExecutable;
 class UnlinkedFunctionCodeBlock;
@@ -101,9 +104,7 @@ public:
     // Out-of-range input clamps rather than fails: a line past the end gives the end of the text,
     // and a column past the end of its line gives that line's end.
     JS_EXPORT_PRIVATE unsigned offsetForPosition(StringView text, unsigned line0Based, unsigned column0Based);
-
-    // The zero-based line and column of positionInfoForOffset(). Unlike it, this reads none of the text if isBuilt().
-    JS_EXPORT_PRIVATE LineColumn lineColumnForOffset(StringView text, unsigned offset);
+    JS_EXPORT_PRIVATE LineColumn zeroBasedLineColumnForOffset(const SourceProvider&, unsigned offset);
 
     // What a table holds, from where each line starts, the first at 0.
     JS_EXPORT_PRIVATE static LineStarts encode(const Vector<unsigned>&);
@@ -192,7 +193,9 @@ public:
 
     JS_EXPORT_PRIVATE void lockUnderlyingBuffer();
     JS_EXPORT_PRIVATE void unlockUnderlyingBuffer();
-    JS_EXPORT_PRIVATE virtual CodeBlockHash codeBlockHashConcurrently(int startOffset, int endOffset, CodeSpecializationKind);
+    JS_EXPORT_PRIVATE CodeBlockHash codeBlockHashConcurrently(int startOffset, int endOffset, CodeSpecializationKind) const;
+    // Like source(), but safe on any thread. The text is valid only during the call.
+    JS_EXPORT_PRIVATE virtual void withSourceConcurrently(const ScopedLambda<void(StringView)>&) const;
 
     virtual bool isScriptBufferSourceProvider() const { return false; }
 
@@ -200,42 +203,39 @@ public:
 
     LineStartTable::PositionInfo positionInfoForOffset(unsigned offset)
     {
+        // Reads source(), which is unsafe on GC threads. documentLineColumnForOffset() is a thread-safe option.
+        ASSERT(Thread::currentSingleton().gcThreadType() == GCThreadType::None);
         return m_lineStartTable.positionInfoForOffset(source(), offset);
     }
 
     unsigned offsetForPosition(unsigned line0Based, unsigned column0Based)
     {
+        ASSERT(Thread::currentSingleton().gcThreadType() == GCThreadType::None);
         return m_lineStartTable.offsetForPosition(source(), line0Based, column0Based);
     }
 
-    // Zero-based, in the provider's own text.
+    // Zero-based, in the provider's own text. On any thread, as documentLineColumnForOffset() is: an override reads the
+    // text through withSourceConcurrently().
     virtual LineColumn lineColumnInTextForOffset(unsigned offset)
     {
-        return m_lineStartTable.lineColumnForOffset(source(), offset);
+        return m_lineStartTable.zeroBasedLineColumnForOffset(*this, offset);
     }
 
     // An inline <script> shifts every line of its document, but shifts the column only on its first
     // line, since later lines begin where their own line begins.
-    LineColumn documentLineColumn(LineColumn inText) const
+    LineColumn documentZeroBasedLineColumnForOffset(unsigned offset)
     {
+        auto position = lineColumnInTextForOffset(offset);
         return {
-            m_startPosition.m_line.oneBasedInt() + inText.line,
-            inText.line ? inText.column + 1 : m_startPosition.m_column.oneBasedInt() + inText.column,
+            m_startPosition.m_line.zeroBasedInt() + position.line,
+            position.line ? position.column : m_startPosition.m_column.zeroBasedInt() + position.column,
         };
     }
 
     LineColumn documentLineColumnForOffset(unsigned offset)
     {
-        return documentLineColumn(lineColumnInTextForOffset(offset));
-    }
-
-    LineColumn documentZeroBasedLineColumnForOffset(unsigned offset)
-    {
-        auto inText = lineColumnInTextForOffset(offset);
-        return {
-            m_startPosition.m_line.zeroBasedInt() + inText.line,
-            inText.line ? inText.column : m_startPosition.m_column.zeroBasedInt() + inText.column,
-        };
+        auto position = documentZeroBasedLineColumnForOffset(offset);
+        return { position.line + 1, position.column + 1 };
     }
 
     bool lineStartTableIsBuilt() const { return m_lineStartTable.isBuilt(); }

@@ -62,6 +62,8 @@ class CoordinatedPlatformLayerBuffer;
 class FilterOperations;
 class SkiaBackingStore;
 
+enum class FilterSurfaceAlignment : bool { LocalCoordinates, DevicePixels };
+
 class SkiaCompositingLayer final : public RefCountedAndCanMakeWeakPtr<SkiaCompositingLayer> {
     WTF_MAKE_TZONE_ALLOCATED(SkiaCompositingLayer);
 public:
@@ -234,8 +236,8 @@ private:
 #endif
     bool stopPaintingIntoBackdropIfNeeded(PaintContext&);
     void paintSelfAndChildren(SkCanvas&, PaintContext&);
-    void paintWithIntermediateSurface(SkCanvas&, PaintContext&, const IntRect&, SkPaint*, PaintFunction&&);
-    void paintWithFilter(SkCanvas&, PaintContext&, const TransformationMatrix& layerTransform, const TransformationMatrix& inverseLayerTransform, const FloatRect& localBounds, const SkPaint&, PaintFunction&&);
+    void paintWithIntermediateSurface(SkCanvas&, PaintContext&, const IntRect&, SkPaint*, NOESCAPE const PaintFunction&);
+    void paintWithFilter(SkCanvas&, PaintContext&, const TransformationMatrix& layerTransform, const TransformationMatrix& inverseLayerTransform, const FloatRect& localBounds, const SkPaint&, FilterSurfaceAlignment, NOESCAPE const PaintFunction&);
     FloatSize filterSurfaceScale(const PaintContext&) const;
     void paintWith3DRenderingContext(SkCanvas&, PaintContext&);
     void paintBackdrop(SkCanvas&, PaintContext&);
@@ -243,7 +245,7 @@ private:
     TransformationMatrix replicaTransform() const;
     TransformationMatrix combinedTransform(const PaintContext&) const;
     sk_sp<SkImage> maskImage();
-    FloatPolygon3D geometryFor3DRenderingContext() const;
+    Polygon4D geometryFor3DRenderingContext() const;
     FloatRect transformedFlattenedBounds() const;
     void collect3DRenderingContextLayers(Vector<SkiaCompositingLayer3DRenderingContext::Layer>&);
     void recursiveCleanUpAfterPaint();
@@ -297,6 +299,7 @@ private:
     float opacity() const;
     float opacityForAnimationsState(const AnimationsState*) const;
     const std::optional<Filter> filter() const;
+    bool hasFilter() const;
     IntOutsets unclippedFilterOutsets() const;
 
     struct DebugBorder {
@@ -349,7 +352,7 @@ private:
     // value string/geometry were computed for.
     struct {
         std::optional<unsigned> count;
-        CString string;
+        ASCIICString string;
         float backgroundWidth { 0 };
         float backgroundHeight { 0 };
         float baselineOffset { 0 };
@@ -358,6 +361,7 @@ private:
     std::optional<Filter> m_filter;
     struct {
         sk_sp<SkImageFilter> filter;
+        FilterOperations filterOperations;
         FloatRoundedRect clipRect;
         std::optional<SkPath> clipPath;
     } m_backdrop;
@@ -372,7 +376,7 @@ private:
 #if ENABLE(DAMAGE_TRACKING)
     bool m_damagePropagationEnabled { false };
     std::optional<Damage> m_layerDamage;
-    std::unique_ptr<LayerRectTracker> m_layerRectTracker;
+    const std::unique_ptr<LayerRectTracker> m_layerRectTracker;
     uint64_t m_layerRectID { 0 };
     bool m_groupPropertyChanged { false };
 #endif

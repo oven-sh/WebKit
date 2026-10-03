@@ -146,6 +146,7 @@ public:
     void createProvisionalFrame(ProvisionalFrameCreationParameters&&);
     void commitProvisionalFrame();
     void destroyProvisionalFrame();
+    void updateSandboxFlags(WebCore::SandboxFlags);
     void loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier>);
     WebCore::LocalFrame* provisionalFrame() { return m_provisionalFrame.get(); }
 
@@ -367,7 +368,7 @@ private:
     Markable<WebCore::LayerHostingContextIdentifier> m_layerHostingContextIdentifier;
     Markable<WebCore::FrameIdentifier> m_frameIDBeforeProvisionalNavigation;
 
-    std::unique_ptr<FrameInspectorTarget> m_inspectorTarget;
+    const std::unique_ptr<FrameInspectorTarget> m_inspectorTarget;
 };
 
 RefPtr<WebCore::ShareableBitmap> shareableBitmapFromImageData(WebCore::ImageData&);

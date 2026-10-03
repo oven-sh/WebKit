@@ -39,6 +39,7 @@
 #include "SharedPreferencesForWebProcess.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/ImageBuffer.h>
+#include <WebCore/ImageBufferTransferIdentifier.h>
 #include <WebCore/IntDegrees.h>
 #include <WebCore/NowPlayingManager.h>
 #include <WebCore/PageIdentifier.h>
@@ -163,6 +164,9 @@ public:
     USING_CAN_MAKE_WEAKPTR(WebCore::NowPlayingManagerClient);
 
     IPC::Connection& connection() { return m_connection.get(); }
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    void close() { didClose(connection()); }
+#endif
     IPC::MessageReceiverMap& messageReceiverMap() LIFETIME_BOUND { return m_messageReceiverMap; }
     GPUProcess& gpuProcess() { return m_gpuProcess.get(); }
     WebCore::ProcessIdentifier webProcessIdentifier() const { return m_webProcessIdentifier; }
@@ -349,6 +353,7 @@ private:
     void releaseAudioHardwareListener(RemoteAudioHardwareListenerIdentifier);
     void createRemoteCommandListener(RemoteRemoteCommandListenerIdentifier);
     void releaseRemoteCommandListener(RemoteRemoteCommandListenerIdentifier);
+    void releaseTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier);
     void setMediaOverridesForTesting(MediaOverridesForTesting);
     void configureLoggingChannel(const String&, WTFLogChannelState, WTFLogLevel);
 
@@ -376,7 +381,7 @@ private:
 
     static uint64_t gObjectCountForTesting;
 
-    RefPtr<Logger> m_logger;
+    const RefPtr<Logger> m_logger;
 
     const Ref<IPC::Connection> m_connection;
     IPC::MessageReceiverMap m_messageReceiverMap;
@@ -386,10 +391,10 @@ private:
 #if ENABLE(WEB_AUDIO)
     const std::unique_ptr<RemoteAudioDestinationManager> m_remoteAudioDestinationManager;
 #endif
-    RefPtr<RemoteSharedResourceCache> m_sharedResourceCache;
+    const RefPtr<RemoteSharedResourceCache> m_sharedResourceCache;
 #if ENABLE(VIDEO)
     const RefPtr<RemoteAudioVideoRendererProxyManager> m_remoteAudioVideoRendererProxyManager;
-    Ref<RemoteMediaPlayerManagerProxy> m_remoteMediaPlayerManagerProxy;
+    const Ref<RemoteMediaPlayerManagerProxy> m_remoteMediaPlayerManagerProxy;
 #endif
 #if ENABLE(LINEAR_MEDIA_PLAYER)
     const LazyUniqueRef<GPUConnectionToWebProcess, VideoReceiverEndpointManager> m_videoReceiverEndpointManager;
@@ -430,7 +435,7 @@ private:
     using RemoteGPUMap = HashMap<WebGPUIdentifier, IPC::ScopedActiveMessageReceiveQueue<RemoteGPU>>;
     RemoteGPUMap m_remoteGPUMap;
 #if ENABLE(ENCRYPTED_MEDIA)
-    RefPtr<RemoteCDMFactoryProxy> m_cdmFactoryProxy;
+    const RefPtr<RemoteCDMFactoryProxy> m_cdmFactoryProxy;
 #endif
 #if USE(AUDIO_SESSION)
     RefPtr<RemoteAudioSessionProxy> m_audioSessionProxy;
@@ -439,7 +444,7 @@ private:
     const std::unique_ptr<RemoteMediaSessionHelperProxy> m_mediaSessionHelperProxy;
 #endif
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
-    RefPtr<RemoteLegacyCDMFactoryProxy> m_legacyCdmFactoryProxy;
+    const RefPtr<RemoteLegacyCDMFactoryProxy> m_legacyCdmFactoryProxy;
 #endif
 #if HAVE(AVASSETREADER)
     const std::unique_ptr<RemoteImageDecoderAVFProxy> m_imageDecoderAVFProxy;

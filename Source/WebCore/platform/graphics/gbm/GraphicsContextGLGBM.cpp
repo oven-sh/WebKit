@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && USE(GBM)
 #include "ANGLEHeaders.h"
+#include "ANGLEUtilities.h"
 #include "CoordinatedPlatformLayerBufferDMABuf.h"
 #include "DMABufBuffer.h"
 #include "DRMDeviceManager.h"
@@ -35,6 +36,7 @@
 #include "GBMVersioning.h"
 #include "GLFence.h"
 #include "Logging.h"
+#include "PixelBuffer.h"
 #include "PlatformDisplay.h"
 #include <drm_fourcc.h>
 #include <wtf/unix/UnixFileDescriptor.h>
@@ -251,7 +253,7 @@ void GraphicsContextGLGBM::prepareForDisplay()
     m_layerContentsDisplayDelegate->setDisplayBuffer(WTF::move(buffer));
 }
 
-void GraphicsContextGLGBM::prepareForDisplayWithFinishedSignal(Function<void()>&& finishedSignalCreator)
+void GraphicsContextGLGBM::prepareForDisplayWithFinishedSignal(NOESCAPE const Function<void()>& finishedSignalCreator)
 {
     if (!makeContextCurrent())
         return;
@@ -266,6 +268,26 @@ void GraphicsContextGLGBM::prepareForDisplayWithFinishedSignal(Function<void()>&
         forceContextLost();
         return;
     }
+}
+
+RefPtr<PixelBuffer> GraphicsContextGLGBM::readCompositedResults()
+{
+    if (!m_displayBuffer.image)
+        return nullptr;
+    if (!makeContextCurrent())
+        return nullptr;
+    if (getInternalFramebufferSize().isEmpty())
+        return nullptr;
+    // bindNextDrawingBuffer() leaves m_texture bound to the buffer that will be rendered into next,
+    // so the presented frame is only available as the m_displayBuffer image.
+    ScopedTexture displayTexture;
+    {
+        ScopedRestoreTextureBinding restoreBinding(TEXTURE_BINDING_2D, TEXTURE_2D);
+        GL_BindTexture(GL_TEXTURE_2D, displayTexture);
+        GL_EGLImageTargetTexture2DOES(GL_TEXTURE_2D, m_displayBuffer.image);
+    }
+    ScopedScratchReadFramebufferBinding fboBinding(m_isForWebGL2, m_state.boundReadFBO, displayTexture);
+    return readPixelsForPaintResults();
 }
 
 #if ENABLE(WEBXR)
@@ -328,7 +350,8 @@ bool GraphicsContextGLGBM::enableRequiredWebXRExtensionsImpl()
 {
     return enableExtensionsImpl({
         "GL_OES_EGL_image"_s,
-        "GL_OES_EGL_image_external"_s
+        "GL_OES_EGL_image_external"_s,
+        "GL_EXT_discard_framebuffer"_s
     });
 }
 #endif // ENABLE(WEBXR)

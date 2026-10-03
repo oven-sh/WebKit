@@ -87,10 +87,10 @@ private:
 #endif
 #endif
 
-    Ref<VideoFrameGStreamer> m_videoFrame;
+    const Ref<VideoFrameGStreamer> m_videoFrame;
     std::optional<GstVideoDecoderPlatform> m_videoDecoderPlatform;
 #if USE(TEXTURE_MAPPER)
-    std::unique_ptr<CoordinatedPlatformLayerBuffer> m_buffer;
+    const std::unique_ptr<CoordinatedPlatformLayerBuffer> m_buffer;
     std::optional<GstMappedFrame> m_mappedVideoFrame;
 #else
     sk_sp<SkImage> m_image;

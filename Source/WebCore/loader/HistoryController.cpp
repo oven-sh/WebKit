@@ -250,10 +250,7 @@ void HistoryController::saveDocumentState()
 void HistoryController::saveDocumentAndScrollState()
 {
     Ref frame = m_frame.get();
-    for (RefPtr<Frame> descendant = frame.ptr(); descendant; descendant = descendant->tree().traverseNext(frame.ptr())) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(*descendant);
-        if (!localFrame)
-            continue;
+    for (Ref localFrame : inclusiveDescendantFrames<LocalFrame>(frame)) {
         Ref history = localFrame->loader().history();
         history->saveDocumentState();
         history->saveScrollPositionAndViewStateToItem(protect(history->currentItem()).get());
@@ -559,7 +556,7 @@ void HistoryController::updateForReloadOrReplace()
 
 void HistoryController::updateForStandardLoad(HistoryUpdateType updateType)
 {
-    LOG(History, "HistoryController %p updateForStandardLoad: Updating History for standard load in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader()->url().string().ascii().data());
+    LOG(History, "HistoryController %p updateForStandardLoad: Updating History for standard load in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader()->url().string().utf8());
 
     Ref frameLoader = m_frame->loader();
 
@@ -611,35 +608,42 @@ void HistoryController::updateForRedirectWithLockedBackForwardList()
     bool canRecordHistory = canRecordHistoryForFrame(m_frame);
     auto historyURL = documentLoader ? documentLoader->urlForHistory() : URL { };
 
+    auto createChildItemInParent = [&] {
+        RefPtr page = m_frame->page();
+        RefPtr parentFrame = dynamicDowncast<LocalFrame>(m_frame->tree().parent());
+        if (!page || !parentFrame)
+            return;
+        RefPtr parentCurrentItem = parentFrame->loader().history().currentItem();
+        if (!parentCurrentItem)
+            return;
+        Ref item = createItem(page->historyItemClient(), parentCurrentItem->itemID());
+        parentCurrentItem->setChildItem(item.copyRef());
+        protect(page->backForward())->setChildItem(parentCurrentItem->frameItemID(), WTF::move(item));
+    };
+
     if (documentLoader && documentLoader->isClientRedirect()) {
-        if (!m_currentItem && m_frame->isMainFrame()) {
-            if (!historyURL.isEmpty()) {
-                updateBackForwardListClippedAtTarget(true);
-                if (canRecordHistory) {
-                    Ref frameLoader = m_frame->loader();
-                    protect(frameLoader->client())->updateGlobalHistory();
-                    documentLoader->setDidCreateGlobalHistoryEntry(true);
-                    if (documentLoader->unreachableURL().isEmpty())
-                        protect(frameLoader->client())->updateGlobalHistoryRedirectLinks();
+        if (!m_currentItem) {
+            if (m_frame->isMainFrame()) {
+                if (!historyURL.isEmpty()) {
+                    updateBackForwardListClippedAtTarget(true);
+                    if (canRecordHistory) {
+                        Ref frameLoader = m_frame->loader();
+                        protect(frameLoader->client())->updateGlobalHistory();
+                        documentLoader->setDidCreateGlobalHistoryEntry(true);
+                        if (documentLoader->unreachableURL().isEmpty())
+                            protect(frameLoader->client())->updateGlobalHistoryRedirectLinks();
+                    }
                 }
-            }
+            } else
+                createChildItemInParent();
         }
         // The client redirect replaces the current history item.
         if (RefPtr page = m_frame->page()) {
             auto scope = protect(page->historyItemClient())->ignoreChangesForScopeDuringRedirect(protect(m_frame));
             updateCurrentItem();
         }
-    } else {
-        RefPtr page = m_frame->page();
-        RefPtr parentFrame = dynamicDowncast<LocalFrame>(m_frame->tree().parent());
-        if (page && parentFrame) {
-            if (RefPtr parentCurrentItem = parentFrame->loader().history().currentItem()) {
-                Ref item = createItem(page->historyItemClient(), parentCurrentItem->itemID());
-                parentCurrentItem->setChildItem(item.copyRef());
-                protect(page->backForward())->setChildItem(parentCurrentItem->frameItemID(), WTF::move(item));
-            }
-        }
-    }
+    } else
+        createChildItemInParent();
 
     if (!historyURL.isEmpty() && canRecordHistory) {
         Ref frame = m_frame.get();
@@ -1098,7 +1102,7 @@ void HistoryController::pushState(RefPtr<SerializedScriptValue>&& stateObject, c
     currentItem->setURLString(urlString);
     currentItem->setShouldRestoreScrollPosition(shouldRestoreScrollPosition);
 
-    LOG(History, "HistoryController %p pushState: Adding top item %p, setting url of current item %p to %s, scrollRestoration is %s", this, topItem.ptr(), m_currentItem.get(), urlString.ascii().data(), topItem->shouldRestoreScrollPosition() ? "auto" : "manual");
+    LOG(History, "HistoryController %p pushState: Adding top item %p, setting url of current item %p to %s, scrollRestoration is %s", this, topItem.ptr(), m_currentItem.get(), urlString.utf8(), topItem->shouldRestoreScrollPosition() ? "auto" : "manual");
 
     protect(protect(m_frame)->navigationScheduler())->adjustPendingHistoryNavigationForNewBackForwardEntry();
     protect(page->backForward())->addItem(WTF::move(topItem));
@@ -1119,7 +1123,7 @@ void HistoryController::updateBackForwardListForReplaceState(RefPtr<SerializedSc
     if (!currentItem)
         return;
 
-    LOG(History, "HistoryController %p updateBackForwardListForReplaceState: Setting url of current item %p to %s scrollRestoration %s", this, currentItem.get(), urlString.ascii().data(), currentItem->shouldRestoreScrollPosition() ? "auto" : "manual");
+    LOG(History, "HistoryController %p updateBackForwardListForReplaceState: Setting url of current item %p to %s scrollRestoration %s", this, currentItem.get(), urlString.utf8(), currentItem->shouldRestoreScrollPosition() ? "auto" : "manual");
 
     if (!urlString.isEmpty())
         currentItem->setURLString(urlString);

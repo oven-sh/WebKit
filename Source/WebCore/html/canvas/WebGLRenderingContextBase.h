@@ -102,6 +102,7 @@ class EXTTextureNorm16;
 class HTMLImageElement;
 class ImageData;
 class IntSize;
+class IntRect;
 class KHRParallelShaderCompile;
 class NativeImage;
 class NVShaderNoperspectiveInterpolation;
@@ -146,6 +147,7 @@ class WebGLShader;
 class WebGLShaderPrecisionFormat;
 class WebGLStencilTexturing;
 class WebGLUniformLocation;
+class ScopedWebGLRestoreFramebuffer;
 
 #if ENABLE(MEDIA_STREAM)
 class VideoFrame;
@@ -161,6 +163,8 @@ class OffscreenCanvas;
 
 template<typename> class ExceptionOr;
 
+struct SizedImage;
+
 using WebGLCanvas = Variant<
       Ref<HTMLCanvasElement>
 #if ENABLE(OFFSCREEN_CANVAS)
@@ -170,6 +174,7 @@ using WebGLCanvas = Variant<
 
 class WebGLRenderingContextBase : public GraphicsContextGL::Client, public GPUBasedCanvasRenderingContext {
     WTF_MAKE_TZONE_ALLOCATED(WebGLRenderingContextBase);
+    friend class WebGLDefaultFramebuffer;
 public:
     USING_CAN_MAKE_WEAKPTR(GPUBasedCanvasRenderingContext);
 
@@ -341,7 +346,7 @@ public:
     virtual void texSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&&);
     virtual ExceptionOr<void> texSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLenum format, GCGLenum type, std::optional<TexImageSource>&&);
 
-    virtual ExceptionOr<void> texElementImage2D(GCGLenum target, GCGLenum internalformat, std::optional<CanvasElementImageSource>, std::optional<WebGLCopyElementImageConfig>);
+    virtual ExceptionOr<void> texElementSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, std::optional<CanvasElementImageSource>, std::optional<WebGLCopyElementImageConfig>);
 
     template<typename TypedArray, typename DataType>
     class TypedList {
@@ -537,17 +542,21 @@ protected:
     friend class ScopedClearDepthAndMask;
     friend class ScopedClearStencilAndMask;
     friend class ScopedDisableRasterizerDiscard;
+    friend class ScopedDisableDither;
     friend class ScopedDisableScissorTest;
-    friend class ScopedEnableBackbuffer;
     friend class ScopedInspectorShaderProgramHighlight;
     friend class ScopedScissorTestForRegion;
     friend class ScopedWebGLRestoreFramebuffer;
     friend class ScopedWebGLRestoreRenderbuffer;
     friend class ScopedWebGLRestoreTexture;
 
-    void initializeNewContext(Ref<GraphicsContextGL>);
+    // Returns false if the context is unusable, and must be lost.
+    bool initializeNewContext(Ref<GraphicsContextGL>);
     virtual void initializeContextState() WTF_REQUIRES_LOCK(objectGraphLock());
     virtual void initializeDefaultObjects() WTF_REQUIRES_LOCK(objectGraphLock());
+    // Destroys m_defaultFramebuffer. Must be called while m_context is still the GraphicsContextGL
+    // instance that the default framebuffer objects were created with.
+    void destroyDefaultFramebuffer();
     virtual void detachAndRemoveAllObjects() WTF_REQUIRES_LOCK(objectGraphLock());
 
     // ActiveDOMObject
@@ -594,7 +603,7 @@ protected:
     // Adds a compressed texture format.
     void addCompressedTextureFormat(GCGLenum);
 
-    RefPtr<NativeImage> drawImageIntoBuffer(Image&, int width, int height, int deviceScaleFactor, ASCIILiteral functionName);
+    RefPtr<NativeImage> drawImageIntoBuffer(const SizedImage&, int width, int height, int deviceScaleFactor, ASCIILiteral functionName);
 
 #if ENABLE(VIDEO)
     RefPtr<NativeImage> videoFrameToNativeImage(HTMLVideoElement&, ASCIILiteral functionName);
@@ -695,7 +704,6 @@ protected:
 
     GCGLint m_maxDrawBuffers;
     GCGLint m_maxColorAttachments;
-    GCGLenum m_backDrawBuffer;
     bool m_drawBuffersWebGLRequirementsChecked;
     bool m_drawBuffersSupported;
 
@@ -720,6 +728,7 @@ protected:
     GCGLboolean m_depthMask;
 
     bool m_rasterizerDiscardEnabled { false };
+    bool m_ditherEnabled { true };
 
     bool m_isDepthStencilSupported;
 
@@ -984,6 +993,18 @@ protected:
 
     // Get the framebuffer bound to the given target.
     virtual WebGLFramebuffer* NODELETE getFramebufferBinding(GCGLenum target);
+    // Resolves and redirects the read if the default framebuffer is bound for reading and its
+    // contents need to be resolved first.
+    [[nodiscard]] std::optional<ScopedWebGLRestoreFramebuffer> prepareDefaultFramebufferForReadIfBound(std::optional<IntRect> = std::nullopt);
+    // True when the default framebuffer is the source of reads, i.e. no framebuffer is bound for
+    // reading. WebGL 2 has a separate read framebuffer binding.
+    virtual bool isDefaultFramebufferBoundForRead() const { return !m_framebufferBinding; }
+    // Validates a read of the default framebuffer, which must fail when its READ_BUFFER is NONE.
+    bool validateDefaultFramebufferRead(ASCIILiteral functionName);
+
+    // Restore the GL framebuffer bindings to the state recorded by the WebGL layer
+    // (used by ScopedWebGLRestoreFramebuffer on scope exit).
+    virtual void rebindFramebuffers();
 
     // Helper function to validate input parameters for framebuffer functions.
     // Generate GL error if parameters are illegal.
@@ -1042,7 +1063,6 @@ protected:
     // Clamp the width and height to GL_MAX_VIEWPORT_DIMS.
     IntSize clampedCanvasSize();
 
-    void NODELETE setBackDrawBuffer(GCGLenum);
     void setFramebuffer(const AbstractLocker&, GCGLenum, WebGLFramebuffer*);
 
     // Check if EXT_draw_buffers extension is supported and if it satisfies the WebGL requirements.

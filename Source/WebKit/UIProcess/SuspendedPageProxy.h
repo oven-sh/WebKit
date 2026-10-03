@@ -40,7 +40,7 @@
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
-class RegistrableDomain;
+class Site;
 }
 
 namespace WebKit {
@@ -68,7 +68,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    static RefPtr<WebProcessProxy> findReusableSuspendedPageProcess(WebProcessPool&, const WebCore::RegistrableDomain&, WebsiteDataStore&, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&);
+    static RefPtr<WebProcessProxy> findReusableSuspendedPageProcess(WebProcessPool&, const WebCore::Site&, WebsiteDataStore&, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&);
 
     WebPageProxy* NODELETE page() const;
     WebCore::PageIdentifier webPageID() const { return m_webPageID; }
@@ -156,10 +156,11 @@ private:
     LayerHostingContextID m_contextIDForVisibilityPropagationInGPUProcess { 0 };
 #endif
 #endif
-} SWIFT_SHARED_REFERENCE(refSuspendedPageProxy, derefSuspendedPageProxy) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refSuspendedPageProxy, derefSuspendedPageProxy);
 
 } // namespace WebKit
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refSuspendedPageProxy(WebKit::SuspendedPageProxy* WTF_NONNULL obj)
 {
     obj->ref();
@@ -169,3 +170,4 @@ inline void derefSuspendedPageProxy(WebKit::SuspendedPageProxy* WTF_NONNULL obj)
 {
     obj->deref();
 }
+#endif

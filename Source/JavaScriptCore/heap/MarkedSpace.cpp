@@ -143,7 +143,7 @@ static Vector<size_t> sizeClasses()
 }
 
 template<typename TableType, typename SizeClassCons, typename DefaultCons>
-void buildSizeClassTable(TableType& table, const SizeClassCons& cons, const DefaultCons& defaultCons)
+void buildSizeClassTable(TableType& table, NOESCAPE const SizeClassCons& cons, NOESCAPE const DefaultCons& defaultCons)
 {
     size_t nextIndex = 0;
     for (size_t sizeClass : sizeClasses()) {
@@ -347,14 +347,6 @@ void MarkedSpace::prepareForConservativeScan()
     }
 }
 
-void MarkedSpace::prepareForMarking()
-{
-    if (heap().collectionScope() == CollectionScope::Eden)
-        m_preciseAllocationsOffsetForThisCollection = m_preciseAllocationsNurseryOffset;
-    else
-        m_preciseAllocationsOffsetForThisCollection = 0;
-}
-
 void MarkedSpace::resumeAllocating()
 {
     m_conservativeScanIsPrepared = false;
@@ -401,10 +393,12 @@ void MarkedSpace::beginMarking()
 {
     switch (heap().collectionScope().value()) {
     case CollectionScope::Eden: {
+        m_preciseAllocationsOffsetForThisCollection = m_preciseAllocationsNurseryOffset;
         m_edenVersion = nextVersion(m_edenVersion);
         break;
     }
     case CollectionScope::Full: {
+        m_preciseAllocationsOffsetForThisCollection = 0;
         forEachDirectory(
             [&] (BlockDirectory& directory) -> IterationStatus {
                 directory.beginMarkingForFullCollection();

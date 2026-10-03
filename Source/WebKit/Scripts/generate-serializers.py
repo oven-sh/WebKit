@@ -137,7 +137,6 @@ def matches_bundle(item, bundle_filter):
 # EncodeRequestBody - Include the body of the WebCore::ResourceRequest when encoding (by default, it is omitted).
 # Validator - additional C++ to validate the value when decoding
 # NotSerialized - member is present in structure but intentionally not serialized.
-# SecureCodingAllowed - ObjC classes to allow when decoding.
 # OptionalTupleBits - This member stores bits of whether each following member is serialized. Attribute must be immediately before members with OptionalTupleBit.
 # OptionalTupleBit - The name of the bit indicating whether this member is serialized.
 # SupportWKKeyedCoder - For webkit_secure_coding types, in addition to the preferred property list code path, support SupportWKKeyedCoder
@@ -1025,23 +1024,17 @@ def decode_type(type, serialized_types):
         if member.condition is not None:
             result.append(f'#if {member.condition}')
         sanitized_variable_name = sanitize_string_for_variable_name(member.name)
-        r = re.compile(r'SecureCodingAllowed=\[(.*)\]')
-        decodable_classes = [r.match(m).groups()[0] for m in list(filter(r.match, member.attributes))]
-        if len(decodable_classes) == 1:
-            match = re.search("RetainPtr<(.*)>", member.type)
-            assert match
-            for attribute in member.attributes:
-                precondition = re.search(r'Precondition=\'(.*)\'', attribute)
-                if precondition:
-                    condition, = precondition.groups()
-                    result.append(f'    if (!({condition}))')
-                    result.append('        return std::nullopt;')
-                    break
-                else:
-                    condition = re.search(r'Precondition', attribute)
-                    assert not condition
-            result.append(f'    auto {sanitized_variable_name} = decoder.decodeWithAllowedClasses<{member.type}>({{ {decodable_classes[0]} }});')
-        elif member.is_subclass:
+        for attribute in member.attributes:
+            precondition = re.search(r'Precondition=\'(.*)\'', attribute)
+            if precondition:
+                condition, = precondition.groups()
+                result.append(f'    if (!({condition}))')
+                result.append('        return std::nullopt;')
+                break
+            else:
+                condition = re.search(r'Precondition', attribute)
+                assert not condition
+        if member.is_subclass:
             result.append(f'    if (type == {type.subclass_enum_name()}::{member.name}) {{')
             typename = f'{member.namespace}::{member.name}'
             result.append(f'        auto result = decoder.decode<Ref<{typename}>>();')
@@ -1074,7 +1067,6 @@ def decode_type(type, serialized_types):
                 result.append('            return std::nullopt;')
                 result.append('    }')
         else:
-            assert len(decodable_classes) == 0
             if should_decode_ref(member, serialized_types):
                 result.append(f'    auto {sanitized_variable_name} = decoder.decode<Ref<{member.type}>>();')
             else:
@@ -1321,7 +1313,7 @@ def generate_impl(serialized_types, serialized_enums, headers, generating_webkit
         result.append(f'    encoder << (instance ? std::optional(WebKit::{type.wrapper}(instance)) : std::nullopt);')
         result.append('}')
         result.append('')
-        result.append(f'template<> std::optional<RetainPtr<id>> decodeObjectDirectlyRequiringAllowedClasses<{type.ns_type}>(IPC::Decoder& decoder)')
+        result.append(f'template<> std::optional<RetainPtr<id>> decodeObjectDirectly<{type.ns_type}>(IPC::Decoder& decoder)')
         result.append('{')
         result.append(f'    auto result = decoder.decode<std::optional<WebKit::{type.wrapper}>>();')
         result.append('    if (!result)')
@@ -1887,11 +1879,6 @@ def parse_serialized_types(file):
                 complete, _, validator, _ = match.groups()
                 member_attributes.append(validator)
                 member_attributes_s = member_attributes_s.replace(complete, "")
-            match = re.search(r"((, |^)+(SecureCodingAllowed=\[.*?\]))(, |$)?", member_attributes_s)
-            if match:
-                complete, _, allow_list, _ = match.groups()
-                member_attributes.append(allow_list)
-                member_attributes_s = member_attributes_s.replace(complete, "")
             member_attributes += [member_attribute.strip() for member_attribute in member_attributes_s.split(",")]
             if struct_or_class == 'webkit_secure_coding':
                 dictionary_members.append(MemberVariable(member_type, member_name, member_condition, member_attributes))
@@ -1943,7 +1930,7 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
     result.append('    return dictionaryForWebKitSecureCodingTypeFromWKKeyedCoder(object);')
     result.append('}')
     result.append('')
-    result.append('template<typename T> static RetainPtr<NSDictionary> dictionaryFromVector(const Vector<std::pair<String, RetainPtr<T>>>& vector)')
+    result.append('template<typename T> RetainPtr<NSDictionary> dictionaryFromVector(const Vector<std::pair<String, RetainPtr<T>>>& vector)')
     result.append('{')
     result.append('    NSMutableDictionary *dictionary = [NSMutableDictionary dictionaryWithCapacity:vector.size()];')
     result.append('    for (auto& pair : vector)')
@@ -1951,14 +1938,14 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
     result.append('    return dictionary;')
     result.append('}')
     result.append('')
-    result.append('template<typename T> static RetainPtr<NSDictionary> dictionaryFromOptionalVector(const std::optional<Vector<std::pair<String, RetainPtr<T>>>>& vector)')
+    result.append('template<typename T> RetainPtr<NSDictionary> dictionaryFromOptionalVector(const std::optional<Vector<std::pair<String, RetainPtr<T>>>>& vector)')
     result.append('{')
     result.append('    if (!vector)')
     result.append('        return nil;')
     result.append('    return dictionaryFromVector<T>(*vector);')
     result.append('}')
     result.append('')
-    result.append('template<typename T> static Vector<std::pair<String, RetainPtr<T>>> vectorFromDictionary(NSDictionary *dictionary)')
+    result.append('template<typename T> Vector<std::pair<String, RetainPtr<T>>> vectorFromDictionary(NSDictionary *dictionary)')
     result.append('{')
     result.append('    if (![dictionary isKindOfClass:NSDictionary.class])')
     result.append('        return { };')
@@ -1970,28 +1957,28 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
     result.append('    return result;')
     result.append('}')
     result.append('')
-    result.append('template<typename T> static std::optional<Vector<std::pair<String, RetainPtr<T>>>> optionalVectorFromDictionary(NSDictionary *dictionary)')
+    result.append('template<typename T> std::optional<Vector<std::pair<String, RetainPtr<T>>>> optionalVectorFromDictionary(NSDictionary *dictionary)')
     result.append('{')
     result.append('    if (![dictionary isKindOfClass:NSDictionary.class])')
     result.append('        return std::nullopt;')
     result.append('    return vectorFromDictionary<T>(dictionary);')
     result.append('}')
     result.append('')
-    result.append('template<typename T> static RetainPtr<NSArray> arrayFromVector(const Vector<RetainPtr<T>>& vector)')
+    result.append('template<typename T> RetainPtr<NSArray> arrayFromVector(const Vector<RetainPtr<T>>& vector)')
     result.append('{')
     result.append('    return createNSArray(vector, [] (auto& t) {')
     result.append('        return t.get();')
     result.append('    });')
     result.append('}')
     result.append('')
-    result.append('template<typename T> static RetainPtr<NSArray> arrayFromOptionalVector(const std::optional<Vector<RetainPtr<T>>>& vector)')
+    result.append('template<typename T> RetainPtr<NSArray> arrayFromOptionalVector(const std::optional<Vector<RetainPtr<T>>>& vector)')
     result.append('{')
     result.append('    if (!vector)')
     result.append('        return nil;')
     result.append('    return arrayFromVector<T>(*vector);')
     result.append('}')
     result.append('')
-    result.append('template<typename T> static Vector<RetainPtr<T>> vectorFromArray(NSArray *array)')
+    result.append('template<typename T> Vector<RetainPtr<T>> vectorFromArray(NSArray *array)')
     result.append('{')
     result.append('    if (![array isKindOfClass:NSArray.class])')
     result.append('        return { };')
@@ -2004,7 +1991,7 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
     result.append('    return result;')
     result.append('}')
     result.append('')
-    result.append('template<typename T> static std::optional<Vector<RetainPtr<T>>> optionalVectorFromArray(NSArray *array)')
+    result.append('template<typename T> std::optional<Vector<RetainPtr<T>>> optionalVectorFromArray(NSArray *array)')
     result.append('{')
     result.append('    if (![array isKindOfClass:NSArray.class])')
     result.append('        return std::nullopt;')

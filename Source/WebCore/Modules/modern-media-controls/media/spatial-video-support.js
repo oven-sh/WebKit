@@ -36,12 +36,13 @@ class SpatialVideoSupport extends MediaControllerSupport
         this._lastX = 0;
         this._lastY = 0;
         this._projection = "equirect360";
+        this._cameraFieldOfView = SpatialVideoSupport.DefaultCameraFieldOfView;
         this._maybeEnable();
     }
 
     get mediaEvents()
     {
-        return ["loadedmetadata", "resize", "webkitprojectionchanged"];
+        return ["loadedmetadata", "resize", "webkitprojectionchanged", "webkitcameraviewchanged"];
     }
 
     get tracksToMonitor()
@@ -86,6 +87,8 @@ class SpatialVideoSupport extends MediaControllerSupport
             return;
         }
 
+        this._applyDeclaredCameraView(media);
+
         if (this._active) {
             if (resolved.projection === this._projection && resolved.fovDegrees === this._fovDegrees)
                 return;
@@ -112,7 +115,7 @@ class SpatialVideoSupport extends MediaControllerSupport
         if (declared)
             return { projection: declared, fovDegrees: null };
 
-        const fov = typeof host.spatialVideoHorizontalFieldOfView === "number" ? host.spatialVideoHorizontalFieldOfView : null;
+        const fov = typeof host.spatialVideoHorizontalFieldOfView === "number" ? host.spatialVideoHorizontalFieldOfView / SpatialVideoSupport.FieldOfViewScale : null;
         switch (host.spatialVideoProjectionKind) {
         case "Equirectangular":
             return { projection: "equirect360", fovDegrees: null };
@@ -123,6 +126,18 @@ class SpatialVideoSupport extends MediaControllerSupport
             return { projection: "wideFOV", fovDegrees: fov };
         }
         return null;
+    }
+
+    _applyDeclaredCameraView(media)
+    {
+        const fieldOfView = parseFloat(media.getAttribute("x-webkit-fieldofview"));
+        this._cameraFieldOfView = isNaN(fieldOfView) ? SpatialVideoSupport.DefaultCameraFieldOfView : clampFieldOfView(fieldOfView);
+
+        const yaw = parseFloat(media.getAttribute("x-webkit-yaw"));
+        this._yaw = isNaN(yaw) ? 0 : yaw * Math.PI / 180;
+
+        const pitch = parseFloat(media.getAttribute("x-webkit-pitch"));
+        this._pitch = isNaN(pitch) ? 0 : clampPitch(pitch * Math.PI / 180);
     }
 
     _enable()
@@ -216,6 +231,7 @@ class SpatialVideoSupport extends MediaControllerSupport
             gl.texParameterf(gl.TEXTURE_2D, anisoExtension.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, maxAniso));
         }
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+        this._applyMipmapLimit();
         return true;
     }
 
@@ -257,10 +273,68 @@ class SpatialVideoSupport extends MediaControllerSupport
         } else if (projection === "equirect180") {
             this._mesh = this._makeSphere(Math.PI);
             this._feather = SpatialVideoSupport.FeatherFraction;
+        } else if (projection === "equiAngularCubemap") {
+            this._mesh = this._makeEquiAngularCubemap();
+            this._feather = 0;
         } else {
             this._mesh = this._makeSphere(2 * Math.PI);
             this._feather = 0;
         }
+        this._applyMipmapLimit();
+    }
+
+    _applyMipmapLimit()
+    {
+        const gl = this._gl;
+        if (!this._texture)
+            return;
+        gl.bindTexture(gl.TEXTURE_2D, this._texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, this._maximumMipmapLevel());
+    }
+
+    _maximumMipmapLevel()
+    {
+        if (this._projection !== "equiAngularCubemap")
+            return SpatialVideoSupport.UnlimitedMipmapLevel;
+        const media = this.mediaController.media;
+        const face = Math.min(media.videoWidth / SpatialVideoSupport.CubemapColumns, media.videoHeight / SpatialVideoSupport.CubemapRows);
+        if (!face)
+            return SpatialVideoSupport.UnlimitedMipmapLevel;
+        return Math.max(0, Math.floor(Math.log2(Math.max(1, face / SpatialVideoSupport.MinimumCubemapFaceTexels))));
+    }
+
+    _makeEquiAngularCubemap(radius = 10)
+    {
+        const segments = 48, positions = [], texCoords = [], edges = [], indices = [];
+        const media = this.mediaController.media;
+        const tileWidth = 1 / SpatialVideoSupport.CubemapColumns, tileHeight = 1 / SpatialVideoSupport.CubemapRows;
+        const insetU = media.videoWidth ? 0.5 / media.videoWidth : 0;
+        const insetV = media.videoHeight ? 0.5 / media.videoHeight : 0;
+        for (const face of EquiAngularCubemapFaces) {
+            const base = positions.length / 3;
+            const minU = face.column * tileWidth + insetU, maxU = (face.column + 1) * tileWidth - insetU;
+            const minV = face.row * tileHeight + insetV, maxV = (face.row + 1) * tileHeight - insetV;
+            for (let i = 0; i <= segments; i++) {
+                const t = -1 + 2 * i / segments;
+                for (let j = 0; j <= segments; j++) {
+                    const s = -1 + 2 * j / segments;
+                    const direction = equiAngularCubemapDirection(face.axis, Math.tan(s * Math.PI / 4), Math.tan(t * Math.PI / 4));
+                    const length = Math.hypot(direction[0], direction[1], direction[2]);
+                    positions.push(radius * direction[0] / length, radius * direction[1] / length, radius * direction[2] / length);
+                    const [localU, localV] = rotateUnitSquare((s + 1) / 2, (1 - t) / 2, face.rotation);
+                    texCoords.push(minU + localU * (maxU - minU), minV + localV * (maxV - minV));
+                    edges.push(0);
+                }
+            }
+            const cols = segments + 1;
+            for (let i = 0; i < segments; i++) {
+                for (let j = 0; j < segments; j++) {
+                    const topLeft = base + i * cols + j, bottomLeft = topLeft + cols;
+                    indices.push(topLeft, topLeft + 1, bottomLeft, topLeft + 1, bottomLeft + 1, bottomLeft);
+                }
+            }
+        }
+        return this._uploadMesh(positions, texCoords, edges, indices);
     }
 
     _makeSphere(span, radius = 10)
@@ -352,8 +426,7 @@ class SpatialVideoSupport extends MediaControllerSupport
             event.stopPropagation();
             this._yaw -= dx * SpatialVideoSupport.DragSpeed;
             this._pitch -= dy * SpatialVideoSupport.DragSpeed;
-            const pitchLimit = Math.PI / 2 - 0.01;
-            this._pitch = Math.max(-pitchLimit, Math.min(pitchLimit, this._pitch));
+            this._pitch = clampPitch(this._pitch);
             this._lastX = event.clientX;
             this._lastY = event.clientY;
         };
@@ -371,11 +444,17 @@ class SpatialVideoSupport extends MediaControllerSupport
                 this._moved = false;
             }
         };
+        this._onWheel = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this._cameraFieldOfView = clampFieldOfView(this._cameraFieldOfView + event.deltaY * SpatialVideoSupport.ZoomSpeed);
+        };
         container.addEventListener("pointerdown", this._onPointerDown, true);
         container.addEventListener("pointermove", this._onPointerMove, true);
         container.addEventListener("pointerup", this._onPointerUp, true);
         container.addEventListener("pointercancel", this._onPointerUp, true);
         container.addEventListener("click", this._onClick, true);
+        container.addEventListener("wheel", this._onWheel, true);
     }
 
     _removeInteraction()
@@ -388,6 +467,7 @@ class SpatialVideoSupport extends MediaControllerSupport
         container.removeEventListener("pointerup", this._onPointerUp, true);
         container.removeEventListener("pointercancel", this._onPointerUp, true);
         container.removeEventListener("click", this._onClick, true);
+        container.removeEventListener("wheel", this._onWheel, true);
         if (this._savedContainerTouchAction !== undefined)
             container.style.touchAction = this._savedContainerTouchAction;
     }
@@ -450,7 +530,7 @@ class SpatialVideoSupport extends MediaControllerSupport
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.enable(gl.DEPTH_TEST);
 
-        const projection = perspective(SpatialVideoSupport.CameraFOV, this._canvas.width / this._canvas.height, 0.05, 100);
+        const projection = perspective(this._cameraFieldOfView, this._canvas.width / this._canvas.height, 0.05, 100);
         const view = mul4(rotX(this._pitch), rotY(this._yaw));
         gl.uniformMatrix4fv(this._mvpLocation, false, new Float32Array(mul4(projection, view)));
         gl.uniform1f(this._featherLocation, this._feather);
@@ -470,7 +550,17 @@ class SpatialVideoSupport extends MediaControllerSupport
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.index);
         gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
 
+        this._reportCamera();
+
         this._animationFrame = requestAnimationFrame(() => this._drawLoop());
+    }
+
+    _reportCamera()
+    {
+        const host = this.mediaController.host;
+        if (!host || typeof host.spatialCameraDidMove !== "function")
+            return;
+        host.spatialCameraDidMove(this._yaw * 180 / Math.PI, this._pitch * 180 / Math.PI, this._cameraFieldOfView);
     }
 
     _teardown()
@@ -492,9 +582,17 @@ class SpatialVideoSupport extends MediaControllerSupport
 }
 
 SpatialVideoSupport.FeatherFraction = 0.12;
-SpatialVideoSupport.CameraFOV = 80;
+SpatialVideoSupport.FieldOfViewScale = 1000;
+SpatialVideoSupport.DefaultCameraFieldOfView = 80;
+SpatialVideoSupport.MinimumCameraFieldOfView = 30;
+SpatialVideoSupport.MaximumCameraFieldOfView = 110;
 SpatialVideoSupport.DragTolerance = 3;
 SpatialVideoSupport.DragSpeed = 0.005;
+SpatialVideoSupport.ZoomSpeed = 0.1;
+SpatialVideoSupport.CubemapColumns = 3;
+SpatialVideoSupport.CubemapRows = 2;
+SpatialVideoSupport.MinimumCubemapFaceTexels = 8;
+SpatialVideoSupport.UnlimitedMipmapLevel = 1000;
 const ProjectionAttributeValues = {
     "none": "none",
     "equirectangular": "equirect360",
@@ -504,12 +602,66 @@ const ProjectionAttributeValues = {
     "parametric": "wideFOV",
     "wfov": "wideFOV",
     "fisheye": "fisheye",
+    "equiangularcubemap": "equiAngularCubemap",
+    "eac": "equiAngularCubemap",
 };
+
+const EquiAngularCubemapFaces = [
+    { axis: "left", column: 0, row: 0, rotation: 0 },
+    { axis: "front", column: 1, row: 0, rotation: 0 },
+    { axis: "right", column: 2, row: 0, rotation: 0 },
+    { axis: "down", column: 0, row: 1, rotation: 1 },
+    { axis: "back", column: 1, row: 1, rotation: 3 },
+    { axis: "up", column: 2, row: 1, rotation: 1 },
+];
+
+function equiAngularCubemapDirection(axis, u, v)
+{
+    switch (axis) {
+    case "front":
+        return [u, v, -1];
+    case "back":
+        return [-u, v, 1];
+    case "left":
+        return [-1, v, -u];
+    case "right":
+        return [1, v, u];
+    case "up":
+        return [u, 1, v];
+    case "down":
+        return [u, -1, -v];
+    }
+    return [u, v, -1];
+}
+
+function rotateUnitSquare(u, v, rotation)
+{
+    switch (rotation & 3) {
+    case 1:
+        return [v, 1 - u];
+    case 2:
+        return [1 - u, 1 - v];
+    case 3:
+        return [1 - v, u];
+    }
+    return [u, v];
+}
 
 function canvasSizeChanged(canvas)
 {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     return canvas.width !== Math.floor(canvas.clientWidth * dpr) || canvas.height !== Math.floor(canvas.clientHeight * dpr);
+}
+
+function clampFieldOfView(degrees)
+{
+    return Math.max(SpatialVideoSupport.MinimumCameraFieldOfView, Math.min(SpatialVideoSupport.MaximumCameraFieldOfView, degrees));
+}
+
+function clampPitch(radians)
+{
+    const limit = Math.PI / 2 - 0.01;
+    return Math.max(-limit, Math.min(limit, radians));
 }
 
 function perspective(fovDegrees, aspect, near, far)

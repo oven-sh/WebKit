@@ -103,7 +103,7 @@ RenderLayerScrollableArea::RenderLayerScrollableArea(RenderLayer& layer)
 {
     auto& renderer = m_layer.renderer();
     if (renderer.settings().cssScrollAnchoringEnabled() && !is<HTMLHtmlElement>(renderer.element()) && !is<HTMLBodyElement>(renderer.element()))
-        m_scrollAnchoringController = WTF::makeUnique<ScrollAnchoringController>(*this);
+        lazyInitialize(m_scrollAnchoringController, WTF::makeUnique<ScrollAnchoringController>(*this));
 }
 
 RenderLayerScrollableArea::~RenderLayerScrollableArea() = default;
@@ -1962,7 +1962,7 @@ void RenderLayerScrollableArea::scrollByRecursively(const IntSize& delta, Scroll
     auto& renderer = m_layer.renderer();
     bool restrictedByLineClamp = false;
     if (renderer.parent())
-        restrictedByLineClamp = !renderer.parent()->style().lineClamp().isNone();
+        restrictedByLineClamp = renderer.parent()->style().hasLegacyLineClamp();
 
     if (renderer.hasNonVisibleOverflow() && !restrictedByLineClamp) {
         ScrollOffset newScrollOffset = scrollOffset() + delta;

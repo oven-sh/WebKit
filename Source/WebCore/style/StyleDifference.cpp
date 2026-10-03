@@ -233,10 +233,10 @@ public:
     {
         ASSERT(&a != &b);
 
-        if (a.lineClamp != b.lineClamp || a.initialLetter != b.initialLetter)
+        if (a.initialLetter != b.initialLetter)
             return true;
 
-        if (a.shapeMargin != b.shapeMargin)
+        if (a.shapeMargin != b.shapeMargin || a.shapeImageThreshold != b.shapeImageThreshold)
             return true;
 
         if (a.columnGap != b.columnGap || a.rowGap != b.rowGap)
@@ -388,9 +388,7 @@ public:
     #endif
             || a.listStyleType != b.listStyleType
             || a.listStyleImage != b.listStyleImage
-            || a.blockEllipsis != b.blockEllipsis
-            || a.borderHorizontalSpacing != b.borderHorizontalSpacing
-            || a.borderVerticalSpacing != b.borderVerticalSpacing)
+            || a.blockEllipsis != b.blockEllipsis)
             return true;
 
         if (a.textStrokeWidth != b.textStrokeWidth)
@@ -476,8 +474,10 @@ public:
             return true;
 
         if (&a.inheritedData() != &b.inheritedData()) {
-            if (a.inheritedData().lineHeight != b.inheritedData().lineHeight
-                || a.inheritedData().textAutosizingAdjustedLineHeight != b.inheritedData().textAutosizingAdjustedLineHeight)
+            if (a.inheritedData().textAutosizingAdjustedLineHeight != b.inheritedData().textAutosizingAdjustedLineHeight
+                || a.inheritedData().lineHeight != b.inheritedData().lineHeight
+                || a.inheritedData().borderHorizontalSpacing != b.inheritedData().borderHorizontalSpacing
+                || a.inheritedData().borderVerticalSpacing != b.inheritedData().borderVerticalSpacing)
                 return true;
 
             if (a.inheritedData().fontData != b.inheritedData().fontData)
@@ -807,6 +807,7 @@ public:
             || a.accentColor != b.accentColor
             || a.insideDefaultButton != b.insideDefaultButton
             || a.insideSubmitButton != b.insideSubmitButton
+            || a.paintOrder != b.paintOrder
     #if ENABLE(DARK_MODE_CSS)
             || a.colorScheme != b.colorScheme
     #endif

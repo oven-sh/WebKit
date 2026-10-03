@@ -80,12 +80,12 @@ private:
     VideoEncoder::Config m_config;
     VideoEncoder::DescriptionCallback m_descriptionCallback;
     VideoEncoder::OutputCallback m_outputCallback;
-    RefPtr<WebKitVideoEncoderBitRateAllocation> m_bitrateAllocation;
+    const RefPtr<WebKitVideoEncoderBitRateAllocation> m_bitrateAllocation;
     int64_t m_timestamp { 0 };
     std::optional<uint64_t> m_duration;
     bool m_isClosed { false };
     bool m_isInitialized { false };
-    RefPtr<GStreamerElementHarness> m_harness;
+    const RefPtr<GStreamerElementHarness> m_harness;
     GUniquePtr<GstVideoConverter> m_colorConvert;
     GRefPtr<GstCaps> m_colorConvertInputCaps;
     GRefPtr<GstCaps> m_colorConvertOutputCaps;
@@ -268,7 +268,7 @@ GStreamerInternalVideoEncoder::GStreamerInternalVideoEncoder(const VideoEncoder:
         delete static_cast<ThreadSafeWeakPtr<GStreamerInternalVideoEncoder>*>(data);
     }, static_cast<GConnectFlags>(0));
 
-    m_harness = GStreamerElementHarness::create(WTF::move(element), [weakThis = ThreadSafeWeakPtr { *this }, this](auto&, GRefPtr<GstSample>&& outputSample) {
+    lazyInitialize(m_harness, GStreamerElementHarness::create(WTF::move(element), [weakThis = ThreadSafeWeakPtr { *this }, this](auto&, GRefPtr<GstSample>&& outputSample) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -291,7 +291,7 @@ GStreamerInternalVideoEncoder::GStreamerInternalVideoEncoder(const VideoEncoder:
 
         VideoEncoder::EncodedFrame encodedFrame { encodedImage.createVector(), isKeyFrame, m_timestamp, m_duration, temporalIndex };
         m_outputCallback({ WTF::move(encodedFrame) });
-    });
+    }));
 }
 
 GStreamerInternalVideoEncoder::~GStreamerInternalVideoEncoder()
@@ -337,7 +337,7 @@ bool GStreamerInternalVideoEncoder::encode(VideoEncoder::RawFrame&& rawFrame, bo
     auto orientation = makeString(gstVideoFrame.isMirrored() ? "flip-"_s : ""_s, "rotate-"_s, gstVideoFrame.rotation());
     if (orientation != m_orientation) {
         auto orientationCString = orientation.utf8();
-        GST_DEBUG_OBJECT(m_harness->element(), "New orientation: %s", orientationCString.legacyCStringPointer());
+        GST_DEBUG_OBJECT(m_harness->element(), "New orientation: %s", orientationCString);
         GRefPtr tags = adoptGRef(gst_tag_list_new(GST_TAG_IMAGE_ORIENTATION, orientationCString.legacyCStringPointer(), nullptr));
         GRefPtr event = adoptGRef(gst_event_new_tag(tags.leakRef()));
         m_harness->storeStickyEvent(event);

@@ -163,7 +163,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncTest, (JSGlobalObject* globalObject, Cal
     JSString* str = callFrame->argument(0).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (regExpExecWatchpointIsValid(vm, thisObject)) [[likely]] {
+    if (regExpExecWatchpointIsValid(vm, globalObject, thisObject)) [[likely]] {
         auto* regExp = dynamicDowncast<RegExpObject>(thisValue);
         if (!regExp) [[unlikely]]
             return throwVMTypeError(globalObject, scope, "Builtin RegExp exec can only be called on a RegExp object"_s);
@@ -307,7 +307,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncMatch, (JSGlobalObject* globalObject, Ca
 
     // Fast path: receiver is a primordial RegExpObject with no observable side effects.
     auto* regExpObject = dynamicDowncast<RegExpObject>(thisObject);
-    if (regExpObject && regExpObject->isSymbolMatchFastAndNonObservable()) [[likely]]
+    if (regExpObject && regExpObject->isSymbolMatchFastAndNonObservable(globalObject)) [[likely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(regExpMatchFast(globalObject, regExpObject, string)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(regExpMatchSlow(globalObject, thisObject, string)));
@@ -574,12 +574,12 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoGetterFlags, (JSGlobalObject* globalObject, 
         return throwVMTypeError(globalObject, scope, "The RegExp.prototype.flags getter can only be called on an object"_s);
 
     if (auto* regExpObject = dynamicDowncast<RegExpObject>(thisValue); regExpObject && regExpFlagsWatchpointIsValid(vm, regExpObject)) [[likely]]
-        return JSValue::encode(jsString(vm, String::fromLatin1(Yarr::flagsString(regExpObject->regExp()->flags()).data())));
+        return JSValue::encode(jsString(vm, String { Yarr::flagsString(regExpObject->regExp()->flags()).span() }));
 
     auto flags = flagsString(globalObject, asObject(thisValue));
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    return JSValue::encode(jsString(vm, String::fromLatin1(flags.data())));
+    return JSValue::encode(jsString(vm, String { flags.span() }));
 }
 
 JSC_DEFINE_HOST_FUNCTION(regExpProtoGetterSource, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -615,7 +615,7 @@ JSValue regExpSearchGeneric(JSGlobalObject* globalObject, JSObject* thisObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (regExpExecWatchpointIsValid(vm, thisObject)) [[likely]] {
+    if (regExpExecWatchpointIsValid(vm, globalObject, thisObject)) [[likely]] {
         auto* regExp = dynamicDowncast<RegExpObject>(thisObject);
         if (!regExp) [[unlikely]] {
             throwTypeError(globalObject, scope, "Builtin RegExp exec can only be called on a RegExp object"_s);
@@ -680,7 +680,7 @@ template<typename ControlFunc, typename PushFunc>
 MatchResult genericSplit(
     JSGlobalObject* globalObject, RegExp* regexp, JSString* inputString, StringView input, unsigned inputSize, unsigned& position,
     unsigned& matchPosition, bool regExpIsSticky, bool regExpIsUnicode,
-    const ControlFunc& control, const PushFunc& push)
+    NOESCAPE const ControlFunc& control, NOESCAPE const PushFunc& push)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1109,7 +1109,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncSplit, (JSGlobalObject* globalObject, Ca
     JSValue limitValue = callFrame->argument(1);
 
     auto* regExpObject = dynamicDowncast<RegExpObject>(thisObject);
-    if (regExpObject && regExpObject->isSymbolSplitFastAndNonObservable() && (limitValue.isUndefined() || limitValue.isNumber())) [[likely]] {
+    if (regExpObject && regExpObject->isSymbolSplitFastAndNonObservable(globalObject) && (limitValue.isUndefined() || limitValue.isNumber())) [[likely]] {
         unsigned limit = 0xFFFFFFFFu;
         if (!limitValue.isUndefined()) {
             limit = limitValue.toUInt32(globalObject);
@@ -1187,7 +1187,7 @@ JSValue regExpSplitSlow(JSGlobalObject* globalObject, JSObject* thisObject, JSSt
 
     // After Construct, re-check whether the splitter is a primordial RegExpObject with non-observable
     // side effects so RegExp subclasses (whose species is %RegExp%) still take the fast path.
-    if (auto* splitterRegExp = dynamicDowncast<RegExpObject>(splitter); splitterRegExp && splitterRegExp->isSymbolSplitFastAndNonObservable() && (limitValue.isUndefined() || limitValue.isNumber())) {
+    if (auto* splitterRegExp = dynamicDowncast<RegExpObject>(splitter); splitterRegExp && splitterRegExp->isSymbolSplitFastAndNonObservable(globalObject) && (limitValue.isUndefined() || limitValue.isNumber())) {
         unsigned limit = 0xFFFFFFFFu;
         if (!limitValue.isUndefined()) {
             limit = limitValue.toUInt32(globalObject);
@@ -1730,7 +1730,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncMatchAll, (JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, { });
 
     auto* regExpObject = dynamicDowncast<RegExpObject>(thisObject);
-    if (regExpObject && regExpObject->isSymbolMatchAllFastAndNonObservable()) [[likely]] {
+    if (regExpObject && regExpObject->isSymbolMatchAllFastAndNonObservable(globalObject)) [[likely]] {
         RegExp* regExp = regExpObject->regExp();
 
         bool global = regExp->global();

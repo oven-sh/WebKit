@@ -103,7 +103,9 @@ enum TreeType {
 
 [Conditional=WEBGL] enum SimulatedWebGLContextEvent {
     "GPUStatusFailure",
-    "Timeout"
+    "Timeout",
+    "DisplayBufferAllocationFailure",
+    "RenderbufferAllocationFailure"
 };
 
 enum AudioSessionCategory {
@@ -222,6 +224,14 @@ enum AutoplayPolicy {
     float left = 0;
     float bottom = 0;
     float right = 0;
+};
+
+[
+    ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
+    Conditional=MODEL_PROCESS,
+    ImplementedAs=ModelSceneGraphAsTextOptions,
+] dictionary ModelSceneGraphAsTextOptions {
+    boolean includeAssetEntities = false;
 };
 
 enum HEVCParameterCodec {
@@ -793,6 +803,7 @@ enum ContentsFormat {
     unsigned long remoteImagesCountForTesting();
     undefined setAsyncDecodingEnabledForTesting(HTMLImageElement element, boolean enabled);
     undefined setForceUpdateImageDataEnabledForTesting(HTMLImageElement element, boolean enabled);
+    undefined simulateImageDataReplacedForTesting(HTMLImageElement element);
     undefined setHasHDRContentForTesting(HTMLImageElement element);
 
     [Conditional=WEB_CODECS] boolean hasPendingActivity(WebCodecsVideoDecoder decoder);
@@ -1030,6 +1041,7 @@ enum ContentsFormat {
 
     undefined forceAXObjectCacheUpdate();
     undefined setAccessibilityAnnouncementTranslationTimeout(unrestricted double seconds);
+    undefined setAccessibilityFormErrorSettleDelay(unrestricted double seconds);
     unsigned long liveRegionSnapshotBuildCount();
     undefined resetLiveRegionSnapshotBuildCount();
     undefined setShouldMockParentSearchResultsForTesting(boolean enabled);
@@ -1143,6 +1155,7 @@ enum ContentsFormat {
     [Conditional=VIDEO] undefined suspendAllMediaBuffering();
     [Conditional=VIDEO] undefined suspendAllMediaPlayback();
     [Conditional=VIDEO] undefined resumeAllMediaPlayback();
+    [Conditional=VIDEO] undefined setMediaElementGracePeriodForResumingPlaybackInBackground(HTMLMediaElement element, double gracePeriodInSeconds);
 
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined setMockMediaPlaybackTargetPickerEnabled(boolean enabled);
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined setMockMediaPlaybackTargetPickerState(DOMString deviceName, DOMString deviceState);
@@ -1506,6 +1519,8 @@ enum ContentsFormat {
 
     undefined setContentSizeCategory(ContentSizeCategory category);
 
+    [Conditional=TELEPHONE_NUMBER_DETECTION] unsigned long telephoneNumberRangesChangedCount();
+
     [Conditional=ATTACHMENT_ELEMENT, Conditional=SERVICE_CONTROLS] boolean hasImageControls(HTMLImageElement element);
     [Conditional=ATTACHMENT_ELEMENT] DOMString attachmentElementShadowUserAgentStyleSheet();
 
@@ -1573,6 +1588,7 @@ enum ContentsFormat {
     Promise<ImageBufferResourceLimits> getImageBufferResourceLimits();
 
     undefined setTopDocumentURLForQuirks(DOMString urlString);
+    undefined setSubframeURLForQuirks(DOMString urlString);
     sequence<DOMString> activeQuirks();
 
     [CallWith=CurrentGlobalObject] ReadableStream readableStreamFromMessagePort(MessagePort port);
@@ -1582,11 +1598,15 @@ enum ContentsFormat {
     [Conditional=MODEL_ELEMENT] DOMString modelElementState(HTMLModelElement element);
     [Conditional=MODEL_ELEMENT] boolean isModelElementIntersectingViewport(HTMLModelElement element);
 
+    [Conditional=MODEL_PROCESS] Promise<DOMString> modelSceneGraphAsText(Element element, optional ModelSceneGraphAsTextOptions options = {});
+
     [Conditional=SPATIAL_PORTAL] unsigned long numberOfHostedModelsInSpatialPortal(Element element);
     [Conditional=SPATIAL_PORTAL] boolean establishesSpatialPortal(Element element);
     [Conditional=SPATIAL_PORTAL] Element? spatialPortalAnchorForModel(HTMLModelElement model);
     [Conditional=SPATIAL_PORTAL] sequence<unrestricted double>? spatialPortalResolvedTransform(Element element);
     [Conditional=SPATIAL_PORTAL] DOMString effectiveEnvironmentMap(Element element);
+
+    [Conditional=CONNECTED_VOLUMETRIC_SCENE] DOMString volumetricScenePresentationMode(Element element);
 
     undefined copyImageAtLocation(long x, long y);
 

@@ -80,10 +80,7 @@ UserGestureToken::UserGestureToken(IsProcessingUserGesture isProcessingUserGestu
     if (!documentFrame)
         return;
 
-    for (RefPtr ancestorFrame = documentFrame->tree().parent(); ancestorFrame; ancestorFrame = ancestorFrame->tree().parent()) {
-        RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestorFrame);
-        if (!localAncestor)
-            continue;
+    for (Ref localAncestor : ancestorFrames<LocalFrame>(*documentFrame)) {
         if (RefPtr ancestorDocument = localAncestor->document())
             m_documentsImpactedByUserGesture.add(*ancestorDocument);
     }
@@ -127,7 +124,7 @@ bool UserGestureToken::isValidForDocument(const Document& document) const
     return m_documentsImpactedByUserGesture.contains(document);
 }
 
-void UserGestureToken::forEachImpactedDocument(Function<void(Document&)>&& function)
+void UserGestureToken::forEachImpactedDocument(NOESCAPE const Function<void(Document&)>& function)
 {
     m_documentsImpactedByUserGesture.forEach(function);
 }
@@ -206,8 +203,8 @@ UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture
         }
         if (RefPtr frame = document->frame(); frame && !frame->hasHadUserInteraction()) {
             bool hasRemoteAncestor = false;
-            for (RefPtr<Frame> ancestor = frame; ancestor; ancestor = ancestor->tree().parent()) {
-                if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor)) {
+            for (Ref ancestor : inclusiveAncestorFrames(*frame)) {
+                if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor.get())) {
                     localAncestor->setHasHadUserInteraction();
                     if (RefPtr ancestorDocument = localAncestor->document())
                         ancestorDocument->updateLastHandledUserGestureTimestamp(currentToken(vm)->startTime());

@@ -109,7 +109,7 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
         ASSERT(existingSharedProcess->isSharedProcess());
         RELEASE_ASSERT(!existingSharedProcess->process().isInProcessCache());
         existingSharedProcess->process().addSharedProcessDomain(site.domain());
-        BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: site %" SENSITIVE_LOG_STRING " joined shared process %d, which now hosts %u sites", site.loggingString().utf8().legacyCStringPointer(), existingSharedProcess->process().processID(), m_sharedProcessSites.size());
+        BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: site %" SENSITIVE_LOG_STRING " joined shared process %d, which now hosts %u sites", site.loggingString().utf8(), existingSharedProcess->process().processID(), m_sharedProcessSites.size());
         return completionHandler(existingSharedProcess.get());
     }
 
@@ -120,7 +120,7 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
     ASSERT(frameProcess->process().isSharedProcess());
     frameProcess->process().addSharedProcessDomain(site.domain());
     m_sharedProcess = frameProcess.ptr();
-    BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: created shared process %d for site %" SENSITIVE_LOG_STRING, process->processID(), site.loggingString().utf8().legacyCStringPointer());
+    BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: created shared process %d for site %" SENSITIVE_LOG_STRING, process->processID(), site.loggingString().utf8());
     completionHandler(frameProcess.ptr());
 }
 
@@ -132,7 +132,7 @@ Ref<FrameProcess> BrowsingContextGroup::ensureProcessForSite(const Site& site, c
             ASSERT(&sharedProcess->process() == &process);
             if (m_sharedProcessSites.add(site).isNewEntry) {
                 process.addSharedProcessDomain(site.domain());
-                BROWSINGCONTEXTGROUP_RELEASE_LOG("ensureProcessForSite: site %" SENSITIVE_LOG_STRING " joined shared process %d, which now hosts %u sites", site.loggingString().utf8().legacyCStringPointer(), process.processID(), m_sharedProcessSites.size());
+                BROWSINGCONTEXTGROUP_RELEASE_LOG("ensureProcessForSite: site %" SENSITIVE_LOG_STRING " joined shared process %d, which now hosts %u sites", site.loggingString().utf8(), process.processID(), m_sharedProcessSites.size());
             }
             return sharedProcess.releaseNonNull();
         }
@@ -378,7 +378,7 @@ bool BrowsingContextGroup::hasVisiblePage() const
     return false;
 }
 
-void BrowsingContextGroup::forEachRemotePage(const WebPageProxy& page, Function<void(RemotePageProxy&)>&& function)
+void BrowsingContextGroup::forEachRemotePage(const WebPageProxy& page, NOESCAPE const Function<void(RemotePageProxy&)>& function)
 {
     auto it = m_remotePages.find(page);
     if (it == m_remotePages.end())

@@ -51,6 +51,8 @@ struct GPUExtent3DDict {
 
 using GPUExtent3D = Variant<Vector<GPUIntegerCoordinate>, GPUExtent3DDict>;
 
+Ref<JSON::Value> toJSON(const GPUExtent3D&);
+
 inline WebGPU::Extent3D convertToBacking(const GPUExtent3D& extent3D)
 {
     return WTF::switchOn(extent3D, [](const Vector<GPUIntegerCoordinate>& vector) -> WebGPU::Extent3D {

@@ -46,7 +46,7 @@ public:
 
     void clear()
     {
-        m_elements.clear();
+        m_elements.shrink(0);
         m_hint = 0;
     }
 
@@ -93,7 +93,7 @@ public:
     }
 
     template<typename Func>
-    void forEachSetBit(const Func& func) const
+    void forEachSetBit(NOESCAPE const Func& func) const
     {
         for (const Element& element : m_elements) {
             unsigned base = element.index * elementBits;

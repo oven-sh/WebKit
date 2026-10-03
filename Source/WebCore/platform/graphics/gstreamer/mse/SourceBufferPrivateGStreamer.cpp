@@ -64,14 +64,15 @@ bool SourceBufferPrivateGStreamer::isContentTypeSupported(const ContentType& typ
     return containerType == "audio/mpeg"_s || containerType.endsWith("mp4"_s) || containerType.endsWith("aac"_s) || containerType.endsWith("webm"_s);
 }
 
-Ref<SourceBufferPrivateGStreamer> SourceBufferPrivateGStreamer::create(MediaSourcePrivateGStreamer& mediaSource, const ContentType& contentType)
+Ref<SourceBufferPrivateGStreamer> SourceBufferPrivateGStreamer::create(MediaSourcePrivateGStreamer& mediaSource, const ContentType& contentType, bool textTracksEnabled)
 {
-    return adoptRef(*new SourceBufferPrivateGStreamer(mediaSource, contentType));
+    return adoptRef(*new SourceBufferPrivateGStreamer(mediaSource, contentType, textTracksEnabled));
 }
 
-SourceBufferPrivateGStreamer::SourceBufferPrivateGStreamer(MediaSourcePrivateGStreamer& mediaSource, const ContentType& contentType)
+SourceBufferPrivateGStreamer::SourceBufferPrivateGStreamer(MediaSourcePrivateGStreamer& mediaSource, const ContentType& contentType, bool textTracksEnabled)
     : SourceBufferPrivate(mediaSource)
     , m_type(contentType)
+    , m_textTracksEnabled(textTracksEnabled)
     , m_appendPipeline(makeUnique<AppendPipeline>(*this, *player()))
 #if !RELEASE_LOG_DISABLED
     , m_logger(mediaSource.logger())
@@ -152,7 +153,7 @@ bool SourceBufferPrivateGStreamer::canSwitchToType(const ContentType& type)
 
     if (isContentTypeSupported(type)) {
         if (player)
-            GST_INFO_OBJECT(player->pipeline(), "type change %s -> %s", m_type.raw().utf8().legacyCStringPointer(), type.raw().utf8().legacyCStringPointer());
+            GST_INFO_OBJECT(player->pipeline(), "type change %s -> %s", m_type.raw().utf8(), type.raw().utf8());
         m_type = type;
 
         return true;

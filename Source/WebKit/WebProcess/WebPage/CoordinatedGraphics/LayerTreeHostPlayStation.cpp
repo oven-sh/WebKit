@@ -97,9 +97,9 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displa
     scheduleRenderingUpdate();
 
 #if HAVE(DISPLAY_LINK)
-    m_compositor = ThreadedCompositor::create(*this);
+    lazyInitialize(m_compositor, ThreadedCompositor::create(*this));
 #else
-    m_compositor = ThreadedCompositor::create(*this, *this, displayID);
+    lazyInitialize(m_compositor, ThreadedCompositor::create(*this, *this, displayID));
 #endif
 #if ENABLE(DAMAGE_TRACKING)
     std::optional<OptionSet<ThreadedCompositor::DamagePropagationFlags>> damagePropagationFlags;
@@ -579,7 +579,7 @@ void LayerTreeHost::resetDamageHistoryForTesting()
     m_compositor->enableFrameDamageNotificationForTesting();
 }
 
-void LayerTreeHost::foreachRegionInDamageHistoryForTesting(Function<void(const Region&)>&& callback)
+void LayerTreeHost::foreachRegionInDamageHistoryForTesting(NOESCAPE const Function<void(const Region&)>& callback)
 {
     Locker locker { m_frameDamageHistoryForTestingLock };
     for (const auto& region : m_frameDamageHistoryForTesting)

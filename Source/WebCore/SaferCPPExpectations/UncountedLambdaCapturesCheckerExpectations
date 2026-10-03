@@ -1,31 +1,10 @@
-Modules/cache/DOMCacheStorage.cpp
-Modules/mediastream/RTCDataChannel.cpp
-Modules/webdatabase/DatabaseThread.cpp
 animation/KeyframeEffect.cpp
 css/values/CSSValueTypes+DeprecatedCSSOMValueCreation.h
-inspector/agents/page/PageDOMDebuggerAgent.cpp
-[ iOS ] loader/ios/LegacyPreviewLoader.mm
-page/IntelligenceTextEffectsSupport.cpp
-page/writing-tools/WritingToolsController.mm
-[ iOS ] platform/PreviewConverter.cpp
-platform/ScrollableArea.cpp
-platform/graphics/cocoa/VideoMediaSampleRenderer.mm
-platform/mediastream/RealtimeVideoCaptureSource.cpp
-rendering/BackgroundPainter.cpp
 rendering/BorderPainter.cpp
 rendering/RenderElement.cpp
 rendering/RenderGrid.cpp
 rendering/RenderLayer.cpp
-rendering/RenderLayerCompositor.cpp
 rendering/RenderListBox.cpp
-rendering/RenderText.cpp
-rendering/svg/RenderSVGText.cpp
 style/StyleCustomProperty.cpp
-style/Styleable.cpp
-style/computed/data/StyleCustomPropertyData.cpp
 style/values/backgrounds/StyleFillLayers.h
-style/values/grid/StyleGridTrackBreadth.cpp
 style/values/images/StyleGradient.cpp
-style/values/primitives/StyleKeyword+CSSValueCreation.h
-style/values/primitives/StyleKeyword+Serialization.h
-style/values/primitives/StylePrimitiveNumericTypes+Conversions.h

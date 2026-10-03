@@ -345,6 +345,40 @@ static void convertContentToRootView(const LocalFrameView& view, Vector<Selectio
         geometry.setQuad(view.contentsToRootView(geometry.quad()));
 }
 
+static void convertContentToMainFrameView(const LocalFrameView& view, Vector<SelectionGeometry>& geometries)
+{
+    for (auto& geometry : geometries)
+        geometry.setQuad(view.contentsToMainFrameView(geometry.quad()));
+}
+
+static std::optional<IntRect> overflowClipRectForSelection(const VisibleSelection& selection)
+{
+    auto range = selection.range();
+    if (!range)
+        return std::nullopt;
+
+    CheckedPtr enclosingLayer = computeEnclosingLayer(*range).enclosingLayer;
+    if (!enclosingLayer)
+        return std::nullopt;
+
+    CheckedRef renderer = enclosingLayer->renderer();
+    std::optional<IntRect> clipRect;
+    CheckedPtr block = dynamicDowncast<RenderBlock>(renderer.get());
+    if (!block)
+        block = renderer->containingBlock();
+    for (; block && !is<RenderView>(*block); block = block->containingBlock()) {
+        if (!block->hasNonVisibleOverflow())
+            continue;
+
+        auto blockClipRect = enclosingIntRect(block->localToAbsoluteQuad(FloatQuad { block->overflowClipRect({ }) }).boundingBox());
+        if (clipRect)
+            clipRect->intersect(blockClipRect);
+        else
+            clipRect = blockClipRect;
+    }
+    return clipRect;
+}
+
 void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) const
 {
     getPlatformEditorStateCommon(frame, result);
@@ -355,8 +389,10 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
     auto& postLayoutData = *result.postLayoutData;
     auto& visualData = *result.visualData;
 
-    if (RefPtr document = frame.document())
+    if (RefPtr document = frame.document()) {
         visualData.needsHideSelectionDuringOverflowScrollQuirk = document->quirks().needsHideSelectionDuringOverflowScrollQuirk();
+        visualData.shouldAllowTouchMoveToChangeSelectionQuirk = document->quirks().shouldAllowTouchMoveToChangeSelection();
+    }
 
     Ref view = *frame.view();
 
@@ -466,13 +502,24 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
     // the top-level page as well as any CSS transforms on the remote ancestor frames -- so UIKit reads
     // the correct location synchronously without a UI-process round-trip. A plain translation offset
     // could not represent a scale on an ancestor iframe.
-    if (!frame.localMainFrame()) {
+    RefPtr localRootView = frame.rootFrame().view();
+    if (!frame.localMainFrame() && localRootView) {
+        auto frameClipRect = view->convertToRootView(IntRect { { }, view->size() });
+        for (RefPtr ancestor = dynamicDowncast<LocalFrameView>(view->parent()); ancestor; ancestor = dynamicDowncast<LocalFrameView>(ancestor->parent()))
+            frameClipRect.intersect(ancestor->convertToRootView(IntRect { { }, ancestor->size() }));
+        if (auto overflowClipRect = overflowClipRectForSelection(selection))
+            frameClipRect.intersect(view->contentsToRootView(*overflowClipRect));
+        if (visualData.selectionClipRect.isEmpty())
+            visualData.selectionClipRect = frameClipRect;
+        else
+            visualData.selectionClipRect.intersect(frameClipRect);
+
         auto convertRect = [&](IntRect& rect) {
-            rect = roundedIntRect(view->convertToRootViewAcrossIsolatedFrames(FloatRect { rect }));
+            rect = roundedIntRect(localRootView->convertToRootViewAcrossIsolatedFrames(FloatRect { rect }));
         };
         auto convertGeometries = [&](Vector<SelectionGeometry>& geometries) {
             for (auto& geometry : geometries)
-                geometry.setQuad(view->convertToRootViewAcrossIsolatedFrames(geometry.quad()));
+                geometry.setQuad(localRootView->convertToRootViewAcrossIsolatedFrames(geometry.quad()));
         };
         convertRect(visualData.caretRectAtStart);
         convertRect(visualData.caretRectAtEnd);
@@ -839,14 +886,14 @@ void WebPage::advanceToNextMisspelling(bool)
 IntRect WebPage::rectForElementAtInteractionLocation() const
 {
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
-    RefPtr localMainFrame = protect(*m_page)->localMainFrame();
-    if (!localMainFrame)
+    RefPtr localMainOrRootFrame = protect(*m_page)->localMainOrRootFrame();
+    if (!localMainOrRootFrame)
         return IntRect();
-    HitTestResult result = localMainFrame->eventHandler().hitTestResultAtPoint(flooredIntPoint(m_lastInteractionLocation), hitType);
+    HitTestResult result = localMainOrRootFrame->eventHandler().hitTestResultAtPoint(flooredIntPoint(m_lastInteractionLocation), hitType);
     RefPtr hitNode = result.innerNode();
     if (!hitNode || !hitNode->renderer())
         return IntRect();
-    return protect(result.innerNodeFrame()->view())->contentsToRootView(protect(hitNode->renderer())->absoluteBoundingBoxRect(true));
+    return protect(result.innerNodeFrame()->view())->contentsToMainFrameView(protect(hitNode->renderer())->absoluteBoundingBoxRect(true));
 }
 
 void WebPage::updateSelectionAppearance()
@@ -991,14 +1038,14 @@ Awaitable<DragInitiationResult> WebPage::requestAdditionalItemsForDragSession(st
     // is opaque to the web process, which only sees that the current drag has ended, and that a new one is beginning.
     PlatformMouseEvent event(clientPosition, globalPosition, MouseButton::Left, PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), 0, WebCore::SyntheticClickType::NoTap, WebCore::MouseEventInputSource::UserDriven);
     m_page->dragController().dragEnded();
-    RefPtr localMainFrame = protect(*m_page)->localMainFrame();
-    if (!localMainFrame)
+    RefPtr localRootFrame = this->localRootFrame(rootFrameID);
+    if (!localRootFrame)
         co_return { false };
 
-    localMainFrame->eventHandler().dragSourceEndedAt(event, { }, MayExtendDragSession::Yes);
+    localRootFrame->eventHandler().dragSourceEndedAt(event, { }, MayExtendDragSession::Yes);
 
     auto handledOrTransformer = co_await AwaitableFromCompletionHandler<std::expected<bool, RemoteFrameGeometryTransformer>> { [=] (auto completionHandler) {
-        localMainFrame->eventHandler().tryToBeginDragAtPoint(clientPosition, globalPosition, WTF::move(completionHandler));
+        localRootFrame->eventHandler().tryToBeginDragAtPoint(clientPosition, globalPosition, WTF::move(completionHandler));
     } };
     if (handledOrTransformer)
         co_return { *handledOrTransformer };
@@ -1474,6 +1521,23 @@ IntRect WebPage::rootViewBounds(const Node& node)
     return view->contentsToRootView(renderer->absoluteBoundingBoxRect());
 }
 
+IntRect WebPage::mainFrameViewBounds(const Node& node)
+{
+    RefPtr frame = node.document().frame();
+    if (!frame)
+        return { };
+
+    RefPtr view = frame->view();
+    if (!view)
+        return { };
+
+    CheckedPtr renderer = node.renderer();
+    if (!renderer)
+        return { };
+
+    return view->contentsToMainFrameView(renderer->absoluteBoundingBoxRect());
+}
+
 void WebPage::clearSelection()
 {
     m_startingGestureRange = std::nullopt;
@@ -1687,6 +1751,17 @@ void WebPage::updateSelectionWithTouches(const IntPoint& point, SelectionTouch s
     completionHandler(point, selectionTouch, flags);
 }
 
+// The UI process sends these points in the main frame's root view. In a cross-origin iframe's process the
+// iframe is the local root, so its own rootViewToContents would be off by the iframe's position. This is
+// the identity for a main frame.
+static IntPoint mainFrameRootViewToRootView(const LocalFrame& frame, const IntPoint& point)
+{
+    RefPtr view = frame.view();
+    if (!view)
+        return point;
+    return roundedIntPoint(view->convertFromRootViewAcrossIsolatedFrames(FloatPoint { point }));
+}
+
 void WebPage::selectWithTwoTouches(const WebCore::IntPoint& from, const WebCore::IntPoint& to, GestureType gestureType, GestureRecognizerState gestureState, CompletionHandler<void(const WebCore::IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>)>&& completionHandler)
 {
     RefPtr frame = m_page->focusController().focusedOrMainFrame();
@@ -1694,8 +1769,8 @@ void WebPage::selectWithTwoTouches(const WebCore::IntPoint& from, const WebCore:
         return;
 
     RefPtr view = frame->view();
-    auto fromPosition = frame->visiblePositionForPoint(view->rootViewToContents(from));
-    auto toPosition = frame->visiblePositionForPoint(view->rootViewToContents(to));
+    auto fromPosition = frame->visiblePositionForPoint(view->rootViewToContents(mainFrameRootViewToRootView(*frame, from)));
+    auto toPosition = frame->visiblePositionForPoint(view->rootViewToContents(mainFrameRootViewToRootView(*frame, to)));
     if (auto range = makeSimpleRange(fromPosition, toPosition)) {
         if (!(fromPosition < toPosition))
             std::swap(range->start, range->end);
@@ -2009,7 +2084,7 @@ void WebPage::getRectsForGranularityWithSelectionOffset(WebCore::TextGranularity
 
     auto selectionGeometries = RenderObject::collectSelectionGeometriesWithoutUnionInteriorLines(*range);
     RefPtr view = frame->view();
-    convertContentToRootView(*view, selectionGeometries);
+    convertContentToMainFrameView(*view, selectionGeometries);
     completionHandler(selectionGeometries);
 }
 
@@ -2058,7 +2133,7 @@ void WebPage::getRectsAtSelectionOffsetWithText(int32_t offset, const String& te
 
     auto selectionGeometries = RenderObject::collectSelectionGeometriesWithoutUnionInteriorLines(*range);
     RefPtr view = frame->view();
-    convertContentToRootView(*view, selectionGeometries);
+    convertContentToMainFrameView(*view, selectionGeometries);
     completionHandler(selectionGeometries);
 }
 
@@ -2068,7 +2143,7 @@ void WebPage::selectPositionAtBoundaryWithDirection(const WebCore::IntPoint& poi
     if (!frame)
         return completionHandler();
 
-    VisiblePosition position = visiblePositionInFocusedNodeForPoint(*frame, point, isInteractingWithFocusedElement);
+    VisiblePosition position = visiblePositionInFocusedNodeForPoint(*frame, mainFrameRootViewToRootView(*frame, point), isInteractingWithFocusedElement);
 
     if (position.isNotNull()) {
         position = positionOfNextBoundaryOfGranularity(position, granularity, direction);
@@ -2280,7 +2355,7 @@ void WebPage::requestAutocorrectionData(const String& textForAutocorrection, Com
         selectionGeometries = RenderObject::collectSelectionGeometries(*range).geometries;
 
     auto rootViewSelectionRects = selectionGeometries.map([&](const auto& selectionGeometry) -> FloatRect {
-        return frame->view()->contentsToRootView(selectionGeometry.rect());
+        return frame->view()->contentsToMainFrameView(selectionGeometry.rect());
     });
 
     bool multipleFonts = false;
@@ -2681,12 +2756,17 @@ std::optional<FocusedElementInformation> WebPage::focusedElementInformationWitho
     if (RefPtr webFrame = WebProcess::singleton().webFrame(focusedOrMainFrame->frameID()))
         information.frame = webFrame->info();
 
-    information.lastInteractionLocation = flooredIntPoint(m_lastInteractionLocation);
+    // The last interaction location is relative to the local root frame, so map it into the main frame
+    // along with the rects below for when the focused element is in a cross-origin subframe.
+    if (RefPtr localRootView = focusedOrMainFrame->rootFrame().view())
+        information.lastInteractionLocation = flooredIntPoint(localRootView->convertToRootViewAcrossIsolatedFrames(FloatPoint { m_lastInteractionLocation }));
+    else
+        information.lastInteractionLocation = flooredIntPoint(m_lastInteractionLocation);
     if (auto elementContext = contextForElement(*focusedElement))
         information.elementContext = WTF::move(*elementContext);
 
     if (CheckedPtr renderer = focusedElement->renderer()) {
-        information.interactionRect = rootViewInteractionBounds(*focusedElement);
+        information.interactionRect = mainFrameViewInteractionBounds(*focusedElement);
         information.nodeFontSize = protect(renderer->style())->fontDescription().usedSize();
 
         bool inFixed = false;
@@ -2714,11 +2794,11 @@ std::optional<FocusedElementInformation> WebPage::focusedElementInformationWitho
     information.allowsUserScaling = m_viewportConfiguration.allowsUserScaling();
     information.allowsUserScalingIgnoringAlwaysScalable = m_viewportConfiguration.allowsUserScalingIgnoringAlwaysScalable();
     if (auto nextElement = nextAssistableElement(focusedElement.get(), page, true)) {
-        information.nextNodeRect = rootViewBounds(*nextElement);
+        information.nextNodeRect = mainFrameViewBounds(*nextElement);
         information.hasNextNode = true;
     }
     if (auto previousElement = nextAssistableElement(focusedElement.get(), page, false)) {
-        information.previousNodeRect = rootViewBounds(*previousElement);
+        information.previousNodeRect = mainFrameViewBounds(*previousElement);
         information.hasPreviousNode = true;
     }
     information.identifier = m_internals->lastFocusedElementInformationIdentifier.increment();
@@ -2776,7 +2856,7 @@ std::optional<FocusedElementInformation> WebPage::focusedElementInformationWitho
         }
         information.selectedIndex = element->selectedIndex();
         information.isMultiSelect = element->multiple();
-        information.usesBaseAppearancePicker = element->usesBaseAppearancePicker();
+        information.optionsAreRenderedWithBaseAppearance = element->optionsAreRenderedWithBaseAppearance();
     } else if (RefPtr element = dynamicDowncast<HTMLTextAreaElement>(*focusedElement)) {
         information.autocapitalizeType = element->autocapitalizeType();
         information.isAutocorrect = element->shouldAutocorrect();
@@ -4136,7 +4216,7 @@ void WebPage::drawPrintingToSnapshotiOS(RemoteSnapshotIdentifier snapshotIdentif
     Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
     m_remoteSnapshotState = {
         .identifier = snapshotIdentifier,
-        .recorder = remoteRenderingBackend->createSnapshotRecorder(mediaBox, snapshotIdentifier),
+        .recorder = remoteRenderingBackend->createSnapshotRecorder(mediaBox, snapshotIdentifier, RenderingMode::DisplayList),
         .callback = MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize = mediaBox.size()] (bool success) mutable {
             completionHandler(success ? std::optional<FloatSize>(snapshotSize) : std::nullopt);
         })
@@ -4223,7 +4303,7 @@ void WebPage::drawPrintingPagesToSnapshotiOS(RemoteSnapshotIdentifier snapshotId
     Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
     m_remoteSnapshotState = {
         .identifier = snapshotIdentifier,
-        .recorder = remoteRenderingBackend->createSnapshotRecorder(mediaBox, snapshotIdentifier),
+        .recorder = remoteRenderingBackend->createSnapshotRecorder(mediaBox, snapshotIdentifier, RenderingMode::PDFDocument),
         .callback = MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize = mediaBox.size()] (bool success) mutable {
             completionHandler(success ? std::optional<FloatSize>(snapshotSize) : std::nullopt);
         })
@@ -4438,6 +4518,9 @@ void WebPage::requestDocumentEditingContext(DocumentEditingContextRequest&& requ
     if (!view)
         return completionHandler({ });
 
+    if (!request.rect.isEmpty())
+        request.rect = view->contentsToRootView(view->rootViewToContentsAcrossIsolatedFrames(request.rect));
+
     protect(frame->document())->updateLayout(LayoutOptions::IgnorePendingStylesheets);
 
     VisibleSelection selection = frame->selection().selection();
@@ -4642,7 +4725,7 @@ void WebPage::requestDocumentEditingContext(DocumentEditingContextRequest&& requ
             }
 
             for (auto& absoluteRect : absoluteRects)
-                rects.append({ protect(iterator.range().start.document().view())->contentsToRootView(absoluteRect), { offsetSoFar++, 1 } });
+                rects.append({ protect(iterator.range().start.document().view())->contentsToMainFrameView(absoluteRect), { offsetSoFar++, 1 } });
 
             lastTextRange = iterator.range();
         }

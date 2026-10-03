@@ -21,7 +21,9 @@
 
 #include "TestMain.h"
 #include "WebViewTest.h"
+#include <algorithm>
 #include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if PLATFORM(GTK)
 #include <WebKit/GtkVersioning.h>
@@ -35,15 +37,30 @@ using PlatformEventKey = GdkEventKey;
 using PlatformEventKey = void;
 #endif
 
+struct MockCursorArea {
+    int x;
+    int y;
+    int width;
+    int height;
+};
+
 typedef struct _WebKitInputMethodContextMock {
     WebKitInputMethodContext parent;
 
     bool enabled;
     GString* preedit;
     bool commitNextCharacter;
+    // Offset of the input method caret inside the preedit, or -1 for the end of the preedit.
+    // Counted in bytes, like GString::len, which matches the ASCII preedits used here.
+    int preeditCursorOffset;
     char* surroundingText;
     unsigned surroundingCursorIndex;
     unsigned surroundingSelectionIndex;
+    MockCursorArea cursorArea;
+    unsigned focusInCount;
+    unsigned focusOutCount;
+    unsigned cursorAreaCount;
+    unsigned surroundingCount;
 #if ENABLE(WPE_PLATFORM)
     bool usingWPEPlatformAPI;
 #endif
@@ -84,8 +101,14 @@ static void webkitInputMethodContextMockGetPreedit(WebKitInputMethodContext* con
         *text = mock->preedit ? g_strdup(mock->preedit->str) : g_strdup("");
     if (underlines)
         *underlines = mock->preedit ? g_list_prepend(*underlines, webkit_input_method_underline_new(0, mock->preedit->len)) : nullptr;
-    if (cursorOffset)
-        *cursorOffset = mock->preedit ? mock->preedit->len : 0;
+    if (cursorOffset) {
+        if (!mock->preedit)
+            *cursorOffset = 0;
+        else if (mock->preeditCursorOffset < 0)
+            *cursorOffset = mock->preedit->len;
+        else
+            *cursorOffset = std::min<unsigned>(mock->preeditCursorOffset, mock->preedit->len);
+    }
 }
 
 static gboolean webkitInputMethodContextMockFilterKeyEvent(WebKitInputMethodContext* context, PlatformEventKey* keyEvent)
@@ -199,12 +222,23 @@ static gboolean webkitInputMethodContextMockFilterKeyEvent(WebKitInputMethodCont
 
 static void webkitInputMethodContextMockNotifyFocusIn(WebKitInputMethodContext* context)
 {
-    reinterpret_cast<WebKitInputMethodContextMock*>(context)->enabled = true;
+    auto* mock = reinterpret_cast<WebKitInputMethodContextMock*>(context);
+    mock->enabled = true;
+    mock->focusInCount++;
 }
 
 static void webkitInputMethodContextMockNotifyFocusOut(WebKitInputMethodContext* context)
 {
-    reinterpret_cast<WebKitInputMethodContextMock*>(context)->enabled = false;
+    auto* mock = reinterpret_cast<WebKitInputMethodContextMock*>(context);
+    mock->enabled = false;
+    mock->focusOutCount++;
+}
+
+static void webkitInputMethodContextMockNotifyCursorArea(WebKitInputMethodContext* context, int x, int y, int width, int height)
+{
+    auto* mock = reinterpret_cast<WebKitInputMethodContextMock*>(context);
+    mock->cursorArea = { x, y, width, height };
+    mock->cursorAreaCount++;
 }
 
 static void webkitInputMethodContextMockNotifySurrounding(WebKitInputMethodContext* context, const gchar *text, unsigned length, unsigned cursorIndex, unsigned selectionIndex)
@@ -219,6 +253,7 @@ static void webkitInputMethodContextMockNotifySurrounding(WebKitInputMethodConte
     mock->surroundingText = g_strndup(text, length);
     mock->surroundingCursorIndex = cursorIndex;
     mock->surroundingSelectionIndex = selectionIndex;
+    mock->surroundingCount++;
 }
 
 static void webkitInputMethodContextMockReset(WebKitInputMethodContext* context)
@@ -254,12 +289,14 @@ static void webkit_input_method_context_mock_class_init(WebKitInputMethodContext
     imClass->filter_key_event = webkitInputMethodContextMockFilterKeyEvent;
     imClass->notify_focus_in = webkitInputMethodContextMockNotifyFocusIn;
     imClass->notify_focus_out = webkitInputMethodContextMockNotifyFocusOut;
+    imClass->notify_cursor_area = webkitInputMethodContextMockNotifyCursorArea;
     imClass->notify_surrounding = webkitInputMethodContextMockNotifySurrounding;
     imClass->reset = webkitInputMethodContextMockReset;
 }
 
-static void webkit_input_method_context_mock_init(WebKitInputMethodContextMock*)
+static void webkit_input_method_context_mock_init(WebKitInputMethodContextMock* mock)
 {
+    mock->preeditCursorOffset = -1;
 }
 
 class InputMethodTest: public WebViewTest {
@@ -275,9 +312,9 @@ public:
         }
 
         Type type;
-        CString data;
+        UTF8CString data;
         unsigned keyCode;
-        CString key;
+        UTF8CString key;
         bool isComposing;
     };
 
@@ -327,6 +364,13 @@ public:
         webkit_user_content_manager_register_script_message_handler(m_userContentManager.get(), "imEvent", nullptr);
 #endif
         g_signal_connect(m_userContentManager.get(), "script-message-received::imEvent", G_CALLBACK(imEventCallback), this);
+        g_signal_connect_swapped(m_context.get(), "notify::input-purpose", G_CALLBACK(contentTypeNotifiedCallback), this);
+        g_signal_connect_swapped(m_context.get(), "notify::input-hints", G_CALLBACK(contentTypeNotifiedCallback), this);
+    }
+
+    static void contentTypeNotifiedCallback(InputMethodTest* test)
+    {
+        test->m_contentTypeNotificationCount++;
     }
 
     ~InputMethodTest()
@@ -337,6 +381,7 @@ public:
         webkit_user_content_manager_unregister_script_message_handler(m_userContentManager.get(), "imEvent", nullptr);
 #endif
         g_signal_handlers_disconnect_by_data(m_userContentManager.get(), this);
+        g_signal_handlers_disconnect_by_data(m_context.get(), this);
     }
 
     void imEvent(JSCValue* jsEvent)
@@ -354,7 +399,7 @@ public:
             value = adoptGRef(jsc_value_object_get_property(jsEvent, "key"));
             g_assert_true(jsc_value_is_string(value.get()));
             strValue.reset(jsc_value_to_string(value.get()));
-            event.key = strValue.get();
+            event.key = UTF8CString::unsafeFromUTF8(strValue.get());
             value = adoptGRef(jsc_value_object_get_property(jsEvent, "isComposing"));
             g_assert_true(jsc_value_is_boolean(value.get()));
             event.isComposing = jsc_value_to_boolean(value.get());
@@ -373,7 +418,7 @@ public:
             value = adoptGRef(jsc_value_object_get_property(jsEvent, "key"));
             g_assert_true(jsc_value_is_string(value.get()));
             strValue.reset(jsc_value_to_string(value.get()));
-            event.key = strValue.get();
+            event.key = UTF8CString::unsafeFromUTF8(strValue.get());
             value = adoptGRef(jsc_value_object_get_property(jsEvent, "isComposing"));
             g_assert_true(jsc_value_is_boolean(value.get()));
             event.isComposing = jsc_value_to_boolean(value.get());
@@ -383,21 +428,21 @@ public:
             value = adoptGRef(jsc_value_object_get_property(jsEvent, "data"));
             g_assert_true(jsc_value_is_string(value.get()));
             strValue.reset(jsc_value_to_string(value.get()));
-            event.data = strValue.get();
+            event.data = UTF8CString::unsafeFromUTF8(strValue.get());
             m_events.append(WTF::move(event));
         } else if (!g_strcmp0(strValue.get(), "compositionupdate")) {
             InputMethodTest::Event event(InputMethodTest::Event::Type::CompositionUpdate);
             value = adoptGRef(jsc_value_object_get_property(jsEvent, "data"));
             g_assert_true(jsc_value_is_string(value.get()));
             strValue.reset(jsc_value_to_string(value.get()));
-            event.data = strValue.get();
+            event.data = UTF8CString::unsafeFromUTF8(strValue.get());
             m_events.append(WTF::move(event));
         } else if (!g_strcmp0(strValue.get(), "compositionend")) {
             InputMethodTest::Event event(InputMethodTest::Event::Type::CompositionEnd);
             value = adoptGRef(jsc_value_object_get_property(jsEvent, "data"));
             g_assert_true(jsc_value_is_string(value.get()));
             strValue.reset(jsc_value_to_string(value.get()));
-            event.data = strValue.get();
+            event.data = UTF8CString::unsafeFromUTF8(strValue.get());
             m_events.append(WTF::move(event));
         }
 
@@ -405,10 +450,8 @@ public:
             g_main_loop_quit(m_mainLoop);
     }
 
-    void focusEditableAndWaitUntilInputMethodEnabled()
+    void waitUntilInputMethodEnabled()
     {
-        g_assert_false(m_context->enabled);
-        runJavaScriptAndWaitUntilFinished("document.getElementById('editable').focus()", nullptr);
         if (m_context->enabled)
             return;
 
@@ -425,10 +468,15 @@ public:
         g_assert_true(m_context->enabled);
     }
 
-    void unfocusEditableAndWaitUntilInputMethodDisabled()
+    void focusEditableAndWaitUntilInputMethodEnabled()
     {
-        g_assert_true(m_context->enabled);
-        runJavaScriptAndWaitUntilFinished("document.getElementById('editable').blur()", nullptr);
+        g_assert_false(m_context->enabled);
+        runJavaScriptAndWaitUntilFinished("document.getElementById('editable').focus()", nullptr);
+        waitUntilInputMethodEnabled();
+    }
+
+    void waitUntilInputMethodDisabled()
+    {
         if (!m_context->enabled)
             return;
 
@@ -445,6 +493,13 @@ public:
         g_assert_false(m_context->enabled);
     }
 
+    void unfocusEditableAndWaitUntilInputMethodDisabled()
+    {
+        g_assert_true(m_context->enabled);
+        runJavaScriptAndWaitUntilFinished("document.getElementById('editable').blur()", nullptr);
+        waitUntilInputMethodDisabled();
+    }
+
     void resetEditable()
     {
         runJavaScriptAndWaitUntilFinished("document.getElementById('editable').value = ''", nullptr);
@@ -455,6 +510,23 @@ public:
     {
         auto* jsResult = runJavaScriptAndWaitUntilFinished("document.getElementById('editable').value", nullptr);
         return GUniquePtr<char>(WebViewTest::javascriptResultToCString(jsResult));
+    }
+
+    GUniquePtr<char> editableTextContent()
+    {
+        auto* jsResult = runJavaScriptAndWaitUntilFinished("document.getElementById('editable').textContent", nullptr);
+        return GUniquePtr<char>(WebViewTest::javascriptResultToCString(jsResult));
+    }
+
+    void deleteSurrounding(int offset, unsigned characterCount)
+    {
+        g_signal_emit_by_name(m_context.get(), "delete-surrounding", offset, characterCount, nullptr);
+    }
+
+    unsigned editableSelectionStart()
+    {
+        auto* jsResult = runJavaScriptAndWaitUntilFinished("document.getElementById('editable').selectionStart", nullptr);
+        return WebViewTest::javascriptResultToNumber(jsResult);
     }
 
     void keyStrokeAndWaitForEvents(unsigned keyval, unsigned eventsCount, OptionSet<Modifiers> modifiers = OptionSet<Modifiers>())
@@ -505,12 +577,80 @@ public:
         return m_context->surroundingSelectionIndex;
     }
 
+    MockCursorArea cursorArea() const
+    {
+        return m_context->cursorArea;
+    }
+
+    unsigned cursorAreaCount() const
+    {
+        return m_context->cursorAreaCount;
+    }
+
+    unsigned surroundingCount() const
+    {
+        return m_context->surroundingCount;
+    }
+
+    unsigned focusInCount() const
+    {
+        return m_context->focusInCount;
+    }
+
+    unsigned focusOutCount() const
+    {
+        return m_context->focusOutCount;
+    }
+
+    unsigned contentTypeNotificationCount() const
+    {
+        return m_contentTypeNotificationCount;
+    }
+
+    bool isInputMethodEnabled() const
+    {
+        return m_context->enabled;
+    }
+
+    void clearInputMethodCounters()
+    {
+        m_context->focusInCount = 0;
+        m_context->focusOutCount = 0;
+        m_context->cursorAreaCount = 0;
+        m_context->surroundingCount = 0;
+        m_contentTypeNotificationCount = 0;
+    }
+
+    void setPreeditCursorOffset(int offset) { m_context->preeditCursorOffset = offset; }
+
+    void waitForCursorAreaCount(unsigned count)
+    {
+        if (m_context->cursorAreaCount >= count)
+            return;
+
+        m_expectedCursorAreaCount = count;
+        m_cursorAreaSourceID = g_idle_add([](gpointer userData) -> gboolean {
+            auto* test = static_cast<InputMethodTest*>(userData);
+            if (test->m_context->cursorAreaCount >= test->m_expectedCursorAreaCount) {
+                test->m_cursorAreaSourceID = 0;
+                test->quitMainLoop();
+                return FALSE;
+            }
+
+            return TRUE;
+        }, this);
+        g_main_loop_run(m_mainLoop);
+        g_clear_handle_id(&m_cursorAreaSourceID, g_source_remove);
+        m_expectedCursorAreaCount = 0;
+        g_assert_cmpuint(m_context->cursorAreaCount, >=, count);
+    }
+
     void waitForSurroundingText(const char* text)
     {
-        m_expectedSurroundingText = text;
+        m_expectedSurroundingText = UTF8CString::unsafeFromUTF8(text);
         g_idle_add([](gpointer userData) -> gboolean {
             auto* test = static_cast<InputMethodTest*>(userData);
-            if (!g_strcmp0(test->m_context->surroundingText, test->m_expectedSurroundingText.data())) {
+            if (UTF8CStringView::unsafeFromUTF8(test->m_context->surroundingText) == test->m_expectedSurroundingText) {
                 test->quitMainLoop();
                 return FALSE;
             }
@@ -524,7 +664,10 @@ public:
     GRefPtr<WebKitInputMethodContextMock> m_context;
     Vector<Event> m_events;
     unsigned m_eventsExpected { 0 };
-    CString m_expectedSurroundingText;
+    UTF8CString m_expectedSurroundingText;
+    unsigned m_contentTypeNotificationCount { 0 };
+    unsigned m_expectedCursorAreaCount { 0 };
+    unsigned m_cursorAreaSourceID { 0 };
 };
 
 static void testWebKitInputMethodContextSimple(InputMethodTest* test, gconstpointer)
@@ -539,13 +682,13 @@ static void testWebKitInputMethodContextSimple(InputMethodTest* test, gconstpoin
     g_assert_cmpuint(test->m_events.size(), ==, 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 65);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "a");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "a");
     g_assert_false(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::KeyPress);
     g_assert_cmpuint(test->m_events[1].keyCode, ==, 97);
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 65);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "a");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "a");
     g_assert_false(test->m_events[2].isComposing);
     {
         auto editableValue = test->editableValue();
@@ -558,13 +701,13 @@ static void testWebKitInputMethodContextSimple(InputMethodTest* test, gconstpoin
     g_assert_cmpuint(test->m_events.size(), ==, 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 65);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "a");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "a");
     g_assert_false(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::KeyPress);
     g_assert_cmpuint(test->m_events[1].keyCode, ==, 97);
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 65);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "a");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "a");
     g_assert_false(test->m_events[2].isComposing);
     {
         auto editableValue = test->editableValue();
@@ -584,63 +727,63 @@ static void testWebKitInputMethodContextSequence(InputMethodTest* test, gconstpo
     test->keyStrokeAndWaitForEvents(KEY(w), 4, { WebViewTest::Modifiers::Control, WebViewTest::Modifiers::Shift });
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_false(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionStart);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[2].data.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[2].data, ==, "w");
     g_assert_true(test->m_events[3].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[3].keyCode, ==, 87);
-    g_assert_cmpstr(test->m_events[3].key.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[3].key, ==, "w");
     g_assert_true(test->m_events[3].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(g), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "wg");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "wg");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 71);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "g");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "g");
     g_assert_true(test->m_events[2].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(t), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "wgt");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "wgt");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 84);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "t");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "t");
     g_assert_true(test->m_events[2].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(k), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "wgtk");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "wgtk");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 75);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "k");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "k");
     g_assert_true(test->m_events[2].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(ISO_Enter), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionEnd);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "WebKitGTK");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "WebKitGTK");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 13);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "Enter");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "Enter");
     g_assert_false(test->m_events[2].isComposing);
     {
         auto editableValue = test->editableValue();
@@ -652,63 +795,63 @@ static void testWebKitInputMethodContextSequence(InputMethodTest* test, gconstpo
     test->keyStrokeAndWaitForEvents(KEY(w), 4, { WebViewTest::Modifiers::Control, WebViewTest::Modifiers::Shift });
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_false(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionStart);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[2].data.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[2].data, ==, "w");
     g_assert_true(test->m_events[3].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[3].keyCode, ==, 87);
-    g_assert_cmpstr(test->m_events[3].key.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[3].key, ==, "w");
     g_assert_true(test->m_events[3].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(w), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "ww");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "ww");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 87);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "w");
     g_assert_true(test->m_events[2].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(p), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "wwp");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "wwp");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 80);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "p");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "p");
     g_assert_true(test->m_events[2].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(e), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "wwpe");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "wwpe");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 69);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "e");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "e");
     g_assert_true(test->m_events[2].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(space), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionEnd);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "WPEWebKit");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "WPEWebKit");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 32);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, " ");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, " ");
     g_assert_false(test->m_events[2].isComposing);
     {
         auto editableValue = test->editableValue();
@@ -728,39 +871,39 @@ static void testWebKitInputMethodContextInvalidSequence(InputMethodTest* test, g
     test->keyStrokeAndWaitForEvents(KEY(w), 4, { WebViewTest::Modifiers::Control, WebViewTest::Modifiers::Shift });
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_false(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionStart);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[2].data.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[2].data, ==, "w");
     g_assert_true(test->m_events[3].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[3].keyCode, ==, 87);
-    g_assert_cmpstr(test->m_events[3].key.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[3].key, ==, "w");
     g_assert_true(test->m_events[3].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(w), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "ww");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "ww");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 87);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "w");
     g_assert_true(test->m_events[2].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(space), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionEnd);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "w");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 32);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, " ");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, " ");
     g_assert_false(test->m_events[2].isComposing);
     {
         auto editableValue = test->editableValue();
@@ -780,27 +923,27 @@ static void testWebKitInputMethodContextCancelSequence(InputMethodTest* test, gc
     test->keyStrokeAndWaitForEvents(KEY(w), 4, { WebViewTest::Modifiers::Control, WebViewTest::Modifiers::Shift });
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_false(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionStart);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[2].data.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[2].data, ==, "w");
     g_assert_true(test->m_events[3].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[3].keyCode, ==, 87);
-    g_assert_cmpstr(test->m_events[3].key.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[3].key, ==, "w");
     g_assert_true(test->m_events[3].isComposing);
     test->m_events.clear();
     test->keyStrokeAndWaitForEvents(KEY(Escape), 3);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_true(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionEnd);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[2].keyCode, ==, 27);
-    g_assert_cmpstr(test->m_events[2].key.data(), ==, "Escape");
+    ASSERT_CMP_CSTRING(test->m_events[2].key, ==, "Escape");
     g_assert_false(test->m_events[2].isComposing);
     {
         auto editableValue = test->editableValue();
@@ -937,6 +1080,34 @@ static void testWebKitInputMethodContextSurrounding(InputMethodTest* test, gcons
     test->m_events.clear();
 }
 
+static void testWebKitInputMethodContextDeleteSurroundingContentEditable(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml("<html><body><h1>Title</h1><div id='editable' contenteditable></div></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->runJavaScriptAndWaitUntilFinished("editable.textContent = 'abc'; getSelection().collapse(editable.firstChild, 3)", nullptr);
+
+    test->deleteSurrounding(-1, 1);
+    auto textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "ab");
+}
+
+static void testWebKitInputMethodContextDeleteSurroundingBeforeStart(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml("<html><body><h1>Title</h1><div id='editable' contenteditable></div></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->runJavaScriptAndWaitUntilFinished("editable.textContent = 'abc'; getSelection().collapse(editable.firstChild, 1)", nullptr);
+
+    test->deleteSurrounding(-2, 2);
+    auto textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "abc");
+    auto* jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().focusNode === editable.firstChild && getSelection().focusOffset === 1", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+}
+
 static void testWebKitInputMethodContextReset(InputMethodTest* test, gconstpointer)
 {
     test->loadHtml(testHTML, nullptr);
@@ -948,25 +1119,158 @@ static void testWebKitInputMethodContextReset(InputMethodTest* test, gconstpoint
     test->keyStrokeAndWaitForEvents(KEY(w), 4, { WebViewTest::Modifiers::Control, WebViewTest::Modifiers::Shift });
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::KeyDown);
     g_assert_cmpuint(test->m_events[0].keyCode, ==, 229);
-    g_assert_cmpstr(test->m_events[0].key.data(), ==, "Unidentified");
+    ASSERT_CMP_CSTRING(test->m_events[0].key, ==, "Unidentified");
     g_assert_false(test->m_events[0].isComposing);
     g_assert_true(test->m_events[1].type == InputMethodTest::Event::Type::CompositionStart);
-    g_assert_cmpstr(test->m_events[1].data.data(), ==, "");
+    ASSERT_CMP_CSTRING(test->m_events[1].data, ==, "");
     g_assert_true(test->m_events[2].type == InputMethodTest::Event::Type::CompositionUpdate);
-    g_assert_cmpstr(test->m_events[2].data.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[2].data, ==, "w");
     g_assert_true(test->m_events[3].type == InputMethodTest::Event::Type::KeyUp);
     g_assert_cmpuint(test->m_events[3].keyCode, ==, 87);
-    g_assert_cmpstr(test->m_events[3].key.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[3].key, ==, "w");
     g_assert_true(test->m_events[3].isComposing);
     test->m_events.clear();
     test->clickAndWaitForEvents(1);
     g_assert_true(test->m_events[0].type == InputMethodTest::Event::Type::CompositionEnd);
-    g_assert_cmpstr(test->m_events[0].data.data(), ==, "w");
+    ASSERT_CMP_CSTRING(test->m_events[0].data, ==, "w");
     {
         auto editableValue = test->editableValue();
         g_assert_cmpstr(editableValue.get(), ==, "w");
     }
     test->resetEditable();
+}
+
+// Two fields whose InputMethodState compares equal, the case WebPage::setInputMethodState
+// short-circuits.
+static const char* twoFieldsHTML = "<html><body>"
+    "<input id='editable' type='text' value='one' spellcheck='false'>"
+    "<input id='second' type='text' value='two' spellcheck='false'>"
+    "</body></html>";
+
+// The same two fields, both empty, so that the surrounding text does not change either.
+static const char* twoEmptyFieldsHTML = "<html><body>"
+    "<input id='editable' type='text' spellcheck='false'>"
+    "<input id='second' type='text' spellcheck='false'>"
+    "</body></html>";
+
+static void testWebKitInputMethodContextCursorArea(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml(testHTML, nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+
+    // One character moves the caret by less than the 10px threshold in notifyCursorRect, so type
+    // enough of them to be sure a notification is sent whatever the caret did on focus.
+    auto areaCountBeforeTyping = test->cursorAreaCount();
+    test->keyStrokeAndWaitForEvents(KEY(a), 3);
+    test->m_events.clear();
+    test->keyStrokeAndWaitForEvents(KEY(b), 3);
+    test->m_events.clear();
+    test->waitForCursorAreaCount(areaCountBeforeTyping + 1);
+    auto firstArea = test->cursorArea();
+    g_assert_cmpint(firstArea.width, >, 0);
+    g_assert_cmpint(firstArea.height, >, 0);
+    test->m_events.clear();
+
+    auto areaCountBeforeMoving = test->cursorAreaCount();
+    test->keyStrokeAndWaitForEvents(KEY(c), 3);
+    test->m_events.clear();
+    test->keyStrokeAndWaitForEvents(KEY(d), 3);
+    test->m_events.clear();
+    test->keyStrokeAndWaitForEvents(KEY(e), 3);
+    test->m_events.clear();
+    test->waitForCursorAreaCount(areaCountBeforeMoving + 1);
+    g_assert_cmpint(test->cursorArea().x, >, firstArea.x);
+}
+
+static void testWebKitInputMethodContextPreeditCursor(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml(testHTML, nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+
+    // Report the input method caret inside the preedit rather than at its end.
+    test->setPreeditCursorOffset(1);
+
+    test->keyStrokeAndWaitForEvents(KEY(w), 4, { WebViewTest::Modifiers::Control, WebViewTest::Modifiers::Shift });
+    test->m_events.clear();
+    test->keyStrokeAndWaitForEvents(KEY(g), 3);
+    test->m_events.clear();
+    test->keyStrokeAndWaitForEvents(KEY(t), 3);
+    test->m_events.clear();
+
+    {
+        auto editableValue = test->editableValue();
+        g_assert_cmpstr(editableValue.get(), ==, "wgt");
+    }
+
+    // The composition starts where the input method said its caret was, one code unit in. With the
+    // caret left at the end of the preedit this would be 3.
+    g_assert_cmpuint(test->editableSelectionStart(), ==, 1);
+
+    test->keyStrokeAndWaitForEvents(KEY(Escape), 3);
+}
+
+static void testWebKitInputMethodContextFocusChange(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml(twoFieldsHTML, nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->waitForSurroundingText("one");
+    g_assert_cmpstr(test->surroundingText(), ==, "one");
+
+    test->clearInputMethodCounters();
+    test->runJavaScriptAndWaitUntilFinished("document.getElementById('second').focus()", nullptr);
+    test->waitForSurroundingText("two");
+
+    // The keyboard must stay open across the move: no focus out/in cycle, no content type change.
+    g_assert_cmpuint(test->focusOutCount(), ==, 0);
+    g_assert_cmpuint(test->focusInCount(), ==, 0);
+    g_assert_cmpuint(test->contentTypeNotificationCount(), ==, 0);
+
+    // Here the new surrounding text is the only hint the embedder gets that anything happened.
+    g_assert_cmpstr(test->surroundingText(), ==, "two");
+
+    // Repeat the move between two empty fields, where the surrounding text does not change either.
+    test->runJavaScriptAndWaitUntilFinished("document.getElementById('second').blur()", nullptr);
+    test->waitUntilInputMethodDisabled();
+    test->loadHtml(twoEmptyFieldsHTML, nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->clearInputMethodCounters();
+    test->runJavaScriptAndWaitUntilFinished("document.getElementById('second').focus()", nullptr);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'second'");
+
+    g_assert_cmpuint(test->focusOutCount(), ==, 0);
+    g_assert_cmpuint(test->focusInCount(), ==, 0);
+    g_assert_cmpuint(test->contentTypeNotificationCount(), ==, 0);
+
+    // surroundingCount() stays 0: nothing at all reaches the embedder.
+    // This is a gap, not intentional behaviour.
+}
+
+static void testWebKitInputMethodContextFocusInteraction(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml("<input id='editable' type='text' spellcheck='false'>", nullptr);
+    test->waitUntilLoadFinished();
+
+    // Focusing by click is a user interaction, so the on screen keyboard is not inhibited. Check
+    // the click landed on the field before waiting, so a miss fails instead of hanging.
+    g_assert_false(test->isInputMethodEnabled());
+    test->clickMouseButton(20, 20);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    test->waitUntilInputMethodEnabled();
+    g_assert_cmpuint(test->purpose(), ==, WEBKIT_INPUT_PURPOSE_FREE_FORM);
+    g_assert_cmpuint(test->hints() & WEBKIT_INPUT_HINT_INHIBIT_OSK, ==, 0);
+    test->unfocusEditableAndWaitUntilInputMethodDisabled();
+
+    // element.focus() is not, which is why the content-type test expects INHIBIT_OSK everywhere.
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    g_assert_cmpuint(test->hints() & WEBKIT_INPUT_HINT_INHIBIT_OSK, ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
 }
 
 static void testWebKitInputMethodContextContentType(InputMethodTest* test, gconstpointer)
@@ -1140,7 +1444,13 @@ void beforeAll()
     InputMethodTest::add("WebKitInputMethodContext", "invalid-sequence", testWebKitInputMethodContextInvalidSequence);
     InputMethodTest::add("WebKitInputMethodContext", "cancel-sequence", testWebKitInputMethodContextCancelSequence);
     InputMethodTest::add("WebKitInputMethodContext", "surrounding", testWebKitInputMethodContextSurrounding);
+    InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-contenteditable", testWebKitInputMethodContextDeleteSurroundingContentEditable);
+    InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-before-start", testWebKitInputMethodContextDeleteSurroundingBeforeStart);
     InputMethodTest::add("WebKitInputMethodContext", "reset", testWebKitInputMethodContextReset);
+    InputMethodTest::add("WebKitInputMethodContext", "cursor-area", testWebKitInputMethodContextCursorArea);
+    InputMethodTest::add("WebKitInputMethodContext", "preedit-cursor", testWebKitInputMethodContextPreeditCursor);
+    InputMethodTest::add("WebKitInputMethodContext", "focus-change", testWebKitInputMethodContextFocusChange);
+    InputMethodTest::add("WebKitInputMethodContext", "focus-interaction", testWebKitInputMethodContextFocusInteraction);
     InputMethodTest::add("WebKitInputMethodContext", "content-type", testWebKitInputMethodContextContentType);
 }
 

@@ -97,6 +97,14 @@
 #include "WasmDebuggerDebuggable.h"
 #endif
 
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+#include "ImageBufferBackendHandle.h"
+#include <WebCore/ImageBuffer.h>
+#include <WebCore/PlaceholderFrameIdentifier.h>
+#include <WebCore/PlaceholderRenderingContextIdentifier.h>
+#include <WebCore/PlatformLayerIdentifier.h>
+#endif
+
 namespace API {
 class Navigation;
 class PageConfiguration;
@@ -659,6 +667,15 @@ public:
     void takeInvalidMessageStringForTesting(CompletionHandler<void(String&&)>&&);
 #endif
 
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+    void commitOffscreenCanvasPlaceholderFrame(WebCore::RemotePlaceholderRenderingContextIdentifier&&, WebCore::ImageBufferTransferHandle&&, std::optional<ImageBufferBackendHandle>&& layerContentsHandle, bool originClean, bool opaque, CompletionHandler<void(bool)>&&);
+    void offscreenCanvasPlaceholderCreated(WebCore::PlaceholderRenderingContextIdentifier);
+    void offscreenCanvasPlaceholderDestroyed(WebCore::PlaceholderRenderingContextIdentifier);
+    // Called by WebPageProxy, which is the authority on the page the layer belongs to.
+    void setOffscreenCanvasPlaceholderLayer(WebCore::PlaceholderRenderingContextIdentifier, WebPageProxyIdentifier, std::optional<WebCore::PlatformLayerIdentifier>);
+    static void removeOffscreenCanvasPlaceholdersForProcess(WebCore::ProcessIdentifier);
+#endif
+
     void setIneligbleForWebProcessCache() { m_isEligibleForWebProcessCache = false; }
     bool isEligibleForWebProcessCache() const { return m_isEligibleForWebProcessCache; }
 
@@ -926,7 +943,7 @@ private:
     MediaCaptureSandboxExtensions m_mediaCaptureSandboxExtensions { SandboxExtensionType::None };
     MachSendRight m_taskNamePort;
 #endif
-    RefPtr<Logger> m_logger;
+    const RefPtr<Logger> m_logger;
 
     struct RemoteWorkerInformation {
         WebPageProxyIdentifier remoteWorkerPageProxyID;
@@ -1013,7 +1030,7 @@ private:
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
     bool m_didReceiveLogsDuringLaunchForTesting { false };
 #endif // ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
-} SWIFT_SHARED_REFERENCE(refWebProcessProxy, derefWebProcessProxy) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refWebProcessProxy, derefWebProcessProxy);
 
 WTF::TextStream& operator<<(WTF::TextStream&, const WebProcessProxy&);
 
@@ -1027,6 +1044,7 @@ inline RefPtr<WebProcessProxy> downcastToWebProcessProxy(AuxiliaryProcessProxy* 
 
 } // namespace WebKit
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refWebProcessProxy(WebKit::WebProcessProxy* WTF_NONNULL obj)
 {
     obj->ref();
@@ -1036,6 +1054,7 @@ inline void derefWebProcessProxy(WebKit::WebProcessProxy* WTF_NONNULL obj)
 {
     obj->deref();
 }
+#endif
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebProcessProxy)
 static bool isType(const WebKit::AuxiliaryProcessProxy& process) { return process.type() == WebKit::AuxiliaryProcessProxy::Type::WebContent; }

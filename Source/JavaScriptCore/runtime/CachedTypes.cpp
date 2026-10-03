@@ -4844,7 +4844,7 @@ String UnlinkedFunctionExecutable::ecmaNameWithoutGCSlow() const
         materializeDeferredNameSlow();
         return m_ecmaName.string();
     }
-    // ErrorInstance::computeErrorInfo under Heap::runEndPhase (world stopped, the thread's atom string table cleared):
+    // ErrorInstance::computeErrorInfo under Collector::runEndPhase (world stopped, the thread's atom string table cleared):
     // copy the name out of the record instead of materializing (atomizing) it.
     return m_members.pending().record->slotsView().name->decodePlainString(*m_members.pending().decoder);
 }
@@ -5318,7 +5318,8 @@ protected:
     // 11: source positions are offsets only (321541@main): no lines or columns in ExpressionInfo, a function executable's
     // scalars, a global code block, a class source or a JSTextPosition.
     // 12: a global code block and the entry of a builtin function have the line starts of their source.
-    static constexpr uint32_t cachedTypesFormatRevision = 12;
+    // 13: op_iterator_close_check is upstream's (321765@main): it has metadata, and the opcodes up to its old place are renumbered.
+    static constexpr uint32_t cachedTypesFormatRevision = 13;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

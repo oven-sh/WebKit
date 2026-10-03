@@ -78,12 +78,12 @@ using FlexLayoutItems = Vector<FlexLayoutItem, 4>;
 struct FlexLayoutConstraints {
     // The formatting-context root's computed style (the flex container's own style).
     CheckedRef<const Style::ComputedStyle> style;
+    size_t minimumLineCount { 1 };
     bool isHorizontalFlow { false };
     bool isColumnFlow { false };
     bool isMultiline { false };
     bool isWrapReverse { false };
     bool isBalance { false };
-    size_t minimumLineCount { 1 };
     bool isColumnOrRowReverse { false };
     bool isLeftToRightFlow { false };
     FlowDirection crossAxisDirection { };
@@ -171,6 +171,7 @@ private:
 
     FlexBaseAndHypotheticalMainSizeList computeFlexBaseAndHypotheticalMainSizes(FlexLayoutItems&);
     LayoutUnit flexBaseSizeForFlexItem(const FlexLayoutItem&);
+    LayoutUnit computeFlexBaseSize(const FlexLayoutItem&, const Style::FlexBasis&);
     std::optional<LayoutUnit> ensureBlockAxisContentSizeForFlexItemIfNeeded(const FlexLayoutItem&);
     std::pair<LayoutUnit, LayoutUnit> minMaxMainSizesForFlexItem(const FlexLayoutItem&);
     std::optional<LayoutUnit> computeUsedMaxMainSize(const FlexLayoutItem&);

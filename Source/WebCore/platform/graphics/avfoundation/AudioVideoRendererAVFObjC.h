@@ -177,7 +177,7 @@ private:
     void destroyAudioRenderers();
     void destroyAudioRenderer(RetainPtr<AVSampleBufferAudioRenderer>);
     RetainPtr<AVSampleBufferAudioRenderer> audioRendererFor(TrackIdentifier) const;
-    void applyOnAudioRenderers(NOESCAPE Function<void(AVSampleBufferAudioRenderer *)>&&) const;
+    void applyOnAudioRenderers(NOESCAPE const Function<void(AVSampleBufferAudioRenderer *)>&) const;
 
     Ref<GenericPromise> updateDisplayLayerIfNeeded();
     bool NODELETE shouldEnsureLayerOrVideoRenderer() const;
@@ -325,7 +325,7 @@ private:
     MediaTime m_lastSeekTime;
     SeekState m_seekState { SeekCompleted };
     std::optional<GenericPromise::AutoRejectProducer> m_seekPromise;
-    RetainPtr<id> m_timeJumpedObserver;
+    const RetainPtr<id> m_timeJumpedObserver;
     bool m_isSynchronizerSeeking { false };
     bool m_hasAvailableVideoFrame { false };
     bool m_allRenderersHaveAvailableSamples { false };

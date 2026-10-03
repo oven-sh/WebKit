@@ -46,7 +46,7 @@ class LocaleICU final : public Locale {
     WTF_MAKE_TZONE_ALLOCATED(LocaleICU);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LocaleICU);
 public:
-    explicit LocaleICU(const char*);
+    explicit LocaleICU(UTF8CString&&);
     virtual ~LocaleICU();
 
     Locale::WritingDirection defaultWritingDirection() const final;
@@ -77,14 +77,14 @@ private:
     std::unique_ptr<Vector<String>> createLabelVector(const UDateFormat*, UDateFormatSymbolType, int32_t startIndex, int32_t size);
     void initializeDateTimeFormat();
 
-    CString m_locale;
+    UTF8CString m_locale;
 
 #if !UCONFIG_NO_FORMATTING
     UNumberFormat* m_numberFormat { nullptr };
     bool m_didCreateDecimalFormat { false };
 #endif
 
-    std::unique_ptr<Vector<String>> m_monthLabels;
+    const std::unique_ptr<Vector<String>> m_monthLabels;
     String m_dateFormat;
     String m_monthFormat;
     String m_shortMonthFormat;

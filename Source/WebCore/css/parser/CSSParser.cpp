@@ -694,9 +694,9 @@ RefPtr<StyleRuleNamespace> CSSParser::consumeNamespaceRule(CSSParserTokenRange p
     return StyleRuleNamespace::create(namespacePrefix, uri);
 }
 
-void CSSParser::runInNewNestingContext(auto&& run)
+void CSSParser::runInNewNestingContext(NOESCAPE const auto& run)
 {
-    m_nestingContextStack.append(NestingContext { });
+    m_nestingContextStack.constructAndAppend();
     run();
     m_nestingContextStack.removeLast();
 }

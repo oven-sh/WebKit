@@ -34,7 +34,7 @@
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/spi/cocoa/IOTypesSPI.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PresentationContextIOSurface);
 
@@ -42,8 +42,11 @@ Ref<PresentationContextIOSurface> PresentationContextIOSurface::create(const WGP
 {
     auto presentationContextIOSurface = adoptRef(*new PresentationContextIOSurface(surfaceDescriptor, instance));
 
-    const auto& descriptor = surfaceDescriptor.cocoaDescriptor;
-    descriptor.compositorIntegrationRegister([presentationContext = presentationContextIOSurface.copyRef()](CFArrayRef ioSurfaces) {
+    const auto* descriptor = findChainedStruct<WGPUSurfaceDescriptorCocoaCustomSurface>(surfaceDescriptor.nextInChain);
+    if (!descriptor)
+        return presentationContextIOSurface;
+
+    descriptor->compositorIntegrationRegister([presentationContext = presentationContextIOSurface.copyRef()](CFArrayRef ioSurfaces) {
         presentationContext->renderBuffersWereRecreated(bridge_cast(ioSurfaces));
     }, [presentationContext = presentationContextIOSurface.copyRef()](WGPUWorkItem workItem) {
         presentationContext->onSubmittedWorkScheduled(makeBlockPtr(WTF::move(workItem)));
@@ -96,11 +99,8 @@ RetainPtr<CGImageRef> PresentationContextIOSurface::getTextureAsNativeImage(uint
         return nullptr;
 
     auto& renderBuffer = m_renderBuffers[bufferIndex];
-    WeakPtr texture = renderBuffer.luminanceClampTexture.get() ? renderBuffer.luminanceClampTexture.get() : renderBuffer.texture.ptr();
+    RefPtr texture = renderBuffer.luminanceClampTexture.get() ? renderBuffer.luminanceClampTexture.get() : renderBuffer.texture.ptr();
     if (!texture || !texture->waitForCommandBufferCompletion())
-        return nullptr;
-
-    if (!texture.get())
         return nullptr;
 
     id<MTLTexture> mtlTexture = texture->texture();
@@ -305,7 +305,7 @@ void PresentationContextIOSurface::configure(Device& device, const WGPUSwapChain
         }
     }
 
-    Vector viewFormats(wgpuTextureDescriptor.viewFormatsSpan());
+    Vector viewFormats(viewFormatsSpan(wgpuTextureDescriptor));
     if (NSString *error = device.errorValidatingTextureCreation(wgpuTextureDescriptor, viewFormats)) {
         generateAValidationError(device, error, reportValidationErrors);
         return;
@@ -505,6 +505,6 @@ TextureView* PresentationContextIOSurface::getCurrentTextureView()
     return nullptr;
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs

@@ -57,9 +57,8 @@ void testPatchpointManyWarmAnyImms()
             CHECK_EQ(params[4], ValueRep::constantFloat(-42.5f));
             CHECK_EQ(params[4].floatValue(), -42.5f);
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     CHECK(!compileAndRun<int>(proc));
 }
@@ -89,9 +88,8 @@ void testPatchpointManyColdAnyImms()
             CHECK_EQ(params[4], ValueRep::constantFloat(-42.5f));
             CHECK_EQ(params[4].floatValue(), -42.5f);
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     CHECK(!compileAndRun<int>(proc));
 }
@@ -116,7 +114,8 @@ void testPatchpointWithRegisterResult()
             CHECK(params[2].isGPR());
             add32(jit, params[1].gpr(), params[2].gpr(), GPRInfo::nonArgGPR0);
         });
-    root->appendNewControlValue(proc, Return, Origin(), patchpoint);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), patchpoint);
 
     CHECK_EQ(compileAndRun<int>(proc, 1, 2), 3);
 }
@@ -143,7 +142,8 @@ void testPatchpointWithStackArgumentResult()
             jit.add32(params[1].gpr(), params[2].gpr(), jit.scratchRegister());
             jit.store32(jit.scratchRegister(), CCallHelpers::Address(CCallHelpers::stackPointerRegister, 0));
         });
-    root->appendNewControlValue(proc, Return, Origin(), patchpoint);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), patchpoint);
 
     CHECK_EQ(compileAndRun<int>(proc, 1, 2), 3);
 }
@@ -173,7 +173,8 @@ void testPatchpointWithAnyResult()
             jit.convertInt32ToDouble(GPRInfo::regT0, FPRInfo::fpRegT0);
             jit.storeDouble(FPRInfo::fpRegT0, CCallHelpers::Address(GPRInfo::callFrameRegister, params[0].offsetFromFP()));
         });
-    root->appendNewControlValue(proc, Return, Origin(), patchpoint);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), patchpoint);
 
     CHECK_EQ(compileAndRun<double>(proc, 1, 2), 3);
 }
@@ -198,8 +199,8 @@ void testSimpleCheck()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     auto code = compileProc(proc);
 
@@ -219,8 +220,8 @@ void testCheckFalse()
             if (optLevel > 1)
                 CHECK(!"This should not have executed");
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     auto code = compileProc(proc);
 
@@ -249,11 +250,64 @@ void testCheckTrue()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     auto code = compileProc(proc);
 
+    CHECK_EQ(invoke<int>(*code), 42);
+}
+
+void testCheckTrueBeforeTerminalWithResult()
+{
+    Procedure proc;
+    if (proc.optLevel() < 1)
+        return;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* success = proc.addBlock();
+    BasicBlock* slowPath = proc.addBlock();
+
+    CheckValue* check = root->appendNew<CheckValue>(
+        proc, Check, Origin(), root->appendNew<Const32Value>(proc, Origin(), 1));
+    check->setGenerator(
+        [&] (CCallHelpers& jit, const StackmapGenerationParams&) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            jit.move(CCallHelpers::TrustedImm32(42), GPRInfo::returnValueGPR);
+            jit.emitFunctionEpilogue();
+            jit.ret();
+        });
+
+    bool terminalWasGenerated = false;
+    PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Int32, Origin());
+    patchpoint->effects.terminal = true;
+    patchpoint->setGenerator(
+        [&] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            terminalWasGenerated = true;
+            jit.move(CCallHelpers::TrustedImm32(1), params[0].gpr());
+            CCallHelpers::Jump jumpToSuccess;
+            if (!params.fallsThroughToSuccessor(0))
+                jumpToSuccess = jit.jump();
+            Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+            params.addLatePath(
+                [=] (CCallHelpers& jit) {
+                    if (jumpToSuccess.isSet())
+                        jumpToSuccess.linkTo(*labels[0], &jit);
+                });
+        });
+    root->appendSuccessor(success);
+    root->appendSuccessor(FrequentedBlock(slowPath, FrequencyClass::Rare));
+
+    success->clearSuccessors();
+    success->appendNew<Value>(proc, Return, Origin(), success->appendNew<Value>(
+            proc, Add, Origin(), patchpoint, success->appendNew<Const32Value>(proc, Origin(), 0)));
+
+    slowPath->clearSuccessors();
+    slowPath->appendNew<Value>(proc, Return, Origin(), slowPath->appendNew<Const32Value>(proc, Origin(), 666));
+
+    auto code = compileProc(proc);
+
+    CHECK(!terminalWasGenerated);
     CHECK_EQ(invoke<int>(*code), 42);
 }
 
@@ -281,8 +335,8 @@ void testCheckLessThan()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     auto code = compileProc(proc);
 
@@ -330,8 +384,8 @@ void testCheckMegaCombo()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     auto code = compileProc(proc);
 
@@ -386,8 +440,8 @@ void testCheckTrickyMegaCombo()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     auto code = compileProc(proc);
 
@@ -453,8 +507,8 @@ void testCheckTwoMegaCombos()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0));
 
     auto code = compileProc(proc);
 
@@ -504,9 +558,8 @@ void testCheckTwoNonRedundantMegaCombos()
         root->appendNew<MemoryValue>(proc, Load8S, Origin(), ptr),
         root->appendNew<Const32Value>(proc, Origin(), 42));
 
-    root->appendNewControlValue(
-        proc, Branch, Origin(), branchPredicate,
-        FrequentedBlock(thenCase), FrequentedBlock(elseCase));
+    root->setSuccessors(FrequentedBlock(thenCase), FrequentedBlock(elseCase));
+    root->appendNew<Value>(proc, Branch, Origin(), branchPredicate);
 
     CheckValue* check = thenCase->appendNew<CheckValue>(proc, Check, Origin(), checkPredicate);
     check->setGenerator(
@@ -520,8 +573,8 @@ void testCheckTwoNonRedundantMegaCombos()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    thenCase->appendNewControlValue(
-        proc, Return, Origin(), thenCase->appendNew<Const32Value>(proc, Origin(), 43));
+    thenCase->clearSuccessors();
+    thenCase->appendNew<Value>(proc, Return, Origin(), thenCase->appendNew<Const32Value>(proc, Origin(), 43));
 
     CheckValue* check2 = elseCase->appendNew<CheckValue>(proc, Check, Origin(), checkPredicate);
     check2->setGenerator(
@@ -535,8 +588,8 @@ void testCheckTwoNonRedundantMegaCombos()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    elseCase->appendNewControlValue(
-        proc, Return, Origin(), elseCase->appendNew<Const32Value>(proc, Origin(), 45));
+    elseCase->clearSuccessors();
+    elseCase->appendNew<Value>(proc, Return, Origin(), elseCase->appendNew<Const32Value>(proc, Origin(), 45));
 
     auto code = compileProc(proc);
 
@@ -590,9 +643,8 @@ void testCheckAddImm()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
 
     auto code = compileProc(proc);
 
@@ -627,9 +679,8 @@ void testCheckAddImmCommute()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
 
     auto code = compileProc(proc);
 
@@ -663,9 +714,8 @@ void testCheckAddImmSomeRegister()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
 
     auto code = compileProc(proc);
 
@@ -699,9 +749,8 @@ void testCheckAdd()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
 
     auto code = compileProc(proc);
 
@@ -735,9 +784,8 @@ void testCheckAdd64()
                 jit.emitFunctionEpilogue();
                 jit.ret();
     });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkAdd));
 
     auto code = compileProc(proc);
 
@@ -766,7 +814,8 @@ void testCheckAdd64Range()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -786,7 +835,8 @@ void testCheckAddFold(int a, int b)
             if (optLevel > 1)
                 CHECK(!"Should have been folded");
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -809,7 +859,8 @@ void testCheckAddFoldFail(int a, int b)
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -849,7 +900,8 @@ void testCheckAddArgumentAliasing64()
     CheckValue* checkAdd3 = root->appendNew<CheckValue>(proc, CheckAdd, Origin(), checkAdd1, checkAdd2);
     checkAdd3->setGenerator([&] (CCallHelpers& jit, const StackmapGenerationParams&) { jit.oops(); });
 
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd3);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd3);
 
     CHECK_EQ(compileAndRun<int64_t>(proc, 1LL, 2LL, 3LL), 8);
 }
@@ -887,7 +939,8 @@ void testCheckAddArgumentAliasing32()
     CheckValue* checkAdd3 = root->appendNew<CheckValue>(proc, CheckAdd, Origin(), checkAdd1, checkAdd2);
     checkAdd3->setGenerator([&] (CCallHelpers& jit, const StackmapGenerationParams&) { jit.oops(); });
 
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd3);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd3);
 
     CHECK_EQ(compileAndRun<int32_t>(proc, 1, 2, 3), 8);
 }
@@ -915,7 +968,8 @@ void testCheckAddSelfOverflow64()
     opaqueUse->append(ConstrainedValue(arg, ValueRep::SomeRegister));
     opaqueUse->setGenerator([&] (CCallHelpers&, const StackmapGenerationParams&) { });
 
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -947,7 +1001,8 @@ void testCheckAddSelfOverflow32()
     opaqueUse->append(ConstrainedValue(arg, ValueRep::SomeRegister));
     opaqueUse->setGenerator([&] (CCallHelpers&, const StackmapGenerationParams&) { });
 
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -968,7 +1023,8 @@ void testCheckAddRemoveCheckWithSExt8(int8_t value)
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.abortWithReason(B3Oops);
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -987,7 +1043,8 @@ void testCheckAddRemoveCheckWithSExt16(int16_t value)
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.abortWithReason(B3Oops);
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -1006,7 +1063,8 @@ void testCheckAddRemoveCheckWithSExt32(int32_t value)
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.abortWithReason(B3Oops);
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -1025,7 +1083,8 @@ void testCheckAddRemoveCheckWithZExt32(int32_t value)
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.abortWithReason(B3Oops);
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkAdd);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkAdd);
 
     auto code = compileProc(proc);
 
@@ -1057,9 +1116,8 @@ void testCheckSubImm()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkSub));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkSub));
 
     auto code = compileProc(proc);
 
@@ -1100,9 +1158,8 @@ void testCheckSubBadImm()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkSub));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkSub));
 
     auto code = compileProc(proc);
 
@@ -1136,9 +1193,8 @@ void testCheckSub()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkSub));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkSub));
 
     auto code = compileProc(proc);
 
@@ -1166,7 +1222,8 @@ void testCheckSubBitAnd()
         jit.emitFunctionEpilogue();
         jit.ret();
     });
-    root->appendNewControlValue(proc, Return, Origin(), checkSub);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkSub);
 
     auto code = compileProc(proc);
 
@@ -1208,9 +1265,8 @@ void testCheckSub64()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkSub));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkSub));
 
     auto code = compileProc(proc);
 
@@ -1233,7 +1289,8 @@ void testCheckSubFold(int a, int b)
             if (optLevel > 1)
                 CHECK(!"Should have been folded");
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkSub);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkSub);
 
     auto code = compileProc(proc);
 
@@ -1256,7 +1313,8 @@ void testCheckSubFoldFail(int a, int b)
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkSub);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkSub);
 
     auto code = compileProc(proc);
 
@@ -1284,9 +1342,8 @@ void testCheckNeg()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkNeg));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkNeg));
 
     auto code = compileProc(proc);
 
@@ -1316,9 +1373,8 @@ void testCheckNeg64()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkNeg));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkNeg));
 
     auto code = compileProc(proc);
 
@@ -1352,9 +1408,8 @@ void testCheckMul()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkMul));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkMul));
 
     auto code = compileProc(proc);
 
@@ -1395,9 +1450,8 @@ void testCheckMulMemory()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkMul));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkMul));
 
     auto code = compileProc(proc);
 
@@ -1443,9 +1497,8 @@ void testCheckMul2()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkMul));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkMul));
 
     auto code = compileProc(proc);
 
@@ -1478,9 +1531,8 @@ void testCheckMul64()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkMul));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkMul));
 
     auto code = compileProc(proc);
 
@@ -1503,7 +1555,8 @@ void testCheckMulFold(int a, int b)
             if (optLevel > 1)
                 CHECK(!"Should have been folded");
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkMul);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkMul);
 
     auto code = compileProc(proc);
 
@@ -1526,7 +1579,8 @@ void testCheckMulFoldFail(int a, int b)
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(proc, Return, Origin(), checkMul);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkMul);
 
     auto code = compileProc(proc);
 
@@ -1566,7 +1620,8 @@ void testCheckMulArgumentAliasing64()
     CheckValue* checkMul3 = root->appendNew<CheckValue>(proc, CheckMul, Origin(), checkMul1, checkMul2);
     checkMul3->setGenerator([&] (CCallHelpers& jit, const StackmapGenerationParams&) { jit.oops(); });
 
-    root->appendNewControlValue(proc, Return, Origin(), checkMul3);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkMul3);
     int64_t a = 2;
     int64_t b = 3;
     int64_t c = 4;
@@ -1606,7 +1661,8 @@ void testCheckMulArgumentAliasing32()
     CheckValue* checkMul3 = root->appendNew<CheckValue>(proc, CheckMul, Origin(), checkMul1, checkMul2);
     checkMul3->setGenerator([&] (CCallHelpers& jit, const StackmapGenerationParams&) { jit.oops(); });
 
-    root->appendNewControlValue(proc, Return, Origin(), checkMul3);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), checkMul3);
 
     CHECK_EQ(compileAndRun<int32_t>(proc, 2, 3, 4), 72);
 }
@@ -1640,9 +1696,8 @@ void testCheckMul64SShr()
             jit.emitFunctionEpilogue();
             jit.ret();
         });
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(proc, IToD, Origin(), checkMul));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, IToD, Origin(), checkMul));
 
     auto code = compileProc(proc);
 
@@ -1654,7 +1709,7 @@ void testCheckMul64SShr()
 
 template<typename LeftFunctor, typename RightFunctor, typename InputType>
 void genericTestCompare(
-    B3::Opcode opcode, const LeftFunctor& leftFunctor, const RightFunctor& rightFunctor,
+    B3::Opcode opcode, NOESCAPE const LeftFunctor& leftFunctor, NOESCAPE const RightFunctor& rightFunctor,
     InputType left, InputType right, int result)
 {
     // Using a compare.
@@ -1666,9 +1721,8 @@ void genericTestCompare(
         Value* rightValue = rightFunctor(root, proc);
         Value* comparisonResult = root->appendNew<Value>(proc, opcode, Origin(), leftValue, rightValue);
     
-        root->appendNewControlValue(
-            proc, Return, Origin(),
-            root->appendNew<Value>(
+        root->clearSuccessors();
+        root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
                 proc, NotEqual, Origin(),
                 comparisonResult,
                 root->appendIntConstant(proc, Origin(), comparisonResult->type(), 0)));
@@ -1686,10 +1740,8 @@ void genericTestCompare(
         Value* leftValue = leftFunctor(root, proc);
         Value* rightValue = rightFunctor(root, proc);
 
-        root->appendNewControlValue(
-            proc, Branch, Origin(),
-            root->appendNew<Value>(proc, opcode, Origin(), leftValue, rightValue),
-            FrequentedBlock(thenCase), FrequentedBlock(elseCase));
+        root->setSuccessors(FrequentedBlock(thenCase), FrequentedBlock(elseCase));
+        root->appendNew<Value>(proc, Branch, Origin(), root->appendNew<Value>(proc, opcode, Origin(), leftValue, rightValue));
 
         // We use a patchpoint on the then case to ensure that this doesn't get if-converted.
         PatchpointValue* patchpoint = thenCase->appendNew<PatchpointValue>(proc, Int32, Origin());
@@ -1700,11 +1752,11 @@ void genericTestCompare(
                 CHECK(params[0].isGPR());
                 jit.move(CCallHelpers::TrustedImm32(1), params[0].gpr());
             });
-        thenCase->appendNewControlValue(proc, Return, Origin(), patchpoint);
+        thenCase->clearSuccessors();
+        thenCase->appendNew<Value>(proc, Return, Origin(), patchpoint);
 
-        elseCase->appendNewControlValue(
-            proc, Return, Origin(),
-            elseCase->appendNew<Const32Value>(proc, Origin(), 0));
+        elseCase->clearSuccessors();
+        elseCase->appendNew<Value>(proc, Return, Origin(), elseCase->appendNew<Const32Value>(proc, Origin(), 0));
 
         CHECK_EQ(compileAndRun<int>(proc, left, right), result);
     }
@@ -1944,9 +1996,8 @@ void testEqualDouble(double left, double right, bool result)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<double, double>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, Equal, Origin(),
             arguments[0],
             arguments[1]));
@@ -1967,9 +2018,8 @@ void testCallSimple(int a, int b)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<CCallValue>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<CCallValue>(
             proc, Int32, Origin(),
             root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(simpleFunction)),
             arguments[0],
@@ -1986,18 +2036,14 @@ void testCallRare(int a, int b)
     BasicBlock* rare = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t, intptr_t, intptr_t>(proc, root).eager();
 
-    root->appendNewControlValue(
-        proc, Branch, Origin(),
-        arguments[0],
-        FrequentedBlock(rare, FrequencyClass::Rare),
-        FrequentedBlock(common));
+    root->setSuccessors(FrequentedBlock(rare, FrequencyClass::Rare), FrequentedBlock(common));
+    root->appendNew<Value>(proc, Branch, Origin(), arguments[0]);
 
-    common->appendNewControlValue(
-        proc, Return, Origin(), common->appendNew<Const32Value>(proc, Origin(), 0));
+    common->clearSuccessors();
+    common->appendNew<Value>(proc, Return, Origin(), common->appendNew<Const32Value>(proc, Origin(), 0));
 
-    rare->appendNewControlValue(
-        proc, Return, Origin(),
-        rare->appendNew<CCallValue>(
+    rare->clearSuccessors();
+    rare->appendNew<Value>(proc, Return, Origin(), rare->appendNew<CCallValue>(
             proc, Int32, Origin(),
             rare->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(simpleFunction)),
             arguments[1],
@@ -2014,18 +2060,14 @@ void testCallRareLive(int a, int b, int c)
     BasicBlock* rare = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t, intptr_t, intptr_t, int32_t>(proc, root).eager();
 
-    root->appendNewControlValue(
-        proc, Branch, Origin(),
-        arguments[0],
-        FrequentedBlock(rare, FrequencyClass::Rare),
-        FrequentedBlock(common));
+    root->setSuccessors(FrequentedBlock(rare, FrequencyClass::Rare), FrequentedBlock(common));
+    root->appendNew<Value>(proc, Branch, Origin(), arguments[0]);
 
-    common->appendNewControlValue(
-        proc, Return, Origin(), common->appendNew<Const32Value>(proc, Origin(), 0));
+    common->clearSuccessors();
+    common->appendNew<Value>(proc, Return, Origin(), common->appendNew<Const32Value>(proc, Origin(), 0));
 
-    rare->appendNewControlValue(
-        proc, Return, Origin(),
-        rare->appendNew<Value>(
+    rare->clearSuccessors();
+    rare->appendNew<Value>(proc, Return, Origin(), rare->appendNew<Value>(
             proc, Add, Origin(),
             rare->appendNew<CCallValue>(
                 proc, Int32, Origin(),
@@ -2042,9 +2084,8 @@ void testCallSimplePure(int a, int b)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<CCallValue>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<CCallValue>(
             proc, Int32, Origin(), Effects::none(),
             root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(simpleFunction)),
             arguments[0],
@@ -2076,7 +2117,8 @@ void testCallFunctionWithHellaArguments()
         root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(functionWithHellaArguments)));
     call->appendArgs(args);
 
-    root->appendNewControlValue(proc, Return, Origin(), call);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), call);
 
     CHECK_EQ(compileAndRun<int>(proc), functionWithHellaArguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26));
 }
@@ -2105,7 +2147,8 @@ void testCallFunctionWithHellaArguments2()
         root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(functionWithHellaArguments2)));
     call->appendArgs(args);
 
-    root->appendNewControlValue(proc, Return, Origin(), call);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), call);
 
     auto a = compileAndRun<uint64_t>(proc);
     auto b = functionWithHellaArguments2(limit, limit-1, limit-2, limit-3, limit-4, limit-5, limit-6, limit-7, limit-8, limit-9, limit-10, limit-11, limit-12, limit-13, limit-14, limit-15, limit-16, limit-17, limit-18, limit-19, limit-20, limit-21, limit-22, limit-23, limit-24, limit-25);
@@ -2157,7 +2200,8 @@ void testCallFunctionWithHellaArguments3()
         root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(functionWithHellaArguments3)));
     call->appendArgs(args);
 
-    root->appendNewControlValue(proc, Return, Origin(), call);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), call);
 
 #if OS(WINDOWS)
     // We need to precommit stack memory, otherwise the B3 operation will
@@ -2206,7 +2250,8 @@ void testCallPairResult(int a, int b)
     Value* sum = root->appendNew<Value>(proc, Sub, Origin(),
         root->appendNew<ExtractValue>(proc, Origin(), registerType(), call, 0),
         root->appendNew<ExtractValue>(proc, Origin(), registerType(), call, 1));
-    root->appendNewControlValue(proc, Return, Origin(), sum);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), sum);
 
     CHECK(isIdentical(compileAndRun<uintptr_t>(proc), (a - b) - (a * b)));
 }
@@ -2220,11 +2265,8 @@ void testCallPairResultRare(int a, int b)
     auto arguments = cCallArgumentValues<intptr_t>(proc, root).eager();
 
     {
-        root->appendNewControlValue(
-            proc, Branch, Origin(),
-            arguments[0],
-            FrequentedBlock(call, FrequencyClass::Rare),
-            FrequentedBlock(ret0));
+        root->setSuccessors(FrequentedBlock(call, FrequencyClass::Rare), FrequentedBlock(ret0));
+        root->appendNew<Value>(proc, Branch, Origin(), arguments[0]);
     }
 
     {
@@ -2237,12 +2279,13 @@ void testCallPairResultRare(int a, int b)
         Value* sum = call->appendNew<Value>(proc, Sub, Origin(),
             call->appendNew<ExtractValue>(proc, Origin(), registerType(), cCall, 0),
             call->appendNew<ExtractValue>(proc, Origin(), registerType(), cCall, 1));
-        call->appendNewControlValue(proc, Return, Origin(), sum);
+        call->clearSuccessors();
+        call->appendNew<Value>(proc, Return, Origin(), sum);
     }
 
     {
-        ret0->appendNewControlValue(proc, Return, Origin(),
-            ret0->appendNew<Const32Value>(proc, Origin(), 0));
+        ret0->clearSuccessors();
+        ret0->appendNew<Value>(proc, Return, Origin(), ret0->appendNew<Const32Value>(proc, Origin(), 0));
     }
 
     CHECK(isIdentical(compileAndRun<uintptr_t>(proc, 1), (a - b) - (a * b)));
@@ -2252,9 +2295,8 @@ void testReturnDouble(double value)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<ConstDoubleValue>(proc, Origin(), value));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<ConstDoubleValue>(proc, Origin(), value));
 
     CHECK(isIdentical(compileAndRun<double>(proc), value));
 }
@@ -2263,9 +2305,8 @@ void testReturnFloat(float value)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<ConstFloatValue>(proc, Origin(), value));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<ConstFloatValue>(proc, Origin(), value));
 
     CHECK(isIdentical(compileAndRun<float>(proc), value));
 }
@@ -2283,9 +2324,8 @@ void testCallSimpleDouble(double a, double b)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<double, double>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<CCallValue>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<CCallValue>(
             proc, Double, Origin(),
             root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(simpleFunctionDouble)),
             arguments[0],
@@ -2311,9 +2351,8 @@ void testCallSimpleFloat(float a, float b)
     Value* argument2int32 = arguments[1];
     Value* floatValue1 = root->appendNew<Value>(proc, BitwiseCast, Origin(), argument1int32);
     Value* floatValue2 = root->appendNew<Value>(proc, BitwiseCast, Origin(), argument2int32);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<CCallValue>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<CCallValue>(
             proc, Float, Origin(),
             root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(simpleFunctionFloat)),
             floatValue1,
@@ -2344,7 +2383,8 @@ void testCallFunctionWithHellaDoubleArguments()
         root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(functionWithHellaDoubleArguments)));
     call->appendArgs(args);
 
-    root->appendNewControlValue(proc, Return, Origin(), call);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), call);
 
     CHECK_EQ(compileAndRun<double>(proc), functionWithHellaDoubleArguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26));
 }
@@ -2371,7 +2411,8 @@ void testCallFunctionWithHellaFloatArguments()
         root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(functionWithHellaFloatArguments)));
     call->appendArgs(args);
 
-    root->appendNewControlValue(proc, Return, Origin(), call);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), call);
 
     CHECK_EQ(compileAndRun<float>(proc), functionWithHellaFloatArguments(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26));
 }
@@ -2388,9 +2429,8 @@ void testForcedSpillCalleeOnStack()
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
 
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<CCallValue>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<CCallValue>(
             proc, Int32, Origin(),
             root->appendNew<ConstPtrValue>(proc, Origin(), tagCFunction<OperationPtrTag>(simpleFunction)),
             arguments[0],
@@ -2414,9 +2454,8 @@ void testChillDiv(int num, int den, int res)
         BasicBlock* root = proc.addBlock();
         auto arguments = cCallArgumentValues<int32_t, int32_t>(proc, root);
     
-        root->appendNewControlValue(
-            proc, Return, Origin(),
-            root->appendNew<Value>(
+        root->clearSuccessors();
+        root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
                 proc, chill(Div), Origin(),
                 arguments[0],
                 arguments[1]));
@@ -2429,9 +2468,8 @@ void testChillDiv(int num, int den, int res)
         Procedure proc;
         BasicBlock* root = proc.addBlock();
     
-        root->appendNewControlValue(
-            proc, Return, Origin(),
-            root->appendNew<Value>(
+        root->clearSuccessors();
+        root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
                 proc, chill(Div), Origin(),
                 root->appendNew<Const32Value>(proc, Origin(), num),
                 root->appendNew<Const32Value>(proc, Origin(), den)));
@@ -2446,9 +2484,8 @@ void testChillDivTwice(int num1, int den1, int num2, int den2, int res)
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t, int32_t, int32_t, int32_t>(proc, root);
 
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, Add, Origin(),
             root->appendNew<Value>(
                 proc, chill(Div), Origin(),
@@ -2471,9 +2508,8 @@ void testChillDiv64(int64_t num, int64_t den, int64_t res)
         BasicBlock* root = proc.addBlock();
         auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
     
-        root->appendNewControlValue(
-            proc, Return, Origin(),
-            root->appendNew<Value>(
+        root->clearSuccessors();
+        root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
                 proc, chill(Div), Origin(),
                 arguments[0],
                 arguments[1]));
@@ -2486,9 +2522,8 @@ void testChillDiv64(int64_t num, int64_t den, int64_t res)
         Procedure proc;
         BasicBlock* root = proc.addBlock();
     
-        root->appendNewControlValue(
-            proc, Return, Origin(),
-            root->appendNew<Value>(
+        root->clearSuccessors();
+        root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
                 proc, chill(Div), Origin(),
                 root->appendNew<Const64Value>(proc, Origin(), num),
                 root->appendNew<Const64Value>(proc, Origin(), den)));
@@ -2508,7 +2543,8 @@ void testModArg(int64_t value)
 
     Value* argument = arguments[0];
     Value* result = root->appendNew<Value>(proc, Mod, Origin(), argument, argument);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK(!compileAndRun<int64_t>(proc, value));
 }
@@ -2527,7 +2563,8 @@ void testModArgs(int64_t numerator, int64_t denominator)
     Value* argument1 = arguments[0];
     Value* argument2 = arguments[1];
     Value* result = root->appendNew<Value>(proc, Mod, Origin(), argument1, argument2);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<int64_t>(proc, numerator, denominator), numerator % denominator);
 }
@@ -2545,7 +2582,8 @@ void testModImms(int64_t numerator, int64_t denominator)
     Value* argument1 = root->appendNew<Const64Value>(proc, Origin(), numerator);
     Value* argument2 = root->appendNew<Const64Value>(proc, Origin(), denominator);
     Value* result = root->appendNew<Value>(proc, Mod, Origin(), argument1, argument2);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<int64_t>(proc, numerator, denominator), numerator % denominator);
 }
@@ -2561,7 +2599,8 @@ void testModArg32(int32_t value)
 
     Value* argument = arguments[0];
     Value* result = root->appendNew<Value>(proc, Mod, Origin(), argument, argument);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK(!compileAndRun<int32_t>(proc, value));
 }
@@ -2580,7 +2619,8 @@ void testModArgs32(int32_t numerator, int32_t denominator)
     Value* argument1 = arguments[0];
     Value* argument2 = arguments[1];
     Value* result = root->appendNew<Value>(proc, Mod, Origin(), argument1, argument2);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<int32_t>(proc, numerator, denominator), numerator % denominator);
 }
@@ -2598,7 +2638,8 @@ void testModImms32(int32_t numerator, int32_t denominator)
     Value* argument1 = root->appendNew<Const32Value>(proc, Origin(), numerator);
     Value* argument2 = root->appendNew<Const32Value>(proc, Origin(), denominator);
     Value* result = root->appendNew<Value>(proc, Mod, Origin(), argument1, argument2);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<int32_t>(proc, numerator, denominator), numerator % denominator);
 }
@@ -2611,7 +2652,8 @@ void testChillModArg(int64_t value)
 
     Value* argument = arguments[0];
     Value* result = root->appendNew<Value>(proc, chill(Mod), Origin(), argument, argument);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK(!compileAndRun<int64_t>(proc, value));
 }
@@ -2625,7 +2667,8 @@ void testChillModArgs(int64_t numerator, int64_t denominator)
     Value* argument1 = arguments[0];
     Value* argument2 = arguments[1];
     Value* result = root->appendNew<Value>(proc, chill(Mod), Origin(), argument1, argument2);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<int64_t>(proc, numerator, denominator), chillMod(numerator, denominator));
 }
@@ -2638,7 +2681,8 @@ void testChillModImms(int64_t numerator, int64_t denominator)
     Value* argument1 = root->appendNew<Const64Value>(proc, Origin(), numerator);
     Value* argument2 = root->appendNew<Const64Value>(proc, Origin(), denominator);
     Value* result = root->appendNew<Value>(proc, chill(Mod), Origin(), argument1, argument2);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<int64_t>(proc, numerator, denominator), chillMod(numerator, denominator));
 }
@@ -2651,7 +2695,8 @@ void testChillModArg32(int32_t value)
 
     Value* argument = arguments[0];
     Value* result = root->appendNew<Value>(proc, chill(Mod), Origin(), argument, argument);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK(!compileAndRun<int32_t>(proc, value));
 }
@@ -2665,7 +2710,8 @@ void testChillModArgs32(int32_t numerator, int32_t denominator)
     Value* argument1 = arguments[0];
     Value* argument2 = arguments[1];
     Value* result = root->appendNew<Value>(proc, chill(Mod), Origin(), argument1, argument2);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<int32_t>(proc, numerator, denominator), chillMod(numerator, denominator));
 }
@@ -2678,7 +2724,8 @@ void testChillModImms32(int32_t numerator, int32_t denominator)
     Value* argument1 = root->appendNew<Const32Value>(proc, Origin(), numerator);
     Value* argument2 = root->appendNew<Const32Value>(proc, Origin(), denominator);
     Value* result = root->appendNew<Value>(proc, chill(Mod), Origin(), argument1, argument2);
-    root->appendNewControlValue(proc, Return, Origin(), result);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<int32_t>(proc, numerator, denominator), chillMod(numerator, denominator));
 }
@@ -2698,16 +2745,12 @@ void testLoopWithMultipleHeaderEdges()
         proc, NotEqual, Origin(),
         arg0,
         root->appendNew<ConstPtrValue>(proc, Origin(), 42));
-    outerHeader->appendNewControlValue(
-        proc, Branch, Origin(),
-        ne42,
-        FrequentedBlock(innerHeader), FrequentedBlock(outerEnd));
+    outerHeader->setSuccessors(FrequentedBlock(innerHeader), FrequentedBlock(outerEnd));
+    outerHeader->appendNew<Value>(proc, Branch, Origin(), ne42);
     auto* arg32 = arg0;
     arg32 = root->appendNew<Value>(proc, Trunc, Origin(), arg0);
-    outerEnd->appendNewControlValue(
-        proc, Branch, Origin(),
-        arg32,
-        FrequentedBlock(outerHeader), FrequentedBlock(end));
+    outerEnd->setSuccessors(FrequentedBlock(outerHeader), FrequentedBlock(end));
+    outerEnd->appendNew<Value>(proc, Branch, Origin(), arg32);
 
     SwitchValue* switchValue = innerHeader->appendNew<SwitchValue>(
         proc, Origin(), arguments[1]);
@@ -2716,12 +2759,13 @@ void testLoopWithMultipleHeaderEdges()
         switchValue->appendCase(SwitchCase(i, FrequentedBlock(innerHeader)));
     }
 
-    root->appendNewControlValue(proc, Jump, Origin(), FrequentedBlock(outerHeader));
+    root->setSuccessors(FrequentedBlock(outerHeader));
+    root->appendNew<Value>(proc, Jump, Origin());
 
-    innerEnd->appendNewControlValue(proc, Jump, Origin(), FrequentedBlock(outerEnd));
-    end->appendNewControlValue(
-        proc, Return, Origin(),
-        end->appendNew<Const32Value>(proc, Origin(), 5678));
+    innerEnd->setSuccessors(FrequentedBlock(outerEnd));
+    innerEnd->appendNew<Value>(proc, Jump, Origin());
+    end->clearSuccessors();
+    end->appendNew<Value>(proc, Return, Origin(), end->appendNew<Const32Value>(proc, Origin(), 5678));
 
     auto code = compileProc(proc); // This shouldn't crash in computing NaturalLoops.
     CHECK_EQ(invoke<int32_t>(*code, 0, 12345), 5678);
@@ -2734,9 +2778,8 @@ void testSwitch(unsigned degree, unsigned gap)
 
     BasicBlock* terminate = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t, intptr_t, intptr_t>(proc, root);
-    terminate->appendNewControlValue(
-        proc, Return, Origin(),
-        terminate->appendNew<Const32Value>(proc, Origin(), 0));
+    terminate->clearSuccessors();
+    terminate->appendNew<Value>(proc, Return, Origin(), terminate->appendNew<Const32Value>(proc, Origin(), 0));
 
     SwitchValue* switchValue = root->appendNew<SwitchValue>(
         proc, Origin(), arguments[0]);
@@ -2744,9 +2787,8 @@ void testSwitch(unsigned degree, unsigned gap)
 
     for (unsigned i = 0; i < degree; ++i) {
         BasicBlock* newBlock = proc.addBlock();
-        newBlock->appendNewControlValue(
-            proc, Return, Origin(),
-            (i & 1) ? arguments.withBlock(newBlock, 2) : arguments.withBlock(newBlock, 1));
+        newBlock->clearSuccessors();
+        newBlock->appendNew<Value>(proc, Return, Origin(), (i & 1) ? arguments.withBlock(newBlock, 2) : arguments.withBlock(newBlock, 1));
         switchValue->appendCase(SwitchCase(gap * i, FrequentedBlock(newBlock)));
     }
 
@@ -2772,16 +2814,14 @@ void testSwitchSameCaseAsDefault()
 
     BasicBlock* return10 = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t>(proc, root);
-    return10->appendNewControlValue(
-        proc, Return, Origin(),
-        return10->appendNew<Const32Value>(proc, Origin(), 10));
+    return10->clearSuccessors();
+    return10->appendNew<Value>(proc, Return, Origin(), return10->appendNew<Const32Value>(proc, Origin(), 10));
 
     Value* switchOperand = arguments[0];
 
     BasicBlock* caseAndDefault = proc.addBlock();
-    caseAndDefault->appendNewControlValue(
-        proc, Return, Origin(), 
-            caseAndDefault->appendNew<Value>(
+    caseAndDefault->clearSuccessors();
+    caseAndDefault->appendNew<Value>(proc, Return, Origin(), caseAndDefault->appendNew<Value>(
                 proc, Equal, Origin(),
                 switchOperand, caseAndDefault->appendNew<ConstPtrValue>(proc, Origin(), 0)));
 
@@ -2814,9 +2854,8 @@ void testSwitchChillDiv(unsigned degree, unsigned gap)
     Value* right = arguments[2];
 
     BasicBlock* terminate = proc.addBlock();
-    terminate->appendNewControlValue(
-        proc, Return, Origin(),
-        terminate->appendNew<Const32Value>(proc, Origin(), 0));
+    terminate->clearSuccessors();
+    terminate->appendNew<Value>(proc, Return, Origin(), terminate->appendNew<Const32Value>(proc, Origin(), 0));
 
     SwitchValue* switchValue = root->appendNew<SwitchValue>(
         proc, Origin(), arguments[0]);
@@ -2825,9 +2864,8 @@ void testSwitchChillDiv(unsigned degree, unsigned gap)
     for (unsigned i = 0; i < degree; ++i) {
         BasicBlock* newBlock = proc.addBlock();
 
-        newBlock->appendNewControlValue(
-            proc, Return, Origin(),
-            newBlock->appendNew<Value>(
+        newBlock->clearSuccessors();
+        newBlock->appendNew<Value>(proc, Return, Origin(), newBlock->appendNew<Value>(
                 proc, chill(Div), Origin(), (i & 1) ? right : left, (i & 1) ? left : right));
     
         switchValue->appendCase(SwitchCase(gap * i, FrequentedBlock(newBlock)));
@@ -2858,18 +2896,16 @@ void testSwitchTargettingSameBlock()
 
     BasicBlock* terminate = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t>(proc, root);
-    terminate->appendNewControlValue(
-        proc, Return, Origin(),
-        terminate->appendNew<Const32Value>(proc, Origin(), 5));
+    terminate->clearSuccessors();
+    terminate->appendNew<Value>(proc, Return, Origin(), terminate->appendNew<Const32Value>(proc, Origin(), 5));
 
     SwitchValue* switchValue = root->appendNew<SwitchValue>(
         proc, Origin(), arguments[0]);
     switchValue->setFallThrough(FrequentedBlock(terminate));
 
     BasicBlock* otherTarget = proc.addBlock();
-    otherTarget->appendNewControlValue(
-        proc, Return, Origin(),
-        otherTarget->appendNew<Const32Value>(proc, Origin(), 42));
+    otherTarget->clearSuccessors();
+    otherTarget->appendNew<Value>(proc, Return, Origin(), otherTarget->appendNew<Const32Value>(proc, Origin(), 42));
     switchValue->appendCase(SwitchCase(3, FrequentedBlock(otherTarget)));
     switchValue->appendCase(SwitchCase(13, FrequentedBlock(otherTarget)));
 
@@ -2888,17 +2924,16 @@ void testSwitchTargettingSameBlockFoldPathConstant()
 
     BasicBlock* terminate = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t>(proc, root);
-    terminate->appendNewControlValue(
-        proc, Return, Origin(),
-        terminate->appendNew<Const32Value>(proc, Origin(), 42));
+    terminate->clearSuccessors();
+    terminate->appendNew<Value>(proc, Return, Origin(), terminate->appendNew<Const32Value>(proc, Origin(), 42));
 
     Value* argument = arguments[0];
     SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), argument);
     switchValue->setFallThrough(FrequentedBlock(terminate));
 
     BasicBlock* otherTarget = proc.addBlock();
-    otherTarget->appendNewControlValue(
-        proc, Return, Origin(), argument);
+    otherTarget->clearSuccessors();
+    otherTarget->appendNew<Value>(proc, Return, Origin(), argument);
     switchValue->appendCase(SwitchCase(3, FrequentedBlock(otherTarget)));
     switchValue->appendCase(SwitchCase(13, FrequentedBlock(otherTarget)));
 
@@ -2908,6 +2943,44 @@ void testSwitchTargettingSameBlockFoldPathConstant()
         int32_t expected = (i == 3 || i == 13) ? i : 42;
         CHECK_EQ(invoke<int32_t>(*code, i), expected);
     }
+}
+
+void testSwitchOnConstant(int64_t key, bool is64Bit)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+
+    BasicBlock* fallThrough = proc.addBlock();
+    fallThrough->clearSuccessors();
+    fallThrough->appendNew<Value>(proc, Return, Origin(), fallThrough->appendNew<Const32Value>(proc, Origin(), 5));
+
+    Value* condition;
+    if (is64Bit)
+        condition = root->appendNew<Const64Value>(proc, Origin(), key);
+    else
+        condition = root->appendNew<Const32Value>(proc, Origin(), static_cast<int32_t>(key));
+    SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), condition);
+    switchValue->setFallThrough(FrequentedBlock(fallThrough));
+
+    BasicBlock* shared = proc.addBlock();
+    shared->clearSuccessors();
+    shared->appendNew<Value>(proc, Return, Origin(), shared->appendNew<Const32Value>(proc, Origin(), 42));
+    switchValue->appendCase(SwitchCase(3, FrequentedBlock(shared)));
+    switchValue->appendCase(SwitchCase(13, FrequentedBlock(shared)));
+
+    BasicBlock* negative = proc.addBlock();
+    negative->clearSuccessors();
+    negative->appendNew<Value>(proc, Return, Origin(), negative->appendNew<Const32Value>(proc, Origin(), 7));
+    switchValue->appendCase(SwitchCase(-1, FrequentedBlock(negative)));
+
+    auto code = compileProc(proc);
+
+    int32_t expected = 5;
+    if (key == 3 || key == 13)
+        expected = 42;
+    else if (key == -1)
+        expected = 7;
+    CHECK_EQ(invoke<int32_t>(*code), expected);
 }
 
 void testSwitchSparseI64RangeOverflow()
@@ -2931,18 +3004,16 @@ void testSwitchSparseI64RangeOverflow()
     auto arguments = cCallArgumentValues<int64_t>(proc, root);
 
     BasicBlock* fallThrough = proc.addBlock();
-    fallThrough->appendNewControlValue(
-        proc, Return, Origin(),
-        fallThrough->appendNew<Const64Value>(proc, Origin(), -1));
+    fallThrough->clearSuccessors();
+    fallThrough->appendNew<Value>(proc, Return, Origin(), fallThrough->appendNew<Const64Value>(proc, Origin(), -1));
 
     SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), arguments[0]);
     switchValue->setFallThrough(FrequentedBlock(fallThrough));
 
     for (unsigned i = 0; i < numCases; ++i) {
         BasicBlock* target = proc.addBlock();
-        target->appendNewControlValue(
-            proc, Return, Origin(),
-            target->appendNew<Const64Value>(proc, Origin(), static_cast<int64_t>(i)));
+        target->clearSuccessors();
+        target->appendNew<Value>(proc, Return, Origin(), target->appendNew<Const64Value>(proc, Origin(), static_cast<int64_t>(i)));
         switchValue->appendCase(SwitchCase(caseValues[i], FrequentedBlock(target)));
     }
 
@@ -2959,9 +3030,8 @@ void testTruncFold(int64_t value)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, Trunc, Origin(),
             root->appendNew<Const64Value>(proc, Origin(), value)));
 
@@ -2973,9 +3043,8 @@ void testZExt32(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, ZExt32, Origin(),
             arguments[0]));
 
@@ -2986,9 +3055,8 @@ void testZExt32Fold(int32_t value)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, ZExt32, Origin(),
             root->appendNew<Const32Value>(proc, Origin(), value)));
 
@@ -3000,9 +3068,8 @@ void testSExt32(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt32, Origin(),
             arguments[0]));
 
@@ -3013,9 +3080,8 @@ void testSExt32Fold(int32_t value)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt32, Origin(),
             root->appendNew<Const32Value>(proc, Origin(), value)));
 
@@ -3027,9 +3093,8 @@ void testTruncZExt32(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, Trunc, Origin(),
             root->appendNew<Value>(
                 proc, ZExt32, Origin(),
@@ -3043,9 +3108,8 @@ void testTruncSExt32(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, Trunc, Origin(),
             root->appendNew<Value>(
                 proc, SExt32, Origin(),
@@ -3059,9 +3123,8 @@ void testSExt8(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt8, Origin(),
             arguments[0]));
 
@@ -3072,9 +3135,8 @@ void testSExt8Fold(int32_t value)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt8, Origin(),
             root->appendNew<Const32Value>(proc, Origin(), value)));
 
@@ -3086,9 +3148,8 @@ void testSExt8SExt8(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt8, Origin(),
             root->appendNew<Value>(
                 proc, SExt8, Origin(),
@@ -3102,9 +3163,8 @@ void testSExt8SExt16(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt8, Origin(),
             root->appendNew<Value>(
                 proc, SExt16, Origin(),
@@ -3118,9 +3178,8 @@ void testSExt8BitAnd(int32_t value, int32_t mask)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt8, Origin(),
             root->appendNew<Value>(
                 proc, BitAnd, Origin(),
@@ -3135,9 +3194,8 @@ void testBitAndSExt8(int32_t value, int32_t mask)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, BitAnd, Origin(),
             root->appendNew<Value>(
                 proc, SExt8, Origin(),
@@ -3152,9 +3210,8 @@ void testSExt16(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt16, Origin(),
             arguments[0]));
 
@@ -3165,9 +3222,8 @@ void testSExt16Fold(int32_t value)
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt16, Origin(),
             root->appendNew<Const32Value>(proc, Origin(), value)));
 
@@ -3179,9 +3235,8 @@ void testSExt16SExt16(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt16, Origin(),
             root->appendNew<Value>(
                 proc, SExt16, Origin(),
@@ -3195,9 +3250,8 @@ void testSExt16SExt8(int32_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt16, Origin(),
             root->appendNew<Value>(
                 proc, SExt8, Origin(),
@@ -3211,9 +3265,8 @@ void testSExt16BitAnd(int32_t value, int32_t mask)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt16, Origin(),
             root->appendNew<Value>(
                 proc, BitAnd, Origin(),
@@ -3228,9 +3281,8 @@ void testBitAndSExt16(int32_t value, int32_t mask)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, BitAnd, Origin(),
             root->appendNew<Value>(
                 proc, SExt16, Origin(),
@@ -3245,9 +3297,8 @@ void testSExt32BitAnd(int32_t value, int32_t mask)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t>(proc, root);
-    root->appendNewControlValue(
-        proc, Return, Origin(),
-        root->appendNew<Value>(
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(
             proc, SExt32, Origin(),
             root->appendNew<Value>(
                 proc, BitAnd, Origin(),

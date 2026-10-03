@@ -24,9 +24,11 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Vector.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if PLATFORM(GTK)
 #include <cairo.h>
@@ -80,14 +82,21 @@
         g_test_add(testPath.get(), ClassName, 0, ClassName::setUp, testFunc, ClassName::tearDown); \
     }
 
+inline const char* assertCmpCStringPointer(const char* string) { return string; }
+inline const char* assertCmpCStringPointer(const UTF8CString& string) { return string.legacyCStringPointer(); }
+inline const char* assertCmpCStringPointer(const ASCIICString& string) { return string.data(); }
+inline const char* assertCmpCStringPointer(const UTF8CStringView& string) { return string.utf8(); }
+
 #define ASSERT_CMP_CSTRING(s1, cmp, s2) \
     do {                                                                 \
-        CString __s1 = (s1);                                             \
-        CString __s2 = (s2);                                             \
-        if (g_strcmp0(__s1.data(), __s2.data()) cmp 0) ;                 \
+        auto&& __s1 = (s1);                                              \
+        auto&& __s2 = (s2);                                              \
+        const char* __p1 = assertCmpCStringPointer(__s1);                \
+        const char* __p2 = assertCmpCStringPointer(__s2);                \
+        if (g_strcmp0(__p1, __p2) cmp 0) ;                               \
         else {                                                           \
             g_assertion_message_cmpstr(G_LOG_DOMAIN, __FILE__, __LINE__, \
-                G_STRFUNC, #s1 " " #cmp " " #s2, __s1.data(), #cmp, __s2.data()); \
+                G_STRFUNC, #s1 " " #cmp " " #s2, __p1, #cmp, __p2);      \
         }                                                                \
     } while (0)
 
@@ -359,17 +368,13 @@ public:
         WebKit2Resources,
     };
 
-    static CString getResourcesDir(ResourcesDir resourcesDir = WebKitGLibResources)
+    static UTF8CString getResourcesDir(ResourcesDir resourcesDir = WebKitGLibResources)
     {
         switch (resourcesDir) {
-        case WebKitGLibResources: {
-            GUniquePtr<char> resourcesDir(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Resources", "glib", nullptr));
-            return resourcesDir.get();
-        }
-        case WebKit2Resources: {
-            GUniquePtr<char> resourcesDir(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Resources", nullptr));
-            return resourcesDir.get();
-        }
+        case WebKitGLibResources:
+            return UTF8CString { gBuildFilename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Resources", "glib").span() };
+        case WebKit2Resources:
+            return UTF8CString { gBuildFilename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Resources").span() };
         }
         RELEASE_ASSERT_NOT_REACHED();
     }

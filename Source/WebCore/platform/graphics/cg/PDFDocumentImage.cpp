@@ -52,6 +52,18 @@ String PDFDocumentImage::filenameExtension() const
     return "pdf"_s;
 }
 
+NaturalDimensions PDFDocumentImage::unorientedNaturalDimensions() const
+{
+    // FIXME: If we want size negotiation with PDF documents as-image, this is the place to implement it (https://bugs.webkit.org/show_bug.cgi?id=12095).
+
+    auto size = this->size();
+    if (size.isEmpty())
+        return NaturalDimensions::none();
+
+    // FIXME: Why does it make sense for this to return a non-existing aspect ratio. It currently is doing it to match PDFDocumentImage::computeIntrinsicDimensions, but we should document why that is appropriate.
+    return { .width = size.width(), .height = size.height(), .aspectRatio = std::nullopt };
+}
+
 FloatSize PDFDocumentImage::size(ImageOrientation) const
 {
     FloatSize expandedCropBoxSize = FloatSize(expandedIntSize(m_cropBox.size()));
@@ -192,7 +204,7 @@ ImageDrawResult PDFDocumentImage::drawFromCachedSubimage(GraphicsContext& contex
     return ImageDrawResult::DidDraw;
 }
 
-ImageDrawResult PDFDocumentImage::draw(GraphicsContext& context, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
+ImageDrawResult PDFDocumentImage::draw(GraphicsContext& context, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, const ImageDrawingExtras*)
 {
     auto result = drawFromCachedSubimage(context, destination, source, options);
     if (result != ImageDrawResult::DidNothing)

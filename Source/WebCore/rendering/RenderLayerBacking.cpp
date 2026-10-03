@@ -59,6 +59,7 @@
 #include "HTMLNames.h"
 #include "HTMLPlugInElement.h"
 #include "HTMLVideoElement.h"
+#include "ImageObserver.h"
 #include "InspectorInstrumentation.h"
 #include "LayerAncestorClippingStack.h"
 #include "LocalFrame.h"
@@ -600,7 +601,7 @@ void RenderLayerBacking::updateDebugIndicators(bool showBorder, bool showRepaint
         // depth() is 1-based and counts through cross-process ancestor frames, so subtract 1 to keep the
         // mainframe's indicator unstaggered while nested frames offset further with each level of nesting.
         unsigned frameNestingDepth = showFrameProcessBorders ? renderer().frame().tree().depth() - 1 : 0;
-        m_childContainmentLayer->setShowFrameProcessBorders(showFrameProcessBorders, frameNestingDepth);
+        m_childContainmentLayer->setShowFrameProcessBorders(showFrameProcessBorders, frameNestingDepth, renderer().frame().frameID());
     }
 
     if (m_backgroundLayer) {
@@ -1609,6 +1610,20 @@ static void setContentsClipShapePath(GraphicsLayer& graphicsLayer, const Style::
     graphicsLayer.setContentsClipShapePath(shapePath);
 }
 
+void RenderLayerBacking::updateAnimationExtent()
+{
+    auto computeAnimationExtent = [&] () -> std::optional<FloatRect> {
+        auto styleable = Styleable::fromRenderer(renderer());
+        if (!styleable || !styleable->isRunningOrAboutToRunAcceleratedTransformRelatedAnimation())
+            return { };
+        LayoutRect animatedBounds;
+        if (m_owningLayer.getOverlapBoundsIncludingChildrenAccountingForTransformAnimations(animatedBounds, RenderLayer::IncludeCompositedDescendants))
+            return FloatRect(animatedBounds);
+        return { };
+    };
+    m_graphicsLayer->setAnimationExtent(computeAnimationExtent());
+}
+
 void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
 {
     ASSERT(!m_owningLayer.normalFlowListDirty());
@@ -1618,9 +1633,6 @@ void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
 
     const Style::ComputedStyle& style = renderer().style();
     const auto deviceScaleFactor = this->deviceScaleFactor();
-
-    auto styleable = Styleable::fromRenderer(renderer());
-    bool isRunningAcceleratedTransformAnimation = styleable && styleable->isRunningAcceleratedTransformRelatedAnimation();
 
     updateTransform(style);
     updateOpacity(style);
@@ -1710,13 +1722,7 @@ void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
         m_contentsContainmentLayer->setSize(primaryGraphicsLayerRect.size());
     }
 
-    auto computeAnimationExtent = [&] () -> std::optional<FloatRect> {
-        LayoutRect animatedBounds;
-        if (isRunningAcceleratedTransformAnimation && m_owningLayer.getOverlapBoundsIncludingChildrenAccountingForTransformAnimations(animatedBounds, RenderLayer::IncludeCompositedDescendants))
-            return FloatRect(animatedBounds);
-        return { };
-    };
-    m_graphicsLayer->setAnimationExtent(computeAnimationExtent());
+    updateAnimationExtent();
     m_graphicsLayer->setPreserves3D(preserves3D);
     m_graphicsLayer->setBackfaceVisibility(style.backfaceVisibility() == BackfaceVisibility::Visible);
 
@@ -2504,12 +2510,12 @@ void RenderLayerBacking::updateSeparatedProperties()
             return false;
         if (!renderImage->cachedImage() || renderImage->cachedImage()->errorOccurred())
             return false;
-        auto* image = renderImage->cachedImage()->imageForRenderer(renderImage);
-        if (!image)
+        RefPtr bitmapImage = dynamicDowncast<BitmapImage>(renderImage->cachedImage()->image());
+        if (!bitmapImage)
             return false;
-        if (image == &Image::nullImage())
+        if (bitmapImage.get() == &BitmapImage::nullImage())
             return false;
-        return !image->isAnimated() && image->isBitmapImage() && image->nativeImage();
+        return !bitmapImage->isAnimated() && bitmapImage->nativeImage();
     }();
 
     m_graphicsLayer->setIsSeparatedImage(isSeparatedImage);
@@ -2521,14 +2527,12 @@ bool RenderLayerBacking::updateAncestorClippingStack(Vector<CompositedClipData>&
     if (!m_ancestorClippingStack && clippingData.isEmpty())
         return false;
 
-    RefPtr scrollingCoordinator = m_owningLayer.page().scrollingCoordinator();
-
     if (m_ancestorClippingStack && clippingData.isEmpty()) {
-        m_ancestorClippingStack->clear(scrollingCoordinator);
+        m_ancestorClippingStack->clear(compositor());
         m_ancestorClippingStack = nullptr;
         
         if (m_overflowControlsHostLayerAncestorClippingStack) {
-            m_overflowControlsHostLayerAncestorClippingStack->clear(scrollingCoordinator);
+            m_overflowControlsHostLayerAncestorClippingStack->clear(compositor());
             m_overflowControlsHostLayerAncestorClippingStack = nullptr;
         }
         return true;
@@ -2545,20 +2549,19 @@ bool RenderLayerBacking::updateAncestorClippingStack(Vector<CompositedClipData>&
         return false;
     }
     
-    m_ancestorClippingStack->updateWithClipData(scrollingCoordinator, Vector { clippingData });
+    m_ancestorClippingStack->updateWithClipData(compositor(), Vector { clippingData });
     LOG_WITH_STREAM(Compositing, stream << "layer " << &m_owningLayer << " ancestorClippingStack " << *m_ancestorClippingStack);
     if (m_overflowControlsHostLayerAncestorClippingStack)
-        m_overflowControlsHostLayerAncestorClippingStack->updateWithClipData(scrollingCoordinator, WTF::move(clippingData));
+        m_overflowControlsHostLayerAncestorClippingStack->updateWithClipData(compositor(), WTF::move(clippingData));
     return true;
 }
 
 void RenderLayerBacking::ensureOverflowControlsHostLayerAncestorClippingStack(const RenderLayer* compositedAncestor)
 {
-    RefPtr scrollingCoordinator = m_owningLayer.page().scrollingCoordinator();
     auto clippingData = m_ancestorClippingStack->compositedClipData();
 
     if (m_overflowControlsHostLayerAncestorClippingStack)
-        m_overflowControlsHostLayerAncestorClippingStack->updateWithClipData(scrollingCoordinator, WTF::move(clippingData));
+        m_overflowControlsHostLayerAncestorClippingStack->updateWithClipData(compositor(), WTF::move(clippingData));
     else
         m_overflowControlsHostLayerAncestorClippingStack = makeUnique<LayerAncestorClippingStack>(WTF::move(clippingData));
 
@@ -2706,13 +2709,11 @@ bool RenderLayerBacking::updateAncestorClipping(bool needsAncestorClip, const Re
             layersChanged = true;
         }
     } else if (m_ancestorClippingStack) {
-        RefPtr scrollingCoordinator = m_owningLayer.page().scrollingCoordinator();
-
-        m_ancestorClippingStack->clear(scrollingCoordinator);
+        m_ancestorClippingStack->clear(compositor());
         m_ancestorClippingStack = nullptr;
         
         if (m_overflowControlsHostLayerAncestorClippingStack) {
-            m_overflowControlsHostLayerAncestorClippingStack->clear(scrollingCoordinator);
+            m_overflowControlsHostLayerAncestorClippingStack->clear(compositor());
             m_overflowControlsHostLayerAncestorClippingStack = nullptr;
         }
         
@@ -3314,7 +3315,7 @@ void RenderLayerBacking::detachFromScrollingCoordinator(OptionSet<ScrollCoordina
     }
 
     if (roles.contains(ScrollCoordinationRole::ScrollingProxy) && m_ancestorClippingStack) {
-        m_ancestorClippingStack->detachFromScrollingCoordinator(*scrollingCoordinator);
+        m_ancestorClippingStack->detachFromScrollingCoordinator(compositor());
         LOG_WITH_STREAM(Compositing, stream << "Detaching nodes in ancestor clipping stack");
     }
 
@@ -3508,6 +3509,20 @@ void RenderLayerBacking::updateDirectlyCompositedBackgroundColor(PaintedContents
     didUpdateContentsRect = true;
 }
 
+// Only bitmap images are directly composited, so the layer shows the image's current frame at its natural size.
+static RefPtr<NativeImage> nativeImageForDirectlyCompositedImage(Image& image)
+{
+    // Showing the image in a layer uses its decoded data, as drawing it would.
+    if (RefPtr observer = image.imageObserver())
+        observer->didDraw(image);
+
+    RefPtr bitmapImage = dynamicDowncast<BitmapImage>(image);
+    if (!bitmapImage)
+        return nullptr;
+
+    return bitmapImage->currentNativeImage();
+}
+
 void RenderLayerBacking::updateDirectlyCompositedBackgroundImage(PaintedContentsInfo& contentsInfo, bool& didUpdateContentsRect)
 {
     if (!GraphicsLayer::supportsContentsTiling())
@@ -3517,13 +3532,13 @@ void RenderLayerBacking::updateDirectlyCompositedBackgroundImage(PaintedContents
         return;
 
     if (!contentsInfo.isSimpleContainer()) {
-        m_graphicsLayer->setContentsToImage(nullptr);
+        m_graphicsLayer->setContentsToNativeImage(nullptr);
         return;
     }
 
     auto& backgroundLayers = renderer().style().backgroundLayers();
     if (!Style::hasImageInAnyLayer(backgroundLayers)) {
-        m_graphicsLayer->setContentsToImage(nullptr);
+        m_graphicsLayer->setContentsToNativeImage(nullptr);
         return;
     }
 
@@ -3536,7 +3551,8 @@ void RenderLayerBacking::updateDirectlyCompositedBackgroundImage(PaintedContents
     m_graphicsLayer->setContentsTilePhase(geometry.phase);
     m_graphicsLayer->setContentsRect(geometry.destinationRect);
     m_graphicsLayer->setContentsClippingRect(FloatRoundedRect(geometry.destinationRect));
-    m_graphicsLayer->setContentsToImage(backgroundLayer.image().tryStyleImage()->cachedImage()->image());
+    if (RefPtr nativeImage = nativeImageForDirectlyCompositedImage(Ref { *backgroundLayer.image().tryStyleImage()->cachedImage()->image() }))
+        m_graphicsLayer->setContentsToNativeImage(nativeImage.get());
 
     didUpdateContentsRect = true;
 }
@@ -3898,14 +3914,14 @@ bool RenderLayerBacking::isDirectlyCompositedImage() const
         if (!cachedImage->hasImage())
             return false;
 
-        RefPtr image = dynamicDowncast<BitmapImage>(cachedImage->imageForRenderer(imageRenderer.get()));
+        RefPtr image = dynamicDowncast<BitmapImage>(cachedImage->image());
         if (!image)
             return false;
 
         if (image->currentFrameOrientation() != ImageOrientation::Orientation::None)
             return false;
 
-        return m_graphicsLayer->shouldDirectlyCompositeImage(image);
+        return m_graphicsLayer->canDirectlyCompositeNativeImage();
     }
 
     return false;
@@ -3943,7 +3959,7 @@ bool RenderLayerBacking::isUnscaledBitmapOnly() const
             if (!cachedImage->hasImage())
                 return false;
 
-            RefPtr image = dynamicDowncast<BitmapImage>(cachedImage->imageForRenderer(imageRenderer.get()));
+            RefPtr image = dynamicDowncast<BitmapImage>(cachedImage->image());
             if (!image)
                 return false;
 
@@ -4035,7 +4051,7 @@ void RenderLayerBacking::updateImageContents(PaintedContentsInfo& contentsInfo)
         if (!cachedImage)
             return;
 
-        RefPtr image = cachedImage->imageForRenderer(&imageRenderer);
+        RefPtr image = cachedImage->image();
         if (!image)
             return;
 
@@ -4043,8 +4059,8 @@ void RenderLayerBacking::updateImageContents(PaintedContentsInfo& contentsInfo)
         if (!cachedImage->isLoaded())
             return;
 
-
-        m_graphicsLayer->setContentsToImage(image);
+        if (RefPtr nativeImage = nativeImageForDirectlyCompositedImage(*image))
+            m_graphicsLayer->setContentsToNativeImage(nativeImage.get());
 
         // Image animation is "lazy", in that it automatically stops unless someone is drawing
         // the image. So we have to kick the animation each time; this has the downside that the
@@ -5242,6 +5258,9 @@ void RenderLayerBacking::updateAcceleratedEffectsAndBaseValues(HashSet<Ref<Accel
     }
 
     m_graphicsLayer->setAcceleratedEffectsAndBaseValues(WTF::move(acceleratedEffects), WTF::move(baseValues));
+
+    if (!renderer.view().needsLayout() && !m_owningLayer.normalFlowListDirty() && !m_owningLayer.zOrderListsDirty())
+        updateAnimationExtent();
 
     m_owningLayer.setNeedsPostLayoutCompositingUpdate();
     m_owningLayer.setNeedsCompositingGeometryUpdate();

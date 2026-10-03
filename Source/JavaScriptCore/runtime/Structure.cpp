@@ -45,7 +45,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 template<typename DetailsFunc>
-void Structure::checkOffsetConsistency(PropertyTable* propertyTable, const DetailsFunc& detailsFunc) const
+void Structure::checkOffsetConsistency(PropertyTable* propertyTable, NOESCAPE const DetailsFunc& detailsFunc) const
 {
     // We cannot reliably assert things about the property table in the concurrent
     // compilation thread. It is possible for the table to be stolen and then have
@@ -1459,7 +1459,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         // NOTE: This can interleave in pin(), in which case it may see a null property table.
         // That's fine, because then the barrier will fire and we will scan this again.
         visitor.append(thisObject->m_propertyTableUnsafe);
-    } else if (visitor.vm().isAnalyzingHeap())
+    } else if (visitor.heapAnalyzer())
         visitor.append(thisObject->m_propertyTableUnsafe);
     else if (thisObject->m_propertyTableUnsafe)
         thisObject->m_propertyTableUnsafe.clear();
@@ -1481,7 +1481,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
 
     // Mark only in non Full collection. In full collection, we handle it as a weak-link.
-    if (!(visitor.heap()->collectionScope() == CollectionScope::Full)) {
+    if (visitor.collectionScope() != CollectionScope::Full) {
         if (auto* transition = thisObject->m_transitionTable.trySingleTransition())
             visitor.appendUnbarriered(transition);
     }

@@ -1494,7 +1494,7 @@ class WebCore::ContentType {
 
 struct WebCore::DateTimeChooserParameters {
     AtomString type;
-    WebCore::IntRect anchorRectInRootView;
+    WebCore::IntRect anchorRectInMainFrameView;
     AtomString locale;
     String currentValue;
     Vector<String> suggestionValues;
@@ -3308,7 +3308,7 @@ class WebCore::SpeechRecognitionUpdate {
 };
 
 header: <WebCore/ImageBufferParameters.h>
-[CustomHeader] struct WebCore::ImageBufferParameters {
+[CustomHeader, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImageBufferParameters {
     WebCore::FloatSize logicalSize;
     float resolutionScale;
     WebCore::ColorSpace colorSpace
@@ -3316,8 +3316,10 @@ header: <WebCore/ImageBufferParameters.h>
     WebCore::RenderingPurpose purpose;
 };
 
+using WebCore::ImageBufferTransferIdentifier = WTF::UUID;
+
 header: <WebCore/ImageBuffer.h>
-[CustomHeader] struct WebCore::ImageBufferTransferHandle {
+[CustomHeader, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImageBufferTransferHandle {
     WebCore::ImageBufferTransferIdentifier identifier;
     WebCore::ImageBufferParameters parameters;
     WebCore::RenderingMode renderingMode;
@@ -3562,6 +3564,9 @@ struct WebCore::NavigationRequester {
     bool hasHadUserInteraction;
     bool parentOriginIsSameAsTopOrigin;
     std::optional<WebCore::ProcessIdentifier> processIdentifier;
+    bool isSecureContext;
+    bool localNetworkAllowedByPermissionsPolicy;
+    bool loopbackNetworkAllowedByPermissionsPolicy;
 };
 
 struct WebCore::PolicyContainer {
@@ -6048,6 +6053,9 @@ struct WebCore::SerializedScriptValueInternals {
     uint64_t exposedMessagePortCount;
     std::optional<WebCore::NonSerializedDataToken> nonSerializedDataToken;
     Vector<std::optional<WebCore::DetachedImageBitmap>> detachedImageBitmaps;
+#if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
+    [Validator='std::ranges::all_of(*detachedOffscreenCanvases, [](auto& canvas) { return !!canvas; })'] Vector<std::unique_ptr<WebCore::DetachedOffscreenCanvas>> detachedOffscreenCanvases;
+#endif
     [NotSerialized] Vector<WebCore::FileSystemHandleKeepAlive> fileSystemHandleKeepAlives;
 #if ENABLE(WEB_CODECS)
     [NotSerialized] Vector<WebCore::WebCodecsVideoFrameData> serializedVideoFrames;
@@ -6066,7 +6074,6 @@ struct WebCore::SerializedScriptValueInternals {
 #endif
     [NotSerialized] std::unique_ptr<Vector<JSC::ArrayBufferContents>> sharedBufferContentsArray;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-    [NotSerialized] Vector<std::unique_ptr<WebCore::DetachedOffscreenCanvas>> detachedOffscreenCanvases;
     [NotSerialized] Vector<Ref<WebCore::OffscreenCanvas>> inMemoryOffscreenCanvases;
 #endif
     [NotSerialized] Vector<Ref<WebCore::MessagePort>> inMemoryMessagePorts;
@@ -6077,6 +6084,21 @@ struct WebCore::SerializedScriptValueInternals {
     [NotSerialized] Vector<WebCore::URLKeepingBlobAlive> blobHandles;
     [NotSerialized] uint64_t memoryCost;
 };
+
+#if ENABLE(OFFSCREEN_CANVAS)
+using WebCore::PlaceholderRenderingContextIdentifier = WTF::UUID;
+# Both are ProcessQualified<WTF::UUID>, whose coder is declared as ScriptExecutionContextIdentifier.
+using WebCore::RemotePlaceholderRenderingContextIdentifier = WebCore::ScriptExecutionContextIdentifier;
+#endif
+
+#if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
+header: <WebCore/OffscreenCanvas.h>
+[CustomHeader] class WebCore::DetachedOffscreenCanvas {
+    WebCore::IntSize size();
+    bool originClean();
+    std::optional<WebCore::RemotePlaceholderRenderingContextIdentifier> placeholderIdentifier();
+};
+#endif
 
 header: <WebCore/ImageBitmap.h>
 [CustomHeader] class WebCore::DetachedImageBitmap {
@@ -7145,6 +7167,11 @@ header: <WebCore/DocumentClasses.h>
 #if ENABLE(MODEL_PROCESS)
 header: <WebCore/StageModeOperations.h>
 enum class WebCore::StageModeOperation : bool;
+
+header: <WebCore/ModelPlayer.h>
+[CustomHeader] struct WebCore::ModelSceneGraphAsTextOptions {
+    bool includeAssetEntities;
+};
 #endif
 
 #if ENABLE(SPATIAL_PORTAL)
@@ -7318,6 +7345,7 @@ enum class WebCore::AccessibilitySearchKey : uint8_t {
     DifferentType,
     FontChange,
     FontColorChange,
+    FormFieldWithError,
     Frame,
     Graphic,
     HeadingLevel1,
@@ -7437,6 +7465,12 @@ struct WebCore::FocusOptions {
 };
 
 enum class WebKit::CommitTiming : bool;
+
+header: <WebCore/DevicePostureType.h>
+enum class WebCore::DevicePostureType : uint8_t {
+    Continuous,
+    Folded,
+};
 
 header: <WebCore/ResolvedCaptionDisplaySettingsOptions.h>
 [CustomHeader] enum class WebCore::ResolvedCaptionDisplaySettingsOptionsXPositionArea : uint8_t {

@@ -367,6 +367,8 @@ public:
     LayoutUnit computeLogicalWidthUsing(const Style::MaximumSize& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBlock& containingBlock) const;
     LayoutUnit computeLogicalWidthUsing(const Style::FlexBasis& logicalWidth, LayoutUnit availableLogicalWidth, const RenderBlock& containingBlock) const;
 
+    LayoutUnit resolveCalcSizeLogicalWidth(const Style::UnevaluatedCalcSize&, LayoutUnit keywordContentLogicalWidth, LayoutUnit percentResolutionLogicalWidth) const;
+
     std::optional<LayoutUnit> computeLogicalHeightUsing(const Style::PreferredSize& logicalHeight, std::optional<LayoutUnit> intrinsicContentHeight) const;
     std::optional<LayoutUnit> computeLogicalHeightUsing(const Style::MinimumSize& logicalHeight, std::optional<LayoutUnit> intrinsicContentHeight) const;
     std::optional<LayoutUnit> computeLogicalHeightUsing(const Style::MaximumSize& logicalHeight, std::optional<LayoutUnit> intrinsicContentHeight) const;
@@ -710,7 +712,6 @@ private:
     // These include tables, positioned objects, floats and flexible boxes.
     virtual void computeIntrinsicLogicalWidthContributions();
 
-    LayoutRect frameRectForStickyPositioning() const override { return borderBoxRectInContainer(); }
 
     RepaintRects computeVisibleRectsUsingPaintOffset(const RepaintRects&) const final;
     
@@ -735,7 +736,7 @@ protected:
     // Our overflow information.
     std::unique_ptr<RenderOverflow> m_overflow;
 
-    std::unique_ptr<RenderBoxOverridingSizes> m_overridingSizes;
+    const std::unique_ptr<RenderBoxOverridingSizes> m_overridingSizes;
 
 private:
     RenderBoxOverridingSizes& ensureOverridingSizes();

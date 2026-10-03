@@ -194,7 +194,7 @@ void WebExtensionContext::writeStateToStorage() const
         RELEASE_LOG_ERROR(Extensions, "Unable to save extension state: %" PUBLIC_LOG_STRING, error->message);
 }
 
-void WebExtensionContext::enumerateExtensionPages(NOESCAPE Function<void(WebPageProxy&, bool&)>&& action)
+void WebExtensionContext::enumerateExtensionPages(NOESCAPE const Function<void(WebPageProxy&, bool&)>& action)
 {
     if (!isLoaded())
         return;
@@ -337,7 +337,7 @@ void WebExtensionContext::loadBackgroundWebView()
         return;
     }
 
-    webkitWebViewLoadServiceWorker(m_backgroundWebView.get(), backgroundContentURL().string().utf8().legacyCStringPointer(), protect(extension())->backgroundContentUsesModules(), [this, protectedThis = Ref { *this }](bool success) {
+    webkitWebViewLoadServiceWorker(m_backgroundWebView.get(), backgroundContentURL(), protect(extension())->backgroundContentUsesModules(), [this, protectedThis = Ref { *this }](bool success) {
         if (!success) {
             m_backgroundContentLoadError = createError(Error::BackgroundContentFailedToLoad);
             recordErrorIfNeeded(backgroundContentLoadError());

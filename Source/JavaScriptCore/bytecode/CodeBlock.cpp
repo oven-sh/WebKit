@@ -602,6 +602,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         LINK(OpCreateGenerator)
 
         LINK(OpJneqPtr)
+        LINK(OpIteratorCloseCheck)
 
         LINK(OpCatch)
         LINK(OpProfileControlFlow)
@@ -2576,13 +2577,9 @@ void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSi
 LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
     RELEASE_ASSERT(bytecodeIndex.offset() < instructions().size());
-    SourceProvider& provider = *source().provider();
-    return provider.documentLineColumn(m_unlinkedCode->lineColumnInTextForBytecodeIndex(bytecodeIndex, provider, sourceOffset()));
-}
-
-LineColumn CodeBlock::lineColumnForBytecodeIndexConcurrently(BytecodeIndex bytecodeIndex) const
-{
-    return source().provider()->documentLineColumnForOffset(expressionInfoForBytecodeIndex(bytecodeIndex).divot);
+    auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);
+    unsigned divotInProvider = sourceOffset() + entry.divot;
+    return source().provider()->documentLineColumnForOffset(divotInProvider);
 }
 
 ExpressionInfo::Entry CodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex) const
@@ -3760,7 +3757,7 @@ void CodeBlock::tallyFrequentExitSites()
     case JITType::FTLJIT: {
         auto* jitCode = m_jitCode->ftl();
         for (auto& stub : jitCode->m_osrExitStubs)
-            jitCode->m_osrExit[stub.exitIndex].considerAddingAsFrequentExitSite(profiledBlock);
+            jitCode->osrExit(stub.exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
         break;
     }
 #endif

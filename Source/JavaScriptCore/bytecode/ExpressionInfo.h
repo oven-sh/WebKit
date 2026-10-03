@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <JavaScriptCore/LineColumn.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashTraits.h>
 #include <wtf/IterationStatus.h>
@@ -38,7 +37,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-class SourceProvider;
+class ConcurrentJSLocker;
 
 // See comment at the top of ExpressionInfo.cpp on how ExpressionInfo works.
 
@@ -184,16 +183,11 @@ public:
 
     ~ExpressionInfo() = default;
 
-    Entry NODELETE entryForInstPC(InstPC);
-
-    // The zero-based line and column of the instruction's divot in the text of its source, where this code starts at
-    // sourceOffset. entryForInstPC() decodes from the start of the chapter on every call, and stack traces ask for the
-    // same instructions again, so this keeps each answer. Sources share unlinked code when the CodeCache finds their text
-    // equal (a precompiled program is for the source it was compiled from), and everyone who asks it for global code
-    // gives it all of a source. So the text and sourceOffset, and with them the answer, are the same for every source
-    // that shares this. Where a source says its text starts is not in the answer.
-    // Not for a thread that runs beside the mutator: nothing guards the map.
-    LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
+    // The caller holds the owning UnlinkedCodeBlock's lock, because compiler threads also look up
+    // entries (useSourceCodeDump) and lookups fill a cache.
+    Entry entryForInstPC(const ConcurrentJSLocker&, InstPC);
+    // Decodes on every call. It takes no lock and keeps nothing: see UnlinkedCodeBlock::expressionInfoIfDecoded().
+    Entry NODELETE decodeEntryForInstPC(InstPC);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
     size_t NODELETE byteSize() const; // owned by this object
@@ -324,9 +318,8 @@ private:
 
     static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
-    using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
+    UncheckedKeyHashMap<InstPC, Entry, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>> m_cachedEntries;
 
-    LineColumnMap m_cachedLineColumns;
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
     unsigned m_numberOfEncodedInfoExtensions;

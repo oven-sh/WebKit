@@ -50,7 +50,7 @@ public:
     {
         auto mappedInitData = GstMappedOwnedBuffer::create(initData);
         if (!mappedInitData) {
-            GST_CAT_LEVEL_LOG(webkit_media_common_encryption_decrypt_debug_category, GST_LEVEL_ERROR, nullptr, "cannot map %s protection data", systemId.utf8().legacyCStringPointer());
+            GST_CAT_LEVEL_LOG(webkit_media_common_encryption_decrypt_debug_category, GST_LEVEL_ERROR, nullptr, "cannot map %s protection data", systemId.utf8());
             ASSERT_NOT_REACHED();
         }
         m_payload = extractCencIfNeeded(mappedInitData->createSharedBuffer());
@@ -113,7 +113,7 @@ public:
         return equalIgnoringASCIICase(keySystem, s_ClearKeyKeySystem);
     }
 
-    static bool isClearKeyUUID(CStringView uuid)
+    static bool isClearKeyUUID(UTF8CStringView uuid)
     {
         return equalIgnoringASCIICase(uuid.span(), s_ClearKeyUUID);
     }
@@ -123,7 +123,7 @@ public:
         return equalIgnoringASCIICase(keySystem, s_WidevineKeySystem);
     }
 
-    static bool isWidevineUUID(CStringView uuid)
+    static bool isWidevineUUID(UTF8CStringView uuid)
     {
         return equalIgnoringASCIICase(uuid.span(), s_WidevineUUID);
     }
@@ -133,7 +133,7 @@ public:
         return equalIgnoringASCIICase(keySystem, s_PlayReadyKeySystems[0]) || equalIgnoringASCIICase(keySystem, s_PlayReadyKeySystems[1]);
     }
 
-    static bool isPlayReadyUUID(CStringView uuid)
+    static bool isPlayReadyUUID(UTF8CStringView uuid)
     {
         return equalIgnoringASCIICase(uuid.span(), s_PlayReadyUUID);
     }
@@ -143,7 +143,7 @@ public:
         return equalIgnoringASCIICase(keySystem, s_unspecifiedKeySystem);
     }
 
-    static bool isUnspecifiedUUID(CStringView uuid)
+    static bool isUnspecifiedUUID(UTF8CStringView uuid)
     {
         return equalIgnoringASCIICase(uuid.span(), s_unspecifiedUUID);
     }
@@ -166,7 +166,7 @@ public:
         return { };
     }
 
-    static ASCIILiteral uuidToKeySystem(CStringView uuid)
+    static ASCIILiteral uuidToKeySystem(UTF8CStringView uuid)
     {
         if (isClearKeyUUID(uuid))
             return s_ClearKeyKeySystem;

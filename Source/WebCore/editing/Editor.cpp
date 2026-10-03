@@ -411,7 +411,7 @@ bool Editor::handleTextEvent(TextEvent& event)
         auto action = event.isRemoveBackground() ? EditAction::RemoveBackground : EditAction::Paste;
         if (event.pastingFragment()) {
 #if PLATFORM(IOS_FAMILY)
-            if (client()->performsTwoStepPaste(protect(event.pastingFragment())))
+            if (protect(client())->performsTwoStepPaste(protect(event.pastingFragment())))
                 return true;
 #endif
             replaceSelectionWithFragment(*protect(event.pastingFragment()), SelectReplacement::No, event.shouldSmartReplace() ? SmartReplace::Yes : SmartReplace::No, event.shouldMatchStyle() ? MatchStyle::Yes : MatchStyle::No, action, event.mailBlockquoteHandling());
@@ -1425,7 +1425,11 @@ void Editor::clear()
 
 #if ENABLE(TELEPHONE_NUMBER_DETECTION) && !PLATFORM(IOS_FAMILY)
     m_telephoneNumberDetectionUpdateTimer.stop();
-    m_detectedTelephoneNumberRanges.clear();
+    if (!m_detectedTelephoneNumberRanges.isEmpty()) {
+        m_detectedTelephoneNumberRanges.clear();
+        if (RefPtr page = document().page())
+            protect(page->servicesOverlayController())->selectedTelephoneNumberRangesChanged();
+    }
 #endif
 }
 
@@ -2460,18 +2464,18 @@ public:
         : m_document(WTF::move(document))
         , m_typingGestureIndicator(*m_document->frame())
     {
-        protect(protect(m_document)->editor())->setIgnoreSelectionChanges(true);
+        protect(m_document->editor())->setIgnoreSelectionChanges(true);
     }
 
     ~SetCompositionScope()
     {
-        Ref editor = protect(m_document)->editor();
+        Ref editor = m_document->editor();
         editor->setIgnoreSelectionChanges(false);
         if (CheckedPtr editorClient = editor->client())
             editorClient->didUpdateComposition();
     }
 
-    RefPtr<Document> m_document;
+    const RefPtr<Document> m_document;
     UserTypingGestureIndicator m_typingGestureIndicator;
 };
 
@@ -2634,7 +2638,7 @@ void Editor::setComposition(const String& text, const Vector<CompositionUnderlin
     }
 
 #if PLATFORM(IOS_FAMILY)
-    client()->startDelayingAndCoalescingContentChangeNotifications();
+    protect(client())->startDelayingAndCoalescingContentChangeNotifications();
 #endif
 
     RefPtr<CompositionEvent> event;
@@ -2744,7 +2748,7 @@ void Editor::setComposition(const String& text, const Vector<CompositionUnderlin
     }
 
 #if PLATFORM(IOS_FAMILY)        
-    client()->stopDelayingAndCoalescingContentChangeNotifications();
+    protect(client())->stopDelayingAndCoalescingContentChangeNotifications();
 #endif
 }
 
@@ -4429,9 +4433,12 @@ void Editor::scanSelectionForTelephoneNumbers()
     if (!shouldDetectTelephoneNumbers() || !client())
         return;
 
+    bool hadDetectedTelephoneNumberRanges = !m_detectedTelephoneNumberRanges.isEmpty();
     m_detectedTelephoneNumberRanges.clear();
-    
+
     auto notifyController = makeScopeExit([&] {
+        if (!hadDetectedTelephoneNumberRanges && m_detectedTelephoneNumberRanges.isEmpty())
+            return;
         if (RefPtr page = document().page())
             protect(page->servicesOverlayController())->selectedTelephoneNumberRangesChanged();
     });

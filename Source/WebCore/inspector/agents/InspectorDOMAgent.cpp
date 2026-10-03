@@ -255,7 +255,7 @@ public:
         return InspectorDOMAgent::nodeAsScriptValue(state, m_node.get());
     }
 private:
-    RefPtr<Node> m_node;
+    const RefPtr<Node> m_node;
 };
 
 class EventFiredCallback final : public EventListener {
@@ -1909,7 +1909,7 @@ String InspectorDOMAgent::documentURLString(Document* document)
     return document->url().string();
 }
 
-static String documentBaseURLString(Document* document)
+String InspectorDOMAgent::documentBaseURLString(Document* document)
 {
     return document->encodingParseURL(emptyString()).string();
 }
@@ -2374,7 +2374,7 @@ Ref<Inspector::Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildO
             ignored = axObject->isIgnored();
             ignoredByDefault = axObject->isIgnoredByDefault();
 
-            String invalidValue = axObject->invalidStatus();
+            String invalidValue = axObject->invalidStatusIncludingInferred();
             if (invalidValue == "false"_s)
                 invalid = Inspector::Protocol::DOM::AccessibilityProperties::Invalid::False;
             else if (invalidValue == "grammar"_s)
@@ -2821,7 +2821,7 @@ void InspectorDOMAgent::styleAttributeInvalidated(const Vector<Element*>& elemen
         if (!id)
             continue;
 
-        if (auto* cssAgent = agents->enabledCSSAgent())
+        if (CheckedPtr cssAgent = agents->enabledCSSAgent())
             cssAgent->didModifyDOMAttr(*element);
 
         nodeIds->addItem(id);
@@ -2847,7 +2847,7 @@ void InspectorDOMAgent::didInvalidateStyleAttr(Element& element)
         return;
 
     if (!m_revalidateStyleAttrTask)
-        m_revalidateStyleAttrTask = makeUnique<RevalidateStyleAttributeTask>(this);
+        lazyInitialize(m_revalidateStyleAttrTask, makeUnique<RevalidateStyleAttributeTask>(this));
     m_revalidateStyleAttrTask->scheduleFor(element);
 }
 

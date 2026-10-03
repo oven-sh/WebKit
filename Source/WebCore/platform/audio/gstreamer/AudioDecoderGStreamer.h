@@ -40,12 +40,12 @@ public:
 private:
     GStreamerAudioDecoder(const String& codecName, const Config&, OutputCallback&&, GRefPtr<GstElement>&&);
 
-    Ref<DecodePromise> decode(EncodedData&&) final;
+    Ref<DecodePromise> decode(AudioEncodedData&&) final;
     Ref<GenericPromise> flush() final;
     void reset() final;
     void close() final;
 
-    Ref<GStreamerInternalAudioDecoder> m_internalDecoder;
+    const Ref<GStreamerInternalAudioDecoder> m_internalDecoder;
 };
 
 }

@@ -25,6 +25,8 @@
 
 """Supports checking WebKit style in cmake files.(.cmake, CMakeLists.txt)"""
 
+import re
+
 from webkitpy.style.checkers.common import TabChecker, match, search, searchIgnorecase
 
 
@@ -66,7 +68,7 @@ class CMakeChecker(object):
         #From FindPkgConfig.cmake
         'pkg_check_modules',
         'project',
-        'remove_definitions', 'return',
+        'remove_definitions',
         'separate_arguments', 'set', 'set_directory_properties', 'set_property',
         'set_source_files_properties', 'set_target_properties',
         'set_tests_properties', 'site_name', 'source_group', 'string',
@@ -81,7 +83,7 @@ class CMakeChecker(object):
         'if', 'else', 'elseif', 'endif',
         'foreach', 'endforeach',
         'while', 'endwhile',
-        'break',
+        'break', 'return',
     ]
 
     categories = [
@@ -106,6 +108,9 @@ class CMakeChecker(object):
             # ignore comment line
             return
         l = line_content.expandtabs(4)
+        self._check_trailing_whitespace(line_number, l)
+        # Parentheses and command names inside quoted arguments aren't syntax.
+        l = re.sub(r'"(?:[^"\\]|\\.)*"', '""', l)
         # check command like message( "testing")
         if search(r'\(\ +', l):
             self._handle_style_error(line_number, 'whitespace/parentheses', 5,
@@ -114,7 +119,6 @@ class CMakeChecker(object):
         if search(r'\ +\)', l) and not search(r'^\ +\)$', l):
             self._handle_style_error(line_number, 'whitespace/parentheses', 5,
                                      'No space before ")"')
-        self._check_trailing_whitespace(line_number, l)
         self._check_no_space_cmds(line_number, l)
         self._check_one_space_cmds(line_number, l)
         self._check_indent(line_number, line_content)
@@ -158,10 +162,20 @@ class CMakeChecker(object):
         last_line = None
 
         for line_number, line in enumerate(lines, start=1):
-            matched = search(r'\$\{.*\}', line)
-            if matched:
-                continue
             line = line.strip()
+
+            # A comment inside a list starts a new, independently ordered group
+            # of items.
+            if last_line is not None and line.startswith('#'):
+                last_line = ''
+                empty_lines_count = 0
+                continue
+
+            # Items containing variables are exempt from ordering checks.
+            if search(r'\$\{.*\}', line):
+                if last_line is not None and line.endswith(')'):
+                    last_line = None
+                continue
 
             if last_line == None:
                 matched = match(r'(set\(|list\((APPEND|REMOVE_ITEM) )(?P<name>\w+)(?P<item>\s+\w+)?$', line)

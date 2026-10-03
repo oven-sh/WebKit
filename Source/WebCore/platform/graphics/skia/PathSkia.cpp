@@ -48,6 +48,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PathSkia);
 Ref<PathSkia> PathSkia::create(std::span<const PathSegment> segments)
 {
     Ref pathSkia = adoptRef(*new PathSkia);
+    pathSkia->m_builder.incReserve(segments.size());
     for (auto& segment : segments)
         pathSkia->addSegment(segment);
     return pathSkia;
@@ -241,7 +242,7 @@ void PathSkia::addPath(const PathSkia& path, const AffineTransform& transform)
     resetPlatformPath();
 }
 
-bool PathSkia::applyElements(const PathElementApplier& applier) const
+bool PathSkia::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib/Win port
 

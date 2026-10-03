@@ -130,7 +130,7 @@ IntSize BitmapImageDescriptor::sourceSize(ImageOrientation orientation) const
         size = decoder->size();
     else
 #endif
-        size = primaryImageFrameMetadata(m_size, CachedFlag::Size, &ImageFrame::size, SubsamplingLevel::Default);
+        size = primaryImageFrameMetadata(m_naturalSize, CachedFlag::NaturalSize, &ImageFrame::naturalSize, SubsamplingLevel::Default);
 
     if (orientation == ImageOrientation::Orientation::FromImage)
         orientation = this->orientation();
@@ -262,7 +262,7 @@ SubsamplingLevel BitmapImageDescriptor::subsamplingLevelForScaleFactor(GraphicsC
         return SubsamplingLevel::Default;
 
     // Never use subsampled images for drawing into PDF contexts.
-    if (context.hasPlatformContext() && CGContextGetType(context.platformContext()) == kCGContextTypePDF)
+    if (context.hasPlatformContext() && CGContextGetType(protect(context.platformContext())) == kCGContextTypePDF)
         return SubsamplingLevel::Default;
 
     float scale = std::min(float(1), std::max(scaleFactor.width(), scaleFactor.height()));

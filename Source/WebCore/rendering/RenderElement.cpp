@@ -97,7 +97,6 @@
 #include "RenderView.h"
 #include "ResolvedStyle.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGImage.h"
 #include "SVGLengthContext.h"
 #include "SVGRenderSupport.h"
 #include "SVGSVGElement.h"
@@ -901,7 +900,8 @@ void RenderElement::propagateStyleToAnonymousChildren(StylePropagationType propa
         if (!elementChild->isAnonymous() || elementChild->style().pseudoElementType() || elementChild->isViewTransitionContainingBlock())
             continue;
 
-        bool isBlockOrRuby = is<RenderBlock>(elementChild.get()) || elementChild->style().display() == Style::DisplayType::InlineRuby;
+        auto display = elementChild->style().display();
+        bool isBlockOrRuby = is<RenderBlock>(elementChild.get()) || display == Style::DisplayType::InlineRuby || display == Style::DisplayType::RubyBase;
         if (propagationType == StylePropagationType::BlockAndRubyChildren && !isBlockOrRuby)
             continue;
 
@@ -910,7 +910,6 @@ void RenderElement::propagateStyleToAnonymousChildren(StylePropagationType propa
             continue;
 
         auto newStyle = [&] {
-            auto display = elementChild->style().display();
             if (display == Style::DisplayType::RubyBase || display == Style::DisplayType::InlineRuby)
                 return createAnonymousStyleForRuby(style(), display);
             return Style::ComputedStyle::createAnonymousStyleWithDisplay(style(), display);
@@ -1949,12 +1948,8 @@ bool RenderElement::repaintForPausedImageAnimationsIfNeeded(const IntRect& visib
 
     repaint();
 
-    if (RefPtr image = cachedImage.image()) {
-        if (auto* svgImage = dynamicDowncast<SVGImage>(*image))
-            svgImage->scheduleStartAnimation();
-        else
-            image->startAnimation();
-    }
+    if (RefPtr image = cachedImage.image())
+        image->startAnimation();
 
     // For directly-composited animated GIFs it does not suffice to call repaint() to resume animation. We need to mark the image as changed.
     if (CheckedPtr modelObject = dynamicDowncast<RenderBoxModelObject>(*this))

@@ -43,10 +43,13 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UUID.h>
 #include <wtf/glib/Application.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
 #include <wtf/glib/Sandbox.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/MakeString.h>
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkPixmap.h>
@@ -133,8 +136,8 @@ public:
         if (!icon)
             return nullptr;
 
-        auto writeIconToTemporaryFile = [](const RefPtr<WebCore::Image>& icon) -> CString {
-            auto nativeImage = icon->nativeImage();
+        auto writeIconToTemporaryFile = [](const RefPtr<WebCore::Image>& icon) -> UTF8CString {
+            auto nativeImage = icon->nativeImage(WebCore::ConcreteObjectSize::fixed(icon->size()));
             if (!nativeImage)
                 return { };
 
@@ -157,10 +160,10 @@ public:
                 return { };
             }
 
-            return filename.get();
+            return UTF8CString::unsafeFromUTF8(filename.get());
         };
 
-        auto addResult = m_iconCache.add(iconURL, std::pair<uint32_t, CString>({ 0, CString() }));
+        auto addResult = m_iconCache.add(iconURL, std::pair<uint32_t, UTF8CString>({ 0, UTF8CString() }));
         if (addResult.isNewEntry) {
             auto path = writeIconToTemporaryFile(icon);
             if (path.isNull()) {
@@ -171,7 +174,7 @@ public:
         } else
             addResult.iterator->value.first++;
 
-        return std::get<CString>(addResult.iterator->value.second).data();
+        return std::get<UTF8CString>(addResult.iterator->value.second).legacyCStringPointer();
     }
 
     GBytes* iconBytes(const String& iconURL, const RefPtr<WebCore::Image>& icon)
@@ -180,7 +183,7 @@ public:
             return nullptr;
 
         auto writeIconToBuffer = [](const RefPtr<WebCore::Image>& icon) -> GRefPtr<GBytes> {
-            auto nativeImage = icon->nativeImage();
+            auto nativeImage = icon->nativeImage(WebCore::ConcreteObjectSize::fixed(icon->size()));
             if (!nativeImage)
                 return nullptr;
 
@@ -216,7 +219,7 @@ public:
             return;
 
         bool isNull = WTF::switchOn(it->value.second,
-            [](const CString& path) {
+            [](const UTF8CString& path) {
                 return path.isNull();
             },
             [](const GRefPtr<GBytes>& bytes) {
@@ -236,9 +239,9 @@ public:
         m_iconCache.removeIf([force](auto& it) -> bool {
             if (!it.value.first || force) {
                 WTF::switchOn(it.value.second,
-                    [](const CString& path) {
+                    [](const UTF8CString& path) {
                         if (!path.isNull()) {
-                            if (unlink(path.data()) == -1)
+                            if (posixUnlink(path) == -1)
                                 SAFE_WTFLOGALWAYS("Failed to remove cached notification icon %s: %s", path, safeStrerror(errno));
                         }
                     },
@@ -256,7 +259,7 @@ public:
     }
 
 private:
-    HashMap<String, std::pair<uint32_t, Variant<CString, GRefPtr<GBytes>>>> m_iconCache;
+    HashMap<String, std::pair<uint32_t, Variant<UTF8CString, GRefPtr<GBytes>>>> m_iconCache;
     RunLoop::Timer m_timer;
 };
 
@@ -331,21 +334,21 @@ void NotificationService::processCapabilities(GVariant* variant)
 
 static const char* applicationIcon()
 {
-    static std::optional<CString> appIcon;
+    static std::optional<UTF8CString> appIcon;
 #if HAVE(GDESKTOPAPPINFO)
     if (!appIcon) {
-        appIcon = []() -> CString {
-            const char* applicationID = WTF::applicationID().data();
+        appIcon = []() -> UTF8CString {
+            const auto& applicationID = WTF::applicationID();
 
 #if PLATFORM(GTK)
             if (auto* iconTheme = gtk_icon_theme_get_for_display(gdk_display_get_default())) {
-                if (gtk_icon_theme_has_icon(iconTheme, applicationID))
+                if (gtk_icon_theme_has_icon(iconTheme, applicationID.legacyCStringPointer()))
                     return applicationID;
             }
 #endif
 
-            GUniquePtr<char> desktopFileID(g_strdup_printf("%s.desktop", applicationID));
-            GRefPtr<GDesktopAppInfo> appInfo = adoptGRef(g_desktop_app_info_new(desktopFileID.get()));
+            auto desktopFileID = makeString(applicationID.span(), ".desktop"_s).utf8();
+            GRefPtr<GDesktopAppInfo> appInfo = adoptGRef(g_desktop_app_info_new(desktopFileID.legacyCStringPointer()));
             if (!appInfo)
                 return { };
 
@@ -355,12 +358,12 @@ static const char* applicationIcon()
 
             if (G_IS_FILE_ICON(icon)) {
                 GUniquePtr<char> uri(g_file_get_uri(g_file_icon_get_file(G_FILE_ICON(icon))));
-                return uri.get();
+                return UTF8CString::unsafeFromUTF8(uri.get());
             }
 
             if (G_IS_THEMED_ICON(icon)) {
                 const char* const* iconNames = g_themed_icon_get_names(G_THEMED_ICON(icon));
-                return iconNames[0];
+                return UTF8CString::unsafeFromUTF8(iconNames[0]);
             }
 
             return { };
@@ -368,7 +371,7 @@ static const char* applicationIcon()
     }
 #endif // HAVE(GDESKTOPAPPINFO)
 
-    return appIcon->data();
+    return appIcon->legacyCStringPointer();
 }
 
 bool NotificationService::showNotification(const WebNotification& notification, const RefPtr<WebCore::NotificationResources>& resources)
@@ -398,8 +401,8 @@ bool NotificationService::showNotification(const WebNotification& notification, 
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE_VARDICT);
 
-        g_variant_builder_add(&builder, "{sv}", "title", g_variant_new_string(notification.title().utf8().legacyCStringPointer()));
-        g_variant_builder_add(&builder, "{sv}", "body", g_variant_new_string(notification.body().utf8().legacyCStringPointer()));
+        g_variant_builder_add(&builder, "{sv}", "title", gVariantNewString(notification.title().utf8()));
+        g_variant_builder_add(&builder, "{sv}", "body", gVariantNewString(notification.body().utf8()));
         g_variant_builder_add(&builder, "{sv}", "default-action", g_variant_new_string("default"));
         if (resources) {
             if (auto* bytes = iconCache().iconBytes(notification.iconURL(), resources->icon())) {
@@ -408,7 +411,7 @@ bool NotificationService::showNotification(const WebNotification& notification, 
             }
         }
         addResult.iterator->value.portalID = createVersion4UUIDString();
-        g_dbus_proxy_call(m_proxy.get(), "AddNotification", g_variant_new("(s@a{sv})", addResult.iterator->value.portalID.utf8().legacyCStringPointer(), g_variant_builder_end(&builder)),
+        g_dbus_proxy_call(m_proxy.get(), "AddNotification", gVariantNew("(s@a{sv})", addResult.iterator->value.portalID.utf8(), g_variant_builder_end(&builder)),
             G_DBUS_CALL_FLAGS_NONE, -1, nullptr, [](GObject* source, GAsyncResult* result, gpointer) {
                 GUniqueOutPtr<GError> error;
                 GRefPtr<GVariant> variant = adoptGRef(g_dbus_proxy_call_finish(G_DBUS_PROXY(source), result, &error.outPtr()));
@@ -427,7 +430,7 @@ bool NotificationService::showNotification(const WebNotification& notification, 
 
         GVariantBuilder hintsBuilder;
         g_variant_builder_init(&hintsBuilder, G_VARIANT_TYPE("a{sv}"));
-        g_variant_builder_add(&hintsBuilder, "{sv}", "desktop-entry", g_variant_new_string(WTF::applicationID().data()));
+        g_variant_builder_add(&hintsBuilder, "{sv}", "desktop-entry", gVariantNewString(WTF::applicationID()));
         if (m_capabilities.contains(Capabilities::Persistence) && notification.isPersistentNotification())
             g_variant_builder_add(&hintsBuilder, "{sv}", "resident", g_variant_new_boolean(TRUE));
         if (resources && m_capabilities.contains(Capabilities::IconStatic)) {
@@ -439,16 +442,16 @@ bool NotificationService::showNotification(const WebNotification& notification, 
         g_value_init(value, G_TYPE_UINT64);
         g_value_set_uint64(value, notification.identifier().toUInt64());
 
-        CString body;
+        UTF8CString body;
         if (m_capabilities.contains(Capabilities::Body))
             body = notification.body().utf8();
 
         const char* appIcon = applicationIcon();
 
-        g_dbus_proxy_call(m_proxy.get(), "Notify", g_variant_new(
+        g_dbus_proxy_call(m_proxy.get(), "Notify", gVariantNew(
             "(susssasa{sv}i)",
             g_get_application_name(), addResult.iterator->value.id, appIcon ? appIcon : "",
-            notification.title().utf8().legacyCStringPointer(), body.data(),
+            notification.title().utf8(), body,
             &actionsBuilder, &hintsBuilder, -1
             ), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, [](GObject* source, GAsyncResult* result, gpointer userData) {
                 GUniqueOutPtr<GError> error;
@@ -481,7 +484,7 @@ void NotificationService::cancelNotification(WebNotificationIdentifier webNotifi
         if (it->value.portalID.isEmpty())
             return;
 
-        g_dbus_proxy_call(m_proxy.get(), "RemoveNotification", g_variant_new("(s)", it->value.portalID.utf8().legacyCStringPointer()), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
+        g_dbus_proxy_call(m_proxy.get(), "RemoveNotification", gVariantNew("(s)", it->value.portalID.utf8()), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
             [](GObject* source, GAsyncResult* result, gpointer) {
                 GUniqueOutPtr<GError> error;
                 GRefPtr<GVariant> variant = adoptGRef(g_dbus_proxy_call_finish(G_DBUS_PROXY(source), result, &error.outPtr()));

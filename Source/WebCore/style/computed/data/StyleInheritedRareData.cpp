@@ -61,8 +61,6 @@ InheritedRareData::InheritedRareData()
 #endif
     , listStyleType(ComputedStyle::initialListStyleType())
     , blockEllipsis(ComputedStyle::initialBlockEllipsis())
-    , borderHorizontalSpacing(ComputedStyle::initialBorderHorizontalSpacing())
-    , borderVerticalSpacing(ComputedStyle::initialBorderVerticalSpacing())
     , textIndent(ComputedStyle::initialTextIndent())
     , listStyleImage(ComputedStyle::initialListStyleImage())
     , dynamicRangeLimit(ComputedStyle::initialDynamicRangeLimit())
@@ -136,6 +134,7 @@ InheritedRareData::InheritedRareData()
     , autoRevealsWhenFound(false)
     , insideDefaultButton(false)
     , insideSubmitButton(false)
+    , inBaseAppearanceSubtree(false)
 #if ENABLE(SMART_IMAGE_RESIZER)
     , isAffectedBySmartImageResizer(false)
 #endif
@@ -174,8 +173,6 @@ inline InheritedRareData::InheritedRareData(const InheritedRareData& o)
 #endif
     , listStyleType(o.listStyleType)
     , blockEllipsis(o.blockEllipsis)
-    , borderHorizontalSpacing(o.borderHorizontalSpacing)
-    , borderVerticalSpacing(o.borderVerticalSpacing)
     , textIndent(o.textIndent)
     , listStyleImage(o.listStyleImage)
     , dynamicRangeLimit(o.dynamicRangeLimit)
@@ -249,6 +246,7 @@ inline InheritedRareData::InheritedRareData(const InheritedRareData& o)
     , autoRevealsWhenFound(o.autoRevealsWhenFound)
     , insideDefaultButton(o.insideDefaultButton)
     , insideSubmitButton(o.insideSubmitButton)
+    , inBaseAppearanceSubtree(o.inBaseAppearanceSubtree)
 #if ENABLE(SMART_IMAGE_RESIZER)
     , isAffectedBySmartImageResizer(o.isAffectedBySmartImageResizer)
 #endif
@@ -360,6 +358,7 @@ bool InheritedRareData::operator==(const InheritedRareData& o) const
         && usedContentVisibility == o.usedContentVisibility
         && insideDefaultButton == o.insideDefaultButton
         && insideSubmitButton == o.insideSubmitButton
+        && inBaseAppearanceSubtree == o.inBaseAppearanceSubtree
 #if ENABLE(SMART_IMAGE_RESIZER)
         && isAffectedBySmartImageResizer == o.isAffectedBySmartImageResizer
 #endif
@@ -373,8 +372,6 @@ bool InheritedRareData::operator==(const InheritedRareData& o) const
         && listStyleImage == o.listStyleImage
         && listStyleType == o.listStyleType
         && blockEllipsis == o.blockEllipsis
-        && borderHorizontalSpacing == o.borderHorizontalSpacing
-        && borderVerticalSpacing == o.borderVerticalSpacing
         && mathDepth == o.mathDepth;
 }
 
@@ -385,6 +382,7 @@ void InheritedRareData::dumpDifferences(TextStream& ts, const InheritedRareData&
 
     LOG_IF_DIFFERENT(usedZoom);
     LOG_IF_DIFFERENT(deviceScaleFactor);
+
     LOG_IF_DIFFERENT(listStyleImage);
 
     LOG_IF_DIFFERENT(textStrokeWidth);
@@ -490,6 +488,7 @@ void InheritedRareData::dumpDifferences(TextStream& ts, const InheritedRareData&
 
     LOG_IF_DIFFERENT_WITH_CAST(bool, insideDefaultButton);
     LOG_IF_DIFFERENT_WITH_CAST(bool, insideSubmitButton);
+    LOG_IF_DIFFERENT_WITH_CAST(bool, inBaseAppearanceSubtree);
 #if ENABLE(SMART_IMAGE_RESIZER)
     LOG_IF_DIFFERENT_WITH_CAST(bool, isAffectedBySmartImageResizer);
 #endif
@@ -530,9 +529,6 @@ void InheritedRareData::dumpDifferences(TextStream& ts, const InheritedRareData&
 
     LOG_IF_DIFFERENT(listStyleType);
     LOG_IF_DIFFERENT(blockEllipsis);
-
-    LOG_IF_DIFFERENT(borderHorizontalSpacing);
-    LOG_IF_DIFFERENT(borderVerticalSpacing);
 
     LOG_IF_DIFFERENT(mathDepth);
 }

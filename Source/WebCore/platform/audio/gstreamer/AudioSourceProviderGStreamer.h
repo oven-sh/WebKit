@@ -64,7 +64,7 @@ public:
     void handleNewDeinterleavePad(GstPad*);
     void handleRemovedDeinterleavePad(GstPad*);
 
-    GstFlowReturn handleSample(GstAppSink*, bool isPreroll);
+    GstFlowReturn handleSample(GstAppSink*);
     void clearAdapters();
 
 private:
@@ -78,13 +78,13 @@ private:
 
 #if ENABLE(MEDIA_STREAM)
     WeakPtr<MediaStreamTrackPrivate> m_captureSource;
-    RefPtr<MediaStreamPrivate> m_streamPrivate;
+    const RefPtr<MediaStreamPrivate> m_streamPrivate;
     GRefPtr<GstElement> m_pipeline;
 #endif
     enum MainThreadNotification {
         DeinterleavePadsConfigured = 1 << 0,
     };
-    Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
+    const Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
     GRefPtr<GstElement> m_audioSinkBin;
     WeakPtr<AudioSourceProviderClient> m_client;
     int m_deinterleaveSourcePads { 0 };
@@ -93,7 +93,7 @@ private:
     unsigned long m_deinterleavePadAddedHandlerId { 0 };
     unsigned long m_deinterleavePadRemovedHandlerId { 0 };
     Lock m_adapterLock;
-    CString m_providerId;
+    ASCIICString m_providerId;
 };
 
 }

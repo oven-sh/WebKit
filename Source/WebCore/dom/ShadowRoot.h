@@ -136,6 +136,7 @@ public:
 
     inline void didRemoveAllChildrenOfShadowHost(); // Defined in SlotAssignment.h
     inline void didMutateTextNodesOfShadowHost(); // Defined in SlotAssignment.h
+    inline void didChangeSlotNamesOfShadowHostChildren(); // Defined in SlotAssignment.h
     inline void hostChildElementDidChange(const Element&); // Defined in SlotAssignment.h
     inline void hostChildElementDidChangeSlotAttribute(Element&, const AtomString& oldValue, const AtomString& newValue); // Defined in SlotAssignment.h
 
@@ -182,10 +183,10 @@ private:
 
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_host;
     Node* m_shadowIncludingRoot { nullptr };
-    RefPtr<StyleSheetList> m_styleSheetList;
+    const RefPtr<StyleSheetList> m_styleSheetList;
 
     std::unique_ptr<Style::Scope> m_styleScope;
-    std::unique_ptr<SlotAssignment> m_slotAssignment;
+    const std::unique_ptr<SlotAssignment> m_slotAssignment;
     mutable std::optional<PartMappings> m_partMappings;
 
     AtomString m_referenceTarget;

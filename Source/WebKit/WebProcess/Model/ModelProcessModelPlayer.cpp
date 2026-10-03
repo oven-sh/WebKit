@@ -286,8 +286,10 @@ void ModelProcessModelPlayer::sizeDidChange(WebCore::LayoutSize size)
 
 void ModelProcessModelPlayer::configureGraphicsLayer(WebCore::GraphicsLayer& graphicsLayer, WebCore::ModelPlayerGraphicsLayerConfiguration&& configuration)
 {
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    if (configuration.detachedForImmersive)
+    // A hosting context can only be hosted in one place, so the page must drop its copy while the content is
+    // hosted elsewhere.
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (configuration.presentationMode != WebCore::ModelPresentationMode::Inline)
         return graphicsLayer.removeModelContents();
 #endif
 
@@ -615,6 +617,30 @@ void ModelProcessModelPlayer::exitImmersivePresentation(CompletionHandler<void()
 }
 
 #endif
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+void ModelProcessModelPlayer::enterVolumetricPresentation(CompletionHandler<void(std::optional<WebCore::LayerHostingContextIdentifier>)>&& completion)
+{
+    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::EnterVolumetricPresentation(), WTF::move(completion));
+}
+
+void ModelProcessModelPlayer::exitVolumetricPresentation()
+{
+    send(Messages::ModelProcessModelPlayerProxy::ExitVolumetricPresentation());
+}
+
+void ModelProcessModelPlayer::updateVolumetricPresentationSize(const WebCore::FloatSize& volumeSizeInMeters)
+{
+    send(Messages::ModelProcessModelPlayerProxy::UpdateVolumetricPresentationSize(volumeSizeInMeters));
+}
+
+#endif
+
+void ModelProcessModelPlayer::sceneGraphAsTextForTesting(std::optional<WebCore::NodeIdentifier> rootNode, Vector<std::pair<WebCore::NodeIdentifier, String>>&& modelLabels, const WebCore::ModelSceneGraphAsTextOptions& options, CompletionHandler<void(String&&)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::ModelProcessModelPlayerProxy::SceneGraphAsTextForTesting(rootNode, modelLabels, options), WTF::move(completionHandler));
+}
 
 }
 

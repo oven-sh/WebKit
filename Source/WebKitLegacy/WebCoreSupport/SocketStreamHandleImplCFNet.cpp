@@ -91,7 +91,7 @@ SocketStreamHandleImpl::SocketStreamHandleImpl(const URL& url, SocketStreamHandl
     ASSERT(url.protocolIs("ws"_s) || url.protocolIs("wss"_s));
 
     URL httpsURL { makeString("https://"_s, m_url.host()) };
-    m_httpsURL = httpsURL.createCFURL();
+    lazyInitialize(m_httpsURL, httpsURL.createCFURL());
 
     // Don't check for HSTS violation for ephemeral sessions since
     // HSTS state should not transfer between regular and private browsing.
@@ -123,8 +123,10 @@ void SocketStreamHandleImpl::scheduleStreams()
     CFReadStreamSetClient(m_readStream.get(), static_cast<CFOptionFlags>(-1), readStreamCallback, &clientContext);
     CFWriteStreamSetClient(m_writeStream.get(), static_cast<CFOptionFlags>(-1), writeStreamCallback, &clientContext);
 
-    CFReadStreamScheduleWithRunLoop(m_readStream.get(), callbacksRunLoop(), callbacksRunLoopMode());
-    CFWriteStreamScheduleWithRunLoop(m_writeStream.get(), callbacksRunLoop(), callbacksRunLoopMode());
+    RetainPtr runLoopMode = callbacksRunLoopMode();
+    RetainPtr runLoop = callbacksRunLoop();
+    CFReadStreamScheduleWithRunLoop(m_readStream.get(), runLoop, runLoopMode);
+    CFWriteStreamScheduleWithRunLoop(m_writeStream.get(), runLoop, runLoopMode);
 
     CFReadStreamOpen(m_readStream.get());
     CFWriteStreamOpen(m_writeStream.get());
@@ -183,7 +185,7 @@ void SocketStreamHandleImpl::executePACFileURL(CFURLRef pacFileURL)
     // CFNetwork returns an empty proxy array for WebSocket schemes, so use m_httpsURL.
     CFStreamClientContext clientContext = { 0, this, retainSocketStreamHandle, releaseSocketStreamHandle, copyPACExecutionDescription };
     m_pacRunLoopSource = adoptCF(CFNetworkExecuteProxyAutoConfigurationURL(pacFileURL, m_httpsURL.get(), pacExecutionCallback, &clientContext));
-    CFRunLoopAddSource(callbacksRunLoop(), m_pacRunLoopSource.get(), callbacksRunLoopMode());
+    CFRunLoopAddSource(protect(callbacksRunLoop()), m_pacRunLoopSource.get(), protect(callbacksRunLoopMode()));
     m_connectingSubstate = ExecutingPACFile;
 }
 
@@ -192,7 +194,7 @@ void SocketStreamHandleImpl::removePACRunLoopSource()
     ASSERT(m_pacRunLoopSource);
 
     CFRunLoopSourceInvalidate(m_pacRunLoopSource.get());
-    CFRunLoopRemoveSource(callbacksRunLoop(), m_pacRunLoopSource.get(), callbacksRunLoopMode());
+    CFRunLoopRemoveSource(protect(callbacksRunLoop()), m_pacRunLoopSource.get(), protect(callbacksRunLoopMode()));
     m_pacRunLoopSource = 0;
 }
 
@@ -356,7 +358,7 @@ bool SocketStreamHandleImpl::getStoredCONNECTProxyCredentials(const ProtectionSp
 
     // Try system credential storage first, matching HTTP behavior (CFNetwork only asks the client for password if it couldn't find it in Keychain).
     Credential storedCredential;
-    if (auto* storageSession = m_storageSessionProvider ? protect(m_storageSessionProvider)->storageSession() : nullptr) {
+    if (auto* storageSession = m_storageSessionProvider ? m_storageSessionProvider->storageSession() : nullptr) {
         storedCredential = CredentialStorage::getFromPersistentStorage(protectionSpace);
         if (storedCredential.isEmpty())
             storedCredential = storageSession->credentialStorage().get(m_credentialPartition, protectionSpace);
@@ -712,8 +714,10 @@ void SocketStreamHandleImpl::platformClose()
         return;
     }
 
-    CFReadStreamUnscheduleFromRunLoop(m_readStream.get(), callbacksRunLoop(), callbacksRunLoopMode());
-    CFWriteStreamUnscheduleFromRunLoop(m_writeStream.get(), callbacksRunLoop(), callbacksRunLoopMode());
+    RetainPtr runLoopMode = callbacksRunLoopMode();
+    RetainPtr runLoop = callbacksRunLoop();
+    CFReadStreamUnscheduleFromRunLoop(m_readStream.get(), runLoop, runLoopMode);
+    CFWriteStreamUnscheduleFromRunLoop(m_writeStream.get(), runLoop, runLoopMode);
 
     CFReadStreamClose(m_readStream.get());
     CFWriteStreamClose(m_writeStream.get());

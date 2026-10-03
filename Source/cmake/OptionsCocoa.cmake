@@ -5,7 +5,7 @@ include(WebKitVersion)
 # match. Without this CMake compiles .mm as CXX, CMAKE_OBJCXX_FLAGS are
 # ignored, and WEBKIT_ADD_PREFIX_HEADER produces no OBJCXX precompiled
 # header for .mm sources.
-enable_language(OBJC OBJCXX)
+WEBKIT_ENABLE_LANGUAGE(OBJC OBJCXX)
 
 WEBKIT_OPTION_BEGIN()
 
@@ -111,6 +111,7 @@ WEBKIT_OPTION_OWNED_BY_PLATFORM_H(
     ENABLE_PDF_HUD
     ENABLE_PDF_PLUGIN
     ENABLE_PREDEFINED_COLOR_SPACE_DISPLAY_P3
+    ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS
     ENABLE_UIPROCESS_PERIODIC_MEMORY_MONITOR
     ENABLE_UNIFIED_PDF
 )
@@ -157,6 +158,12 @@ if (WEBKIT_SDK_IS_IOS_FAMILY)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBDRIVER_MOUSE_INTERACTIONS PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBDRIVER_WHEEL_INTERACTIONS PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_IPC_TESTING_SWIFT PRIVATE OFF)
+endif ()
+
+# iOS launches the auxiliary processes as ExtensionKit extensions; every other
+# platform launches them as XPC services.
+if (WEBKIT_SDK_IS_IOS)
+    WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_EXTENSIONKIT PRIVATE ON)
 endif ()
 
 WEBKIT_OPTION_END()
@@ -320,6 +327,27 @@ if (RELATIVE_DEBUG_INFO)
         "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-fdebug-prefix-map=${CMAKE_BINARY_DIR}=build>"
         "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.>"
     )
+endif ()
+
+option(GENERATE_DSYM "Extract debug info from linked binaries into corresponding .dSYM bundles." OFF)
+
+if (GENERATE_DSYM)
+    WEBKIT_RESOLVE_TOOL(DSYMUTIL_EXECUTABLE "dsymutil")
+    WEBKIT_RESOLVE_TOOL(CMAKE_STRIP "strip")
+
+    # Sanity check that the build will produce debug info.
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _dsym_config)
+    if (NOT "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_dsym_config}}" MATCHES "(^| )-g($| )")
+        message(WARNING "GENERATE_DSYM is enabled but ${CMAKE_BUILD_TYPE} emits no debug info.")
+    endif ()
+
+    # dsymutil follows the N_OSO stabs back to the object files. Under LTO the
+    # linker synthesizes those objects in a temporary directory and deletes them
+    # when it exits, so they have to be kept somewhere durable.
+    if (LTO_MODE)
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/LTO")
+        add_link_options("LINKER-Wl,:-object_path_lto,${CMAKE_BINARY_DIR}/LTO")
+    endif ()
 endif ()
 
 if (ENABLE_SANITIZERS)
@@ -501,7 +529,8 @@ endif ()
 
 if (CMAKE_OSX_SYSROOT)
     add_compile_options("$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-F${CMAKE_BINARY_DIR};-iframework${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks>")
-    add_compile_options("$<$<COMPILE_LANGUAGE:Swift>:-F${CMAKE_BINARY_DIR};-Fsystem;${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks>")
+    # -F rather than -Fsystem for SDK frameworks, cf. rdar://problem/30939744
+    add_compile_options("$<$<COMPILE_LANGUAGE:Swift>:-F${CMAKE_BINARY_DIR};-F${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks>")
 endif ()
 
 # Regenerate the Xcode debug wrapper on every (re)configure so its scheme paths

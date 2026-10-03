@@ -113,10 +113,7 @@ static inline bool checkFrameAncestors(ContentSecurityPolicySourceListDirective*
     if (!directive)
         return true;
     bool didReceiveRedirectResponse = false;
-    for (RefPtr current = frame.tree().parent(); current; current = current->tree().parent()) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(*current);
-        if (!localFrame)
-            continue;
+    for (Ref localFrame : ancestorFrames<LocalFrame>(frame)) {
         URL origin = urlFromOrigin(protect(protect(localFrame->document())->securityOrigin()));
         if (!origin.isValid() || !directive->allows(origin, didReceiveRedirectResponse))
             return false;
@@ -638,13 +635,13 @@ void ContentSecurityPolicyDirectiveList::parseRequireTrustedTypesFor(ParsedDirec
 }
 
 template<class CSPDirectiveType>
-void ContentSecurityPolicyDirectiveList::setCSPDirective(ParsedDirective&& directive, std::unique_ptr<CSPDirectiveType>& existingDirective)
+void ContentSecurityPolicyDirectiveList::setCSPDirective(ParsedDirective&& directive, const std::unique_ptr<CSPDirectiveType>& existingDirective)
 {
     if (existingDirective) {
         m_policy->reportDuplicateDirective(directive.name);
         return;
     }
-    existingDirective = makeUnique<CSPDirectiveType>(*this, WTF::move(directive.name), WTF::move(directive.value));
+    lazyInitialize(existingDirective, makeUnique<CSPDirectiveType>(*this, WTF::move(directive.name), WTF::move(directive.value)));
 }
 
 void ContentSecurityPolicyDirectiveList::applySandboxPolicy(ParsedDirective&& directive)

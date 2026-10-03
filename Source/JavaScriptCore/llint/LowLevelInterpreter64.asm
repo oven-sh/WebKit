@@ -3398,10 +3398,9 @@ end)
 
 llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch, metadata, return)
 
-    loadVariable(get, m_next, t0)
-    # When m_next is not a cell it may be the index that op_iterator_open left there for an Array it made no iterator object for.
-    btqnz t0, notCellMask, .iteratorNextIsNotCell
-    bbneq JSCell::m_type[t0], constexpr SentinelType, .iteratorNextGeneric
+    loadVariable(get, m_next, t3)
+    btqnz t3, notCellMask, .iteratorNextForNonCell
+    bbneq JSCell::m_type[t3], constexpr SentinelType, .iteratorNextGeneric
     macro fastNarrow()
         callSlowPath(_iterator_next_try_fast_narrow)
     end
@@ -3417,60 +3416,66 @@ llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch
     bpeq r1, constexpr IterationMode::Generic, .iteratorNextGeneric
     dispatch()
 
-.iteratorNextIsNotCell:
-    # Then, and only then, m_iterator is a sentinel cell instead of an object.
-    move t0, t1
+.iteratorNextForNonCell:
     loadVariable(get, m_iterator, t0)
-    btqnz t0, notCellMask, .iteratorNextGeneric
-    bbneq JSCell::m_type[t0], constexpr SentinelType, .iteratorNextGeneric
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t1
+    bpneq t0, VM::m_fastArraySentinel[t1], .iteratorNextNotFastArray
 
-    # The Array is in m_iterable and the index of the next element, an Int32, in m_next. An element that is there, in Int32 or
-    # Contiguous storage, is handled here; everything else (the end, holes, other kinds of storage) in C++.
-    bqb t1, numberTag, .iteratorNextIndexInFrameSlow
-    loadVariable(get, m_iterable, t3)
-    btqnz t3, notCellMask, .iteratorNextIndexInFrameSlow
-    bbneq JSCell::m_type[t3], constexpr ArrayType, .iteratorNextIndexInFrameSlow
-    loadb JSCell::m_indexingTypeAndMisc[t3], t2
-    andi IndexingShapeMask, t2
-    bieq t2, Int32Shape, .iteratorNextIsContiguous
-    bineq t2, ContiguousShape, .iteratorNextIndexInFrameSlow
-.iteratorNextIsContiguous:
-    loadp JSObjectWithButterfly::m_butterfly[t3], t0
-    # As unsigned: the index of a finished iteration, -1, is above any length.
-    zxi2q t1, t1
-    biaeq t1, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0], .iteratorNextIndexInFrameSlow
-    bieq t1, 0x7fffffff, .iteratorNextIndexInFrameSlow
-    loadq [t0, t1, 8], t2
-    btqz t2, .iteratorNextIndexInFrameSlow
+    bqb t3, numberTag, .iteratorNextFastArraySlow
+    loadVariable(get, m_iterable, t2)
+    btqnz t2, notCellMask, .iteratorNextFastArraySlow
+    loadb JSCell::m_indexingTypeAndMisc[t2], t0
+    andi IndexingTypeMask, t0
+    bieq t0, ArrayWithInt32, .iteratorNextFastArrayIsContiguous
+    bineq t0, ArrayWithContiguous, .iteratorNextFastArraySlow
+
+.iteratorNextFastArrayIsContiguous:
+    loadp JSObjectWithButterfly::m_butterfly[t2], t0
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0], .iteratorNextFastArraySlow
+    zxi2q t3, t3
+    loadq [t0, t3, 8], t1
+    btqz t1, .iteratorNextFastArraySlow
 
     metadata(t5, t0)
-    loadi JSCell::m_structureID[t3], t0
-    storei t0, OpIteratorNext::Metadata::m_iterableProfile.m_lastSeenStructureID[t5]
+    arrayProfile(OpIteratorNext::Metadata::m_iterableProfile, t2, t5, t0)
     loadh OpIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5], t0
-    btinz t0, constexpr IterationMode::FastArray, .iteratorNextModeIsRecorded
     ori constexpr IterationMode::FastArray, t0
     storeh t0, OpIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5]
-.iteratorNextModeIsRecorded:
-    storeVariable(get, m_value, t2, t0)
-    valueProfile(size, OpIteratorNext, m_valueValueProfile, t2, t0)
-    move ValueFalse, t2
-    storeVariable(get, m_done, t2, t0)
-    addi 1, t1
-    orq numberTag, t1
-    storeVariable(get, m_next, t1, t0)
+    storeVariable(get, m_value, t1, t0)
+    valueProfile(size, OpIteratorNext, m_valueValueProfile, t1, t0)
+    move ValueFalse, t1
+    storeVariable(get, m_done, t1, t0)
+    addi 1, t3
+    orq numberTag, t3
+    storeVariable(get, m_next, t3, t0)
     dispatch()
 
-.iteratorNextIndexInFrameSlow:
-    macro indexInFrameNarrow()
-        callSlowPath(_iterator_next_index_in_frame_narrow)
+.iteratorNextFastArraySlow:
+    macro fastArrayNarrow()
+        callSlowPath(_iterator_next_fast_array_narrow)
     end
-    macro indexInFrameWide16()
-        callSlowPath(_iterator_next_index_in_frame_wide16)
+    macro fastArrayWide16()
+        callSlowPath(_iterator_next_fast_array_wide16)
     end
-    macro indexInFrameWide32()
-        callSlowPath(_iterator_next_index_in_frame_wide32)
+    macro fastArrayWide32()
+        callSlowPath(_iterator_next_fast_array_wide32)
     end
-    size(indexInFrameNarrow, indexInFrameWide16, indexInFrameWide32, macro (callOp) callOp() end)
+    size(fastArrayNarrow, fastArrayWide16, fastArrayWide32, macro (callOp) callOp() end)
+    dispatch()
+
+.iteratorNextNotFastArray:
+    bpneq t0, VM::m_fastStringSentinel[t1], .iteratorNextGeneric
+    macro fastStringNarrow()
+        callSlowPath(_iterator_next_fast_string_narrow)
+    end
+    macro fastStringWide16()
+        callSlowPath(_iterator_next_fast_string_wide16)
+    end
+    macro fastStringWide32()
+        callSlowPath(_iterator_next_fast_string_wide32)
+    end
+    size(fastStringNarrow, fastStringWide16, fastStringWide32, macro (callOp) callOp() end)
     dispatch()
 
 .iteratorNextGeneric:
@@ -3579,20 +3584,36 @@ llintOpWithMetadata(op_new_reg_exp_shared, OpNewRegExpShared, macro (size, get, 
     dispatch()
 end)
 
-llintOpWithJump(op_iterator_close_check, OpIteratorCloseCheck, macro (size, get, jump, dispatch)
+llintOpWithMetadata(op_iterator_close_check, OpIteratorCloseCheck, macro (size, get, dispatch, metadata, return)
     loadVariable(get, m_iterator, t0)
-    btqnz t0, notCellMask, .iteratorCloseCheckFallThrough
-    bbneq JSCell::m_type[t0], constexpr SentinelType, .iteratorCloseCheckFallThrough
-    # No iterator object. There is nothing to close while this realm's Array Iterator protocol watchpoint set is intact.
     loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t2
+    bpneq t0, VM::m_fastArraySentinel[t2], .iteratorCloseCheckNotFastArray
+    metadata(t5, t3)
+    loadb OpIteratorCloseCheck::Metadata::m_seenModes[t5], t3
+    ori constexpr IterationMode::FastArray, t3
+    storeb t3, OpIteratorCloseCheck::Metadata::m_seenModes[t5]
     loadp CodeBlock::m_globalObject[t1], t1
     branchIfInlineWatchpointSetIsStillValid(JSGlobalObject::m_arrayIteratorProtocolWatchpointSet + InlineWatchpointSet::m_data[t1], t1, .iteratorCloseCheckNothingToClose)
+    jmp .iteratorCloseCheckNeedsIterator
+
+.iteratorCloseCheckNotFastArray:
+    bpneq t0, VM::m_fastStringSentinel[t2], .iteratorCloseCheckFallThrough
+    metadata(t5, t3)
+    loadb OpIteratorCloseCheck::Metadata::m_seenModes[t5], t3
+    ori constexpr IterationMode::FastString, t3
+    storeb t3, OpIteratorCloseCheck::Metadata::m_seenModes[t5]
+    loadp CodeBlock::m_globalObject[t1], t1
+    branchIfInlineWatchpointSetIsStillValid(JSGlobalObject::m_stringIteratorProtocolWatchpointSet + InlineWatchpointSet::m_data[t1], t1, .iteratorCloseCheckNothingToClose)
+
+.iteratorCloseCheckNeedsIterator:
     callSlowPath(_slow_path_iterator_close_check)
 .iteratorCloseCheckFallThrough:
     dispatch()
 
 .iteratorCloseCheckNothingToClose:
-    jump(m_targetLabel)
+    get(m_targetLabel, t0)
+    jumpImpl(dispatchIndirect, t0)
 end)
 
 llintOpWithMetadata(op_async_iterator_next, OpAsyncIteratorNext, macro (size, get, dispatch, metadata, return)

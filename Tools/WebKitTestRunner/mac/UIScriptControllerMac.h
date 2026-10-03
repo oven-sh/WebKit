@@ -45,6 +45,7 @@ private:
     double minimumZoomScale() const override;
     void simulateAccessibilitySettingsChangeNotification(JSValueRef) override;
     bool isShowingDateTimePicker() const override;
+    JSObjectRef dateTimePickerRect() const override;
     double dateTimePickerValue() const override;
     void chooseDateTimePickerValue() override;
     bool isShowingDataListSuggestions() const override;
@@ -74,7 +75,7 @@ private:
     void sendEventStream(JSStringRef, JSValueRef) override;
 
     NSTableView *dataListSuggestionsTableView() const;
-    JSRetainPtr<JSStringRef> scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool) const override;
+    RefPtr<OpaqueJSString> scrollbarStateForScrollingNodeID(unsigned long long scrollingNodeID, unsigned long long processID, bool) const override;
 
     int64_t pasteboardChangeCount() const final;
 

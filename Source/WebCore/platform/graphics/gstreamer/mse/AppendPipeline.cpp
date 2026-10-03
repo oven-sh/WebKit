@@ -119,7 +119,7 @@ void AppendPipeline::setupDemuxing()
     }, this, nullptr);
 
     const String& type = m_sourceBufferPrivate.type().containerType();
-    GST_DEBUG_OBJECT(pipeline(), "SourceBuffer containerType: %s", type.utf8().legacyCStringPointer());
+    GST_DEBUG_OBJECT(pipeline(), "SourceBuffer containerType: %s", type.utf8());
 
     if (type.endsWith("mp4"_s) || type.endsWith("aac"_s)) {
         m_demux = makeGStreamerElement("qtdemux"_s);
@@ -546,7 +546,7 @@ void AppendPipeline::appsinkNewSample(const Track& track, GRefPtr<GstSample>&& s
         MediaTime pts = bufferTimeToStreamTime(segment, GST_BUFFER_PTS(buffer));
         MediaTime dts = bufferTimeToStreamTime(segment, GST_BUFFER_DTS_IS_VALID(buffer) ? GST_BUFFER_DTS(buffer) : GST_BUFFER_DTS_OR_PTS(buffer));
         GST_TRACE_OBJECT(track.appsinkPad.get(), "Mapped buffer to segment, PTS %" GST_TIME_FORMAT " -> %s DTS %" GST_TIME_FORMAT " -> %s",
-            GST_TIME_ARGS(GST_BUFFER_PTS(buffer)), pts.toString().utf8().legacyCStringPointer(), GST_TIME_ARGS(GST_BUFFER_DTS(buffer)), dts.toString().utf8().legacyCStringPointer());
+            GST_TIME_ARGS(GST_BUFFER_PTS(buffer)), pts.toString().utf8(), GST_TIME_ARGS(GST_BUFFER_DTS(buffer)), dts.toString().utf8());
         mediaSample->setTimestamps(pts, dts);
     } else if (!GST_BUFFER_DTS(buffer) && GST_BUFFER_PTS(buffer) > 0
         && GST_BUFFER_PTS(buffer) <= toGstClockTime(PlatformTimeRanges::timeFudgeFactor())
@@ -570,9 +570,9 @@ void AppendPipeline::appsinkNewSample(const Track& track, GRefPtr<GstSample>&& s
 
     GST_TRACE_OBJECT(pipeline(), "append: trackId=%" PRIu64 " PTS=%s DTS=%s DUR=%s presentationSize=%.0fx%.0f",
         mediaSample->trackID(),
-        mediaSample->presentationTime().toString().utf8().legacyCStringPointer(),
-        mediaSample->decodeTime().toString().utf8().legacyCStringPointer(),
-        mediaSample->duration().toString().utf8().legacyCStringPointer(),
+        mediaSample->presentationTime().toString().utf8(),
+        mediaSample->decodeTime().toString().utf8(),
+        mediaSample->duration().toString().utf8(),
         mediaSample->presentationSize().width(), mediaSample->presentationSize().height());
 
     if (track.streamType == StreamType::Text) {
@@ -645,7 +645,7 @@ void AppendPipeline::didReceiveInitializationSegment()
                 audioPadStreamIDs.add(WTF::move(streamID));
             else if (streamType == StreamType::Video)
                 videoPadStreamIDs.add(WTF::move(streamID));
-            else if (streamType == StreamType::Text)
+            else if (streamType == StreamType::Text && m_sourceBufferPrivate.textTracksEnabled())
                 textPadStreamIDs.add(WTF::move(streamID));
         }
 
@@ -665,7 +665,7 @@ void AppendPipeline::didReceiveInitializationSegment()
                 videoTracksCount++;
                 if (streamID.isEmpty() || !videoPadStreamIDs.contains(streamID))
                     doVideoTrackStreamIDsMatch = false;
-            } else if (track->streamType == StreamType::Text) {
+            } else if (track->streamType == StreamType::Text && m_sourceBufferPrivate.textTracksEnabled()) {
                 textTracksCount++;
                 if (streamID.isEmpty() || !textPadStreamIDs.contains(streamID))
                     doTextTrackStreamIDsMatch = false;
@@ -691,13 +691,8 @@ void AppendPipeline::didReceiveInitializationSegment()
 
         // Link pads to existing Track objects that don't have a linked pad yet. Existing linked
         // tracks are recycled if their stream type matches the new demuxer source pads.
-        for (GstPad* pad : GstIteratorAdaptor<GstPad>(gst_element_iterate_src_pads(m_demux.get()))) {
-            if (!recycleTrackForPad(pad)) {
-                GST_WARNING_OBJECT(pipeline(), "Can't match pad to existing tracks in the AppendPipeline: %" GST_PTR_FORMAT, pad);
-                m_sourceBufferPrivate.appendParsingFailed();
-                return;
-            }
-        }
+        for (GstPad* pad : GstIteratorAdaptor<GstPad>(gst_element_iterate_src_pads(m_demux.get())))
+            recycleTrackForPad(pad);
     }
 
     for (std::unique_ptr<Track>& track : m_tracks) {
@@ -843,7 +838,7 @@ void AppendPipeline::startChangingType()
     m_pendingInitializationSegmentForChangeType = true;
 
     auto type = sourceBufferPrivate().m_type;
-    GST_INFO_OBJECT(pipeline(), "Pending type change -> %s", type.raw().utf8().legacyCStringPointer());
+    GST_INFO_OBJECT(pipeline(), "Pending type change -> %s", type.raw().utf8());
 }
 
 void AppendPipeline::resetElementsForChangeType()
@@ -851,7 +846,7 @@ void AppendPipeline::resetElementsForChangeType()
     ASSERT(isMainThread());
 
     auto type = sourceBufferPrivate().m_type;
-    GST_INFO_OBJECT(pipeline(), "Replacing appsrc, typefind and demuxer for type change -> %s", type.raw().utf8().legacyCStringPointer());
+    GST_INFO_OBJECT(pipeline(), "Replacing appsrc, typefind and demuxer for type change -> %s", type.raw().utf8());
 
     gst_element_unlink_many(m_appsrc.get(), m_typefind.get(), m_demux.get(), nullptr);
     for (const auto& track : m_tracks) {
@@ -1153,6 +1148,12 @@ std::pair<AppendPipeline::CreateTrackResult, AppendPipeline::Track*> AppendPipel
     auto [parsedCaps, streamType, presentationSize] = parseDemuxerSrcPadCaps(adoptGRef(gst_pad_get_current_caps(demuxerSrcPad)).get());
     GST_DEBUG_OBJECT(pipeline(), "Demuxer src pad caps: %" GST_PTR_FORMAT, parsedCaps.get());
 
+    if (!m_sourceBufferPrivate.textTracksEnabled() && streamType == StreamType::Text) {
+        GST_INFO_OBJECT(pipeline(), "Pad '%s' with parsed caps %" GST_PTR_FORMAT " has an text type but the runtime text track feature is disabled, will be connected to a black hole probe.", GST_PAD_NAME(demuxerSrcPad), parsedCaps.get());
+        gst_pad_add_probe(demuxerSrcPad, GST_PAD_PROBE_TYPE_BUFFER, reinterpret_cast<GstPadProbeCallback>(appendPipelineDemuxerBlackHolePadProbe), nullptr, nullptr);
+        return { CreateTrackResult::TrackIgnored, nullptr };
+    }
+
     if (streamType == StreamType::Invalid) {
         GST_WARNING_OBJECT(pipeline(), "Unsupported track codec: %" GST_PTR_FORMAT, parsedCaps.get());
         // 3.5.7 Initialization Segment Received
@@ -1182,7 +1183,7 @@ std::pair<AppendPipeline::CreateTrackResult, AppendPipeline::Track*> AppendPipel
     return { CreateTrackResult::TrackCreated, &track };
 }
 
-bool AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
+void AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
 {
     ASSERT(isMainThread());
     ASSERT(m_hasReceivedFirstInitializationSegment);
@@ -1205,7 +1206,7 @@ bool AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
         GST_WARNING_OBJECT(pipeline(), "Couldn't find a matching pre-existing track for pad '%s' with parsed caps %" GST_PTR_FORMAT
             " on non-first initialization segment, will be connected to a black hole probe.", GST_PAD_NAME(demuxerSrcPad), parsedCaps.get());
         gst_pad_add_probe(demuxerSrcPad, GST_PAD_PROBE_TYPE_BUFFER, reinterpret_cast<GstPadProbeCallback>(appendPipelineDemuxerBlackHolePadProbe), nullptr, nullptr);
-        return false;
+        return;
     }
 
     matchingTrack->demuxerSrcPad = demuxerSrcPad;
@@ -1250,8 +1251,6 @@ bool AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
     gst_element_set_state(matchingTrack->appsink.get(), GST_STATE_PLAYING);
     if (matchingTrack->parser)
         gst_element_set_state(matchingTrack->parser.get(), GST_STATE_PLAYING);
-
-    return true;
 }
 
 void AppendPipeline::linkPadWithTrack(GstPad* demuxerSrcPad, Track& track)

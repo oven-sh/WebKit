@@ -34,6 +34,7 @@ namespace WebCore {
 class WritingMode;
 
 namespace Style {
+struct GridTrackSize;
 struct PreferredSize;
 }
 
@@ -55,6 +56,9 @@ struct UsedMargins {
 namespace GridLayoutUtils {
 
 LayoutUnit NODELETE totalGuttersSize(size_t tracksCount, LayoutUnit gapsSize);
+
+// https://drafts.csswg.org/css-grid-1/#track-sizes
+Style::GridTrackSize trackSizeWithPercentagesConvertedToAuto(const Style::GridTrackSize&);
 
 UsedMargins usedMarginsForAxis(const PlacedGridItem&, const ComputedSizes&);
 
@@ -93,6 +97,7 @@ bool sizeDependsOnContainingBlockSize(const SizeType& size)
 }
 
 std::optional<double> preferredAspectRatio(const ElementBox&);
+bool hasFitContentBlockSize(const PlacedGridItem&);
 bool inlineContributionMayRequireFullSizingAlgorithmForIntrinsicWidth(const ElementBox&, WritingMode containerWritingMode);
 
 } // namespace GridLayoutUtils

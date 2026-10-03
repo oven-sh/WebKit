@@ -79,16 +79,6 @@ inline void ComputedStyleBase::setColorForHighlight(Color&& colorForHighlight)
         m_inheritedRareData.access().colorForHighlight = WTF::move(colorForHighlight);
 }
 
-inline void ComputedStyleBase::setUsesCurrentBackgroundColorKeyword()
-{
-    m_nonInheritedFlags.usesCurrentBackgroundColorKeyword = true;
-}
-
-inline void ComputedStyleBase::setCurrentBackgroundColor(WebCore::Color currentBackgroundColor)
-{
-    SET(m_inheritedData, currentBackgroundColor, WTF::move(currentBackgroundColor));
-}
-
 inline void ComputedStyleBase::setInsideLink(InsideLink insideLink)
 {
     m_inheritedFlags.insideLink = static_cast<unsigned>(insideLink);
@@ -199,6 +189,11 @@ inline void ComputedStyleBase::setInsideDefaultButton(bool value)
 inline void ComputedStyleBase::setInsideSubmitButton(bool value)
 {
     SET(m_inheritedRareData, insideSubmitButton, value);
+}
+
+inline void ComputedStyleBase::setInBaseAppearanceSubtree(bool value)
+{
+    SET(m_inheritedRareData, inBaseAppearanceSubtree, value);
 }
 
 inline void ComputedStyleBase::setUsedPositionOptionIndex(std::optional<size_t> index)

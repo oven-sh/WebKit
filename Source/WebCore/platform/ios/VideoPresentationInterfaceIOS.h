@@ -173,7 +173,7 @@ public:
     WEBCORE_EXPORT void setMode(HTMLMediaElementEnums::VideoFullscreenMode, VideoPresentationModel::ShouldNotifyMediaElement);
     void clearMode(HTMLMediaElementEnums::VideoFullscreenMode, VideoPresentationModel::ShouldNotifyMediaElement);
     bool hasMode(HTMLMediaElementEnums::VideoFullscreenMode mode) const { return m_currentMode.hasMode(mode); }
-    WEBCORE_EXPORT UIViewController *presentingViewController();
+    WEBCORE_EXPORT RetainPtr<UIViewController> presentingViewController();
     UIViewController *fullscreenViewController() const LIFETIME_BOUND { return m_viewController.get(); }
     WEBCORE_EXPORT virtual bool pictureInPictureWasStartedWhenEnteringBackground() const = 0;
 
@@ -274,7 +274,7 @@ private:
     bool m_finalizeSetupNeedsVideoContentLayer { false };
     bool m_finalizeSetupNeedsReturnVideoContentLayer { false };
     const Ref<PlaybackSessionInterfaceIOS> m_playbackSessionInterface;
-    RetainPtr<UIView> m_pipPlacard;
+    const RetainPtr<UIView> m_pipPlacard;
 
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)
     bool m_prefersSpatialAudioExperience { false };

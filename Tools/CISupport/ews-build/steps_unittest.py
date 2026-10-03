@@ -4018,6 +4018,83 @@ class TestFilterLayoutTestFailuresUsingResultsDB(BuildStepMixinAdditions, unitte
         yield step.filter_failures_using_results_db(failing_tests)
         self.assertEqual(len(queried), cap)
 
+    @defer.inlineCallbacks
+    def test_a_test_whose_expectations_this_change_modifies_is_not_excused_as_pre_existing(self):
+        # Removing an expectation claims the test passes now, which the database cannot vouch for.
+        step = self._configure({'ungardened.html', 'unrelated.html'})
+        self.setProperty('modified_tests', ['LayoutTests/ungardened.html'])
+
+        yield step.filter_failures_using_results_db(['ungardened.html', 'unrelated.html'])
+
+        self.assertEqual(step.failing_tests_filtered, ['ungardened.html'])
+        self.assertEqual(step.pre_existing_failures_in_results_db, ['unrelated.html'])
+        self.assertEqual(step.tests_modified_by_change, ['ungardened.html'])
+
+    @defer.inlineCallbacks
+    def test_a_test_this_change_modifies_is_not_excused_as_a_known_flake(self):
+        step = self._configure(set())
+        self.setProperty('modified_tests', ['LayoutTests/modified.html'])
+        self.patch(ResultsDatabase, 'flaky_verdicts_for', classmethod(
+            lambda cls, tests, **kwargs: defer.succeed((
+                {test: FlakyVerdict(flaky_type='DirtyTree', build_urls={'https://build.webkit.org/'}) for test in tests}, ''))))
+
+        yield step.filter_failures_using_results_db(['modified.html', 'flaky.html'])
+
+        # flaky.html is excused by its verdict, modified.html is never queried at all.
+        self.assertEqual(step.failing_tests_filtered, ['modified.html'])
+        self.assertEqual(step.pre_existing_flakes_in_results_db, {'flaky.html': 'DirtyTree'})
+
+    @defer.inlineCallbacks
+    def test_results_db_is_not_queried_for_tests_this_change_modifies(self):
+        queried = []
+
+        def fake_is_pre_existing(cls, test, **kwargs):
+            queried.append(test)
+            return defer.succeed({
+                'is_existing_failure': True, 'pass_rate': 0, 'raw_data': {}, 'logs': '', 'request_failed': False,
+            })
+
+        step = self._configure(set())
+        self.patch(ResultsDatabase, 'is_test_pre_existing_failure', classmethod(fake_is_pre_existing))
+        self.setProperty('modified_tests', ['LayoutTests/modified.html'])
+
+        yield step.filter_failures_using_results_db(['modified.html', 'other.html'])
+
+        self.assertEqual(queried, ['other.html'])
+
+    @defer.inlineCallbacks
+    def test_modified_tests_are_matched_without_the_layouttests_prefix(self):
+        # FindModifiedLayoutTests stores 'LayoutTests/foo.html'; failures are reported as 'foo.html'.
+        step = self._configure({'ipc/invalid-message-to-web-process-crash.html'})
+        self.setProperty('modified_tests', ['LayoutTests/ipc/invalid-message-to-web-process-crash.html'])
+
+        yield step.filter_failures_using_results_db(['ipc/invalid-message-to-web-process-crash.html'])
+
+        self.assertEqual(step.failing_tests_filtered, ['ipc/invalid-message-to-web-process-crash.html'])
+        self.assertEqual(step.pre_existing_failures_in_results_db, [])
+
+    @defer.inlineCallbacks
+    def test_tests_this_change_does_not_touch_are_still_excused(self):
+        # Over-reach guard: modified_tests must not stop unrelated failures being ignored.
+        step = self._configure({'unrelated.html'})
+        self.setProperty('modified_tests', ['LayoutTests/modified.html'])
+
+        yield step.filter_failures_using_results_db(['unrelated.html'])
+
+        self.assertEqual(step.failing_tests_filtered, [])
+        self.assertEqual(step.pre_existing_failures_in_results_db, ['unrelated.html'])
+        self.assertEqual(step.tests_modified_by_change, [])
+
+    @defer.inlineCallbacks
+    def test_without_modified_tests_every_failure_is_still_checked(self):
+        step = self._configure({'pre-existing.html'})
+
+        yield step.filter_failures_using_results_db(['pre-existing.html', 'real.html'])
+
+        self.assertEqual(step.failing_tests_filtered, ['real.html'])
+        self.assertEqual(step.pre_existing_failures_in_results_db, ['pre-existing.html'])
+        self.assertEqual(step.tests_modified_by_change, [])
+
 
 class TestRunWebKitTestsRedTree(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
@@ -6471,9 +6548,8 @@ class TestCheckChangeRelevance(BuildStepMixinAdditions, unittest.TestCase):
             rc = self.run_step()
         return rc
 
-    @expectedFailure
     def test_relevant_safer_cpp_pull_request(self):
-        file_names = ['Tools/CISupport/safer-cpp-llvm-version', 'Tools/CISupport/safer-cpp-swift-version']
+        file_names = ['Tools/CISupport/safer-cpp-swift-version']
         self.setup_step(CheckChangeRelevance())
         self.setProperty('buildername', 'Safer-CPP-Checks-EWS')
         self.setProperty('github.number', 1234)
@@ -13750,13 +13826,17 @@ class TestIsTestFlakyClassifier(unittest.TestCase):
         payload = [{'test': 'layout/test.html', 'configuration': {}, 'results': rows}]
         return TwistedAdditions.Response(status_code=200, content=json.dumps(payload).encode('utf-8'))
 
+    def _submitter_of(self, build: Optional[int]) -> list:
+        return [f'author-of-{build}'] if build is not None else []
+
     def _flaky_row(
         self, flaky_type: Optional[str], build: Optional[int] = None,
         pr_number: Optional[int] = None, authors: Optional[list] = None,
     ) -> dict:
         return {'flaky_type': flaky_type, 'details': {
             'build_url': self._builder_url(build) if build is not None else None,
-            'pr_number': pr_number, 'authors': authors or [],
+            'pr_number': pr_number,
+            'authors': self._submitter_of(build) if authors is None else authors,
         }}
 
     def _failed_row(
@@ -13803,7 +13883,7 @@ class TestIsTestFlakyClassifier(unittest.TestCase):
         rows = [self._flaky_row('WithinStepCleanTree', 153004, 72787, [self.SUBMITTER])]
         verdicts, logs = yield self._verdicts_for(rows)
         self.assertFalse(verdicts[self.TEST].is_flaky)
-        self.assertIn('layout/test.html: 1 clean-tree row(s) come from 1 build(s), fewer than the 2 the clean-tree rule needs', logs)
+        self.assertIn('layout/test.html: 1 clean-tree row(s) come from 1 build(s) and 1 author(s), fewer than the 2 build(s) and 2 author(s) the clean-tree rule needs', logs)
         self.assertNotIn("recorded by this change's own author(s)", logs)
 
     @defer.inlineCallbacks
@@ -13839,7 +13919,18 @@ class TestIsTestFlakyClassifier(unittest.TestCase):
         ]
         verdicts, logs = yield self._verdicts_for(rows, authors=())
         self.assertFalse(verdicts[self.TEST].is_flaky)
-        self.assertIn('layout/test.html: 3 clean-tree row(s) come from 1 build(s), fewer than the 2 the clean-tree rule needs', logs)
+        self.assertIn('layout/test.html: 3 clean-tree row(s) come from 1 build(s) and 3 author(s), fewer than the 2 build(s) and 2 author(s) the clean-tree rule needs', logs)
+
+    @defer.inlineCallbacks
+    def test_clean_tree_rows_from_one_author_do_not_convict(self) -> Generator[Any, Any, None]:
+        # These four builds are a real escape, not a hypothetical: one author's own stack.
+        rows = [
+            self._flaky_row('WithinStepCleanTree', build, pr, ['alanbaradlay'])
+            for build, pr in ((156322, 74305), (156323, 74304), (156325, 74303), (156326, 74302))
+        ]
+        verdicts, logs = yield self._verdicts_for(rows, authors=())
+        self.assertFalse(verdicts[self.TEST].is_flaky)
+        self.assertIn('layout/test.html: 4 clean-tree row(s) come from 4 build(s) and 1 author(s), fewer than the 2 build(s) and 2 author(s) the clean-tree rule needs', logs)
 
     @defer.inlineCallbacks
     def test_a_single_build_of_clean_tree_evidence_falls_through_to_the_dirty_tree_rule(self) -> Generator[Any, Any, None]:
@@ -13852,7 +13943,7 @@ class TestIsTestFlakyClassifier(unittest.TestCase):
         result = verdicts[self.TEST]
         self.assertEqual(result.flaky_type, 'DirtyTree')
         self.assertEqual(result.pr_numbers, {72701, 72650})
-        self.assertIn('layout/test.html: 1 clean-tree row(s) come from 1 build(s), fewer than the 2 the clean-tree rule needs', logs)
+        self.assertIn('layout/test.html: 1 clean-tree row(s) come from 1 build(s) and 1 author(s), fewer than the 2 build(s) and 2 author(s) the clean-tree rule needs', logs)
 
     @defer.inlineCallbacks
     def test_clean_tree_evidence_below_its_threshold_does_not_fill_the_dirty_tree_quota(self) -> Generator[Any, Any, None]:
@@ -13953,7 +14044,7 @@ class TestIsTestFlakyClassifier(unittest.TestCase):
     @defer.inlineCallbacks
     def test_dirty_tree_pull_requests_with_no_author_not_flaky(self):
         rows = [
-            self._flaky_row('WithinStepDirtyTree', n, n)
+            self._flaky_row('WithinStepDirtyTree', n, n, authors=[])
             for n in range(1, 4)
         ]
         verdicts, _ = yield self._verdicts_for(rows, authors=())

@@ -35,11 +35,18 @@
 #include "CachedResourceLoader.h"
 #include "CrossfadeGeneratedImage.h"
 #include "DeprecatedCSSOMValue.h"
+#include "Document.h"
 #include "RenderElement.h"
-#include "SVGImageForContainer.h"
+#include "RenderObjectDocument.h"
+#include "SVGImage.h"
+#include "StyleImageDrawingExtras.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include <wtf/PointerComparison.h>
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
 
 namespace WebCore {
 namespace Style {
@@ -176,16 +183,24 @@ RefPtr<WebCore::Image> CrossfadeImage::image(const RenderElement* renderer, cons
     RefPtr protectedFromImage = fromImage;
     RefPtr protectedToImage = toImage;
 
-    if (RefPtr fromSVGImage = dynamicDowncast<SVGImage>(protectedFromImage)) {
-        auto fromURL = m_cachedFromImage ? protect(m_cachedFromImage)->url() : WTF::URL();
-        protectedFromImage = SVGImageForContainer::create(fromSVGImage.get(), { .containerSize = size, .initialFragmentURL = fromURL });
-    }
-    if (RefPtr toSVGImage = dynamicDowncast<SVGImage>(protectedToImage)) {
-        auto toURL = m_cachedToImage ? protect(m_cachedToImage)->url() : WTF::URL();
-        protectedToImage = SVGImageForContainer::create(toSVGImage.get(), { .containerSize = size, .initialFragmentURL = toURL });
-    }
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    auto invertContent = AXCustomColorModeController::shouldInvertSVGImage(*renderer) ? InvertContent::Yes : InvertContent::No;
+#endif
 
-    return CrossfadeGeneratedImage::create(*protectedFromImage, *protectedToImage, m_progress.value.value, fixedSize(*renderer), size);
+    auto extrasFor = [&](auto& image, auto& cachedImage) -> std::unique_ptr<WebCore::ImageDrawingExtras> {
+        if (!is<SVGImage>(image))
+            return nullptr;
+        return makeUnique<ImageDrawingExtras>(cachedImage ? protect(cachedImage)->url() : WTF::URL());
+    };
+    auto fromExtras = extrasFor(protectedFromImage, m_cachedFromImage);
+    auto toExtras = extrasFor(protectedToImage, m_cachedToImage);
+
+    ImagePaintingOptions inputOptions;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    inputOptions = ImagePaintingOptions { invertContent };
+#endif
+
+    return CrossfadeGeneratedImage::create(*protectedFromImage, *protectedToImage, m_progress.value.value, fixedSize(*renderer), WTF::move(fromExtras), WTF::move(toExtras), inputOptions);
 }
 
 bool CrossfadeImage::currentFrameIsComplete(const RenderElement* renderer) const
@@ -223,6 +238,13 @@ FloatSize CrossfadeImage::fixedSize(const RenderElement& renderer) const
     float inverseProgress = 1 - progress;
 
     return fromImageSize * inverseProgress + toImageSize * progress;
+}
+
+NaturalDimensions CrossfadeImage::naturalDimensions(const RenderElement& renderer, const ImageSizingContext&) const
+{
+    // FIXME: Add support for negotiating each input in the given context as per https://drafts.csswg.org/css-images-4/#cross-fade-sizing.
+
+    return NaturalDimensions::fixed(floorSizeToDevicePixels(LayoutSize(fixedSize(renderer)), protect(renderer.document())->deviceScaleFactor()));
 }
 
 void CrossfadeImage::imageChanged(WebCore::CachedImage*, const IntRect*)

@@ -27,8 +27,10 @@
 
 #include "AffineTransform.h"
 #include "CanvasDirection.h"
+#include "CanvasDrawElementImageOptions.h"
 #include "CanvasElementImage.h"
 #include "CanvasFillRule.h"
+#include "CanvasImageSource.h"
 #include "CanvasLineCap.h"
 #include "CanvasLineJoin.h"
 #include "CanvasPath.h"
@@ -61,7 +63,6 @@ struct Uint8ClampedAdaptor;
 
 namespace WebCore {
 
-class CachedImage;
 class CanvasLayerContextSwitcher;
 class CanvasGradient;
 class DOMMatrix;
@@ -71,30 +72,12 @@ class ImageData;
 class OffscreenCanvas;
 class Path2D;
 class RenderElement;
-class RenderObject;
 class SVGImageElement;
 class TextMetrics;
 class WebCodecsVideoFrame;
 
 struct DOMMatrix2DInit;
 struct GlyphOverflow;
-
-using CanvasImageSource = Variant<
-      Ref<HTMLImageElement>
-    , Ref<SVGImageElement>
-#if ENABLE(VIDEO)
-    , Ref<HTMLVideoElement>
-#endif
-    , Ref<HTMLCanvasElement>
-    , Ref<ImageBitmap>
-#if ENABLE(OFFSCREEN_CANVAS)
-    , Ref<OffscreenCanvas>
-#endif
-#if ENABLE(WEB_CODECS)
-    , Ref<WebCodecsVideoFrame>
-#endif
-    , Ref<CSSStyleImageValue>
->;
 
 class CanvasRenderingContext2DBase : public CanvasRenderingContext, public CanvasPath {
     WTF_MAKE_TZONE_ALLOCATED(CanvasRenderingContext2DBase);
@@ -217,10 +200,10 @@ public:
     ExceptionOr<void> drawImage(CanvasImageSource&&, float dx, float dy, float dw, float dh);
     ExceptionOr<void> drawImage(CanvasImageSource&&, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh);
 
-    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, float dx, float dy);
-    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, float dx, float dy, float dw, float dh);
-    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, float sx, float sy, float sw, float sh, float dx, float dy);
-    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh);
+    ExceptionOr<void> drawElementImage(CanvasElementImageSource&&, float dx, float dy, std::optional<CanvasDrawElementImageOptions>);
+    ExceptionOr<void> drawElementImage(CanvasElementImageSource&&, float dx, float dy, float dw, float dh, std::optional<CanvasDrawElementImageOptions>);
+    ExceptionOr<void> drawElementImage(CanvasElementImageSource&&, float sx, float sy, float sw, float sh, float dx, float dy, std::optional<CanvasDrawElementImageOptions>);
+    ExceptionOr<void> drawElementImage(CanvasElementImageSource&&, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, std::optional<CanvasDrawElementImageOptions>);
 
     void clearCanvas();
 
@@ -449,7 +432,7 @@ private:
     void setStrokeColorImpl(Color&& color, String&& unparsedColor = { });
     void setFillColorImpl(Color&& color, String&& unparsedColor = { });
 
-    ExceptionOr<RefPtr<CanvasPattern>> createPattern(CachedImage&, RenderElement*, bool repeatX, bool repeatY);
+    ExceptionOr<RefPtr<CanvasPattern>> createPattern(Image&, ConcreteObjectSize, bool originClean, bool repeatX, bool repeatY);
     ExceptionOr<RefPtr<CanvasPattern>> createPattern(HTMLImageElement&, bool repeatX, bool repeatY);
     ExceptionOr<RefPtr<CanvasPattern>> createPattern(SVGImageElement&, bool repeatX, bool repeatY);
     ExceptionOr<RefPtr<CanvasPattern>> createPattern(CanvasBase&, bool repeatX, bool repeatY);
@@ -467,7 +450,7 @@ private:
     ExceptionOr<void> drawImage(SVGImageElement&, const FloatRect& srcRect, const FloatRect& dstRect);
     ExceptionOr<void> drawImage(SVGImageElement&, const FloatRect& srcRect, const FloatRect& dstRect, const CompositeOperator&, const BlendMode&);
     ExceptionOr<void> drawImage(CanvasBase&, const FloatRect& srcRect, const FloatRect& dstRect);
-    ExceptionOr<void> drawImage(Document&, CachedImage&, const RenderObject*, const FloatRect& imageRect, const FloatRect& srcRect, const FloatRect& dstRect, const CompositeOperator&, const BlendMode&, ImageOrientation = ImageOrientation::Orientation::FromImage);
+    ExceptionOr<void> drawImage(Document&, Image&, ConcreteObjectSize, const FloatRect& srcRect, const FloatRect& dstRect, const CompositeOperator&, const BlendMode&, ImageOrientation = ImageOrientation::Orientation::FromImage);
 #if ENABLE(VIDEO)
     ExceptionOr<void> drawImage(HTMLVideoElement&, const FloatRect& srcRect, const FloatRect& dstRect);
 #endif
@@ -477,8 +460,8 @@ private:
     ExceptionOr<void> drawImage(WebCodecsVideoFrame&, const FloatRect& srcRect, const FloatRect& dstRect);
 #endif
 
-    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, const FloatRect& srcRect, const FloatRect& dstRect);
-    ExceptionOr<Ref<DOMMatrix>> drawSnapshot(const CanvasElementSnapshot&, const FloatRect& srcRect, const FloatRect& dstRect);
+    ExceptionOr<void> drawElementImage(CanvasElementImageSource&&, const FloatRect& srcRect, const FloatRect& dstRect, std::optional<CanvasDrawElementImageOptions>);
+    ExceptionOr<void> drawSnapshot(const CanvasElementSnapshot&, const FloatRect& srcRect, const FloatRect& dstRect, std::optional<CanvasDrawElementImageOptions>);
 
     void beginCompositeLayer();
     void endCompositeLayer();

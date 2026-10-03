@@ -388,9 +388,15 @@ RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::moveToImageBuffer(Re
     return result;
 }
 
-void RemoteRenderingBackendProxy::moveSerializedBufferToTransferHeap(RemoteSerializedImageBufferProxy& serialized, WebCore::ImageBufferTransferIdentifier transferIdentifier)
+std::optional<WebCore::ImageBufferTransferIdentifier> RemoteRenderingBackendProxy::moveSerializedBufferToTransferHeap(RemoteSerializedImageBufferProxy& serialized)
 {
-    send(Messages::RemoteRenderingBackend::MoveSerializedBufferToTransferHeap(serialized.identifier(), transferIdentifier));
+    // Waited for, so that the buffer is already in place when the message naming it is sent: a
+    // recipient's claim then never has to wait for this process.
+    auto sendResult = sendSync(Messages::RemoteRenderingBackend::MoveSerializedBufferToTransferHeap(serialized.identifier()));
+    if (!sendResult.succeeded())
+        return std::nullopt;
+    auto [transferIdentifier] = sendResult.takeReply();
+    return transferIdentifier;
 }
 
 RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::takeTransferredBuffer(const WebCore::ImageBufferTransferHandle& handle)
@@ -404,13 +410,13 @@ RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::takeTransferredBuffe
     auto resultIdentifier = result->renderingResourceIdentifier();
     auto addResult = m_imageBuffers.add(resultIdentifier, result);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
-    send(Messages::RemoteRenderingBackend::TakeTransferredBuffer(handle.identifier, resultIdentifier, result->contextIdentifier()));
+    send(Messages::RemoteRenderingBackend::TakeTransferredBuffer(handle, resultIdentifier, result->contextIdentifier()));
     return result;
 }
 
-UniqueRef<RemoteSnapshotRecorderProxy> RemoteRenderingBackendProxy::createSnapshotRecorder(const FloatRect& initialClip, RemoteSnapshotIdentifier snapshotIdentifier)
+UniqueRef<RemoteSnapshotRecorderProxy> RemoteRenderingBackendProxy::createSnapshotRecorder(const FloatRect& initialClip, RemoteSnapshotIdentifier snapshotIdentifier, RenderingMode renderingMode)
 {
-    auto recorder = makeUniqueRef<RemoteSnapshotRecorderProxy>(initialClip, *this);
+    auto recorder = makeUniqueRef<RemoteSnapshotRecorderProxy>(initialClip, renderingMode, *this);
     send(Messages::RemoteRenderingBackend::CreateSnapshotRecorder(recorder->identifier(), snapshotIdentifier));
     return recorder;
 }
@@ -634,7 +640,7 @@ void RemoteRenderingBackendProxy::endPreparingImageBufferSetsForDisplay()
         send(Messages::RemoteRenderingBackend::PrepareImageBufferSetsForDisplay(inputData));
     }
 
-    m_bufferSetsToPrepare.clear();
+    m_bufferSetsToPrepare.shrink(0);
 }
 
 void RemoteRenderingBackendProxy::prepareImageBufferSetForDisplay(LayerPrepareBuffersData&& bufferSetToPrepare)

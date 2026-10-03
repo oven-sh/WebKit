@@ -50,9 +50,13 @@ typedef struct HBITMAP__* HBITMAP;
 typedef const struct OpaqueJSContext* JSContextRef;
 typedef const struct OpaqueJSValue* JSValueRef;
 
-namespace JSC { namespace Yarr {
+namespace JSC {
+class Debugger;
+
+namespace Yarr {
 class RegularExpression;
-} }
+}
+} // namespace JSC
 
 namespace WTF {
 class TextStream;
@@ -134,9 +138,9 @@ using NodeQualifier = Function<RefPtr<Node> (const HitTestResult&, Node* termina
 class LocalFrame final : public Frame {
 public:
     using ClientCreator = CompletionHandler<UniqueRef<LocalFrameLoaderClient>(LocalFrame&, FrameLoader&)>;
-    WEBCORE_EXPORT static Ref<LocalFrame> createMainFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, Frame* opener, Ref<FrameTreeSyncData>&&);
+    WEBCORE_EXPORT static Ref<LocalFrame> createMainFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, Frame* opener, Ref<FrameTreeSyncData>&&, float pageZoomFactor = 1, float textZoomFactor = 1);
     WEBCORE_EXPORT static Ref<LocalFrame> createSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, HTMLFrameOwnerElement&, Ref<FrameTreeSyncData>&&);
-    WEBCORE_EXPORT static Ref<LocalFrame> createProvisionalSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, ScrollbarMode, Frame& parent, Ref<FrameTreeSyncData>&&);
+    WEBCORE_EXPORT static Ref<LocalFrame> createProvisionalSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, ScrollbarMode, Frame& parent, Ref<FrameTreeSyncData>&&, float pageZoomFactor, float textZoomFactor);
 
     WEBCORE_EXPORT void init();
 #if PLATFORM(IOS_FAMILY)
@@ -370,13 +374,16 @@ public:
     FrameConsoleClient& console() { return m_consoleClient.get(); }
     const FrameConsoleClient& console() const { return m_consoleClient.get(); }
 
+    // The debugger to attach to this frame's global objects.
+    JSC::Debugger* debugger() const LIFETIME_BOUND;
+
 protected:
     void frameWasDisconnectedFromOwner() const final;
 
 private:
     friend class NavigationDisabler;
 
-    LocalFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, std::optional<ScrollbarMode>, HTMLFrameOwnerElement*, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&&, AddToFrameTree = AddToFrameTree::Yes);
+    LocalFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, std::optional<ScrollbarMode>, HTMLFrameOwnerElement*, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&&, float pageZoomFactor, float textZoomFactor, AddToFrameTree = AddToFrameTree::Yes);
 
     void dropChildren();
 
@@ -405,7 +412,7 @@ private:
     UniqueRef<ScriptController> m_script;
 
 #if ENABLE(DATA_DETECTION)
-    std::unique_ptr<DataDetectionResultsStorage> m_dataDetectionResults;
+    const std::unique_ptr<DataDetectionResultsStorage> m_dataDetectionResults;
 #endif
 #if PLATFORM(IOS_FAMILY)
     void setTimersPausedInternal(bool);
@@ -432,7 +439,7 @@ private:
     SandboxFlags m_sandboxFlags;
     ReferrerPolicy m_parentFrameOrOpenerReferrerPolicy;
     const UniqueRef<EventHandler> m_eventHandler;
-    std::unique_ptr<HashSet<RegistrableDomain>> m_storageAccessExceptionDomains;
+    const std::unique_ptr<HashSet<RegistrableDomain>> m_storageAccessExceptionDomains;
 
     const UniqueRef<FrameInspectorController> m_inspectorController;
     const UniqueRef<FrameConsoleClient> m_consoleClient;

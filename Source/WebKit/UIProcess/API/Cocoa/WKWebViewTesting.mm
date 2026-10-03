@@ -39,6 +39,7 @@
 #import "RemoteScrollingCoordinatorProxy.h"
 #import "SuspendedPageProxy.h"
 #import "UserMediaProcessManager.h"
+#import "VideoPresentationManagerProxy.h"
 #import "ViewGestureController.h"
 #import "ViewSnapshotStore.h"
 #import "WKColorExtensionView.h"
@@ -292,6 +293,11 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #else
     _impl->setGrammarCheckingEnabled(enabled);
 #endif
+}
+
+- (void)_setUseDarkAppearanceForTesting:(BOOL)useDarkAppearance
+{
+    _page->setUseDarkAppearanceForTesting(useDarkAppearance);
 }
 
 - (NSDictionary *)_contentsOfUserInterfaceItem:(NSString *)userInterfaceItem
@@ -595,6 +601,15 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     }
 #endif
     return std::numeric_limits<double>::quiet_NaN();
+}
+
+- (CGRect)_lastVideoPresentationSetupRectForTesting
+{
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    if (RefPtr videoPresentationManager = _page->videoPresentationManager())
+        return videoPresentationManager->lastSetupFullscreenRectForTesting();
+#endif
+    return CGRectZero;
 }
 
 - (void)_doAfterProcessingAllPendingMouseEvents:(dispatch_block_t)action
@@ -921,7 +936,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
             : WebKit::MediaSessionCoordinatorProxyPrivate()
             , m_clientCoordinator(clientCoordinator)
         {
-            m_coordinatorDelegate = adoptNS([[WKMediaSessionCoordinatorHelper alloc] initWithCoordinator:this]);
+            lazyInitialize(m_coordinatorDelegate, adoptNS([[WKMediaSessionCoordinatorHelper alloc] initWithCoordinator:this]));
             [m_clientCoordinator setDelegate:m_coordinatorDelegate.get()];
         }
 
@@ -1082,8 +1097,8 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
         }
 
     private:
-        RetainPtr<id <_WKMediaSessionCoordinator>> m_clientCoordinator;
-        RetainPtr<WKMediaSessionCoordinatorHelper> m_coordinatorDelegate;
+        const RetainPtr<id<_WKMediaSessionCoordinator>> m_clientCoordinator;
+        const RetainPtr<WKMediaSessionCoordinatorHelper> m_coordinatorDelegate;
     };
 
     ASSERT(!_impl->mediaSessionCoordinatorForTesting());

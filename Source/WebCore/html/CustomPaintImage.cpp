@@ -57,12 +57,12 @@
 namespace WebCore {
 
 CustomPaintImage::CustomPaintImage(PaintDefinition& definition, const FloatSize& size, const RenderElement& element, const Vector<String>& arguments)
-    : m_paintDefinition(definition)
+    : GeneratedImage(size)
+    , m_paintDefinition(definition)
     , m_inputProperties(definition.inputProperties)
     , m_element(element)
     , m_arguments(arguments)
 {
-    setContainerSize(size);
 }
 
 CustomPaintImage::~CustomPaintImage() = default;
@@ -137,7 +137,7 @@ ImageDrawResult CustomPaintImage::doCustomPaint(GraphicsContext& destContext, co
     return ImageDrawResult::DidDraw;
 }
 
-ImageDrawResult CustomPaintImage::draw(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+ImageDrawResult CustomPaintImage::draw(GraphicsContext& destContext, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options, const ImageDrawingExtras*)
 {
     GraphicsContextStateSaver stateSaver(destContext);
     destContext.setCompositeOperation(options.compositeOperator(), options.blendMode());
@@ -151,8 +151,8 @@ ImageDrawResult CustomPaintImage::draw(GraphicsContext& destContext, const Float
     return doCustomPaint(destContext, size());
 }
 
-void CustomPaintImage::drawPattern(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform,
-    const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void CustomPaintImage::drawPattern(GraphicsContext& destContext, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform,
+    const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, const ImageDrawingExtras*)
 {
     // Allow the generator to provide visually-equivalent tiling parameters for better performance.
     FloatSize adjustedSize = size();
@@ -171,11 +171,10 @@ void CustomPaintImage::drawPattern(GraphicsContext& destContext, const FloatRect
         return;
     doCustomPaint(buffer->context(), adjustedSize);
 
-    if (destContext.drawLuminanceMask())
+    if (options.drawLuminanceMask() == DrawLuminanceMask::Yes)
         buffer->convertToLuminanceMask();
 
     destContext.drawPattern(*buffer, destRect, adjustedSrcRect, adjustedPatternCTM, phase, spacing, options);
-    destContext.setDrawLuminanceMask(false);
 }
 
 } // namespace WebCore

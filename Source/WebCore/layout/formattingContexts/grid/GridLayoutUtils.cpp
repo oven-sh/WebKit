@@ -49,6 +49,31 @@ LayoutUnit totalGuttersSize(size_t tracksCount, LayoutUnit gapsSize)
     return tracksCount ? gapsSize * (tracksCount - 1) : LayoutUnit { };
 }
 
+Style::GridTrackSize trackSizeWithPercentagesConvertedToAuto(const Style::GridTrackSize& trackSize)
+{
+    return WTF::switchOn(trackSize,
+        [&trackSize](const Style::GridTrackBreadth& breadth) {
+            if (breadth.isPercentOrCalculated())
+                return Style::GridTrackSize { CSS::Keyword::Auto { } };
+            return trackSize;
+        },
+        [&trackSize](const Style::GridTrackSize::FitContent& fitContent) {
+            // Without a limit, fit-content() is minmax(auto, max-content). Unlike an auto track,
+            // it must not be stretched by Stretch auto Tracks.
+            if (fitContent->value.isPercentOrCalculated())
+                return Style::GridTrackSize { Style::GridTrackSize::MinMax { CSS::Keyword::Auto { }, CSS::Keyword::MaxContent { } } };
+            return trackSize;
+        },
+        [&trackSize](const Style::GridTrackBreadth::Flex&) {
+            return trackSize;
+        },
+        [](const Style::GridTrackSize::MinMax& minMax) {
+            auto minTrackSizingFunction = !minMax->min.isPercentOrCalculated() ? minMax->min : Style::GridTrackBreadth { CSS::Keyword::Auto { } };
+            auto maxTrackSizingFunction = !minMax->max.isPercentOrCalculated() ? minMax->max : Style::GridTrackBreadth { CSS::Keyword::Auto { } };
+            return Style::GridTrackSize { Style::GridTrackSize::MinMax { minTrackSizingFunction, maxTrackSizingFunction } };
+        });
+}
+
 // Resolves a grid item's used margins in one axis.
 // FIXME: Resolve percentage and calc() margins against the grid area's inline size.
 UsedMargins usedMarginsForAxis(const PlacedGridItem& gridItem, const ComputedSizes& axisSizes)
@@ -147,6 +172,19 @@ static bool isStretchedForAutomaticSize(const PlacedGridItem& placedGridItem, co
         return !preferredAspectRatio(placedGridItem.layoutBox()) && !placedGridItem.isReplacedElement();
 
     return alignmentPosition == ItemPosition::Stretch;
+}
+
+// https://drafts.csswg.org/css-grid-1/#grid-item-sizing
+bool hasFitContentBlockSize(const PlacedGridItem& placedGridItem)
+{
+    auto& blockAxisSizes = placedGridItem.blockAxisSizes();
+    if (!blockAxisSizes.preferredSize.isAuto())
+        return false;
+
+    if (isStretchedForAutomaticSize(placedGridItem, blockAxisSizes, placedGridItem.blockAxisAlignment()))
+        return false;
+
+    return !placedGridItem.isReplacedElement() && !preferredAspectRatio(placedGridItem.layoutBox());
 }
 
 bool inlineContributionMayRequireFullSizingAlgorithmForIntrinsicWidth(const ElementBox& gridItem, WritingMode containerWritingMode)

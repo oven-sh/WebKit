@@ -118,6 +118,7 @@ enum class ShadowRootClonable : bool { No, Yes };
 enum class ShadowRootSerializable : bool { No, Yes };
 enum class SlotAssignmentMode : bool;
 enum class AllowScrollingOverflowHidden : bool { No, Yes };
+enum class StyleAppearance : uint8_t;
 enum class VisibilityAdjustment : uint8_t;
 
 // https://github.com/whatwg/html/pull/9841
@@ -692,6 +693,7 @@ public:
     // Used for disabled form elements; if true, prevents mouse events from being dispatched
     // to event listeners, and prevents DOMActivate events from being sent at all.
     virtual bool isDisabledFormControl() const { return false; }
+    virtual bool NODELETE supportsBaseAppearance(StyleAppearance) const { return false; }
 
     virtual bool childShouldCreateRenderer(const Node&) const;
 
@@ -942,7 +944,7 @@ protected:
 
     NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
     void removingSteps(RemovalType, ContainerNode&) override;
-    void movingSteps(IsSubtreeRoot, ContainerNode&) override;
+    void movingSteps(MovingType, ContainerNode&) override;
     void childrenChanged(const ChildChange&) override;
     void removeAllEventListeners() override;
 
@@ -956,7 +958,7 @@ protected:
     static ExceptionOr<void> mergeWithNextTextNode(Text&);
 
     StylePropertyMap* NODELETE attributeStyleMap();
-    void setAttributeStyleMap(Ref<StylePropertyMap>&&);
+    void initializeAttributeStyleMap(Ref<StylePropertyMap>&&);
 
     FormAssociatedCustomElement& NODELETE formAssociatedCustomElementUnsafe() const;
     void ensureFormAssociatedCustomElement();
@@ -1006,6 +1008,9 @@ private:
 
     enum class HTMLDocumentNamedItemMapsUpdatingCondition : bool { Always, UpdateOnlyIfDiffersFromNameAttribute };
     void updateIdForDocument(HTMLDocument&, const AtomString& oldId, const AtomString& newId, HTMLDocumentNamedItemMapsUpdatingCondition);
+
+    void addToIdAndNameMaps(TreeScope&, HTMLDocument*);
+    void removeFromIdAndNameMaps(TreeScope&, HTMLDocument*);
 
     ExceptionOr<Node*> insertAdjacent(const String& where, Ref<Node>&& newChild);
 

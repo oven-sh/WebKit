@@ -42,8 +42,8 @@ public:
 private:
     ColorImageGeneratedImage(const Color&, const FloatSize&);
 
-    ImageDrawResult draw(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions = { }) override;
-    void drawPattern(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) override;
+    ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) override;
+    void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& sourceRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) override;
 
     void dump(WTF::TextStream&) const override;
 

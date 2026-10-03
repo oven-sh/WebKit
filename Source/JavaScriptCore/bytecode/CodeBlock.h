@@ -216,15 +216,14 @@ public:
     CodeBlock* alternative() const { return static_cast<CodeBlock*>(m_alternative.get()); }
     void setAlternative(VM&, CodeBlock*);
 
-    template <typename Functor> void forEachRelatedCodeBlock(Functor&& functor)
+    template <typename Functor> void forEachRelatedCodeBlock(NOESCAPE const Functor& functor)
     {
-        Functor f(std::forward<Functor>(functor));
         Vector<CodeBlock*, 4> codeBlocks;
         codeBlocks.append(this);
 
         while (!codeBlocks.isEmpty()) {
             CodeBlock* currentCodeBlock = codeBlocks.takeLast();
-            f(currentCodeBlock);
+            functor(currentCodeBlock);
 
             if (CodeBlock* alternative = currentCodeBlock->alternative())
                 codeBlocks.append(alternative);
@@ -286,8 +285,6 @@ public:
     void removeExceptionHandlerForCallSite(DisposableCallSiteIndex);
 
     LineColumn lineColumnForBytecodeIndex(BytecodeIndex) const;
-    // For a thread that runs beside the mutator. It keeps nothing, so it decodes the expression info on every call.
-    LineColumn lineColumnForBytecodeIndexConcurrently(BytecodeIndex) const;
     ExpressionInfo::Entry expressionInfoForBytecodeIndex(BytecodeIndex) const;
 
     std::optional<BytecodeIndex> bytecodeIndexFromCallSiteIndex(CallSiteIndex);
@@ -441,9 +438,9 @@ public:
     ValueProfileRef NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
     SpeculatedType valueProfilePredictionForBytecodeIndex(BytecodeIndex, JSValue* specFailValue = nullptr);
 
-    template<typename Functor> void forEachValueProfile(const Functor&);
-    template<typename Functor> void forEachArrayAllocationProfile(const Functor&);
-    template<typename Functor> void forEachObjectAllocationProfile(const Functor&);
+    template<typename Functor> void forEachValueProfile(NOESCAPE const Functor&);
+    template<typename Functor> void forEachArrayAllocationProfile(NOESCAPE const Functor&);
+    template<typename Functor> void forEachObjectAllocationProfile(NOESCAPE const Functor&);
     // For the instructions of FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO; the first two crash for any other. The last one is
     // safe to call from a compiler thread.
     // What the call sites of the MetadataTable own, if this is the CodeBlock the table was linked for: optimized CodeBlocks share
@@ -454,7 +451,7 @@ public:
     DataOnlyCallLinkInfo& ensureCallLinkInfoAt(const JSInstruction*);
     DataOnlyCallLinkInfo* callLinkInfoIfExistsAt(BytecodeIndex);
 
-    template<typename Functor> void forEachLLIntOrBaselineCallLinkInfo(const Functor&);
+    template<typename Functor> void forEachLLIntOrBaselineCallLinkInfo(NOESCAPE const Functor&);
 
     BinaryArithProfile* NODELETE binaryArithProfileForBytecodeIndex(BytecodeIndex);
     UnaryArithProfile* NODELETE unaryArithProfileForBytecodeIndex(BytecodeIndex);

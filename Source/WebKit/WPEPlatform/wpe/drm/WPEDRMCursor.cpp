@@ -28,6 +28,7 @@
 
 #include "WPEDRM.h"
 #include "WPEDRMCursorTheme.h"
+#include <glib.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WPE {
@@ -76,16 +77,16 @@ void Cursor::updateBuffer(const uint8_t* pixels, uint32_t width, uint32_t height
     gbm_bo_write(m_buffer->bufferObject(), deviceBuffer.span().data(), deviceBuffer.sizeInBytes());
 }
 
-void Cursor::setFromName(const char* name, double scale)
+void Cursor::setFromName(UTF8CStringView name, double scale)
 {
     if (!m_theme)
         return;
 
-    if (!g_strcmp0(m_name.get(), name))
+    if (m_name == name)
         return;
 
-    m_name.reset(g_strdup(name));
-    if (!g_strcmp0(m_name.get(), "none")) {
+    m_name = UTF8CString { name.span() };
+    if (m_name == "none"_s) {
         m_isHidden = true;
         return;
     }
@@ -93,7 +94,7 @@ void Cursor::setFromName(const char* name, double scale)
     // FIXME: support animated cursors.
     const auto& cursor = m_theme->cursor(name, scale, 1);
     if (cursor.isEmpty()) {
-        g_warning("Cursor %s not found in theme", name);
+        g_warning("Cursor %s not found in theme", name.utf8());
         return;
     }
 
@@ -112,7 +113,7 @@ void Cursor::setFromBytes(GBytes* bytes, uint32_t width, uint32_t height, uint32
         return;
 
     m_isHidden = false;
-    m_name = nullptr;
+    m_name = { };
     updateBuffer(reinterpret_cast<const uint8_t*>(g_bytes_get_data(bytes, nullptr)), width, height, stride);
     m_hotspot.x = hotspotX;
     m_hotspot.y = hotspotY;
