@@ -6799,6 +6799,11 @@ struct BytecodeLinkEncoder::Impl {
                     continue;
                 }
                 AOT::CompiledCode code;
+                if (Options::aotFunctionToDump()) [[unlikely]] {
+                    StringView wanted = StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
+                    auto* executable = jobs[index].executable;
+                    code.mayBeDumped = (executable && executable->ecmaName().string() == wanted) || makeString(jobs[index].key.start) == wanted || makeString(jobs[index].key.module, ':', jobs[index].key.start) == wanted;
+                }
                 if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, &programCode)) {
                     {
                         auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);

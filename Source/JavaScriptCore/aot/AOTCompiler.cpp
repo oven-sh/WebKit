@@ -326,7 +326,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     promoteEnvironments(graph);
     analyzeEscapes(graph);
     shareRegExpLiterals(graph);
-    if (Options::dumpAOTGraph()) [[unlikely]] {
+    if (Options::dumpAOTGraph() && result.mayBeDumped) [[unlikely]] {
         static Lock lock;
         Locker locker { lock };
         dataLogLn("AOT graph:");
@@ -345,7 +345,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (!lowering.run())
         return declined();
     estimateFrequencies(proc);
-    if (Options::dumpAOTB3Graph()) [[unlikely]]
+    if (Options::dumpAOTB3Graph() && result.mayBeDumped) [[unlikely]]
         dataLogLn("AOT B3:\n", proc);
 
     for (B3::Value* value : proc.values()) {
@@ -481,7 +481,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i)
         info.catchEntrypoints.append({ graph.catchEntrypoints[i]->bytecodeBegin, offsetOf(proc.code().entrypointLabel(i + 1)) });
 
-    MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
+    MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly() && result.mayBeDumped, linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
 #if CPU(ARM64)
     {
         constexpr uint32_t breakpoint = 0xd4200000;

@@ -147,6 +147,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpAOTGraph, false, Normal, "Dump the AOT compiler's IR."_s) \
     v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
     v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
+    v(OptionString, aotFunctionToDump, nullptr, Normal, "If set, dumpAOTGraph, dumpAOTB3Graph and dumpAOTDisassembly only dump the functions of this name, or the code at <start offset> or <module>:<start offset> as in the map file."_s) \
     v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
     v(OptionString, aotRemarksPath, nullptr, Normal, "When compiling: write the optimizations applied to each function to this file, one per line (function name, tab, remark). In the jsc shell, aotRemarks() reads it. For tests."_s) \
     v(OptionString, aotTypeCoveragePath, nullptr, Normal, "When compiling: write one line per operation of the program to this file: its position, its opcode, what it compiled to and, if the type table gives it no type, the number of the reason. Tools/Scripts/aot/type-coverage.py reports from it. In the jsc shell with compileMainScriptAheadOfTime, an empty path means a temporary file, which aotTypeCoverage() reads."_s) \

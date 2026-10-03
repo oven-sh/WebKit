@@ -141,6 +141,7 @@ struct CompiledCode {
     Vector<String> remarks;
     Vector<CoveredOperation> coverage;
     String whyDeclined;
+    bool mayBeDumped { true };
 };
 
 JS_EXPORT_PRIVATE uint64_t imageStamp();
