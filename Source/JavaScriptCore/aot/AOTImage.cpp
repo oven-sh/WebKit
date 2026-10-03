@@ -2114,6 +2114,7 @@ Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule)
     EncoderStringTable strings;
     BytecodeLinkEncoder::Result linked;
     {
+        DeferGC deferGC(vm);
         BytecodeLinkEncoder::Hints hints;
         hints.compileAheadOfTime = true;
         BytecodeLinkEncoder encoder(vm, &strings, WTF::move(hints));

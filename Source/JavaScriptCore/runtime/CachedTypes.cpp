@@ -1295,6 +1295,7 @@ public:
     {
         m_link->functionCodeBlocks.append(Strong<UnlinkedFunctionCodeBlock>(m_vm, codeBlock));
     }
+    void didEndLink() { m_link->functionCodeBlocks.clear(); }
     void encodeLinkedBodies(LinkClass region)
     {
         m_link->openRegion = region;
@@ -1320,7 +1321,6 @@ public:
             data.encode();
         RELEASE_ASSERT(!hasQueuedLinkedBodies());
         m_link->coldData.clear();
-        m_link->functionCodeBlocks.clear();
     }
     void alignCurrentPageEnd() { m_currentPage->alignEnd(); }
 #endif
@@ -7054,6 +7054,7 @@ auto BytecodeLinkEncoder::finish() -> Result
     }
     result.reportableSites = WTF::move(m_impl->reportableSites);
 #endif
+    encoder.didEndLink();
     BytecodeCacheError error;
     result.payload = encoder.release(error);
     RELEASE_ASSERT(result.payload && result.payload->size() == payloadSize && payloadSize <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max()));
