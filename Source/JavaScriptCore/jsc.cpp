@@ -3087,12 +3087,20 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTTypeCoverage, (JSGlobalObject* globalObject,
     JSArray* result = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, { });
     for (auto line : StringView(text).split('\n')) {
-        Vector<StringView, 13> fields;
+        Vector<StringView, 14> fields;
         for (auto field : line.splitAllowingEmptyEntries('\t'))
             fields.append(field);
-        if (fields.size() != 13 || fields[0] != "O"_s || fields[8] != name)
+        if (fields.size() != 14 || fields[0] != "O"_s || fields[8] != name)
             continue;
-        result->push(globalObject, jsString(vm, makeString(fields[2], ':', fields[3], ' ', fields[4], ' ', fields[5], ' ', fields[7], ' ', fields[9])));
+        uint64_t timesRun = 0;
+        uint64_t rareCalls = 0;
+        if (auto counter = parseInteger<uint32_t>(fields[13])) {
+            if (uint32_t* counters = AOT::Instance::ensure(globalObject).typeCoverageCounters) {
+                timesRun = counters[*counter];
+                rareCalls = counters[*counter + 1];
+            }
+        }
+        result->push(globalObject, jsString(vm, makeString(fields[2], ':', fields[3], ' ', fields[4], ' ', fields[5], ' ', timesRun, ' ', rareCalls, ' ', fields[7], ' ', fields[9])));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(result);

@@ -513,6 +513,8 @@ public:
     UncheckedKeyHashSet<B3::Value*> patchpointsTakingData;
     Vector<String> remarks;
     Vector<CoveredOperation> coverage;
+    uint32_t firstTypeCoverageCounter { 0 };
+    bool isCoveringOperation() const { return m_isCoveringOperation; }
     void remark(ASCIILiteral what, StringView detail = { }, bool isOnRarePath = false)
     {
         if (Options::aotRemarksPath() || Options::aotTypeCoveragePath()) [[unlikely]]

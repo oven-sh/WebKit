@@ -12,8 +12,8 @@ function operationsOf(f, opcode) {
         return null;
     }
     return lines.map(line => {
-        const [position, opcode, flags, property, ...outcomes] = line.split(" ");
-        return { position, opcode, flags: Number(flags), property, outcomes };
+        const [position, opcode, flags, timesRun, rareCalls, property, ...outcomes] = line.split(" ");
+        return { position, opcode, flags: Number(flags), timesRun: Number(timesRun), rareCalls: Number(rareCalls), property, outcomes };
     }).filter(operation => operation.opcode === opcode && !(operation.flags & isInGenericCopy));
 }
 function describe(operations) { return operations.map(operation => operation.position + " " + operation.property).join(); }
@@ -74,6 +74,8 @@ if (operationsOf(readsTwo, "op_get_by_id")) {
 
     check(describe(operationsOf(Point, "op_put_by_id").filter(write => write.outcomes.includes("absorbed-into-allocation"))), "39:28 x,39:40 y", "stores that an allocation absorbs");
     check(operationsOf(writesOne, "op_put_by_id").some(write => write.outcomes.includes("absorbed-into-allocation")), false, "a store to an object that exists already");
+
+    check(operationsOf(readsTwo, "op_get_by_id").every(read => !read.timesRun && !read.rareCalls), true, "nothing is counted unless asked for");
 
     const readsOfCaller = operationsOf(caller, "op_get_by_id");
     check(describe(readsOfCaller.filter(read => read.flags & isInlined)), "34:33 inner", "a read in an inlined function has its own position");

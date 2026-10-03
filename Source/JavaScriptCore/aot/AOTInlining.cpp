@@ -402,6 +402,7 @@ private:
         }
 
         auto inlinee = makeUniqueWithoutFastMallocCheck<Graph>(m_graph.vm(), callee, unknownScopeChain());
+        inlinee->firstTypeCoverageCounter = about->firstTypeCoverageCounter;
         inlinee->setCalleeHints(about->hints);
         inlinee->setVariableSummaries(m_graph.variableSummaries());
         inlinee->setLinkage(about->linkage, declaredNamesFor(callee));

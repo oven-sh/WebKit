@@ -301,6 +301,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         return false;
     };
 
+    if (program) {
+        if (auto about = program->about(unlinkedCodeBlock))
+            graph.firstTypeCoverageCounter = about->firstTypeCoverageCounter;
+    }
     if (!parseBytecode(graph))
         return declined();
     if (program)

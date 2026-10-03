@@ -364,6 +364,23 @@ bool Lowering::run()
     return true;
 }
 
+void Lowering::incrementTypeCoverageCounter(uint32_t counter)
+{
+    LValue counters = m_out.loadPtr(m_out.address(m_heaps.root, m_instance, Instance::offsetOfTypeCoverageCounters()));
+    TypedPointer address = m_out.address(m_heaps.root, counters, static_cast<ptrdiff_t>(counter) * sizeof(uint32_t));
+    m_out.store32(m_out.add(m_out.load32(address), m_out.int32One), address);
+}
+
+void Lowering::coverOperation(Node* node, BasicBlock* block, bool isElided)
+{
+    size_t first = m_graph.coverage.size();
+    m_graph.beginCoveredOperation(node, block, isElided);
+    if (!Options::useAOTTypeCoverageCounters())
+        return;
+    for (size_t i = first; i < m_graph.coverage.size(); ++i)
+        incrementTypeCoverageCounter(m_graph.coverage[i].counter);
+}
+
 void Lowering::unsupported(Node* node)
 {
     m_graph.fail("no lowering"_s, node->opcode);
@@ -524,6 +541,8 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
 {
     m_graph.emitsCalls = true;
     m_graph.remark("calls"_s, nameOf(stub), m_out.m_block->frequency() <= coldFrequency);
+    if (Options::useAOTTypeCoverageCounters() && m_graph.isCoveringOperation() && m_out.m_block->frequency() <= coldFrequency) [[unlikely]]
+        incrementTypeCoverageCounter(m_graph.coverage.last().counter + 1);
     if (!place)
         place = m_node;
     CallSite site;
@@ -709,6 +728,8 @@ LValue Lowering::coldCallForValue(Node* node, Entry function, LValue first, LVal
 LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function, const Vector<LValue, 8>& arguments)
 {
     m_graph.remark("calls"_s, nameOf(function), m_out.m_block->frequency() <= coldFrequency);
+    if (Options::useAOTTypeCoverageCounters() && m_graph.isCoveringOperation() && m_out.m_block->frequency() <= coldFrequency) [[unlikely]]
+        incrementTypeCoverageCounter(m_graph.coverage.last().counter + 1);
     bool throws = !!node;
     bool withGlobalObject = !arguments.isEmpty() && arguments[0] == m_globalObject;
     bool withInstance = !arguments.isEmpty() && arguments[0] == m_instance;
@@ -1253,7 +1274,7 @@ void Lowering::lowerBlock(BasicBlock* block)
         m_node = node && node->instruction ? node : nullptr;
         m_code = node ? node->graph : block->graph;
         if (Options::aotTypeCoveragePath()) [[unlikely]]
-            m_graph.beginCoveredOperation(node, block);
+            coverOperation(node, block);
     };
     for (m_nodeIndex = 0; m_nodeIndex < block->nodes.size(); ++m_nodeIndex) {
         Node* node = block->nodes[m_nodeIndex];
@@ -1261,7 +1282,7 @@ void Lowering::lowerBlock(BasicBlock* block)
             break;
         if (node->isElided) {
             if (Options::aotTypeCoveragePath()) [[unlikely]]
-                m_graph.beginCoveredOperation(node, block, true);
+                coverOperation(node, block, true);
             continue;
         }
         if (auto run = m_propertyRunOfStore.find(node); run != m_propertyRunOfStore.end()) {
@@ -1270,7 +1291,7 @@ void Lowering::lowerBlock(BasicBlock* block)
                 continue;
             if (Options::aotTypeCoveragePath()) [[unlikely]] {
                 for (unsigned i = 1; i < stores.size(); ++i) {
-                    m_graph.beginCoveredOperation(stores[i], block);
+                    coverOperation(stores[i], block);
                     m_graph.remark("stored-in-property-run"_s);
                 }
             }

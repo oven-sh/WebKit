@@ -1120,6 +1120,7 @@ Vector<uint8_t> ImageBuilder::finish()
     header.fieldsOffset = place(fields.sizeInBytes());
     header.inlineSlotCountsOffset = place(inlineSlotCounts.sizeInBytes());
     header.auditsTypes = Options::auditAOTTypedFields();
+    header.numberOfTypeCoverageCounters = m_numberOfTypeCoverageCounters;
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
     header.numberOfSelectors = selectors.size();
     header.selectorRowsOffset = place(selectorRow.sizeInBytes());
@@ -1505,6 +1506,12 @@ uint32_t Image::environmentsSize()
 {
     Image* image = withCode();
     return image ? image->header().environmentsSize : 0;
+}
+
+uint32_t Image::numberOfTypeCoverageCounters()
+{
+    Image* image = withCode();
+    return image ? image->header().numberOfTypeCoverageCounters : 0;
 }
 
 uint32_t Image::numberOfFunctions()

@@ -277,12 +277,14 @@ struct CoveredOperation {
     static constexpr uint8_t hasTypeTag = 32;
     static constexpr uint8_t isNotInGraph = 64;
     static constexpr uint32_t noReason = UINT32_MAX;
+    static constexpr uint32_t noCounter = UINT32_MAX;
 
     UnlinkedCodeBlock* codeBlock { nullptr };
     ImageKey function;
     uint32_t bytecodeOffset { 0 };
     uint32_t divot { 0 };
     uint32_t reason { noReason };
+    uint32_t counter { noCounter };
     uint16_t opcode { 0 };
     uint8_t flags { 0 };
     String property;
@@ -297,6 +299,7 @@ public:
         const ModuleLinkage* linkage { nullptr };
         const FunctionSummary* summary { nullptr };
         ImageKey key;
+        uint32_t firstTypeCoverageCounter { 0 };
     };
     virtual std::optional<About> about(UnlinkedCodeBlock*) const = 0;
     virtual UnlinkedFunctionCodeBlock* codeForBuiltin(unsigned) const = 0;

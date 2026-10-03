@@ -1981,6 +1981,8 @@ CoveredOperation Graph::coveredOperationAt(unsigned offset, uint8_t flags)
     operation.bytecodeOffset = offset;
     operation.opcode = instruction->opcodeID();
     operation.flags = flags;
+    if (Options::useAOTTypeCoverageCounters())
+        operation.counter = firstTypeCoverageCounter + offset;
     if (uint32_t tag = typeTagAt(offset)) {
         operation.flags |= CoveredOperation::hasTypeTag;
         if (TypeTable::shared()) {

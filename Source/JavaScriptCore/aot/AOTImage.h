@@ -64,6 +64,7 @@ struct ImageHeader {
     uint32_t largestFieldID;
     uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes;
+    uint32_t numberOfTypeCoverageCounters;
     uint32_t selectorsOffset;
     uint32_t numberOfSelectors;
     uint32_t selectorRowsOffset;
@@ -154,6 +155,7 @@ public:
     size_t numberOfFunctions() const { return m_functions.size(); }
     void clear() { m_functions.clear(); }
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
+    void setNumberOfTypeCoverageCounters(uint32_t number) { m_numberOfTypeCoverageCounters = number; }
     void setProgramIdentifierIndices(const IdentifierIndices* numbers, uint32_t number)
     {
         m_programIdentifierIndices = numbers;
@@ -175,6 +177,7 @@ private:
     Vector<Function> m_functions;
     Vector<ImageEnvironment> m_environments;
     uint32_t m_environmentsSize { 0 };
+    uint32_t m_numberOfTypeCoverageCounters { 0 };
     Vector<FunctionReportableSites> reportableSites();
     Vector<FunctionReportableSites> m_reportableSites;
     struct RegExpCode {
@@ -202,6 +205,7 @@ public:
     const void* code() const { return m_code; }
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
     JS_EXPORT_PRIVATE static uint32_t numberOfFunctions();
+    static uint32_t numberOfTypeCoverageCounters();
     static size_t totalDataSize();
     JS_EXPORT_PRIVATE static ImageEnvironment environmentOf(uint32_t graphModule);
     static const void* stubAddress(Stub);

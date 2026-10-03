@@ -51,6 +51,10 @@
 #include "ObjectConstructorInlines.h"
 #include "ThunkGenerators.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
+#include <wtf/FileHandle.h>
+#include <wtf/FileSystem.h>
+#include <wtf/MappedFileData.h>
+#include <wtf/ProcessID.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if OS(DARWIN)
@@ -211,6 +215,8 @@ struct Instance::Collections {
     String retainedString;
     UncheckedKeyHashMap<uint32_t, JSArray*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> templateObjects;
     JSCell* token { nullptr };
+    FileSystem::MappedFileData typeCoverageCountersFile;
+    Vector<uint32_t> typeCoverageCountersWithoutFile;
     bool loaderWasCleared { false };
     size_t environmentsSize { 0 };
     size_t sizeFromInstance { 0 };
@@ -316,6 +322,24 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->code = static_cast<const uint8_t*>(image->code());
         instance->codeGranules = image->at<uint32_t>(image->header().codeGranulesOffset);
         instance->subsequentFunctionStarts = image->at<uint32_t>(image->header().functionStartsOffset) + 1;
+    }
+    if (uint32_t numberOfCounters = Image::numberOfTypeCoverageCounters()) [[unlikely]] {
+        if (const char* path = byteCast<char>(Options::aotTypeCoverageCountsPath())) {
+            String name = makeStringByReplacingAll(String::fromUTF8(path), "%p"_s, String::number(getCurrentProcessID()));
+            auto file = FileSystem::openFile(name, FileSystem::FileOpenMode::ReadWrite);
+            if (file && file.truncate(static_cast<int64_t>(numberOfCounters) * sizeof(uint32_t))) {
+                if (auto mapped = file.map(FileSystem::MappedFileMode::Shared, FileSystem::FileOpenMode::ReadWrite)) {
+                    instance->collections->typeCoverageCountersFile = WTF::move(*mapped);
+                    instance->typeCoverageCounters = reinterpret_cast<uint32_t*>(instance->collections->typeCoverageCountersFile.mutableSpan().data());
+                }
+            }
+            if (!instance->typeCoverageCounters)
+                dataLogLn("AOT: cannot map ", name, " for the type coverage counters");
+        }
+        if (!instance->typeCoverageCounters) {
+            instance->collections->typeCoverageCountersWithoutFile.fill(0, numberOfCounters);
+            instance->typeCoverageCounters = instance->collections->typeCoverageCountersWithoutFile.mutableSpan().data();
+        }
     }
     instance->missLimitPerEightSlots = Options::aotCacheMissesPerEightSlotsBeforeOwnData();
     instance->remainingMissBudget = Options::aotExtraCacheMissesBeforeOwnData();

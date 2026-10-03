@@ -6723,8 +6723,13 @@ struct BytecodeLinkEncoder::Impl {
         AOT::closePropertyEffects(functionSummaries.span());
         LinkedProgramCode programCode;
         programCode.builtins = &engineBuiltins;
-        for (auto& job : jobs)
-            programCode.all.add(job.codeBlock, AOT::ProgramCode::About { hints[job.module].get(), linkages[job.module].get(), summariesByCodeBlock.get(job.codeBlock), job.key });
+        uint32_t numberOfTypeCoverageCounters = 0;
+        for (auto& job : jobs) {
+            programCode.all.add(job.codeBlock, AOT::ProgramCode::About { hints[job.module].get(), linkages[job.module].get(), summariesByCodeBlock.get(job.codeBlock), job.key, numberOfTypeCoverageCounters });
+            if (Options::useAOTTypeCoverageCounters() && Options::aotTypeCoveragePath()) [[unlikely]]
+                numberOfTypeCoverageCounters += job.codeBlock->instructionsSize() + 1;
+        }
+        builder.setNumberOfTypeCoverageCounters(numberOfTypeCoverageCounters);
         std::atomic<uint64_t> unreachedFunctions { 0 };
         std::atomic<uint64_t> unreachedBytecodeSize { 0 };
         auto work = [&] {
@@ -6983,7 +6988,10 @@ struct BytecodeLinkEncoder::Impl {
                             file->print(i ? " " : "");
                             printEscaped(operation.outcomes[i]);
                         }
-                        file->print("\t", operation.function.start, "\t", operation.function.kind, "\t", operation.bytecodeOffset, "\n");
+                        file->print("\t", operation.function.start, "\t", operation.function.kind, "\t", operation.bytecodeOffset, "\t");
+                        if (operation.counter != AOT::CoveredOperation::noCounter)
+                            file->print(operation.counter);
+                        file->print("\n");
                     }
                 }
                 std::array<uint64_t, numOpcodeIDs> instructions { };

@@ -66,6 +66,8 @@ private:
     LBasicBlock entryBlockFor(BasicBlock* successor);
     Vector<std::tuple<BasicBlock*, Node*, ArrayView>, 4> m_arrayViews;
     void unsupported(Node*);
+    void incrementTypeCoverageCounter(uint32_t);
+    void coverOperation(Node*, BasicBlock*, bool isElided = false);
 
     LValue lowRaw(Node*);
     LValue lowJSValue(Node*);
