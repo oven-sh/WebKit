@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates programs and compares the interpreter with ahead-of-time compiled code.
 
-  fuzz-programs.py <jsc> <output directory> [--generator closures|objects|loops|numbers|all] [--seconds N] [--jobs N] [--seed N]
+  fuzz-programs.py <jsc> <output directory> [--generator closures|objects|loops|numbers|classes|all] [--seconds N] [--jobs N] [--seed N]
   fuzz-programs.py <jsc> --minimize <finding.js> [--limit SECONDS]
 
 closures: functions nested up to four deep (declarations, expressions, arrows, methods, async functions, generators), parameters
@@ -25,6 +25,12 @@ numbers: expressions of every operator and many functions of Math over values at
 zeros, strings that are and are not numbers, objects that convert, and now and then a BigInt; variables that are counted up and
 down past those edges in loops, stored to typed arrays and switched on; functions whose arguments are of another kind each round;
 and a few small expressions over every pair of the edge values, in a loop, where arithmetic is compiled inline.
+
+classes: classes that extend each other, built-in classes, a plain function or null, with public, private and static fields,
+private methods, accessors, static blocks, constructors that log before and after super() or return another object, methods that
+are static, async or generators, and super in all of them and in object literals; iterators whose return() is logged, left by
+break, continue, return and throw; destructuring with defaults and rests; spread; generators resumed, closed and thrown into;
+thenables; tagged templates; and operands that log when they are evaluated.
 
 What happens goes to a log, errors by the name of their class. A program counts if the interpreter runs it to an end without
 running out of stack, which happens at another depth in other code. It is a finding if compiled code prints something else, ends
@@ -653,6 +659,230 @@ function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error 
         return text + '    }\n}\nprint(log.join("\\n"));\n'
 
 
+class Classes:
+    """Classes with members of every kind, the iterator protocol, destructuring, generators, async functions, and the order in which things are evaluated."""
+    FIELDS = ['f0', 'f1', 'f2']
+    METHODS = ['m0', 'm1', 'm2', 'm3']
+
+    def __init__(self, seed):
+        self.r = random.Random(seed)
+        self.n = 0
+        self.classes = []
+
+    def name(self, prefix):
+        self.n += 1
+        return '%s%d' % (prefix, self.n)
+
+    def primitive(self):
+        return self.r.choice(['0', '1', '2', '-1', '1.5', '"s"', '"t"', 'null', 'undefined', 'true', '[1, 2]', '{ f0: 5 }'])
+
+    def expression(self, c, depth=0):
+        """c: what can be named here: 'values', and inside a class 'this', 'privates', 'privateMethods', 'super'."""
+        r = self.r
+        k = r.randrange(24)
+        e = lambda: self.expression(c, depth + 1)
+        v = r.choice(c['values']) if c['values'] else '(0)'
+        if depth > 2 or k < 4:
+            return v if r.random() < 0.6 else self.primitive()
+        if k < 7 and c.get('this'):
+            return 'this.%s' % r.choice(self.FIELDS)
+        if k == 7 and c.get('privates'):
+            return 'this.%s' % r.choice(c['privates'])
+        if k == 8 and c.get('privateMethods'):
+            return 'this.%s(%s)' % (r.choice(c['privateMethods']), e())
+        if k == 9 and c.get('this'):
+            return 'this.%s(%s)' % (r.choice(self.METHODS), e())
+        if k == 10 and c.get('super'):
+            return r.choice(['super.%s(%s)' % (r.choice(self.METHODS), e()), 'super.%s' % r.choice(self.FIELDS + ['acc']), '(() => super.%s(%s))()' % (r.choice(self.METHODS), e())])
+        if k == 11 and self.classes:
+            return 'new %s(%s)' % (r.choice(self.classes), ', '.join(e() for _ in range(r.randrange(3))))
+        if k == 12:
+            return '(%s %s %s)' % (e(), r.choice(['+', '+', '-', '===', '??', '||', '&&', '<']), e())
+        if k == 13:
+            return '`${%s}-${%s}`' % (e(), e())
+        if k == 14 and self.classes:
+            return '(%s instanceof %s)' % (v, r.choice(self.classes + ['Array', 'Error', 'Object']))
+        if k == 15 and c.get('privates'):
+            return '(%s in Object(%s))' % (r.choice(c['privates']), v)
+        if k == 16:
+            return '%s?.%s' % (v, r.choice(self.FIELDS + ['acc', 'm0?.(1)', 'm1?.()', 'length', 'size']))
+        if k == 17 and c.get('this'):
+            return '(() => this.%s)()' % r.choice(self.FIELDS)
+        if k == 18:
+            return 'seq(%d, %s)' % (r.randrange(9), e())
+        if k == 19:
+            return '[...iterate(%s)].length' % v
+        if k == 20:
+            return 'tag`a${%s}b${%s}`' % (e(), e())
+        if k == 21:
+            return '%s.%s' % (v, r.choice(['acc', 'constructor?.name', 'toString?.()', self.r.choice(self.FIELDS)]))
+        if k == 22:
+            return 'String(%s)' % e()
+        return 'typeof %s' % e()
+
+    def statements(self, c, indent, count, depth=0, kind=''):
+        r = self.r
+        pad = '    ' * indent
+        c = dict(c, values=list(c['values']))
+        text = ''
+        for _ in range(count):
+            k = r.randrange(26)
+            e = lambda: self.expression(c)
+            v = r.choice(c['values']) if c['values'] else '(0)'
+            if k < 3:
+                n = self.name('v')
+                text += pad + '%s %s = %s;\n' % (r.choice(['const', 'let']), n, e())
+                c['values'].append(n)
+            elif k < 6:
+                text += pad + 'note(%s);\n' % e()
+            elif k < 8 and c.get('this'):
+                text += pad + 'this.%s %s %s;\n' % (r.choice(self.FIELDS + ['acc']), r.choice(['=', '=', '+=', '??=', '||=']), e())
+            elif k == 8 and c.get('privates'):
+                text += pad + 'this.%s %s %s;\n' % (r.choice(c['privates']), r.choice(['=', '+=', '??=']), e())
+            elif k == 9 and c.get('super'):
+                text += pad + 'super.%s = %s;\n' % (r.choice(self.FIELDS + ['acc']), e())
+            elif k == 10:
+                a, b, d = self.name('v'), self.name('v'), self.name('v')
+                form = r.randrange(4)
+                if form == 0:
+                    text += pad + 'const { f0: %s, f1: %s = seq(1, 7), ...%s } = Object(%s);\n' % (a, b, d, v)
+                elif form == 1:
+                    text += pad + 'const [%s, %s = seq(2, 8), ...%s] = iterate(%s);\n' % (a, b, d, v)
+                elif form == 2:
+                    text += pad + 'const { f0: %s = seq(3, 1), acc: %s, f2: { f0: %s } = { f0: 9 } } = Object(%s);\n' % (a, b, d, v)
+                else:
+                    text += pad + 'const [%s, , %s = 3] = iterate(%s), %s = 0;\n' % (a, b, v, d)
+                text += pad + 'note([%s, %s, %s]);\n' % (a, b, d)
+                c['values'] += [a, b]
+            elif k == 11 and depth < 2:
+                n = self.name('x')
+                inner = self.statements(dict(c, values=c['values'] + [n]), indent + 1, r.randrange(1, 4), depth + 1, kind)
+                leave = r.choice(['', pad + '    if (%s === %s) break;\n' % (n, self.primitive()), pad + '    if (%s) continue;\n' % n, pad + '    if (%s === 2) throw new Error("left");\n' % n, pad + '    if (%s === 1) return %s;\n' % (n, n) if kind != 'static' else ''])
+                text += pad + 'for (const %s of iterate(%s)) {\n' % (n, v) + leave + inner + pad + '}\n'
+            elif k == 12 and depth < 2:
+                n = self.name('e')
+                text += pad + 'try {\n' + self.statements(c, indent + 1, r.randrange(1, 4), depth + 1, kind) + pad + '} catch (%s) {\n' % n + pad + '    note(%s);\n' % n + pad + '}' + (' finally {\n' + pad + '    note("finally");\n' + pad + '}' if r.random() < 0.5 else '') + '\n'
+            elif k == 13 and kind in ('generator', 'asyncGenerator'):
+                text += pad + r.choice(['yield %s;', 'note(yield %s);', 'yield* iterate(%s);']) % e() + '\n'
+            elif k == 14 and kind in ('async', 'asyncGenerator'):
+                text += pad + r.choice(['note(await %s);', 'await null;', 'note(await thenable(%s));', 'note(await Promise.all([%s, thenable(1)]));']).replace('%s', e(), 1) + '\n'
+            elif k == 15:
+                text += pad + 'note(tryCall(() => %s));\n' % e()
+            elif k == 16 and depth < 2:
+                text += pad + 'if (%s) {\n' % e() + self.statements(c, indent + 1, r.randrange(1, 3), depth + 1, kind) + pad + '}\n'
+            elif k == 17:
+                text += pad + 'seq(1, %s)[seq(2, "f0")] = seq(3, %s);\n' % ('Object(%s)' % v, e())
+            elif k == 18:
+                text += pad + 'note(sum(seq(1, 1), ...iterate(%s), seq(2, 2)));\n' % v
+            elif k == 19:
+                g = self.name('g')
+                text += pad + 'const %s = tryCall(() => %s.gen?.(%s));\n' % (g, v, e()) + pad + 'note(tryCall(() => [%s?.next?.(), %s?.%s, %s?.next?.()]));\n' % (g, g, r.choice(['next?.(5)', 'return?.(6)', 'throw?.(new Error("in"))']), g)
+            elif k == 20:
+                text += pad + 'switch (%s) {\n' % e() + ''.join(pad + 'case %s: note(%d);%s\n' % (self.primitive() if r.random() < 0.7 else e(), j, r.choice([' break;', ''])) for j in range(r.randrange(1, 4))) + pad + 'default: note("default");\n' + pad + '}\n'
+            elif k == 21:
+                text += pad + 'kept.push(%s);\n' % r.choice(['() => %s' % e(), v, 'async () => %s' % e()])
+            elif k == 22 and depth < 1:
+                o = self.name('o')
+                text += pad + 'const %s = { __proto__: Object(%s), f1: %s, m1(a) { burn(); return [super.m1?.(a), super.f0, this.f1]; }, get acc() { return seq(4, super.acc); }, [seq(5, "k")]: %s };\n' % (o, v, e(), e())
+                c['values'].append(o)
+            else:
+                text += pad + 'note(%s);\n' % v
+        return text
+
+    def classText(self):
+        r = self.r
+        name = self.name('C')
+        parent = r.choice(self.classes + self.classes + [None, None, 'Array', 'Error', 'Map', 'Plain', 'null']) if self.classes or r.random() < 0.4 else None
+        derived = parent is not None and parent != 'null'
+        privates = ['#p%d' % i for i in range(r.randrange(3))]
+        privateMethods = ['#q%d' % i for i in range(r.randrange(2))]
+        c = {'values': [], 'this': True, 'privates': privates, 'privateMethods': privateMethods, 'super': derived}
+        text = 'class %s%s {\n' % (name, ' extends %s' % parent if parent else '')
+        for p in privates:
+            text += '    %s = %s;\n' % (p, self.expression(c))
+        for f in r.sample(self.FIELDS, r.randrange(len(self.FIELDS) + 1)):
+            text += '    %s = %s;\n' % (f, r.choice([self.expression(c), '() => this.%s' % r.choice(self.FIELDS), 'seq(6, %s)' % self.primitive()]))
+        if r.random() < 0.4:
+            text += '    static count = seq(7, 0);\n    static #hidden = 1;\n    static peek(o) { return [%s.#hidden, %s]; }\n' % (name, '%s in Object(o)' % privates[0] if privates else '0')
+        if r.random() < 0.3:
+            text += '    static {\n        try {\n' + self.statements({'values': [], 'this': True, 'super': derived}, 3, r.randrange(1, 3), 1, 'static') + '        } catch (e) {\n            note(e);\n        }\n    }\n'
+        if r.random() < 0.7 and parent != 'null':
+            text += '    constructor(a, b) {\n        burn();\n'
+            before = self.statements({'values': ['a', 'b']}, 2, r.randrange(2), 1)
+            text += (before + '        super(%s);\n' % r.choice(['', 'a', 'a, b', '...iterate(b)']) if derived else '') + '        note(new.target === %s);\n' % name + self.statements(dict(c, values=['a', 'b']), 2, r.randrange(4), 1)
+            text += r.choice(['', '', '', '        return { f0: "replaced" };\n']) + '    }\n'
+        for q in privateMethods:
+            text += '    %s(a) {\n        burn();\n' % q + self.statements(dict(c, values=['a']), 2, r.randrange(1, 3), 1) + '        return %s;\n    }\n' % self.expression(dict(c, values=['a']))
+        for m in r.sample(self.METHODS, r.randrange(1, len(self.METHODS) + 1)):
+            kind = r.choice(['', '', '', 'async', 'static'])
+            head = {'': '', 'async': 'async ', 'static': 'static '}[kind]
+            text += '    %s%s(a) {\n        burn();\n' % (head, m) + self.statements(dict(c, values=['a'], privates=[] if kind == 'static' else privates, privateMethods=[] if kind == 'static' else privateMethods), 2, r.randrange(1, 5), 0, kind) + '        return %s;\n    }\n' % self.expression(dict(c, values=['a'], privates=[] if kind == 'static' else privates, privateMethods=[] if kind == 'static' else privateMethods))
+        if r.random() < 0.6:
+            text += '    get acc() { return seq(8, %s); }\n' % self.expression(c)
+            if r.random() < 0.6:
+                text += '    set acc(a) { note("set"); this.f2 = %s; }\n' % self.expression(dict(c, values=['a']))
+        if r.random() < 0.5:
+            kind = r.choice(['generator', 'generator', 'asyncGenerator'])
+            text += '    %s*gen(a) {\n        burn();\n' % ('async ' if kind == 'asyncGenerator' else '') + '        try {\n' + self.statements(dict(c, values=['a']), 3, r.randrange(1, 5), 1, kind) + '        } finally {\n            note("generator left");\n        }\n    }\n'
+        if r.random() < 0.3 and parent not in ('Array', 'Map'):
+            text += '    *[Symbol.iterator]() { burn(); yield this.f0; yield* iterate(this.f1); }\n'
+        if r.random() < 0.3:
+            text += '    [Symbol.toPrimitive](hint) { note(hint); return %s; }\n' % r.choice(['1', '"p"', 'this.f0', 'hint'])
+        self.classes.append(name)
+        return text + '}\n'
+
+    def program(self):
+        r = self.r
+        text = """let fuel = 500;
+const log = [], kept = [];
+class OutOfFuel extends Error { }
+function burn() { if (--fuel < 0) throw new OutOfFuel("fuel"); }
+function show(x, depth = 0) {
+    if (typeof x === "function") return "function";
+    if (typeof x === "symbol") return "symbol";
+    if (typeof x !== "object" || x === null) return typeof x === "string" ? JSON.stringify(x.slice(0, 40)) : String(x);
+    if (x instanceof Error) return x.constructor.name;
+    if (typeof x.then === "function") { tryCall(() => x.then(v => note(["then", v]), e => note(["rejected", e]))); return "thenable"; }
+    if (depth > 2) return "...";
+    if (Array.isArray(x)) return "[" + x.slice(0, 8).map(v => show(v, depth + 1)).join() + "]";
+    if (typeof x.next === "function") return "iterator";
+    return (x.constructor?.name ?? "null") + "{" + Object.keys(x).slice(0, 8).map(k => k + ":" + show(tryCall(() => x[k]), depth + 1)).join() + "}";
+}
+function note(x) { if (log.length < 5000) log.push(show(x)); }
+function tryCall(f) { try { burn(); return f(); } catch (e) { return e instanceof Error ? e.constructor.name : e; } }
+function seq(n, x) { if (log.length < 5000) log.push("#" + n); return x; }
+function sum(...all) { return all.length + ":" + all.map(v => show(v)).join("+"); }
+function tag(strings, ...values) { tag.seen ??= new Set(); const again = tag.seen.has(strings); tag.seen.add(strings); return strings.raw.join("|") + again + values.map(v => show(v)).join(); }
+function thenable(x) { return { then(resolve) { note("then called"); resolve(x); } }; }
+function Plain(a) { this.f0 = a; }
+Plain.prototype.m0 = function (a) { return ["plain", a, this.f0]; };
+function iterate(x) {
+    if (x !== null && x !== undefined && typeof x[Symbol.iterator] === "function" && typeof x !== "string") return x;
+    let i = 0;
+    return { [Symbol.iterator]() { return this; }, next() { burn(); note("next"); return i < 3 ? { value: i++, done: false } : { value: undefined, done: true }; }, return(v) { note("return called"); return { value: v, done: true }; } };
+}
+"""
+        for _ in range(r.randrange(2, 6)):
+            text += self.classText()
+        functions = []
+        for _ in range(r.randrange(1, 4)):
+            f = self.name('f')
+            kind = r.choice(['', '', 'async', 'generator'])
+            text += '%sfunction%s %s(a, b) {\n    burn();\n' % ('async ' if kind == 'async' else '', '*' if kind == 'generator' else '', f) + self.statements({'values': ['a', 'b']}, 1, r.randrange(2, 8), 0, kind) + '    return %s;\n}\n' % self.expression({'values': ['a', 'b']})
+            functions.append(f)
+        text += 'for (let round = 0; round < %d; round++) {\n    fuel = 500;\n' % r.choice([1, 3, 8])
+        pool = []
+        for _ in range(r.randrange(2, 5)):
+            o = self.name('o')
+            text += '    const %s = tryCall(() => new %s(%s, %s));\n' % (o, r.choice(self.classes), self.primitive(), r.choice(pool) if pool else self.primitive())
+            pool.append(o)
+        for _ in range(r.randrange(3, 9)):
+            o = r.choice(pool)
+            text += '    note(tryCall(() => %s));\n' % r.choice(['%s(%s, %s)' % (r.choice(functions), o, r.choice(pool)), '%s.%s(%s)' % (o, r.choice(self.METHODS), r.choice(pool)), '%s.%s(%s)' % (r.choice(self.classes), r.choice(self.METHODS + ['peek']), o), '%s.acc' % o, '[...%s]' % o, '`${%s}`' % o, '%s + 1' % o, '%s.acc = %s' % (o, self.primitive())])
+        text += ''.join('    note(%s);\n' % o for o in pool) + '    for (const f of kept.splice(0, 20)) note(tryCall(() => typeof f === "function" ? f() : f));\n    drainMicrotasks();\n}\nprint(log.join("\\n"));\n'
+        return text
+
+
 def run(jsc, options, path, limit=20):
     p = subprocess.run([sys.executable, CAP, '1.5', str(limit), jsc, *options, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     err = '\n'.join(l for l in p.stderr.decode('utf-8', 'replace').split('\n') if not l.startswith('[capped]'))
@@ -672,7 +902,7 @@ def compare(jsc, path, extra, module, limit=20):
 def fuzz(args):
     out = os.path.abspath(args.output)
     os.makedirs(out, exist_ok=True)
-    generators = {'closures': [Closures], 'objects': [Objects], 'loops': [Loops], 'numbers': [Numbers], 'all': [Closures, Objects, Loops, Numbers]}[args.generator]
+    generators = {'closures': [Closures], 'objects': [Objects], 'loops': [Loops], 'numbers': [Numbers], 'classes': [Classes], 'all': [Closures, Objects, Loops, Numbers, Classes]}[args.generator]
     stats = {'programs': 0, 'do not count': 0, 'findings': 0}
     lock = threading.Lock()
     deadline = time.time() + args.seconds
@@ -743,7 +973,7 @@ parser.add_argument('output', nargs='?')
 parser.add_argument('--seconds', type=float, default=300)
 parser.add_argument('--jobs', type=int, default=os.cpu_count() // 2)
 parser.add_argument('--seed', type=int, default=1)
-parser.add_argument('--generator', choices=['closures', 'objects', 'loops', 'numbers', 'all'], default='all')
+parser.add_argument('--generator', choices=['closures', 'objects', 'loops', 'numbers', 'classes', 'all'], default='all')
 parser.add_argument('--minimize', metavar='FINDING')
 parser.add_argument('--limit', type=float, default=20, help='seconds a run may take while minimizing')
 args = parser.parse_args()
