@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates programs and compares the interpreter with ahead-of-time compiled code.
 
-  fuzz-programs.py <jsc> <output directory> [--generator closures|objects|both] [--seconds N] [--jobs N] [--seed N]
+  fuzz-programs.py <jsc> <output directory> [--generator closures|objects|loops|all] [--seconds N] [--jobs N] [--seed N]
   fuzz-programs.py <jsc> --minimize <finding.js> [--limit SECONDS]
 
 closures: functions nested up to four deep (declarations, expressions, arrows, methods, async functions, generators), parameters
@@ -15,6 +15,11 @@ accessors, arrays with and without holes, typed arrays, objects that inherit the
 twice. Properties are read before and after calls that may write them, in loops and in closures; objects are made that may or may
 not escape; and shapes change under way: properties are deleted, become accessors or read-only, prototypes are replaced, objects
 are frozen. The functions run for up to thirty rounds, so that caches fill before something changes.
+
+loops: loops of a dozen forms over arrays of every indexing type, with and without holes, typed arrays, their subclasses, views of
+buffers that can be resized, array-likes, strings and arguments objects. Elements are read and written at and around the index,
+and in some iteration of some round the array changes: it grows, shrinks, gets another kind of element, an accessor or a length of
+its own, another prototype, or its buffer is resized or detached. Loops that may grow what they run over count their steps.
 
 What happens goes to a log, errors by the name of their class. A program counts if the interpreter runs it to an end without
 running out of stack, which happens at another depth in other code. It is a finding if compiled code prints something else, ends
@@ -376,6 +381,157 @@ const shared = { x: 10, y: 20, sum() { return this.x; } }, other = { z: 30, get 
         return text
 
 
+class Loops:
+    """Loops over arrays of every kind, typed arrays, array-likes and strings, which change while the loop runs."""
+
+    def __init__(self, seed):
+        self.r = random.Random(seed)
+        self.n = 0
+
+    def name(self, prefix):
+        self.n += 1
+        return '%s%d' % (prefix, self.n)
+
+    def make(self):
+        return self.r.choice([
+            '[1, 2, 3, 4, 5]', '[1.5, 2.5, 3.5, 4.5]', '[1, "a", null, { x: 1 }, undefined]', '[1, , 3, , 5]', 'new Array(4)', '[]', '[0, -0, NaN, 2147483647, -2147483648]', '[7]',
+            'new Uint8Array([1, 2, 3, 250, 5])', 'new Int8Array([1, -2, 3])', 'new Uint16Array([1, 65535, 3, 4])', 'new Int32Array([1, -2, 2147483647])', 'new Uint32Array([1, 4294967295, 3])',
+            'new Float32Array([1.5, 2, NaN])', 'new Float64Array([1.5, -0, 3])', 'new Uint8ClampedArray([1, 255, 3])', 'new Uint8Array(0)', 'new Sub([1, 2, 3, 4])', 'new Deep([5, 6, 7])', 'new Deeper([8, 9])',
+            'withOwnLength(new Sub([1, 2, 3, 4]), 2)', 'new Uint8Array(new ArrayBuffer(4, { maxByteLength: 16 }))', 'new Uint8Array(new ArrayBuffer(8, { maxByteLength: 16 }), 2)', 'new Uint8Array(new ArrayBuffer(8), 2, 4)',
+            '{ length: 3, 0: 1, 1: 2, 2: 3 }', '{ length: 2, 0: "a" }', '"hello"', '"h\u00e9llo\u4e16"', 'argumentsOf(1, 2, 3)', 'Object.freeze([1, 2, 3])', 'new List(1, 2, 3)', 'sparse()', 'Object.create([1, 2, 3])',
+        ])
+
+    def index(self, i, a):
+        return self.r.choice([i, i, i, i, i, '%s + 1' % i, '%s - 1' % i, '%s * 2' % i, '%s | 0' % i, '%s >>> 0' % i, '%s.length - 1 - %s' % (a, i), '0', '-1', '%s + 0.5' % i, '"%d"' % self.r.randrange(3), '%s %% 3' % i])
+
+    def value(self, i, arrays):
+        r = self.r
+        return r.choice(['1', '0', '-1', '1.5', '300', '"s"', 'null', 'undefined', '{ x: 1 }', 'NaN', i, '%s * 2' % i, '%s + 0.5' % i, '%s[%s]' % (r.choice(arrays), self.index(i, r.choice(arrays))), 'sum'])
+
+    def change(self, a, i):
+        """A statement that changes the array, and whether it may make it longer."""
+        return self.r.choice([
+            ('%s.push(9)' % a, True), ('%s.push(1.5)' % a, True), ('%s.pop()' % a, False), ('%s.shift()' % a, False), ('%s.unshift(0)' % a, True), ('%s.length = 1' % a, False), ('%s.length = 0' % a, False),
+            ('%s.length = 7' % a, True), ('%s[12] = 1' % a, True), ('%s[%s] = 1.5' % (a, i), False), ('%s[%s] = "s"' % (a, i), False), ('delete %s[%s]' % (a, i), False), ('%s[2000] = 1' % a, True),
+            ('%s.buffer.resize(2)' % a, False), ('%s.buffer.resize(12)' % a, True), ('%s.buffer.transfer()' % a, False), ('withOwnLength(%s, 1)' % a, False), ('withOwnLength(%s, 6)' % a, True),
+            ('Object.setPrototypeOf(%s, Other.prototype)' % a, False), ('Object.setPrototypeOf(%s, null)' % a, False), ('Object.setPrototypeOf(%s, Array.prototype)' % a, False), ('Object.freeze(%s)' % a, False),
+            ('%s.reverse()' % a, False), ('%s.fill(3)' % a, False), ('%s.splice(1, 1)' % a, False), ('%s.sort()' % a, False), ('changes(%s)' % a, True), ('Object.defineProperty(%s, %s, { get() { return 42; }, configurable: true })' % (a, i), False),
+        ])
+
+    def body(self, i, a, arrays, indent, depth):
+        r = self.r
+        pad = '    ' * indent
+        text, grows = '', False
+        for _ in range(r.randrange(1, 5)):
+            k = r.randrange(17)
+            b = r.choice(arrays)
+            if k < 3:
+                text += pad + r.choice(['sum += %s[%s];', 'sum = (sum + %s[%s]) | 0;', 'text += show(%s[%s]);', 'sum ^= %s[%s];', 'sum = Math.max(sum, %s[%s]);']) % (a, self.index(i, a)) + '\n'
+            elif k < 5:
+                text += pad + '%s[%s] = %s;\n' % (b, self.index(i, b), self.value(i, arrays))
+            elif k == 5:
+                text += pad + 'if (%s[%s] === %s) %s;\n' % (a, i, r.choice(['3', '2.5', '"a"', 'undefined', '250', '"l"']), r.choice(['break', 'continue', 'sum++']))
+            elif k < 8:
+                change, longer = self.change(b, i)
+                grows |= longer
+                text += pad + 'if (%s === %d%s) tryCall(() => %s);\n' % (i, r.randrange(4), r.choice(['', '', ' && round === %d' % r.randrange(12)]), change)
+            elif k == 8:
+                text += pad + 'note(%s[%s]);\n' % (a, self.index(i, a))
+            elif k == 9:
+                text += pad + '%s[%s]%s;\n' % (b, i, r.choice(['++', '--', ' += 1', ' *= 2', ' |= 1', ' += 0.5', ' += "x"']))
+            elif k == 10 and depth < 1:
+                inner, g = self.loop(arrays, indent, depth + 1)
+                text += inner
+                grows |= g
+            elif k == 11:
+                text += pad + 'if (%s in %s) sum++;\n' % (self.index(i, a), b)
+            elif k == 12:
+                text += pad + 'sum += %s.length;\n' % b
+            elif k == 13:
+                text += pad + 'if (%s === %d) %s = %s;\n' % (i, r.randrange(3), a, r.choice(arrays))
+            elif k == 14:
+                text += pad + 'sum += reads(%s, %s);\n' % (b, self.index(i, b))
+            else:
+                text += pad + 'if (%s[%s] %s %s[%s]) sum++;\n' % (a, i, r.choice(['<', '===', '==', '>=', '!==']), b, self.index(i, b))
+        return text, grows
+
+    def loop(self, arrays, indent, depth=0):
+        r = self.r
+        pad = '    ' * indent
+        a = r.choice(arrays)
+        i = self.name('i')
+        body, grows = self.body(i, a, arrays, indent + 1, depth)
+        guard = pad + '    if (++steps > 3000) throw new TooManySteps();\n' if grows or r.random() < 0.2 else ''
+        k = r.randrange(13)
+        if k < 3:
+            head = 'for (let %s = 0; %s < %s.length; %s++) {' % (i, i, a, i)
+        elif k == 3:
+            head = 'for (let %s = 0, n = %s.length; %s < n; %s++) {' % (i, a, i, i)
+        elif k == 4:
+            head = 'for (let %s = %s.length - 1; %s >= 0; %s--) {' % (i, a, i, i)
+        elif k == 5:
+            head = 'for (let %s = 0; %s < %s.length; %s += 2) {' % (i, i, a, i)
+        elif k == 6:
+            head = 'for (let %s = %d; %s <= %d; %s++) {' % (i, r.randrange(-2, 2), i, r.randrange(2, 8), i)
+        elif k == 7:
+            head = 'for (var %s = 0; %s !== %s.length && %s < 9; ++%s) {' % (i, i, a, i, i)
+        elif k == 8:
+            return pad + 'let %s = 0;\n' % i + pad + 'while (%s < %s.length) {\n' % (i, a) + pad + '    if (++steps > 3000) throw new TooManySteps();\n' + body.replace('continue;', 'sum--;') + pad + '    %s++;\n' % i + pad + '}\n', grows
+        elif k == 9:
+            v = self.name('v')
+            return pad + 'let %s = 0;\n' % i + pad + 'for (const %s of %s) {\n' % (v, a) + pad + '    if (++steps > 3000) throw new TooManySteps();\n' + pad + '    text += show(%s);\n' % v + body.replace('continue;', 'sum--;') + pad + '    %s++;\n' % i + pad + '}\n', grows
+        elif k == 10:
+            return pad + 'for (const %s in %s) {\n' % (i, a) + pad + '    if (++steps > 3000) throw new TooManySteps();\n' + body + pad + '}\n', grows
+        elif k == 11:
+            v = self.name('v')
+            return pad + 'Array.prototype.%s.call(%s, (%s, %s) => {\n' % (r.choice(['forEach', 'map', 'some', 'filter']), a, v, i) + pad + '    if (++steps > 3000) throw new TooManySteps();\n' + pad + '    text += show(%s);\n' % v + body.replace('continue;', 'return;').replace('break;', 'return true;') + pad + '});\n', grows
+        else:
+            head = 'for (let %s = 0; %s < Math.min(%s.length, 6); %s++) {' % (i, i, a, i)
+        return pad + head + '\n' + guard + body + pad + '}\n', grows
+
+    def program(self):
+        r = self.r
+        text = """const log = [];
+let steps = 0, round = 0;
+class TooManySteps extends Error { }
+class Sub extends Uint8Array { }
+class Deep extends Sub { }
+class Deeper extends Deep { }
+class Other extends Uint8Array { get length() { return 2; } }
+class List extends Array { }
+function withOwnLength(a, n) { Object.defineProperty(a, "length", { value: n, configurable: true, writable: true }); return a; }
+function argumentsOf() { return arguments; }
+function sparse() { const a = [1, 2]; a[5000] = 3; a.length = 4; return a; }
+function changes(a) { if (round % 3 === 1) a[a.length] = round; return a; }
+function reads(a, i) { const v = a[i]; return typeof v === "number" ? v : 0; }
+function show(x, depth = 0) {
+    if (typeof x !== "object" || x === null) return Object.is(x, -0) ? "-0" : typeof x === "string" ? JSON.stringify(x.slice(0, 60)) : String(x);
+    if (x instanceof Error) return x.constructor.name;
+    if (depth > 1) return "...";
+    const n = tryCall(() => x.length);
+    if (typeof n === "number") { let s = "["; for (let i = 0; i < n && i < 14; i++) s += (i in x ? show(x[i], depth + 1) : "hole") + ","; return s + "]" + n; }
+    return "{" + Object.keys(x).join() + "}";
+}
+function note(x) { if (log.length < 6000) log.push(show(x)); }
+function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error ? e.constructor.name : e; } }
+"""
+        functions = []
+        for _ in range(r.randrange(2, 6)):
+            f = self.name('f')
+            text += 'function %s(a, b) {\n    let sum = 0, text = "";\n' % f
+            for _ in range(r.randrange(1, 4)):
+                text += self.loop(['a', 'b'], 1)[0]
+            text += '    return show(sum) + text;\n}\n'
+            functions.append(f)
+        text += 'for (round = 0; round < %d; round++) {\n    steps = 0;\n' % r.choice([2, 8, 20])
+        pool = ['o%d' % i for i in range(r.randrange(2, 6))]
+        text += ''.join('    const %s = %s;\n' % (o, self.make()) for o in pool)
+        for _ in range(r.randrange(2, 8)):
+            text += '    note(tryCall(() => %s(%s, %s)));\n' % (r.choice(functions), r.choice(pool), r.choice(pool))
+        text += ''.join('    note(%s);\n' % o for o in pool) + '}\nprint(log.join("\\n"));\n'
+        return text
+
+
 def run(jsc, options, path, limit=20):
     p = subprocess.run([sys.executable, CAP, '1.5', str(limit), jsc, *options, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     err = '\n'.join(l for l in p.stderr.decode('utf-8', 'replace').split('\n') if not l.startswith('[capped]'))
@@ -395,7 +551,7 @@ def compare(jsc, path, extra, module, limit=20):
 def fuzz(args):
     out = os.path.abspath(args.output)
     os.makedirs(out, exist_ok=True)
-    generators = {'closures': [Closures], 'objects': [Objects], 'both': [Closures, Objects]}[args.generator]
+    generators = {'closures': [Closures], 'objects': [Objects], 'loops': [Loops], 'all': [Closures, Objects, Loops]}[args.generator]
     stats = {'programs': 0, 'do not count': 0, 'findings': 0}
     lock = threading.Lock()
     deadline = time.time() + args.seconds
@@ -466,7 +622,7 @@ parser.add_argument('output', nargs='?')
 parser.add_argument('--seconds', type=float, default=300)
 parser.add_argument('--jobs', type=int, default=os.cpu_count() // 2)
 parser.add_argument('--seed', type=int, default=1)
-parser.add_argument('--generator', choices=['closures', 'objects', 'both'], default='both')
+parser.add_argument('--generator', choices=['closures', 'objects', 'loops', 'all'], default='all')
 parser.add_argument('--minimize', metavar='FINDING')
 parser.add_argument('--limit', type=float, default=20, help='seconds a run may take while minimizing')
 args = parser.parse_args()
