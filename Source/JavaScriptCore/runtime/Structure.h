@@ -844,6 +844,7 @@ public:
     DEFINE_BITFIELD(bool, hasSpecialProperties, HasSpecialProperties, 1, 7);
     DEFINE_BITFIELD(DefinitelyNonThenableState, definitelyNonThenableState, DefinitelyNonThenableState, 2, 8); // This flag can be flipped on the main thread at any timing.
     DEFINE_BITFIELD(bool, hasImmutableProperties, HasImmutableProperties, 1, 10); // Set by TransitionKind::MakePropertiesImmutable and inherited by every later transition. See JSObject::makePropertiesImmutable().
+    DEFINE_BITFIELD(bool, classInterceptsOwnPropertyStores, ClassInterceptsOwnPropertyStores, 1, 11); // The class overrides put() or defineOwnProperty(), and not getOwnPropertySlot(). Set when the Structure is created.
     DEFINE_BITFIELD(TransitionKind, transitionKind, TransitionKind, 5, 13);
     DEFINE_BITFIELD(bool, isWatchingReplacement, IsWatchingReplacement, 1, 18); // This flag can be fliped on the main thread at any timing.
     DEFINE_BITFIELD(bool, mayBePrototype, MayBePrototype, 1, 19);
@@ -869,6 +870,10 @@ public:
     bool isBrandedStructure() { return variant() == StructureVariant::Branded; }
 
     static_assert(s_bitWidthOfTransitionKind <= sizeof(TransitionKind) * 8);
+
+    // op_enumerator_put_by_val in OwnStructureMode writes the slot of the property, unless the structure has one of these bits.
+    static constexpr uint32_t s_enumeratorPutByValTakesGenericPathBits = s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | s_isWatchingReplacementBits | s_hasImmutablePropertiesBits | s_classInterceptsOwnPropertyStoresBits;
+    bool enumeratorPutByValTakesGenericPath() const { return m_bitField & s_enumeratorPutByValTakesGenericPathBits; }
 
     static bool bitFieldFlagsCantBeChangedWithoutTransition(unsigned flags)
     {

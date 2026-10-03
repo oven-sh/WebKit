@@ -383,6 +383,11 @@ PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const Structur
         if (structure->typeInfo().overridesGetOwnPropertySlot() && structure->typeInfo().type() != GlobalObjectType)
             return PutByStatus(LikelyTakesSlowPath);
 
+        // The store has to call put(), or defineOwnProperty() for a direct store. An inline cache learns that from the
+        // PutPropertySlot. There is none here. A global object never has this bit, so it stays exempt.
+        if (structure->classInterceptsOwnPropertyStores())
+            return PutByStatus(LikelyTakesSlowPath);
+
         if (!structure->propertyAccessesAreCacheable())
             return PutByStatus(LikelyTakesSlowPath);
     

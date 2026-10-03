@@ -161,6 +161,15 @@ void Structure::dumpStatistics()
 #endif
 }
 
+// A store that is decided from the Structure alone has no PutPropertySlot to ask, so it would write behind these overrides.
+// A class that also overrides getOwnPropertySlot() is left out. PutByStatus tests for that flag, and the put() of JSArray,
+// JSFunction, RegExpObject and the like only guards names that the other such stores do not reach.
+static bool computeClassInterceptsOwnPropertyStores(const TypeInfo& typeInfo, bool overridesPut, const ClassInfo* classInfo)
+{
+    bool overridesDefineOwnProperty = classInfo->methodTable.defineOwnProperty != JSObject::defineOwnProperty;
+    return typeInfo.isObject() && !typeInfo.overridesGetOwnPropertySlot() && (overridesPut || overridesDefineOwnProperty);
+}
+
 #if ASSERT_ENABLED
 void Structure::validateFlags()
 {
@@ -211,6 +220,7 @@ void Structure::validateFlags()
 
     bool overridesPut = methodTable.put != JSObject::put && ((typeInfo().type() == StringType || typeInfo().type() == SymbolType || typeInfo().type() == HeapBigIntType) || methodTable.put != JSCell::put);
     RELEASE_ASSERT(overridesPut == typeInfo().overridesPut());
+    RELEASE_ASSERT(classInterceptsOwnPropertyStores() == computeClassInterceptsOwnPropertyStores(typeInfo(), overridesPut, m_classInfo));
 
     bool overridesIsExtensible =
         methodTable.isExtensible != static_cast<MethodTable::IsExtensibleFunctionPtr>(JSObject::isExtensible)
@@ -261,6 +271,7 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     setTransitionKind(TransitionKind::Unknown);
     setMayBePrototype(false);
     setDidPreventExtensions(typeInfo.overridesIsExtensible());
+    setClassInterceptsOwnPropertyStores(computeClassInterceptsOwnPropertyStores(typeInfo, typeInfo.overridesPut(), m_classInfo));
     setDidTransition(false);
     setStaticPropertiesReified(false);
     setTransitionWatchpointIsLikelyToBeFired(false);
@@ -354,6 +365,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setMayBePrototype(previous->mayBePrototype());
     setDidPreventExtensions(previous->didPreventExtensions());
     setHasImmutableProperties(previous->hasImmutableProperties());
+    setClassInterceptsOwnPropertyStores(previous->classInterceptsOwnPropertyStores());
     setDidTransition(true);
     setStaticPropertiesReified(previous->staticPropertiesReified());
     setHasBeenDictionary(previous->hasBeenDictionary());
