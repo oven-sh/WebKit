@@ -80,7 +80,7 @@ class Closures:
         if k == 7 and v and depth < 2:
             return '(%s + %s)' % (v, self.value(scopes, depth + 1))
         if k == 8:
-            return r.choice(['undefined', 'null', 'true', '1.5', '[1, 2]', '{ a: 1 }'])
+            return r.choice(['undefined', 'null', 'true', '1.5', '[1, 2]', '{ a: 1 }', '(100 / -0.25)', '(0.5 * 4)', '(-400.5 + 0.5)', '(0.5 * 17179869184)', '(1.5 - 1.5)'])
         f = self.pick(scopes, ('f',))
         if k in (9, 10) and f and depth < 2:
             return 'tryCall(() => %s(%s))' % (f, ', '.join(self.value(scopes, depth + 1) for _ in range(r.randrange(3))))
@@ -242,7 +242,7 @@ class Objects:
         return '%s%d' % (prefix, self.n)
 
     def primitive(self):
-        return self.r.choice(['0', '1', '2', '-1', '7', '1.5', '-0', '2147483647', '"s"', '"1"', 'undefined', 'null', 'true', 'NaN'])
+        return self.r.choice(['0', '1', '2', '-1', '7', '1.5', '-0', '2147483647', '"s"', '"1"', 'undefined', 'null', 'true', 'NaN', '(100 / -0.25)', '(0.5 * 4)', '(-400.5 + 0.5)', '(0.5 * 17179869184)', '(1.5 - 1.5)'])
 
     def make(self):
         r = self.r
@@ -547,7 +547,7 @@ function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error 
 class Numbers:
     """Arithmetic at the edges of int32, uint32 and double, conversions, and variables whose kind of value changes."""
     EDGES = ['0', '1', '-1', '2', '3', '7', '-0', '0.5', '-1.5', '255', '256', '65535', '65536', '2147483647', '2147483646', '-2147483648', '-2147483647', '2147483648', '4294967295', '4294967296', '-4294967296',
-             '1073741824', '46341', '9007199254740991', '9007199254740992', '-9007199254740991', '1e21', '1e-7', '5e-324', '1.7976931348623157e308', 'NaN', 'Infinity', '-Infinity', '0.1', '0.30000000000000004']
+             '1073741824', '46341', '9007199254740991', '9007199254740992', '-9007199254740991', '1e21', '1e-7', '5e-324', '1.7976931348623157e308', 'NaN', 'Infinity', '-Infinity', '0.1', '0.30000000000000004', '(100 / -0.25)', '(0.5 * 4)', '(-400.5 + 0.5)', '(0.5 * 17179869184)', '(1.5 - 1.5)']
     OTHERS = ['"5"', '"-0"', '""', '" 12 "', '"0x10"', '"1e3"', '"abc"', 'true', 'false', 'null', 'undefined', '[]', '[7]', '{ valueOf() { return 3; } }', '{ toString() { return "4"; } }', '10n', '-3n']
     BINARY = ['+', '-', '*', '/', '%', '**', '|', '&', '^', '<<', '>>', '>>>', '<', '<=', '>', '>=', '==', '!=', '===', '!==', '&&', '||', '??']
     MATH = ['abs', 'floor', 'ceil', 'round', 'trunc', 'sign', 'sqrt', 'fround', 'clz32', 'cbrt', 'log2', 'exp']
@@ -675,7 +675,7 @@ class Classes:
         return '%s%d' % (prefix, self.n)
 
     def primitive(self):
-        return self.r.choice(['0', '1', '2', '-1', '1.5', '"s"', '"t"', 'null', 'undefined', 'true', '[1, 2]', '{ f0: 5 }'])
+        return self.r.choice(['0', '1', '2', '-1', '1.5', '"s"', '"t"', 'null', 'undefined', 'true', '[1, 2]', '{ f0: 5 }', '(100 / -0.25)', '(0.5 * 4)', '(-400.5 + 0.5)', '(0.5 * 17179869184)', '(1.5 - 1.5)'])
 
     def expression(self, c, depth=0):
         """c: what can be named here: 'values', and inside a class 'this', 'privates', 'privateMethods', 'super'."""

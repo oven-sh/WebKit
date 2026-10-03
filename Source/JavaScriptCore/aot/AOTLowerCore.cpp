@@ -856,8 +856,12 @@ LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
     case Rep::JSValue:
         switch (from) {
         case Rep::Int32:
+            if (!mayBe(fromType, TInt32))
+                return boxDouble(m_out.intToDouble(value));
             return boxInt32(value);
         case Rep::Int64: {
+            if (!mayBe(fromType, TInt32))
+                return boxDouble(m_out.intToDouble(value));
             LValue narrow = m_out.castToInt32(value);
             return m_out.select(m_out.equal(m_out.signExt32To64(narrow), value), boxInt32(narrow), boxDouble(m_out.intToDouble(value)));
         }
