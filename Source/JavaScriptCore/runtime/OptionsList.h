@@ -172,6 +172,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useAOTInlining, true, Normal, "Inline a call whose callee is known exactly, if the callee is small or this is its only call site."_s) \
     v(Unsigned, maximumAOTInlineCandidateBytecodeCostInLoop, 60, Normal, "With useAOTInlining: maximum bytecode size of a callee with several call sites, for a call site in a loop."_s) \
     v(Unsigned, maximumAOTInlineCandidateBytecodeCost, 18, Normal, "With useAOTInlining: the same for a call site outside a loop. Roughly the size of a call."_s) \
+    v(Unsigned, maximumAOTInlineCandidateBytecodeCostWithCallback, 300, Normal, "With useAOTInlining: maximum bytecode size of a callee that calls one of its parameters, for a call site that passes a function expression as that parameter."_s) \
     v(Unsigned, maximumAOTInlineCandidateBytecodeCostForSingleCallSite, 1200, Normal, "With useAOTInlining: maximum bytecode size of a callee that has exactly one call site."_s) \
     v(Unsigned, maximumAOTInliningCallerBytecodeCost, 4000, Normal, "With useAOTInlining: maximum total bytecode size inlined into one function."_s) \
     v(Bool, validateAOTInferredTypes, false, Normal, "For testing the AOT compiler. Compiled code checks every value whose type was inferred rather than checked, and crashes if the type is wrong."_s) \

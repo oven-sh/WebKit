@@ -103,6 +103,44 @@ public:
         return size <= (isCalledInLoop ? Options::maximumAOTInlineCandidateBytecodeCostInLoop() : std::min(Options::maximumAOTInlineCandidateBytecodeCost(), Options::maximumAOTInlineCandidateBytecodeCostInLoop()));
     }
 
+    static bool callsParameter(UnlinkedCodeBlock* callee, unsigned parameter)
+    {
+        VirtualRegister reg = virtualRegisterForArgumentIncludingThis(parameter + 1);
+        Vector<VirtualRegister, 4> copies { reg };
+        bool isCalled = false;
+        for (const auto& instruction : callee->instructions()) {
+            switch (instruction->opcodeID()) {
+            case op_call:
+                isCalled |= copies.contains(instruction->as<OpCall>().m_callee);
+                break;
+            case op_call_ignore_result:
+                isCalled |= copies.contains(instruction->as<OpCallIgnoreResult>().m_callee);
+                break;
+            case op_tail_call:
+                isCalled |= copies.contains(instruction->as<OpTailCall>().m_callee);
+                break;
+            case op_new_func_exp:
+                if (instruction->as<OpNewFuncExp>().m_dst == reg)
+                    return false;
+                break;
+            case op_mov: {
+                auto bytecode = instruction->as<OpMov>();
+                if (bytecode.m_dst == reg)
+                    return false;
+                if (bytecode.m_src == reg) {
+                    if (!copies.contains(bytecode.m_dst))
+                        copies.append(bytecode.m_dst);
+                } else
+                    copies.removeAll(bytecode.m_dst);
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        return isCalled;
+    }
+
     static bool canBeInlinedIntoCaller(UnlinkedCodeBlock* callee)
     {
         if (callee->codeType() != FunctionCode || callee->numberOfExceptionHandlers())
@@ -288,6 +326,7 @@ private:
         unsigned guardedIntrinsic = 0;
         bool calleeIsProvenIntrinsic = false;
         bool isArraySpecialization = false;
+        bool passesCallback = false;
         auto declineToInline = [&](ASCIILiteral why) {
             dataLogLnIf(Options::verboseAOTCompilation(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
             return false;
@@ -336,11 +375,17 @@ private:
                 closureFunction = calleeNode;
             callee = known->forCall;
             calleeExecutable = known->executable;
+            if (callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostWithCallback()) {
+                for (unsigned parameter = 0; parameter + 1 < argc && !passesCallback; ++parameter) {
+                    Node* argument = resolve(call->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::argumentOffset(parameter))));
+                    passesCallback = argument->isBytecode(op_new_func_exp) && parameter + 1 < callee->numParameters() && callsParameter(callee, parameter);
+                }
+            }
         }
         auto about = m_program.about(callee);
         if (guardedIntrinsic && (!about || !canBeInlinedIntoCaller(callee)))
             return declineToInline(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
-        if (!about || !canBeInlinedIntoCaller(callee) || !(closureScope || guardedIntrinsic ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : isProfitable(callee, about->summary, block->isInLoop || m_graph.isCalledRepeatedly())))
+        if (!about || !canBeInlinedIntoCaller(callee) || !(closureScope || guardedIntrinsic ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : (passesCallback && (!about->summary || about->summary->isReached())) || isProfitable(callee, about->summary, block->isInLoop || m_graph.isCalledRepeatedly())))
             return guardedIntrinsic ? declineToInline("it is too big"_s) : false;
         if (m_inlinedBytecodeSize + callee->instructionsSize() > Options::maximumAOTInliningCallerBytecodeCost() || m_graph.inlineFrames.size() > PackedSite::maxInlineFrames)
             return guardedIntrinsic ? declineToInline("the caller has taken over enough"_s) : false;
@@ -389,9 +434,11 @@ private:
         }
 
         dataLogLnIf(Options::verboseAOTCompilation() && guardedIntrinsic, "AOT: a builtin is made part of its caller at bc#", call->bytecodeIndex.offset());
-        if (calleeExecutable)
+        if (calleeExecutable) {
             m_graph.remark(isConstruct ? "inlined-construct"_s : closureScope ? "inlined-closure"_s : "inlined-call"_s, calleeExecutable->ecmaName().string());
-        else
+            if (passesCallback)
+                m_graph.remark("inlined-call-with-callback"_s, calleeExecutable->ecmaName().string());
+        } else
             m_graph.remark("inlined-builtin"_s);
         m_didInline = true;
         m_inlinedBytecodeSize += callee->instructionsSize();
