@@ -183,10 +183,6 @@ void Lowering::emitGuard(Node* guard)
     case GuardKind::Reentry:
         guardReentry(guard->block);
         return;
-    case GuardKind::Field:
-        guardField(guard);
-        guard->isHandled = true;
-        return;
     case GuardKind::Structure:
         checkStructure(guard->uses[0].node, lowJSValue(guard->uses[0].node), loadSlotWord(propertyGuardSlot(guard->site), 0));
         return;
@@ -466,56 +462,6 @@ bool Lowering::branchUnlessAccepted(Node* valueNode, LValue value, TypeTable::Fi
         m_out.jump(otherwise);
     m_out.appendTo(accepted);
     return true;
-}
-
-void Lowering::guardField(Node* guard)
-{
-    bool isRead = guard->opcode == op_get_by_id;
-    Node* baseNode = guard->use(isRead ? guard->as<OpGetById>().m_base : guard->as<OpPutById>().m_base);
-    LValue base = lowJSValue(baseNode);
-    LBasicBlock has = nullptr;
-    LBasicBlock done = nullptr;
-    std::optional<ValueFromBlock> absentResult;
-    if (!baseNode->hasLayoutInRange(guard->firstLayout, guard->lastLayout)) {
-        if (!isSubtype(baseNode->type, TCell))
-            exitUnless(isCell(base));
-        if (!baseNode->hasLayoutInRangeIfCell(guard->firstLayout, guard->lastLayout)) {
-            LValue hasLayoutWithProperty = isOneOf(loadTypedLayoutID(base), guard->firstLayout, guard->lastLayout);
-            if (!guard->firstExcludedLayout)
-                exitUnless(hasLayoutWithProperty);
-            else {
-                has = m_out.newBlock();
-                done = m_out.newBlock();
-                LBasicBlock mayLackProperty = m_out.newBlock();
-                m_out.branch(hasLayoutWithProperty, usually(has), unsure(mayLackProperty));
-                m_out.appendTo(mayLackProperty);
-                exitUnless(isOneOf(layoutOf(base), guard->firstExcludedLayout, guard->lastExcludedLayout));
-                absentResult = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
-                m_out.jump(done);
-                m_out.appendTo(has);
-            }
-        }
-    }
-    TypedPointer slot = m_out.address(m_heaps.properties[isRead ? guard->as<OpGetById>().m_property : guard->as<OpPutById>().m_property], base, JSObject::offsetOfInlineStorage() + guard->fieldSlot * sizeof(EncodedJSValue));
-    LValue valueInSlot = m_out.load64(slot);
-    exitUnless(m_out.notZero64(valueInSlot));
-    if (isRead) {
-        if (done) {
-            ValueFromBlock found = m_out.anchor(valueInSlot);
-            m_out.jump(done);
-            m_out.appendTo(done);
-            valueInSlot = m_out.phi(Int64, found, *absentResult);
-        }
-        guard->lowered = valueInSlot;
-        return;
-    }
-    exitUnless(m_out.testIsZero32(m_out.load32(m_out.address(m_heaps.root, structureOf(base), Structure::bitFieldOffset())), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)));
-    Node* valueNode = guard->use(guard->as<OpPutById>().m_value);
-    LValue value = lowJSValue(valueNode);
-    branchUnlessAccepted(valueNode, value, { guard->fieldTypeKinds, guard->fieldTypeFirst, guard->fieldTypeLast }, m_exit);
-    m_out.store64(value, slot);
-    if (mayBe(valueNode->type, TCell))
-        storeBarrier(base);
 }
 
 void Lowering::guardPutById(Node* guard)

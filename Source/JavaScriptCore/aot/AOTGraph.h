@@ -87,7 +87,6 @@ enum class GuardKind : uint8_t {
     IsArrayIntrinsic,
     IsIntrinsic,
     IsLikelyFunction,
-    Field,
 };
 
 struct NewObjectPlan {
@@ -189,14 +188,8 @@ struct Node {
     Type narrowedTo { TNone };
     Type speculatedType { TNone };
     uint32_t likelyFunction { 0 };
-    uint16_t fieldSlot { 0 };
     uint16_t firstLayout { 0 };
     uint16_t lastLayout { 0 };
-    uint16_t firstExcludedLayout { 0 };
-    uint16_t lastExcludedLayout { 0 };
-    uint16_t fieldTypeKinds { 0 };
-    uint16_t fieldTypeFirst { 0 };
-    uint16_t fieldTypeLast { 0 };
     bool hasLayoutInRange(uint16_t first, uint16_t last) const
     {
         for (const Node* node = this; node->kind == NodeKind::Narrow && node->narrowedTo; node = node->uses[0].node) {
@@ -209,18 +202,11 @@ struct Node {
     }
     bool hasLayoutInRangeIfCell(uint16_t first, uint16_t last) const
     {
-        if (Type cells = type & TCell; cells && isSubtype(cells, TFinalObject)) {
-            auto layouts = layoutRangeOf(cells);
-            if (layouts.lowest >= first && layouts.highest <= last)
-                return true;
-        }
-        const Node* node = this;
-        while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz))
-            node = node->uses[0].node;
-        if (node->kind != NodeKind::Bytecode || !node->guard || node->guard->guardKind != GuardKind::Field || !node->guard->fieldTypeFirst)
+        Type cells = type & TCell;
+        if (!cells || !isSubtype(cells, TFinalObject))
             return false;
-        constexpr unsigned notCells = MaskUndefined | MaskNull | MaskBoolean | MaskNumber;
-        return !(node->guard->fieldTypeKinds & ~(notCells | MaskOtherObject)) && node->guard->fieldTypeFirst >= first && node->guard->fieldTypeLast <= last;
+        auto layouts = layoutRangeOf(cells);
+        return layouts.lowest >= first && layouts.highest <= last;
     }
     unsigned expectedMask { 0 };
     GuardKind guardKind { GuardKind::Whole };
@@ -501,7 +487,6 @@ public:
     static bool methodMayBeOverridden(ASCIILiteral className, Node* read);
     static bool isAnyArrayIteratorMethod(const Node*);
     void findBuiltinsCalled();
-    bool isFullyDuplicated { false };
     void recordKnownFunctionUses(const FunctionSummaryMap&, const FunctionSummary* currentSummary);
     void recordObjectsInVariables(VariableSummaries&);
     Node* constantCellOf(UnlinkedCodeBlock*, VirtualRegister);

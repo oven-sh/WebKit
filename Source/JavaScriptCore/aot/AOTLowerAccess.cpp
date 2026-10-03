@@ -593,7 +593,7 @@ void Lowering::lowerGetById(Node* node)
             return;
         }
     }
-    if (auto field = (Options::aotShapeOptimizations() & 2) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
+    if (auto field = (Options::aotShapeOptimizations() & 2) && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
         m_graph.remark("typed-field-read"_s, code().codeBlock()->identifier(bytecode.m_property).string());
         LValue base = lowJSValue(baseNode);
         if (Options::useAOTTypedFields() && TypeTable::hasTypedFields() && field->id) {
@@ -1019,7 +1019,7 @@ void Lowering::lowerPutById(Node* node)
     m_effectEpochBeforeStore = loadEffectEpoch();
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
-    if (auto field = (Options::aotShapeOptimizations() & 4) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {
+    if (auto field = (Options::aotShapeOptimizations() & 4) && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {
         m_graph.remark("typed-field-write"_s, code().codeBlock()->identifier(bytecode.m_property).string());
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock has = m_out.newBlock();

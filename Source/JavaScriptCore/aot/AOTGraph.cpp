@@ -2238,7 +2238,7 @@ bool Graph::isEscapingFunctionThis(const Node* node)
 
 std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
 {
-    if (!Options::useAOTTypedFields() || Options::useAOTFunctionSplitting() || !TypeTable::typedFieldsAreEnforced() || node->guard)
+    if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || node->guard)
         return std::nullopt;
     if (node->onlyChecksConstantObject || node->slotInConstantObjectPlusOne)
         return std::nullopt;
@@ -2870,9 +2870,6 @@ void Node::dump(PrintStream& out) const
         case GuardKind::Nothing:
             out.print("Guard()");
             break;
-        case GuardKind::Field:
-            out.print("GuardField(", opcode, " bc#", bytecodeIndex.offset(), ", slot ", fieldSlot, " of #", firstLayout, "..", lastLayout, ")");
-            break;
         case GuardKind::Entry:
             out.print("GuardEntry");
             break;
@@ -3382,24 +3379,6 @@ private:
         }
     }
 
-    std::optional<TypeTable::Field> fieldReadBy(unsigned offset)
-    {
-        if (!Options::useAOTFunctionSplitting() || !TypeTable::shared())
-            return std::nullopt;
-        uint32_t tag = m_graph.typeTagAt(offset);
-        if (!tag)
-            return std::nullopt;
-        const JSInstruction* instruction = m_instructions.at(offset).ptr();
-        unsigned identifier;
-        if (instruction->opcodeID() == op_get_by_id && (Options::aotShapeOptimizations() & 2))
-            identifier = instruction->as<OpGetById>().m_property;
-        else if (instruction->opcodeID() == op_put_by_id && (Options::aotShapeOptimizations() & 4) && !instruction->as<OpPutById>().m_flags.isDirect())
-            identifier = instruction->as<OpPutById>().m_property;
-        else
-            return std::nullopt;
-        return TypeTable::shared()->fieldOf(tag, m_codeBlock->identifier(identifier).impl());
-    }
-
     bool isCheckSubsumedByAssertion(unsigned offset, unsigned end)
     {
         const JSInstruction* instruction = m_instructions.at(offset).ptr();
@@ -3447,7 +3426,7 @@ private:
 
     bool usesTypedAccessWithoutGuard(unsigned offset)
     {
-        if (!Options::useAOTTypedFields() || Options::useAOTFunctionSplitting() || !TypeTable::shared())
+        if (!Options::useAOTTypedFields() || !TypeTable::shared())
             return false;
         uint32_t tag = m_graph.typeTagAt(offset);
         if (!tag)
@@ -3468,30 +3447,6 @@ private:
         if (!Options::useAOTLoopSplitting() || !Options::aotLoopSplittingPolicy() || !usesDataStubs())
             return false;
         unsigned size = m_instructions.size();
-        BitVector fieldAccesses;
-        if (Options::useAOTFunctionSplitting() && TypeTable::shared()) {
-            BitVector allocationPart;
-            unsigned count = 0;
-            for (const auto& instruction : m_instructions) {
-                unsigned offset = instruction.offset();
-                if (instruction->opcodeID() == op_new_object) {
-                    for (unsigned store : m_graph.literalStores(offset))
-                        allocationPart.set(store);
-                } else if (instruction->opcodeID() == op_create_this) {
-                    for (auto& store : NewObjectPlan::forCreateThis(m_instructions, offset).stores)
-                        allocationPart.set(store.offset);
-                }
-                if (!allocationPart.get(offset) && fieldReadBy(offset)) {
-                    fieldAccesses.set(offset);
-                    ++count;
-                }
-            }
-            if (count < std::max(1u, Options::minimumTypedAccessesForAOTFunctionSplitting()))
-                fieldAccesses.clearAll();
-        }
-        bool splitsWholeFunction = Options::useAOTWholeFunctionSplitting() && !m_graph.loopSplittingIsDisabled && m_codeBlock->codeType() == FunctionCode && size <= Options::maximumAOTWholeFunctionSplittingSize()
-            && !m_codeBlock->numberOfExceptionHandlers() && !isGeneratorOrAsyncFunctionBodyParseMode(m_codeBlock->parseMode());
-        bool isFullyDuplicated = !fieldAccesses.isEmpty() && !m_graph.loopSplittingIsDisabled;
         struct BlockInfo {
             Vector<unsigned, 8> guards;
             bool benefitsFromFastCopy { false };
@@ -3500,7 +3455,7 @@ private:
         };
         Vector<BlockInfo> blockInfos(m_graph.blocks.size());
         for (BasicBlock* block : m_graph.m_rpo) {
-            if ((!block->isInLoop && !splitsWholeFunction) || block == m_graph.root)
+            if (!block->isInLoop || block == m_graph.root)
                 continue;
             BlockInfo& blockInfo = blockInfos[block->index];
             m_recentProperties.shrink(0);
@@ -3610,40 +3565,23 @@ private:
         }
         if (m_graph.loopSplittingIsDisabled)
             return false;
-        if (splitsWholeFunction) {
-            unsigned count = 0;
-            for (auto& info : blockInfos)
-                count += info.guards.size();
-            splitsWholeFunction = count >= Options::minimumAOTWholeFunctionSplittingGuards();
-            if (splitsWholeFunction)
-                m_graph.remark("split-function"_s);
-        }
-        isFullyDuplicated |= splitsWholeFunction;
-        m_graph.isFullyDuplicated = isFullyDuplicated;
 
         bool found = false;
         for (BasicBlock* block : m_graph.m_rpo) {
             bool isInSplitLoop = block->isInLoop && hasTwoCopies.get(block->index);
-            if (!isInSplitLoop && (!isFullyDuplicated || block == m_graph.root))
+            if (!isInSplitLoop)
                 continue;
             if (m_inLoop.isEmpty()) {
                 m_inLoop.ensureSize(size + 1);
                 m_guards.ensureSize(size + 1);
                 m_loopHeaders.ensureSize(size + 1);
             }
-            if (block->isLoopHeader && isInSplitLoop) {
+            if (block->isLoopHeader) {
                 m_graph.remark("split-loop"_s);
                 m_loopHeaders.set(block->bytecodeBegin);
             }
-            for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
+            for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size())
                 m_inLoop.set(offset);
-                if (fieldAccesses.get(offset)) {
-                    m_guards.set(offset);
-                    found = true;
-                }
-            }
-            if (!isInSplitLoop && !splitsWholeFunction)
-                continue;
             for (unsigned offset : blockInfos[block->index].guards) {
                 m_guards.set(offset);
                 found = true;
@@ -4327,24 +4265,6 @@ private:
                 }
             }
 
-            if (comesAfterGuard && block->predecessors[0]->terminal()->guardKind == GuardKind::Field) {
-                Node* guard = block->predecessors[0]->terminal();
-                VirtualRegister baseRegister = opcode == op_get_by_id ? instruction->as<OpGetById>().m_base : instruction->as<OpPutById>().m_base;
-                Node* base = get(block, baseRegister);
-                Node* narrow = m_graph.addNode(NodeKind::Narrow);
-                narrow->reg = baseRegister;
-                narrow->bytecodeIndex = BytecodeIndex(offset);
-                narrow->uses.append({ VirtualRegister(), base });
-                narrow->firstLayout = guard->firstExcludedLayout ? std::min(guard->firstLayout, guard->firstExcludedLayout) : guard->firstLayout;
-                narrow->lastLayout = std::max(guard->lastLayout, guard->lastExcludedLayout);
-                narrow->narrowedTo = objectTypeForLayoutRange(narrow->firstLayout, narrow->lastLayout);
-                append(block, narrow);
-                for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
-                    if (block->valuesAtTail[index] == base && !m_graph.m_frameRegisters.get(index))
-                        block->valuesAtTail[index] = narrow;
-                }
-            }
-
             Node* node = m_graph.addNode(NodeKind::Bytecode);
             node->opcode = opcode;
             node->instruction = instruction;
@@ -4475,21 +4395,6 @@ private:
             forEachUse(instruction, [&](VirtualRegister reg) {
                 guard->uses.append({ reg, get(block, reg) });
             });
-            if (auto field = fieldReadBy(block->bytecodeEnd)) {
-                guard->guardKind = GuardKind::Field;
-                guard->fieldSlot = field->slot;
-                guard->firstLayout = field->first;
-                guard->lastLayout = field->last;
-                if (guard->opcode == op_get_by_id && (Options::aotShapeOptimizations() & 8)) {
-                    guard->firstExcludedLayout = field->firstExcludedLayout;
-                    guard->lastExcludedLayout = field->lastExcludedLayout;
-                }
-                if (Options::useAOTTypedFields() && field->fieldType.isConstrained()) {
-                    guard->fieldTypeKinds = safeCast<uint16_t>(field->fieldType.kinds);
-                    guard->fieldTypeFirst = field->fieldType.first;
-                    guard->fieldTypeLast = field->fieldType.last;
-                }
-            }
             append(block, guard);
             return;
         }

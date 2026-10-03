@@ -231,7 +231,6 @@ private:
     LValue isStringEqualTo(Node* comparison, Node* valueNode, LValue, const String&, Node* literalString);
     LValue isStringEqualToAtom(Node* valueNode, LValue, LValue literalString);
     void validateNewObject(Node*, LValue, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown = nullptr);
-    void guardField(Node* guard);
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     struct OwnData {
         LValue hasAny;

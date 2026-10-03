@@ -203,8 +203,6 @@ private:
         case NodeKind::Narrow:
             return true;
         case NodeKind::Guard:
-            if (node->guardKind == GuardKind::Field && node->opcode == op_put_by_id)
-                loop.propertiesWritten.append(node->as<OpPutById>().m_property);
             if (node->guardKind != GuardKind::Whole)
                 return true;
             if (!applies(node))

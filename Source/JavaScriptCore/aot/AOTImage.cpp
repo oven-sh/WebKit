@@ -666,7 +666,7 @@ Vector<uint8_t> ImageBuilder::finish()
             RELEASE_ASSERT(typesBySlot.size() < 256 && slotTypes.size() < (1u << 24));
             slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | typesBySlot.size());
             for (auto& fieldType : typesBySlot)
-                slotTypes.append({ safeCast<uint16_t>(fieldType.kinds), Options::useAOTFunctionSplitting() ? fieldType.first : uint16_t(0), Options::useAOTFunctionSplitting() ? fieldType.last : uint16_t(0), 0 });
+                slotTypes.append({ safeCast<uint16_t>(fieldType.kinds), 0, 0, 0 });
         }
     }
     Vector<ImageSelector> imageSelectors;
