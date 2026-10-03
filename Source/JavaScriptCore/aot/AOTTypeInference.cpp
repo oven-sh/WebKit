@@ -463,7 +463,7 @@ private:
 
     void noteEscapingArguments(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv)
     {
-        if (!node->use(calleeRegister)->type)
+        if (!mayBe(node->use(calleeRegister)->type, TAnyObject))
             return;
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         bool isExact = false;
@@ -884,7 +884,7 @@ private:
         bool isExact = false;
         const KnownFunction* known = m_graph.knownCallee(node, &isExact);
         if (!known || !isExact || !known->forCall)
-            return node->use(node->opcode == op_tail_call ? node->as<OpTailCall>().m_callee : node->as<OpCall>().m_callee)->type ? TTop : TNone;
+            return mayBe(node->use(node->opcode == op_tail_call ? node->as<OpTailCall>().m_callee : node->as<OpCall>().m_callee)->type, TAnyObject) ? TTop : TNone;
         if (calleesRead && !calleesRead->contains(known))
             calleesRead->append(known);
         return known->returnType.load();

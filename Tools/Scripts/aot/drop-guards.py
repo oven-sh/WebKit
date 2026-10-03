@@ -13,7 +13,8 @@ guard at all; and then fuzz-programs.py for a while. One line for each:
   tests      a test fails
   fuzzing    the tests pass, a generated program differs (its generator and seed are in the name of the finding)
   SURVIVES   nothing notices, though the guard is in the given number of functions of the tests: a test is missing
-  unreached  nothing notices, and no test has the guard: a test is missing that gets the compiler there at all
+  unreached  nothing notices, and neither a test nor any of forty generated programs has the guard: a test is missing that gets
+             the compiler there at all (the guards of typed layouts need a type table, which only an embedder's tests have)
 
 A guard may survive because it cannot fail, being implied by another. Then it can go.
 """
@@ -44,13 +45,24 @@ sites = [s for s in sites if re.search(args.only, s[0])]
 tests = [f for f in sorted(os.listdir(STRESS)) if re.match(r'(aot|sound-types)-.*\.js$', f)]
 
 
-def functionsWithGuard(site):
-    def one(test):
-        module = ['-m'] if re.search(r'//@[^\n]*"-m"', open(os.path.join(STRESS, test), errors='replace').read(2000)) else []
-        p = subprocess.run([args.jsc, '--useJIT=false', '--useDollarVM=true', '--writeAOTImageTo=/dev/null', '--verboseAOTCompilation=1', '--aotGuardToDropForTesting=' + site, *module, test], cwd=STRESS, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+def functionsWithGuard(site, programs):
+    def one(path):
+        module = ['-m'] if re.search(r'//@[^\n]*"-m"', open(path, errors='replace').read(2000)) else []
+        p = subprocess.run([args.jsc, '--useJIT=false', '--useDollarVM=true', '--writeAOTImageTo=/dev/null', '--verboseAOTCompilation=1', '--aotGuardToDropForTesting=' + site, *module, path], cwd=STRESS, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return p.stdout.count(b'AOT: dropped the guard')
     with ThreadPoolExecutor(args.jobs) as pool:
-        return sum(pool.map(one, tests))
+        return sum(pool.map(one, programs))
+
+
+source = open(os.path.join(HERE, 'fuzz-programs.py')).read()
+generators = {'__file__': os.path.join(HERE, 'fuzz-programs.py')}
+exec(compile(source[:source.index('parser = argparse.ArgumentParser')], 'fuzz-programs.py', 'exec'), generators)
+samples = tempfile.mkdtemp()
+generated = []
+for name in ('Closures', 'Objects', 'Loops', 'Numbers', 'Classes'):
+    for seed in range(8):
+        generated.append(os.path.join(samples, '%s-%d.js' % (name, seed)))
+        open(generated[-1], 'w').write(generators[name](args.seed * 100 + seed).program())
 
 
 tally = {}
@@ -61,12 +73,15 @@ for site, line in sites:
     if not m or int(m.group(2)):
         verdict = 'tests      %s fail' % (m.group(2).decode() if m else '?')
     else:
-        count = functionsWithGuard(site)
-        out = tempfile.mkdtemp()
-        p = subprocess.run([sys.executable, os.path.join(HERE, 'fuzz-programs.py'), args.jsc, out, '--seconds', str(args.fuzz), '--jobs', str(args.jobs), '--seed', str(args.seed)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        found = sorted(f for f in os.listdir(out) if not f.startswith('case-'))
-        shutil.rmtree(out)
+        count = functionsWithGuard(site, [os.path.join(STRESS, test) for test in tests])
+        found = []
+        if count or functionsWithGuard(site, generated):
+            out = tempfile.mkdtemp()
+            subprocess.run([sys.executable, os.path.join(HERE, 'fuzz-programs.py'), args.jsc, out, '--seconds', str(args.fuzz), '--jobs', str(args.jobs), '--seed', str(args.seed)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            found = sorted(f for f in os.listdir(out) if not f.startswith('case-'))
+            shutil.rmtree(out)
         verdict = 'fuzzing    %d findings, %s' % (len(found), found[0]) if found else 'SURVIVES   in %d functions' % count if count else 'unreached'
     tally[verdict.split()[0]] = tally.get(verdict.split()[0], 0) + 1
     print('%-28s %-34s %s' % (site, verdict, line[:110]), flush=True)
+shutil.rmtree(samples)
 print(tally)
