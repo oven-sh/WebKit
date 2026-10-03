@@ -76,7 +76,6 @@ struct Slot;
     v(operationAOTThrowThisTDZError) \
     v(operationAOTThrowStaticError) \
     v(operationAOTGetByIdWellKnown) \
-    v(operationAOTLearnPropertyName) \
     v(operationAOTPutByIdReallocating) \
     v(operationAOTWriteBarrierAfterPut) \
     v(operationAOTGetByIdDirect) \
@@ -205,7 +204,6 @@ JSC_DECLARE_JIT_OPERATION(operationAOTThrowThisTDZError, void, (Instance*));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowStaticError, void, (Instance*, EncodedJSValue message, uint32_t errorType));
 
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t wellKnownIdentifier, Slot*));
-JSC_DECLARE_JIT_OPERATION(operationAOTLearnPropertyName, void, (Instance*, JSCell* base, uint32_t identifierIndex, uint32_t indexAmongNamesWithLikelySlots));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdReallocating, void, (VM*, JSObject* base, EncodedJSValue value, const void* megamorphicCacheStoreEntry));
 JSC_DECLARE_JIT_OPERATION(operationAOTWriteBarrierAfterPut, void, (VM*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByIdDirect, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t identifierIndex, Slot*));

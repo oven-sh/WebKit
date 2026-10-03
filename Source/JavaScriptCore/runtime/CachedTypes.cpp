@@ -6368,14 +6368,17 @@ struct BytecodeLinkEncoder::Impl {
         AOT::ProgramClasses programClasses;
         AOT::setProgramClasses(&programClasses);
         auto forgetProgramClasses = makeScopeExit([] { AOT::setProgramClasses(nullptr); });
-        for (auto& job : jobs)
-            programClasses.noteNewObjectsIn(job.codeBlock);
-        programClasses.chooseLikelySlots();
+        MonotonicTime phaseStart = MonotonicTime::now();
+        auto endPhase = [&](ASCIILiteral name) {
+            MonotonicTime now = MonotonicTime::now();
+            if (Options::verboseAOTCompilation()) [[unlikely]]
+                dataLogLn("AOT: ", name, " took ", static_cast<unsigned>((now - phaseStart).milliseconds()), " ms");
+            phaseStart = now;
+        };
         AOT::MultiValueReturnTable multiValueReturnTable;
         AOT::setMultiValueReturnTable(&multiValueReturnTable);
         auto forgetFunctionReturnValues = makeScopeExit([] { AOT::setMultiValueReturnTable(nullptr); });
         {
-            MonotonicTime before = MonotonicTime::now();
             for (auto& moduleHints : hints) {
                 if (!moduleHints)
                     continue;
@@ -6531,7 +6534,7 @@ struct BytecodeLinkEncoder::Impl {
             Vector<unsigned> worklist;
             for (unsigned i = 0; i < units.size(); ++i)
                 worklist.append(i);
-            MonotonicTime before = MonotonicTime::now();
+            endPhase("finding the uses of known functions"_s);
             unsigned rounds = 0;
             size_t inferences = 0;
             unsigned neverCreatedScopes = 0;
@@ -6682,8 +6685,8 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
 
+        endPhase("type inference"_s);
         AOT::ImageBuilder builder;
-        builder.setNumberOfNamesWithLikelySlots(programClasses.numberOfNamesWithLikelySlots());
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
         std::atomic<size_t> next { 0 };
         Lock declinedLock;
@@ -6916,7 +6919,9 @@ struct BytecodeLinkEncoder::Impl {
                     builder.addRegExp(vm, regExp->pattern(), regExp->flags());
             }
         }
+        endPhase("code generation"_s);
         Vector<uint8_t> image = builder.finish();
+        endPhase("writing the image"_s);
         reportableSites = builder.takeReportableSites();
         return image;
     }

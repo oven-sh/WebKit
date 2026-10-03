@@ -765,51 +765,8 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     auto throughStub = [&]() -> LValue {
         return callStub(*stub, Int64, { { base, firstStubOperandGPR }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { });
     };
-    if (stub && isCompact()) {
-        const ProgramClasses::LikelySlots* likely = stub == Stub::GetById && programClasses() && m_graph.codeBlock()->codeType() == FunctionCode && !m_block->isGeneric && !m_block->isRarelyExecuted
-            ? programClasses()->likelySlotsOf(code().codeBlock()->identifier(functionIdentifier).impl()) : nullptr;
-        if (!likely)
-            return throughStub();
-        m_graph.remark("looks-in-likely-slots"_s, code().codeBlock()->identifier(functionIdentifier).string());
-        LBasicBlock isElsewhere = newColdBlock();
-        LBasicBlock learns = newColdBlock();
-        LBasicBlock otherwise = newColdBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        Vector<ValueFromBlock, 3> results;
-        if (!isSubtype(baseType, TCell)) {
-            LBasicBlock cellCase = m_out.newBlock();
-            m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
-            m_out.appendTo(cellCase);
-        }
-        LValue structure = structureOf(base);
-        LValue ids = m_out.loadPtr(m_out.address(m_heaps.root, m_instance, Instance::offsetOfIDsOfNamesWithLikelySlots()));
-        LValue id = m_out.load16ZeroExt32(m_out.address(m_heaps.root, ids, likely->index * sizeof(uint16_t)));
-        Vector<LValue, ProgramClasses::LikelySlots::maxCount> idsInSlots;
-        for (unsigned i = 0; i < likely->count; ++i) {
-            unsigned slot = likely->slots[i];
-            LBasicBlock isThere = m_out.newBlock();
-            LBasicBlock next = i + 1 < likely->count ? m_out.newBlock() : isElsewhere;
-            LValue idInSlot = m_out.load16ZeroExt32(m_out.address(m_heaps.root, structure, Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t)));
-            idsInSlots.append(idInSlot);
-            m_out.branch(m_out.equal(idInSlot, id), i ? unsure(isThere) : usually(isThere), i + 1 < likely->count ? unsure(next) : rarely(next));
-            m_out.appendTo(isThere);
-            results.append(m_out.anchor(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)))));
-            m_out.jump(continuation);
-            m_out.appendTo(next);
-        }
-        LValue hasSomethingToLearn = m_out.equal(id, m_out.constInt32(Instance::propertyNameIDNotLearned));
-        for (LValue idInSlot : idsInSlots)
-            hasSomethingToLearn = m_out.bitOr(hasSomethingToLearn, m_out.isZero32(idInSlot));
-        m_out.branch(hasSomethingToLearn, unsure(learns), unsure(otherwise));
-        m_out.appendTo(learns);
-        vmCall(node, Void, Entry::operationAOTLearnPropertyName, m_instance, base, m_out.constInt32(identifier), m_out.constInt32(likely->index));
-        m_out.jump(otherwise);
-        m_out.appendTo(otherwise);
-        results.append(m_out.anchor(throughStub()));
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        return m_out.phi(Int64, results);
-    }
+    if (stub && isCompact())
+        return throughStub();
 
     LBasicBlock cellCase = m_out.newBlock();
     LBasicBlock rightStructure = m_out.newBlock();

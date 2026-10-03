@@ -10,7 +10,6 @@
 #include "AOTStubs.h"
 #include "AOTType.h"
 #include "DeclaredNamesLink.h"
-#include <array>
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -223,21 +222,6 @@ public:
     JS_EXPORT_PRIVATE void recordNonEscapingMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function);
     JS_EXPORT_PRIVATE void noteThisIn(UnlinkedCodeBlock*, uint16_t layoutID);
 
-    struct LikelySlots {
-        static constexpr unsigned maxCount = 2;
-        uint32_t index { 0 };
-        uint8_t count { 0 };
-        std::array<uint8_t, maxCount> slots { };
-    };
-    JS_EXPORT_PRIVATE void noteNewObjectsIn(UnlinkedCodeBlock*);
-    JS_EXPORT_PRIVATE void chooseLikelySlots();
-    const LikelySlots* likelySlotsOf(UniquedStringImpl* name) const
-    {
-        auto it = m_likelySlots.find(name);
-        return it == m_likelySlots.end() ? nullptr : &it->value;
-    }
-    unsigned numberOfNamesWithLikelySlots() const { return m_likelySlots.size(); }
-
     uint32_t closedMethod(uint32_t classType, UniquedStringImpl* name) const { return m_methods.get({ classType, name }); }
     bool isNonEscapingMethod(uint32_t function) const { return function && m_nonEscapingMethods.contains(function); }
     uint16_t thisLayoutIDIn(UnlinkedCodeBlock* code) const { return m_thisLayoutID.get(code); }
@@ -253,12 +237,6 @@ private:
     UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint32_t> m_methods;
     UncheckedKeyHashSet<uint32_t> m_nonEscapingMethods;
     UncheckedKeyHashMap<UnlinkedCodeBlock*, uint16_t> m_thisLayoutID;
-    struct SlotCounts {
-        std::array<uint32_t, 16> inConstructors { };
-        std::array<uint32_t, 16> inLiterals { };
-    };
-    UncheckedKeyHashMap<UniquedStringImpl*, SlotCounts> m_slotCounts;
-    UncheckedKeyHashMap<UniquedStringImpl*, LikelySlots> m_likelySlots;
 };
 JS_EXPORT_PRIVATE void setProgramClasses(ProgramClasses*);
 ProgramClasses* programClasses();

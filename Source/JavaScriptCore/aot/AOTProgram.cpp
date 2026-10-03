@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTGraph.h"
 #include "AOTImage.h"
 #include "AOTType.h"
 #include "BytecodeStructs.h"
@@ -220,80 +219,6 @@ void closePropertyEffects(std::span<const std::unique_ptr<FunctionSummary>> summ
             changed |= effects.isArbitrary;
         }
     }
-}
-
-void ProgramClasses::noteNewObjectsIn(UnlinkedCodeBlock* code)
-{
-    static_assert(std::tuple_size_v<decltype(SlotCounts::inConstructors)> == Structure::numberOfSlotsWithFieldIDs);
-    auto& instructions = code->instructions();
-    auto note = [&](unsigned identifier, unsigned slot, bool isInConstructor) {
-        UniquedStringImpl* name = code->identifier(identifier).impl();
-        if (slot >= Structure::numberOfSlotsWithFieldIDs || name->isSymbol())
-            return;
-        SlotCounts& counts = m_slotCounts.add(name, SlotCounts { }).iterator->value;
-        ++(isInConstructor ? counts.inConstructors : counts.inLiterals)[slot];
-    };
-    for (const auto& instruction : instructions) {
-        if (instruction->opcodeID() == op_create_this) {
-            unsigned slot = 0;
-            for (auto& property : NewObjectPlan::forCreateThis(instructions, instruction.offset()).properties)
-                note(property.identifier, slot++, true);
-            continue;
-        }
-        if (instruction->opcodeID() != op_new_object)
-            continue;
-        VirtualRegister object = instruction->as<OpNewObject>().m_dst;
-        Vector<unsigned, 8> written;
-        for (unsigned offset = instruction.offset() + instruction->size(); offset < instructions.size(); offset += instructions.at(offset)->size()) {
-            auto next = instructions.at(offset);
-            OpcodeID opcode = next->opcodeID();
-            if (isBranch(opcode) || isTerminal(opcode) || isThrow(opcode) || opcode == op_new_object)
-                break;
-            if (opcode == op_mov && next->as<OpMov>().m_dst == object)
-                break;
-            if (opcode != op_put_by_id)
-                continue;
-            auto bytecode = next->as<OpPutById>();
-            if (bytecode.m_base != object)
-                continue;
-            if (!bytecode.m_flags.isDirect() || written.contains(bytecode.m_property))
-                break;
-            note(bytecode.m_property, written.size(), false);
-            written.append(bytecode.m_property);
-        }
-    }
-}
-
-void ProgramClasses::chooseLikelySlots()
-{
-    Vector<UniquedStringImpl*> names;
-    for (auto& entry : m_slotCounts)
-        names.append(entry.key);
-    std::ranges::sort(names, [](UniquedStringImpl* a, UniquedStringImpl* b) {
-        return codePointCompareLessThan(StringView(a), StringView(b));
-    });
-    for (UniquedStringImpl* name : names) {
-        const SlotCounts& counts = m_slotCounts.find(name)->value;
-        LikelySlots likely;
-        likely.index = m_likelySlots.size();
-        auto takeBestOf = [&](const std::array<uint32_t, 16>& slots) {
-            unsigned best = slots.size();
-            for (unsigned slot = 0; slot < slots.size(); ++slot) {
-                if (!slots[slot] || std::ranges::contains(std::span { likely.slots }.first(likely.count), slot))
-                    continue;
-                if (best == slots.size() || slots[slot] > slots[best])
-                    best = slot;
-            }
-            if (best != slots.size() && likely.count < LikelySlots::maxCount)
-                likely.slots[likely.count++] = best;
-        };
-        takeBestOf(counts.inConstructors);
-        takeBestOf(counts.inConstructors);
-        takeBestOf(counts.inLiterals);
-        takeBestOf(counts.inLiterals);
-        m_likelySlots.add(name, likely);
-    }
-    m_slotCounts.clear();
 }
 
 static const ProgramFunctions* s_programFunctions;

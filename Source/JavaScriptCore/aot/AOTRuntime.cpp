@@ -376,10 +376,6 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     if (Image* image = Image::withShapes()) {
         instance->dispatch = image->at<uint32_t>(image->header().dispatchOffset);
         instance->selectorRows = image->at<uint32_t>(image->header().selectorRowsOffset);
-        if (uint32_t count = image->header().numberOfNamesWithLikelySlots) {
-            instance->idsOfNamesWithLikelySlots = static_cast<uint16_t*>(fastMalloc(count * sizeof(uint16_t)));
-            std::fill_n(instance->idsOfNamesWithLikelySlots, count, propertyNameIDNotLearned);
-        }
         RELEASE_ASSERT(!image->header().intrinsicHash || image->header().intrinsicHash == ImmutableIntrinsics::shared()->hash());
         instance->objectPrototype = globalObject->objectPrototype();
         if (JSValue call = globalObject->linkTimeConstant(LinkTimeConstant::callFunction); call.isCell()) {
@@ -593,7 +589,6 @@ void Instance::destroy(Instance* instance)
     delete instance->collections;
     OSAllocator::decommitAndRelease(instance->fieldsWithObservableReads, sizeOfFieldsWithObservableReads);
     fastFree(instance->selectorsOnObjectPrototype);
-    fastFree(instance->idsOfNamesWithLikelySlots);
     OSAllocator::decommitAndRelease(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
 }
 

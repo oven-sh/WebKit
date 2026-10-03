@@ -79,7 +79,6 @@ struct ImageHeader {
     uint32_t quoteBlockSize;
     uint32_t numberOfProgramIdentifiers;
     uint32_t numberOfProgramConstants;
-    uint32_t numberOfNamesWithLikelySlots;
     uint32_t regExpsOffset;
     uint32_t numberOfRegExps;
     uint32_t regExpTextOffset;
@@ -160,7 +159,6 @@ public:
         m_numberOfProgramIdentifiers = number;
     }
     void setNumberOfProgramConstants(uint32_t number) { m_numberOfProgramConstants = number; }
-    void setNumberOfNamesWithLikelySlots(uint32_t number) { m_numberOfNamesWithLikelySlots = number; }
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
     Vector<FunctionReportableSites> takeReportableSites() { return std::exchange(m_reportableSites, { }); }
@@ -184,7 +182,6 @@ private:
         Yarr::YarrCodeForImage code[2];
     };
     uint32_t m_numberOfProgramIdentifiers { 0 };
-    uint32_t m_numberOfNamesWithLikelySlots { 0 };
     const IdentifierIndices* m_programIdentifierIndices { nullptr };
     uint32_t m_numberOfProgramConstants { 0 };
     Vector<RegExpCode> m_regExps;

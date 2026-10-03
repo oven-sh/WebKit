@@ -1020,13 +1020,6 @@ static ALWAYS_INLINE const Identifier& wellKnownIdentifier(VM& vm, uint32_t whic
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTLearnPropertyName, void, (Instance* instance, JSCell* base, uint32_t identifierIndex, uint32_t index))
-{
-    AOT_OPERATION_BEGIN(instance);
-    learnPropertyName(vm, *instance, base, identifierAt(instance, callFrame, identifierIndex).impl(), index);
-    OPERATION_RETURN(scope);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, Slot* cache))
 {
     AOT_OPERATION_BEGIN(instance);

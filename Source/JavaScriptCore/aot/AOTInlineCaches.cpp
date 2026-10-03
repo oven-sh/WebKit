@@ -100,7 +100,7 @@ static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
     auto result = table.ids.add(uid, 0);
     if (!result.isNewEntry)
         return result.iterator->value;
-    if (table.next >= Instance::propertyNameIDCannotBeLearned) {
+    if (table.next >= Structure::firstReservedPropertyNameID) {
         table.ids.remove(result.iterator);
         return 0;
     }
@@ -154,16 +154,6 @@ static bool fillPropertyNameTable(VM& vm, Structure* structure)
             structure->setPropertyNameIDInInlineSlot(slot, ids[slot]);
     }
     return true;
-}
-
-void learnPropertyName(VM& vm, Instance& instance, JSCell* base, UniquedStringImpl* name, uint32_t index)
-{
-    uint16_t& id = instance.idsOfNamesWithLikelySlots[index];
-    if (id == Instance::propertyNameIDNotLearned) {
-        uint16_t learned = propertyNameID(vm, name);
-        id = learned ? learned : Instance::propertyNameIDCannotBeLearned;
-    }
-    fillPropertyNameTable(vm, base->structure());
 }
 
 static bool cacheByName(VM& vm, PolymorphicSlots* several, JSCell* base, Structure* structure, const PropertySlot& slot)

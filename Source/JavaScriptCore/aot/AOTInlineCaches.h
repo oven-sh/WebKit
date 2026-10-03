@@ -29,7 +29,6 @@ void cachePrivateName(VM&, Data*, Slot* cache, JSObject* base, JSValue name, std
 void cacheInstanceOf(JSGlobalObject*, Data*, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype);
 
 void makePrototypeChainWatchable(VM&, JSCell* base);
-void learnPropertyName(VM&, Instance&, JSCell* base, UniquedStringImpl*, uint32_t indexAmongNamesWithLikelySlots);
 
 JSValue getByIdAndFillMegamorphicCache(JSGlobalObject*, JSValue base, const Identifier&, PropertySlot&);
 void fillMegamorphicCacheAfterPut(JSGlobalObject*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&);
