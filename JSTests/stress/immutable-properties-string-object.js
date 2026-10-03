@@ -109,29 +109,61 @@ for (let [name, source] of Object.entries(operations)) {
 }
 
 // The object comes from an inlined function of another realm: it is that realm's String.prototype that counts, which the site, in this
-// realm, does not watch. Such an object, immutable properties or not, is not taken for one of this realm's.
+// realm, does not watch. Such an object, immutable properties or not, is not taken for one of this realm's. (What produces the object
+// has to be in the other realm's code once that is inlined: a call that is not inlined itself, and a load from an object.)
 for (let change of [object => object, object => $vm.makePropertiesImmutable(object)]) {
+    noInline(change);
     let other = $vm.createGlobalObject();
     change(new other.String("abc"));
-    let object = change(new other.String("abc"));
-    let fresh = other.Function("return new String('abc'); // site " + ++sites);
-    let existing = other.Function("object", "return object; // site " + ++sites);
-    let addFresh = new Function("make", "suffix", "return make() + suffix; // site " + ++sites);
-    let addExisting = new Function("make", "object", "suffix", "return make(object) + suffix; // site " + ++sites);
+    let holder = { object: change(new other.String("abc")) };
+    let fresh = other.Function("change", "return change(new String('abc')); // site " + ++sites);
+    let existing = other.Function("holder", "return holder.object; // site " + ++sites);
+    let addFresh = new Function("make", "change", "suffix", "return make(change) + suffix; // site " + ++sites);
+    let addExisting = new Function("make", "holder", "suffix", "return make(holder) + suffix; // site " + ++sites);
     noInline(addFresh);
     noInline(addExisting);
     for (let i = 0; i < hot; ++i) {
-        shouldBe(addFresh(fresh, "!"), "abc!");
-        shouldBe(addExisting(existing, object, "!"), "abc!");
+        shouldBe(addFresh(fresh, change, "!"), "abc!");
+        shouldBe(addExisting(existing, holder, "!"), "abc!");
     }
     other.String.prototype.valueOf = other.Function("return 'replaced';");
     for (let i = 0; i < hot; ++i) {
-        shouldBe(addFresh(fresh, "!"), "replaced!");
-        shouldBe(addExisting(existing, object, "!"), "replaced!");
+        shouldBe(addFresh(fresh, change, "!"), "replaced!");
+        shouldBe(addExisting(existing, holder, "!"), "replaced!");
     }
 }
 
-// A change to String.prototype reaches such an object, hot, as it reaches any other.
+// The structure is kept. A realm's only such object is gone, and what a collected Structure would have left is taken by others: a new
+// such object gets the structure that compiled code checks for.
+{
+    let other = $vm.createGlobalObject();
+    let makeAndDrop = () => { $vm.makePropertiesImmutable(new other.String("abc")); };
+    let overwriteTheStack = depth => depth ? overwriteTheStack(depth - 1) + 1 : 0;
+    noInline(makeAndDrop);
+    noInline(overwriteTheStack);
+    makeAndDrop();
+    overwriteTheStack(200);
+    let shapes = [];
+    for (let round = 0; round < 3; ++round) {
+        fullGC();
+        for (let i = 0; i < 500; ++i)
+            shapes.push({ ["property" + round + "_" + i]: i });
+    }
+    let makeSiteThere = () => {
+        let site = other.Function("object", "suffix", "return object + suffix; // site " + ++sites);
+        noInline(site);
+        return site;
+    };
+    let site = makeSiteThere(), control = makeSiteThere();
+    for (let i = 0; i < hot * 3; ++i) {
+        shouldBe(site($vm.makePropertiesImmutable(new other.String("abc")), "!"), "abc!");
+        shouldBe(control(new other.String("abc"), "!"), "abc!");
+    }
+    shouldBe(reoptimizationRetryCount(site) <= reoptimizationRetryCount(control), true, "reoptimized after a collection");
+}
+
+// A change to String.prototype reaches such an object, hot, as it reaches any other. (Last: no site of this realm that is compiled after
+// this gets the fast conversion, whatever is put back.)
 {
     let site = makeSite("object + suffix");
     let immutable = $vm.makePropertiesImmutable(new String("abc"));
@@ -143,21 +175,4 @@ for (let change of [object => object, object => $vm.makePropertiesImmutable(obje
         shouldBe(site(immutable, "!"), "replaced!");
     String.prototype.valueOf = valueOf;
     shouldBe(site(immutable, "!"), "abc!");
-}
-
-// The structure is kept: after every such object is gone, a new one gets the structure compiled code checks for.
-{
-    let site = makeSite("object + suffix");
-    for (let round = 0; round < 3; ++round) {
-        for (let i = 0; i < hot; ++i)
-            shouldBe(site($vm.makePropertiesImmutable(new String("abc")), "!"), "abc!");
-        fullGC();
-    }
-    let control = makeSite("object + suffix");
-    for (let round = 0; round < 3; ++round) {
-        for (let i = 0; i < hot; ++i)
-            shouldBe(control(new String("abc"), "!"), "abc!");
-        fullGC();
-    }
-    shouldBe(reoptimizationRetryCount(site) <= reoptimizationRetryCount(control), true, "reoptimized after a collection");
 }
