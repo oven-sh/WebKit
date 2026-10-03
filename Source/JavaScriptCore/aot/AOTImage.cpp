@@ -442,7 +442,7 @@ Vector<uint8_t> ImageBuilder::finish()
     if (Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("AOT: compiled ", m_regExps.size(), " regular expressions, and left ", m_numberOfRegExpsNotCompiled, " to the interpreter");
     std::ranges::sort(m_functions, [](const Function& a, const Function& b) {
-        return a.rank < b.rank;
+        return std::tie(a.rank, a.key.module, a.key.start, a.key.kind) < std::tie(b.rank, b.key.module, b.key.start, b.key.kind);
     });
 
     unsigned capacity = 16;

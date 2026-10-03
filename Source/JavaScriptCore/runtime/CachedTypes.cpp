@@ -1222,6 +1222,14 @@ public:
         }
         m_link->matchedHotRanks.ensureSize(hotFunctions.size());
     }
+    std::optional<uint64_t> hotRankOf(const UnlinkedFunctionExecutable& executable) const
+    {
+        auto placement = m_link->placements.find(&executable);
+        if (placement == m_link->placements.end() || placement->value.linkClass != LinkClass::Hot)
+            return std::nullopt;
+        return placement->value.rank;
+    }
+    bool hasHotFunctions() const { return !m_link->hotRanks.isEmpty(); }
     unsigned namedHotFunctions() const { return m_link->namedHotFunctions; }
     unsigned placedHotFunctions() const { return m_link->placedHotFunctions; }
     unsigned functionsWithoutName() const { return m_link->functionsWithoutName; }
@@ -6200,9 +6208,11 @@ struct BytecodeLinkEncoder::Impl {
             UnlinkedFunctionExecutable* executable { nullptr };
         };
         Vector<Job> jobs;
+        constexpr uint64_t isNotHot = 1ull << 63;
+        constexpr uint64_t runsOnce = 1ull << 62;
         for (unsigned index = 0; index < modules.size(); ++index) {
             if (auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get()))
-                jobs.append({ AOT::imageKeyForTopLevelCode(modules[index].entryOffset + 1), static_cast<uint64_t>(index) << 34, codeBlock, index });
+                jobs.append({ AOT::imageKeyForTopLevelCode(modules[index].entryOffset + 1), (encoder.hasHotFunctions() && !modules[index].isLate ? runsOnce : isNotHot) | static_cast<uint64_t>(index) << 34, codeBlock, index });
         }
 
         UncheckedKeyHashMap<UnlinkedFunctionExecutable*, unsigned> functionIndex;
@@ -6249,7 +6259,10 @@ struct BytecodeLinkEncoder::Impl {
                 key.kind = static_cast<uint32_t>(function.key.kind) << 1 | isConstruct;
                 if (!keys.insert({ key.module, key.start, key.kind }).second)
                     continue;
-                jobs.append({ key, static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module, function.executable });
+                uint64_t place = isNotHot | static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2;
+                if (auto hotRank = encoder.hotRankOf(*function.executable))
+                    place = *hotRank << 2;
+                jobs.append({ key, place | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module, function.executable });
             }
         }
 
