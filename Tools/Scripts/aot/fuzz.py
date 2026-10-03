@@ -43,6 +43,7 @@ def mutate(r,s):
     k=r.randrange(14)
     if k<8:
         toks=TOKEN.findall(s); idx=list(range(len(toks)))
+        if not idx: return s
         ids=[t for t in toks if re.match(r'[A-Za-z_$]',t) and t not in KEYWORDS]
         for _ in range(40):
             i=r.choice(idx); t=toks[i]

@@ -57,6 +57,7 @@ private:
     LValue readPromotedVariable(Node* environment, unsigned offset);
     void writePromotedVariable(Node* environment, unsigned offset, LValue);
     LValue ancestorScope(Node* scope, unsigned hops);
+    LValue scopeAbove(Node* scope, unsigned hops);
     UncheckedKeyHashMap<Node*, Vector<B3::Variable*>> m_environmentVariables;
     struct ArrayView {
         LValue butterfly { nullptr };

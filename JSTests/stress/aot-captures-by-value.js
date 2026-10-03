@@ -239,6 +239,59 @@ function makesWalker() {
     }
     return { hasDissolvedScope, setOutermost };
 }
+function makesWalkerWithHandler() {
+    let outermost = "first";
+    function setOutermost(v) { outermost = v; }
+    function callsIt(f) { return f(); }
+    function hasDissolvedScope() {
+        const hasHandler = (copied, written) => {
+            try { keptClosures.push(() => { written = written + 1; }); } catch (e) { }
+            { function inBlock(x) { return x + outermost; } return callsIt(() => inBlock(copied) + outermost); }
+        };
+        return callsIt(() => hasHandler("-", 1));
+    }
+    return { hasDissolvedScope, setOutermost };
+}
+function makesLoopBelowDissolvedScope() {
+    let outermost = "first";
+    function setOutermost(v) { outermost = v; }
+    function callsIt(f) { return f(); }
+    function hasDissolvedScope() {
+        const loops = function () {
+            let result = "";
+            try {
+                for (let i = 0; i < 3; i++) {
+                    result += outermost + i;
+                    const readsCounter = () => i;
+                }
+            } catch (e) {
+                const readsException = function () { return e; };
+                result += "caught " + e;
+            }
+            return result;
+        };
+        return callsIt(() => loops());
+    }
+    return { hasDissolvedScope, setOutermost };
+}
+function makesCatchBelowDissolvedScope() {
+    let outermost = "first";
+    function setOutermost(v) { outermost = v; }
+    function callsIt(f) { return f(); }
+    function throws() { throw 7; }
+    function hasDissolvedScope() {
+        const catches = function () {
+            try {
+                throws();
+            } catch (e) {
+                const writesException = () => { e = e; return e; };
+                return outermost + e;
+            }
+        };
+        return callsIt(() => catches());
+    }
+    return { hasDissolvedScope, setOutermost };
+}
 function looksUpFromRestoredScope(model) {
     let kept = model;
     const set = (v) => { kept = v; };
@@ -355,6 +408,21 @@ for (let i = 0; i < 100; i++) {
         const walker = makesWalker();
         walker.setOutermost("second");
         check(walker.hasDissolvedScope("-", ["a", "b"]), "a-second,b-second1", "an inlined closure that reads a variable beyond a scope that is never made");
+    }
+    {
+        const walker = makesWalkerWithHandler();
+        walker.setOutermost("second");
+        check(walker.hasDissolvedScope(), "-secondsecond", "a variable beyond a scope that is never made, looked up after a handler");
+    }
+    {
+        const looper = makesLoopBelowDissolvedScope();
+        looper.setOutermost("x");
+        check(looper.hasDissolvedScope(), "x0x1x2", "a loop with a scope for each iteration, right below a scope that is never made");
+    }
+    {
+        const catcher = makesCatchBelowDissolvedScope();
+        catcher.setOutermost("x");
+        check(catcher.hasDissolvedScope(), "x7", "a variable beyond a scope that is never made, looked up in a handler");
     }
     check(resultOf(asyncDeclaration(i)()), i + i, "an async function that is declared");
     check(resultOf(closureInAsync(i)())(), i + 1, "a closure that is made in an async function after an await");

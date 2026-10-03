@@ -1087,7 +1087,7 @@ unsigned Graph::dissolvedScopesAbove(const Node* scope, unsigned hops)
     const void* identity = scopeIdentity(scope);
     unsigned count = 0;
     std::optional<unsigned> frame;
-    for (unsigned i = 0; i < hops && identity; ++i) {
+    for (unsigned i = 0; i + 1 < hops && identity; ++i) {
         const void* parent = nullptr;
         if (!frame) {
             for (BasicBlock* block : outermost().m_rpo) {
