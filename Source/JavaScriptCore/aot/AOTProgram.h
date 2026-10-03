@@ -182,6 +182,7 @@ private:
     UncheckedKeyHashSet<UniquedStringImpl*> m_namesLookedUpFromUnknownScopes;
     Lock m_scopesLock;
     UncheckedKeyHashMap<const void*, const FunctionSummary*> m_makersOfScopes;
+    UncheckedKeyHashMap<const void*, unsigned> m_positionsOfScopes;
     UncheckedKeyHashMap<const void*, WhyMade> m_scopesThatMustExist;
     UncheckedKeyHashMap<std::pair<const void*, unsigned>, Vector<const FunctionSummary*, 2>> m_readersFromInside;
     Vector<ClosureMade> m_closuresMade;

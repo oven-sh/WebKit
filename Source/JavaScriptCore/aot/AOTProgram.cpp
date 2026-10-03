@@ -155,9 +155,11 @@ void VariableSummaries::noteObjectsEscapeIn(const void* scope, ASCIILiteral how)
 void VariableSummaries::noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&& closures)
 {
     Locker locker { m_scopesLock };
-    for (const void* scope : made) {
+    for (size_t i = 0; i < made.size(); ++i) {
+        const void* scope = made[i];
         if (!m_makersOfScopes.add(scope, maker).isNewEntry || !maker)
             m_scopesThatMustExist.add(scope, maker ? WhyMade::MadeTwice : WhyMade::MakerCannotPromote);
+        m_positionsOfScopes.add(scope, i);
     }
     for (auto [scope, why] : mustExist) {
         m_scopesThatMustExist.add(scope, why);
@@ -193,13 +195,25 @@ unsigned VariableSummaries::dissolveScopes(unsigned& closuresWithCaptures)
             candidates.add(scope);
     }
     using Captured = std::pair<const void*, unsigned>;
+    auto orderOf = [&](const Captured& variable) {
+        return std::tuple { m_makersOfScopes.get(variable.first)->number, m_positionsOfScopes.get(variable.first), variable.second };
+    };
+    Vector<Captured> variablesInOrder;
+    for (auto& [variable, readers] : m_readersFromInside) {
+        if (!candidates.contains(variable.first))
+            continue;
+        variablesInOrder.append(variable);
+        std::ranges::sort(readers, { }, [](const FunctionSummary* reader) { return reader ? reader->number : 0; });
+    }
+    std::ranges::sort(variablesInOrder, { }, orderOf);
     UncheckedKeyHashMap<const FunctionSummary*, Vector<Captured, 4>> held;
     for (bool changed = true; changed;) {
         changed = false;
         held.clear();
-        for (auto& [variable, readers] : m_readersFromInside) {
+        for (auto& variable : variablesInOrder) {
             if (!candidates.contains(variable.first))
                 continue;
+            auto& readers = m_readersFromInside.find(variable)->value;
             const FunctionSummary* makerOfScope = m_makersOfScopes.get(variable.first);
             bool works = variable.second < 64;
             WhyMade why = WhyMade::TooLarge;
@@ -267,7 +281,7 @@ unsigned VariableSummaries::dissolveScopes(unsigned& closuresWithCaptures)
             if (m_dissolvedScopes.contains(variable.first))
                 holder->captures.append(variable);
         }
-        std::ranges::sort(holder->captures);
+        std::ranges::sort(holder->captures, { }, orderOf);
         closuresWithCaptures += !holder->captures.isEmpty();
     }
     return m_dissolvedScopes.size();
