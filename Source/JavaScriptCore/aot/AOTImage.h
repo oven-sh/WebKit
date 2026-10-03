@@ -138,6 +138,7 @@ struct CompiledCode {
     Vector<uint8_t> bytes;
     CompiledFunctionInfo info;
     Vector<String> remarks;
+    Vector<CoveredOperation> coverage;
 };
 
 JS_EXPORT_PRIVATE uint64_t imageStamp();

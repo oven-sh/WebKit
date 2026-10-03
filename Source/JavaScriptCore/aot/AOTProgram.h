@@ -267,6 +267,28 @@ JS_EXPORT_PRIVATE const MultiValueReturnTable::Names* registerReturnValuesOf(Unl
 
 class CalleeHints;
 class ModuleLinkage;
+
+struct CoveredOperation {
+    static constexpr uint8_t isInGenericCopy = 1;
+    static constexpr uint8_t isRarelyExecuted = 2;
+    static constexpr uint8_t isInLoop = 4;
+    static constexpr uint8_t isInlined = 8;
+    static constexpr uint8_t isElided = 16;
+    static constexpr uint8_t hasTypeTag = 32;
+    static constexpr uint8_t isNotInGraph = 64;
+    static constexpr uint32_t noReason = UINT32_MAX;
+
+    UnlinkedCodeBlock* codeBlock { nullptr };
+    ImageKey function;
+    uint32_t bytecodeOffset { 0 };
+    uint32_t divot { 0 };
+    uint32_t reason { noReason };
+    uint16_t opcode { 0 };
+    uint8_t flags { 0 };
+    String property;
+    Vector<String, 2> outcomes;
+};
+
 class ProgramCode {
 public:
     virtual ~ProgramCode() = default;

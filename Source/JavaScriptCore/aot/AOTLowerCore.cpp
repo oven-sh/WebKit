@@ -523,7 +523,7 @@ bool Lowering::isLiveAfterNextNode(Node* node) const
 PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgument, 8>& arguments, const Vector<StubImmediate, 2>& immediates, StubClobbers clobbers, Node* place)
 {
     m_graph.emitsCalls = true;
-    m_graph.remark("calls"_s, nameOf(stub));
+    m_graph.remark("calls"_s, nameOf(stub), m_out.m_block->frequency() <= coldFrequency);
     if (!place)
         place = m_node;
     CallSite site;
@@ -708,7 +708,7 @@ LValue Lowering::coldCallForValue(Node* node, Entry function, LValue first, LVal
 
 LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function, const Vector<LValue, 8>& arguments)
 {
-    m_graph.remark("calls"_s, nameOf(function));
+    m_graph.remark("calls"_s, nameOf(function), m_out.m_block->frequency() <= coldFrequency);
     bool throws = !!node;
     bool withGlobalObject = !arguments.isEmpty() && arguments[0] == m_globalObject;
     bool withInstance = !arguments.isEmpty() && arguments[0] == m_instance;
@@ -1252,17 +1252,28 @@ void Lowering::lowerBlock(BasicBlock* block)
     auto setCurrentNode = [&](Node* node) {
         m_node = node && node->instruction ? node : nullptr;
         m_code = node ? node->graph : block->graph;
+        if (Options::aotTypeCoveragePath()) [[unlikely]]
+            m_graph.beginCoveredOperation(node, block);
     };
     for (m_nodeIndex = 0; m_nodeIndex < block->nodes.size(); ++m_nodeIndex) {
         Node* node = block->nodes[m_nodeIndex];
         if (node == terminal)
             break;
-        if (node->isElided)
+        if (node->isElided) {
+            if (Options::aotTypeCoveragePath()) [[unlikely]]
+                m_graph.beginCoveredOperation(node, block, true);
             continue;
+        }
         if (auto run = m_propertyRunOfStore.find(node); run != m_propertyRunOfStore.end()) {
             const PropertyRun& stores = m_propertyRuns[run->value];
             if (node != stores.last())
                 continue;
+            if (Options::aotTypeCoveragePath()) [[unlikely]] {
+                for (unsigned i = 1; i < stores.size(); ++i) {
+                    m_graph.beginCoveredOperation(stores[i], block);
+                    m_graph.remark("stored-in-property-run"_s);
+                }
+            }
             setCurrentNode(stores[0]);
             lowerPropertyRun(stores);
             m_availableFields.shrink(0);

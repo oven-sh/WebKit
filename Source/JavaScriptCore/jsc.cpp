@@ -546,6 +546,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionOptimizeNextInvocation);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfDFGCompiles);
 static JSC_DECLARE_HOST_FUNCTION(functionIsAOTCompiled);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTRemarks);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTTypeCoverage);
 static JSC_DECLARE_HOST_FUNCTION(functionHasExecutable);
 static JSC_DECLARE_HOST_FUNCTION(functionImportInNewLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled);
@@ -924,6 +925,7 @@ private:
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
         addFunction(vm, "isAOTCompiled"_s, functionIsAOTCompiled, 1);
         addFunction(vm, "aotRemarks"_s, functionAOTRemarks, 1);
+        addFunction(vm, "aotTypeCoverage"_s, functionAOTTypeCoverage, 1);
         addFunction(vm, "hasExecutable"_s, functionHasExecutable, 1);
         addFunction(vm, "importInNewLoader"_s, functionImportInNewLoader, 1);
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
@@ -3058,6 +3060,39 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTRemarks, (JSGlobalObject* globalObject, Call
         if (tab == notFound || line.left(tab) != name)
             continue;
         result->push(globalObject, jsString(vm, line.substring(tab + 1).toString()));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+#else
+    UNUSED_PARAM(callFrame);
+    UNUSED_PARAM(scope);
+    return JSValue::encode(jsNull());
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTTypeCoverage, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    const char* path = byteCast<char>(Options::aotTypeCoveragePath());
+    if (!path || !AOT::ProgramData::get())
+        return JSValue::encode(jsNull());
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    Vector<char> buffer;
+    if (!fetchScriptFromLocalFileSystem(String::fromUTF8(path), buffer))
+        return JSValue::encode(jsNull());
+    String text = String::fromUTF8(buffer.span());
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto line : StringView(text).split('\n')) {
+        Vector<StringView, 13> fields;
+        for (auto field : line.splitAllowingEmptyEntries('\t'))
+            fields.append(field);
+        if (fields.size() != 13 || fields[0] != "O"_s || fields[8] != name)
+            continue;
+        result->push(globalObject, jsString(vm, makeString(fields[2], ':', fields[3], ' ', fields[4], ' ', fields[5], ' ', fields[7], ' ', fields[9])));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(result);
@@ -5329,14 +5364,20 @@ extern const JITOperationAnnotation endOfJITOperationsInShell __asm__("section$e
     RELEASE_ASSERT(GetTempFileNameA(directory, "aot", 0, path));
     char remarksPath[MAX_PATH];
     RELEASE_ASSERT(GetTempFileNameA(directory, "aot", 0, remarksPath));
+    char coveragePath[MAX_PATH];
+    RELEASE_ASSERT(GetTempFileNameA(directory, "aot", 0, coveragePath));
     _putenv_s("JSC_compileMainScriptAheadOfTime", "");
 
+    char coverageOption[MAX_PATH + 32];
+    snprintf(coverageOption, sizeof(coverageOption), "--aotTypeCoveragePath=%s", coveragePath);
     auto run = [&](std::initializer_list<const char*> added) {
         Vector<const char*> arguments { argv[0] };
         for (const char* argument : added)
             arguments.append(argument);
         for (int i = 1; i < argc; ++i) {
-            if (strncmp(argv[i], "--compileMainScriptAheadOfTime", strlen("--compileMainScriptAheadOfTime")))
+            if (!strcmp(argv[i], "--aotTypeCoveragePath="))
+                arguments.append(coverageOption);
+            else if (strncmp(argv[i], "--compileMainScriptAheadOfTime", strlen("--compileMainScriptAheadOfTime")))
                 arguments.append(argv[i]);
         }
         arguments.append(nullptr);
@@ -5351,6 +5392,7 @@ extern const JITOperationAnnotation endOfJITOperationsInShell __asm__("section$e
     if ((static_cast<uint32_t>(buildStatus) & 0xC0000000u) == 0xC0000000u) {
         DeleteFileA(path);
         DeleteFileA(remarksPath);
+        DeleteFileA(coveragePath);
         fprintf(stderr, "The process that compiles ahead of time was terminated with status 0x%08x\n", static_cast<uint32_t>(buildStatus));
         exit(static_cast<int>(buildStatus));
     }
@@ -5363,6 +5405,7 @@ extern const JITOperationAnnotation endOfJITOperationsInShell __asm__("section$e
     intptr_t status = run({ isBuilt ? useOption : "--useAOT=1", remarksOption });
     DeleteFileA(path);
     DeleteFileA(remarksPath);
+    DeleteFileA(coveragePath);
     exit(static_cast<int>(status));
 }
 #elif ENABLE(AOT)
@@ -5391,14 +5434,22 @@ extern char** environ;
     snprintf(remarksPath, sizeof(remarksPath), "%s/jsc-aot-remarks-XXXXXX", directory ? directory : "/tmp");
     int remarksFileDescriptor = mkstemp(remarksPath);
     RELEASE_ASSERT(remarksFileDescriptor >= 0);
+    char coveragePath[PATH_MAX];
+    snprintf(coveragePath, sizeof(coveragePath), "%s/jsc-aot-coverage-XXXXXX", directory ? directory : "/tmp");
+    int coverageFileDescriptor = mkstemp(coveragePath);
+    RELEASE_ASSERT(coverageFileDescriptor >= 0);
     unsetenv("JSC_compileMainScriptAheadOfTime");
 
+    char coverageOption[PATH_MAX + 32];
+    snprintf(coverageOption, sizeof(coverageOption), "--aotTypeCoveragePath=%s", coveragePath);
     auto argumentsPlus = [&](std::initializer_list<const char*> added) {
         Vector<char*> result { argv[0] };
         for (const char* argument : added)
             result.append(const_cast<char*>(argument));
         for (int i = 1; i < argc; ++i) {
-            if (strncmp(argv[i], "--compileMainScriptAheadOfTime", strlen("--compileMainScriptAheadOfTime")))
+            if (!strcmp(argv[i], "--aotTypeCoveragePath="))
+                result.append(coverageOption);
+            else if (strncmp(argv[i], "--compileMainScriptAheadOfTime", strlen("--compileMainScriptAheadOfTime")))
                 result.append(argv[i]);
         }
         result.append(nullptr);
@@ -5416,6 +5467,7 @@ extern char** environ;
     if (WIFSIGNALED(status)) {
         unlink(path);
         unlink(remarksPath);
+        unlink(coveragePath);
         fprintf(stderr, "The process that compiles ahead of time was terminated by signal %d\n", WTERMSIG(status));
         exit(128 + WTERMSIG(status));
     }
@@ -5428,10 +5480,13 @@ extern char** environ;
     while (waitpid(runner, &status, 0) < 0 && errno == EINTR) { }
     unlink(path);
     unlink(remarksPath);
+    unlink(coveragePath);
     exit(WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status));
 #else
     unlink(path);
     unlink(remarksPath);
+    unlink(coveragePath);
+    snprintf(coverageOption, sizeof(coverageOption), "--aotTypeCoveragePath=/dev/fd/%d", coverageFileDescriptor);
     char optionBuffer[64];
     snprintf(optionBuffer, sizeof(optionBuffer), "--aotImagePath=/dev/fd/%d", fileDescriptor);
     char remarksOptionBuffer[64];

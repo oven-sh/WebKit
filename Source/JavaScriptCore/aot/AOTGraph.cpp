@@ -1923,11 +1923,84 @@ void Graph::noteClassesDefined()
     }
 }
 
-void Graph::addRemark(ASCIILiteral what, StringView detail)
+void Graph::addRemark(ASCIILiteral what, StringView detail, bool isOnRarePath)
 {
     String text = detail.isNull() ? String(what) : makeString(what, ':', detail);
+    if (m_isCoveringOperation) {
+        auto& outcomes = coverage.last().outcomes;
+        String outcome = isOnRarePath ? makeString("rarely-"_s, text) : text;
+        if (!outcomes.contains(outcome))
+            outcomes.append(WTF::move(outcome));
+    }
     if (!remarks.contains(text))
         remarks.append(WTF::move(text));
+}
+
+void Graph::beginCoveredOperation(const Node* node, const BasicBlock* block, bool isElided)
+{
+    m_isCoveringOperation = false;
+    if (!node || node->kind != NodeKind::Bytecode || !node->instruction)
+        return;
+    uint8_t flags = 0;
+    if (block->isGeneric)
+        flags |= CoveredOperation::isInGenericCopy;
+    if (block->isRarelyExecuted)
+        flags |= CoveredOperation::isRarelyExecuted;
+    if (block->isInLoop)
+        flags |= CoveredOperation::isInLoop;
+    if (node->graph != this)
+        flags |= CoveredOperation::isInlined;
+    if (isElided)
+        flags |= CoveredOperation::isElided;
+    auto append = [&](unsigned offset) -> CoveredOperation& {
+        coverage.append(node->graph->coveredOperationAt(offset, flags));
+        return coverage.last();
+    };
+    if (node->numberOfLiteralProperties) {
+        if (node->opcode == op_new_object) {
+            for (unsigned offset : node->graph->literalStores(node->bytecodeIndex.offset()))
+                append(offset).outcomes.append("absorbed-into-allocation"_s);
+        } else if (node->opcode == op_create_this) {
+            for (auto& store : NewObjectPlan::forCreateThis(node->graph->codeBlock()->instructions(), node->bytecodeIndex.offset()).stores)
+                append(store.offset).outcomes.append("absorbed-into-allocation"_s);
+        }
+    }
+    append(node->graph->codeBlock()->bytecodeOffset(node->instruction));
+    m_isCoveringOperation = !isElided;
+}
+
+CoveredOperation Graph::coveredOperationAt(unsigned offset, uint8_t flags)
+{
+    auto instruction = codeBlock()->instructions().at(offset);
+    CoveredOperation operation;
+    operation.codeBlock = codeBlock();
+    operation.bytecodeOffset = offset;
+    operation.opcode = instruction->opcodeID();
+    operation.flags = flags;
+    if (uint32_t tag = typeTagAt(offset)) {
+        operation.flags |= CoveredOperation::hasTypeTag;
+        if (TypeTable::shared()) {
+            if (auto reason = TypeTable::shared()->reasonForNoType(tag))
+                operation.reason = *reason;
+        }
+    }
+    std::optional<unsigned> identifier;
+    switch (instruction->opcodeID()) {
+    case op_get_by_id:
+        identifier = instruction->as<OpGetById>().m_property;
+        break;
+    case op_put_by_id:
+        identifier = instruction->as<OpPutById>().m_property;
+        break;
+    case op_in_by_id:
+        identifier = instruction->as<OpInById>().m_property;
+        break;
+    default:
+        break;
+    }
+    if (identifier)
+        operation.property = codeBlock()->identifier(*identifier).string();
+    return operation;
 }
 
 uint32_t Graph::closedMethodReadBy(const Node* node)

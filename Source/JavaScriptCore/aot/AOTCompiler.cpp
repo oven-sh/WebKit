@@ -493,6 +493,28 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
     result.info = WTF::move(info);
     result.remarks = WTF::move(graph.remarks);
+    if (Options::aotTypeCoveragePath() && program) [[unlikely]] {
+        BitVector isReported;
+        for (auto& operation : graph.coverage) {
+            if (operation.codeBlock == unlinkedCodeBlock)
+                isReported.set(operation.bytecodeOffset);
+        }
+        for (const auto& instruction : unlinkedCodeBlock->instructions()) {
+            if (isReported.get(instruction.offset()))
+                continue;
+            graph.coverage.append(graph.coveredOperationAt(instruction.offset(), CoveredOperation::isNotInGraph));
+            graph.coverage.last().outcomes.append("not-in-graph"_s);
+        }
+        for (auto& operation : graph.coverage) {
+            auto about = program->about(operation.codeBlock);
+            if (!about)
+                continue;
+            operation.function = about->key;
+            if (operation.codeBlock->hasExpressionInfo())
+                operation.divot = operation.codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(operation.bytecodeOffset)).divot;
+            result.coverage.append(WTF::move(operation));
+        }
+    }
     return true;
 }
 

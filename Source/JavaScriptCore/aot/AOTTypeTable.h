@@ -145,6 +145,13 @@ public:
     unsigned numberOfLayouts() const { return m_layouts.size() - 1; }
     Vector<FieldType, 8> fieldTypesBySlot(uint32_t layout) const;
     Vector<FieldType, 8> layoutFieldTypesBySlot(uint32_t layoutID) const;
+    std::optional<uint32_t> reasonForNoType(uint32_t type) const
+    {
+        auto words = record(type);
+        if (words.size() == 2 && words[0] == Tags && (words[1] >> 31))
+            return words[1] & 1023;
+        return std::nullopt;
+    }
     unsigned receiverHintOf(uint32_t type) const
     {
         auto words = record(type);

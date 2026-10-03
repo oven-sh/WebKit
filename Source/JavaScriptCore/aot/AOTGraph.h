@@ -512,12 +512,16 @@ public:
     bool emitsCalls { false };
     UncheckedKeyHashSet<B3::Value*> patchpointsTakingData;
     Vector<String> remarks;
-    void remark(ASCIILiteral what, StringView detail = { })
+    Vector<CoveredOperation> coverage;
+    void remark(ASCIILiteral what, StringView detail = { }, bool isOnRarePath = false)
     {
-        if (Options::aotRemarksPath()) [[unlikely]]
-            addRemark(what, detail);
+        if (Options::aotRemarksPath() || Options::aotTypeCoveragePath()) [[unlikely]]
+            addRemark(what, detail, isOnRarePath);
     }
-    void addRemark(ASCIILiteral what, StringView detail);
+    void addRemark(ASCIILiteral what, StringView detail, bool isOnRarePath);
+    void beginCoveredOperation(const Node*, const BasicBlock*, bool isElided = false);
+    CoveredOperation coveredOperationAt(unsigned bytecodeOffset, uint8_t flags);
+    bool m_isCoveringOperation { false };
     bool alwaysEmitsCalls { false };
     mutable std::optional<bool> hasRemainingCalls;
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> wideIntegerConstants;

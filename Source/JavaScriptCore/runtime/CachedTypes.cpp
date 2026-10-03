@@ -6700,6 +6700,11 @@ struct BytecodeLinkEncoder::Impl {
             Vector<String> remarks;
         };
         Vector<FunctionRemarks> allRemarks;
+        struct FunctionCoverage {
+            String name;
+            Vector<AOT::CoveredOperation> operations;
+        };
+        Vector<FunctionCoverage> allCoverage;
         UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
         class LinkedProgramCode final : public AOT::ProgramCode {
         public:
@@ -6761,6 +6766,10 @@ struct BytecodeLinkEncoder::Impl {
                     if (Options::aotRemarksPath()) [[unlikely]] {
                         Locker locker { declinedLock };
                         allRemarks.append({ jobs[index].key, jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.remarks) });
+                    }
+                    if (Options::aotTypeCoveragePath()) [[unlikely]] {
+                        Locker locker { declinedLock };
+                        allCoverage.append({ jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.coverage) });
                     }
                     String nameForMap;
                     if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
@@ -6898,6 +6907,7 @@ struct BytecodeLinkEncoder::Impl {
                 unreachedBytecodeSize = 0;
                 builder.clear();
                 allRemarks.clear();
+                allCoverage.clear();
                 declined.clear();
                 next = 0;
             }
@@ -6912,6 +6922,85 @@ struct BytecodeLinkEncoder::Impl {
                     for (auto& remark : function.remarks)
                         file->print(function.name, "\t", remark, "\n");
                 }
+            }
+        }
+        if (Options::aotTypeCoveragePath()) [[unlikely]] {
+            if (auto file = FilePrintStream::open(byteCast<char>(Options::aotTypeCoveragePath()), "wb")) {
+                Vector<Vector<unsigned>> lineStarts(modules.size());
+                UncheckedKeyHashMap<uint32_t, unsigned> moduleIndices;
+                for (unsigned module = 0; module < modules.size(); ++module)
+                    moduleIndices.add(modules[module].entryOffset + 1, module);
+                auto positionOf = [&](unsigned module, unsigned offset) {
+                    auto& starts = lineStarts[module];
+                    if (starts.isEmpty()) {
+                        starts.append(0);
+                        StringView text = moduleText(module);
+                        for (unsigned i = 0; i < text.length(); ++i) {
+                            if (text[i] == '\n')
+                                starts.append(i + 1);
+                        }
+                    }
+                    unsigned line = std::ranges::upper_bound(starts, offset) - starts.begin();
+                    return std::pair { line, offset - starts[line - 1] + 1 };
+                };
+                auto printEscaped = [&](StringView text) {
+                    for (char16_t character : text.codeUnits()) {
+                        if (character > ' ' && character != '\\' && character < 0x7f)
+                            file->print(static_cast<char>(character));
+                        else
+                            file->printf("\\u%04x", character);
+                    }
+                };
+                for (unsigned module = 0; module < modules.size(); ++module) {
+                    if (isProgramModule(module))
+                        file->print("M\t", module, "\t", modules[module].source.provider()->sourceURL(), "\n");
+                }
+                for (auto& function : allCoverage) {
+                    for (auto& operation : function.operations) {
+                        auto functionKind = static_cast<OrderFunctionKind>(operation.function.kind >> 1);
+                        bool isTopLevel = operation.codeBlock->codeType() != FunctionCode;
+                        auto found = moduleIndices.find(operation.function.module);
+                        if (found == moduleIndices.end())
+                            continue;
+                        unsigned module = found->value;
+                        if (!isProgramModule(module) || !(isTopLevel || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody))
+                            continue;
+                        unsigned offset = (isTopLevel ? 0 : operation.function.start) + operation.divot;
+                        if (offset >= moduleText(module).length())
+                            continue;
+                        auto [line, column] = positionOf(module, offset);
+                        file->print("O\t", module, "\t", line, "\t", column, "\t", opcodeNames[operation.opcode], "\t", operation.flags, "\t");
+                        if (operation.reason != AOT::CoveredOperation::noReason)
+                            file->print(operation.reason);
+                        file->print("\t");
+                        printEscaped(operation.property);
+                        file->print("\t");
+                        printEscaped(function.name);
+                        file->print("\t");
+                        for (unsigned i = 0; i < operation.outcomes.size(); ++i) {
+                            file->print(i ? " " : "");
+                            printEscaped(operation.outcomes[i]);
+                        }
+                        file->print("\t", operation.function.start, "\t", operation.function.kind, "\t", operation.bytecodeOffset, "\n");
+                    }
+                }
+                std::array<uint64_t, numOpcodeIDs> instructions { };
+                std::array<uint64_t, numOpcodeIDs> instructionsWithoutPosition { };
+                for (auto& job : jobs) {
+                    if (!isProgramModule(job.module) || declined.contains(job.codeBlock))
+                        continue;
+                    if (const AOT::FunctionSummary* summary = summariesByCodeBlock.get(job.codeBlock); summary && !summary->isReached())
+                        continue;
+                    auto functionKind = static_cast<OrderFunctionKind>(job.key.kind >> 1);
+                    bool hasPosition = job.codeBlock->codeType() != FunctionCode || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody;
+                    for (const auto& instruction : job.codeBlock->instructions())
+                        (hasPosition ? instructions : instructionsWithoutPosition)[instruction->opcodeID()]++;
+                }
+                for (unsigned opcode = 0; opcode < numOpcodeIDs; ++opcode) {
+                    if (instructions[opcode] || instructionsWithoutPosition[opcode])
+                        file->print("T\t", opcodeNames[opcode], "\t", instructions[opcode], "\t", instructionsWithoutPosition[opcode], "\n");
+                }
+                file->print("U\t", unreachedFunctions.load(), "\t", unreachedBytecodeSize.load(), "\n");
             }
         }
         AOT::forgetDeclaredNames();
