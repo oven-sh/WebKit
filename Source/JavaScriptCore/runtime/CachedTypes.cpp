@@ -6731,6 +6731,12 @@ struct BytecodeLinkEncoder::Impl {
                     return makeString('`', executable ? executable->name().string() : "(top level)"_s, "` @"_s, jobs[index].key.module, ':', jobs[index].key.start);
                 };
                 for (unsigned index = 0; index < units.size(); ++index) {
+                    if (Options::aotFunctionToDump()) {
+                        StringView wanted = StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
+                        auto* executable = jobs[index].executable;
+                        if (!(executable && executable->ecmaName().string() == wanted) && makeString(jobs[index].key.start) != wanted && makeString(jobs[index].key.module, ':', jobs[index].key.start) != wanted)
+                            continue;
+                    }
                     AnalysisUnit& unit = units[index];
                     if (unit.summary) {
                         StringPrintStream out;

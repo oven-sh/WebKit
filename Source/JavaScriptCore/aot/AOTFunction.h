@@ -46,7 +46,11 @@ using Decompress = bool (*)(const uint8_t* source, size_t sourceSize, uint8_t* d
 JS_EXPORT_PRIVATE void setCodec(Compress, Decompress);
 
 struct AllocationPlan {
-    static uint32_t encode(unsigned inlineCapacity, unsigned count) { return inlineCapacity << 16 | count; }
+    static uint32_t encode(unsigned inlineCapacity, unsigned count)
+    {
+        RELEASE_ASSERT(inlineCapacity <= 0xffff && count <= 0xffff);
+        return inlineCapacity << 16 | count;
+    }
     static uint32_t encode(unsigned identifier, bool isDefined, bool isStrict, bool isAssigned) { return identifier << 3 | isAssigned << 2 | isDefined << 1 | isStrict; }
 
     explicit operator bool() const { return !!words; }

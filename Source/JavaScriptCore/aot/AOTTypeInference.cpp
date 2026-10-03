@@ -147,7 +147,8 @@ public:
                     noteArgumentsOf(node);
                     noteStoresToVariables(node);
                     recordWhetherReturnObjectIsNeededBy(node);
-                }
+                } else if (!calleesWithWidenedInputs && Options::validateAOTInferredTypes()) [[unlikely]]
+                    verifyAgainstSummaries(node);
             }
         }
         if (calleesWithWidenedInputs && m_graph.summary())
@@ -685,6 +686,95 @@ private:
         }
     }
 
+    void reportContradiction(Node* node, ASCIILiteral what, const String& name, Type found, Type recorded)
+    {
+        const KnownFunction* function = programFunctions() && m_graph.summary() ? programFunctions()->function(m_graph.summary()->number) : nullptr;
+        dataLogLn("AOT: contradicts the analysis: ", what, " `", name, "` at bc#", node->bytecodeIndex.offset(), node->graph != &m_graph ? " (inlined)" : "", " in `", function && function->executable ? function->executable->ecmaName().string() : String(), "` @", function ? function->key.module : 0, ":", function ? function->key.start : 0, ": ", TypeDump(found), " is not in ", TypeDump(recorded));
+    }
+
+    bool isSavedAtDefinition(Variable slot)
+    {
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (!node->isElided || !node->isBytecode(op_put_to_scope))
+                    continue;
+                Variable other = m_graph.variableAccessedBy(node);
+                if (other.scope == slot.scope && other.offset == slot.offset)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    void verifyAgainstSummaries(Node* node)
+    {
+        switch (node->opcode) {
+        case op_put_to_scope: {
+            VariableSummaries* summaries = m_graph.variableSummaries();
+            Variable variable = summaries ? m_graph.variableAccessedBy(node) : Variable { };
+            if (!variable)
+                return;
+            if (node->graph->isGeneratorFrame(variable.scope)) {
+                if (!node->isElided && isSavedAtDefinition(variable))
+                    return;
+            } else if (node->isElided)
+                return;
+            UniquedStringImpl* name = node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl();
+            Node* value = node->use(node->as<OpPutToScope>().m_value);
+            if (value->wasInferredUnreachable)
+                return;
+            Type put = value->type & TTop;
+            Type recorded = summaries->read(variable, name, VariableSummaries::nobody);
+            if (!isSubtype(put, recorded))
+                reportContradiction(node, "the store to"_s, String(name), put, recorded);
+            return;
+        }
+        case op_ret: {
+            const KnownFunction* function = programFunctions() && m_graph.summary() ? programFunctions()->function(m_graph.summary()->number) : nullptr;
+            if (node->isElided || !function || !m_graph.summary()->isReached() || function->forCall != m_graph.codeBlock() || node->graph != &m_graph)
+                return;
+            if (node->use(node->as<OpRet>().m_value)->wasInferredUnreachable)
+                return;
+            Type returned = node->use(node->as<OpRet>().m_value)->type & TTop;
+            Type recorded = function->returnType.load();
+            if (!isSubtype(returned, recorded))
+                reportContradiction(node, "the result of"_s, "return"_s, returned, recorded);
+            return;
+        }
+        case op_call:
+        case op_call_ignore_result:
+        case op_tail_call: {
+            auto operands = Graph::callOperands(node->instruction);
+            bool isExact = false;
+            const KnownFunction* known = node->isElided ? nullptr : m_graph.knownCallee(node, &isExact);
+            if (!known || !isExact || !known->forCall || !known->summary || !known->summary->isNonEscaping || !known->summary->isReached())
+                return;
+            int firstArgument = -static_cast<int>(operands.argv) + CallFrame::thisArgumentOffset();
+            if (node->use(operands.callee)->wasInferredUnreachable || !mayBe(node->use(operands.callee)->type, TAnyObject))
+                return;
+            for (unsigned i = 0; i < operands.argc; ++i) {
+                Node* argument = node->use(VirtualRegister(firstArgument + i));
+                if (argument->wasInferredUnreachable || !argument->type)
+                    return;
+            }
+            unsigned count = std::min<unsigned>(std::max<unsigned>(known->forCall->numParameters(), known->conventionForCall.numberOfParameters + 1), FunctionSummary::maxParameters);
+            for (unsigned i = 1; i < count; ++i) {
+                Type passed = i < operands.argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
+                Type recorded = known->summary->parameterTypes[i].load();
+                if (!isSubtype(passed, recorded))
+                    reportContradiction(node, "an argument of"_s, makeString(known->executable ? known->executable->ecmaName().string() : String(), " #"_s, i), passed, recorded);
+            }
+            Type passed = node->use(VirtualRegister(firstArgument))->type & TTop;
+            Type recorded = known->summary->thisType.load();
+            if (!isSubtype(passed, recorded))
+                reportContradiction(node, "this of"_s, known->executable ? known->executable->ecmaName().string() : String(), passed, recorded);
+            return;
+        }
+        default:
+            return;
+        }
+    }
+
     void noteArgumentsOf(Node* node)
     {
         unsigned argc;
@@ -894,7 +984,14 @@ private:
 
     bool update(Node* node)
     {
-        Type type = node->type | compute(node);
+        Type computed = compute(node);
+        if (Options::validateAOTInferredTypes() && calleesWithWidenedInputs && (node->type & ~computed)) [[unlikely]] {
+            StringPrintStream operands;
+            for (auto& use : node->uses)
+                operands.print(" ", TypeDump(use.node->type));
+            dataLogLn("AOT: not monotone: kind ", static_cast<unsigned>(node->kind), node->kind == NodeKind::Bytecode ? " " : "", node->kind == NodeKind::Bytecode ? opcodeNames[node->opcode] : ""_s, node->speculatedType ? " speculated" : "", node->narrowedTo ? " narrowed" : "", node->target ? " target" : "", ": had ", TypeDump(node->type), ", now ", TypeDump(computed), ", from", operands.toString());
+        }
+        Type type = node->type | computed;
         if (type == node->type)
             return false;
         node->type = type;
@@ -957,6 +1054,8 @@ private:
                 return node->fieldType.typeOfStored(node->uses[0].node->type);
             if (node->speculatedType) {
                 Type value = node->uses[0].node->type;
+                if (calleesWithWidenedInputs)
+                    return value;
                 return mayBe(value, node->speculatedType) && !isSubtype(value, TNumber) ? value & node->speculatedType : value;
             }
             if (node->narrowedTo)
@@ -1031,8 +1130,8 @@ private:
         switch (node->opcode) {
         case op_add: {
             auto bytecode = node->as<OpAdd>();
-            Type left = typeOf(bytecode.m_lhs);
-            Type right = typeOf(bytecode.m_rhs);
+            Type left = typeOf(bytecode.m_lhs) & TTop;
+            Type right = typeOf(bytecode.m_rhs) & TTop;
             if (!left || !right)
                 return TNone;
             if (isSubtype(left | right, TNumberLike))
@@ -1222,7 +1321,7 @@ private:
                     }
                 }
             }
-            return TAll;
+            return typeOf(node->as<OpGetById>().m_base) ? TAll : TNone;
         case op_new_reg_exp:
         case op_new_reg_exp_shared:
             return TRegExp;
