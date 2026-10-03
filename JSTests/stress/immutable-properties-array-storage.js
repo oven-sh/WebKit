@@ -91,6 +91,14 @@ for (let name in copyOnWriteKinds) {
         shouldBe($vm.indexingMode(array), mode, name + " storage after " + String(mutator));
     }
 }
+// A put of "length" is refused even with the length the array has, whatever the storage: these calls write nothing else.
+for (let name in copyOnWriteKinds) {
+    for (let mutator of [a => a.push(), a => a.unshift(), a => a.splice(), a => a.splice(a.length, 0)]) {
+        let error;
+        try { mutator(targets[name]); } catch (e) { error = e; }
+        shouldBe(error instanceof TypeError, true, name + " " + String(mutator));
+    }
+}
 
 // 3. An array whose elements take a large allocation: a few mutators of each sort, compared by its contents as a string.
 {

@@ -212,6 +212,12 @@ function snapshot(object) {
     let ordinary = {};
     Error.captureStackTrace(ordinary);
     shouldBe(typeof ordinary.stack, "string");
+    // A capture whose string is not built yet when the properties become immutable is still what "stack" reads as.
+    let captured = new Error("captured");
+    Error.captureStackTrace(captured);
+    $vm.makePropertiesImmutable(captured);
+    shouldBe(typeof captured.stack, "string");
+    shouldBe(captured.stack.length > 0, true);
 }
 
 // The one attribute that changes reaches inheritors too: an object that inherits from such a RegExp cannot assign lastIndex, as
