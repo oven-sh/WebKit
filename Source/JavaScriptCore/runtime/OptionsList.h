@@ -158,8 +158,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, evaluateObjectLiteralValuesFirst, false, Normal, "Evaluate all property values of an object literal before allocating the object, where the difference is unobservable, so that the allocation and its stores form one run of instructions."_s) \
     v(Bool, resolveAllScopeSlotsStatically, false, Normal, "The bytecode optimizer resolves get_from_scope to a scope slot whenever it can prove the variable's location, even if that widens the instruction."_s) \
     v(Unsigned, numberOfAOTCompilerThreads, 0, Normal, "Number of threads used to compile an image. Zero means one per processor."_s) \
-    v(Bool, useAOTInlineFastPathsInLoops, false, Normal, "The AOT compiler emits fast paths inline, instead of calling shared stubs, in loops and in recursive functions. Faster in hot code, at the cost of about 10% more code."_s) \
-    v(Bool, useAOTLoopSplitting, false, Normal, "The AOT compiler emits two copies of each loop: a fast copy with no slow paths, and a generic copy that the fast copy exits to."_s) \
+    v(Bool, useAOTInlineFastPathsInLoops, true, Normal, "The AOT compiler emits fast paths inline, instead of calling shared stubs, in loops and in recursive functions. Faster in hot code, at the cost of about 10% more code."_s) \
+    v(Bool, useAOTLoopSplitting, true, Normal, "The AOT compiler emits two copies of each loop: a fast copy with no slow paths, and a generic copy that the fast copy exits to."_s) \
     v(Bool, useGuardPagesForShortFunctionExecutables, false, Normal, "For testing. Place each short-form FunctionExecutable at the end of a page followed by an unmapped page, so that reading past it crashes."_s) \
     v(OptionString, aotTypeTablePath, nullptr, Normal, "When compiling: path to the program's type table (AOT::TypeTable), which the source refers to by index (see useTypeTags)."_s) \
     v(OptionString, aotOverriddenMethodsPath, nullptr, Normal, "When compiling: path to a file listing the built-in methods overridden by the program's subclasses, one per line (e.g. `Map.set`). If unset, every built-in method is assumed to be overridable."_s) \
