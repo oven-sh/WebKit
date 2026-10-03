@@ -156,7 +156,7 @@ public:
         const FunctionSummary* maker { nullptr };
         Vector<std::pair<const void*, uint64_t>, 2> scopesAndWhatIsStoredLater;
     };
-    enum class WhyMade : uint8_t { MadeTwice, MakerCannotPromote, TooLarge, UnknownAccess, UsedOtherwise, WrittenFromInside, ReadByUnknownCode, ClosureIsUnknown, Evaluated, ReaderCannotHold, ReaderMadeTwice, ReaderNotMade, StoredLater, NotInChain, TooManyCaptures, Untracked, Bisected, NeedsParent, GeneratorFrame, MakerIsNotFunction, MakerHasNoSummary, MakerIsBody, MakerIsWrapper, MakerHasCatch, MakerIsOtherKind, Count };
+    enum class WhyMade : uint8_t { MadeTwice, MakerCannotPromote, TooLarge, UnknownAccess, UsedOtherwise, WrittenFromInside, ReadByUnknownCode, ClosureIsUnknown, Evaluated, ReaderCannotHold, ReaderMadeTwice, ReaderNotMade, StoredLater, NotInChain, TooManyCaptures, Untracked, NeedsParent, GeneratorFrame, MakerIsNotFunction, MakerHasNoSummary, MakerIsBody, MakerIsWrapper, MakerHasCatch, MakerIsOtherKind, Count };
     void noteScopes(const FunctionSummary* maker, std::span<const void* const> made, std::span<const std::pair<const void*, WhyMade>> mustExist, std::span<const Variable> readFromInside, Vector<ClosureMade>&&, std::span<const std::pair<const void*, const void*>> requirements = { });
     unsigned originalFrameSize(const void* table, unsigned sizeNow);
     unsigned dissolveScopes(unsigned& closuresWithCaptures);

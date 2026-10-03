@@ -112,7 +112,7 @@ bool Lowering::tryLowerAllocation(Node* node)
 
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
         LValue closedOver = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(scope));
-        const KnownFunction* made = Options::useAOTCapturesByValue() && programFunctions() ? programFunctions()->function(functionNumberOf(node->type)) : nullptr;
+        const KnownFunction* made = programFunctions() ? programFunctions()->function(functionNumberOf(node->type)) : nullptr;
         if (made && made->summary && !made->summary->captures.isEmpty()) {
             RELEASE_ASSERT(kind == FunctionKind::Normal || kind == FunctionKind::Async);
             auto& captures = made->summary->captures;

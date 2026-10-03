@@ -1,4 +1,4 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTClearsDeadFrameSlots=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));

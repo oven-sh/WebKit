@@ -556,7 +556,7 @@ public:
     // Without a base: where the phis that are being located are.
     static Where lexicalLocationOf(Node* scope, unsigned depth, PhisBeingLocated* beingLocated, bool throughObjects)
     {
-        if (depth <= 24 && Options::useAOTCapturesByValue() && (scope->kind == NodeKind::Phi || scope->kind == NodeKind::Narrow)) {
+        if (depth <= 24 && (scope->kind == NodeKind::Phi || scope->kind == NodeKind::Narrow)) {
             if (beingLocated && beingLocated->contains(scope))
                 return { nullptr, 0 };
             PhisBeingLocated own;
@@ -753,7 +753,7 @@ public:
             return true;
         if (auto scope = scopeThatMustBeThere(user))
             return use.reg == *scope && isDissolved(locationOf(use.node).base);
-        if (Options::useAOTCapturesByValue() && isThisOfCall(user, use))
+        if (isThisOfCall(user, use))
             return true;
         switch (user->opcode) {
         case op_get_scope:
@@ -772,17 +772,6 @@ public:
         }
     }
 
-    static String namesIn(Node* environment)
-    {
-        StringPrintStream out;
-        auto* table = uncheckedDowncast<SymbolTable>(environment->graph->codeBlock()->getConstant(environment->as<OpCreateLexicalEnvironment>().m_symbolTable).asCell());
-        ConcurrentJSLocker locker(table->m_lock);
-        unsigned count = 0;
-        for (auto it = table->begin(locker), end = table->end(locker); it != end && count < 8; ++it, ++count)
-            out.print(it->key.get(), " ");
-        return out.toString();
-    }
-
     bool keepSearchedEnvironments(Node* resolve)
     {
         if (!resolve->isBytecode(op_resolve_scope) || locationOf(resolve).base != resolve || resolve->graph->resolvedEnvironmentDepth(resolve))
@@ -796,8 +785,6 @@ public:
                 continue;
             JSValue table = environment->graph->codeBlock()->getConstant(environment->as<OpCreateLexicalEnvironment>().m_symbolTable);
             if (uncheckedDowncast<SymbolTable>(table.asCell())->contains(name)) {
-                if (Options::verboseAOTCompilation() && isDissolved(environment)) [[unlikely]]
-                    dataLogLn("AOT: PROTOTYPE: a scope that is in no chain is searched for ", name, "; its variables: ", namesIn(environment));
                 m_candidates.remove(environment);
                 changed = true;
             }
@@ -865,15 +852,6 @@ public:
                     }
                     if (!where.isLocalEnvironment() || !m_candidates.contains(where.base) || worksWithoutEnvironment(user, use))
                         continue;
-                    if (Options::verboseAOTCompilation() && isDissolved(where.base)) [[unlikely]]
-                        dataLogLn("AOT: PROTOTYPE: a scope that is in no chain is made for ", user->kind == NodeKind::Bytecode ? opcodeNames[user->opcode] : "a node that is no bytecode"_s, " kind ", static_cast<unsigned>(user->kind), " bc#", user->bytecodeIndex.offset(), user->graph != &m_graph ? " (inlined)" : "", where.base->graph != &m_graph ? " (scope of an inlined function)" : "", user->guard ? " guard" : "", user->guarded ? " guarded" : "", user->block && user->block->isGeneric ? " generic" : "", where.base->block->isGeneric ? " (scope is generic)" : "", where.base->block->isInLoop ? " (scope in loop)" : "", " operand ", use.reg.offset(), "; its variables: ", namesIn(where.base));
-                    if (Options::verboseAOTCompilation() && isDissolved(where.base) && user->kind != NodeKind::Bytecode) [[unlikely]] {
-                        for (auto& input : user->uses) {
-                            Where there = locationOf(input.node);
-                            dataLogLn("AOT: PROTOTYPE:   input @", input.node->index, " kind ", static_cast<unsigned>(input.node->kind), " ", input.node->kind == NodeKind::Bytecode ? opcodeNames[input.node->opcode] : ""_s, " bc#", input.node->bytecodeIndex.offset(), input.node->graph != &m_graph ? " (inlined)" : "", " is at @", there.base->index, " kind ", static_cast<unsigned>(there.base->kind), " ", there.base->kind == NodeKind::Bytecode ? opcodeNames[there.base->opcode] : ""_s, " + ", there.hops, there.base->mayBeInFrame ? " mayBeInFrame" : "");
-                        }
-                        dataLogLn("AOT: PROTOTYPE:   the phi is @", user->index, " in block bc#", user->block ? user->block->bytecodeBegin : 0, user->block && user->block->isLoopHeader ? " (loop header)" : "", user->block && user->block->isGeneric ? " (generic)" : "", user->block && user->block->isInLoop ? " (in loop)" : "", "; the scope is @", where.base->index, where.base->mayBeInFrame ? " mayBeInFrame" : " NOT mayBeInFrame");
-                    }
                     m_candidates.remove(where.base);
                     changed = true;
                 }
@@ -890,10 +868,6 @@ public:
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
                 if (node->isBytecode(op_create_lexical_environment) && node->mayBeInFrame && !m_candidates.contains(node)) {
-                    if (Options::verboseAOTCompilation() && m_savedInFrame.contains(node) && isDissolved(node)) [[unlikely]] {
-                        dataLogLn("AOT: PROTOTYPE: @", node->index, " is in no chain, lives across a suspension and cannot be in the frame, in a function of ", m_graph.codeBlock()->instructionsSize(), " bytes");
-                        m_graph.dump(WTF::dataFile());
-                    }
                     RELEASE_ASSERT_WITH_MESSAGE(!m_savedInFrame.contains(node) || !isDissolved(node), "A scope that is in no chain lives across a suspension and cannot be in the frame");
                     node->mayBeInFrame = false;
                     isStable = false;
@@ -993,13 +967,11 @@ public:
                 user->uses.append({ VirtualRegister(), start.base });
                 return;
             }
-            if (Options::useAOTCapturesByValue()) {
-                for (auto& use : user->uses) {
-                    if (!isThisOfCall(user, use))
-                        continue;
-                    if (Where where = locationOf(use.node); where.isLocalEnvironment() && isInNoChain(where.base))
-                        use.node = m_graph.constant(jsUndefined());
-                }
+            for (auto& use : user->uses) {
+                if (!isThisOfCall(user, use))
+                    continue;
+                if (Where where = locationOf(use.node); where.isLocalEnvironment() && isInNoChain(where.base))
+                    use.node = m_graph.constant(jsUndefined());
             }
             switch (user->opcode) {
             case op_get_from_scope:
@@ -1008,12 +980,6 @@ public:
                     return;
                 Where where = locationOf(user->use(user->opcode == op_get_from_scope ? user->as<OpGetFromScope>().m_scope : user->as<OpPutToScope>().m_scope));
                 user->accessesLocalEnvironment = where.isLocalEnvironment();
-                if (Node* operand = user->use(user->opcode == op_get_from_scope ? user->as<OpGetFromScope>().m_scope : user->as<OpPutToScope>().m_scope); Options::verboseAOTCompilation() && where.isLocalEnvironment() && operand->kind != NodeKind::Bytecode) [[unlikely]] {
-                    StringPrintStream out;
-                    for (auto& use : operand->uses)
-                        out.print(" [kind ", static_cast<unsigned>(use.node->kind), " ", use.node->kind == NodeKind::Bytecode ? opcodeNames[use.node->opcode] : ""_s, " bc#", use.node->bytecodeIndex.offset(), use.node->block && use.node->block->isGeneric ? " generic" : "", use.node->block && use.node->block->isInLoop ? " in loop" : "", "]");
-                    dataLogLn("AOT: PROTOTYPE: ", opcodeNames[user->opcode], " bc#", user->bytecodeIndex.offset(), user->block->isGeneric ? " generic" : "", user->block->isInLoop ? " in loop" : "", user->block->isLoopHeader ? " header" : "", user->graph != &m_graph ? " (inlined)" : "", " finds its scope through kind ", static_cast<unsigned>(operand->kind), " in block bc#", operand->block ? operand->block->bytecodeBegin : 0, operand->block && operand->block->isGeneric ? " generic" : "", operand->block && operand->block->isLoopHeader ? " header" : "", " of", out.toString(), "; variables: ", namesIn(where.base));
-                }
                 if (!where.isLocalEnvironment() || !where.base->isPromoted)
                     return;
                 user->promotedEnvironment = where.base;
@@ -1262,28 +1228,12 @@ void clearDeadFrameSlots(Graph& graph)
 
 bool mayPromoteEnvironmentsOf(Graph& graph)
 {
-    UnlinkedCodeBlock* code = graph.codeBlock();
-    if (Options::useAOTCapturesByValue())
-        return code->codeType() == FunctionCode;
-    if (!graph.catchEntrypoints.isEmpty() || graph.hasFrameRegisters() || code->codeType() != FunctionCode)
-        return false;
-    switch (code->parseMode()) {
-    case SourceParseMode::NormalFunctionMode:
-    case SourceParseMode::ArrowFunctionMode:
-    case SourceParseMode::MethodMode:
-    case SourceParseMode::GetterMode:
-    case SourceParseMode::SetterMode:
-        return true;
-    default:
-        return false;
-    }
+    return graph.codeBlock()->codeType() == FunctionCode;
 }
 
 void promoteEnvironments(Graph& graph)
 {
-    bool mayPromote = mayPromoteEnvironmentsOf(graph);
-    if (mayPromote || Options::useAOTCapturesByValue())
-        Promoter(graph).run(mayPromote);
+    Promoter(graph).run(mayPromoteEnvironmentsOf(graph));
 }
 
 void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* current)
@@ -1312,16 +1262,6 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
                 mustExist.append({ scope, WhyMade::GeneratorFrame });
             node->mayBeInFrame = Options::useAOTScopesInFrames() && node->isBytecode(op_create_lexical_environment) && isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode()) && !graph.isGeneratorFrame(scope);
             JSValue table = node->isBytecode(op_create_lexical_environment) ? graph.codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable) : JSValue();
-            if (Options::aotDissolvedScopesFrom() || Options::aotDissolvedScopesBelow() < 65536) [[unlikely]] {
-                unsigned hash = graph.codeBlock()->instructionsSize() * 2654435761u + node->bytecodeIndex.offset() * 40503u + graph.codeBlock()->numberOfIdentifiers() * 69069u + graph.codeBlock()->numParameters();
-                for (unsigned i = 0; i < graph.codeBlock()->numberOfIdentifiers() && i < 12; ++i)
-                    hash = hash * 31 + graph.codeBlock()->identifier(i).impl()->hash();
-                hash = (hash ^ (hash >> 16)) & 0xffff;
-                if (hash < Options::aotDissolvedScopesFrom() || hash >= Options::aotDissolvedScopesBelow())
-                    mustExist.append({ scope, WhyMade::Bisected });
-                else if (Options::aotDissolvedScopesBelow() - Options::aotDissolvedScopesFrom() <= 64)
-                    dataLogLn("AOT: PROTOTYPE: bisection keeps hash ", hash, ": a scope at bc#", node->bytecodeIndex.offset(), " of a function of ", graph.codeBlock()->instructionsSize(), " bytes, mode ", static_cast<unsigned>(graph.codeBlock()->parseMode()), ", ", graph.codeBlock()->numParameters(), " parameters; variables: ", Promoter::namesIn(node));
-            }
             if (!canDoWithout) {
                 SourceParseMode mode = graph.codeBlock()->parseMode();
                 mustExist.append({ scope, graph.codeBlock()->codeType() != FunctionCode ? WhyMade::MakerIsNotFunction
@@ -1418,11 +1358,8 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
                         UniquedStringImpl* name = graph.codeBlock()->identifier(bytecode.m_var).impl();
                         for (Where at = where; at.isLocalEnvironment(); at = Promoter::out(at, 1, 0)) {
                             JSValue table = graph.codeBlock()->getConstant(at.base->as<OpCreateLexicalEnvironment>().m_symbolTable);
-                            if (const void* scope = local.get(at.base); scope && (!table || !table.isCell() || uncheckedDowncast<SymbolTable>(table.asCell())->contains(name))) {
-                                if (Options::verboseAOTCompilation()) [[unlikely]]
-                                    dataLogLn("AOT: PROTOTYPE: pass 1: the scope at bc#", at.base->bytecodeIndex.offset(), " (", Promoter::namesIn(at.base), ") is made because the lookup of ", name, " at bc#", user->bytecodeIndex.offset(), " (resolve type ", static_cast<unsigned>(bytecode.m_resolveType), ", depth ", bytecode.m_localScopeDepth, ", operand kind ", static_cast<unsigned>(use.node->kind), ") is not resolved, in a function of ", graph.codeBlock()->instructionsSize(), " bytes");
+                            if (const void* scope = local.get(at.base); scope && (!table || !table.isCell() || uncheckedDowncast<SymbolTable>(table.asCell())->contains(name)))
                                 mustExist.append({ scope, WhyMade::UnknownAccess });
-                            }
                         }
                     }
                     break;
@@ -1456,11 +1393,8 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
             if (works)
                 continue;
             for (Where at = where; at.isLocalEnvironment(); at = Promoter::out(at, 1, 0)) {
-                if (const void* scope = local.get(at.base)) {
-                    if (Options::verboseAOTCompilation() && !graph.isGeneratorFrame(scope)) [[unlikely]]
-                        dataLogLn("AOT: PROTOTYPE: pass 1: the scope at bc#", at.base->bytecodeIndex.offset(), " (", Promoter::namesIn(at.base), ") is made for ", user->kind == NodeKind::Bytecode ? opcodeNames[user->opcode] : "a node that is no bytecode"_s, " kind ", static_cast<unsigned>(user->kind), " at bc#", user->bytecodeIndex.offset(), ", in a function of ", graph.codeBlock()->instructionsSize(), " bytes");
+                if (const void* scope = local.get(at.base))
                     mustExist.append({ scope, WhyMade::UsedOtherwise });
-                }
             }
         }
     };

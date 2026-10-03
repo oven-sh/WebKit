@@ -6693,7 +6693,7 @@ struct BytecodeLinkEncoder::Impl {
                 closed += function.summary->isNonEscaping;
                 isNeverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
             }
-            if (Options::useAOTCapturesByValue() && variableSummaries) {
+            if (variableSummaries) {
                 for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
                     const AOT::KnownFunction& function = *programFunctions.function(number);
                     if (!function.forCall)

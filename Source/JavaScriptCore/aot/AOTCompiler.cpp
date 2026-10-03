@@ -307,8 +307,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     }
     if (!parseBytecode(graph))
         return declined();
-    if (Options::useAOTSavesAtDefinitions())
-        saveRegistersAtDefinitions(graph);
+    saveRegistersAtDefinitions(graph);
     if (program)
         inlineCalls(graph, *program);
     replaceReadsOfConstantObjects(graph);
@@ -324,8 +323,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     graph.sinkIteratorMethodReads();
     graph.findBuiltinsCalled();
     graph.findArgumentLists();
-    if (Options::useAOTClearsDeadFrameSlots())
-        clearDeadFrameSlots(graph);
+    clearDeadFrameSlots(graph);
     promoteEnvironments(graph);
     analyzeEscapes(graph);
     shareRegExpLiterals(graph);
@@ -544,8 +542,7 @@ bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBloc
     if (variableSummaries) {
         graph.recordUntrackableVariableAccesses(*variableSummaries);
         graph.recordObjectsInVariables(*variableSummaries);
-        if (Options::useAOTCapturesByValue())
-            recordScopes(graph, *variableSummaries, summariesByExecutable, summary);
+        recordScopes(graph, *variableSummaries, summariesByExecutable, summary);
     }
     return true;
 }

@@ -1395,39 +1395,13 @@ void Lowering::writePromotedVariable(Node* environment, unsigned offset, LValue 
         storeBarrier(frame);
 }
 
-LValue Lowering::heldCapture(Graph& graph, const void* scope, unsigned offset, Node* forLog)
+LValue Lowering::heldCapture(Graph& graph, const void* scope, unsigned offset)
 {
     Graph* holder = &graph;
     while (!holder->closureFunction && holder->closureScope)
         holder = holder->closureScope->graph;
     const FunctionSummary* summary = holder->summaryWithCaptures();
     auto index = summary ? summary->indexOfCapture(scope, offset) : std::nullopt;
-    if (!index) [[unlikely]] {
-        dataLogLn("AOT: PROTOTYPE: offset ", offset, " of a scope that is in no chain is read by a function that does not hold it. The reader is ", &graph == &m_graph ? "not inlined" : graph.closureFunction ? "inlined, with its function" : graph.closureScope ? "inlined, with its scope" : "inlined, with neither",
-            "; the holder is ", holder == &graph ? "the reader" : holder == &m_graph ? "the outermost function" : "another inlined function", summary ? "; it holds " : "; it has no summary ", summary ? summary->captures.size() : 0,
-            summary && summary->canHoldCaptures ? "" : " (cannot hold)", "; constructor: ", holder->codeBlock()->isConstructor(), "; mode ", static_cast<unsigned>(holder->codeBlock()->parseMode()), "; identifiers: ", holder->codeBlock()->numberOfIdentifiers() ? holder->codeBlock()->identifier(0).impl() : nullptr);
-        auto describe = [&](ASCIILiteral what, Node* node) {
-            for (unsigned depth = 0; node && depth < 8; ++depth) {
-                dataLogLn("AOT: PROTOTYPE:   ", what, " ", depth, ": kind ", static_cast<unsigned>(node->kind), " ", node->kind == NodeKind::Bytecode ? opcodeNames[node->opcode] : ""_s, node->graph == &m_graph ? " (outermost)" : " (inlined)", node->isElided ? " elided" : "", node->isPromoted ? " promoted" : "", node->block && node->block->isGeneric ? " generic" : "", node->block && node->block->isInLoop ? " in loop" : "",
-                    node->scopeToStartFrom ? " starts from another node" : "", " dissolved: ", m_graph.variableSummaries()->isDissolved(m_graph.scopeIdentity(node)), " same scope: ", m_graph.scopeIdentity(node) == scope, " uses ", node->uses.size());
-                Node* next = nullptr;
-                if (node->isBytecode(op_get_scope))
-                    next = node->graph->closureScope;
-                else if (node->isBytecode(op_resolve_scope))
-                    next = node->use(node->as<OpResolveScope>().m_scope);
-                else if (node->isBytecode(op_get_parent_scope))
-                    next = node->use(node->as<OpGetParentScope>().m_scope);
-                else if (node->isBytecode(op_create_lexical_environment))
-                    next = node->use(node->as<OpCreateLexicalEnvironment>().m_scope);
-                else if (node->isBytecode(op_get_from_scope))
-                    next = node->use(node->as<OpGetFromScope>().m_scope);
-                else if (!node->uses.isEmpty())
-                    next = node->uses[0].node;
-                node = next;
-            }
-        };
-        describe("access"_s, forLog);
-    }
     RELEASE_ASSERT_WITH_MESSAGE(index, "A variable of a scope that is in no chain is read by a function that does not hold it");
     LValue function = holder->closureFunction ? lowCell(holder->currentClosureFunction()) : callee();
     return m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), function, JSFunctionWithCaptures::offsetOfCaptures() + *index * sizeof(EncodedJSValue)));
@@ -1439,7 +1413,7 @@ static unsigned dissolvedScopesWithin(Node* scope, unsigned hops)
         scope = scope->graph->closureScope;
     if (scope->isBytecode(op_get_scope))
         return scope->graph->dissolvedScopesOutside(hops);
-    return Options::useAOTCapturesByValue() ? scope->graph->dissolvedScopesAbove(scope, hops) : 0;
+    return scope->graph->dissolvedScopesAbove(scope, hops);
 }
 
 LValue Lowering::ancestorScope(Node* scope, unsigned hops)
@@ -1572,10 +1546,10 @@ void Lowering::lowerGetFromScope(Node* node)
         return;
     }
 
-    if (VariableSummaries* summaries = m_graph.variableSummaries(); summaries && Options::useAOTCapturesByValue()) {
+    if (VariableSummaries* summaries = m_graph.variableSummaries()) {
         if (Variable variable = m_graph.variableAccessedBy(node); variable && !node->accessesLocalEnvironment && summaries->isDissolved(variable.scope)) {
             m_graph.remark("reads-capture"_s, StringView(code().codeBlock()->identifier(bytecode.m_var).impl()));
-            setJSValue(node, heldCapture(code(), variable.scope, variable.offset, node));
+            setJSValue(node, heldCapture(code(), variable.scope, variable.offset));
             return;
         }
     }
@@ -1593,22 +1567,9 @@ void Lowering::lowerGetFromScope(Node* node)
     ResolveType type = bytecode.m_getPutInfo.resolveType();
 
     auto hopsToEnvironment = [&]() -> std::optional<unsigned> {
-        Node* resolveNode = node->use(bytecode.m_scope);
-        if (resolveNode->isBytecode(op_get_scope))
+        if (node->use(bytecode.m_scope)->isBytecode(op_get_scope))
             return 0;
-        if (!resolveNode->isBytecode(op_resolve_scope))
-            return std::nullopt;
-        auto resolve = resolveNode->as<OpResolveScope>();
-        if (Options::useAOTCapturesByValue())
-            return std::nullopt;
-        if (isStaticClosureVarResolveType(resolve.m_resolveType))
-            return resolve.m_localScopeDepth + staticClosureVarHops(resolve.m_resolveType) - resolveNode->skippedEnvironments;
-        if (resolve.m_resolveType == Dynamic)
-            return std::nullopt;
-        StaticVariable variable = resolveStatically(resolve.m_var, resolve.m_localScopeDepth, resolve.m_resolveType);
-        if (variable.kind != StaticVariable::Closure)
-            return std::nullopt;
-        return variable.depth - resolveNode->skippedEnvironments;
+        return std::nullopt;
     };
     auto loadClosureVariable = [&](unsigned offset, bool mayBeLazy) {
         if (auto hops = m_graph.mayReturnScopeVariable ? hopsToEnvironment() : std::nullopt) {
@@ -1732,7 +1693,7 @@ void Lowering::lowerPutToScope(Node* node)
     if (closureOffset) {
         m_out.store64(value, scope, m_heaps.JSLexicalEnvironment_variables[*closureOffset]);
         if (mayBe(valueNode->type, TCell)) {
-            if (Options::useAOTSavesAtDefinitions() && m_scopeWithBarrier == node->use(bytecode.m_scope))
+            if (m_scopeWithBarrier == node->use(bytecode.m_scope))
                 m_graph.remark("shares-write-barrier"_s);
             else {
                 storeBarrier(scope);

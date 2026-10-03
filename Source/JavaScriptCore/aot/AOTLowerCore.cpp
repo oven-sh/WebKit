@@ -1233,11 +1233,6 @@ void Lowering::emitUpsilons(BasicBlock* block, BasicBlock* successor)
     RELEASE_ASSERT(predecessorIndex != notFound);
     for (Node* phi : successor->phis) {
         Node* input = phi->uses[predecessorIndex].node;
-        if (Options::verboseAOTCompilation() && Options::useAOTScopesInFrames() && (input->standIn || !input->lowered) && input->kind == NodeKind::Bytecode) [[unlikely]] {
-            dataLogLn("AOT: PROTOTYPE: an input of a phi is ", opcodeNames[input->opcode], " bc#", input->bytecodeIndex.offset(), input->lowered ? "" : " WITHOUT A VALUE", input->isElided ? " elided" : "", input->isPromoted ? " promoted" : "", input->mayBeInFrame ? " mayBeInFrame" : "", input->graph == &m_graph ? "" : " inlined", successor->isLoopHeader ? ", at a loop header" : "", " in a function of ", m_graph.codeBlock()->instructionsSize(), " bytes, mode ", static_cast<unsigned>(m_graph.codeBlock()->parseMode()));
-            if (m_graph.codeBlock()->instructionsSize() < 700)
-                m_graph.dump(WTF::dataFile());
-        }
         LValue value = convert(lowRaw(input), input->rep(), input->type, phi->rep());
         m_out.addIncomingToPhi(phi->lowered, m_out.anchor(value));
     }
