@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTGraph.h"
 #include "AOTRuntime.h"
 #include "B3AbstractHeapRepository.h"
 #include "B3Procedure.h"
@@ -41,8 +42,7 @@ public:
     }
     void dropNextGuardForTesting() { m_dropsNextGuard = true; }
 
-    using WideIntegers = UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>>;
-    void noteFoldedConstantsIn(WideIntegers& integers) { m_foldedConstants = &integers; }
+    void noteFoldedConstantsIn(IntegersThatLookLikeAddresses& integers) { m_foldedConstants = &integers; }
     LValue add(LValue left, LValue right) { return noteIfFolded(FTL::Output::add(left, right), left, right); }
     LValue shl(LValue value, LValue amount) { return noteIfFolded(FTL::Output::shl(value, amount), value, amount); }
     LValue aShr(LValue value, LValue amount) { return noteIfFolded(FTL::Output::aShr(value, amount), value, amount); }
@@ -51,12 +51,12 @@ public:
 private:
     LValue noteIfFolded(LValue result, LValue left, LValue right)
     {
-        if (m_foldedConstants && result->hasInt64() && left->hasInt() && right->hasInt() && result->asInt64() > 0)
+        if (m_foldedConstants && result->hasInt64() && left->hasInt() && right->hasInt())
             m_foldedConstants->add(result->asInt64());
         return result;
     }
 
-    WideIntegers* m_foldedConstants { nullptr };
+    IntegersThatLookLikeAddresses* m_foldedConstants { nullptr };
     bool m_dropsNextGuard { false };
 };
 

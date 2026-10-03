@@ -112,6 +112,20 @@ class Graph;
 struct BasicBlock;
 struct Node;
 
+class IntegersThatLookLikeAddresses {
+public:
+    static bool isOne(uint64_t bits) { return bits >= 4 * GB && bits < (1ULL << 47); }
+    void add(int64_t value)
+    {
+        if (isOne(value))
+            m_integers.add(value);
+    }
+    bool contains(int64_t value) const { return m_integers.contains(value); }
+
+private:
+    UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> m_integers;
+};
+
 enum class Escape : uint8_t {
     NotAnalyzed,
     StaysHere,
@@ -542,7 +556,7 @@ public:
     bool m_isCoveringOperation { false };
     bool alwaysEmitsCalls { false };
     mutable std::optional<bool> hasRemainingCalls;
-    UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> wideIntegerConstants;
+    IntegersThatLookLikeAddresses wideIntegerConstants;
 
     void fail(ASCIILiteral reason, OpcodeID = op_nop);
     bool failed() const { return !m_failureReason.isNull(); }
