@@ -12,8 +12,8 @@ function operationsOf(f, opcode) {
         return null;
     }
     return lines.map(line => {
-        const [position, opcode, flags, timesRun, rareCalls, property, ...outcomes] = line.split(" ");
-        return { position, opcode, flags: Number(flags), timesRun: Number(timesRun), rareCalls: Number(rareCalls), property, outcomes };
+        const [position, opcode, flags, timesRun, stubCalls, runtimeCalls, property, ...outcomes] = line.split(" ");
+        return { position, opcode, flags: Number(flags), timesRun: Number(timesRun), calls: Number(stubCalls) + Number(runtimeCalls), runtimeCalls: Number(runtimeCalls), property, outcomes };
     }).filter(operation => operation.opcode === opcode);
 }
 function timesRun(f, opcode, property = "") {
@@ -21,8 +21,8 @@ function timesRun(f, opcode, property = "") {
     check(counts.size, 1, "every copy of " + opcode + " " + property + " in " + f.name + " has the same counter");
     return [...counts][0];
 }
-function rareCalls(f, opcode) {
-    return Math.max(...operationsOf(f, opcode).map(operation => operation.rareCalls));
+function calls(f, opcode) {
+    return Math.max(...operationsOf(f, opcode).map(operation => operation.calls));
 }
 
 function reads(o) { return o.value; }
@@ -33,6 +33,7 @@ function branches(o, which) {
     return o.other;
 }
 function testsFlag(o) { return o.flags & 4; }
+function usesThis(a) { "use strict"; return [this, a]; }
 function loops(o, n) {
     let sum = 0;
     for (let i = 0; i < n; i++)
@@ -49,7 +50,7 @@ function program() {
     return [first, second];
 }
 const [first, second] = program();
-for (const f of [reads, isNeverCalled, branches, testsFlag, loops, Point])
+for (const f of [reads, isNeverCalled, branches, testsFlag, usesThis, loops, Point])
     noInline(f);
 
 if (operationsOf(reads, "op_get_by_id")) {
@@ -68,11 +69,22 @@ if (operationsOf(reads, "op_get_by_id")) {
     for (let i = 0; i < 10; i++)
         testsFlag({ flags: i });
     check(timesRun(testsFlag, "op_bitand"), 10, "a bit operation on int32s");
-    check(rareCalls(testsFlag, "op_bitand"), 0, "int32s stay on the usual path");
+    if (!operationsOf(testsFlag, "op_bitand").some(operation => operation.outcomes.some(outcome => outcome.startsWith("calls:"))))
+        check(calls(testsFlag, "op_bitand"), 0, "int32s need no call");
     for (let i = 0; i < 3; i++)
         testsFlag({ flags: "4" });
     check(timesRun(testsFlag, "op_bitand"), 13, "a bit operation on strings too");
-    check(rareCalls(testsFlag, "op_bitand") >= 3, true, "strings leave the usual path");
+    check(calls(testsFlag, "op_bitand") >= 3, true, "strings need a call each");
+
+    for (let i = 0; i < 5; i++)
+        usesThis.call({ }, i);
+    const [toThis] = operationsOf(usesThis, "op_to_this").filter(operation => operation.timesRun);
+    check(toThis.timesRun, 5, "an operation with a path to the runtime");
+    if (!toThis.outcomes.some(outcome => outcome.startsWith("calls:")))
+        check(toThis.calls, 0, "which an object does not take");
+    const [newArray] = operationsOf(usesThis, "op_new_array").filter(operation => operation.timesRun);
+    check(newArray.timesRun, 5, "an operation that always calls the runtime");
+    check(newArray.runtimeCalls >= 5, true, "each time");
 
     check(loops({ inside: 2 }, 6), 12, "a loop");
     check(operationsOf(loops, "op_get_by_id").reduce((most, read) => Math.max(most, read.timesRun), 0), 6, "an operation in a loop, in whichever copy ran");

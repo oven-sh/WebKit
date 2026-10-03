@@ -6727,9 +6727,9 @@ struct BytecodeLinkEncoder::Impl {
         for (auto& job : jobs) {
             programCode.all.add(job.codeBlock, AOT::ProgramCode::About { hints[job.module].get(), linkages[job.module].get(), summariesByCodeBlock.get(job.codeBlock), job.key, numberOfTypeCoverageCounters });
             if (Options::useAOTTypeCoverageCounters() && Options::aotTypeCoveragePath()) [[unlikely]]
-                numberOfTypeCoverageCounters += job.codeBlock->instructionsSize() + 1;
+                numberOfTypeCoverageCounters += job.codeBlock->instructionsSize();
         }
-        builder.setNumberOfTypeCoverageCounters(numberOfTypeCoverageCounters);
+        builder.setNumberOfTypeCoverageCounters(numberOfTypeCoverageCounters * AOT::CoveredOperation::countersPerOperation);
         std::atomic<uint64_t> unreachedFunctions { 0 };
         std::atomic<uint64_t> unreachedBytecodeSize { 0 };
         auto work = [&] {

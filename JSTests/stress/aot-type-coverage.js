@@ -12,8 +12,8 @@ function operationsOf(f, opcode) {
         return null;
     }
     return lines.map(line => {
-        const [position, opcode, flags, timesRun, rareCalls, property, ...outcomes] = line.split(" ");
-        return { position, opcode, flags: Number(flags), timesRun: Number(timesRun), rareCalls: Number(rareCalls), property, outcomes };
+        const [position, opcode, flags, timesRun, stubCalls, runtimeCalls, property, ...outcomes] = line.split(" ");
+        return { position, opcode, flags: Number(flags), timesRun: Number(timesRun), stubCalls: Number(stubCalls), runtimeCalls: Number(runtimeCalls), property, outcomes };
     }).filter(operation => operation.opcode === opcode && !(operation.flags & isInGenericCopy));
 }
 function describe(operations) { return operations.map(operation => operation.position + " " + operation.property).join(); }
@@ -23,6 +23,7 @@ function writesOne(o, v) { o.third = v; }
 function testsFlag(o) { return o.flags & 4; }
 function adds(a, b) { return a + b; }
 function readsNothing(a) { return a; }
+function usesThis(a) { "use strict"; return [this, a]; }
 function readsOddNames(o) { return o["\t"] + o["a b"] + o["\n"] + o["\\"] + o["\u00e9"]; }
 function loops(list) {
     let before = list.before;
@@ -38,7 +39,7 @@ function program() {
 }
 function Point(x, y) { this.x = x; this.y = y; }
 const caller = program();
-for (const f of [readsTwo, writesOne, testsFlag, adds, readsNothing, readsOddNames, loops])
+for (const f of [readsTwo, writesOne, testsFlag, adds, readsNothing, usesThis, readsOddNames, loops])
     noInline(f);
 
 check(readsTwo({ first: 1, second: 2 }), 3, "two reads");
@@ -72,12 +73,17 @@ if (operationsOf(readsTwo, "op_get_by_id")) {
     check(reads.filter(read => read.property === "inside").every(read => read.flags & isInLoop), true, "a read in a loop");
     check(reads.some(read => read.property === "inside"), true, "the read in the loop is reported");
 
-    check(describe(operationsOf(Point, "op_put_by_id").filter(write => write.outcomes.includes("absorbed-into-allocation"))), "39:28 x,39:40 y", "stores that an allocation absorbs");
+    check(describe(operationsOf(Point, "op_put_by_id").filter(write => write.outcomes.includes("absorbed-into-allocation"))), "40:28 x,40:40 y", "stores that an allocation absorbs");
     check(operationsOf(writesOne, "op_put_by_id").some(write => write.outcomes.includes("absorbed-into-allocation")), false, "a store to an object that exists already");
 
-    check(operationsOf(readsTwo, "op_get_by_id").every(read => !read.timesRun && !read.rareCalls), true, "nothing is counted unless asked for");
+    check(operationsOf(readsTwo, "op_get_by_id").every(read => !read.timesRun && !read.stubCalls && !read.runtimeCalls), true, "nothing is counted unless asked for");
+
+    const [toThis] = operationsOf(usesThis, "op_to_this");
+    check(toThis.outcomes.includes("rarely-calls:operationAOTToThis"), true, "a call in a block that is branched to rarely is rare");
+    check(toThis.outcomes.includes("calls:operationAOTToThis"), false, "and is not taken for one that is always made");
+    check(operationsOf(usesThis, "op_new_array").every(allocation => allocation.outcomes.some(outcome => outcome.startsWith("calls:"))), true, "a call after an operation with a rare path is not rare");
 
     const readsOfCaller = operationsOf(caller, "op_get_by_id");
-    check(describe(readsOfCaller.filter(read => read.flags & isInlined)), "34:33 inner", "a read in an inlined function has its own position");
-    check(describe(readsOfCaller.filter(read => !(read.flags & isInlined))), "35:45 outer", "a read in the function itself");
+    check(describe(readsOfCaller.filter(read => read.flags & isInlined)), "35:33 inner", "a read in an inlined function has its own position");
+    check(describe(readsOfCaller.filter(read => !(read.flags & isInlined))), "36:45 outer", "a read in the function itself");
 }

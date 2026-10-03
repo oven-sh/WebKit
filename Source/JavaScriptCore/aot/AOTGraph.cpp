@@ -1923,12 +1923,12 @@ void Graph::noteClassesDefined()
     }
 }
 
-void Graph::addRemark(ASCIILiteral what, StringView detail, bool isOnRarePath)
+void Graph::addRemark(ASCIILiteral what, StringView detail, bool isOffUsualPath)
 {
     String text = detail.isNull() ? String(what) : makeString(what, ':', detail);
     if (m_isCoveringOperation) {
         auto& outcomes = coverage.last().outcomes;
-        String outcome = isOnRarePath ? makeString("rarely-"_s, text) : text;
+        String outcome = isOffUsualPath ? makeString("rarely-"_s, text) : text;
         if (!outcomes.contains(outcome))
             outcomes.append(WTF::move(outcome));
     }
@@ -1982,7 +1982,7 @@ CoveredOperation Graph::coveredOperationAt(unsigned offset, uint8_t flags)
     operation.opcode = instruction->opcodeID();
     operation.flags = flags;
     if (Options::useAOTTypeCoverageCounters())
-        operation.counter = firstTypeCoverageCounter + offset;
+        operation.counter = (firstTypeCoverageCounter + offset) * CoveredOperation::countersPerOperation;
     if (uint32_t tag = typeTagAt(offset)) {
         operation.flags |= CoveredOperation::hasTypeTag;
         if (TypeTable::shared()) {

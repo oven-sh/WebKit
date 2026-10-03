@@ -515,12 +515,12 @@ public:
     Vector<CoveredOperation> coverage;
     uint32_t firstTypeCoverageCounter { 0 };
     bool isCoveringOperation() const { return m_isCoveringOperation; }
-    void remark(ASCIILiteral what, StringView detail = { }, bool isOnRarePath = false)
+    void remark(ASCIILiteral what, StringView detail = { }, bool isOffUsualPath = false)
     {
         if (Options::aotRemarksPath() || Options::aotTypeCoveragePath()) [[unlikely]]
-            addRemark(what, detail, isOnRarePath);
+            addRemark(what, detail, isOffUsualPath);
     }
-    void addRemark(ASCIILiteral what, StringView detail, bool isOnRarePath);
+    void addRemark(ASCIILiteral what, StringView detail, bool isOffUsualPath);
     void beginCoveredOperation(const Node*, const BasicBlock*, bool isElided = false);
     CoveredOperation coveredOperationAt(unsigned bytecodeOffset, uint8_t flags);
     bool m_isCoveringOperation { false };

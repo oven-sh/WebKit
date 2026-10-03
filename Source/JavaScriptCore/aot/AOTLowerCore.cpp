@@ -375,10 +375,19 @@ void Lowering::coverOperation(Node* node, BasicBlock* block, bool isElided)
 {
     size_t first = m_graph.coverage.size();
     m_graph.beginCoveredOperation(node, block, isElided);
+    m_blockWhereOperationStarts = m_out.m_block;
     if (!Options::useAOTTypeCoverageCounters())
         return;
     for (size_t i = first; i < m_graph.coverage.size(); ++i)
         incrementTypeCoverageCounter(m_graph.coverage[i].counter);
+}
+
+void Lowering::coverCall(StringView name, uint32_t whichCounter)
+{
+    bool isOffUsualPath = m_out.m_block != m_blockWhereOperationStarts && (m_out.m_block->frequency() <= coldFrequency || (m_blocksReachedRarely.contains(m_out.m_block) && !m_blocksReachedOtherwise.contains(m_out.m_block)));
+    m_graph.remark("calls"_s, name, isOffUsualPath);
+    if (Options::useAOTTypeCoverageCounters() && m_graph.isCoveringOperation()) [[unlikely]]
+        incrementTypeCoverageCounter(m_graph.coverage.last().counter + whichCounter);
 }
 
 void Lowering::unsupported(Node* node)
@@ -540,9 +549,7 @@ bool Lowering::isLiveAfterNextNode(Node* node) const
 PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgument, 8>& arguments, const Vector<StubImmediate, 2>& immediates, StubClobbers clobbers, Node* place)
 {
     m_graph.emitsCalls = true;
-    m_graph.remark("calls"_s, nameOf(stub), m_out.m_block->frequency() <= coldFrequency);
-    if (Options::useAOTTypeCoverageCounters() && m_graph.isCoveringOperation() && m_out.m_block->frequency() <= coldFrequency) [[unlikely]]
-        incrementTypeCoverageCounter(m_graph.coverage.last().counter + 1);
+    coverCall(nameOf(stub), CoveredOperation::stubCallsCounter);
     if (!place)
         place = m_node;
     CallSite site;
@@ -727,9 +734,7 @@ LValue Lowering::coldCallForValue(Node* node, Entry function, LValue first, LVal
 
 LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function, const Vector<LValue, 8>& arguments)
 {
-    m_graph.remark("calls"_s, nameOf(function), m_out.m_block->frequency() <= coldFrequency);
-    if (Options::useAOTTypeCoverageCounters() && m_graph.isCoveringOperation() && m_out.m_block->frequency() <= coldFrequency) [[unlikely]]
-        incrementTypeCoverageCounter(m_graph.coverage.last().counter + 1);
+    coverCall(nameOf(function), CoveredOperation::runtimeCallsCounter);
     bool throws = !!node;
     bool withGlobalObject = !arguments.isEmpty() && arguments[0] == m_globalObject;
     bool withInstance = !arguments.isEmpty() && arguments[0] == m_instance;

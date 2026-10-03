@@ -68,6 +68,28 @@ private:
     void unsupported(Node*);
     void incrementTypeCoverageCounter(uint32_t);
     void coverOperation(Node*, BasicBlock*, bool isElided = false);
+    void coverCall(StringView name, uint32_t whichCounter);
+    FTL::WeightedTarget rarely(LBasicBlock block)
+    {
+        if (Options::aotTypeCoveragePath()) [[unlikely]]
+            m_blocksReachedRarely.add(block);
+        return FTL::rarely(block);
+    }
+    FTL::WeightedTarget usually(LBasicBlock block)
+    {
+        if (Options::aotTypeCoveragePath()) [[unlikely]]
+            m_blocksReachedOtherwise.add(block);
+        return FTL::usually(block);
+    }
+    FTL::WeightedTarget unsure(LBasicBlock block)
+    {
+        if (Options::aotTypeCoveragePath()) [[unlikely]]
+            m_blocksReachedOtherwise.add(block);
+        return FTL::unsure(block);
+    }
+    LBasicBlock m_blockWhereOperationStarts { nullptr };
+    UncheckedKeyHashSet<LBasicBlock> m_blocksReachedRarely;
+    UncheckedKeyHashSet<LBasicBlock> m_blocksReachedOtherwise;
 
     LValue lowRaw(Node*);
     LValue lowJSValue(Node*);

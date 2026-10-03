@@ -278,6 +278,9 @@ struct CoveredOperation {
     static constexpr uint8_t isNotInGraph = 64;
     static constexpr uint32_t noReason = UINT32_MAX;
     static constexpr uint32_t noCounter = UINT32_MAX;
+    static constexpr uint32_t countersPerOperation = 3;
+    static constexpr uint32_t stubCallsCounter = 1;
+    static constexpr uint32_t runtimeCallsCounter = 2;
 
     UnlinkedCodeBlock* codeBlock { nullptr };
     ImageKey function;

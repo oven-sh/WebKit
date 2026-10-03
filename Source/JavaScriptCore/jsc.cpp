@@ -23,6 +23,7 @@
 #include "config.h"
 
 #include "AOTFunction.h"
+#include "AOTProgram.h"
 #include "AOTRuntime.h"
 #include "APICast.h"
 #include "ArrayBuffer.h"
@@ -3093,14 +3094,16 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTTypeCoverage, (JSGlobalObject* globalObject,
         if (fields.size() != 14 || fields[0] != "O"_s || fields[8] != name)
             continue;
         uint64_t timesRun = 0;
-        uint64_t rareCalls = 0;
+        uint64_t stubCalls = 0;
+        uint64_t runtimeCalls = 0;
         if (auto counter = parseInteger<uint32_t>(fields[13])) {
             if (uint32_t* counters = AOT::Instance::ensure(globalObject).typeCoverageCounters) {
                 timesRun = counters[*counter];
-                rareCalls = counters[*counter + 1];
+                stubCalls = counters[*counter + AOT::CoveredOperation::stubCallsCounter];
+                runtimeCalls = counters[*counter + AOT::CoveredOperation::runtimeCallsCounter];
             }
         }
-        result->push(globalObject, jsString(vm, makeString(fields[2], ':', fields[3], ' ', fields[4], ' ', fields[5], ' ', timesRun, ' ', rareCalls, ' ', fields[7], ' ', fields[9])));
+        result->push(globalObject, jsString(vm, makeString(fields[2], ':', fields[3], ' ', fields[4], ' ', fields[5], ' ', timesRun, ' ', stubCalls, ' ', runtimeCalls, ' ', fields[7], ' ', fields[9])));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(result);
