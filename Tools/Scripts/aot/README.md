@@ -26,6 +26,7 @@ realm (`createGlobalObject().load()`), on another thread (`$.agent.start()`), or
 | Fuzzing (open-ended) | `fuzz.py` mutates `JSTests/stress` and compares the interpreter with compiled code. `minimize.py` reduces a finding. |
 | Fuzzing with generated programs (open-ended) | `fuzz-programs.py` generates programs about scopes and closures, and about objects, their shapes and aliases, and compares likewise. `--minimize` reduces a finding. It found wrong code within a minute where `fuzz.py` found none in twenty. |
 | Check that a faster build still does the same work (minutes) | `compare-execution-counts.py`, see below |
+| Find the checks of compiled code that no test covers (an hour) | `drop-guards.py <jsc>` leaves out one guard of the compiler at a time, with `--aotGuardToDropForTesting`, and runs the tests and the fuzzers. What survives lacks a test. |
 | Limit a runaway compile | `capped.py <GB> <seconds> <command...>` |
 
 ## Seeing what the compiler did

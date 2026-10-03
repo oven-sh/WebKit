@@ -73,12 +73,15 @@ private:
     void incrementTypeCoverageCounter(uint32_t);
     void coverOperation(Node*, BasicBlock*, bool isElided = false);
     void coverCall(StringView name, uint32_t whichCounter);
-    FTL::WeightedTarget rarely(LBasicBlock block)
+    FTL::WeightedTarget rarely(LBasicBlock block, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE())
     {
         if (Options::aotTypeCoveragePath()) [[unlikely]]
             m_blocksReachedRarely.add(block);
+        if (Options::aotGuardToDropForTesting()) [[unlikely]]
+            dropGuardIfSelected(file, line);
         return FTL::rarely(block);
     }
+    void dropGuardIfSelected(const char* file, unsigned line);
     FTL::WeightedTarget usually(LBasicBlock block)
     {
         if (Options::aotTypeCoveragePath()) [[unlikely]]

@@ -37,7 +37,14 @@ function takesRemainderOfArguments(x, y) { let result; for (let i = 0; i < 3; i+
 function negates(table) { for (let i = 0; i < table.length; i++) { const row = table[i]; check(-row[0], row[1], "-(" + row[0] + ")"); } }
 function counts(start, steps) { let x = start; for (let i = 0; i < steps; i++) x++; return x; }
 function countsDown(start, steps) { let x = start; for (let i = 0; i < steps; i++) x--; return x; }
+function addsWideConstants(b) { b = 4294967296; return b + b; }
+function addsThreeWideConstants(b) { b = 4294967296; const c = 8589934592; return b + c + b; }
+function scalesWideConstants() { const a = 1073741824; return a * 8 + a * 16; }
 for (let round = 0; round < 20; round++) {
+    check(isAOTCompiled(addsWideConstants) && isAOTCompiled(addsThreeWideConstants) && isAOTCompiled(scalesWideConstants), true, "functions that fold wide constants are compiled");
+    check(addsWideConstants(1), 8589934592, "the sum of two wide constants");
+    check(addsThreeWideConstants(1), 17179869184, "the sum of three wide constants");
+    check(scalesWideConstants(), 25769803776, "multiples of a constant");
     for (const [table, inLoop, ofArguments, sign] of [[products, multiplies, multipliesArguments, "*"], [sums, adds, addsArguments, "+"], [differences, subtracts, subtractsArguments, "-"], [remainders, takesRemainders, takesRemainderOfArguments, "%"]]) {
         inLoop(split(table.filter(isInteger), asInt32));
         inLoop(split(table, asItIs));

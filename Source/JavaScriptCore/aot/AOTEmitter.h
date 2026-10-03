@@ -26,6 +26,40 @@ using FTL::rarely;
 using FTL::unsure;
 using FTL::usually;
 
+class Output final : public FTL::Output {
+public:
+    using FTL::Output::Output;
+    using FTL::Output::branch;
+    void branch(LValue condition, FTL::WeightedTarget taken, FTL::WeightedTarget notTaken)
+    {
+        if (m_dropsNextGuard) [[unlikely]] {
+            m_dropsNextGuard = false;
+            jump(taken.weight().value() ? taken.target() : notTaken.target());
+            return;
+        }
+        FTL::Output::branch(condition, taken, notTaken);
+    }
+    void dropNextGuardForTesting() { m_dropsNextGuard = true; }
+
+    using WideIntegers = UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>>;
+    void noteFoldedConstantsIn(WideIntegers& integers) { m_foldedConstants = &integers; }
+    LValue add(LValue left, LValue right) { return noteIfFolded(FTL::Output::add(left, right), left, right); }
+    LValue shl(LValue value, LValue amount) { return noteIfFolded(FTL::Output::shl(value, amount), value, amount); }
+    LValue aShr(LValue value, LValue amount) { return noteIfFolded(FTL::Output::aShr(value, amount), value, amount); }
+    LValue lShr(LValue value, LValue amount) { return noteIfFolded(FTL::Output::lShr(value, amount), value, amount); }
+
+private:
+    LValue noteIfFolded(LValue result, LValue left, LValue right)
+    {
+        if (m_foldedConstants && result->hasInt64() && left->hasInt() && right->hasInt() && result->asInt64() > 0)
+            m_foldedConstants->add(result->asInt64());
+        return result;
+    }
+
+    WideIntegers* m_foldedConstants { nullptr };
+    bool m_dropsNextGuard { false };
+};
+
 class Emitter {
     WTF_MAKE_NONCOPYABLE(Emitter);
 protected:
@@ -110,7 +144,7 @@ protected:
 
     B3::Procedure& m_proc;
     B3::AbstractHeapRepository m_heaps;
-    FTL::Output m_out;
+    Output m_out;
     LValue m_instance { nullptr };
     LValue m_vm { nullptr };
     LValue m_globalObject { nullptr };

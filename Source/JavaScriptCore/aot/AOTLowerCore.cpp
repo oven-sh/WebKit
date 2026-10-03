@@ -170,6 +170,7 @@ Lowering::Lowering(Graph& graph, Procedure& proc)
     : Emitter(proc)
     , m_graph(graph)
 {
+    m_out.noteFoldedConstantsIn(graph.wideIntegerConstants);
 }
 
 static unsigned scratchWordsFor(Node* node)
@@ -912,6 +913,18 @@ LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
     }
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
+}
+
+void Lowering::dropGuardIfSelected(const char* file, unsigned line)
+{
+    StringView path = StringView::fromLatin1(file);
+    size_t slash = path.reverseFind('/');
+    String site = makeString(slash == notFound ? path : path.substring(slash + 1), ':', line);
+    if (site != StringView::fromLatin1(byteCast<char>(Options::aotGuardToDropForTesting())))
+        return;
+    m_out.dropNextGuardForTesting();
+    if (Options::verboseAOTCompilation())
+        dataLogLn("AOT: dropped the guard at ", site);
 }
 
 void Lowering::noteIndexConstant(int32_t index)
