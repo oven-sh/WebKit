@@ -1115,7 +1115,7 @@ UnlinkedFunctionExecutable* VMProgram::unlinkedFunction(uint32_t index, bool isS
     RELEASE_ASSERT(index < m_data.numberOfUnlinkedFunctions);
     if (UnlinkedFunctionExecutable* existing = m_impl->unlinkedFunctions[index])
         return existing;
-    DeferGC deferGC(m_vm);
+    DeferGCForAWhile deferGC(m_vm);
     UnlinkedFunctionExecutable* result = ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).unlinkedFunction(index);
     RELEASE_ASSERT(result);
     if (isShared)
@@ -1199,7 +1199,7 @@ FunctionExecutable* VMProgram::executable(uint32_t executableIndex)
         return existing;
     RELEASE_ASSERT(!m_vm.heap.isShuttingDown() && m_vm.heap.mutatorState() == MutatorState::Running && !m_vm.heap.worldIsStopped() && !m_vm.heap.objectSpace().isIterating());
     const ExecutableRow& row = m_data.executableRow(executableIndex);
-    DeferGC deferGC(m_vm);
+    DeferGCForAWhile deferGC(m_vm);
     FunctionExecutable* result;
     if (row.isShort)
         result = FunctionExecutable::createInShortForm(m_vm, row.entry, row.index);

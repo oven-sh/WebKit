@@ -295,7 +295,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     ASSERT(vm.heap.isDeferred());
     // Compiling needs source text. Asking for a position would build the provider's
     // line-start table for every executable whenever assertions are on.
-    ASSERT(hasSourceText());
+    ASSERT(hasSourceText() || isShortForm());
 
     JSGlobalObject* globalObject = scope->realm();
 
