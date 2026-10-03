@@ -3859,6 +3859,12 @@ void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
                 return;
             codeBlock->notifyLexicalBindingUpdate();
         });
+#if ENABLE(AOT)
+        for (AOT::Instance* instance : vm.m_aotInstances) {
+            if (instance->globalObject == this)
+                instance->forgetResolvedGlobalScopes();
+        }
+#endif
     }
 }
 

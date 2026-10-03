@@ -523,6 +523,7 @@ struct Instance {
     unsigned inlineCapacityFor(JSFunction* constructor, unsigned inlineCapacityInBytecode);
     void noteFirstStructure(Structure*, JSFunction* constructor);
     void noteOutOfLineProperty(Structure*);
+    JS_EXPORT_PRIVATE void forgetResolvedGlobalScopes();
     void noteRunOfProperties(Structure* from, Structure* to);
     JSFunction* constructorOfObjectsWith(Structure*);
     void learnInlineCapacity(JSFunction* constructor, Structure*);

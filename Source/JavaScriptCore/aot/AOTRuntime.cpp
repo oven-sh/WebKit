@@ -1983,6 +1983,19 @@ void Instance::finalizeUnconditionally(bool newOnly)
     }
 }
 
+void Instance::forgetResolvedGlobalScopes()
+{
+    for (Data* data : collections->all) {
+        for (unsigned i = 0; i < data->numSlots; ++i) {
+            Slot& slot = data->slots[i];
+            if (slot.structureID || (slot.pointer != globalObject && slot.pointer != globalObject->globalLexicalEnvironment()))
+                continue;
+            slot.clear();
+            data->slotEpoch++;
+        }
+    }
+}
+
 void Data::finalizeSlot(VM& vm, Slot& slot)
 {
     if (!slot.structureID)
