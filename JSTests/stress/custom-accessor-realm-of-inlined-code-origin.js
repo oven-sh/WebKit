@@ -96,20 +96,21 @@ function oneLevelSetter(name) {
     return -1;
 }
 
-// The same direction reversed: a guest-realm holder read by a host-realm function that the guest calls.
+// The direction reversed: the holder is in the guest realm, and a guest function inlines a reader of this realm.
 function guestHolder(name) {
     const guestRun = guest.eval(`
-        (host => {
+        (hostRead => {
             const holder = $vm.createCustomTestGetterSetter();
+            const caller = object => hostRead(object);
+            noInline(caller);
             for (let i = 0; i < testLoopCount; ++i) {
-                if (host(holder) !== globalThis)
+                if (caller(holder) !== globalThis)
                     return i;
             }
             return -1;
         });
     `);
-    const guestRead = guest.read[name];
-    return guestRun(object => guestRead(object));
+    return guestRun(new Function("object", "return object." + name + ";"));
 }
 
 for (const name of accessorNames) {
@@ -123,7 +124,7 @@ for (const name of accessorNames) {
     shouldBe(oneLevel(name), -1, `${name} read by an inlined guest function`);
     shouldBe(twoLevels(name), -1, `${name} read through two levels of inlining`);
     shouldBe(oneLevelSetter(name), -1, `${name} written by an inlined guest function`);
-    shouldBe(guestHolder(name), -1, `${name} of a guest holder read by an inlined host function`);
+    shouldBe(guestHolder(name), -1, `${name} of a guest holder read by an inlined function of this realm`);
 }
 
 // Only for the plain CustomAccessor: a DOMAttribute getter throws for a receiver that is not an instance of its class.
