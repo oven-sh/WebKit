@@ -297,8 +297,10 @@ public:
 
     static bool isWorthNarrowing(Type before, Type after)
     {
-        if (!after || after == before)
+        if (after == before)
             return false;
+        if (!after)
+            return true;
         if (repForType(after) != repForType(before) || (isSubtype(after, TCell) && !isSubtype(before, TCell)))
             return true;
         return mayBe(after, TOther) && isSubtype(before & ~after, TOther) && isWorthNarrowing(before, before & ~TOther);

@@ -311,6 +311,8 @@ private:
             return { Verdict::Lent };
         }
         Node* callee = call->use(calleeRegister);
+        if (callee->wasInferredUnreachable || !mayBe(callee->type, TAnyObject))
+            return { };
         if (callee->kind == NodeKind::Intrinsic)
             return escapes(Escape::PassedToBuiltin);
         if (callee->isBytecode(op_get_by_id) || callee->isBytecode(op_get_by_val))
@@ -327,8 +329,11 @@ private:
     Verdict escapeThroughUse(Node* user, VirtualRegister reg, Node* value, bool isParameter)
     {
         switch (user->kind) {
-        case NodeKind::Phi:
         case NodeKind::Narrow:
+            if (isParameter)
+                return { Verdict::Aliases };
+            [[fallthrough]];
+        case NodeKind::Phi:
             return escapes(Escape::Merged);
         case NodeKind::SetStack:
             return escapes(Escape::Homed);

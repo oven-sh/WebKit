@@ -406,6 +406,8 @@ private:
             }
         }
         auto about = m_program.about(callee);
+        if (about && about->summary && !about->summary->isReached())
+            return false;
         if (about && about->summary && about->summary->makesDissolvedScopes && call->block->isInLoop && !m_graph.loopSplittingIsDisabled)
             return false;
         if (call->block->isInLoop && !guardedIntrinsic && !passesCallback && !closureScope && !m_graph.loopSplittingIsDisabled && hasLoop(callee))
