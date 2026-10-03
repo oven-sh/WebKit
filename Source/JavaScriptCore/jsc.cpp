@@ -5347,7 +5347,14 @@ extern const JITOperationAnnotation endOfJITOperationsInShell __asm__("section$e
     snprintf(remarksOption, sizeof(remarksOption), "--aotRemarksPath=%s", remarksPath);
     char buildOption[MAX_PATH + 32];
     snprintf(buildOption, sizeof(buildOption), "--writeAOTImageTo=%s", path);
-    bool isBuilt = !run({ buildOption, remarksOption });
+    intptr_t buildStatus = run({ buildOption, remarksOption });
+    if ((static_cast<uint32_t>(buildStatus) & 0xC0000000u) == 0xC0000000u) {
+        DeleteFileA(path);
+        DeleteFileA(remarksPath);
+        fprintf(stderr, "The process that compiles ahead of time was terminated with status 0x%08x\n", static_cast<uint32_t>(buildStatus));
+        exit(static_cast<int>(buildStatus));
+    }
+    bool isBuilt = !buildStatus;
     struct _stat64 written;
     isBuilt = isBuilt && !_stat64(path, &written) && written.st_size;
 
@@ -5406,6 +5413,12 @@ extern char** environ;
     RELEASE_ASSERT(!posix_spawn(&builder, executable, nullptr, nullptr, argumentsPlus({ pathBuffer, remarksPathBuffer }).mutableSpan().data(), environ));
     int status = 0;
     while (waitpid(builder, &status, 0) < 0 && errno == EINTR) { }
+    if (WIFSIGNALED(status)) {
+        unlink(path);
+        unlink(remarksPath);
+        fprintf(stderr, "The process that compiles ahead of time was terminated by signal %d\n", WTERMSIG(status));
+        exit(128 + WTERMSIG(status));
+    }
     struct stat written;
     bool isBuilt = WIFEXITED(status) && !WEXITSTATUS(status) && !fstat(fileDescriptor, &written) && written.st_size;
 #if OS(FREEBSD)
