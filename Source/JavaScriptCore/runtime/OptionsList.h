@@ -164,22 +164,13 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, numberOfAOTCompilerThreads, 0, Normal, "Number of threads used to compile an image. Zero means one per processor."_s) \
     v(Bool, useAOTInlineFastPathsInLoops, true, Normal, "The AOT compiler emits fast paths inline, instead of calling shared stubs, in loops and in recursive functions. Faster in hot code, at the cost of about 10% more code."_s) \
     v(Bool, useAOTLoopSplitting, true, Normal, "The AOT compiler emits two copies of each loop: a fast copy with no slow paths, and a generic copy that the fast copy exits to."_s) \
-    v(Bool, useGuardPagesForShortFunctionExecutables, false, Normal, "For testing. Place each short-form FunctionExecutable at the end of a page followed by an unmapped page, so that reading past it crashes."_s) \
     v(OptionString, aotTypeTablePath, nullptr, Normal, "When compiling: path to the program's type table (AOT::TypeTable), which the source refers to by index (see useTypeTags)."_s) \
     v(OptionString, aotOverriddenMethodsPath, nullptr, Normal, "When compiling: path to a file listing the built-in methods overridden by the program's subclasses, one per line (e.g. `Map.set`). If unset, every built-in method is assumed to be overridable."_s) \
-    v(Unsigned, aotShapeOptimizations, 15, Normal, "Bitmask selecting how shapes from the type table are used. 1: lay out object literals accordingly. 2: optimize reads. 4: optimize writes. 8: a read of a property that a layout is known to lack yields undefined."_s) \
     v(Bool, useAOTTypedFields, false, Normal, "A value read through a static type has the type that the type table gives the field. For an object allocated with a typed layout this holds because every store to the field is checked (TypedLayoutTable). For any other object the value is read on the slow path and checked, and a mismatch throws a TypeError, as for a parameter."_s) \
     v(Bool, auditAOTTypedFields, false, Normal, "With useAOTTypedFields: compiled code does not rely on static types, and each violation that would have thrown a TypeError is logged instead (AUDIT lines), once per reason and typed layout. Use to find where a program contradicts its types."_s) \
-    v(Bool, preferUnsplitAOTLoops, true, Normal, "Compile each function with its loops unsplit first, hoisting the storage and length loads of loop-invariant arrays out of the loop. With useAOTLoopSplitting, the function is recompiled with split loops only if a loop contains an access whose slow path has side effects. Requires useImmutableIntrinsics."_s) \
     v(Bool, useAOTInlining, true, Normal, "Inline a call whose callee is known exactly, if the callee is small or this is its only call site."_s) \
-    v(Unsigned, maximumAOTInlineCandidateBytecodeCostInLoop, 60, Normal, "With useAOTInlining: maximum bytecode size of a callee with several call sites, for a call site in a loop."_s) \
-    v(Unsigned, maximumAOTInlineCandidateBytecodeCost, 18, Normal, "With useAOTInlining: the same for a call site outside a loop. Roughly the size of a call."_s) \
-    v(Unsigned, maximumAOTInlineCandidateBytecodeCostWithCallback, 300, Normal, "With useAOTInlining: maximum bytecode size of a callee that calls one of its parameters, for a call site that passes a function expression as that parameter."_s) \
-    v(Unsigned, maximumAOTInlineCandidateBytecodeCostForSingleCallSite, 1200, Normal, "With useAOTInlining: maximum bytecode size of a callee that has exactly one call site."_s) \
-    v(Unsigned, maximumAOTInliningCallerBytecodeCost, 4000, Normal, "With useAOTInlining: maximum total bytecode size inlined into one function."_s) \
     v(Bool, validateAOTInferredTypes, false, Normal, "For testing the AOT compiler. Compiled code checks every value whose type was inferred rather than checked, and crashes if the type is wrong."_s) \
     v(Bool, logAOTTypeInference, false, Normal, "After whole-program type inference, logs the result for each function and variable and what contributed to it. Lines start with \"AOT inference:\"."_s) \
-    v(Unsigned, aotLoopSplittingPolicy, 3, Normal, "Which loops useAOTLoopSplitting applies to. 1: all. 2: loops that contain something the fast copy improves (arithmetic, indexed element accesses, a call it can elide). 3: loops that make no calls. 4: loops that satisfy both 2 and 3. 5: loops that make no calls, or that contain a call the fast copy elides or an indexed element access."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
@@ -189,9 +180,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
     v(Bool, useUnboxedFastArrayIteration, true, Normal, "for-of and array destructuring over an Array keep the index in the frame instead of allocating an Array Iterator object"_s) \
     v(Bool, useSharedRegExpLiteralObjects, true, Normal, "reuse one RegExpObject per literal site when the object provably cannot be observed"_s) \
-    v(Unsigned, aotCacheMissesPerEightSlotsBeforeOwnData, 8, Normal, "A cold-start function gets its own inline cache storage after this many cache misses per eight slots, plus aotExtraCacheMissesBeforeOwnData."_s) \
-    v(Unsigned, aotExtraCacheMissesBeforeOwnData, 4, Normal, "See aotCacheMissesPerEightSlotsBeforeOwnData."_s) \
-    v(Unsigned, aotQuoteCompressionBlockSize, 65536, Normal, "Source text that error messages may quote is compressed in blocks of this many bytes. Tests use a small value to get more than one block."_s) \
     v(Bool, hideFunctionSourceForTesting, false, Normal, "Function.prototype.toString() behaves as if the program had been built without source text."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "Freeze the initial properties of built-in objects such as Object.prototype, Array.prototype and Math when a realm is created. See JSGlobalObject::makeIntrinsicsImmutable()."_s) \
     v(Bool, useTypeTags, false, Normal, "Allow type tags in source text: a 0x01 byte followed by six characters that encode a number (Lexer::readTypeTag()), attached to the next token. The bundler emits them to convey static types."_s) \

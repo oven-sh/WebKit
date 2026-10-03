@@ -284,7 +284,6 @@ static bool canSkipLoopSplitting(Graph& graph)
 static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
-    triesUnsplitLoops &= Options::preferUnsplitAOTLoops();
     graph.loopSplittingIsDisabled = triesUnsplitLoops;
     graph.setCalleeHints(hints);
     graph.setSummary(summary);
@@ -314,7 +313,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
     planMultiValueReturns(graph);
-    if (triesUnsplitLoops && Options::useAOTLoopSplitting() && Options::aotLoopSplittingPolicy() && !canSkipLoopSplitting(graph))
+    if (triesUnsplitLoops && Options::useAOTLoopSplitting() && !canSkipLoopSplitting(graph))
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false);
     inferRanges(graph);
     optimizeLoops(graph);

@@ -1205,7 +1205,7 @@ private:
                 if (auto field = Graph::typedFieldAccessedBy(node); field && field->fieldType.isConstrained())
                     return typeOf(node->as<OpGetById>().m_base) ? field->fieldType.type() | (field->isOptional ? TUndefined : TNone) : TNone;
             }
-            if (Options::useAOTTypedFields() && !Options::auditAOTTypedFields() && (Options::aotShapeOptimizations() & 2) && !node->guard && TypeTable::shared()) {
+            if (Options::useAOTTypedFields() && !Options::auditAOTTypedFields() && !node->guard && TypeTable::shared()) {
                 if (uint32_t tag = Graph::typeTagOf(node)) {
                     if (auto field = TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); field && field->fieldType.isConstrained()) {
                         if (!typeOf(node->as<OpGetById>().m_base))

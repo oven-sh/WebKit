@@ -2196,10 +2196,10 @@ std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
     uint32_t tag = typeTagOf(node);
     unsigned identifier;
     VirtualRegister base;
-    if (node->isBytecode(op_get_by_id) && (Options::aotShapeOptimizations() & 2)) {
+    if (node->isBytecode(op_get_by_id)) {
         identifier = node->as<OpGetById>().m_property;
         base = node->as<OpGetById>().m_base;
-    } else if (node->isBytecode(op_put_by_id) && (Options::aotShapeOptimizations() & 4)) {
+    } else if (node->isBytecode(op_put_by_id)) {
         identifier = node->as<OpPutById>().m_property;
         base = node->as<OpPutById>().m_base;
     } else
@@ -2447,7 +2447,7 @@ uint16_t Graph::thisLayoutID() const
 
 uint16_t Graph::newObjectLayoutID(const Node* node)
 {
-    if (!Options::useAOTTypedFields() || !TypeTable::hasTypedFields() || !(Options::aotShapeOptimizations() & 1))
+    if (!Options::useAOTTypedFields() || !TypeTable::hasTypedFields())
         return 0;
     uint32_t tag = typeTagOf(node);
     return tag ? TypeTable::shared()->allocationLayoutID(tag) : 0;
@@ -2459,7 +2459,7 @@ std::optional<KnownShape> Graph::literalShape(const Node* node) const
         return node->graph->literalShape(node);
     unsigned count = node->numberOfLiteralProperties;
     std::optional<TypeTable::Layout> layout;
-    if (uint32_t tag = typeTagOf(node); tag && (Options::aotShapeOptimizations() & 1) && TypeTable::shared())
+    if (uint32_t tag = typeTagOf(node); tag && TypeTable::shared())
         layout = TypeTable::shared()->layoutOf(tag);
     if ((!count && !layout && !newObjectLayoutID(node)) || count > KnownShape::maxProperties)
         return std::nullopt;
@@ -3296,45 +3296,6 @@ private:
         return nullptr;
     }
 
-    static bool opcodeBenefitsFromFastCopy(OpcodeID opcode)
-    {
-        switch (opcode) {
-        case op_add:
-        case op_sub:
-        case op_mul:
-        case op_div:
-        case op_mod:
-        case op_pow:
-        case op_inc:
-        case op_dec:
-        case op_negate:
-        case op_bitand:
-        case op_bitor:
-        case op_bitxor:
-        case op_bitnot:
-        case op_lshift:
-        case op_rshift:
-        case op_urshift:
-        case op_less:
-        case op_lesseq:
-        case op_greater:
-        case op_greatereq:
-        case op_jless:
-        case op_jlesseq:
-        case op_jgreater:
-        case op_jgreatereq:
-        case op_jnless:
-        case op_jnlesseq:
-        case op_jngreater:
-        case op_jngreatereq:
-        case op_get_by_val:
-        case op_put_by_val:
-            return true;
-        default:
-            return false;
-        }
-    }
-
     static bool isCallLike(OpcodeID opcode)
     {
         switch (opcode) {
@@ -3410,9 +3371,9 @@ private:
             return false;
         const JSInstruction* instruction = m_instructions.at(offset).ptr();
         unsigned identifier;
-        if (instruction->opcodeID() == op_get_by_id && (Options::aotShapeOptimizations() & 2))
+        if (instruction->opcodeID() == op_get_by_id)
             identifier = instruction->as<OpGetById>().m_property;
-        else if (instruction->opcodeID() == op_put_by_id && (Options::aotShapeOptimizations() & 4))
+        else if (instruction->opcodeID() == op_put_by_id)
             identifier = instruction->as<OpPutById>().m_property;
         else
             return false;
@@ -3421,14 +3382,12 @@ private:
 
     bool chooseGuards()
     {
-        if (!Options::useAOTLoopSplitting() || !Options::aotLoopSplittingPolicy() || !usesDataStubs())
+        if (!Options::useAOTLoopSplitting() || !usesDataStubs())
             return false;
         unsigned size = m_instructions.size();
         struct BlockInfo {
             Vector<unsigned, 8> guards;
-            bool benefitsFromFastCopy { false };
             bool hasRealCall { false };
-            bool benefitsGreatlyFromFastCopy { false };
         };
         Vector<BlockInfo> blockInfos(m_graph.blocks.size());
         for (BasicBlock* block : m_graph.m_rpo) {
@@ -3473,18 +3432,8 @@ private:
                 bool isGuarded = canBeGuarded(instruction) && !usesTypedAccessWithoutGuard(offset) && !isCheckSubsumedByAssertion(offset, block->bytecodeEnd);
                 if (isGuarded)
                     blockInfo.guards.append(offset);
-                OpcodeID opcode = instruction->opcodeID();
-                if (isCallLike(opcode)) {
-                    if (isGuarded) {
-                        blockInfo.benefitsFromFastCopy = true;
-                        blockInfo.benefitsGreatlyFromFastCopy = true;
-                    } else
-                        blockInfo.hasRealCall = true;
-                } else if (opcodeBenefitsFromFastCopy(opcode)) {
-                    blockInfo.benefitsFromFastCopy = true;
-                    if (opcode == op_get_by_val || opcode == op_put_by_val)
-                        blockInfo.benefitsGreatlyFromFastCopy = true;
-                }
+                if (isCallLike(instruction->opcodeID()) && !isGuarded)
+                    blockInfo.hasRealCall = true;
             }
         }
 
@@ -3507,32 +3456,10 @@ private:
         }
         BitVector hasTwoCopies(m_graph.blocks.size());
         for (auto& [header, body] : bodies) {
-            bool hasBenefit = false;
-            bool hasLargeBenefit = false;
             bool hasRealCall = false;
-            for (unsigned index : body) {
-                hasBenefit |= blockInfos[index].benefitsFromFastCopy;
-                hasLargeBenefit |= blockInfos[index].benefitsGreatlyFromFastCopy;
+            for (unsigned index : body)
                 hasRealCall |= blockInfos[index].hasRealCall;
-            }
-            bool isProfitable = true;
-            switch (Options::aotLoopSplittingPolicy()) {
-            case 2:
-                isProfitable = hasBenefit;
-                break;
-            case 3:
-                isProfitable = !hasRealCall;
-                break;
-            case 4:
-                isProfitable = hasBenefit && !hasRealCall;
-                break;
-            case 5:
-                isProfitable = hasLargeBenefit || !hasRealCall;
-                break;
-            default:
-                break;
-            }
-            if (isProfitable)
+            if (!hasRealCall)
                 hasTwoCopies.merge(body);
         }
         for (BasicBlock* block : m_graph.m_rpo) {
@@ -4157,7 +4084,7 @@ private:
                 if (m_objectPlan.stores.isEmpty() || m_objectPlan.stores.last().offset >= block->bytecodeEnd)
                     break;
                 if (uint16_t layoutID = m_graph.thisLayoutID()) {
-                    bool hasFieldForEachProperty = TypeTable::hasTypedFields() && (Options::aotShapeOptimizations() & 4) && !Options::auditAOTTypedFields();
+                    bool hasFieldForEachProperty = TypeTable::hasTypedFields() && !Options::auditAOTTypedFields();
                     for (auto& property : m_objectPlan.properties) {
                         auto field = hasFieldForEachProperty ? TypeTable::shared()->layoutField(layoutID, m_codeBlock->identifier(property.identifier).impl()) : std::nullopt;
                         hasFieldForEachProperty = field && field->isInObject();

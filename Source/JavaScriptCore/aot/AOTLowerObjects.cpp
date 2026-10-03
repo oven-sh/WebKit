@@ -292,7 +292,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 KnownShape shape;
                 for (auto& property : plan.properties)
                     shape.names.append(code().codeBlock()->identifier(property.identifier).impl());
-                if (uint32_t tag = node->graph->typeTagAt(plan.stores[0].offset); tag && (Options::aotShapeOptimizations() & 1) && TypeTable::shared()) {
+                if (uint32_t tag = node->graph->typeTagAt(plan.stores[0].offset); tag && TypeTable::shared()) {
                     if (auto layout = TypeTable::shared()->layoutOf(tag); layout && layout->properties.size() == count) {
                         bool matchesSourceOrder = true;
                         for (unsigned i = 0; i < count; ++i)

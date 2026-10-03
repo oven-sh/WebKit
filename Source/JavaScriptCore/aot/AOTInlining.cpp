@@ -20,6 +20,12 @@ namespace JSC { namespace AOT {
 
 namespace {
 
+constexpr unsigned maximumCandidateBytecodeCost = 18;
+constexpr unsigned maximumCandidateBytecodeCostInLoop = 60;
+constexpr unsigned maximumCandidateBytecodeCostWithCallback = 300;
+constexpr unsigned maximumCandidateBytecodeCostForSingleCallSite = 1200;
+constexpr unsigned maximumCallerBytecodeCost = 4000;
+
 class Inliner {
 public:
     Inliner(Graph& graph, const ProgramCode& program)
@@ -99,8 +105,8 @@ public:
             return false;
         unsigned size = callee->instructionsSize();
         if (summary && summary->isNonEscaping && summary->directCalls.load(std::memory_order_relaxed) == 1)
-            return size <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite();
-        return size <= (isCalledInLoop ? Options::maximumAOTInlineCandidateBytecodeCostInLoop() : std::min(Options::maximumAOTInlineCandidateBytecodeCost(), Options::maximumAOTInlineCandidateBytecodeCostInLoop()));
+            return size <= maximumCandidateBytecodeCostForSingleCallSite;
+        return size <= (isCalledInLoop ? maximumCandidateBytecodeCostInLoop : maximumCandidateBytecodeCost);
     }
 
     static bool hasLoop(UnlinkedCodeBlock* callee)
@@ -392,7 +398,7 @@ private:
                 closureFunction = calleeNode;
             callee = known->forCall;
             calleeExecutable = known->executable;
-            if (callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostWithCallback()) {
+            if (callee->instructionsSize() <= maximumCandidateBytecodeCostWithCallback) {
                 for (unsigned parameter = 0; parameter + 1 < argc && !passesCallback; ++parameter) {
                     Node* argument = resolve(call->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::argumentOffset(parameter))));
                     passesCallback = argument->isBytecode(op_new_func_exp) && parameter + 1 < callee->numParameters() && callsParameter(callee, parameter);
@@ -406,9 +412,9 @@ private:
             return false;
         if (guardedIntrinsic && (!about || !canBeInlinedIntoCaller(callee)))
             return declineToInline(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
-        if (!about || !canBeInlinedIntoCaller(callee) || !(closureScope || guardedIntrinsic ? callee->instructionsSize() <= Options::maximumAOTInlineCandidateBytecodeCostForSingleCallSite() : (passesCallback && (!about->summary || about->summary->isReached())) || isProfitable(callee, about->summary, block->isInLoop || likelyFunction || m_graph.isCalledRepeatedly())))
+        if (!about || !canBeInlinedIntoCaller(callee) || !(closureScope || guardedIntrinsic ? callee->instructionsSize() <= maximumCandidateBytecodeCostForSingleCallSite : (passesCallback && (!about->summary || about->summary->isReached())) || isProfitable(callee, about->summary, block->isInLoop || likelyFunction || m_graph.isCalledRepeatedly())))
             return guardedIntrinsic ? declineToInline("it is too big"_s) : false;
-        if (m_inlinedBytecodeSize + callee->instructionsSize() > Options::maximumAOTInliningCallerBytecodeCost() || m_graph.inlineFrames.size() > PackedSite::maxInlineFrames)
+        if (m_inlinedBytecodeSize + callee->instructionsSize() > maximumCallerBytecodeCost || m_graph.inlineFrames.size() > PackedSite::maxInlineFrames)
             return guardedIntrinsic ? declineToInline("the caller has taken over enough"_s) : false;
         unsigned depth = 0;
         for (unsigned frame = caller.inlineFrame(); frame; frame = m_graph.inlineFrames[frame].parent)

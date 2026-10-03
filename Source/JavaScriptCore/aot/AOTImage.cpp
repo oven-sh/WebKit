@@ -1064,7 +1064,7 @@ Vector<uint8_t> ImageBuilder::finish()
             }
         }
     }
-    size_t compressionBlockSize = std::max(64u, Options::aotQuoteCompressionBlockSize());
+    constexpr size_t compressionBlockSize = 64 * KB;
     uint32_t quoteTextBlockSize = 0;
     if (auto packed = compressInBlocks(quotesText.span(), compressionBlockSize)) {
         quotesText = WTF::move(*packed);

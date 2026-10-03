@@ -368,8 +368,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
             instance->typeCoverageCounters = instance->collections->typeCoverageCountersWithoutFile.mutableSpan().data();
         }
     }
-    instance->missLimitPerEightSlots = Options::aotCacheMissesPerEightSlotsBeforeOwnData();
-    instance->remainingMissBudget = Options::aotExtraCacheMissesBeforeOwnData();
+    instance->missLimitPerEightSlots = 8;
+    instance->remainingMissBudget = 4;
     instance->structureIDBase = JSC::structureIDBase();
     {
         auto idOf = [](Structure* structure) { return structure->id().bits(); };
