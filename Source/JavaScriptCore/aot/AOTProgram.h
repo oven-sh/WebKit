@@ -10,6 +10,8 @@
 #include "AOTStubs.h"
 #include "AOTType.h"
 #include "DeclaredNamesLink.h"
+#include "JSCJSValue.h"
+#include "VirtualRegister.h"
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -119,7 +121,47 @@ public:
     }
     bool isUntracked(Variable, UniquedStringImpl* name) const;
 
+    struct ObjectLiteral {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(ObjectLiteral);
+        struct Value {
+            JSValue immediate;
+            VirtualRegister constantCell;
+            bool isKnown() const { return immediate || constantCell.isValid(); }
+        };
+        Vector<UniquedStringImpl*, 8> names;
+        Vector<Value, 8> values;
+        std::optional<uint8_t> inlineCapacity;
+        UnlinkedCodeBlock* codeBlock { nullptr };
+        UniquedStringImpl* variableName { nullptr };
+        bool isNeverAllocated { false };
+    };
+    using StoresToVariables = Vector<std::pair<Variable, std::unique_ptr<ObjectLiteral>>, 4>;
+    using NamesReadOfVariables = Vector<std::pair<Variable, UniquedStringImpl*>, 8>;
+    using EscapingVariables = Vector<std::pair<Variable, ASCIILiteral>, 8>;
+    void noteObjectsInVariables(StoresToVariables&&, const EscapingVariables&, const NamesReadOfVariables& = { }, std::span<const Variable> needingObject = { }, std::span<UniquedStringImpl* const> lookedUpFromUnknownScopes = { });
+    void noteObjectEscapes(Variable variable, ASCIILiteral how) { noteObjectsInVariables({ }, { { variable, how } }); }
+    void noteObjectsEscapeIn(const void* scope, ASCIILiteral how);
+    unsigned finishFindingConstantObjects(unsigned& neverAllocated);
+    const ObjectLiteral* constantObjectIn(Variable variable) const
+    {
+        if (m_objectsInVariables.isEmpty())
+            return nullptr;
+        auto it = m_objectsInVariables.find({ variable.scope, variable.offset });
+        return it == m_objectsInVariables.end() ? nullptr : it->value.literal.get();
+    }
+
 private:
+    struct ObjectInVariable {
+        std::unique_ptr<ObjectLiteral> literal;
+        unsigned numberOfStores { 0 };
+        ASCIILiteral howItEscapes;
+        bool needsObject { false };
+        UncheckedKeyHashSet<UniquedStringImpl*> namesRead;
+    };
+    Lock m_objectsInVariablesLock;
+    UncheckedKeyHashMap<std::pair<const void*, unsigned>, ObjectInVariable> m_objectsInVariables;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_namesLookedUpFromUnknownScopes;
+
     using ReaderSet = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
     struct Cell {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(Cell);

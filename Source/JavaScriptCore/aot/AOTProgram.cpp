@@ -123,6 +123,61 @@ void VariableSummaries::giveUpOnScope(const void* scope)
     m_untrackedScopes.add(scope);
 }
 
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(VariableSummaries::ObjectLiteral);
+
+void VariableSummaries::noteObjectsInVariables(StoresToVariables&& stores, const EscapingVariables& escaping, const NamesReadOfVariables& namesRead, std::span<const Variable> needingObject, std::span<UniquedStringImpl* const> lookedUpFromUnknownScopes)
+{
+    Locker locker { m_objectsInVariablesLock };
+    for (auto& [variable, literal] : stores) {
+        auto& entry = m_objectsInVariables.add({ variable.scope, variable.offset }, ObjectInVariable { }).iterator->value;
+        entry.numberOfStores++;
+        entry.literal = WTF::move(literal);
+    }
+    for (auto [variable, how] : escaping)
+        m_objectsInVariables.add({ variable.scope, variable.offset }, ObjectInVariable { }).iterator->value.howItEscapes = how;
+    for (auto [variable, name] : namesRead)
+        m_objectsInVariables.add({ variable.scope, variable.offset }, ObjectInVariable { }).iterator->value.namesRead.add(name);
+    for (Variable variable : needingObject)
+        m_objectsInVariables.add({ variable.scope, variable.offset }, ObjectInVariable { }).iterator->value.needsObject = true;
+    for (UniquedStringImpl* name : lookedUpFromUnknownScopes)
+        m_namesLookedUpFromUnknownScopes.add(name);
+}
+
+void VariableSummaries::noteObjectsEscapeIn(const void* scope, ASCIILiteral how)
+{
+    Locker locker { m_objectsInVariablesLock };
+    for (auto& entry : m_objectsInVariables) {
+        if (entry.key.first == scope)
+            entry.value.howItEscapes = how;
+    }
+}
+
+unsigned VariableSummaries::finishFindingConstantObjects(unsigned& neverAllocated)
+{
+    m_objectsInVariables.removeIf([&](auto& entry) {
+        auto& object = entry.value;
+        if (!object.literal)
+            return true;
+        ASCIILiteral why = object.howItEscapes;
+        if (object.numberOfStores != 1)
+            why = "is-assigned-more-than-once"_s;
+        else if (m_hasGivenUpOnAllScopes.load(std::memory_order_relaxed) || m_untrackedScopes.contains(entry.key.first) || m_namesLookedUpFromUnknownScopes.contains(object.literal->variableName))
+            why = "may-be-looked-up-by-name"_s;
+        if (!why.isNull() && Options::verboseAOTCompilation()) [[unlikely]]
+            dataLogLn("AOT: the object literal in ", StringView(object.literal->variableName), " (", object.literal->names.size(), " properties, ", object.namesRead.size(), " read by name) is not constant: ", why);
+        return !why.isNull();
+    });
+    neverAllocated = 0;
+    for (auto& object : m_objectsInVariables.values()) {
+        object.literal->isNeverAllocated = !object.needsObject && std::ranges::all_of(object.namesRead, [&](UniquedStringImpl* name) {
+            size_t index = object.literal->names.find(name);
+            return index == notFound ? isAbsentFromObjectPrototype(name) : object.literal->values[index].isKnown();
+        });
+        neverAllocated += object.literal->isNeverAllocated;
+    }
+    return m_objectsInVariables.size();
+}
+
 bool VariableSummaries::isUntracked(Variable variable, UniquedStringImpl* name) const
 {
     return m_hasGivenUpOnAllScopes.load(std::memory_order_relaxed) || m_untrackedScopes.contains(variable.scope) || m_untrackedNames.contains(name);

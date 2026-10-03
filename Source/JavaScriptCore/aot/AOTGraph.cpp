@@ -22,6 +22,7 @@
 #include "PreciseJumpTargetsInlines.h"
 #include "UnlinkedCodeBlock.h"
 #include "UnlinkedFunctionCodeBlock.h"
+#include "UnlinkedModuleProgramCodeBlock.h"
 #include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ScopedLambda.h>
@@ -308,7 +309,7 @@ const Vector<unsigned, 4>& Graph::literalStores(unsigned offsetOfNewObject)
 void Graph::findLiteralStores()
 {
     m_hasFoundLiteralStores = true;
-    constexpr unsigned maximumCount = 2048;
+    constexpr unsigned maximumCount = KnownShape::maxProperties;
     UncheckedKeyHashMap<int, unsigned, DefaultHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> open;
     for (const auto& instruction : m_codeBlock->instructions()) {
         OpcodeID opcode = instruction->opcodeID();
@@ -1189,6 +1190,269 @@ Variable Graph::variableAccessedBy(const Node* node)
     return { };
 }
 
+Node* Graph::constantCellOf(UnlinkedCodeBlock* owner, VirtualRegister reg)
+{
+    return m_constantCellsOfOtherCode.ensure({ owner, reg.offset() }, [&] {
+        Node* node = addNode(NodeKind::ConstantCell);
+        node->range = IntegerRange::unknown();
+        node->reg = reg;
+        node->ownerOfConstant = owner;
+        JSValue value = owner->getConstant(reg);
+        node->type = valueType(value);
+        if (value.isString() && owner->codeType() == ModuleCode)
+            node->type |= asString(value)->length() <= TypedLayoutTable::maxAtomizedStringLength ? TShortOtherString : TLongString;
+        return node;
+    }).iterator->value;
+}
+
+void Graph::recordObjectsInVariables(VariableSummaries& summaries)
+{
+    auto isAlias = [](const Node* node) {
+        return node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz) || node->isBytecode(op_type_tag);
+    };
+    auto skipAliases = [&](Node* node) {
+        while (isAlias(node))
+            node = node->uses[0].node;
+        return node;
+    };
+    enum class UseKind : uint8_t { ReadsName, OnlyTests, NeedsObject, Escapes };
+    auto onlyReadsArguments = [&](Node* call, VirtualRegister calleeRegister, unsigned argv, VirtualRegister argument) {
+        Node* callee = call->use(calleeRegister);
+        int position = argument.offset() - (-static_cast<int>(argv) + CallFrame::thisArgumentOffset());
+        if (argument == calleeRegister)
+            return false;
+        if (callee->kind == NodeKind::LinkTimeConstant) {
+            auto constant = static_cast<LinkTimeConstant>(callee->intrinsic);
+            return (position == 2 && constant == LinkTimeConstant::copyDataProperties) || (!position && constant == LinkTimeConstant::cloneObject);
+        }
+        if (callee->kind != NodeKind::Intrinsic || position != 1)
+            return false;
+        auto* intrinsics = ImmutableIntrinsics::shared();
+        auto& entry = intrinsics->at(callee->intrinsic);
+        auto& holder = intrinsics->at(entry.holder);
+        if (holder.holder != ImmutableIntrinsics::globalObject || holder.name != "Object"_s)
+            return false;
+        return entry.name == "keys"_s || entry.name == "values"_s || entry.name == "entries"_s || entry.name == "hasOwn"_s || entry.name == "getOwnPropertyNames"_s || entry.name == "isFrozen"_s;
+    };
+    auto kindOf = [&](Node* user, VirtualRegister reg) {
+        if (user->kind != NodeKind::Bytecode || user->guard)
+            return UseKind::Escapes;
+        auto needsObjectIf = [](bool condition) { return condition ? UseKind::NeedsObject : UseKind::Escapes; };
+        switch (user->opcode) {
+        case op_get_by_id:
+            return UseKind::ReadsName;
+        case op_jundefined_or_null:
+        case op_jnundefined_or_null:
+        case op_jeq_null:
+        case op_jneq_null:
+        case op_eq_null:
+        case op_neq_null:
+        case op_is_undefined_or_null:
+        case op_jtrue:
+        case op_jfalse:
+        case op_not:
+            return UseKind::OnlyTests;
+        case op_stricteq:
+        case op_nstricteq:
+        case op_jstricteq:
+        case op_jnstricteq:
+        case op_typeof:
+            return UseKind::NeedsObject;
+        case op_get_by_val:
+            return needsObjectIf(reg == user->as<OpGetByVal>().m_base);
+        case op_in_by_val:
+            return needsObjectIf(reg == user->as<OpInByVal>().m_base);
+        case op_in_by_id:
+            return needsObjectIf(reg == user->as<OpInById>().m_base);
+        case op_get_property_enumerator:
+            return needsObjectIf(reg == user->as<OpGetPropertyEnumerator>().m_base);
+        case op_enumerator_next:
+            return needsObjectIf(reg == user->as<OpEnumeratorNext>().m_base);
+        case op_enumerator_get_by_val:
+            return needsObjectIf(reg == user->as<OpEnumeratorGetByVal>().m_base);
+        case op_enumerator_in_by_val:
+            return needsObjectIf(reg == user->as<OpEnumeratorInByVal>().m_base);
+        case op_enumerator_has_own_property:
+            return needsObjectIf(reg == user->as<OpEnumeratorHasOwnProperty>().m_base);
+        case op_call:
+            return needsObjectIf(onlyReadsArguments(user, user->as<OpCall>().m_callee, user->as<OpCall>().m_argv, reg));
+        case op_call_ignore_result:
+            return needsObjectIf(onlyReadsArguments(user, user->as<OpCallIgnoreResult>().m_callee, user->as<OpCallIgnoreResult>().m_argv, reg));
+        default:
+            return UseKind::Escapes;
+        }
+    };
+    VariableSummaries::EscapingVariables escaping;
+    VariableSummaries::NamesReadOfVariables namesRead;
+    Vector<Variable, 4> needingObject;
+    Vector<UniquedStringImpl*, 4> lookedUpFromUnknownScopes;
+    UncheckedKeyHashMap<Node*, Vector<Node*, 2>> usersOfLiterals;
+    auto nameOfUser = [](const Node* user) {
+        return user->kind == NodeKind::Bytecode ? ASCIILiteral::fromLiteralUnsafe(opcodeNames[user->opcode]) : user->kind == NodeKind::Phi ? "meets-another-value"_s : "is-kept-in-the-frame"_s;
+    };
+    std::optional<UncheckedKeyHashSet<const Node*>> storesNeverReadFromFrame;
+    auto isNeverReadFromFrame = [&](const Node* store) {
+        if (!storesNeverReadFromFrame) {
+            storesNeverReadFromFrame.emplace();
+            for (BasicBlock* block : m_rpo) {
+                BitVector readLater = block->readByHandlersAfterBlock;
+                readLater.ensureSize(numRegisters());
+                for (BasicBlock* successor : block->successors)
+                    readLater.merge(successor->liveIn);
+                for (unsigned i = block->nodes.size(); i--;) {
+                    const Node* node = block->nodes[i];
+                    if (node->kind == NodeKind::GetStack)
+                        readLater.set(registerIndex(node->reg));
+                    else if (node->kind == NodeKind::SetStack) {
+                        unsigned index = registerIndex(node->reg);
+                        if (!readLater.get(index) && !block->readByBlockHandlers.get(index))
+                            storesNeverReadFromFrame->add(node);
+                        readLater.clear(index);
+                    } else if (readsOperandsFromFrame(node)) {
+                        auto bytecode = node->as<OpNewArray>();
+                        for (unsigned operand = 0; operand < bytecode.m_argc; ++operand)
+                            readLater.set(registerIndex(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(operand))));
+                    }
+                }
+            }
+        }
+        return storesNeverReadFromFrame->contains(store);
+    };
+    auto visit = [&](Node* user) {
+        if (isAlias(user) || (user->kind == NodeKind::SetStack && isNeverReadFromFrame(user)))
+            return;
+        for (auto& use : user->uses) {
+            Node* source = skipAliases(use.node);
+            if (source->isBytecode(op_new_object)) {
+                usersOfLiterals.add(source, Vector<Node*, 2> { }).iterator->value.append(user);
+                continue;
+            }
+            if (!source->isBytecode(op_get_from_scope))
+                continue;
+            Variable variable = variableAccessedBy(source);
+            if (!variable)
+                continue;
+            switch (kindOf(user, use.reg)) {
+            case UseKind::ReadsName:
+                namesRead.append({ variable, user->graph->codeBlock()->identifier(user->as<OpGetById>().m_property).impl() });
+                break;
+            case UseKind::OnlyTests:
+                break;
+            case UseKind::NeedsObject:
+                needingObject.append(variable);
+                break;
+            case UseKind::Escapes:
+                escaping.append({ variable, nameOfUser(user) });
+                break;
+            }
+        }
+    };
+    std::optional<Vector<const void*, 4>> scopesMadeHere;
+    auto noteLookupByName = [&](Node* node, unsigned identifier, unsigned offset, ResolveType type) {
+        UniquedStringImpl* name = node->graph->codeBlock()->identifier(identifier).impl();
+        const DeclaredNamesLink* declaredNames = node->graph->m_declaredNames;
+        if (!declaredNames) {
+            lookedUpFromUnknownScopes.append(name);
+            return;
+        }
+        if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
+            if (!scopesMadeHere) {
+                scopesMadeHere.emplace();
+                if (auto* module = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_codeBlock))
+                    scopesMadeHere->append(module->getConstant(VirtualRegister(module->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell());
+                for (BasicBlock* block : m_rpo) {
+                    for (Node* made : block->nodes) {
+                        if (made->isBytecode(op_create_lexical_environment) || made->isBytecode(op_create_generator_frame_environment))
+                            scopesMadeHere->append(scopeIdentity(made));
+                    }
+                }
+            }
+            for (const void* scope : *scopesMadeHere) {
+                if (scope)
+                    escaping.append({ Variable { scope, offset }, "is-accessed-through-a-scope-that-cannot-be-told"_s });
+                else
+                    lookedUpFromUnknownScopes.append(name);
+            }
+            declaredNames->forEachSlotNamed(name, [&](const void* scope, unsigned slot) {
+                escaping.append({ Variable { scope, slot }, "is-accessed-through-a-scope-that-cannot-be-told"_s });
+            });
+            return;
+        }
+        auto kind = declaredNames->resolve(name).kind;
+        if (type != Dynamic && (kind == DeclaredNamesLink::Resolution::Global || kind == DeclaredNamesLink::Resolution::Stable))
+            return;
+        declaredNames->forEachSlotNamed(name, [&](const void* scope, unsigned offset) {
+            escaping.append({ Variable { scope, offset }, "may-be-looked-up-by-name"_s });
+        });
+        if (type == Dynamic)
+            lookedUpFromUnknownScopes.append(name);
+    };
+    Vector<Node*, 4> stores;
+    for (BasicBlock* block : m_rpo) {
+        for (Node* phi : block->phis)
+            visit(phi);
+        for (Node* node : block->nodes) {
+            visit(node);
+            if (node->isBytecode(op_put_to_scope)) {
+                if (variableAccessedBy(node))
+                    stores.append(node);
+                else
+                    noteLookupByName(node, node->as<OpPutToScope>().m_var, node->as<OpPutToScope>().m_offset, node->as<OpPutToScope>().m_getPutInfo.resolveType());
+            } else if (node->isBytecode(op_get_from_scope)) {
+                Variable variable = variableAccessedBy(node);
+                if (!variable)
+                    noteLookupByName(node, node->as<OpGetFromScope>().m_var, node->as<OpGetFromScope>().m_offset, node->as<OpGetFromScope>().m_getPutInfo.resolveType());
+                else if (node->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedLazyClosureVar)
+                    escaping.append({ variable, "may-hold-a-function-declaration"_s });
+            }
+        }
+    }
+    VariableSummaries::StoresToVariables storesToVariables;
+    for (Node* store : stores) {
+        Variable variable = variableAccessedBy(store);
+        auto bytecode = store->as<OpPutToScope>();
+        Node* object = skipAliases(store->use(bytecode.m_value));
+        std::unique_ptr<VariableSummaries::ObjectLiteral> literal;
+        if (object->isBytecode(op_new_object)) {
+            UnlinkedCodeBlock* codeBlock = object->graph->codeBlock();
+            auto& instructions = codeBlock->instructions();
+            literal = makeUnique<VariableSummaries::ObjectLiteral>();
+            literal->codeBlock = codeBlock;
+            literal->variableName = store->graph->codeBlock()->identifier(bytecode.m_var).impl();
+            bool hasPlainNames = true;
+            auto add = [&](const OpPutById& property, Node* value) {
+                UniquedStringImpl* name = codeBlock->identifier(property.m_property).impl();
+                hasPlainNames &= !name->isSymbol() && !literal->names.contains(name);
+                literal->names.append(name);
+                VariableSummaries::ObjectLiteral::Value known;
+                if (value->kind == NodeKind::Constant && value->constant)
+                    known.immediate = value->constant;
+                else if (value->kind == NodeKind::ConstantCell && value->reg.isConstant() && !value->ownerOfConstant && value->graph == object->graph && codeBlock->getConstant(value->reg).isString())
+                    known.constantCell = value->reg;
+                literal->values.append(known);
+            };
+            if (object->numberOfLiteralProperties) {
+                auto& absorbed = object->graph->literalStores(object->bytecodeIndex.offset());
+                for (unsigned i = 0; i < object->numberOfLiteralProperties; ++i)
+                    add(instructions.at(absorbed[i])->as<OpPutById>(), object->use(NewObjectPlan::registerOf(i)));
+            }
+            if (object->numberOfLiteralProperties) {
+                if (auto shape = literalShape(object); shape && !shape->layoutID && shape->slots.isEmpty() && shape->inlineCapacity <= std::numeric_limits<uint8_t>::max())
+                    literal->inlineCapacity = shape->inlineCapacity;
+            }
+            for (Node* user : usersOfLiterals.find(object)->value) {
+                if (user != store)
+                    escaping.append({ variable, nameOfUser(user) });
+            }
+            if (!hasPlainNames)
+                escaping.append({ variable, "the-literal-has-a-symbol-or-the-same-name-twice"_s });
+        }
+        storesToVariables.append({ variable, WTF::move(literal) });
+    }
+    if (!storesToVariables.isEmpty() || !escaping.isEmpty() || !namesRead.isEmpty() || !needingObject.isEmpty() || !lookedUpFromUnknownScopes.isEmpty())
+        summaries.noteObjectsInVariables(WTF::move(storesToVariables), escaping, namesRead, needingObject.span(), lookedUpFromUnknownScopes.span());
+}
+
 void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
 {
     for (BasicBlock* block : m_rpo) {
@@ -1597,7 +1861,7 @@ void Graph::noteFieldsComparedWithStrings()
     auto isProgramString = [](Node* node) {
         if (node->kind != NodeKind::ConstantCell || !node->reg.isConstant())
             return false;
-        JSValue constant = node->graph->codeBlock()->getConstant(node->reg);
+        JSValue constant = node->codeBlockOfConstant()->getConstant(node->reg);
         return constant && constant.isString();
     };
     auto note = [&](auto& self, Node* node, unsigned depth) -> void {
@@ -1811,6 +2075,8 @@ std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
 {
     if (!Options::useAOTTypedFields() || Options::useAOTFunctionSplitting() || !TypeTable::typedFieldsAreEnforced() || node->guard)
         return std::nullopt;
+    if (node->onlyChecksConstantObject || node->slotInConstantObjectPlusOne)
+        return std::nullopt;
     uint32_t tag = typeTagOf(node);
     unsigned identifier;
     VirtualRegister base;
@@ -1905,7 +2171,7 @@ void Graph::noteClassesDefined()
                         Node* property = node->use(bytecode.m_property);
                         if (!number || property->kind != NodeKind::ConstantCell || !property->reg.isConstant())
                             continue;
-                        JSValue name = property->graph->codeBlock()->getConstant(property->reg);
+                        JSValue name = property->codeBlockOfConstant()->getConstant(property->reg);
                         const StringImpl* impl = name && name.isString() ? asString(name)->tryGetValueImpl() : nullptr;
                         if (!impl || !impl->isAtom())
                             continue;

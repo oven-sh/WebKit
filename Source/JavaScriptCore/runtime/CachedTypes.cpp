@@ -6046,13 +6046,18 @@ struct BytecodeLinkEncoder::Impl {
         auto graphRequests = arrayAt(header.requestsOffset, header.requestCount, static_cast<const Graph::Request*>(nullptr));
         auto graphStarExports = arrayAt(header.starExportsOffset, header.starExportCount, static_cast<const uint32_t*>(nullptr));
         auto variableEscapes = [&](uint32_t graphModule, uint32_t sid) {
-            if (graphModule >= linked.size() || !linked[graphModule].codeBlock || !hints[linked[graphModule].index])
+            if (graphModule >= linked.size() || !linked[graphModule].codeBlock)
                 return;
             Identifier name = nameOf(sid);
-            if (name.isNull())
+            if (name.isNull()) {
+                linkScopesReadIndirectly.append(linked[graphModule].symbolTable);
                 return;
+            }
             SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(name.impl());
-            if (!entry.isNull() && entry.varOffset().isScope())
+            if (entry.isNull() || !entry.varOffset().isScope())
+                return;
+            linkVariablesReadIndirectly.append({ linked[graphModule].symbolTable, entry.scopeOffset().offset() });
+            if (hints[linked[graphModule].index])
                 hints[linked[graphModule].index]->noteEscape(entry.scopeOffset().offset());
         };
         BitVector allExportsEscape(graphModules.size());
@@ -6110,6 +6115,8 @@ struct BytecodeLinkEncoder::Impl {
         return result;
     }
     Vector<AOT::Variable> linkVariablesWrittenNatively;
+    Vector<AOT::Variable> linkVariablesReadIndirectly;
+    Vector<const void*> linkScopesReadIndirectly;
 
     Vector<AOT::ModuleHints::Binding> moduleBindings(unsigned index)
     {
@@ -6402,6 +6409,40 @@ struct BytecodeLinkEncoder::Impl {
                 if (!AOT::recordKnownFunctionUsesForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries))
                     unreadable++;
             });
+            if (variableSummaries) {
+                for (unsigned index = 0; index < modules.size(); ++index) {
+                    auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
+                    if (!codeBlock)
+                        continue;
+                    JSCell* scope = codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell();
+                    if (auto exported = variablesExportedBy(index)) {
+                        UncheckedKeyHashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> onlyImportedStatically;
+                        for (auto& binding : moduleBindings(index)) {
+                            if (!binding.isExternallyVisible)
+                                onlyImportedStatically.add(binding.scopeOffset);
+                        }
+                        for (uint32_t offset : *exported) {
+                            if (!onlyImportedStatically.contains(offset))
+                                variableSummaries->noteObjectEscapes({ scope, offset }, "is-exported"_s);
+                        }
+                    } else
+                        variableSummaries->noteObjectsEscapeIn(scope, "may-be-exported"_s);
+                    if (auto* slots = codeBlock->heapAllocatedFunctionDeclSlots(); slots && !slots->hasDecodeSource()) {
+                        for (unsigned i = 0; i < slots->size(); ++i)
+                            variableSummaries->noteObjectEscapes({ scope, slots->at(i).offset() }, "may-hold-a-function-declaration"_s);
+                    }
+                }
+                for (AOT::Variable variable : linkVariablesReadIndirectly)
+                    variableSummaries->noteObjectEscapes(variable, "is-read-through-a-namespace"_s);
+                for (const void* scope : linkScopesReadIndirectly)
+                    variableSummaries->noteObjectsEscapeIn(scope, "is-read-through-a-namespace"_s);
+                for (AOT::Variable variable : linkVariablesWrittenNatively)
+                    variableSummaries->noteObjectEscapes(variable, "is-written-by-the-loader"_s);
+                unsigned neverAllocated = 0;
+                unsigned found = variableSummaries->finishFindingConstantObjects(neverAllocated);
+                if (Options::verboseAOTCompilation()) [[unlikely]]
+                    dataLogLn("AOT: ", found, " variables hold a constant object, ", neverAllocated, " of which are never allocated");
+            }
             {
                 Vector<AOT::FunctionSummary*> calledRepeatedly;
                 for (auto& summary : functionSummaries) {

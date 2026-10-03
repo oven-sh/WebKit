@@ -309,6 +309,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         return declined();
     if (program)
         inlineCalls(graph, *program);
+    replaceReadsOfConstantObjects(graph);
     scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
     planMultiValueReturns(graph);
@@ -535,8 +536,10 @@ bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBloc
     graph.noteFieldsComparedWithStrings();
     recordReturnedLiterals(graph);
     graph.noteClassesDefined();
-    if (variableSummaries)
+    if (variableSummaries) {
         graph.recordUntrackableVariableAccesses(*variableSummaries);
+        graph.recordObjectsInVariables(*variableSummaries);
+    }
     return true;
 }
 
@@ -552,6 +555,7 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
         escapingParameters = std::numeric_limits<uint32_t>::max();
         return TTop;
     }
+    replaceReadsOfConstantObjects(graph);
     scalarReplaceReadOnlyObjects(graph);
     Type result = inferTypes(graph, &calleesRead, &calleesWithWidenedInputs) & TTop;
     graph.recordPropertyEffects();

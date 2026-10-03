@@ -762,7 +762,7 @@ NodeUsers::NodeUsers(Graph& graph)
     }
 }
 
-static bool isAbsentFromObjectPrototype(UniquedStringImpl* name)
+bool isAbsentFromObjectPrototype(UniquedStringImpl* name)
 {
     if (!ImmutableIntrinsics::shared() || name->isSymbol())
         return false;
@@ -1008,6 +1008,116 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
                 for (auto& use : node->uses)
                     use.node = resolve(use.node);
             }
+        }
+    }
+}
+
+void replaceReadsOfConstantObjects(Graph& graph)
+{
+    VariableSummaries* summaries = graph.variableSummaries();
+    if (!summaries)
+        return;
+    bool hasReplacedReads = false;
+    auto isAlias = [](const Node* node) {
+        return node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz) || node->isBytecode(op_type_tag);
+    };
+    auto skipAliases = [&](Node* node) {
+        while (isAlias(node))
+            node = node->uses[0].node;
+        return node;
+    };
+    UncheckedKeyHashSet<Node*> objectsNotAllocated;
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (!node->isBytecode(op_put_to_scope))
+                continue;
+            Variable variable = graph.variableAccessedBy(node);
+            auto* literal = variable ? summaries->constantObjectIn(variable) : nullptr;
+            if (!literal || !literal->isNeverAllocated)
+                continue;
+            VirtualRegister value = node->as<OpPutToScope>().m_value;
+            for (auto& use : node->uses) {
+                if (use.reg != value)
+                    continue;
+                Node* object = skipAliases(use.node);
+                RELEASE_ASSERT(object->isBytecode(op_new_object));
+                graph.remark("does-not-allocate-constant-object"_s, StringView(literal->variableName));
+                objectsNotAllocated.add(object);
+                object->isElided = true;
+                use.node = graph.constant(jsBoolean(true));
+            }
+        }
+    }
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (!objectsNotAllocated.isEmpty() && !node->uses.isEmpty()) {
+                if (isAlias(node) && objectsNotAllocated.contains(skipAliases(node))) {
+                    node->isElided = true;
+                    continue;
+                }
+                if (node->kind == NodeKind::SetStack && objectsNotAllocated.contains(skipAliases(node->uses[0].node))) {
+                    node->uses[0].node = graph.constant(jsBoolean(true));
+                    continue;
+                }
+            }
+            if ((node->isBytecode(op_type_tag) || node->isBytecode(op_check_type)) && !node->uses.isEmpty()) {
+                Node* source = skipAliases(node);
+                Variable variable = source->isBytecode(op_get_from_scope) ? graph.variableAccessedBy(source) : Variable { };
+                if (auto* literal = variable ? summaries->constantObjectIn(variable) : nullptr; literal && literal->isNeverAllocated) {
+                    node->replacement = node->uses[0].node;
+                    node->isElided = true;
+                    hasReplacedReads = true;
+                }
+                continue;
+            }
+            if (!node->isBytecode(op_get_by_id) || node->guard || node->isElided || node->isReadOnlyForCall)
+                continue;
+            auto bytecode = node->as<OpGetById>();
+            Node* source = node->use(bytecode.m_base);
+            while (source->kind == NodeKind::Narrow || source->isBytecode(op_check_type) || source->isBytecode(op_check_tdz) || source->isBytecode(op_type_tag))
+                source = source->uses[0].node;
+            if (!source->isBytecode(op_get_from_scope))
+                continue;
+            Variable variable = graph.variableAccessedBy(source);
+            auto* literal = variable ? summaries->constantObjectIn(variable) : nullptr;
+            if (!literal)
+                continue;
+            UniquedStringImpl* name = node->graph->codeBlock()->identifier(bytecode.m_property).impl();
+            size_t index = literal->names.find(name);
+            if (index == notFound) {
+                if (!isAbsentFromObjectPrototype(name))
+                    continue;
+                node->replacement = graph.constant(jsUndefined());
+                node->propertyOfConstantObjectIsAbsent = true;
+            } else if (auto& value = literal->values[index]; value.isKnown()) {
+                node->replacement = value.immediate ? graph.constant(value.immediate) : graph.constantCellOf(literal->codeBlock, value.constantCell);
+            } else {
+                if (literal->inlineCapacity) {
+                    node->slotInConstantObjectPlusOne = safeCast<uint16_t>(index + 1);
+                    node->inlineCapacityOfConstantObject = *literal->inlineCapacity;
+                }
+                continue;
+            }
+            node->onlyChecksConstantObject = true;
+            node->constantObjectIsNeverAllocated = literal->isNeverAllocated;
+            hasReplacedReads = true;
+        }
+    }
+    if (!hasReplacedReads)
+        return;
+    auto resolve = [](Node* node) {
+        while (node->replacement)
+            node = node->replacement;
+        return node;
+    };
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* phi : block->phis) {
+            for (auto& use : phi->uses)
+                use.node = resolve(use.node);
+        }
+        for (Node* node : block->nodes) {
+            for (auto& use : node->uses)
+                use.node = resolve(use.node);
         }
     }
 }

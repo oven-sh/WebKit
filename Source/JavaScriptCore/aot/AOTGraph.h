@@ -171,6 +171,13 @@ struct Node {
     JSValue constant;
     VirtualRegister reg;
     Node* replacement { nullptr };
+    UnlinkedCodeBlock* ownerOfConstant { nullptr };
+    inline UnlinkedCodeBlock* codeBlockOfConstant() const;
+    uint16_t slotInConstantObjectPlusOne { 0 };
+    uint8_t inlineCapacityOfConstantObject { 0 };
+    bool onlyChecksConstantObject { false };
+    bool constantObjectIsNeverAllocated { false };
+    bool propertyOfConstantObjectIsAbsent { false };
     Node* guard { nullptr };
     Node* guarded { nullptr };
     Node* target { nullptr };
@@ -467,6 +474,8 @@ public:
     void findBuiltinsCalled();
     bool isFullyDuplicated { false };
     void recordKnownFunctionUses(const FunctionSummaryMap&, const FunctionSummary* currentSummary);
+    void recordObjectsInVariables(VariableSummaries&);
+    Node* constantCellOf(UnlinkedCodeBlock*, VirtualRegister);
     static PropertyEffect propertyEffectOf(const Node*);
     const FunctionSummary::PropertyEffects* propertyEffectsOfCall(const Node*) const;
     void recordPropertyEffects() const;
@@ -617,6 +626,7 @@ private:
     const CalleeHints* m_hints { nullptr };
     const FunctionSummary* m_summary { nullptr };
     VariableSummaries* m_variableSummaries { nullptr };
+    UncheckedKeyHashMap<std::pair<UnlinkedCodeBlock*, int>, Node*> m_constantCellsOfOtherCode;
     String m_nameForLog;
     unsigned m_summaryReader { VariableSummaries::nobody };
     UncheckedKeyHashMap<int, Vector<Node*>, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> m_storesToFrameRegisters;
@@ -673,6 +683,10 @@ void inlineCalls(Graph&, const ProgramCode&);
 void analyzeEscapes(Graph&);
 void promoteEnvironments(Graph&);
 void scalarReplaceReadOnlyObjects(Graph&);
+void replaceReadsOfConstantObjects(Graph&);
+bool isAbsentFromObjectPrototype(UniquedStringImpl*);
+
+inline UnlinkedCodeBlock* Node::codeBlockOfConstant() const { return ownerOfConstant ? ownerOfConstant : graph->codeBlock(); }
 void recordReturnedLiterals(Graph&);
 void planMultiValueReturns(Graph&);
 uint32_t escapingParameters(Graph&, Vector<const KnownFunction*>* calleesRead);

@@ -1100,6 +1100,8 @@ private:
             }
             return TFinalObject;
         case op_get_by_id:
+            if (node->onlyChecksConstantObject || node->slotInConstantObjectPlusOne)
+                return TAll;
             if (auto type = returnValueTypeReadBy(node))
                 return *type;
             if (TypeTable::typedFieldsAreEnforced() && Options::useAOTTypedFields()) {

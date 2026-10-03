@@ -519,6 +519,41 @@ void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
+    if (node->onlyChecksConstantObject || node->slotInConstantObjectPlusOne) {
+        TypeTable::Field field { };
+        field.slot = node->slotInConstantObjectPlusOne - 1;
+        field.inlineSlots = node->inlineCapacityOfConstantObject;
+        StringView name { node->graph->codeBlock()->identifier(bytecode.m_property).impl() };
+        if (node->slotInConstantObjectPlusOne)
+            m_graph.remark("reads-slot-of-constant-object"_s, name);
+        else if (node->replacement->kind == NodeKind::Constant && node->replacement->constant.isUndefined() && node->propertyOfConstantObjectIsAbsent)
+            m_graph.remark("absent-property-is-undefined"_s, name);
+        else
+            m_graph.remark("folds-property-of-constant-object"_s, name);
+        if (baseNode->type && !mayBe(baseNode->type, TUndefined)) {
+            m_graph.remark("constant-object-is-initialized"_s);
+            setJSValue(node, node->slotInConstantObjectPlusOne ? m_out.load64(fieldAddress(lowJSValue(baseNode), field)) : m_out.int64Zero);
+            return;
+        }
+        LValue base = lowJSValue(baseNode);
+        LBasicBlock isInitialized = m_out.newBlock();
+        LBasicBlock isNotInitialized = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 2> results;
+        m_out.branch(node->constantObjectIsNeverAllocated ? m_out.equal(base, m_out.constInt64(JSValue::encode(jsBoolean(true)))) : isCell(base), usually(isInitialized), rarely(isNotInitialized));
+        m_out.appendTo(isNotInitialized);
+        results.append(m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property)));
+        m_out.jump(continuation);
+        m_out.appendTo(isInitialized);
+        if (node->slotInConstantObjectPlusOne)
+            results.append(m_out.anchor(m_out.load64(fieldAddress(base, field))));
+        else
+            results.append(m_out.anchor(m_out.int64Zero));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, results));
+        return;
+    }
     if (node->isReadOnlyForCall) {
         if (!isSubtype(baseNode->type, TCell)) {
             LValue base = lowJSValue(baseNode);

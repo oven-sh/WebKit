@@ -300,7 +300,7 @@ struct KnownShape {
     bool hasSlotsOutside() const { return layoutID && reserved > inlineSlots; }
     unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : std::max<unsigned>(*std::ranges::max_element(slots) + 1, reserved); }
 
-    static constexpr unsigned maxProperties = 1000;
+    static constexpr unsigned maxProperties = 4096;
     static unsigned inlineCapacityFor(unsigned numberOfProperties);
 };
 

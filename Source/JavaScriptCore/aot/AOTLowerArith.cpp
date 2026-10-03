@@ -493,7 +493,7 @@ std::optional<String> Lowering::constantStringOf(Node* node)
 {
     if (node->kind != NodeKind::ConstantCell || !node->reg.isConstant())
         return std::nullopt;
-    JSValue constant = node->graph->codeBlock()->getConstant(node->reg);
+    JSValue constant = node->codeBlockOfConstant()->getConstant(node->reg);
     if (!constant || !constant.isString())
         return std::nullopt;
     String said = asString(constant)->tryGetValue();
@@ -512,7 +512,7 @@ bool Lowering::isAtomIfString(Node* node, unsigned depth)
     case NodeKind::ConstantCell: {
         if (!node->reg.isConstant())
             return false;
-        JSValue constant = node->graph->codeBlock()->getConstant(node->reg);
+        JSValue constant = node->codeBlockOfConstant()->getConstant(node->reg);
         const StringImpl* impl = constant && constant.isString() ? asString(constant)->tryGetValueImpl() : nullptr;
         return impl && impl->isAtom();
     }

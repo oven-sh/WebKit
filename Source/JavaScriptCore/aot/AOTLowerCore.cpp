@@ -932,6 +932,8 @@ LValue Lowering::lowRaw(Node* node)
         }
         break;
     case NodeKind::ConstantCell:
+        if (node->ownerOfConstant)
+            return constantThroughStub(programConstantIndex(node), Stub::Constant);
         return lowConstantRegister(*node->graph, node->reg);
     case NodeKind::Intrinsic:
         if (node->intrinsic == ImmutableIntrinsics::globalObject)
@@ -988,7 +990,7 @@ LValue Lowering::constantThroughStub(uint32_t number, Stub stub)
 uint32_t Lowering::programConstantIndex(Node* node)
 {
     RELEASE_ASSERT(node->kind == NodeKind::ConstantCell && node->reg.isConstant());
-    uint32_t number = programConstantIndicesFor(node->graph->codeBlock())->at(node->reg.toConstantIndex());
+    uint32_t number = programConstantIndicesFor(node->codeBlockOfConstant())->at(node->reg.toConstantIndex());
     RELEASE_ASSERT(number != invalidConstantIndex);
     return number;
 }

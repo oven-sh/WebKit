@@ -148,6 +148,16 @@ public:
         }
     }
 
+    template<typename Functor> void forEachSlotNamed(UniquedStringImpl* name, const Functor& functor) const
+    {
+        for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
+            for (const Frame* frame = link->m_frames.get(); frame; frame = frame->next.get()) {
+                if (auto it = frame->slots.find(name); it != frame->slots.end() && frame->identity)
+                    functor(frame->identity, it->value & ~(Frame::lazyFunctionSlotFlag | Frame::readOnlySlotFlag));
+            }
+        }
+    }
+
     bool scopeIsOutermostEnvironment() const { return m_isOutermost && m_frames && !m_frames->isBarrier && !m_frames->next; }
 
     Names* names() const { return m_names.get(); }

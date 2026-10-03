@@ -371,7 +371,7 @@ void Lowering::lowerComparisonChain(BasicBlock* head, const ComparisonChain& cha
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> bitsSeen;
     for (auto& arm : chain.arms) {
         if (arm.constant->kind == NodeKind::ConstantCell) {
-            const StringImpl* string = asString(arm.constant->graph->codeBlock()->getConstant(arm.constant->reg))->tryGetValueImpl();
+            const StringImpl* string = asString(arm.constant->codeBlockOfConstant()->getConstant(arm.constant->reg))->tryGetValueImpl();
             if (stringsSeen.add(string).isNewEntry)
                 strings.append({ string, edgeBlockFrom(arm.block, arm.target), arm.constant });
             continue;
