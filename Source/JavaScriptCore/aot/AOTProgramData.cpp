@@ -679,7 +679,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         module.entryOffset = sortedOffsets[i];
         module.keyHash = key.hash();
         module.keyLength = static_cast<uint32_t>(key.length());
-        module.keyFlags = key.flagsBits();
+        module.keyFlags = key.flagsBitsWithoutCodeGenerationMode();
         auto function = image->find(imageKeyForTopLevelCode(sortedOffsets[i] + 1));
         auto* moduleValue = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock);
         if (!moduleValue) {
@@ -1123,7 +1123,7 @@ UnlinkedCodeBlock* VMProgram::topLevelCodeFor(const SourceCodeKey& key)
     if (!id || !provider.hasNoSourceText())
         return nullptr;
     const ProgramModule* module = m_data.moduleWithEntryOffset(id - 1);
-    if (!module || module->isBuiltinFunction || !module->hasTopLevelCode() || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
+    if (!module || module->isBuiltinFunction || !module->hasTopLevelCode() || key.flagsBitsWithoutCodeGenerationMode() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
         return nullptr;
     didLoadModule(provider);
     return topLevelCode(module->topLevelCodeIndex);

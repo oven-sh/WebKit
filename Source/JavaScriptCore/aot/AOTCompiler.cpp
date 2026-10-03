@@ -301,10 +301,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         return false;
     };
 
-    if (unlinkedCodeBlock->wasCompiledWithDebuggingOpcodes() || unlinkedCodeBlock->wasCompiledWithTypeProfilerOpcodes() || unlinkedCodeBlock->wasCompiledWithControlFlowProfilerOpcodes()) {
-        graph.fail("compiled for the debugger or a profiler"_s);
-        return declined();
-    }
     if (!parseBytecode(graph))
         return declined();
     if (program)

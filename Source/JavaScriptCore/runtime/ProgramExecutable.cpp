@@ -259,7 +259,7 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         ASSERT(!functionName(i).isEmpty());
         globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(functionName(i));
         RETURN_IF_EXCEPTION(throwScope, nullptr);
-        if (vm.typeProfiler() || vm.controlFlowProfiler()) {
+        if ((vm.typeProfiler() || vm.controlFlowProfiler()) && !unlinkedCodeBlock->hasNoInstructions()) {
             UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
             vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), 
                 unlinkedFunctionExecutable->unlinkedFunctionStart(),

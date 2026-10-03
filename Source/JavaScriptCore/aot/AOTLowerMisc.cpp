@@ -818,8 +818,7 @@ bool Lowering::tryLowerMisc(Node* node)
     case op_debug:
     case op_log_shadow_chicken_prologue:
     case op_log_shadow_chicken_tail:
-        unsupported(node);
-        return false;
+        return true;
     default:
         return false;
     }
