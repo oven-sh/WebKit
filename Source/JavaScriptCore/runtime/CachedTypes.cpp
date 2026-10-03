@@ -6736,6 +6736,10 @@ struct BytecodeLinkEncoder::Impl {
                     String nameForMap;
                     if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
                         nameForMap = executable->ecmaName().string();
+                    else if (auto* executable = jobs[index].executable; executable && executable->isBuiltinDefaultClassConstructor()) {
+                        SourceCode source = executable->linkedSourceCode(BuiltinExecutables::defaultConstructorSourceCode(executable->constructorKind()));
+                        AOT::collectQuotes(code.info, jobs[index].codeBlock, source.provider()->source(), source.startOffset());
+                    }
                     builder.add(jobs[index].key, jobs[index].rank, WTF::move(code), WTF::move(nameForMap));
                 }
                 else {

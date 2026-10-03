@@ -77,6 +77,21 @@ for (const C of [Base, Derived, Forwards, WithFields, OfError])
 repeat(() => throwsTypeError(() => Base.call({ }), "calling with a receiver"));
 repeat(() => throwsTypeError(() => new OfNull, "a class that extends null"));
 
+function messageOf(f) {
+    try {
+        f();
+    } catch (error) {
+        return String(error);
+    }
+    return "did not throw";
+}
+check(messageOf(() => new OfNull), "TypeError: function is not a constructor (evaluating 'super(...args)')", "the message of a class that extends null");
+{
+    class LosesItsParent extends Base { }
+    Object.setPrototypeOf(LosesItsParent, { });
+    check(messageOf(() => new LosesItsParent), "TypeError: Object is not a constructor (evaluating 'super(...args)')", "the message when the parent is an object");
+}
+
 repeat(() => {
     try {
         new ForwardsToThrows;
