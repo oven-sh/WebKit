@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates programs and compares the interpreter with ahead-of-time compiled code.
 
-  fuzz-programs.py <jsc> <output directory> [--generator closures|objects|loops|all] [--seconds N] [--jobs N] [--seed N]
+  fuzz-programs.py <jsc> <output directory> [--generator closures|objects|loops|numbers|all] [--seconds N] [--jobs N] [--seed N]
   fuzz-programs.py <jsc> --minimize <finding.js> [--limit SECONDS]
 
 closures: functions nested up to four deep (declarations, expressions, arrows, methods, async functions, generators), parameters
@@ -20,6 +20,11 @@ loops: loops of a dozen forms over arrays of every indexing type, with and witho
 buffers that can be resized, array-likes, strings and arguments objects. Elements are read and written at and around the index,
 and in some iteration of some round the array changes: it grows, shrinks, gets another kind of element, an accessor or a length of
 its own, another prototype, or its buffer is resized or detached. Loops that may grow what they run over count their steps.
+
+numbers: expressions of every operator and many functions of Math over values at the edges of int32, uint32 and double, signed
+zeros, strings that are and are not numbers, objects that convert, and now and then a BigInt; variables that are counted up and
+down past those edges in loops, stored to typed arrays and switched on; functions whose arguments are of another kind each round;
+and a few small expressions over every pair of the edge values, in a loop, where arithmetic is compiled inline.
 
 What happens goes to a log, errors by the name of their class. A program counts if the interpreter runs it to an end without
 running out of stack, which happens at another depth in other code. It is a finding if compiled code prints something else, ends
@@ -532,6 +537,122 @@ function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error 
         return text
 
 
+class Numbers:
+    """Arithmetic at the edges of int32, uint32 and double, conversions, and variables whose kind of value changes."""
+    EDGES = ['0', '1', '-1', '2', '3', '7', '-0', '0.5', '-1.5', '255', '256', '65535', '65536', '2147483647', '2147483646', '-2147483648', '-2147483647', '2147483648', '4294967295', '4294967296', '-4294967296',
+             '1073741824', '46341', '9007199254740991', '9007199254740992', '-9007199254740991', '1e21', '1e-7', '5e-324', '1.7976931348623157e308', 'NaN', 'Infinity', '-Infinity', '0.1', '0.30000000000000004']
+    OTHERS = ['"5"', '"-0"', '""', '" 12 "', '"0x10"', '"1e3"', '"abc"', 'true', 'false', 'null', 'undefined', '[]', '[7]', '{ valueOf() { return 3; } }', '{ toString() { return "4"; } }', '10n', '-3n']
+    BINARY = ['+', '-', '*', '/', '%', '**', '|', '&', '^', '<<', '>>', '>>>', '<', '<=', '>', '>=', '==', '!=', '===', '!==', '&&', '||', '??']
+    MATH = ['abs', 'floor', 'ceil', 'round', 'trunc', 'sign', 'sqrt', 'fround', 'clz32', 'cbrt', 'log2', 'exp']
+    MATH2 = ['min', 'max', 'imul', 'pow', 'atan2', 'hypot']
+
+    def __init__(self, seed):
+        self.r = random.Random(seed)
+        self.n = 0
+
+    def name(self, prefix):
+        self.n += 1
+        return '%s%d' % (prefix, self.n)
+
+    def constant(self):
+        return self.r.choice(self.EDGES) if self.r.random() < 0.85 else self.r.choice(self.OTHERS)
+
+    def expression(self, values, depth=0):
+        r = self.r
+        k = r.randrange(20)
+        if depth > 3 or k < 5:
+            return r.choice(values) if values and r.random() < 0.7 else '(%s)' % self.constant()
+        e = lambda: self.expression(values, depth + 1)
+        if k < 12:
+            return '(%s %s %s)' % (e(), r.choice(self.BINARY), e())
+        if k == 12:
+            return '(%s%s)' % (r.choice(['-', '+', '~', '!', '- -', 'typeof ']), e())
+        if k == 13:
+            return 'Math.%s(%s)' % (r.choice(self.MATH), e())
+        if k == 14:
+            return 'Math.%s(%s, %s)' % (r.choice(self.MATH2), e(), e())
+        if k == 15:
+            return '(%s %s)' % (e(), r.choice(['| 0', '>>> 0', '>> 0', '& 255', '& 0xffff', '% 2', '* 1', '- 0', '+ ""', '/ 1', '<< 1', '>>> 31', '& -1']))
+        if k == 16:
+            return '(%s ? %s : %s)' % (e(), e(), e())
+        if k == 17:
+            return r.choice(['Number(%s)', 'String(%s)', 'parseInt(%s)', 'parseFloat(%s)', 'Number.isInteger(%s)', 'Number.isSafeInteger(%s)', 'Object.is(%s, -0)', 'isNaN(%s)', 'Boolean(%s)', 'Math.floor(%s / 2)']) % e()
+        if k == 18:
+            return '(%s).%s' % (e(), r.choice(['toString()', 'toFixed(2)', 'toString(2)', 'toString(16)', 'valueOf()', 'toPrecision(3)']))
+        return '(%s %s %s %s %s)' % (e(), r.choice(['+', '-', '*']), e(), r.choice(['+', '-', '|', '>>>']), e())
+
+    def block(self, values, variables, callable, indent, count, depth=0):
+        r = self.r
+        pad = '    ' * indent
+        values, variables = list(values), list(variables)
+        text = ''
+        for _ in range(count):
+            k = r.randrange(16)
+            if k < 3:
+                v = self.name('v')
+                text += pad + 'let %s = %s;\n' % (v, self.expression(values))
+                values.append(v)
+                variables.append(v)
+            elif k < 6 and variables:
+                v = r.choice(variables)
+                text += pad + r.choice(['%s = %%s;', '%s += %%s;', '%s -= %%s;', '%s *= %%s;', '%s |= %%s;', '%s >>>= %%s;', '%s <<= %%s;', '%s %%%%= %%s;', '%s ^= %%s;', '%s /= %%s;', '%s **= %%s;', '%s ??= %%s;']) % v % self.expression(values) + '\n'
+            elif k == 6 and variables:
+                text += pad + r.choice(['%s++;', '%s--;', '++%s;', '--%s;', 'note(%s++);', 'note(--%s);']) % r.choice(variables) + '\n'
+            elif k < 9:
+                text += pad + 'note(%s);\n' % self.expression(values)
+            elif k < 11 and depth < 2:
+                i = self.name('i')
+                head = r.choice(['for (let %s = 0; %s < %d; %s++) {' % (i, i, r.randrange(1, 40), i), 'for (let %s = %s; %s > %s - %d; %s--) {' % (i, r.choice(['-2147483640', '5', '0', '2147483647']), i, r.choice(['-2147483640', '5', '0', '2147483647']), 6, i),
+                                 'for (let %s = 2147483640; %s < 2147483650; %s++) {' % (i, i, i), 'for (let %s = 1; %s < 1e10; %s *= %d) {' % (i, i, i, r.choice([2, 3, 10, 65536])), 'for (let %s = 0; %s < 3; %s += 0.5) {' % (i, i, i),
+                                 'for (let %s = 4294967290; %s < 4294967300; %s += 3) {' % (i, i, i), 'for (let %s = -3; %s <= 3; %s++) {' % (i, i, i)])
+                if ' > ' in head and head.count(head.split('= ')[1].split(';')[0]) < 2:
+                    head = 'for (let %s = 5; %s > -1; %s--) {' % (i, i, i)
+                text += pad + head + '\n' + self.block(values + [i], variables, callable, indent + 1, r.randrange(1, 5), depth + 1) + pad + '}\n'
+            elif k == 11 and depth < 2:
+                text += pad + 'if (%s) {\n' % self.expression(values) + self.block(values, variables, callable, indent + 1, r.randrange(1, 4), depth + 1) + pad + '} else {\n' + self.block(values, variables, callable, indent + 1, r.randrange(1, 3), depth + 1) + pad + '}\n'
+            elif k == 12 and callable:
+                text += pad + 'note(%s(%s, %s));\n' % (r.choice(callable), self.expression(values), self.expression(values))
+            elif k == 13:
+                text += pad + 'switch (%s) {\n' % self.expression(values) + ''.join(pad + 'case %s: note(%d);%s\n' % (self.constant(), j, r.choice([' break;', ' break;', ''])) for j in range(r.randrange(1, 5))) + pad + 'default: note("default");\n' + pad + '}\n'
+            elif k == 14:
+                v = self.name('t')
+                text += pad + 'const %s = new %s(2); %s[0] = %s; note(%s[0]);\n' % (v, r.choice(['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array']), v, self.expression(values), v)
+            else:
+                text += pad + 'note(tryCall(() => %s));\n' % self.expression(values)
+        return text
+
+    def program(self):
+        r = self.r
+        text = """const log = [];
+function show(x) {
+    if (typeof x === "number") return Object.is(x, -0) ? "-0" : String(x);
+    if (typeof x === "bigint") return x + "n";
+    if (typeof x === "string") return JSON.stringify(x.slice(0, 60));
+    if (typeof x === "object" && x !== null) return x instanceof Error ? x.constructor.name : "object";
+    return String(x);
+}
+function note(x) { if (log.length < 12000) log.push(show(x)); }
+function tryCall(f) { try { return f(); } catch (e) { return e instanceof Error ? e.constructor.name : e; } }
+"""
+        functions = []
+        for _ in range(r.randrange(2, 7)):
+            f = self.name('f')
+            text += 'function %s(a, b) {\n' % f + self.block(['a', 'b'], ['a', 'b'], functions, 1, r.randrange(2, 9)) + '    return %s;\n}\n' % self.expression(['a', 'b'])
+            functions.append(f)
+        text += 'const edges = [%s];\n' % ', '.join(self.EDGES)
+        for _ in range(r.randrange(1, 4)):
+            f = self.name('pairs')
+            simple = '(x %s y)' % r.choice(self.BINARY[:12])
+            text += 'function %s() {\n    for (let i = 0; i < edges.length; i++) {\n        const x = edges[i];\n        for (let j = 0; j < edges.length; j++) {\n            const y = edges[j];\n            note(%s);\n        }\n    }\n}\n%s();\n' % (
+                f, r.choice([simple, simple, '(%s %s)' % (simple, r.choice(['| 0', '>>> 0', '+ 1', '* y', '- x'])), self.expression(['x', 'y'], 2)]), f)
+        kinds = r.choice([self.EDGES, self.EDGES, self.EDGES + self.OTHERS, ['0', '1', '2', '3', '100', '-5'], ['0.5', '1.5', '-2.5', '1e10']])
+        text += 'const inputs = [%s];\n' % ', '.join(r.choice(kinds) for _ in range(r.randrange(3, 12)))
+        text += 'for (let round = 0; round < %d; round++) {\n    for (const x of inputs) {\n        const y = inputs[(round + 1) %% inputs.length];\n' % r.choice([1, 3, 10])
+        for _ in range(r.randrange(1, 5)):
+            text += '        note(tryCall(() => %s(%s, %s)));\n' % (r.choice(functions), r.choice(['x', 'y', 'round', self.constant()]), r.choice(['x', 'y', 'round', self.constant()]))
+        return text + '    }\n}\nprint(log.join("\\n"));\n'
+
+
 def run(jsc, options, path, limit=20):
     p = subprocess.run([sys.executable, CAP, '1.5', str(limit), jsc, *options, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     err = '\n'.join(l for l in p.stderr.decode('utf-8', 'replace').split('\n') if not l.startswith('[capped]'))
@@ -551,7 +672,7 @@ def compare(jsc, path, extra, module, limit=20):
 def fuzz(args):
     out = os.path.abspath(args.output)
     os.makedirs(out, exist_ok=True)
-    generators = {'closures': [Closures], 'objects': [Objects], 'loops': [Loops], 'all': [Closures, Objects, Loops]}[args.generator]
+    generators = {'closures': [Closures], 'objects': [Objects], 'loops': [Loops], 'numbers': [Numbers], 'all': [Closures, Objects, Loops, Numbers]}[args.generator]
     stats = {'programs': 0, 'do not count': 0, 'findings': 0}
     lock = threading.Lock()
     deadline = time.time() + args.seconds
@@ -622,7 +743,7 @@ parser.add_argument('output', nargs='?')
 parser.add_argument('--seconds', type=float, default=300)
 parser.add_argument('--jobs', type=int, default=os.cpu_count() // 2)
 parser.add_argument('--seed', type=int, default=1)
-parser.add_argument('--generator', choices=['closures', 'objects', 'loops', 'all'], default='all')
+parser.add_argument('--generator', choices=['closures', 'objects', 'loops', 'numbers', 'all'], default='all')
 parser.add_argument('--minimize', metavar='FINDING')
 parser.add_argument('--limit', type=float, default=20, help='seconds a run may take while minimizing')
 args = parser.parse_args()
