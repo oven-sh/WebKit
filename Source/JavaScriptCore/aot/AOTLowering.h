@@ -167,6 +167,20 @@ private:
     const AvailableField* availableField(Node* base, const TypeTable::Field&) const;
     void recordAvailableField(Node* base, const TypeTable::Field&, LValue, Rep, LValue asJSValue, bool isWritten);
     static bool preservesFields(Node*);
+    struct AvailableRead {
+        Node* base;
+        UniquedStringImpl* name;
+        LValue value;
+        LValue effectEpoch;
+        friend bool operator==(const AvailableRead&, const AvailableRead&) = default;
+    };
+    static constexpr unsigned maxAvailableReads = 16;
+    Vector<AvailableRead> m_availableReads;
+    UncheckedKeyHashMap<BasicBlock*, Vector<AvailableRead>> m_availableReadsAtEndOf;
+    LValue m_effectEpochBeforeStore { nullptr };
+    LValue loadEffectEpoch();
+    void recordAvailableRead(Node* base, UniquedStringImpl* name, LValue value, LValue effectEpoch);
+    void forgetReadsChangedBy(Node*);
     static std::optional<String> constantStringOf(Node*);
     static bool isAtomIfString(Node*, unsigned depth = 0);
     static bool isAtomIfShortString(Node*, unsigned depth = 0);

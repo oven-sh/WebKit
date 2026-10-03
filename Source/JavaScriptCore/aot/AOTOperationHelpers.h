@@ -40,6 +40,7 @@ ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
     VM& vm = *(instance)->vm; \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    ++(instance)->effectEpoch; \
     countOperationFor(instance, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
@@ -50,6 +51,7 @@ ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
     VM& vm = *(instance)->vm; \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    ++(instance)->effectEpoch; \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 

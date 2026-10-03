@@ -1214,6 +1214,25 @@ void Lowering::lowerBlock(BasicBlock* block)
         if (auto available = m_availableFieldsAtEndOf.find(block->predecessors[0]); available != m_availableFieldsAtEndOf.end())
             m_availableFields = available->value;
     }
+    m_availableReads.shrink(0);
+    m_effectEpochBeforeStore = nullptr;
+    if (!block->isCatchEntrypoint && !block->isGeneric && block != m_graph.root) {
+        bool isFirst = true;
+        for (BasicBlock* predecessor : block->predecessors) {
+            auto available = m_availableReadsAtEndOf.find(predecessor);
+            if (available == m_availableReadsAtEndOf.end()) {
+                m_availableReads.shrink(0);
+                break;
+            }
+            if (std::exchange(isFirst, false))
+                m_availableReads = available->value;
+            else {
+                m_availableReads.removeAllMatching([&](auto& read) {
+                    return !available->value.contains(read);
+                });
+            }
+        }
+    }
     m_out.setFrequency(block->isGeneric || block->isRarelyExecuted ? coldFrequency : 1);
     if (block->loweredAhead)
         hoistArrayStorageLoadsAheadOf(block);
@@ -1257,6 +1276,7 @@ void Lowering::lowerBlock(BasicBlock* block)
             setCurrentNode(stores[0]);
             lowerPropertyRun(stores);
             m_availableFields.shrink(0);
+            m_availableReads.shrink(0);
             continue;
         }
         setCurrentNode(node);
@@ -1266,9 +1286,14 @@ void Lowering::lowerBlock(BasicBlock* block)
             return;
         if (!m_nodePreservesFields && !m_availableFields.isEmpty() && !preservesFields(node))
             m_availableFields.shrink(0);
+        forgetReadsChangedBy(node);
     }
     if (terminal && !preservesFields(terminal))
         m_availableFields.shrink(0);
+    if (terminal)
+        forgetReadsChangedBy(terminal);
+    if (!m_availableReads.isEmpty())
+        m_availableReadsAtEndOf.set(block, m_availableReads);
     if (!m_availableFields.isEmpty())
         m_availableFieldsAtEndOf.set(block, m_availableFields);
     if (terminal && terminal->kind == NodeKind::Guard) {

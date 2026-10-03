@@ -104,6 +104,74 @@ static Node* skipAliases(Node* node)
     return node;
 }
 
+LValue Lowering::loadEffectEpoch()
+{
+    return m_out.load32(m_out.address(m_heaps.root, m_instance, Instance::offsetOfEffectEpoch()));
+}
+
+void Lowering::recordAvailableRead(Node* base, UniquedStringImpl* name, LValue value, LValue effectEpoch)
+{
+    base = skipAliases(base);
+    m_availableReads.removeAllMatching([&](auto& read) {
+        return read.base == base && read.name == name;
+    });
+    if (m_availableReads.size() == maxAvailableReads)
+        m_availableReads.removeAt(0);
+    m_availableReads.append({ base, name, value, effectEpoch });
+}
+
+void Lowering::forgetReadsChangedBy(Node* node)
+{
+    LValue effectEpochBeforeStore = std::exchange(m_effectEpochBeforeStore, nullptr);
+    if (node->kind == NodeKind::Bytecode && node->opcode == op_put_by_id && !node->guard) {
+        auto bytecode = node->as<OpPutById>();
+        UniquedStringImpl* name = node->graph->codeBlock()->identifier(bytecode.m_property).impl();
+        m_availableReads.removeAllMatching([&](auto& read) {
+            return read.name == name;
+        });
+        if (effectEpochBeforeStore && name != m_graph.vm().propertyNames->length.impl())
+            recordAvailableRead(node->use(bytecode.m_base), name, lowJSValue(node->use(bytecode.m_value)), effectEpochBeforeStore);
+        return;
+    }
+    if (m_availableReads.isEmpty() || preservesFields(node))
+        return;
+    if (node->kind == NodeKind::Bytecode && !node->guard) {
+        switch (node->opcode) {
+        case op_get_by_id:
+        case op_add:
+        case op_sub:
+        case op_mul:
+        case op_div:
+        case op_mod:
+        case op_bitand:
+        case op_bitor:
+        case op_bitxor:
+        case op_lshift:
+        case op_rshift:
+        case op_less:
+        case op_lesseq:
+        case op_greater:
+        case op_greatereq:
+        case op_jless:
+        case op_jlesseq:
+        case op_jgreater:
+        case op_jgreatereq:
+        case op_jnless:
+        case op_jnlesseq:
+        case op_jngreater:
+        case op_jngreatereq:
+        case op_eq:
+        case op_neq:
+        case op_jeq:
+        case op_jneq:
+            return;
+        default:
+            break;
+        }
+    }
+    m_availableReads.shrink(0);
+}
+
 auto Lowering::availableField(Node* base, const TypeTable::Field& field) const -> const AvailableField*
 {
     base = skipAliases(base);
@@ -539,7 +607,32 @@ void Lowering::lowerGetById(Node* node)
         setJSValue(node, m_out.phi(Int64, found, lacking, other));
         return;
     }
-    setJSValue(node, getByIdCached(node, lowJSValue(baseNode), baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+    LValue base = lowJSValue(baseNode);
+    UniquedStringImpl* name = code().codeBlock()->identifier(bytecode.m_property).impl();
+    LValue effectEpoch = loadEffectEpoch();
+    Node* object = skipAliases(baseNode);
+    size_t index = m_availableReads.findIf([&](auto& read) {
+        return read.base == object && read.name == name;
+    });
+    if (index == notFound) {
+        LValue value = getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property);
+        recordAvailableRead(object, name, value, effectEpoch);
+        setJSValue(node, value);
+        return;
+    }
+    m_graph.remark("reuses-property-read"_s, String(name));
+    AvailableRead read = m_availableReads[index];
+    LBasicBlock mayHaveChanged = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    ValueFromBlock reused = m_out.anchor(read.value);
+    m_out.branch(m_out.equal(effectEpoch, read.effectEpoch), usually(continuation), rarely(mayHaveChanged));
+    m_out.appendTo(mayHaveChanged);
+    ValueFromBlock readAgain = m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    LValue value = m_out.phi(Int64, reused, readAgain);
+    recordAvailableRead(object, name, value, effectEpoch);
+    setJSValue(node, value);
 }
 
 LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry operation, unsigned functionIdentifier)
@@ -774,6 +867,7 @@ void Lowering::lowerPutById(Node* node)
     Node* valueNode = node->use(bytecode.m_value);
     LValue base = lowJSValue(baseNode);
     LValue value = lowJSValue(valueNode);
+    m_effectEpochBeforeStore = loadEffectEpoch();
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
     if (auto field = (Options::aotShapeOptimizations() & 4) && !Options::useAOTFunctionSplitting() && !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {

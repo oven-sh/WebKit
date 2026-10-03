@@ -1743,6 +1743,7 @@ static void generateInstanceOfCached(CCallHelpers& jit)
 
 static void callGetter(CCallHelpers& jit, CCallHelpers::JumpList& cannot)
 {
+    jit.add32(TrustedImm32(1), Address(instanceGPR, Instance::offsetOfEffectEpoch()));
     {
         jit.loadPtr(Address(T12, GetterSetter::offsetOfGetterShortcut()), T13);
         Jump hasNoShortcut = jit.branchTestPtr(CCallHelpers::Zero, T13);

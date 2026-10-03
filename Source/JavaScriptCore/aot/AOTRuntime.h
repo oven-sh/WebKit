@@ -567,6 +567,8 @@ struct Instance {
     void noteObservableRead(unsigned slot, uint16_t id) { fieldsWithObservableReads[(slot << 16 | id) >> 3] |= 1 << (id & 7); }
     JSCell* functionPrototypeCall { nullptr };
     uint32_t boundFunctionStructureID { 0 };
+    uint32_t effectEpoch { 0 };
+    static constexpr ptrdiff_t offsetOfEffectEpoch() { return OBJECT_OFFSETOF(Instance, effectEpoch); }
     static constexpr ptrdiff_t offsetOfFunctionPrototypeCall() { return OBJECT_OFFSETOF(Instance, functionPrototypeCall); }
     static constexpr ptrdiff_t offsetOfBoundFunctionStructureID() { return OBJECT_OFFSETOF(Instance, boundFunctionStructureID); }
     uint8_t* selectorsOnObjectPrototype;
