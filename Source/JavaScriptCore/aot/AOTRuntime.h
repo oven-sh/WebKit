@@ -300,6 +300,16 @@ public:
     void countOperationBySlotState(const char* name, const Slot*);
     void countOperationAtSite(const char* name, uint32_t function, unsigned bytecodeOffset, unsigned line, unsigned column);
     void countAllocatedBytes(const char* kind, const Subspace*, size_t cellSize, const ClassInfo* classOfOwner, size_t bytes);
+    bool shouldWriteOperationCountsAfterAllocating(size_t bytes)
+    {
+        m_bytesAllocatedSinceLastWrite += bytes;
+        if (m_bytesAllocatedSinceLastWrite < MB)
+            return false;
+        m_bytesAllocatedSinceLastWrite = 0;
+        return true;
+    }
+    void clearLiveBytes();
+    void setLiveBytes(const Subspace&, size_t cellSize, size_t bytes);
     void countChangeOfMegamorphicCacheEpoch(uint16_t epoch)
     {
         if (std::exchange(m_lastMegamorphicCacheEpoch, epoch) != epoch)
@@ -316,6 +326,7 @@ private:
     UncheckedKeyHashMap<std::pair<const char*, const char*>, uint64_t> m_operationCounts;
     UncheckedKeyHashMap<std::tuple<const char*, const void*, size_t>, CString> m_detailsOfAllocatedBytes;
     UncheckedKeyHashMap<CString, std::pair<uint64_t, uint64_t>> m_allocatedBytesByStack;
+    size_t m_bytesAllocatedSinceLastWrite { 0 };
     UncheckedKeyHashMap<uint64_t, CString> m_detailsOfSites;
     uint16_t m_lastMegamorphicCacheEpoch { 0 };
     UncheckedKeyHashMap<String, std::pair<uint64_t, String>> m_guests;

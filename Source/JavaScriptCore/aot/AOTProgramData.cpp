@@ -1365,6 +1365,25 @@ void VMProgram::didFinishCollection()
     m_impl->hasVisitedEverythingInThisCollection = false;
     if (m_impl->ownStrings)
         m_impl->ownStrings->removeDeadRecentPlainStrings(m_vm);
+    if (Options::useAOTOperationCounters() && m_vm.m_aotRuntimeTable && m_vm.heap.collectionScope().value_or(CollectionScope::Full) == CollectionScope::Full) [[unlikely]] {
+        RuntimeTable& table = *m_vm.m_aotRuntimeTable;
+        table.clearLiveBytes();
+        m_vm.heap.objectSpace().forEachSubspace([&](Subspace& subspace) {
+            subspace.forEachDirectory([&](BlockDirectory& directory) {
+                size_t bytes = 0;
+                directory.forEachBlock([&](MarkedBlock::Handle* handle) {
+                    bytes += handle->size();
+                });
+                table.setLiveBytes(subspace, directory.cellSize(), bytes);
+            });
+            return IterationStatus::Continue;
+        });
+        for (PreciseAllocation* allocation : m_vm.heap.objectSpace().preciseAllocations()) {
+            if (allocation->isMarked())
+                table.setLiveBytes(*allocation->subspace(), 0, allocation->cellSize());
+        }
+        table.writeOperationCounts();
+    }
     if (Options::verboseAOTCompilation()) [[unlikely]] {
         UncheckedKeyHashMap<const ClassInfo*, std::pair<size_t, size_t>> byClass;
         auto count = [&](JSCell* cell) {

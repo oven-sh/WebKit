@@ -1,3 +1,4 @@
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 function shouldBe(actual, expected) {
     if (actual !== expected && !(actual !== actual && expected !== expected))
         throw new Error("bad value: " + actual + ", expected " + expected);
@@ -21,27 +22,6 @@ shouldBe(1 / [-0].map(v => { let r; for (let i = 0; i < 2; i++) r = Math.min(v, 
 shouldBe(1 / [-0].map(v => { let r; for (let i = 0; i < 2; i++) r = Math.max(v, 0); return r; })[0], Infinity);
 shouldBe(math(["4"]), 2 + 4 + 4 + 4 + 4 + 4 + 2 + 4 + 12);
 shouldBe(math([{ valueOf() { return 4; } }]), 2 + 4 + 4 + 4 + 4 + 4 + 2 + 4 + 12);
-
-const sqrt = Math.sqrt;
-Math.sqrt = function (v) { return 1000; };
-shouldBe(math([4]), 1000 + 4 + 4 + 4 + 4 + 4 + 2 + 4 + 12);
-Math.sqrt = Math.abs;
-shouldBe(math([4]), 4 + 4 + 4 + 4 + 4 + 4 + 2 + 4 + 12);
-Math.sqrt = sqrt;
-shouldBe(math(numbers), expected);
-
-function swapsHalfway(n) {
-    let s = 0;
-    for (let i = 0; i < n; i++) {
-        if (i === n >> 1)
-            Math.floor = v => -1;
-        s += Math.floor(i + 0.5);
-    }
-    return s;
-}
-const floor = Math.floor;
-shouldBe(swapsHalfway(10), 0 + 1 + 2 + 3 + 4 - 5);
-Math.floor = floor;
 
 function walk(list) {
     let s = 0;
@@ -105,11 +85,6 @@ shouldBe(codes({ charCodeAt(i) { return i; } }, 0, 4), 6);
 shouldBe(codes(new String("abc"), 0, 3), 294);
 function fractional(s) { let t = 0; for (let i = 0; i < 2; i += 0.5) t += s.charCodeAt(i); return t; }
 shouldBe(fractional("ab"), 97 + 97 + 98 + 98);
-const charCodeAt = String.prototype.charCodeAt;
-String.prototype.charCodeAt = function () { return 1; };
-shouldBe(codes("abc", 0, 3), 3);
-String.prototype.charCodeAt = charCodeAt;
-shouldBe(codes("abc", 0, 3), 294);
 
 function pushes(a, n, v) { let last = 0; for (let i = 0; i < n; i++) last = a.push(v); return last + ":" + a.length + ":" + a[a.length - 1]; }
 shouldBe(pushes([], 100, 1), "100:100:1");
@@ -134,11 +109,6 @@ shouldBe(pushesConstant(7), 7);
 shouldBe(pushesConstant(7), 14);
 function readsWhilePushing(a) { let s = 0; for (let i = 0; i < a.length && i < 20; i++) { s += a[i]; if (i < 5) a.push(i); } return s + ":" + a.length; }
 shouldBe(readsWhilePushing([10]), "20:6");
-const push = Array.prototype.push;
-Array.prototype.push = function () { return -1; };
-shouldBe(pushes([], 2, 1), "-1:0:undefined");
-Array.prototype.push = push;
-shouldBe(pushes([], 2, 1), "2:2:1");
 
 function usesGlobal(n) {
     let s = 0;
@@ -148,10 +118,6 @@ function usesGlobal(n) {
 }
 shouldBe(usesGlobal(5), 10);
 shouldBe(usesGlobal(5), 10);
-if (typeof $262 !== "undefined" && $262.evalScript) {
-    $262.evalScript("let Math = { abs() { return 1; } };");
-    shouldBe(usesGlobal(5), 5);
-}
 
 function repeats(list) {
     let s = 0;

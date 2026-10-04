@@ -75,7 +75,7 @@ static void estimateFrequencies(B3::Procedure& proc)
 
 static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
 {
-    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
+    if (Options::useAOTTypeCoverageCounters() || unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
         return false;
     for (const auto& instruction : unlinkedCodeBlock->instructions()) {
         if (instruction->opcodeID() == op_loop_hint)
@@ -582,8 +582,16 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
             if (!call.isTailCall)
                 minimumSize = std::max<unsigned>(minimumSize, call.offset + 2 * sizeof(uint32_t));
         }
-        while (info.codeSize > minimumSize && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == breakpoint)
-            info.codeSize -= sizeof(uint32_t);
+        auto dropBreakpointAtEnd = [&] {
+            if (info.codeSize > minimumSize && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == breakpoint)
+                info.codeSize -= sizeof(uint32_t);
+        };
+        dropBreakpointAtEnd();
+        B3::Air::BasicBlock* lastBlock = nullptr;
+        for (B3::Air::BasicBlock* block : proc.code())
+            lastBlock = block;
+        if (lastBlock->size() >= 2 && lastBlock->last().kind.opcode == B3::Air::Oops && lastBlock->at(lastBlock->size() - 2).kind.opcode == B3::Air::Patch)
+            dropBreakpointAtEnd();
     }
 #endif
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });

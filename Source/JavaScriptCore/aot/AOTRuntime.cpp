@@ -306,6 +306,22 @@ void RuntimeTable::countAllocatedBytes(const char* kind, const Subspace* subspac
     entry.second++;
 }
 
+void RuntimeTable::clearLiveBytes()
+{
+    for (auto& [operation, count] : m_operationCounts) {
+        if (!strcmp(operation.first, "Heap::live"))
+            count = 0;
+    }
+}
+
+void RuntimeTable::setLiveBytes(const Subspace& subspace, size_t cellSize, size_t bytes)
+{
+    CString& detail = m_detailsOfAllocatedBytes.add(std::tuple { "live", static_cast<const void*>(&subspace), cellSize }, CString()).iterator->value;
+    if (detail.isNull())
+        detail = cellSize ? toUTF8CString("block:", subspace.name(), ":", cellSize) : toUTF8CString("precise:", subspace.name());
+    countOperation("Heap::live", byteCast<char>(detail.data()), bytes);
+}
+
 uint64_t RuntimeTable::operationCount(StringView nameAndDetail) const
 {
     uint64_t result = 0;
@@ -384,8 +400,11 @@ uint64_t operationCount(VM& vm, StringView name)
 
 void countAllocatedBytes(VM& vm, const char* kind, const Subspace* subspace, size_t cellSize, const JSCell* owner, size_t bytes)
 {
-    if (bytes && vm.m_aotRuntimeTable)
-        vm.m_aotRuntimeTable->countAllocatedBytes(kind, subspace, cellSize, owner ? owner->classInfo() : nullptr, bytes);
+    if (!bytes || !vm.m_aotRuntimeTable)
+        return;
+    vm.m_aotRuntimeTable->countAllocatedBytes(kind, subspace, cellSize, owner ? owner->classInfo() : nullptr, bytes);
+    if (vm.m_aotRuntimeTable->shouldWriteOperationCountsAfterAllocating(bytes))
+        vm.m_aotRuntimeTable->writeOperationCounts();
 }
 
 void writeOperationCounts(VM& vm)

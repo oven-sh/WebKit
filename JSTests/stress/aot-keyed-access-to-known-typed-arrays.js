@@ -56,6 +56,25 @@ const [readsLate, writesLate, fills] = (() => {
 })();
 function addsCells(a, w, x, y) { const cells = $$t(a, 6656); return cells[y * w + x] + cells[y * w + x + 1]; }
 
+function readsBeforeThrowing(a, i, limit)
+{
+    if (i >= limit) {
+        const value = $$t(a, 6656)[i];
+        throw new RangeError("at " + i + ": " + value);
+    }
+    return i;
+}
+function writesBeforeThrowing(a, i, limit)
+{
+    if (i >= limit) {
+        $$t(a, 6656)[i] = 77;
+        throw new RangeError("stored at " + i);
+    }
+    return i;
+}
+function sumsInLoop(a, n) { const array = $$t(a, 6656); let sum = 0; for (let i = 0; i < n; ++i) sum += array[i]; return sum; }
+function fillsInLoop(a, n, v) { const array = $$t(a, 6656); for (let i = 0; i < n; ++i) array[i] = v; return array.length; }
+
 function readsUnknown(a, i) { return a[i]; }
 function writesUnknown(a, i, v) { a[i] = v; }
 function readsNumberOrArray(a, i) { return $$t(a, 6664)[i]; }
@@ -229,6 +248,36 @@ writesInteger(doubles, 1, 7.5);
 writesInteger(doubles, 2, 7.5);
 shouldBe(doubles.join(), "0,7", "an integer stored as a double");
 
+function messageOf(run)
+{
+    try {
+        run();
+    } catch (error) {
+        return error instanceof RangeError ? error.message : String(error);
+    }
+    return "nothing was thrown";
+}
+const few = new Int32Array([4, 5, 6]);
+for (let i = 0; i < 100; ++i) {
+    shouldBe(readsBeforeThrowing(few, 1, 100), 1, "a read that is not reached");
+    shouldBe(writesBeforeThrowing(few, 1, 100), 1, "a store that is not reached");
+    shouldBe(sumsInLoop(few, 3), 15, "reads in a loop");
+    shouldBe(fillsInLoop(new Int32Array(3), 3, i), 3, "stores in a loop");
+}
+shouldBe(messageOf(() => readsBeforeThrowing(few, 1, 0)), "at 1: 5", "a read ahead of a throw");
+shouldBe(messageOf(() => readsBeforeThrowing(few, 3, 0)), "at 3: undefined", "a read out of bounds ahead of a throw");
+shouldBe(messageOf(() => readsBeforeThrowing(few, 1.5, 0)), "at 1.5: undefined", "a read at a fraction ahead of a throw");
+shouldBe(messageOf(() => writesBeforeThrowing(few, 1, 0)), "stored at 1", "a store ahead of a throw");
+shouldBe(messageOf(() => writesBeforeThrowing(few, 3, 0)), "stored at 3", "a store out of bounds ahead of a throw");
+shouldBe(few.join(), "4,77,6", "what was stored ahead of a throw");
+shouldBe(sumsInLoop(few, 4), NaN, "a loop that reads beyond the end");
+shouldBe(sumsInLoop(few, 3), 87, "the loop afterwards");
+const filled = new Int32Array(3);
+shouldBe(fillsInLoop(filled, 5, 2.9), 3, "a loop that stores beyond the end");
+shouldBe(filled.join(), "2,2,2", "what the loop stored");
+shouldBe(fillsInLoop(filled, 3, "8"), 3, "a loop that stores strings");
+shouldBe(filled.join(), "8,8,8", "what the loop stored");
+
 shouldBe(readsUnknown(cells, 1), 20, "a base that is not known");
 writesUnknown(cells, 1, 21);
 for (let i = 0; i < 100; ++i) {
@@ -300,6 +349,16 @@ for (const f of [writesNumber, writesInteger, updates, writesNullable, writesCap
     applies(f, "put-by-val-on-typed-array");
 for (const f of [readsUnknown, writesUnknown, readsNumberOrArray, readsEither, readsClamped, writesClamped, readsFloat16, readsBigInt64, writesBigInt64, readsWithString, writesString, readsLength])
     doesNotApply(f);
+for (const f of [readsBeforeThrowing, writesBeforeThrowing]) {
+    if ((remarksOf(f) || []).includes("throws-rarely"))
+        doesNotApply(f);
+}
+for (const [f, remark] of [[sumsInLoop, "get-by-val-on-typed-array"], [fillsInLoop, "put-by-val-on-typed-array"]]) {
+    if ((remarksOf(f) || []).includes("split-loop"))
+        doesNotApply(f);
+    else
+        applies(f, remark);
+}
 for (const f of [readsWithInteger, readsWithWideInteger]) {
     const remarks = remarksOf(f);
     if (remarks && remarks.includes("calls:GetByVal"))

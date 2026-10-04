@@ -164,6 +164,7 @@ private:
     void setDouble(Node*, LValue);
     void setBoolean(Node*, LValue);
     void setResult(Node*, LValue, Rep);
+    void verifyInferredType(Node*, LValue);
     void setProj(Node*, VirtualRegister, LValue, Rep = Rep::JSValue);
 
     LValue doubleToInt32(LValue);

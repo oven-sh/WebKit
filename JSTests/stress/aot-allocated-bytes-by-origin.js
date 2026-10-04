@@ -85,4 +85,18 @@ function shouldBe(actual, expected, what)
     edenGC();
     shouldBe(collections("full") > full, counts, "a full collection is counted");
     shouldBe(collections("eden") > eden, counts, "an eden collection is counted");
+
+    function live(detail) { return counts ? aotOperationCount("Heap::live:" + detail) : 0; }
+    holder[0] = null;
+    fullGC();
+    const liveBefore = live("block:JSCell:48");
+    const kept = [];
+    for (let i = 0; i < 200000; ++i)
+        kept.push({ first: i, second: i, third: i, fourth: i });
+    fullGC();
+    atLeast(live("block:JSCell:48") - liveBefore, 8 * MB, "objects that are kept are live at a full collection");
+    shouldBe(kept[199999].fourth, 199999, "the last object that is kept");
+    kept.length = 0;
+    fullGC();
+    atMost(live("block:JSCell:48") - liveBefore, MB, "objects that are dropped are not");
 })();

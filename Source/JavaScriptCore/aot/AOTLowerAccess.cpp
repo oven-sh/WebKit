@@ -1321,8 +1321,10 @@ auto Lowering::constantKeyOf(Node* property) -> std::optional<ConstantKey>
     return ConstantKey { identifier, name };
 }
 
-static std::optional<JSType> typedArrayUnlessUndefinedOrNull(Node* base)
+static std::optional<JSType> typedArrayToAccessInline(const BasicBlock* block, Node* base)
 {
+    if (block->isGeneric || block->isRarelyExecuted)
+        return std::nullopt;
     auto type = typedArrayTypeOf(base->type & ~TOther);
     if (!type || *type == Uint8ClampedArrayType || *type == Float16ArrayType || *type == BigInt64ArrayType || *type == BigUint64ArrayType)
         return std::nullopt;
@@ -1380,7 +1382,7 @@ void Lowering::lowerGetByVal(Node* node)
         return;
     }
 
-    if (auto type = typedArrayUnlessUndefinedOrNull(baseNode); type && !allowsEmpty && mayBe(propertyNode->type, TNumber)) {
+    if (auto type = typedArrayToAccessInline(m_block, baseNode); type && !allowsEmpty && mayBe(propertyNode->type, TNumber)) {
         m_graph.remark("get-by-val-on-typed-array"_s);
         LBasicBlock outOfBounds = newColdBlock();
         LBasicBlock slowCase = newColdBlock();
@@ -1513,7 +1515,7 @@ void Lowering::lowerPutByVal(Node* node)
     Node* propertyNode = node->use(bytecode.m_property);
     Node* valueNode = node->use(bytecode.m_value);
 
-    if (auto type = typedArrayUnlessUndefinedOrNull(baseNode); type && mayBe(propertyNode->type, TNumber) && mayBe(valueNode->type, TNumber)) {
+    if (auto type = typedArrayToAccessInline(m_block, baseNode); type && mayBe(propertyNode->type, TNumber) && mayBe(valueNode->type, TNumber)) {
         m_graph.remark("put-by-val-on-typed-array"_s);
         LBasicBlock slowCase = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();

@@ -1039,42 +1039,48 @@ LValue Lowering::lowBoolean(Node* node)
     return lowRaw(node);
 }
 
+void Lowering::verifyInferredType(Node* node, LValue value)
+{
+    if (!node->wasInferredUnreachable && (!node->type || isSubtype(TAll, node->type)))
+        return;
+    Type expected = node->wasInferredUnreachable ? TNone : node->type;
+    if (const KnownFunction* known = programFunctions() ? programFunctions()->function(functionNumberOf(expected)) : nullptr; known && known->summary && known->summary->takesScopeAsCallee)
+        expected = (expected & ~TFunction) | TOtherObject;
+    unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
+    if (node->kind == NodeKind::Argument)
+        which += 100 * node->reg.toArgument();
+    unsigned identifierPlusOne = 0;
+    const Node* origin = node;
+    for (unsigned depth = 0; depth < 4; ++depth) {
+        if (origin->isBytecode(op_check_type))
+            origin = origin->use(origin->as<OpCheckType>().m_value);
+        else if (origin->kind == NodeKind::Narrow || (origin->kind == NodeKind::Phi && origin->uses.size() == 1))
+            origin = origin->uses[0].node;
+        else
+            break;
+    }
+    Variable variable;
+    if (origin->isBytecode(op_get_from_scope)) {
+        identifierPlusOne = numberOf(origin, origin->as<OpGetFromScope>().m_var) + 1;
+        variable = m_graph.variableAccessedBy(origin);
+    } else if (node->isBytecode(op_get_by_id))
+        identifierPlusOne = numberOf(node, node->as<OpGetById>().m_property) + 1;
+    Node* place = node;
+    for (unsigned i = m_nodeIndex; place->kind != NodeKind::Bytecode && i < m_block->nodes.size(); ++i)
+        place = m_block->nodes[i];
+    m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
+    m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected >> 64));
+    m_graph.wideIntegerConstants.add(static_cast<int64_t>(std::bit_cast<uintptr_t>(variable.scope)));
+    if (place->kind == NodeKind::Bytecode) {
+        vmCall(place, Void, Entry::operationAOTVerifyInferredType, m_instance, value, m_out.constInt64(static_cast<int64_t>(expected)), m_out.constInt64(static_cast<int64_t>(expected >> 64)), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
+            m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
+    }
+}
+
 void Lowering::setResult(Node* node, LValue value, Rep rep)
 {
-    if (Options::validateAOTInferredTypes() && rep == Rep::JSValue && (node->wasInferredUnreachable || (node->type && !isSubtype(TAll, node->type)))) [[unlikely]] {
-        Type expected = node->wasInferredUnreachable ? TNone : node->type;
-        if (const KnownFunction* known = programFunctions() ? programFunctions()->function(functionNumberOf(expected)) : nullptr; known && known->summary && known->summary->takesScopeAsCallee)
-            expected = (expected & ~TFunction) | TOtherObject;
-        unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
-        if (node->kind == NodeKind::Argument)
-            which += 100 * node->reg.toArgument();
-        unsigned identifierPlusOne = 0;
-        const Node* origin = node;
-        for (unsigned depth = 0; depth < 4; ++depth) {
-            if (origin->isBytecode(op_check_type))
-                origin = origin->use(origin->as<OpCheckType>().m_value);
-            else if (origin->kind == NodeKind::Narrow || (origin->kind == NodeKind::Phi && origin->uses.size() == 1))
-                origin = origin->uses[0].node;
-            else
-                break;
-        }
-        Variable variable;
-        if (origin->isBytecode(op_get_from_scope)) {
-            identifierPlusOne = numberOf(origin, origin->as<OpGetFromScope>().m_var) + 1;
-            variable = m_graph.variableAccessedBy(origin);
-        } else if (node->isBytecode(op_get_by_id))
-            identifierPlusOne = numberOf(node, node->as<OpGetById>().m_property) + 1;
-        Node* place = node;
-        for (unsigned i = m_nodeIndex; place->kind != NodeKind::Bytecode && i < m_block->nodes.size(); ++i)
-            place = m_block->nodes[i];
-        m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
-        m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected >> 64));
-        m_graph.wideIntegerConstants.add(static_cast<int64_t>(std::bit_cast<uintptr_t>(variable.scope)));
-        if (place->kind == NodeKind::Bytecode) {
-            vmCall(place, Void, Entry::operationAOTVerifyInferredType, m_instance, value, m_out.constInt64(static_cast<int64_t>(expected)), m_out.constInt64(static_cast<int64_t>(expected >> 64)), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
-                m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
-        }
-    }
+    if (Options::validateAOTInferredTypes() && rep == Rep::JSValue) [[unlikely]]
+        verifyInferredType(node, value);
     if (Rep to = node->rep(); rep != to && rep != Rep::JSValue && to != Rep::JSValue && (rep == Rep::Boolean || to == Rep::Boolean)) [[unlikely]] {
         dataLog("AOT: lowered representation does not match the node: ");
         node->dump(WTF::dataFile());
@@ -1369,6 +1375,14 @@ void Lowering::lowerBlock(BasicBlock* block)
         if (Options::aotTypeCoveragePath()) [[unlikely]]
             coverOperation(node, block);
     };
+    if (Options::validateAOTInferredTypes() && Options::validateAOTTypesOfPhis()) [[unlikely]] {
+        setCurrentNode(nullptr);
+        m_nodeIndex = 0;
+        for (Node* phi : block->phis) {
+            if (phi->useCount && phi->rep() == Rep::JSValue)
+                verifyInferredType(phi, phi->lowered);
+        }
+    }
     for (m_nodeIndex = 0; m_nodeIndex < block->nodes.size(); ++m_nodeIndex) {
         Node* node = block->nodes[m_nodeIndex];
         if (node == terminal)

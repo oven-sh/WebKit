@@ -175,6 +175,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, auditAOTTypedFields, false, Normal, "With useAOTTypedFields: compiled code does not rely on static types, and each violation that would have thrown a TypeError is logged instead (AUDIT lines), once per reason and typed layout. Use to find where a program contradicts its types."_s) \
     v(Bool, useAOTInlining, true, Normal, "Inline a call whose callee is known exactly, if the callee is small or this is its only call site."_s) \
     v(Bool, validateAOTInferredTypes, false, Normal, "For testing the AOT compiler. Compiled code checks every value whose type was inferred rather than checked, and crashes if the type is wrong."_s) \
+    v(Bool, validateAOTTypesOfPhis, false, Normal, "For testing the AOT compiler. With validateAOTInferredTypes: the type of a phi is checked too, at the head of its block."_s) \
     v(Bool, logAOTTypeInference, false, Normal, "After whole-program type inference, logs the result for each function and variable and what contributed to it. Lines start with \"AOT inference:\"."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
