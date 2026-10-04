@@ -44,8 +44,12 @@
 #include "MicrotaskQueueInlines.h"
 #include "ObjectConstructor.h"
 #include "VMInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 
 namespace JSC {
+
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromiseConstructor);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
@@ -291,6 +295,10 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRaceSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // What rejects it is a job with no handler.
+    keepCurrentAsyncContextForUnhandledRejection(vm, globalObject, promise);
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();
@@ -488,6 +496,10 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // What rejects it is a job with no handler.
+    keepCurrentAsyncContextForUnhandledRejection(vm, globalObject, promise);
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();
@@ -1249,6 +1261,10 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseAnySlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // What rejects it is a job with no handler.
+    keepCurrentAsyncContextForUnhandledRejection(vm, globalObject, promise);
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();

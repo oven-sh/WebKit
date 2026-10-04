@@ -149,6 +149,27 @@ public:
     // https://webidl.spec.whatwg.org/#mark-a-promise-as-handled
     void markAsHandled() { m_packed.setType(flags() | isHandledFlag); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A job with no handler (adopting a native promise, then() with no handler for the settlement, the second
+    // job of finally(), a combinator's job, pipeFrom()) does not enter the async context it was scheduled in.
+    // Once VM::reportsUnhandledRejectionsInAsyncContext(), whoever schedules such a job keeps that async context
+    // in the promise the job will settle: in m_slot, which is unused while a promise is pending with no reaction.
+    // rejectPromiseWithoutHandler() enters it around promiseRejectionTracker, and none if nothing was kept.
+    ALWAYS_INLINE void keepAsyncContextForUnhandledRejection(VM& vm, JSValue asyncContext)
+    {
+        ASSERT(vm.reportsUnhandledRejectionsInAsyncContext());
+        if (asyncContext && asyncContext.isCell() && hasNothingButAKeptAsyncContext())
+            setSlot(vm, asyncContext);
+    }
+    // What keepAsyncContextForUnhandledRejection() kept. Undefined if nothing.
+    JSValue asyncContextKeptForUnhandledRejection() const;
+    // The promise, or the promise of the capability. Null if it is neither.
+    static JSPromise* promiseOf(JSValue promiseOrCapability);
+    // reject() and rejectPromise(), for a job with no handler.
+    void rejectWithoutHandler(VM&, JSValue);
+    void rejectPromiseWithoutHandler(VM&, JSValue);
+#endif
+
     struct DeferredData {
         WTF_FORBID_HEAP_ALLOCATION;
     public:
@@ -273,6 +294,11 @@ private:
     JSPromiseReaction* reactionHead(VM&);
     void settleInlineInternalMicrotask(VM&, JSGlobalObject*, Status, JSValue argument, uint16_t flags);
     void settleInlineHandler(VM&, JSGlobalObject*, Status, JSValue argument, uint16_t flags);
+#if USE(BUN_JSC_ADDITIONS)
+    template<bool withoutHandler> ALWAYS_INLINE void rejectPromiseImpl(VM&, JSValue);
+    // Pending, with no reaction and nothing handling a rejection: m_slot is unused, or holds a kept async context.
+    bool hasNothingButAKeptAsyncContext() const { return !(flags() & (stateMask | inlineReactionKindMask | isHandledFlag)) && !payloadCell(); }
+#endif
     static void triggerPromiseReactions(VM&, JSGlobalObject*, JSPromise::Status, JSPromiseReaction* head, JSValue argument);
 
     InternalMicrotask inlineReactionMicrotask() const

@@ -57,6 +57,8 @@
 #include "JSFunction.h"
 #include "JSFunctionInlines.h"
 #include "JSLock.h"
+#include "JSMap.h"
+#include "JSMapInlines.h"
 #include "JSModuleLoader.h"
 #include "JSNativeStdFunction.h"
 #include "JSONObject.h"
@@ -1156,7 +1158,7 @@ private:
     static JSPromise* moduleLoaderFetch(JSGlobalObject*, JSModuleLoader*, JSValue, const String&, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     static JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSModuleLoader*, JSValue, JSModuleRecord*, RefPtr<ScriptFetcher>);
 
-#if ENABLE(FUZZILLI)
+#if ENABLE(FUZZILLI) || USE(BUN_JSC_ADDITIONS)
     static void promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation);
 #endif
 
@@ -1784,6 +1786,28 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
 }
 
 #endif // ENABLE(FUZZILLI)
+
+#if USE(BUN_JSC_ADDITIONS) && !ENABLE(FUZZILLI)
+// For tests, once $vm.setReportsUnhandledRejectionsInAsyncContext(): records, in the global Map
+// `asyncContextsWhenRejected` if there is one, the async context that is current when the tracker is told of each
+// promise. A promise that is handled afterwards is taken out.
+void GlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
+{
+    VM& vm = globalObject->vm();
+    if (vm.reportsUnhandledRejectionsInAsyncContext()) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSValue contexts = globalObject->getDirect(vm, Identifier::fromString(vm, "asyncContextsWhenRejected"_s));
+        if (auto* map = contexts ? dynamicDowncast<JSMap>(contexts) : nullptr) {
+            if (operation == JSPromiseRejectionOperation::Reject)
+                map->set(globalObject, promise, globalObject->m_asyncContextData->getInternalField(0));
+            else
+                map->remove(globalObject, promise);
+        }
+        (void)scope.tryClearException();
+    }
+    JSGlobalObject::promiseRejectionTracker(globalObject, promise, operation);
+}
+#endif
 
 static UTF8CString toUTF8CString(JSGlobalObject* globalObject, ThrowScope& scope, std::expected<UTF8CString, UTF8ConversionError> expectedString)
 {
