@@ -66,6 +66,8 @@ void Lowering::exitUnlessType(LValue value, Type from, Type wanted)
         wanted &= ~TFunction;
     if ((from & wanted & TFinalObjectTag) && !isSubtype(from & TAnyLayoutNumber, wanted))
         wanted &= ~TFinalObject;
+    if (!isSubtype(from & TString, wanted))
+        wanted &= ~TString;
     from &= TAllTags;
     wanted &= TAllTags;
     LBasicBlock pass = m_out.newBlock();
@@ -82,9 +84,8 @@ void Lowering::exitUnlessType(LValue value, Type from, Type wanted)
             return;
         if (isSubtype(remaining, wanted) || !mayBe(remaining, wanted))
             return;
-        RELEASE_ASSERT(isSubtype(atoms & remaining, wanted) || !mayBe(atoms & remaining, wanted));
         LBasicBlock next = m_out.newBlock();
-        m_out.branch(test(), unsure(mayBe(atoms & remaining, wanted) ? pass : m_exit), unsure(next));
+        m_out.branch(test(), unsure(isSubtype(atoms & remaining, wanted) ? pass : m_exit), unsure(next));
         m_out.appendTo(next);
         remaining &= ~atoms;
     };
@@ -98,14 +99,20 @@ void Lowering::exitUnlessType(LValue value, Type from, Type wanted)
     consider(TSymbol, [&] { return isType(SymbolType); });
     consider(TBigInt, [&] { return isType(HeapBigIntType); });
     consider(TCellOther, [&] { return m_out.below(valueCellType(), m_out.constInt32(ObjectType)); });
-    consider(TFunctionTag, [&] { return m_out.bitOr(isType(JSFunctionType), isType(InternalFunctionType)); });
+    consider(TFunctionTag, [&] {
+        LValue isInternalFunction = isType(InternalFunctionType);
+        if (mayBe(from, TOtherObject))
+            isInternalFunction = m_out.bitAnd(isInternalFunction, m_out.testIsZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(MasqueradesAsUndefined)));
+        return m_out.bitOr(isType(JSFunctionType), isInternalFunction);
+    });
     consider(TArray, [&] { return m_out.bitOr(isType(ArrayType), isType(DerivedArrayType)); });
     for (unsigned i = 0; i < NumberOfTypedArrayTypesExcludingDataView; ++i) {
         JSType typedArrayType = static_cast<JSType>(FirstTypedArrayType + i);
         consider(typeForTypedArray(typedArrayType), [&] { return isType(typedArrayType); });
     }
-    consider(TFinalObjectTag, [&] { return isType(FinalObjectType); });
-    m_out.jump(mayBe(remaining, wanted) ? pass : m_exit);
+    for (auto& kind : objectKinds)
+        consider(kind.type & TAllTags, [&] { return isType(kind.jsType); });
+    m_out.jump(remaining && isSubtype(remaining, wanted) ? pass : m_exit);
     m_out.appendTo(pass);
 }
 
@@ -190,7 +197,8 @@ void Lowering::emitGuard(Node* guard)
         exitUnless(m_out.equal(m_out.castToInt32(loadSlotWord(propertyGuardSlot(guard->site), 0)), m_out.castToInt32(loadSlotWord(propertyGuardSlot(guard->otherSite), 0))));
         return;
     case GuardKind::SlotIsDirect:
-        exitUnless(m_out.logicalNot(hasFlag(m_out, loadSlotWord(propertyGuardSlot(guard->site), 0), Slot::isIndirect)));
+        static_assert(Slot::isGetter == Slot::hasFieldType);
+        exitUnless(m_out.logicalNot(hasFlag(m_out, loadSlotWord(propertyGuardSlot(guard->site), 0), Slot::isIndirect | Slot::hasFieldType)));
         return;
     case GuardKind::BeginSlotChecks: {
         m_slotCheckSlot = allocateSlot();
@@ -239,8 +247,14 @@ void Lowering::emitGuard(Node* guard)
     case GuardKind::KnownCallee: {
         const KnownFunction* known = m_graph.knownCallee(guard);
         if (m_graph.calleeIsExact(guard)) {
-            if (!known->isDeclaration)
-                exitUnless(isCell(lowJSValue(guard->uses[0].node)));
+            if (!known->isDeclaration) {
+                Node* calleeNode = guard->uses[0].node;
+                LValue callee = lowJSValue(calleeNode);
+                if (isSubtype(calleeNode->type & TCell, TFunction))
+                    exitUnless(isCell(callee));
+                else
+                    exitUnless(isCellAnd(calleeNode, callee, [&](LValue cell) { return isCellOfType(cell, JSFunctionType); }));
+            }
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -492,13 +506,14 @@ void Lowering::guardPutById(Node* guard)
     LBasicBlock plain = m_out.newBlock();
     LBasicBlock indirectCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(hasFlag(m_out, word, Slot::isIndirect), rarely(indirectCase), usually(plain));
+    m_out.branch(hasFlag(m_out, word, Slot::isIndirect | Slot::hasFieldType), rarely(indirectCase), usually(plain));
 
     m_out.appendTo(plain, indirectCase);
     ValueFromBlock directAddress = m_out.anchor(directLocation(m_out, base, word));
     m_out.jump(continuation);
 
     m_out.appendTo(indirectCase, continuation);
+    exitUnless(m_out.logicalNot(hasFlag(m_out, word, Slot::hasFieldType)));
     exitUnless(m_out.isZero32(lowHalf(m_out, loadSlotWord(slot, 1))));
     ValueFromBlock indirectAddress = m_out.anchor(cachedPropertyAddress(base, word).value());
     m_out.jump(continuation);
@@ -863,7 +878,7 @@ void Lowering::guardPutByVal(Node* guard)
         {
             LValue boxed;
             if (valueNode->rep() == Rep::Int32)
-                boxed = lowJSValue(valueNode);
+                boxed = boxInt32(lowInt32(valueNode));
             else if (valueNode->rep() == Rep::Int64) {
                 LValue wide = lowRaw(valueNode);
                 LValue narrow = m_out.castToInt32(wide);
@@ -1331,7 +1346,7 @@ bool Lowering::guardCall(Node* guard)
 
         m_out.appendTo(int32Case, doubleCase);
         {
-            LValue value = lowJSValue(valueNode);
+            LValue value = lowJSValuePreferringInt32(valueNode);
             if (valueNode->rep() != Rep::Int32)
                 exitUnless(isInt32(value));
             m_out.store64(value, m_out.baseIndex(m_heaps.indexedInt32Properties, butterfly, utf16Length));

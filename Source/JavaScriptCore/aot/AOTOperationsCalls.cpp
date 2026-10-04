@@ -184,14 +184,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIteratorResultIsNotObject, void, (Inst
     OPERATION_RETURN(scope);
 }
 
-static bool isIterationUnobservable(JSValue value)
+static bool isCopyable(JSValue value)
 {
-    if (!value.isCell())
-        return false;
-    if (value.asCell()->type() == JSCellButterflyType)
-        return true;
-    auto* array = dynamicDowncast<JSArray>(value.asCell());
-    return array && array->isIteratorProtocolFastAndNonObservable();
+    return value.isCell() && (value.asCell()->type() == JSCellButterflyType || copyableArray(value));
 }
 
 static unsigned copyableLength(JSValue value)
@@ -211,7 +206,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (Instance* instance,
         OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     } else {
         auto* items = std::bit_cast<EncodedJSValue*>(listOrItems);
-        bool allIterationsAreUnobservable = true;
+        bool allSourcesAreCopyable = true;
         auto forEachSpread = [&](const auto& functor) {
             unsigned word = 0;
             for (unsigned i = 0; i < descriptor.numberOfItems(); ++i) {
@@ -221,9 +216,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (Instance* instance,
             }
         };
         forEachSpread([&](EncodedJSValue& item, unsigned) {
-            allIterationsAreUnobservable &= isIterationUnobservable(JSValue::decode(item));
+            allSourcesAreCopyable &= isCopyable(JSValue::decode(item));
         });
-        if (!allIterationsAreUnobservable) [[unlikely]] {
+        if (!allSourcesAreCopyable) [[unlikely]] {
             bool threw = false;
             const void* returnAddress = removeCodePtrTag(callFrame->rawReturnPC());
             FunctionRef function = caller(instance, callFrame);
@@ -389,6 +384,36 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheCallee, void, (Instance* inst
     target.pointer = std::bit_cast<void*>(static_cast<uintptr_t>(entryWord & EntryWord::addressMask));
     target.offset += CalleeCache::attempt;
     cache[0].structureID = callee->structureID();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheHostCallee, void, (Instance* instance, Slot* cache, EncodedJSValue encodedCallee, void* callHostFunction, void* callInternalFunction))
+{
+    Slot& target = cache[1];
+    if (target.offset >= CalleeCache::maxAttempts * CalleeCache::attempt) {
+        cache[0].clear();
+        target.offset = CalleeCache::hasGivenUp;
+        return;
+    }
+    target.offset += CalleeCache::attempt;
+    JSValue callee = JSValue::decode(encodedCallee);
+    if (!callee.isCell())
+        return;
+    JSCell* cell = callee.asCell();
+    void* thunk = nullptr;
+    if (cell->type() == InternalFunctionType)
+        thunk = callInternalFunction;
+    else if (auto* function = dynamicDowncast<JSFunction>(cell); function && function->isHostFunction()) {
+        if (function->executable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr() == instance->runtimeTable[static_cast<unsigned>(Entry::NativeCallTrampoline)])
+            thunk = callHostFunction;
+    }
+    if (!thunk)
+        return;
+    instance->noteCalleeCacheFilled(cache);
+    cache[0].structureID = StructureID();
+    cache[0].offset = Slot::isIndirect | Slot::pointerIsCell;
+    cache[0].pointer = cell;
+    target.pointer = thunk;
+    cache[0].structureID = cell->structureID();
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance* instance, uint32_t index))

@@ -52,6 +52,7 @@ public:
         JSType type { CellType };
         bool isCell { false };
         uint16_t builtinCode { 0 };
+        bool isHostFunction { false };
     };
 
     JS_EXPORT_PRIVATE static const ImmutableIntrinsics* NODELETE shared();

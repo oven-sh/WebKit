@@ -105,7 +105,7 @@ struct NewObjectPlan {
 
     static VirtualRegister registerOf(unsigned property) { return VirtualRegister(0x20000000 + static_cast<int>(property)); }
 
-    static NewObjectPlan forCreateThis(const JSInstructionStream&, unsigned offsetOfCreateThis);
+    static NewObjectPlan forCreateThis(UnlinkedCodeBlock*, unsigned offsetOfCreateThis);
 };
 
 class Graph;

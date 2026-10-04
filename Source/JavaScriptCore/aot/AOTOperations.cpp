@@ -202,6 +202,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (!isDirect || (slot.type() == PutPropertySlot::NewProperty && base.isObject() && asObject(base)->canPerformFastPutInline(vm, ident)))
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
+    if (!isDirect && slot.isCacheableSetter() && base.isObject() && base.asCell()->structure() == oldStructure)
+        noteInheritedSetter(globalObject, *instance, asObject(base), ident, slot);
     cachePutById(instance, callerData(instance, callFrame), base, oldStructure, ident, slot, isDirect, cache);
     OPERATION_RETURN(scope);
 }

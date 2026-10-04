@@ -19,6 +19,8 @@ struct BuiltinSignature {
         Always,
         IfFirstArgumentIsNotObject,
         IfThisIsHolder,
+        IsInt32IfArgumentsAre,
+        IsInt32IfOnlyArgumentIs,
     };
     Type result;
     Condition condition;
@@ -28,6 +30,7 @@ std::optional<BuiltinSignature> intrinsicSignature(unsigned number);
 std::optional<Type> constructingIntrinsicResult(unsigned number);
 
 unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name);
+bool isDataPropertyOfFunctionPrototype(const StringImpl& name);
 
 #define FOR_EACH_AOT_BUILTIN(v) \
     v(MathAbs, "Math.abs") v(MathFloor, "Math.floor") v(MathCeil, "Math.ceil") v(MathTrunc, "Math.trunc") v(MathRound, "Math.round") v(MathSqrt, "Math.sqrt") \
@@ -79,6 +82,7 @@ Builtin builtinAtIndex(unsigned intrinsic);
 
 enum class Receiver : uint8_t { None, String, Array, Map, Set, WeakMap, WeakSet, RegExp, Date, Number };
 Type typeOf(Receiver);
+ASCIILiteral nameOf(Receiver);
 JSType cellTypeOf(Receiver);
 unsigned intrinsicFoundOn(Receiver, const StringImpl& name);
 Receiver receiverWithType(Type);

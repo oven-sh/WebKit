@@ -100,6 +100,38 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWeakSetHas, size_t, (JSCell* set, 
     return key.isCell() && uncheckedDowncast<JSWeakSet>(set)->has(key.asCell());
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, JSValue::encode(uncheckedDowncast<JSMap>(map)->get(globalObject, JSValue::decode(key))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(uncheckedDowncast<JSMap>(map)->has(globalObject, JSValue::decode(key)))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(uncheckedDowncast<JSSet>(set)->has(globalObject, JSValue::decode(key)))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTMapSetGeneric, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key, EncodedJSValue value))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    uncheckedDowncast<JSMap>(map)->set(globalObject, JSValue::decode(key), JSValue::decode(value));
+    OPERATION_RETURN(scope, JSValue::encode(map));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetAddGeneric, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    uncheckedDowncast<JSSet>(set)->add(globalObject, JSValue::decode(key));
+    OPERATION_RETURN(scope, JSValue::encode(set));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTMapDelete, size_t, (Instance* instance, JSCell* map, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);

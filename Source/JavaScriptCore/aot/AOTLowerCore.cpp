@@ -209,6 +209,8 @@ static unsigned scratchWordsFor(Node* node)
         return node->as<OpConstruct>().m_argc;
     case op_super_construct:
         return node->as<OpSuperConstruct>().m_argc;
+    case op_call_direct_eval:
+        return node->as<OpCallDirectEval>().m_argc;
     case op_strcat:
         return node->as<OpStrcat>().m_count;
     case op_enumerator_next:
@@ -232,7 +234,7 @@ bool Lowering::run()
 
     LBasicBlock prologue = m_out.newBlock();
     for (BasicBlock* block : m_graph.m_rpo) {
-        m_out.setFrequency(block->isGeneric ? coldFrequency : 1);
+        m_out.setFrequency(block->isGeneric || block->isRarelyExecuted ? coldFrequency : 1);
         block->lowered = m_out.newBlock();
         if (!block->arraysViewed.isEmpty())
             block->loweredAhead = m_out.newBlock();
@@ -299,6 +301,7 @@ bool Lowering::run()
                 use.node->useCount++;
         }
     }
+    m_numberOfScratchWords = scratchWords;
     if (scratchWords)
         m_scratch = m_out.lockedStackSlot(scratchWords * sizeof(EncodedJSValue));
 
@@ -486,7 +489,7 @@ LValue Lowering::slotAddress(unsigned slot)
 
 TypedPointer Lowering::scratchWord(unsigned index)
 {
-    RELEASE_ASSERT(m_scratch);
+    RELEASE_ASSERT(m_scratch && index < m_numberOfScratchWords);
     return m_out.address(m_heaps.root, m_scratch, index * sizeof(EncodedJSValue));
 }
 
@@ -1030,6 +1033,19 @@ LValue Lowering::lowJSValue(Node* node)
     return convert(lowRaw(node), node->rep(), node->type, Rep::JSValue);
 }
 
+LValue Lowering::lowJSValuePreferringInt32(Node* node)
+{
+    Rep rep = node->rep();
+    if (rep == Rep::Int32 || rep == Rep::Int64)
+        return convert(lowRaw(node), rep, TNumber, Rep::JSValue);
+    if (rep != Rep::Double || node->isConstant())
+        return lowJSValue(node);
+    m_graph.remark("boxes-integral-double-as-int32"_s);
+    LValue number = lowRaw(node);
+    LValue narrow = m_out.doubleToInt32(number);
+    return m_out.select(m_out.equal(m_out.bitCast(m_out.intToDouble(narrow), Int64), m_out.bitCast(number, Int64)), boxInt32(narrow), boxDouble(number));
+}
+
 LValue Lowering::lowInt32(Node* node)
 {
     RELEASE_ASSERT(node->rep() == Rep::Int32);
@@ -1145,43 +1161,77 @@ LValue Lowering::toBoolean(Node* node)
         break;
     }
     LValue value = lowRaw(node);
-    if (isSubtype(node->type, TOther))
+    Type type = node->type & ~TEmpty;
+    if (isSubtype(type, TOther))
         return m_out.booleanFalse;
-    if (isSubtype(node->type, TBoolean | TOther))
+    if (isSubtype(type, TBoolean | TOther))
         return m_out.equal(value, m_out.constInt64(JSValue::ValueTrue));
-    if (isSubtype(node->type, TBoolean | TOther | TString | TSymbol | ((TAnyObject) & ~TOtherObject))) {
-        if (!mayBe(node->type, TString) && !mayBe(node->type, TBoolean))
-            return isSubtype(node->type, TCell) ? m_out.booleanTrue : isCell(value);
+    if (isSubtype(type, TInt32 | TOther)) {
+        m_graph.remark("inline-truthiness-of-number"_s);
+        return m_out.above(value, m_out.constInt64(JSValue::NumberTag));
+    }
+    if (isSubtype(type, TNumber | TUndefined)) {
+        m_graph.remark("inline-truthiness-of-number"_s);
+        return m_out.doubleNotEqualAndOrdered(numberToDouble(value), m_out.constDouble(0));
+    }
+    if (isSubtype(type, TBoolean | TOther | TString | TSymbol | TAnyObject)) {
+        bool mayMasquerade = mayBe(type, TOtherObject);
+        if (!mayBe(type, TString) && !mayBe(type, TBoolean) && !mayMasquerade)
+            return isSubtype(type, TCell) ? m_out.booleanTrue : isCell(value);
+        if (mayBe(type, TString))
+            m_graph.remark("truthiness-of-string-by-identity"_s);
+        if (!mayMasquerade) {
+            LValue isTruthyCell = mayBe(type, TString) ? m_out.notEqual(value, emptyString()) : m_out.booleanTrue;
+            if (!isSubtype(type, TCell))
+                isTruthyCell = m_out.bitAnd(isCell(value), isTruthyCell);
+            return mayBe(type, TBoolean) ? m_out.bitOr(isTruthyCell, m_out.equal(value, m_out.constInt64(JSValue::ValueTrue))) : isTruthyCell;
+        }
+        if (mayMasquerade)
+            m_graph.remark("inline-truthiness-of-object"_s);
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
-        Vector<ValueFromBlock, 4> results;
-        if (!isSubtype(node->type, TCell)) {
-            results.append(m_out.anchor(m_out.equal(value, m_out.constInt64(JSValue::ValueTrue))));
+        LBasicBlock objectCase = mayMasquerade ? m_out.newBlock() : continuation;
+        Vector<ValueFromBlock, 6> results;
+        if (!isSubtype(type, TCell)) {
+            results.append(m_out.anchor(mayBe(type, TBoolean) ? m_out.equal(value, m_out.constInt64(JSValue::ValueTrue)) : m_out.booleanFalse));
             m_out.branch(isCell(value), unsure(cellCase), unsure(continuation));
         } else
             m_out.jump(cellCase);
         m_out.appendTo(cellCase);
-        if (mayBe(node->type, TString)) {
-            if (!isSubtype(node->type & TCell, TString)) {
+        if (mayBe(type, TString)) {
+            if (!isSubtype(type & TCell, TString)) {
                 LBasicBlock stringCase = m_out.newBlock();
-                results.append(m_out.anchor(m_out.booleanTrue));
-                m_out.branch(isCellOfType(value, StringType), unsure(stringCase), unsure(continuation));
+                if (!mayMasquerade)
+                    results.append(m_out.anchor(m_out.booleanTrue));
+                m_out.branch(isCellOfType(value, StringType), unsure(stringCase), unsure(objectCase));
                 m_out.appendTo(stringCase);
             }
-            LBasicBlock notRope = m_out.newBlock();
-            LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
+            results.append(m_out.anchor(m_out.notEqual(value, emptyString())));
+            m_out.jump(continuation);
+        } else if (mayMasquerade)
+            m_out.jump(objectCase);
+        else {
             results.append(m_out.anchor(m_out.booleanTrue));
-            m_out.branch(m_out.testNonZeroPtr(impl, m_out.constIntPtr(JSString::isRopeInPointer)), rarely(continuation), usually(notRope));
-            m_out.appendTo(notRope);
-            results.append(m_out.anchor(m_out.notZero32(m_out.load32(impl, m_heaps.StringImpl_length))));
-        } else
+            m_out.jump(continuation);
+        }
+        if (mayMasquerade) {
+            LBasicBlock masquerades = newColdBlock();
+            m_out.appendTo(objectCase);
             results.append(m_out.anchor(m_out.booleanTrue));
-        m_out.jump(continuation);
+            m_out.branch(m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(MasqueradesAsUndefined)), rarely(masquerades), usually(continuation));
+            m_out.appendTo(masquerades);
+            results.append(m_out.anchor(m_out.notEqual(m_out.loadPtr(structureOf(value), m_heaps.Structure_realm), m_globalObject)));
+            m_out.jump(continuation);
+        }
         m_out.appendTo(continuation);
         return m_out.phi(Int32, results);
     }
-    if (isCompact())
-        return callStub(Stub::ToBoolean, Int32, { { value, firstStubOperandGPR } }, { }, StubClobbers::Temporaries);
+    if (isCompact()) {
+        PatchpointValue* patchpoint = callStub(Stub::ToBoolean, Int32, { { value, firstStubOperandGPR } }, { }, StubClobbers::Temporaries);
+        patchpoint->effects = Effects::none();
+        patchpoint->effects.reads = HeapRange::top();
+        return patchpoint;
+    }
 
     LBasicBlock notBoolean = m_out.newBlock();
     LBasicBlock notInt32 = m_out.newBlock();
@@ -1224,32 +1274,58 @@ const Lowering::ArrayView* Lowering::viewOf(Node* access, Node* base)
     if (!access->viewedAheadOf)
         return nullptr;
     UNUSED_PARAM(base);
-    for (auto& [header, array, view] : m_arrayViews) {
-        if (header == access->viewedAheadOf && array == access->arrayViewed)
-            return &view;
+    auto get = [&](B3::Variable* variable) -> LValue {
+        return m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), variable);
+    };
+    for (auto& [header, array, variables] : m_arrayViews) {
+        if (header != access->viewedAheadOf || array != access->arrayViewed)
+            continue;
+        m_graph.remark("array-view"_s);
+        m_arrayViewHere = { get(variables.butterfly), get(variables.length), get(variables.limit) };
+        return &m_arrayViewHere;
     }
     return nullptr;
+}
+
+void Lowering::loadArrayView(Node* base, const ArrayViewVariables& variables)
+{
+    auto set = [&](B3::Variable* variable, LValue value) {
+        m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), variable, value);
+    };
+    LValue array = lowCell(base);
+    LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(array, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
+    LValue butterfly = m_out.loadPtr(array, m_heaps.JSObject_butterfly);
+    LBasicBlock hasElements = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    ValueFromBlock none = m_out.anchor(m_out.int64Zero);
+    m_out.branch(m_out.notZero32(shape), usually(hasElements), rarely(continuation));
+    m_out.appendTo(hasElements);
+    ValueFromBlock some = m_out.anchor(m_out.zeroExt(m_out.load32(butterfly, m_heaps.Butterfly_publicLength), Int64));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    LValue length = m_out.phi(Int64, none, some);
+    set(variables.butterfly, butterfly);
+    set(variables.length, length);
+    set(variables.limit, m_out.select(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), length, m_out.int64Zero));
+}
+
+void Lowering::reloadArrayViews()
+{
+    for (auto& [header, array, variables] : m_arrayViews) {
+        if (!header->loopBody.get(m_block->index))
+            continue;
+        m_graph.remark("reloads-array-view"_s);
+        loadArrayView(array, variables);
+    }
 }
 
 void Lowering::hoistArrayStorageLoadsAheadOf(BasicBlock* header)
 {
     m_out.appendTo(header->loweredAhead);
     for (Node* base : header->arraysViewed) {
-        LValue array = lowCell(base);
-        ArrayView view;
-        LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(array, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
-        view.butterfly = m_out.loadPtr(array, m_heaps.JSObject_butterfly);
-        LBasicBlock hasElements = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        ValueFromBlock none = m_out.anchor(m_out.int64Zero);
-        m_out.branch(m_out.notZero32(shape), usually(hasElements), rarely(continuation));
-        m_out.appendTo(hasElements);
-        ValueFromBlock some = m_out.anchor(m_out.zeroExt(m_out.load32(view.butterfly, m_heaps.Butterfly_publicLength), Int64));
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        view.length = m_out.phi(Int64, none, some);
-        view.limit = m_out.select(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), view.length, m_out.int64Zero);
-        m_arrayViews.append({ header, base, view });
+        ArrayViewVariables variables { m_proc.addVariable(pointerType()), m_proc.addVariable(Int64), m_proc.addVariable(Int64) };
+        loadArrayView(base, variables);
+        m_arrayViews.append({ header, base, variables });
     }
     m_out.jump(header->lowered);
 }
@@ -1305,10 +1381,8 @@ void Lowering::lowerBlock(BasicBlock* block)
     if (terminal && terminal->kind != NodeKind::Guard && !(terminal->kind == NodeKind::Bytecode && (isBranch(terminal->opcode) || isTerminal(terminal->opcode) || isThrow(terminal->opcode))))
         terminal = nullptr;
 
-    m_scopeWithBarrier = nullptr;
+    m_newCells.shrink(0);
     auto setCurrentNode = [&](Node* node) {
-        if (!node || !node->isBytecode(op_put_to_scope))
-            m_scopeWithBarrier = nullptr;
         m_node = node && node->instruction ? node : nullptr;
         m_code = node ? node->graph : block->graph;
         if (Options::aotTypeCoveragePath()) [[unlikely]]
@@ -1337,13 +1411,30 @@ void Lowering::lowerBlock(BasicBlock* block)
             lowerPropertyRun(stores);
             m_availableFields.shrink(0);
             m_availableReads.shrink(0);
+            m_newCells.shrink(0);
             continue;
         }
         setCurrentNode(node);
+        if (Options::aotRemarksPath() || Options::aotTypeCoveragePath()) [[unlikely]] {
+            if (auto kind = allocationKind(node); kind && node->escape != Escape::NotAnalyzed && !node->isPromoted) {
+                if (stays(node->escape))
+                    m_graph.remark(node->escape == Escape::StaysHere ? "allocation-stays-here"_s : "allocation-is-only-borrowed"_s, nameOf(*kind));
+                else
+                    m_graph.remark("allocation-escapes"_s, makeString(nameOf(*kind), ": "_s, nameOf(node->escape)));
+            }
+        }
         m_nodePreservesFields = false;
+        if (!m_newCells.isEmpty() && mayCollectOrThrow(node))
+            m_newCells.shrink(0);
         lowerNode(node);
         if (m_graph.failed())
             return;
+        if (node->isBytecode(op_put_to_scope))
+            m_newCells.removeAll(node->use(node->as<OpPutToScope>().m_value));
+        else if (node->kind == NodeKind::SetStack)
+            m_newCells.removeAll(node->uses[0].node);
+        else if (node->isBytecode(op_create_lexical_environment) && !node->isPromoted)
+            m_newCells.append(node);
         if (!m_nodePreservesFields && !m_availableFields.isEmpty() && !preservesFields(node))
             m_availableFields.shrink(0);
         forgetReadsChangedBy(node);

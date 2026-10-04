@@ -78,6 +78,11 @@ static constexpr unsigned codeGranuleShift = 10;
     v(NewArrayWithSpecies, operationAOTNewArrayWithSpecies) \
     v(CreateRest, operationAOTCreateRest) \
     v(CreateLexicalEnvironment, operationAOTCreateLexicalEnvironment) \
+    v(NewInternalFieldObject, operationAOTNewInternalFieldObject) \
+    v(NewResolvedPromise, operationNewResolvedPromise) \
+    v(NewMapOrSet, operationAOTNewMapOrSet) \
+    v(ToString, operationAOTToString) \
+    v(Int32ToStringWithValidRadix, operationInt32ToStringWithValidRadix) \
     v(MakeRope2, operationMakeRope2) \
     v(MakeRope3, operationMakeRope3) \
     v(StringSliceWithEnd, operationStringSliceWithEnd) \
@@ -91,12 +96,19 @@ static constexpr unsigned codeGranuleShift = 10;
     v(HelperNewInt32Array) \
     v(HelperNewArrayBuffer) \
     v(HelperNewActivation) \
+    v(HelperNewPromise) \
+    v(HelperNewResolvedPromise) \
+    v(HelperNewGenerator) \
+    v(HelperNewAsyncFunctionGenerator) \
+    v(HelperNewMap) \
+    v(HelperNewSet) \
     v(HelperNewArrayWithSpread) \
     v(HelperNewArrayWithSpecies) \
     v(HelperStringSlice) \
     v(HelperStringSubstring) \
     v(HelperMakeRope2) \
     v(HelperMakeRope3) \
+    v(HelperInt32ToString) \
     v(HelperToLowerCase) \
     v(HelperObjectKeys) \
     v(HelperAddField) \
@@ -109,6 +121,9 @@ static constexpr unsigned codeGranuleShift = 10;
     v(Call) \
     v(Construct) \
     v(CallCached) \
+    v(CallHostFunction) \
+    v(CallInternalFunction) \
+    v(ConstructInternalFunction) \
     v(CallList) \
     v(ConstructList) \
     v(CallVarargs) \
@@ -214,6 +229,8 @@ static constexpr unsigned codeGranuleShift = 10;
     v(GetPrivateName) \
     v(CheckPrivateBrand) \
     v(PutPrivateName) \
+    v(DefinePrivateName) \
+    v(SetPrivateBrand) \
     v(ResolveScope) \
     v(GetFromScope) \
     v(PutToScope) \
@@ -223,8 +240,14 @@ static constexpr unsigned codeGranuleShift = 10;
     v(IteratorNext) \
     v(IteratorOpen) \
     v(IteratorCloseCheck) \
+    v(MapGet) \
+    v(MapHas) \
+    v(MapSet) \
+    v(SetHas) \
+    v(SetAdd) \
     v(HandleException) \
     v(ThrowStackOverflowAtPrologue) \
+    v(ThrowStackOverflow) \
     v(Catch) \
     v(VirtualCall) \
     v(VirtualConstruct) \
@@ -249,6 +272,11 @@ static constexpr unsigned codeGranuleShift = 10;
     v(NewArrayWithSpeciesWithFastPath) \
     v(CreateRestWithFastPath) \
     v(CreateLexicalEnvironmentWithFastPath) \
+    v(NewInternalFieldObjectWithFastPath) \
+    v(NewResolvedPromiseWithFastPath) \
+    v(NewMapOrSetWithFastPath) \
+    v(ToStringWithFastPath) \
+    v(Int32ToStringWithValidRadixWithFastPath) \
     v(MakeRope2WithFastPath) \
     v(MakeRope3WithFastPath) \
     v(StringSliceWithEndWithFastPath) \

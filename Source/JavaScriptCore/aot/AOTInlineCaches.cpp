@@ -502,6 +502,29 @@ void noteCustomGetter(JSGlobalObject* globalObject, Instance& instance, JSObject
     instance.customGetterFor(structure->id().bits(), ident.impl()) = { structure->id().bits(), vm.megamorphicCache()->epoch(), passesHolder, ident.impl(), std::bit_cast<void*>(slot.customGetter().taggedPtr()), holder };
 }
 
+void noteInheritedSetter(JSGlobalObject* globalObject, Instance& instance, JSObject* base, const Identifier& ident, const PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    Structure* structure = base->structure();
+    JSObject* holder = slot.base();
+    if (!usesDataStubs() || !vm.megamorphicCache() || holder == base || parseIndex(*ident.impl()))
+        return;
+    if (base->type() == GlobalProxyType || !structure->propertyAccessesAreCacheable() || structure->isDictionary() || structure->needImpurePropertyWatchpoint() || structure->typeInfo().prohibitsPropertyCaching() || isCopyOnWrite(structure->indexingMode()))
+        return;
+    if (holder->structure()->isDictionary())
+        return;
+    auto status = prepareChainForCaching(globalObject, base, ident.impl(), holder);
+    if (!status || status->flattenedDictionary || status->usesPolyProto)
+        return;
+    auto conditions = generateConditionsForPrototypePropertyHit(vm, globalObject, globalObject, structure, holder, ident.impl());
+    if (!conditions.isValid() || !(conditions.slotBaseCondition().attributes() & PropertyAttribute::Accessor))
+        return;
+    PropertyOffset offset = conditions.slotBaseCondition().offset();
+    if (offset > MegamorphicCache::maxOffset || !MegamorphicCache::noteDependenceOnPrototypes(structure->id(), holder))
+        return;
+    instance.inheritedSetterFor(structure->id().bits(), ident.impl()) = { structure->id().bits(), vm.megamorphicCache()->epoch(), static_cast<uint16_t>(offset), ident.impl(), holder, nullptr };
+}
+
 void cacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype)
 {
     if (SharedData::contains(cache))
@@ -513,6 +536,8 @@ void cacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* cache, JSOb
     if (!prototype.isCacheableValue() || prototype.slotBase() != constructor)
         return;
     if (!hasInstance.isCacheableValue() || hasInstance.slotBase() == constructor)
+        return;
+    if (!(hasInstance.attributes() & PropertyAttribute::ReadOnly) || !(hasInstance.attributes() & PropertyAttribute::DontDelete))
         return;
     auto location = propertyLocation(prototype.cachedOffset());
     if (!location || !mayReplace(cache, structure))
@@ -540,6 +565,30 @@ void cachePrivateName(VM& vm, Data* data, Slot* cache, JSObject* base, JSValue n
     if (!location || !mayReplace(cache, structure))
         return;
     fill(vm, data, cache, structure, *location | Slot::pointerIsCell, name.asCell());
+}
+
+void cachePrivateNameTransition(VM& vm, Data* data, Slot* cache, JSObject* base, Structure* oldStructure, JSValue name, std::optional<PropertyOffset> offset)
+{
+    if (!name.isCell() || SharedData::contains(cache))
+        return;
+    Structure* newStructure = base->structure();
+    if (!oldStructure->propertyAccessesAreCacheable() || oldStructure->isDictionary() || oldStructure->mayBePrototype() || !newStructure->propertyAccessesAreCacheable() || newStructure->isDictionary())
+        return;
+    if (newStructure->previousID() != oldStructure || oldStructure->outOfLineCapacity() != newStructure->outOfLineCapacity() || oldStructure->typeInfoBlob() != newStructure->typeInfoBlob())
+        return;
+    auto location = propertyLocation(offset.value_or(0));
+    if (!location || !mayReplace(cache, oldStructure))
+        return;
+    Slot& transition = cache[1];
+    transition.structureID = StructureID();
+    WTF::storeStoreFence();
+    transition.offset = Slot::isIndirect;
+    transition.pointer = nullptr;
+    transition.newStructureID = newStructure->id();
+    WTF::storeStoreFence();
+    transition.structureID = oldStructure->id();
+    data->instance->noteTransitionCached(&transition);
+    fill(vm, data, cache, oldStructure, *location | Slot::pointerIsCell, name.asCell());
 }
 
 static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);

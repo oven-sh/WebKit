@@ -769,7 +769,11 @@ Vector<uint8_t> ImageBuilder::finish()
             auto& code = m_functions[index].code;
             ++functions;
             bytes += code.bytes.size();
+#if CPU(X86_64)
+            static constexpr uint32_t breakpoint = 0xcccccccc;
+#else
             static constexpr uint32_t breakpoint = 0xd4200000;
+#endif
             code.bytes.resize(sizeof(breakpoint));
             memcpy(code.bytes.mutableSpan().data(), &breakpoint, sizeof(breakpoint));
             code.info.stubCalls.clear();

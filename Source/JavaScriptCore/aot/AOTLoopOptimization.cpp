@@ -254,7 +254,7 @@ private:
             constexpr Type byContent = TNumber | TString | TBigInt;
             if (strict)
                 return !mayBe(left, byContent) || !mayBe(right, byContent) || !mayBe(left, TString | TBigInt) || !mayBe(right, TString | TBigInt);
-            return isSubtype(left | right, TAnyObject | TSymbol);
+            return (isSubtype(left | right, TAnyObject) || isSubtype(left | right, TSymbol));
         };
         if (node->opcode == op_type_tag) {
             loop.changesStructures |= !node->uses[0].node->hasLayoutInRange(node->firstLayout, node->lastLayout);

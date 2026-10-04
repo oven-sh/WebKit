@@ -142,6 +142,8 @@ namespace AOT {
     v(operationObjectCreate) \
     v(operationObjectAssignUntyped) \
     v(operationSameValue) \
+    v(operationArrayPush) \
+    v(operationArrayPop) \
     v(operationArrayShift) \
     v(operationArrayUnshift) \
     v(operationArraySplice) \
@@ -154,6 +156,13 @@ namespace AOT {
     v(operationRegExpTestString) \
     v(operationRegExpExecString) \
     v(operationDateNow) \
+    v(operationNewResolvedPromise) \
+    v(operationNewRejectedPromise) \
+    v(operationResolvePromiseFirstResolving) \
+    v(operationRejectPromiseFirstResolving) \
+    v(operationFulfillPromiseFirstResolving) \
+    v(operationPromiseResolve) \
+    v(operationPromiseReject) \
     v(operationMakeRope2) \
     v(operationMakeRope3) \
 
@@ -172,6 +181,8 @@ namespace AOT {
     v(LookupExceptionHandler) \
     v(ThrowStackOverflowError) \
     v(NativeCallTrampoline) \
+    v(InternalFunctionCallTrampoline) \
+    v(InternalFunctionConstructTrampoline) \
     v(EnterStaticFunctionForCall) \
     v(EnterStaticFunctionForConstruct) \
     v(ConstructViaCall) \
@@ -231,6 +242,11 @@ namespace AOT {
     v(NewArrayWithSpeciesSlowPath) \
     v(CreateRestSlowPath) \
     v(CreateLexicalEnvironmentSlowPath) \
+    v(NewInternalFieldObjectSlowPath) \
+    v(NewResolvedPromiseSlowPath) \
+    v(NewMapOrSetSlowPath) \
+    v(ToStringSlowPath) \
+    v(Int32ToStringWithValidRadixSlowPath) \
     v(MakeRope2SlowPath) \
     v(MakeRope3SlowPath) \
     v(StringSliceWithEndSlowPath) \
@@ -660,6 +676,19 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfSingleCharacterStrings() { return OBJECT_OFFSETOF(Instance, singleCharacterStrings); }
     static constexpr ptrdiff_t offsetOfEmptyString() { return OBJECT_OFFSETOF(Instance, emptyString); }
     static constexpr ptrdiff_t offsetOfStringStructureID() { return OBJECT_OFFSETOF(Instance, stringStructureID); }
+    const void* smallIntStrings { nullptr };
+    const void* intStrings { nullptr };
+    static constexpr ptrdiff_t offsetOfSmallIntStrings() { return OBJECT_OFFSETOF(Instance, smallIntStrings); }
+    static constexpr ptrdiff_t offsetOfIntStrings() { return OBJECT_OFFSETOF(Instance, intStrings); }
+    enum class InlineAllocation : unsigned { Promise, Generator, AsyncFunctionGenerator, Map, Set };
+    static constexpr unsigned numberOfInlineAllocations = 5;
+    struct InlineAllocationData {
+        void* allocator;
+        uint64_t header;
+    };
+    InlineAllocationData inlineAllocations[numberOfInlineAllocations] { };
+    static constexpr ptrdiff_t offsetOfAllocatorFor(InlineAllocation kind) { return OBJECT_OFFSETOF(Instance, inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData) + OBJECT_OFFSETOF(InlineAllocationData, allocator); }
+    static constexpr ptrdiff_t offsetOfHeaderFor(InlineAllocation kind) { return OBJECT_OFFSETOF(Instance, inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData) + OBJECT_OFFSETOF(InlineAllocationData, header); }
     JS_EXPORT_PRIVATE void didHaveBadTime();
     struct FieldAddition {
         uint32_t structureID;
@@ -683,6 +712,20 @@ struct Instance {
     static constexpr unsigned numberOfCustomGetters = 128;
     CustomGetter customGetters[numberOfCustomGetters] { };
     CustomGetter& customGetterFor(uint32_t structureID, UniquedStringImpl* uid) { return customGetters[((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4)) % numberOfCustomGetters]; }
+    struct InheritedSetter {
+        uint32_t structureID;
+        uint16_t epoch;
+        uint16_t offset;
+        UniquedStringImpl* uid;
+        JSObject* holder;
+        void* unused;
+    };
+    static_assert(sizeof(InheritedSetter) == 32);
+    static constexpr unsigned numberOfInheritedSetters = 128;
+    static_assert(hasOneBitSet(numberOfInheritedSetters));
+    InheritedSetter inheritedSetters[numberOfInheritedSetters] { };
+    InheritedSetter& inheritedSetterFor(uint32_t structureID, UniquedStringImpl* uid) { return inheritedSetters[((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4)) % numberOfInheritedSetters]; }
+    static constexpr ptrdiff_t offsetOfInheritedSetters() { return OBJECT_OFFSETOF(Instance, inheritedSetters); }
     struct CachedAddressInfo {
         static constexpr uint32_t siteNotResolved = std::numeric_limits<uint32_t>::max();
         static constexpr uint32_t hasNoSite = siteNotResolved - 1;

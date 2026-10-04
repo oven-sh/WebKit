@@ -65,10 +65,18 @@ private:
         LValue length { nullptr };
         LValue limit { nullptr };
     };
+    struct ArrayViewVariables {
+        B3::Variable* butterfly { nullptr };
+        B3::Variable* length { nullptr };
+        B3::Variable* limit { nullptr };
+    };
     const ArrayView* viewOf(Node* access, Node* base);
     void hoistArrayStorageLoadsAheadOf(BasicBlock*);
+    void loadArrayView(Node* array, const ArrayViewVariables&);
+    void reloadArrayViews();
     LBasicBlock entryBlockFor(BasicBlock* successor);
-    Vector<std::tuple<BasicBlock*, Node*, ArrayView>, 4> m_arrayViews;
+    Vector<std::tuple<BasicBlock*, Node*, ArrayViewVariables>, 4> m_arrayViews;
+    ArrayView m_arrayViewHere;
     void unsupported(Node*);
     void incrementTypeCoverageCounter(uint32_t);
     void coverOperation(Node*, BasicBlock*, bool isElided = false);
@@ -100,6 +108,7 @@ private:
 
     LValue lowRaw(Node*);
     LValue lowJSValue(Node*);
+    LValue lowJSValuePreferringInt32(Node*);
     LValue lowInt32(Node*);
     LValue lowInt64(Node*);
     LValue lowDouble(Node*);
@@ -261,6 +270,9 @@ private:
     template<typename... Args> LValue vmCall(Node*, LType, Entry, Args...);
     template<typename... Args> LValue plainCall(LType, Entry, Args...);
     void storeBarrier(LValue owner);
+    bool mayCollectOrThrow(Node*);
+    std::optional<unsigned> offsetOfVariableStoredInline(Node*);
+    bool isFollowedByStoreBarrier(Node*);
     bool isLiveAfterNextNode(Node*) const;
 
     struct StubArgument {
@@ -353,6 +365,7 @@ private:
     void lowerBinaryArith(Node*, VirtualRegister lhs, VirtualRegister rhs);
     void lowerBitOp(Node*, VirtualRegister lhs, VirtualRegister rhs);
     void lowerUnaryArith(Node*, VirtualRegister operand);
+    LValue numberToString(Node* origin, Node* number);
     LValue lowerCompare(Node*, OpcodeID canonical, VirtualRegister lhs, VirtualRegister rhs);
     LValue lowerEquality(Node*, bool strict, VirtualRegister lhs, VirtualRegister rhs);
     LValue toInt32ForBitOp(Node* operand);
@@ -376,6 +389,11 @@ private:
     LValue getByIdCached(Node*, LValue base, Type baseType, Entry operation, unsigned identifier);
     LValue getByIdWithThisCached(Node*, LValue base, LValue thisValue, unsigned identifier);
     LValue lowIndex(Node* property, LBasicBlock indexReady, LBasicBlock notIndex);
+    struct ConstantKey {
+        unsigned identifier;
+        UniquedStringImpl* name;
+    };
+    std::optional<ConstantKey> constantKeyOf(Node* property);
 
     void lowerGuard(BasicBlock*, Node*);
     void emitGuard(Node*);
@@ -425,9 +443,11 @@ private:
     enum class CallMode : uint8_t { Call, Construct, TailCall };
     bool tryLowerCall(Node*);
     Arguments lowerArguments(Node*, unsigned argc, unsigned argv);
-    LValue emitCall(Node*, LValue callee, const Arguments&, CallMode = CallMode::Call, StubIntrinsic = StubIntrinsic::None);
+    LValue emitCall(Node*, LValue callee, const Arguments&, CallMode = CallMode::Call, StubIntrinsic = StubIntrinsic::None, std::optional<Stub> hostCallStub = std::nullopt);
+    std::optional<Stub> stubForHostCallee(Node* calleeNode, CallMode);
     void lowerCall(Node*, VirtualRegister callee, unsigned argc, unsigned argv, CallMode, bool hasResult);
     bool lowerCallToKnownFunction(Node*, VirtualRegister callee, unsigned argv, const Arguments&, CallMode, bool hasResult);
+    bool lowerCallToPromiseFunction(Node*, LinkTimeConstant, const Arguments&, bool hasResult);
     void lowerCallVarargs(Node*, VirtualRegister callee, VirtualRegister thisValue, VirtualRegister arguments, int firstVarArg, CallMode);
     void lowerCallWithItems(Node*, Node* calleeNode, LValue callee, LValue thisValue, Node* list, CallMode);
     void lowerCallDirectEval(Node*);
@@ -437,6 +457,7 @@ private:
 
     LValue isReceiverKind(Node* read, Node* baseNode, LValue base, Receiver);
     void lowerBuiltinRead(Node*, Node* baseNode);
+    bool lowerSizeOfMapOrSet(Node*, Node* baseNode);
     bool lowerBuiltinCall(Node*, Node* calleeNode, unsigned argc, unsigned argv, const Arguments&, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results);
     UncheckedKeyHashMap<Node*, LValue> m_receiverChecks;
 
@@ -452,6 +473,7 @@ private:
     LValue m_listSlot { nullptr };
     LValue m_frameRegisterStorage { nullptr };
     LValue m_scratch { nullptr };
+    unsigned m_numberOfScratchWords { 0 };
     LBasicBlock m_returnBlock { nullptr };
     Vector<ValueFromBlock, 4> m_returnValues;
     Vector<Vector<ValueFromBlock, 4>, 8> m_registerReturnValues;
@@ -467,7 +489,7 @@ private:
     UncheckedKeyHashMap<Node*, unsigned> m_propertyRunOfStore;
     unsigned m_nodeIndex { 0 };
     Node* m_node { nullptr };
-    Node* m_scopeWithBarrier { nullptr };
+    Vector<Node*, 2> m_newCells;
     Graph* m_code { nullptr };
 };
 

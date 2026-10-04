@@ -33,7 +33,10 @@ void Lowering::lowerTerminalOrFallThrough(BasicBlock* block, Node* node)
 
     auto conditional = [&](LValue condition) {
         RELEASE_ASSERT(block->successors.size() == 2);
-        m_out.branch(condition, unsure(edgeTo(block->successors[0])), unsure(edgeTo(block->successors[1])));
+        auto weighted = [&](BasicBlock* successor) {
+            return successor->isRarelyExecuted && !block->isRarelyExecuted ? FTL::rarely(edgeTo(successor)) : unsure(edgeTo(successor));
+        };
+        m_out.branch(condition, weighted(block->successors[0]), weighted(block->successors[1]));
     };
     auto isUndefinedOrNull = [&](Node* value) { return this->isUndefinedOrNull(value); };
     auto equalsNull = [&](Node* value) { return this->equalsNull(value, true); };
@@ -55,9 +58,12 @@ LValue Lowering::equalsNull(Node* value, bool nullCounts)
         return nullCounts ? isOther(jsValue) : m_out.equal(jsValue, m_out.constInt64(JSValue::encode(jsUndefined())));
     };
     {
-        if (!mayBe(value->type, TOther | TAnyObject))
+        constexpr Type mayMasquerade = TOtherObject | TFunction;
+        if (!mayBe(value->type, mayMasquerade) && mayBe(value->type, TAnyObject))
+            m_graph.remark("null-comparison-without-masquerade-test"_s);
+        if (!mayBe(value->type, TOther | mayMasquerade))
             return m_out.booleanFalse;
-        if (!mayBe(value->type, TAnyObject))
+        if (!mayBe(value->type, mayMasquerade))
             return notCellCase(lowJSValue(value));
         LValue jsValue = lowJSValue(value);
         LBasicBlock cellCase = m_out.newBlock();
@@ -797,7 +803,50 @@ bool Lowering::tryLowerMisc(Node* node)
         return true;
     case op_is_cell_with_type: {
         auto bytecode = node->as<OpIsCellWithType>();
-        setBoolean(node, cellTest(lowJSValue(node->use(bytecode.m_operand)), [&](LValue cell) { return isCellOfType(cell, bytecode.m_type); }));
+        Node* value = node->use(bytecode.m_operand);
+        Type exactly = TNone;
+        Type atMost = TCell;
+        switch (bytecode.m_type) {
+        case StringType:
+            exactly = TString;
+            break;
+        case SymbolType:
+            exactly = TSymbol;
+            break;
+        case HeapBigIntType:
+            exactly = TBigInt;
+            break;
+        case JSMapType:
+            exactly = TMap;
+            break;
+        case JSSetType:
+            exactly = TSet;
+            break;
+        case RegExpObjectType:
+            exactly = TRegExp;
+            break;
+        case JSPromiseType:
+            exactly = TPromise;
+            break;
+        case ArrayType:
+        case DerivedArrayType:
+            atMost = TArray;
+            break;
+        default:
+            break;
+        }
+        if (exactly)
+            atMost = exactly;
+        if ((exactly && isSubtype(value->type, exactly)) || !mayBe(value->type, atMost)) {
+            m_graph.remark("folded-type-query"_s);
+            setBoolean(node, mayBe(value->type, atMost) ? m_out.booleanTrue : m_out.booleanFalse);
+            return true;
+        }
+        if (isSubtype(value->type, TCell)) {
+            setBoolean(node, isCellOfType(lowJSValue(value), bytecode.m_type));
+            return true;
+        }
+        setBoolean(node, cellTest(lowJSValue(value), [&](LValue cell) { return isCellOfType(cell, bytecode.m_type); }));
         return true;
     }
     case op_get_internal_field: {

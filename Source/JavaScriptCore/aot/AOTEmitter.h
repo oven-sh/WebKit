@@ -122,6 +122,11 @@ protected:
     LValue newArrayFromValues(LValue values, LValue count, bool areInt32, LBasicBlock giveUp);
     LValue newArrayFromButterfly(LValue immutableButterfly, LBasicBlock giveUp);
     LValue newActivation(LValue scope, LValue symbolTable, LValue initialValue, LValue count, LBasicBlock giveUp);
+    LValue allocateObject(Instance::InlineAllocation, LBasicBlock giveUp);
+    LValue newPromise(LBasicBlock giveUp);
+    LValue newResolvedPromise(LValue, LBasicBlock giveUp);
+    LValue newInternalFieldObject(Instance::InlineAllocation, std::span<const JSValue> initialValues, LBasicBlock giveUp);
+    LValue newMapOrSet(Instance::InlineAllocation, LBasicBlock giveUp);
     LValue newArrayWithSpread(LValue values, LValue count, LValue spreadMask, LBasicBlock giveUp);
     LValue newArrayLike(LValue length, LValue array, LBasicBlock giveUp);
     struct StringParts {
@@ -136,6 +141,7 @@ protected:
     LValue stringSubstring(LValue string, LValue start, LValue end, LBasicBlock giveUp);
     LValue makeRope(LValue first, LValue second, LValue thirdOrNull, LBasicBlock giveUp);
     LValue addStrings(LValue first, LValue second, LBasicBlock giveUp);
+    LValue int32ToString(LValue, LBasicBlock giveUp);
     LValue keysOfObject(LValue, LBasicBlock giveUp);
     LValue stringIfAlreadyLowerCase(LValue string, LBasicBlock giveUp);
     void setArrayLength(LValue array, LValue length, LBasicBlock giveUp);

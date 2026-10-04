@@ -35,6 +35,7 @@
 #include "JSPromise.h"
 #include "JSPromiseConstructor.h"
 #include "JSPropertyNameEnumeratorInlines.h"
+#include "JSSentinel.h"
 #include "JSSetInlines.h"
 #include "JSWithScope.h"
 #include "MegamorphicCache.h"
@@ -125,7 +126,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance* i
     Structure* sourceStructure = source->structure();
     if (targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto() || (targetStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()))
         OPERATION_RETURN(scope, false);
-    if (!sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
+    if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
         OPERATION_RETURN(scope, false);
     const IdentifierSet* excluded = nullptr;
     if (JSValue index = JSValue::decode(encodedExcludedSetIndex))
@@ -249,10 +250,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
             properties.append({ plan.identifier(i), plan.isDefined(i), plan.isStrict(i), plan.isAssigned(i) });
         inlineCapacityInBytecode = plan.inlineCapacity();
     } else {
-        auto& instructions = callerCode(instance, callFrame)->instructions();
+        UnlinkedCodeBlock* codeBlock = callerCode(instance, callFrame);
         unsigned offset = callerBytecodeIndex(instance, callFrame).offset();
-        properties = NewObjectPlan::forCreateThis(instructions, offset).properties;
-        inlineCapacityInBytecode = instructions.at(offset)->as<OpCreateThis>().m_inlineCapacity;
+        properties = NewObjectPlan::forCreateThis(codeBlock, offset).properties;
+        inlineCapacityInBytecode = codeBlock->instructions().at(offset)->as<OpCreateThis>().m_inlineCapacity;
     }
     RELEASE_ASSERT(properties.size() == count);
 
@@ -507,10 +508,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (Instance* i
 
     if (pendingSpreads) {
         auto copySourceArray = [&](unsigned i) -> JSArray* {
-            if (!(pendingSpreads >> i & 1) || !values[i].isCell())
-                return nullptr;
-            auto* array = dynamicDowncast<JSArray>(values[i].asCell());
-            return array && array->isIteratorProtocolFastAndNonObservable() ? array : nullptr;
+            return pendingSpreads >> i & 1 ? copyableArray(values[i]) : nullptr;
         };
         bool allSourcesAreCopyableArrays = count > 1;
         for (unsigned i = 0; i < count; ++i)
@@ -615,6 +613,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithSpecies, JSObject*, (Instance* 
         OPERATION_RETURN(scope, static_cast<JSObject*>(nullptr));
     }
     OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(length)));
+}
+
+JSArray* copyableArray(JSValue iterable)
+{
+    if (!isJSArray(iterable))
+        return nullptr;
+    auto* array = uncheckedDowncast<JSArray>(iterable.asCell());
+    return array->isIteratorProtocolFastAndNonObservable() && !array->hasSparseMap() ? array : nullptr;
 }
 
 JSCell* spread(JSGlobalObject* globalObject, JSValue iterable)
@@ -791,13 +797,35 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewInternalFieldObject, JSObject*, (Instanc
     case InternalFieldObjectKind::Promise:
         OPERATION_RETURN(scope, JSPromise::create(vm, globalObject->promiseStructure()));
     case InternalFieldObjectKind::Generator:
+        prepareInlineAllocation<JSGenerator>(instance, Instance::InlineAllocation::Generator, globalObject->generatorStructure());
         OPERATION_RETURN(scope, JSGenerator::create(vm, globalObject->generatorStructure()));
     case InternalFieldObjectKind::AsyncFunctionGenerator:
+        prepareInlineAllocation<JSAsyncFunctionGenerator>(instance, Instance::InlineAllocation::AsyncFunctionGenerator, globalObject->asyncFunctionGeneratorStructure());
         OPERATION_RETURN(scope, JSAsyncFunctionGenerator::create(vm, globalObject->asyncFunctionGeneratorStructure()));
     case InternalFieldObjectKind::AsyncGenerator:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewMapOrSet, JSObject*, (Instance* instance, uint32_t isSet))
+{
+    AOT_OPERATION_BEGIN(instance);
+    if (isSet) {
+        prepareInlineAllocation<JSSet>(instance, Instance::InlineAllocation::Set, globalObject->setStructure());
+        OPERATION_RETURN(scope, JSSet::create(vm, globalObject->setStructure()));
+    }
+    prepareInlineAllocation<JSMap>(instance, Instance::InlineAllocation::Map, globalObject->mapStructure());
+    OPERATION_RETURN(scope, JSMap::create(vm, globalObject->mapStructure()));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTAsyncFunctionDrive, void, (Instance* instance, EncodedJSValue encodedResolution, JSCell* generator))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue resolution = JSValue::decode(encodedResolution);
+    if (resolution != JSValue(vm.fastAsyncGeneratorSentinel()))
+        JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, resolution, InternalMicrotask::AsyncFunctionResume, generator);
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateInternalFieldObject, JSObject*, (Instance* instance, JSObject* callee, uint32_t kind))
@@ -1239,18 +1267,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByValDirect, void, (Instance* instance, 
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTMapSet, void, (Instance* instance, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash))
+JSC_DEFINE_JIT_OPERATION(operationAOTMapSet, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash))
 {
-    AOT_OPERATION_BEGIN(instance);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     uncheckedDowncast<JSMap>(map)->addNormalized(globalObject, JSValue::decode(key), JSValue::decode(value), hash);
-    OPERATION_RETURN(scope);
+    OPERATION_RETURN(scope, JSValue::encode(map));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSetAdd, void, (Instance* instance, JSCell* set, EncodedJSValue key, int32_t hash))
+JSC_DEFINE_JIT_OPERATION(operationAOTSetAdd, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key, int32_t hash))
 {
-    AOT_OPERATION_BEGIN(instance);
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     uncheckedDowncast<JSSet>(set)->addNormalized(globalObject, JSValue::decode(key), JSValue(), hash);
-    OPERATION_RETURN(scope);
+    OPERATION_RETURN(scope, JSValue::encode(set));
 }
 
 static bool hasPropertyAndCache(JSGlobalObject* globalObject, JSObject* baseObject, UniquedStringImpl* uid)
@@ -1373,9 +1401,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutPrivateName, void, (Instance* instance, 
     auto key = JSValue::decode(property).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     PutPropertySlot slot(object, true);
-    if (isDefine)
+    if (isDefine) {
+        Structure* structureBefore = object->structure();
         object->definePrivateField(globalObject, key, JSValue::decode(value), slot);
-    else {
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (JSValue::decode(base) == object && slot.isCacheablePut() && slot.type() == PutPropertySlot::NewProperty && slot.base() == object)
+            cachePrivateNameTransition(vm, callerData(instance, callFrame), cache, object, structureBefore, JSValue::decode(property), slot.cachedOffset());
+    } else {
         Structure* structureBefore = object->structure();
         object->setPrivateField(globalObject, key, JSValue::decode(value), slot);
         OPERATION_RETURN_IF_EXCEPTION(scope);
@@ -1423,10 +1455,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckPrivateBrand, void, (Instance* instanc
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSetPrivateBrand, void, (Instance* instance, JSObject* base, EncodedJSValue brand))
+JSC_DEFINE_JIT_OPERATION(operationAOTSetPrivateBrand, void, (Instance* instance, JSObject* base, EncodedJSValue brand, uint32_t, Slot* cache, uint32_t))
 {
     AOT_OPERATION_BEGIN(instance);
+    Structure* structureBefore = base->structure();
     base->setPrivateBrand(globalObject, JSValue::decode(brand));
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    cachePrivateNameTransition(vm, callerData(instance, callFrame), cache, base, structureBefore, JSValue::decode(brand), std::nullopt);
     OPERATION_RETURN(scope);
 }
 

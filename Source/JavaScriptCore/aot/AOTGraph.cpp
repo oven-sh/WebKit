@@ -97,6 +97,8 @@ Type valueType(JSValue value)
         const StringImpl* impl = asString(value)->tryGetValueImpl();
         return impl && impl->isAtom() ? TAtomString : asString(value)->length() <= TypedLayoutTable::maxAtomizedStringLength ? TShortOtherString : TLongString;
     }
+    if (value.asCell()->inlineTypeFlags() & MasqueradesAsUndefined)
+        return TOtherObject;
     return cellTypeForJSType(value.asCell()->type());
 }
 
@@ -247,9 +249,11 @@ Node* Graph::constant(JSValue value)
     return result.iterator->value;
 }
 
-NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructions, unsigned offsetOfCreateThis)
+NewObjectPlan NewObjectPlan::forCreateThis(UnlinkedCodeBlock* codeBlock, unsigned offsetOfCreateThis)
 {
     NewObjectPlan plan;
+    auto& instructions = codeBlock->instructions();
+    auto* handler = codeBlock->handlerForBytecodeIndex(BytecodeIndex(offsetOfCreateThis));
     auto createThis = instructions.at(offsetOfCreateThis);
     Vector<VirtualRegister, 4> aliases;
     aliases.append(createThis->as<OpCreateThis>().m_dst);
@@ -276,7 +280,7 @@ NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructio
             continue;
         case op_put_by_id: {
             auto bytecode = instruction->as<OpPutById>();
-            if (!aliases.contains(bytecode.m_base) || aliases.contains(bytecode.m_value))
+            if (!aliases.contains(bytecode.m_base) || aliases.contains(bytecode.m_value) || codeBlock->handlerForBytecodeIndex(BytecodeIndex(offset)) != handler)
                 return plan;
             size_t index = plan.properties.findIf([&](auto& property) { return property.identifier == bytecode.m_property; });
             if (index == notFound) {
@@ -2396,7 +2400,7 @@ void Graph::beginCoveredOperation(const Node* node, const BasicBlock* block, boo
             for (unsigned offset : node->graph->literalStores(node->bytecodeIndex.offset()))
                 append(offset).outcomes.append("absorbed-into-allocation"_s);
         } else if (node->opcode == op_create_this) {
-            for (auto& store : NewObjectPlan::forCreateThis(node->graph->codeBlock()->instructions(), node->bytecodeIndex.offset()).stores)
+            for (auto& store : NewObjectPlan::forCreateThis(node->graph->codeBlock(), node->bytecodeIndex.offset()).stores)
                 append(store.offset).outcomes.append("absorbed-into-allocation"_s);
         }
     }
@@ -4103,7 +4107,7 @@ private:
             case op_create_this: {
                 if (m_graph.hasFrameRegisters() || block->isInLoop)
                     break;
-                m_objectPlan = NewObjectPlan::forCreateThis(m_instructions, offset);
+                m_objectPlan = NewObjectPlan::forCreateThis(m_codeBlock, offset);
                 if (m_objectPlan.stores.isEmpty() || m_objectPlan.stores.last().offset >= block->bytecodeEnd)
                     break;
                 if (uint16_t layoutID = m_graph.thisLayoutID()) {

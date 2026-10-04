@@ -12,6 +12,9 @@
 #include "BytecodeStructs.h"
 #include "DateInstance.h"
 #include "JSCInlines.h"
+#include "JSCellButterfly.h"
+#include "JSMap.h"
+#include "JSSet.h"
 #include "MathCommon.h"
 #include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
@@ -99,6 +102,49 @@ void Lowering::lowerBuiltinRead(Node* node, Node* baseNode)
     node->builtinCalled = number;
 }
 
+bool Lowering::lowerSizeOfMapOrSet(Node* node, Node* baseNode)
+{
+    auto bytecode = node->as<OpGetById>();
+    if (!ImmutableIntrinsics::shared() || code().codeBlock()->identifier(bytecode.m_property) != m_graph.vm().propertyNames->size)
+        return false;
+    Receiver receiver = receiverWithType(baseNode->type);
+    if (receiver != Receiver::Map && receiver != Receiver::Set)
+        return false;
+    m_graph.remark("inline-size-of-collection"_s);
+    LValue base = lowJSValue(baseNode);
+    auto readSize = [&] {
+        LBasicBlock hasStorage = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue storage = m_out.loadPtr(base, receiver == Receiver::Map ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
+        ValueFromBlock withoutStorage = m_out.anchor(m_out.int32Zero);
+        m_out.branch(m_out.isNull(storage), unsure(continuation), unsure(hasStorage));
+        m_out.appendTo(hasStorage);
+        static_assert(JSMap::Helper::aliveEntryCountIndex() == JSSet::Helper::aliveEntryCountIndex());
+        ValueFromBlock withStorage = m_out.anchor(m_out.load32(m_out.address(m_heaps.root, storage, JSCellButterfly::offsetOfData() + JSMap::Helper::aliveEntryCountIndex() * sizeof(EncodedJSValue))));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return m_out.phi(Int32, withoutStorage, withStorage);
+    };
+    LValue isExpectedReceiver = isReceiverKind(node, baseNode, base, receiver);
+    if (!isExpectedReceiver) {
+        setResult(node, readSize(), Rep::Int32);
+        return true;
+    }
+    LBasicBlock isExpected = m_out.newBlock();
+    LBasicBlock otherwise = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(isExpectedReceiver, usually(isExpected), rarely(otherwise));
+    m_out.appendTo(isExpected);
+    ValueFromBlock quick = m_out.anchor(boxInt32(readSize()));
+    m_out.jump(continuation);
+    m_out.appendTo(otherwise);
+    ValueFromBlock found = m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    setJSValue(node, m_out.phi(Int64, quick, found));
+    return true;
+}
+
 bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, unsigned argv, const Arguments& arguments, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results)
 {
     Builtin builtin = builtinAtIndex(node->builtinCalled);
@@ -135,7 +181,37 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         return true;
     };
     auto mustBeNumber = [&](unsigned i) { return requireType(i, TNumber, [&](LValue value) { return isNumber(value); }); };
-    auto mustBeInt32 = [&](unsigned i) { return requireType(i, TInt32, [&](LValue value) { return isInt32(value); }); };
+    Vector<LValue, 8> int32Arguments;
+    int32Arguments.fill(nullptr, argc);
+    auto mustBeInt32 = [&](unsigned i) {
+        if (i >= argc)
+            return false;
+        Node* argument = nodeAt(i);
+        switch (argument->rep()) {
+        case Rep::Int32:
+            int32Arguments[i] = lowInt32(argument);
+            return true;
+        case Rep::Int64: {
+            LValue wide = lowRaw(argument);
+            int32Arguments[i] = m_out.castToInt32(wide);
+            also(m_out.equal(m_out.signExt32To64(int32Arguments[i]), wide));
+            return true;
+        }
+        case Rep::Double: {
+            if (argument->isConstant())
+                return false;
+            m_graph.remark("int32-argument-from-integral-double"_s);
+            LValue number = lowRaw(argument);
+            int32Arguments[i] = m_out.doubleToInt32(number);
+            also(m_out.doubleEqual(m_out.intToDouble(int32Arguments[i]), number));
+            return true;
+        }
+        case Rep::Boolean:
+        case Rep::JSValue:
+            break;
+        }
+        return requireType(i, TInt32, [&](LValue value) { return isInt32(value); });
+    };
     auto mustBeString = [&](unsigned i) {
         return requireType(i, TString, [&](LValue value) { return isCellAnd(nodeAt(i), value, [&](LValue cell) { return isCellOfType(cell, StringType); }); });
     };
@@ -150,7 +226,7 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         return true;
     };
     auto asDouble = [&](unsigned i) { return isSubtype(typeAt(i), TNumber) ? lowDouble(nodeAt(i)) : numberToDouble(arguments[i]); };
-    auto asInt32 = [&](unsigned i) { return isSubtype(typeAt(i), TInt32) ? lowInt32(nodeAt(i)) : unboxInt32(arguments[i]); };
+    auto asInt32 = [&](unsigned i) { return int32Arguments[i] ? int32Arguments[i] : unboxInt32(arguments[i]); };
     auto toInt32 = [&](unsigned i) { return isSubtype(typeAt(i), TInt32) ? lowInt32(nodeAt(i)) : doubleToInt32(asDouble(i)); };
 
     LBasicBlock otherwise = nullptr;
@@ -385,6 +461,10 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
     case Builtin::StringConstructor:
         if (count != 1)
             return false;
+        if (isSubtype(typeAt(1), TNumber)) {
+            begin();
+            return finishValue(numberToString(node, nodeAt(1)));
+        }
         if (!isSubtype(typeAt(1), TString) && !mayBe(typeAt(1), TSymbol | TAnyObject)) {
             begin();
             return finishValue(vmCall(node, pointerType(), Entry::operationToString, m_globalObject, arguments[1]));
@@ -402,6 +482,8 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
             radix = static_cast<int32_t>(radixNode->range.min);
         }
         begin();
+        if (radix == 10)
+            return finishValue(numberToString(node, nodeAt(0)));
         if (isSubtype(typeAt(0), TInt32))
             return finishValue(vmCall(node, pointerType(), Entry::operationInt32ToStringWithValidRadix, m_globalObject, lowInt32(nodeAt(0)), m_out.constInt32(radix)));
         return finishValue(vmCall(node, pointerType(), Entry::operationDoubleToStringWithValidRadix, m_globalObject, lowDouble(nodeAt(0)), m_out.constInt32(radix)));
@@ -538,6 +620,12 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
             answers.append(m_out.anchor(m_out.booleanFalse));
             m_out.branch(m_out.aboveOrEqual(length, needed), unsure(isLongEnough), unsure(settled));
             m_out.appendTo(isLongEnough);
+            if (!atStart && isCompact()) {
+                LBasicBlock lengthIsExact = m_out.newBlock();
+                lengthsOtherwise.append(m_out.anchor(length));
+                m_out.branch(m_out.below(length, m_out.constInt32(std::numeric_limits<uint16_t>::max())), usually(lengthIsExact), rarely(needsSlowPath));
+                m_out.appendTo(lengthIsExact);
+            }
             LValue where = atStart ? characters : m_out.add(characters, m_out.zeroExtPtr(m_out.sub(length, needed)));
             answers.append(m_out.anchor(m_out.isZero64(compareWithLiteral(where, written->span8()))));
             m_out.jump(settled);
@@ -710,6 +798,24 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         return finishValue(made);
     }
 
+    case Builtin::MapGet:
+    case Builtin::MapHas:
+    case Builtin::MapSet:
+    case Builtin::SetHas:
+    case Builtin::SetAdd: {
+        if (count != (builtin == Builtin::MapSet ? 2 : 1) || !usesDataStubs())
+            return false;
+        begin();
+        Stub stub = builtin == Builtin::MapGet ? Stub::MapGet : builtin == Builtin::MapHas ? Stub::MapHas : builtin == Builtin::MapSet ? Stub::MapSet : builtin == Builtin::SetHas ? Stub::SetHas : Stub::SetAdd;
+        Vector<StubArgument, 8> operands { { thisValue, thisGPR }, { lowJSValuePreferringInt32(nodeAt(1)), argumentGPR(0) } };
+        if (builtin == Builtin::MapSet)
+            operands.append({ arguments[2], argumentGPR(1) });
+        LValue result = callStub(stub, Int64, operands, { }, StubClobbers::CallerSavedRegisters, node);
+        m_nodeKeepsReads = true;
+        if (!otherwise && (builtin == Builtin::MapHas || builtin == Builtin::SetHas))
+            return finishBoolean(m_out.equal(result, m_out.constInt64(JSValue::ValueTrue)));
+        return finishValue(result);
+    }
     case Builtin::MapDelete:
     case Builtin::SetDelete:
         if (count != 1)
@@ -765,11 +871,6 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
     case Builtin::StringAt:
     case Builtin::StringCodePointAt:
     case Builtin::ArrayPop:
-    case Builtin::MapGet:
-    case Builtin::MapHas:
-    case Builtin::MapSet:
-    case Builtin::SetHas:
-    case Builtin::SetAdd:
     case Builtin::WeakMapSet:
     case Builtin::WeakMapDelete:
     case Builtin::WeakSetAdd:

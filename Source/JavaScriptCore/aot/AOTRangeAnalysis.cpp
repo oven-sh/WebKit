@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltins.h"
 #include "BytecodeStructs.h"
 #include "JSCInlines.h"
 #include "UnlinkedCodeBlock.h"
@@ -264,6 +265,59 @@ private:
         }
     }
 
+    static Builtin builtinCalledBy(Node* call)
+    {
+        Node* callee = call->use(call->as<OpCall>().m_callee);
+        if (callee->kind == NodeKind::Intrinsic)
+            return builtinAtIndex(callee->intrinsic);
+        if (!callee->isBytecode(op_get_by_id))
+            return Builtin::None;
+        auto read = callee->as<OpGetById>();
+        return builtinAtIndex(intrinsicFoundOnPrimitive(callee->use(read.m_base)->type & ~(TOther | TEmpty), *callee->graph->codeBlock()->identifier(read.m_property).impl()));
+    }
+
+    static Range rangeOfBuiltinCall(Node* node)
+    {
+        auto bytecode = node->as<OpCall>();
+        auto rangeOfArgument = [&](unsigned index) {
+            return node->use(VirtualRegister(-static_cast<int>(bytecode.m_argv) + CallFrame::thisArgumentOffset() + static_cast<int>(index)))->range;
+        };
+        Builtin builtin = builtinCalledBy(node);
+        switch (builtin) {
+        case Builtin::StringIndexOf:
+        case Builtin::StringLastIndexOf:
+            return Range::of(-1, INT32_MAX);
+        case Builtin::StringCodePointAt:
+            return Range::of(0, 0x10ffff);
+        case Builtin::MathMin:
+        case Builtin::MathMax:
+        case Builtin::MathFloor:
+        case Builtin::MathCeil:
+        case Builtin::MathRound:
+        case Builtin::MathTrunc:
+        case Builtin::NumberConstructor:
+        case Builtin::GlobalParseInt:
+        case Builtin::NumberParseInt: {
+            if (!isSubtype(node->type, TInt32) || bytecode.m_argc < 2)
+                return byType(node);
+            bool isMin = builtin == Builtin::MathMin;
+            unsigned count = isMin || builtin == Builtin::MathMax ? bytecode.m_argc : 2;
+            Range result = rangeOfArgument(1);
+            for (unsigned i = 1; i < count; ++i) {
+                Range next = rangeOfArgument(i);
+                if (next.isNone())
+                    return Range::none();
+                if (!next.isKnown())
+                    return byType(node);
+                result = isMin ? Range::of(std::min(result.min, next.min), std::min(result.max, next.max)) : Range::of(std::max(result.min, next.min), std::max(result.max, next.max));
+            }
+            return result;
+        }
+        default:
+            return byType(node);
+        }
+    }
+
     Range computeBytecode(Node* node)
     {
         if (auto [array, element] = m_graph.arrayAndElementStored(node); array && Graph::isLocallyAllocatedArray(array) && !node->block->isGeneric)
@@ -377,7 +431,7 @@ private:
             return Range::of(0, UINT32_MAX);
         case op_get_by_val:
             {
-                if (auto type = Graph::typedArrayAccessed(node)) {
+                if (auto type = Graph::typedArrayAccessed(node); type && isSubtype(node->type, TNumber | TUndefined)) {
                     switch (*type) {
                     case Int8ArrayType:
                         return Range::of(INT8_MIN, INT8_MAX);
@@ -412,7 +466,7 @@ private:
                 return Range::of(0, UINT16_MAX);
             auto bytecode = node->as<OpCall>();
             if (bytecode.m_argc != 2 || Graph::linkTimeConstantOf(node->use(bytecode.m_callee)) != LinkTimeConstant::toLength)
-                return byType(node);
+                return node->guard ? byType(node) : rangeOfBuiltinCall(node);
             Range argument = rangeOf(VirtualRegister(-static_cast<int>(bytecode.m_argv) + CallFrame::thisArgumentOffset() + 1));
             if (argument.isNone())
                 return Range::none();
@@ -421,13 +475,11 @@ private:
             return Range::of(std::max<int64_t>(argument.min, 0), std::max<int64_t>(argument.max, 0));
         }
         case op_get_length: {
-            Type base = node->use(node->as<OpGetLength>().m_base)->type;
+            Type base = node->use(node->as<OpGetLength>().m_base)->type & ~(TOther | TEmpty);
             if (node->guard || (base && isSubtype(base, TString)))
                 return Range::of(0, INT32_MAX);
             if (base && isSubtype(base, TString | TArray))
                 return Range::of(0, UINT32_MAX);
-            if (base && isSubtype(base, TString | TArray | TTypedArray))
-                return Range::of(0, limit);
             return Range::unknown();
         }
         default:

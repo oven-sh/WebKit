@@ -12,6 +12,7 @@
 namespace JSC {
 
 class CallFrame;
+class JSArray;
 class JSCell;
 class JSGlobalObject;
 class JSObject;
@@ -50,6 +51,8 @@ struct Slot;
     v(operationAOTNewFunctionWithCaptures) \
     v(operationAOTSetFunctionName) \
     v(operationAOTNewInternalFieldObject) \
+    v(operationAOTNewMapOrSet) \
+    v(operationAOTAsyncFunctionDrive) \
     v(operationAOTCreateInternalFieldObject) \
     v(operationAOTCreateLexicalEnvironment) \
     v(operationAOTPushWithScope) \
@@ -124,6 +127,7 @@ struct Slot;
     v(operationAOTConstructViaCall) \
     v(operationAOTNoteFilled) \
     v(operationAOTCacheCallee) \
+    v(operationAOTCacheHostCallee) \
     v(operationAOTHasOwnProperty) \
     v(operationAOTEnsureData) \
     v(operationAOTCallDirectEval) \
@@ -168,6 +172,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (Instance*,
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpecies, JSObject*, (Instance*, EncodedJSValue length, JSObject* array));
 JSC_DECLARE_JIT_OPERATION(operationAOTSpread, JSCell*, (Instance*, EncodedJSValue iterable));
 JSCell* spread(JSGlobalObject*, JSValue iterable);
+JSArray* copyableArray(JSValue iterable);
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (Instance*, JSCell* regExp));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instance*, JSObject*));
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayIteratorMethod, EncodedJSValue, (Instance*, JSCell*));
@@ -179,6 +184,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance*, JSScop
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFunctionWithCaptures, JSObject*, (Instance*, JSScope*, uint32_t index, uint32_t isExpression, EncodedJSValue* captures, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance*, JSObject* function, EncodedJSValue name));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewInternalFieldObject, JSObject*, (Instance*, uint32_t kind));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewMapOrSet, JSObject*, (Instance*, uint32_t isSet));
+JSC_DECLARE_JIT_OPERATION(operationAOTAsyncFunctionDrive, void, (Instance*, EncodedJSValue resolution, JSCell* generator));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateInternalFieldObject, JSObject*, (Instance*, JSObject* callee, uint32_t kind));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateLexicalEnvironment, JSObject*, (Instance*, JSScope*, JSCell* symbolTable, EncodedJSValue initialValue, uint32_t numberOfVariables));
 JSC_DECLARE_JIT_OPERATION(operationAOTPushWithScope, JSObject*, (Instance*, JSScope*, EncodedJSValue object));
@@ -219,8 +226,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdWithThis, void, (Instance*, Encoded
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByValWithThis, void, (Instance*, EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByValDirect, void, (Instance*, JSObject* base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTInById, size_t, (Instance*, EncodedJSValue base, uint32_t identifierIndex))
-JSC_DECLARE_JIT_OPERATION(operationAOTMapSet, void, (Instance*, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash));
-JSC_DECLARE_JIT_OPERATION(operationAOTSetAdd, void, (Instance*, JSCell* set, EncodedJSValue key, int32_t hash));
+JSC_DECLARE_JIT_OPERATION(operationAOTMapSet, EncodedJSValue, (Instance*, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetAdd, EncodedJSValue, (Instance*, JSCell* set, EncodedJSValue key, int32_t hash));
 JSC_DECLARE_JIT_OPERATION(operationAOTInByVal, size_t, (Instance*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTDelById, size_t, (Instance*, EncodedJSValue base, uint32_t identifierIndex, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTDelByVal, size_t, (Instance*, EncodedJSValue base, EncodedJSValue property, uint32_t isStrict));
@@ -229,7 +236,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutPrivateName, void, (Instance*, EncodedJ
 JSC_DECLARE_JIT_OPERATION(operationAOTHasPrivateName, size_t, (Instance*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasPrivateBrand, size_t, (Instance*, EncodedJSValue base, EncodedJSValue brand));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckPrivateBrand, void, (Instance*, EncodedJSValue base, EncodedJSValue brand, uint32_t, Slot*, uint32_t));
-JSC_DECLARE_JIT_OPERATION(operationAOTSetPrivateBrand, void, (Instance*, JSObject* base, EncodedJSValue brand));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetPrivateBrand, void, (Instance*, JSObject* base, EncodedJSValue brand, uint32_t, Slot*, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutAccessorById, void, (Instance*, JSObject* base, uint32_t identifierIndex, uint32_t attributes, JSObject* accessor, uint32_t isSetter));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutGetterSetterById, void, (Instance*, JSObject* base, uint32_t identifierIndex, uint32_t attributes, EncodedJSValue getter, EncodedJSValue setter));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutAccessorByVal, void, (Instance*, JSObject* base, EncodedJSValue property, uint32_t attributes, JSObject* accessor, uint32_t isSetter));
@@ -259,6 +266,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructViaCall, UGPRPair, (Call
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance*, void* addressInFunction));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCacheCallee, void, (Instance*, Slot* cache, JSCell* callee, uint64_t entryWord, uint32_t count));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCacheHostCallee, void, (Instance*, Slot* cache, EncodedJSValue callee, void* callHostFunction, void* callInternalFunction));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (Instance*, JSObject*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance*, uint32_t index));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (Instance*, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));

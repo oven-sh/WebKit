@@ -235,8 +235,11 @@ void generateFrontEndGetByVal(CCallHelpers& jit)
 
 void generateFrontEndPutById(CCallHelpers& jit)
 {
+    constexpr GPRReg flags = argument5;
+    constexpr uint32_t isDirect = 1;
     JumpList slowCases;
     enter(jit);
+    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(isDirect)));
     branchIfSlotIsLive(jit, argument4, slowCases);
     branchIfNotObjectValue(jit, argument1, slowCases);
     loadIdentifier(jit, argument3, scratch0);
@@ -409,6 +412,14 @@ void generateFrontEndNewObjectLiteral(CCallHelpers& jit)
     tailCall(jit, Entry::RawNewObjectLiteral);
 }
 
+static void branchIfHasTypedLayout(CCallHelpers& jit, GPRReg structure, GPRReg scratch, JumpList& slowCases)
+{
+    if (!Options::useAOTTypedFields())
+        return;
+    jit.load16(Address(structure, Structure::offsetOfTypedLayoutID()), scratch);
+    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, scratch));
+}
+
 void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
 {
     JumpList slowCases;
@@ -419,6 +430,7 @@ void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
     jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
+    branchIfHasTypedLayout(jit, scratch0, scratch1, slowCases);
     jit.load32(Address(argument4, 2 * sizeof(Slot) + OBJECT_OFFSETOF(Slot, structureID)), scratch1);
     slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, scratch1));
     emitAllocateWithProperties(jit, argument4, argument2, argument3, slowCases);
@@ -431,6 +443,7 @@ void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
     jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), scratch1);
     jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
+    branchIfHasTypedLayout(jit, scratch0, scratch2, slowCases);
     loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
     jit.urshift32(scratch0, TrustedImm32(MegamorphicCache::constructionHashShift), scratch2);
     jit.urshiftPtr(argument4, TrustedImm32(MegamorphicCache::constructionHashShift), scratch4);

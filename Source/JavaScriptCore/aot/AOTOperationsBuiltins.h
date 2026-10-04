@@ -28,6 +28,11 @@ namespace AOT {
     v(operationAOTWeakMapGet) \
     v(operationAOTWeakMapHas) \
     v(operationAOTWeakSetHas) \
+    v(operationAOTMapGet) \
+    v(operationAOTMapHas) \
+    v(operationAOTSetHas) \
+    v(operationAOTMapSetGeneric) \
+    v(operationAOTSetAddGeneric) \
     v(operationAOTMapDelete) \
     v(operationAOTSetDelete) \
     v(operationAOTArrayPushMultiple) \
@@ -45,6 +50,11 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTRandom, double, (Instance*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWeakMapGet, EncodedJSValue, (JSCell*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWeakMapHas, size_t, (JSCell*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWeakSetHas, size_t, (JSCell*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTMapSetGeneric, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue key, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetAddGeneric, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTMapDelete, size_t, (Instance*, JSCell*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetDelete, size_t, (Instance*, JSCell*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTArrayPushMultiple, EncodedJSValue, (Instance*, JSArray*, EncodedJSValue*, uint32_t));

@@ -74,6 +74,8 @@ struct FunctionSummary {
     std::array<AtomicType, maxParameters> parameterTypes { };
     mutable AtomicType returnType;
     mutable Vector<const FunctionSummary*> knownTailCallees;
+    mutable Vector<const FunctionSummary*> knownCallees;
+    bool needsStackCheck { true };
     mutable bool returnsBoxed { false };
     static constexpr unsigned maxReturnValues = std::min<unsigned>(8, numberOfArgumentGPRs);
     mutable std::array<AtomicType, maxReturnValues> returnValueTypes { };
@@ -282,6 +284,7 @@ private:
 };
 JS_EXPORT_PRIVATE void setProgramFunctions(const ProgramFunctions*);
 const ProgramFunctions* programFunctions();
+JS_EXPORT_PRIVATE unsigned findFunctionsWithoutStackCheck(const ProgramFunctions&);
 
 class ProgramClasses {
     WTF_MAKE_TZONE_ALLOCATED(ProgramClasses);

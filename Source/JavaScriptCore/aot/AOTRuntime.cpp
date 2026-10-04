@@ -32,6 +32,7 @@
 
 
 #include "AOTImage.h"
+#include "AOTOperationHelpers.h"
 #include "AOTOperations.h"
 #include "AOTProgram.h"
 #include "AOTThunks.h"
@@ -42,6 +43,7 @@
 #include "JITOperations.h"
 #include "JITThunks.h"
 #include "JSCInlines.h"
+#include "JSPromise.h"
 #include "LLIntData.h"
 #include "LLIntEntrypoint.h"
 #include "LLIntSlowPaths.h"
@@ -147,6 +149,8 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
+    set(Entry::InternalFunctionCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_internal_function_call_trampoline).taggedPtr());
+    set(Entry::InternalFunctionConstructTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_internal_function_construct_trampoline).taggedPtr());
     set(Entry::EnterStaticFunctionForCall, tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::EnterStaticFunctionForCall)));
     set(Entry::EnterStaticFunctionForConstruct, tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::EnterStaticFunctionForConstruct)));
     g_aotStaticFunctionEntrypoints[0] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForCall)];
@@ -404,6 +408,9 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->sentinelString = vm.smallStrings.sentinelString();
         instance->arrayIterationSentinel = vm.fastArrayUnboxedSentinel();
         instance->stringStructureID = idOf(vm.stringStructure.get());
+        instance->smallIntStrings = vm.numericStrings.smallIntCache();
+        instance->intStrings = vm.numericStrings.intCache();
+        prepareInlineAllocation<JSPromise>(instance, InlineAllocation::Promise, globalObject->promiseStructure());
     }
     if (Image* image = Image::withCode()) {
         MonotonicTime before = MonotonicTime::now();
@@ -2050,6 +2057,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     if (std::exchange(collections->hasFieldAdditions, false))
         zeroSpan(std::span { fieldAdditions });
     zeroSpan(std::span { customGetters });
+    zeroSpan(std::span { inheritedSetters });
     for (PolymorphicSlots* several : collections->allSiteSlots) {
         if (newOnly && !several->owner->hasBeenFilledSinceLastCollection)
             continue;

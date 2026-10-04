@@ -281,6 +281,68 @@ static bool canSkipLoopSplitting(Graph& graph)
     return hasLoop;
 }
 
+static bool reliesOnStackCheckOfCaller(const Graph& graph)
+{
+    if (!graph.summary() || graph.summary()->needsStackCheck)
+        return false;
+    for (auto& block : graph.blocks) {
+        if (block->graph == &graph)
+            continue;
+        const FunctionSummary* inlined = block->graph->summaryOfInlinedFunction;
+        if (!inlined || inlined->needsStackCheck)
+            return false;
+    }
+    return true;
+}
+
+static void findRarelyExecutedBlocks(Graph& graph)
+{
+    auto doesNotComplete = [&](BasicBlock* block) {
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode)
+                continue;
+            switch (node->opcode) {
+            case op_throw:
+            case op_throw_static_error:
+                graph.remark("throws-rarely"_s);
+                return true;
+            case op_call:
+            case op_call_ignore_result: {
+                bool isExact = false;
+                const KnownFunction* known = graph.knownCallee(node, &isExact);
+                if (known && isExact && known->forCall && !known->returnType.load()) {
+                    graph.remark("call-never-returns"_s);
+                    return true;
+                }
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        return false;
+    };
+    bool changed = false;
+    for (BasicBlock* block : graph.m_rpo) {
+        if (block == graph.root || block->isRarelyExecuted || !doesNotComplete(block))
+            continue;
+        block->isRarelyExecuted = true;
+        changed = true;
+    }
+    while (changed) {
+        changed = false;
+        for (unsigned index = graph.m_rpo.size(); index--;) {
+            BasicBlock* block = graph.m_rpo[index];
+            if (block == graph.root || block->isRarelyExecuted || block->successors.isEmpty())
+                continue;
+            if (!std::ranges::all_of(block->successors, [](BasicBlock* successor) { return successor->isRarelyExecuted; }))
+                continue;
+            block->isRarelyExecuted = true;
+            changed = true;
+        }
+    }
+}
+
 static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
@@ -307,11 +369,13 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (!parseBytecode(graph))
         return declined();
     saveRegistersAtDefinitions(graph);
+    findRarelyExecutedBlocks(graph);
     if (program)
         inlineCalls(graph, *program);
     replaceReadsOfConstantObjects(graph);
     scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
+    findRarelyExecutedBlocks(graph);
     planMultiValueReturns(graph);
     if (triesUnsplitLoops && Options::useAOTLoopSplitting() && !canSkipLoopSplitting(graph))
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false);
@@ -359,13 +423,17 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     }
 
     StubCalls& stubCalls = graph.stubCalls;
-    proc.code().setPrologueForEntrypoint(0, createSharedTask<B3::Air::PrologueGeneratorFunction>([&stubCalls, &graph](CCallHelpers& jit, B3::Air::Code& code) {
+    bool callerHasCheckedStack = reliesOnStackCheckOfCaller(graph);
+    proc.code().setPrologueForEntrypoint(0, createSharedTask<B3::Air::PrologueGeneratorFunction>([&stubCalls, &graph, callerHasCheckedStack](CCallHelpers& jit, B3::Air::Code& code) {
         if (hasNoFrame(graph, code))
             return;
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.emitFunctionPrologue();
         constexpr unsigned maxFrameSizeWithoutStackCheck = 256;
-        if (graph.makesCalls || code.frameSize() > maxFrameSizeWithoutStackCheck) {
+        bool needsStackCheck = (graph.makesCalls && !callerHasCheckedStack) || code.frameSize() > maxFrameSizeWithoutStackCheck;
+        if (graph.makesCalls && !needsStackCheck)
+            graph.remark("relies-on-stack-check-of-caller"_s);
+        if (needsStackCheck) {
 #if CPU(X86_64)
             constexpr GPRReg newStackPointer = CCallHelpers::s_scratchRegister;
             constexpr GPRReg vm = stubTemporaryGPRs[2];
@@ -394,6 +462,12 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     }
 
     B3::generateToAir(proc);
+    if (Options::aotRemarksPath()) [[unlikely]] {
+        for (B3::Air::BasicBlock* block : proc.code()) {
+            if (block->last().kind.opcode == B3::Air::Patch && block->numSuccessors())
+                graph.remark("jump-table"_s);
+        }
+    }
     usePinnedRegistersDirectly(proc.code());
 #if CPU(X86_64)
     keepDataInRegister(graph, proc.code());
@@ -546,6 +620,24 @@ bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBloc
     return true;
 }
 
+static void recordKnownCallees(const Graph& graph)
+{
+    if (!graph.summary())
+        return;
+    Vector<const FunctionSummary*> callees;
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (!node->isBytecode(op_call) && !node->isBytecode(op_call_ignore_result) && !node->isBytecode(op_tail_call))
+                continue;
+            bool isExact = false;
+            const KnownFunction* known = graph.knownCallee(node, &isExact);
+            if (known && isExact && known->forCall && known->summary && !callees.contains(known->summary))
+                callees.append(known->summary);
+        }
+    }
+    graph.summary()->knownCallees = WTF::move(callees);
+}
+
 Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* summary, VariableSummaries* variableSummaries, unsigned summaryReader, Vector<const KnownFunction*>& calleesRead, Vector<const KnownFunction*>& calleesWithWidenedInputs, uint32_t& escapingParameters, const String& nameForLog)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
@@ -562,6 +654,7 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
     scalarReplaceReadOnlyObjects(graph);
     Type result = inferTypes(graph, &calleesRead, &calleesWithWidenedInputs) & TTop;
     graph.recordPropertyEffects();
+    recordKnownCallees(graph);
     escapingParameters = summary ? AOT::escapingParameters(graph, &calleesRead) : std::numeric_limits<uint32_t>::max();
     return result;
 }

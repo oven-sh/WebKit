@@ -87,12 +87,13 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
             if (auto* function = dynamicDowncast<JSFunction>(value.asCell()); function && function->isBuiltinFunction()) {
                 if (auto index = vm.builtinExecutables()->indexOf(function->jsExecutable()->unlinkedExecutable()))
                     entry.builtinCode = *index + 1;
-            }
+            } else if (function)
+                entry.isHostFunction = function->isHostFunction();
         } else
             entry.primitive = JSValue::encode(value);
         if (number && !description->m_numbers.add(keyFor(holder, name), number).isNewEntry)
             description->m_numbers.set(keyFor(holder, name), 0);
-        description->m_hash = WTF::pairIntHash(description->m_hash, WTF::pairIntHash(name.hash(), holder << 16 | entry.canonical)) + entry.type + entry.isCell;
+        description->m_hash = WTF::pairIntHash(description->m_hash, WTF::pairIntHash(name.hash(), holder << 16 | entry.canonical)) + entry.type + entry.isCell + entry.isHostFunction;
         description->m_entries.append(WTF::move(entry));
         values.append(JSValue::encode(value));
     };

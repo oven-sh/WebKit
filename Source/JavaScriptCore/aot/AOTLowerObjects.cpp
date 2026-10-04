@@ -185,7 +185,10 @@ bool Lowering::tryLowerAllocation(Node* node)
         return true;
     };
     auto newInternalFieldObject = [&](InternalFieldObjectKind kind) {
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewInternalFieldObject, m_instance, m_out.constInt32(static_cast<uint32_t>(kind))));
+        Stub helper = kind == InternalFieldObjectKind::Promise ? Stub::HelperNewPromise : kind == InternalFieldObjectKind::Generator ? Stub::HelperNewGenerator : Stub::HelperNewAsyncFunctionGenerator;
+        setJSValue(node, withHelper(helper, { }, [&] {
+            return vmCall(node, pointerType(), Entry::operationAOTNewInternalFieldObject, m_instance, m_out.constInt32(static_cast<uint32_t>(kind)));
+        }));
         return true;
     };
     auto createInternalFieldObject = [&](VirtualRegister callee, InternalFieldObjectKind kind) {
@@ -287,7 +290,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             LValue callee = lowCell(node->use(bytecode.m_callee));
             unsigned slot = allocateSlots(3);
             {
-                NewObjectPlan plan = NewObjectPlan::forCreateThis(code().codeBlock()->instructions(), node->bytecodeIndex.offset());
+                NewObjectPlan plan = NewObjectPlan::forCreateThis(code().codeBlock(), node->bytecodeIndex.offset());
                 RELEASE_ASSERT(plan.properties.size() == count);
                 KnownShape shape;
                 for (auto& property : plan.properties)
@@ -325,7 +328,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             Vector<LValue, 8> valuesInSlots = values;
             m_graph.remark(node->graph->thisLayoutID() ? "typed-planned-construction"_s : "planned-construction"_s);
             if (uint16_t layoutID = node->graph->thisLayoutID()) {
-                NewObjectPlan plan = NewObjectPlan::forCreateThis(code().codeBlock()->instructions(), node->bytecodeIndex.offset());
+                NewObjectPlan plan = NewObjectPlan::forCreateThis(code().codeBlock(), node->bytecodeIndex.offset());
                 valuesInSlots.shrink(0);
                 for (unsigned i = 0; i < count; ++i) {
                     auto field = TypeTable::shared()->layoutField(layoutID, code().codeBlock()->identifier(plan.properties[i].identifier).impl());
@@ -678,13 +681,16 @@ bool Lowering::tryLowerConversion(Node* node)
     case op_typeof_is_function: {
         bool wantsObject = node->opcode == op_typeof_is_object;
         Node* valueNode = node->use(wantsObject ? node->as<OpTypeofIsObject>().m_operand : node->as<OpTypeofIsFunction>().m_operand);
-        Type yes = wantsObject ? TNull | TArray : TFunction;
-        Type no = wantsObject ? (TPrimitive & ~TNull) | TFunction : TPrimitive | TArray;
+        constexpr Type neverCallable = TAnyObject & ~(TFunction | TOtherObject);
+        Type yes = wantsObject ? TNull | neverCallable : TFunction;
+        Type no = wantsObject ? (TPrimitive & ~TNull) | TFunction : TPrimitive | neverCallable;
         if (isSubtype(valueNode->type, yes)) {
+            m_graph.remark("folded-type-query"_s);
             setBoolean(node, m_out.booleanTrue);
             return true;
         }
         if (isSubtype(valueNode->type, no)) {
+            m_graph.remark("folded-type-query"_s);
             setBoolean(node, m_out.booleanFalse);
             return true;
         }
@@ -721,11 +727,11 @@ bool Lowering::tryLowerConversion(Node* node)
         return true;
     }
     case op_is_callable:
-        return test(node->use(node->as<OpIsCallable>().m_operand), TFunction, TPrimitive | TArray, [&](LValue value) {
+        return test(node->use(node->as<OpIsCallable>().m_operand), TFunction, TPrimitive | (TAnyObject & ~(TFunction | TOtherObject)), [&](LValue value) {
             return plainCall(Int64, Entry::operationAOTIsCallable, value);
         });
     case op_is_constructor:
-        return test(node->use(node->as<OpIsConstructor>().m_operand), TNone, TPrimitive | TArray, [&](LValue value) {
+        return test(node->use(node->as<OpIsConstructor>().m_operand), TNone, TPrimitive | (TAnyObject & ~(TFunction | TOtherObject)), [&](LValue value) {
             return plainCall(Int64, Entry::operationAOTIsConstructor, value);
         });
     case op_strcat: {
@@ -846,8 +852,22 @@ void Lowering::lowerGetLength(Node* node)
 {
     Node* baseNode = node->use(node->as<OpGetLength>().m_base);
     LValue base = lowJSValue(baseNode);
+    Type baseType = baseNode->type;
+    if (Type unlessNullish = baseType & ~(TOther | TEmpty); unlessNullish && isSubtype(unlessNullish, TArray | TString)) {
+        if (mayBe(baseType, TOther)) {
+            m_graph.remark("inline-length-unless-nullish"_s);
+            LBasicBlock isNullish = newColdBlock();
+            LBasicBlock isNotNullish = m_out.newBlock();
+            m_out.branch(isCell(base), usually(isNotNullish), rarely(isNullish));
+            m_out.appendTo(isNullish);
+            getByIdCached(node, base, TOther, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Length));
+            m_out.unreachable();
+            m_out.appendTo(isNotNullish);
+        }
+        baseType = unlessNullish;
+    }
 
-    if (isSubtype(baseNode->type, TArray) && baseNode->type) {
+    if (isSubtype(baseType, TArray) && baseType) {
         if (auto* view = viewOf(node, baseNode)) {
             setInt64(node, view->length);
             return;
@@ -865,7 +885,7 @@ void Lowering::lowerGetLength(Node* node)
         return;
     }
 
-    if (isCompact() && !isSubtype(baseNode->type, TString)) {
+    if (isCompact() && !isSubtype(baseType, TString)) {
         setJSValue(node, callStub(Stub::GetLength, Int64, { { base, firstStubOperandGPR }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Length))), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
@@ -880,13 +900,13 @@ void Lowering::lowerGetLength(Node* node)
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 4> results;
 
-    if (isSubtype(baseNode->type, TCell))
+    if (isSubtype(baseType, TCell))
         m_out.jump(cellCase);
     else
         m_out.branch(isCell(base), usually(cellCase), rarely(genericCase));
 
     m_out.appendTo(cellCase, arrayCase);
-    if (mayBe(baseNode->type, TArray)) {
+    if (mayBe(baseType, TArray)) {
         LValue indexingType = m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc);
         LValue isArrayWithStorage = m_out.bitAnd(m_out.testNonZero32(indexingType, m_out.constInt32(IsArray)), m_out.testNonZero32(indexingType, m_out.constInt32(IndexingShapeMask)));
         m_out.branch(isArrayWithStorage, unsure(arrayCase), unsure(notArrayCase));
@@ -899,9 +919,9 @@ void Lowering::lowerGetLength(Node* node)
     m_out.branch(m_out.greaterThanOrEqual(arrayLength, m_out.int32Zero), usually(continuation), rarely(genericCase));
 
     m_out.appendTo(notArrayCase, stringCase);
-    if (isSubtype(baseNode->type, TString))
+    if (isSubtype(baseType, TString))
         m_out.jump(stringCase);
-    else if (mayBe(baseNode->type, TString))
+    else if (mayBe(baseType, TString))
         m_out.branch(isCellOfType(base, StringType), unsure(stringCase), unsure(genericCase));
     else
         m_out.jump(genericCase);
@@ -919,7 +939,7 @@ void Lowering::lowerGetLength(Node* node)
     m_out.jump(continuation);
 
     m_out.appendTo(genericCase, continuation);
-    results.append(m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Length))));
+    results.append(m_out.anchor(getByIdCached(node, base, baseType, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::Length))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -1075,11 +1095,17 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_put_private_name: {
         auto bytecode = node->as<OpPutPrivateName>();
+        bool isDefine = bytecode.m_putKind.isDefine();
         if (usesDataStubs()) {
-            callStub(Stub::PutPrivateName, Void, { { low(bytecode.m_base), firstStubOperandGPR }, { low(bytecode.m_property), GPRInfo::argumentGPR1 }, { low(bytecode.m_value), GPRInfo::argumentGPR2 },
-                { slotAddress(allocateSite(node, 0, bytecode.m_putKind.isDefine())), GPRInfo::argumentGPR3 } }, { });
+            unsigned slot = allocateSite(node, 0, isDefine);
+            if (isDefine) {
+                allocateSlot();
+                m_graph.remark("caches-private-name-definition"_s);
+            }
+            callStub(isDefine ? Stub::DefinePrivateName : Stub::PutPrivateName, Void, { { low(bytecode.m_base), firstStubOperandGPR }, { low(bytecode.m_property), GPRInfo::argumentGPR1 }, { low(bytecode.m_value), GPRInfo::argumentGPR2 },
+                { slotAddress(slot), GPRInfo::argumentGPR3 } }, { });
         } else
-            vmCall(node, Void, Entry::operationAOTPutPrivateName, m_instance, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), m_out.int32Zero, slotAddress(allocateSlot()), m_out.constInt32(bytecode.m_putKind.isDefine()));
+            vmCall(node, Void, Entry::operationAOTPutPrivateName, m_instance, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), m_out.int32Zero, slotAddress(allocateSlots(2)), m_out.constInt32(isDefine));
         return true;
     }
     case op_has_private_name: {
@@ -1100,7 +1126,13 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_set_private_brand: {
         auto bytecode = node->as<OpSetPrivateBrand>();
-        vmCall(node, Void, Entry::operationAOTSetPrivateBrand, m_instance, low(bytecode.m_base), low(bytecode.m_brand));
+        if (usesDataStubs()) {
+            unsigned slot = allocateSite(node, 0);
+            allocateSlot();
+            m_graph.remark("caches-private-brand"_s);
+            callStub(Stub::SetPrivateBrand, Void, { { low(bytecode.m_base), firstStubOperandGPR }, { low(bytecode.m_brand), GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
+        } else
+            vmCall(node, Void, Entry::operationAOTSetPrivateBrand, m_instance, low(bytecode.m_base), low(bytecode.m_brand), m_out.int32Zero, slotAddress(allocateSlots(2)), m_out.int32Zero);
         return true;
     }
     case op_put_getter_by_id: {

@@ -28,14 +28,13 @@ struct Row {
 };
 
 constexpr Type TStringOrUndefined = TString | TUndefined;
-constexpr Type TNumberOrUndefined = TNumber | TUndefined;
 constexpr Type TObjectOrNull = TAnyObject | TNull;
 
 const Row rows[] = {
-    { "parseInt"_s, TNumber }, { "parseFloat"_s, TNumber }, { "isNaN"_s, TBoolean }, { "isFinite"_s, TBoolean },
+    { "parseInt"_s, TNumber, Condition::IsInt32IfOnlyArgumentIs }, { "parseFloat"_s, TNumber }, { "isNaN"_s, TBoolean }, { "isFinite"_s, TBoolean },
     { "encodeURIComponent"_s, TString }, { "encodeURI"_s, TString }, { "decodeURIComponent"_s, TString }, { "decodeURI"_s, TString },
     { "escape"_s, TString }, { "unescape"_s, TString },
-    { "String"_s, TString }, { "Number"_s, TNumber }, { "Boolean"_s, TBoolean }, { "BigInt"_s, TBigInt }, { "Symbol"_s, TSymbol },
+    { "String"_s, TString }, { "Number"_s, TNumber, Condition::IsInt32IfOnlyArgumentIs }, { "Boolean"_s, TBoolean }, { "BigInt"_s, TBigInt }, { "Symbol"_s, TSymbol },
     { "Array"_s, TArray }, { "Object"_s, TAnyObject }, { "Date"_s, TString },
 
     { "Object.keys"_s, TArray }, { "Object.values"_s, TArray }, { "Object.entries"_s, TArray },
@@ -50,15 +49,15 @@ const Row rows[] = {
     { "Array.from"_s, TArray, Condition::IfThisIsHolder }, { "Array.of"_s, TArray, Condition::IfThisIsHolder },
 
     { "Math.abs"_s, TNumber }, { "Math.acos"_s, TNumber }, { "Math.acosh"_s, TNumber }, { "Math.asin"_s, TNumber }, { "Math.asinh"_s, TNumber },
-    { "Math.atan"_s, TNumber }, { "Math.atan2"_s, TNumber }, { "Math.atanh"_s, TNumber }, { "Math.cbrt"_s, TNumber }, { "Math.ceil"_s, TNumber },
+    { "Math.atan"_s, TNumber }, { "Math.atan2"_s, TNumber }, { "Math.atanh"_s, TNumber }, { "Math.cbrt"_s, TNumber }, { "Math.ceil"_s, TNumber, Condition::IsInt32IfArgumentsAre },
     { "Math.clz32"_s, TInt32 }, { "Math.cos"_s, TNumber }, { "Math.cosh"_s, TNumber }, { "Math.exp"_s, TNumber }, { "Math.expm1"_s, TNumber },
-    { "Math.floor"_s, TNumber }, { "Math.fround"_s, TNumber }, { "Math.hypot"_s, TNumber }, { "Math.imul"_s, TInt32 }, { "Math.log"_s, TNumber },
-    { "Math.log10"_s, TNumber }, { "Math.log1p"_s, TNumber }, { "Math.log2"_s, TNumber }, { "Math.max"_s, TNumber }, { "Math.min"_s, TNumber },
-    { "Math.pow"_s, TNumber }, { "Math.random"_s, TNumber }, { "Math.round"_s, TNumber }, { "Math.sign"_s, TNumber }, { "Math.sin"_s, TNumber },
-    { "Math.sinh"_s, TNumber }, { "Math.sqrt"_s, TNumber }, { "Math.tan"_s, TNumber }, { "Math.tanh"_s, TNumber }, { "Math.trunc"_s, TNumber },
+    { "Math.floor"_s, TNumber, Condition::IsInt32IfArgumentsAre }, { "Math.fround"_s, TNumber }, { "Math.hypot"_s, TNumber }, { "Math.imul"_s, TInt32 }, { "Math.log"_s, TNumber },
+    { "Math.log10"_s, TNumber }, { "Math.log1p"_s, TNumber }, { "Math.log2"_s, TNumber }, { "Math.max"_s, TNumber, Condition::IsInt32IfArgumentsAre }, { "Math.min"_s, TNumber, Condition::IsInt32IfArgumentsAre },
+    { "Math.pow"_s, TNumber }, { "Math.random"_s, TNumber }, { "Math.round"_s, TNumber, Condition::IsInt32IfArgumentsAre }, { "Math.sign"_s, TNumber }, { "Math.sin"_s, TNumber },
+    { "Math.sinh"_s, TNumber }, { "Math.sqrt"_s, TNumber }, { "Math.tan"_s, TNumber }, { "Math.tanh"_s, TNumber }, { "Math.trunc"_s, TNumber, Condition::IsInt32IfArgumentsAre },
 
     { "Number.isInteger"_s, TBoolean }, { "Number.isFinite"_s, TBoolean }, { "Number.isNaN"_s, TBoolean }, { "Number.isSafeInteger"_s, TBoolean },
-    { "Number.parseFloat"_s, TNumber }, { "Number.parseInt"_s, TNumber },
+    { "Number.parseFloat"_s, TNumber }, { "Number.parseInt"_s, TNumber, Condition::IsInt32IfOnlyArgumentIs },
 
     { "JSON.stringify"_s, TStringOrUndefined },
     { "Date.now"_s, TNumber }, { "Date.parse"_s, TNumber }, { "Date.UTC"_s, TNumber },
@@ -70,9 +69,9 @@ const Row rows[] = {
     { "ArrayBuffer.isView"_s, TBoolean },
 
     { "String.prototype.at"_s, TStringOrUndefined }, { "String.prototype.charAt"_s, TString }, { "String.prototype.charCodeAt"_s, TNumber },
-    { "String.prototype.codePointAt"_s, TNumberOrUndefined }, { "String.prototype.concat"_s, TString }, { "String.prototype.endsWith"_s, TBoolean },
-    { "String.prototype.includes"_s, TBoolean }, { "String.prototype.indexOf"_s, TNumber }, { "String.prototype.isWellFormed"_s, TBoolean },
-    { "String.prototype.lastIndexOf"_s, TNumber }, { "String.prototype.localeCompare"_s, TNumber }, { "String.prototype.normalize"_s, TString },
+    { "String.prototype.codePointAt"_s, TInt32 | TUndefined }, { "String.prototype.concat"_s, TString }, { "String.prototype.endsWith"_s, TBoolean },
+    { "String.prototype.includes"_s, TBoolean }, { "String.prototype.indexOf"_s, TInt32 }, { "String.prototype.isWellFormed"_s, TBoolean },
+    { "String.prototype.lastIndexOf"_s, TInt32 }, { "String.prototype.localeCompare"_s, TInt32 }, { "String.prototype.normalize"_s, TString },
     { "String.prototype.padEnd"_s, TString }, { "String.prototype.padStart"_s, TString }, { "String.prototype.repeat"_s, TString },
     { "String.prototype.slice"_s, TString }, { "String.prototype.startsWith"_s, TBoolean }, { "String.prototype.substr"_s, TString },
     { "String.prototype.substring"_s, TString }, { "String.prototype.toLocaleLowerCase"_s, TString }, { "String.prototype.toLocaleUpperCase"_s, TString },
@@ -88,6 +87,22 @@ const Row rows[] = {
     { "Boolean.prototype.toString"_s, TString }, { "Boolean.prototype.valueOf"_s, TBoolean },
     { "Symbol.prototype.toString"_s, TString }, { "Symbol.prototype.valueOf"_s, TSymbol },
     { "BigInt.prototype.toString"_s, TString }, { "BigInt.prototype.toLocaleString"_s, TString }, { "BigInt.prototype.valueOf"_s, TBigInt },
+
+    { "Map.prototype.has"_s, TBoolean }, { "Map.prototype.delete"_s, TBoolean }, { "Map.prototype.set"_s, TMap }, { "Map.prototype.clear"_s, TUndefined },
+    { "Set.prototype.has"_s, TBoolean }, { "Set.prototype.delete"_s, TBoolean }, { "Set.prototype.add"_s, TSet }, { "Set.prototype.clear"_s, TUndefined },
+    { "WeakMap.prototype.has"_s, TBoolean }, { "WeakMap.prototype.delete"_s, TBoolean }, { "WeakMap.prototype.set"_s, TWeakMap },
+    { "WeakSet.prototype.has"_s, TBoolean }, { "WeakSet.prototype.delete"_s, TBoolean }, { "WeakSet.prototype.add"_s, TWeakSet },
+    { "Array.prototype.includes"_s, TBoolean }, { "Array.prototype.every"_s, TBoolean }, { "Array.prototype.some"_s, TBoolean },
+    { "Array.prototype.indexOf"_s, TNumber }, { "Array.prototype.lastIndexOf"_s, TNumber }, { "Array.prototype.findIndex"_s, TNumber }, { "Array.prototype.findLastIndex"_s, TNumber },
+    { "Array.prototype.push"_s, TNumber }, { "Array.prototype.unshift"_s, TNumber }, { "Array.prototype.join"_s, TString },
+    { "RegExp.prototype.test"_s, TBoolean }, { "RegExp.prototype.exec"_s, TArray | TNull },
+    { "Date.prototype.getTime"_s, TNumber }, { "Date.prototype.valueOf"_s, TNumber }, { "Date.prototype.getTimezoneOffset"_s, TNumber },
+    { "Date.prototype.getFullYear"_s, TNumber }, { "Date.prototype.getMonth"_s, TNumber }, { "Date.prototype.getDate"_s, TNumber }, { "Date.prototype.getDay"_s, TNumber },
+    { "Date.prototype.getHours"_s, TNumber }, { "Date.prototype.getMinutes"_s, TNumber }, { "Date.prototype.getSeconds"_s, TNumber }, { "Date.prototype.getMilliseconds"_s, TNumber },
+    { "Date.prototype.getUTCFullYear"_s, TNumber }, { "Date.prototype.getUTCMonth"_s, TNumber }, { "Date.prototype.getUTCDate"_s, TNumber }, { "Date.prototype.getUTCDay"_s, TNumber },
+    { "Date.prototype.getUTCHours"_s, TNumber }, { "Date.prototype.getUTCMinutes"_s, TNumber }, { "Date.prototype.getUTCSeconds"_s, TNumber }, { "Date.prototype.getUTCMilliseconds"_s, TNumber },
+    { "Date.prototype.toISOString"_s, TString }, { "Date.prototype.toString"_s, TString },
+    { "Object.prototype.hasOwnProperty"_s, TBoolean }, { "Object.prototype.isPrototypeOf"_s, TBoolean }, { "Object.prototype.propertyIsEnumerable"_s, TBoolean },
 };
 
 const Row constructors[] = {
@@ -108,6 +123,7 @@ struct Tables {
     unsigned booleanPrototype { 0 };
     unsigned symbolPrototype { 0 };
     unsigned bigIntPrototype { 0 };
+    unsigned functionPrototype { 0 };
     unsigned receiverPrototypes[16] { };
     Vector<Builtin> builtins;
 };
@@ -146,6 +162,7 @@ const Tables* tables()
         result->booleanPrototype = find("Boolean.prototype"_s);
         result->symbolPrototype = find("Symbol.prototype"_s);
         result->bigIntPrototype = find("BigInt.prototype"_s);
+        result->functionPrototype = find("Function.prototype"_s);
         auto prototypeOf = [&](Receiver receiver) -> unsigned& { return result->receiverPrototypes[static_cast<unsigned>(receiver)]; };
         prototypeOf(Receiver::String) = result->stringPrototype;
         prototypeOf(Receiver::Number) = result->numberPrototype;
@@ -209,6 +226,12 @@ unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name)
     return intrinsics->at(number).canonical;
 }
 
+bool isDataPropertyOfFunctionPrototype(const StringImpl& name)
+{
+    const Tables* all = tables();
+    return all && all->functionPrototype && ImmutableIntrinsics::shared()->find(all->functionPrototype, name);
+}
+
 Builtin builtinAtIndex(unsigned number)
 {
     const Tables* all = tables();
@@ -242,6 +265,33 @@ Type typeOf(Receiver receiver)
         return TNumber;
     }
     return TNone;
+}
+
+ASCIILiteral nameOf(Receiver receiver)
+{
+    switch (receiver) {
+    case Receiver::None:
+        break;
+    case Receiver::String:
+        return "String"_s;
+    case Receiver::Array:
+        return "Array"_s;
+    case Receiver::Map:
+        return "Map"_s;
+    case Receiver::Set:
+        return "Set"_s;
+    case Receiver::WeakMap:
+        return "WeakMap"_s;
+    case Receiver::WeakSet:
+        return "WeakSet"_s;
+    case Receiver::RegExp:
+        return "RegExp"_s;
+    case Receiver::Date:
+        return "Date"_s;
+    case Receiver::Number:
+        return "Number"_s;
+    }
+    return ""_s;
 }
 
 JSType cellTypeOf(Receiver receiver)

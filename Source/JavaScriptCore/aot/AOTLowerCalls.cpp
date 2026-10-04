@@ -52,7 +52,24 @@ void Lowering::finishCall(PatchpointValue* patchpoint, CallMode mode, Rep result
     patchpoint->resultConstraints = { result == Rep::Double ? ValueRep::reg(FPRInfo::returnValueFPR) : ValueRep::reg(GPRInfo::returnValueGPR) };
 }
 
-LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments, CallMode mode, StubIntrinsic intrinsic)
+std::optional<Stub> Lowering::stubForHostCallee(Node* calleeNode, CallMode mode)
+{
+    unsigned number = 0;
+    if (calleeNode->kind == NodeKind::Intrinsic)
+        number = calleeNode->intrinsic;
+    else if (auto check = m_receiverChecks.find(calleeNode); check != m_receiverChecks.end() && !check->value)
+        number = calleeNode->builtinCalled;
+    if (!number)
+        return std::nullopt;
+    const ImmutableIntrinsics::Entry& entry = ImmutableIntrinsics::shared()->at(number);
+    if (entry.type == InternalFunctionType)
+        return mode == CallMode::Construct ? Stub::ConstructInternalFunction : Stub::CallInternalFunction;
+    if (entry.isHostFunction && mode != CallMode::Construct)
+        return Stub::CallHostFunction;
+    return std::nullopt;
+}
+
+LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments, CallMode mode, StubIntrinsic intrinsic, std::optional<Stub> hostCallStub)
 {
     unsigned count = arguments.size() - 1;
     bool inMemory = count > numberOfArgumentGPRs;
@@ -66,6 +83,12 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
     bool isCached = usesDataStubs() && !inMemory && mode != CallMode::Construct && (intrinsic != StubIntrinsic::None || m_graph.codeBlock()->codeType() == FunctionCode);
     if (!isCached)
         intrinsic = StubIntrinsic::None;
+    if (inMemory || intrinsic != StubIntrinsic::None)
+        hostCallStub = std::nullopt;
+    if (hostCallStub) {
+        isCached = false;
+        m_graph.remark(mode == CallMode::Construct ? "direct-host-construct"_s : "direct-host-call"_s);
+    }
     m_nodeKeepsReads = intrinsic != StubIntrinsic::None && mode == CallMode::Call;
     LValue cache = isCached ? slotAddress(allocateSlots(CalleeCache::numberOfSlots)) : nullptr;
 
@@ -85,7 +108,7 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
     }
     finishCall(patchpoint, mode);
     CallSite site { mode == CallMode::TailCall && !inMemory ? StubCall::noCallSite : callSiteBitsOf(node) };
-    patchpoint->setGenerator([graph = &m_graph, count, inMemory, mode, intrinsic, isCached, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([graph = &m_graph, count, inMemory, mode, intrinsic, isCached, hostCallStub, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         StubCalls& stubCalls = graph->stubCalls;
         if (inMemory && mode == CallMode::TailCall) {
@@ -98,7 +121,7 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
             stubCalls.call(jit, mode == CallMode::Construct ? Stub::ConstructList : Stub::CallList, site);
             return;
         }
-        Stub stub = intrinsic != StubIntrinsic::None ? Stub::CallIntrinsic : mode == CallMode::Construct ? Stub::Construct : isCached ? Stub::CallCached : Stub::Call;
+        Stub stub = hostCallStub ? *hostCallStub : intrinsic != StubIntrinsic::None ? Stub::CallIntrinsic : mode == CallMode::Construct ? Stub::Construct : isCached ? Stub::CallCached : Stub::Call;
         uint32_t which = intrinsic != StubIntrinsic::None ? static_cast<uint32_t>(intrinsic) : count;
         if (mode != CallMode::TailCall) {
             stubCalls.call(jit, stub, which, site);
@@ -244,6 +267,57 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     return true;
 }
 
+bool Lowering::lowerCallToPromiseFunction(Node* node, LinkTimeConstant function, const Arguments& arguments, bool hasResult)
+{
+    unsigned count = arguments.size() - 1;
+    auto settle = [&](Entry operation) {
+        if (count != 2)
+            return false;
+        m_graph.remark("direct-promise-operation"_s, nameOf(operation));
+        vmCall(node, Void, operation, contextOf(operation), arguments[1], arguments[2]);
+        if (hasResult)
+            setJSValue(node, m_out.constInt64(JSValue::encode(jsUndefined())));
+        return true;
+    };
+    auto make = [&](Entry operation, unsigned expectedCount) {
+        if (count != expectedCount)
+            return false;
+        m_graph.remark("direct-promise-operation"_s, nameOf(operation));
+        LValue result;
+        if (operation == Entry::operationNewResolvedPromise) {
+            result = withHelper(Stub::HelperNewResolvedPromise, { arguments[1] }, [&] {
+                return vmCall(node, pointerType(), operation, m_globalObject, arguments[1]);
+            });
+        } else if (expectedCount == 1)
+            result = vmCall(node, pointerType(), operation, m_globalObject, arguments[1]);
+        else
+            result = vmCall(node, pointerType(), operation, m_globalObject, arguments[1], arguments[2]);
+        if (hasResult)
+            setJSValue(node, result);
+        return true;
+    };
+    switch (function) {
+    case LinkTimeConstant::resolvePromiseWithFirstResolvingFunctionCallCheck:
+        return settle(Entry::operationResolvePromiseFirstResolving);
+    case LinkTimeConstant::rejectPromiseWithFirstResolvingFunctionCallCheck:
+        return settle(Entry::operationRejectPromiseFirstResolving);
+    case LinkTimeConstant::fulfillPromiseWithFirstResolvingFunctionCallCheck:
+        return settle(Entry::operationFulfillPromiseFirstResolving);
+    case LinkTimeConstant::asyncFunctionDrive:
+        return settle(Entry::operationAOTAsyncFunctionDrive);
+    case LinkTimeConstant::newResolvedPromise:
+        return make(Entry::operationNewResolvedPromise, 1);
+    case LinkTimeConstant::newRejectedPromise:
+        return make(Entry::operationNewRejectedPromise, 1);
+    case LinkTimeConstant::promiseResolve:
+        return make(Entry::operationPromiseResolve, 2);
+    case LinkTimeConstant::promiseReject:
+        return make(Entry::operationPromiseReject, 2);
+    default:
+        return false;
+    }
+}
+
 void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv, CallMode mode, bool hasResult)
 {
     if (mode == CallMode::TailCall && !node->graph->isInTailPosition)
@@ -267,6 +341,8 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
             setJSValue(node, copy);
         return;
     }
+    if (auto function = Graph::linkTimeConstantOf(calleeNode); function && mode != CallMode::Construct && lowerCallToPromiseFunction(node, *function, arguments, hasResult))
+        return;
     if (mode == CallMode::Call && argc == 2 && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::toLength) {
         Node* argumentNode = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1));
         if (argumentNode->isInteger() && argumentNode->range.min >= 0) {
@@ -290,7 +366,21 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
             setJSValue(node, m_out.phi(Int64, quick, called));
         return;
     }
+    if (mode == CallMode::Construct && argc == 1 && calleeNode->kind == NodeKind::Intrinsic && node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset())) == calleeNode) {
+        const ImmutableIntrinsics::Entry& entry = ImmutableIntrinsics::shared()->at(calleeNode->intrinsic);
+        bool isSet = entry.name == "Set"_s;
+        if (entry.holder == ImmutableIntrinsics::globalObject && (isSet || entry.name == "Map"_s)) {
+            m_graph.remark("allocates-collection-directly"_s, entry.name);
+            LValue collection = withHelper(isSet ? Stub::HelperNewSet : Stub::HelperNewMap, { }, [&] {
+                return vmCall(node, pointerType(), Entry::operationAOTNewMapOrSet, m_instance, m_out.constInt32(isSet));
+            });
+            if (hasResult)
+                setJSValue(node, collection);
+            return;
+        }
+    }
     LBasicBlock afterBuiltin = nullptr;
+    bool builtinKeepsReads = false;
     Vector<ValueFromBlock, 2> builtinResults;
     if (mode == CallMode::Call && (argc == 2 || argc == 3) && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::copyDataProperties) {
         LValue isCopied = vmCall(node, pointerType(), Entry::operationAOTTryCopyDataProperties, m_instance, arguments[0], arguments[1], argc == 3 ? arguments[2] : m_out.constInt64(JSValue::encode(JSValue())), m_out.constInt32(bytecodeOwner(node)));
@@ -304,11 +394,27 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     if (node->builtinCalled && mode != CallMode::Construct && lowerBuiltinCall(node, calleeNode, argc, argv, arguments, hasResult, afterBuiltin, builtinResults)) {
         if (!afterBuiltin)
             return;
+        builtinKeepsReads = m_nodeKeepsReads;
         mode = CallMode::Call;
     }
     StubIntrinsic intrinsic = StubIntrinsic::None;
     if (mode != CallMode::Construct && calleeNode->isBytecode(op_get_by_id))
         intrinsic = stubIntrinsicFor(calleeNode->graph->codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, hasResult);
+    if (intrinsic != StubIntrinsic::None) {
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        for (unsigned i = 1; i < argc; ++i)
+            arguments[i] = lowJSValuePreferringInt32(node->use(VirtualRegister(firstArgument + static_cast<int>(i))));
+    }
+    std::optional<Stub> hostCallStub = stubForHostCallee(calleeNode, mode);
+    if (mode == CallMode::TailCall && hostCallStub == Stub::CallInternalFunction)
+        mode = CallMode::Call;
+    if (mode == CallMode::TailCall && hostCallStub) {
+        if (emitCall(node, callee, arguments, mode, intrinsic, hostCallStub))
+            RELEASE_ASSERT_NOT_REACHED();
+        m_out.appendTo(m_out.newBlock());
+        setJSValue(node, m_out.int64Zero);
+        return;
+    }
     if (mode == CallMode::TailCall) {
         LBasicBlock otherwise = branchIfCalleeIsFunction(calleeNode, callee);
         if (emitCall(node, callee, arguments, mode, intrinsic))
@@ -316,9 +422,9 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         m_out.appendTo(otherwise);
         mode = CallMode::Call;
     }
-    LValue result = emitCall(node, callee, arguments, mode, intrinsic);
+    LValue result = emitCall(node, callee, arguments, mode, intrinsic, hostCallStub);
     if (afterBuiltin) {
-        m_nodeKeepsReads = false;
+        m_nodeKeepsReads = m_nodeKeepsReads && builtinKeepsReads;
         builtinResults.append(m_out.anchor(result));
         m_out.jump(afterBuiltin);
         m_out.appendTo(afterBuiltin);

@@ -91,12 +91,39 @@ public:
                 Node* closure = use.node;
                 if (!closure->isBytecode(op_new_func_exp) || soleUser.get(closure) != call || closure->block == call->block)
                     continue;
+                if (mayRunAgainWithoutRunning(call->block, closure->block))
+                    continue;
+                m_graph.remark("sinks-closure-into-fallback-call"_s);
                 closure->block->nodes.removeFirst(closure);
                 closure->block = call->block;
                 call->block->nodes.insert(0, closure);
             }
         }
         m_graph.computeBlockOrder();
+    }
+
+    bool mayRunAgainWithoutRunning(BasicBlock* block, BasicBlock* other)
+    {
+        BitVector seen(m_graph.blocks.size());
+        Vector<BasicBlock*, 16> worklist;
+        auto visit = [&](BasicBlock* next) {
+            if (next != other && !seen.set(next->index))
+                worklist.append(next);
+        };
+        for (BasicBlock* successor : block->successors)
+            visit(successor);
+        for (auto& candidate : m_graph.blocks) {
+            if (candidate->isCatchEntrypoint)
+                visit(candidate.get());
+        }
+        while (!worklist.isEmpty()) {
+            BasicBlock* current = worklist.takeLast();
+            if (current == block)
+                return true;
+            for (BasicBlock* successor : current->successors)
+                visit(successor);
+        }
+        return false;
     }
 
     static bool isProfitable(UnlinkedCodeBlock* callee, const FunctionSummary* summary, bool isCalledInLoop = true)

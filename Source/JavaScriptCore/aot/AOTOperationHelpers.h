@@ -81,6 +81,17 @@ ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* cal
 }
 ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(Instance* instance, CallFrame* callFrame) { return caller(instance, callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
 
+template<typename CellType>
+ALWAYS_INLINE void prepareInlineAllocation(Instance* instance, Instance::InlineAllocation kind, Structure* structure)
+{
+    auto& data = instance->inlineAllocations[static_cast<unsigned>(kind)];
+    if (data.allocator) [[likely]]
+        return;
+    static_assert(!JSCell::structureIDOffset() && JSCell::indexingTypeAndMiscOffset() == sizeof(uint32_t));
+    data.header = static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits();
+    data.allocator = subspaceFor<CellType>(*instance->vm)->allocatorFor(sizeof(CellType), AllocatorForMode::EnsureAllocator).localAllocator();
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

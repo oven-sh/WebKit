@@ -21,6 +21,7 @@ namespace JSC { namespace AOT {
 namespace {
 
 constexpr Type TNumberLike = TNumber | TBoolean | TOther;
+constexpr Type TMayBeFalsy = TAll & ~(TSymbol | (TAnyObject & ~(TOtherObject | TFunction)));
 
 class TypeInference {
 public:
@@ -117,6 +118,8 @@ public:
 
     void run()
     {
+        if (!calleesWithWidenedInputs && m_graph.summary() && m_graph.summary()->isNonEscaping)
+            m_graph.remark("function-does-not-escape"_s);
         findVariablesThatAreNotEmptyWhenRead();
         iterateToFixpoint();
         constexpr unsigned maxRounds = 4;
@@ -227,7 +230,7 @@ public:
     static TestedValue valueTestedByCondition(Node* condition, unsigned depth = 0)
     {
         if (condition->kind != NodeKind::Bytecode || condition->guard || condition->guarded)
-            return { condition, TAll & ~TOther, TAll };
+            return { condition, TAll & ~TOther, TMayBeFalsy };
         constexpr Type notObject = TPrimitive | TEmpty;
         constexpr Type neverCallable = TAnyObject & ~(TFunction | TOtherObject);
         switch (condition->opcode) {
@@ -257,7 +260,7 @@ public:
         case op_typeof_is_function:
             return { condition->use(condition->as<OpTypeofIsFunction>().m_operand), TAll & ~(notObject | neverCallable), TAll & ~TFunction };
         default:
-            return { condition, TAll & ~TOther, TAll };
+            return { condition, TAll & ~TOther, TMayBeFalsy };
         }
     }
 
@@ -302,7 +305,7 @@ public:
             return false;
         if (!after)
             return true;
-        if (repForType(after) != repForType(before) || (isSubtype(after, TCell) && !isSubtype(before, TCell)))
+        if (repForType(after) != repForType(before) || (isSubtype(after, TCell) && !isSubtype(before, TCell)) || !mayBe(after, TCell))
             return true;
         return mayBe(after, TOther) && isSubtype(before & ~after, TOther) && isWorthNarrowing(before, before & ~TOther);
     }
@@ -376,12 +379,91 @@ public:
         return true;
     }
 
+    static bool isCalleeOf(const Node* user, VirtualRegister reg)
+    {
+        if ((user->kind != NodeKind::Bytecode && user->kind != NodeKind::Guard) || !user->instruction)
+            return false;
+        switch (user->opcode) {
+        case op_call:
+            return reg == user->as<OpCall>().m_callee;
+        case op_call_ignore_result:
+            return reg == user->as<OpCallIgnoreResult>().m_callee;
+        case op_tail_call:
+            return reg == user->as<OpTailCall>().m_callee;
+        case op_construct:
+            return reg == user->as<OpConstruct>().m_callee;
+        default:
+            return false;
+        }
+    }
+
+    bool narrowAfterCheck(BasicBlock* block, unsigned index, Node* value)
+    {
+        Node* check = block->nodes[index];
+        Node* narrow = nullptr;
+        auto narrowed = [&] {
+            if (!narrow) {
+                narrow = m_graph.addNode(NodeKind::Narrow);
+                narrow->graph = check->graph;
+                narrow->narrowedTo = TAll & ~TEmpty;
+                narrow->bytecodeIndex = check->bytecodeIndex;
+                narrow->uses.append({ VirtualRegister(), value });
+            }
+            return narrow;
+        };
+        auto narrowUsesOf = [&](Node* user) {
+            if (user->kind == NodeKind::Narrow && user->narrowedTo && !mayBe(user->narrowedTo, TEmpty))
+                return;
+            for (auto& use : user->uses) {
+                if (use.node == value && !isCalleeOf(user, use.reg))
+                    use.node = narrowed();
+            }
+        };
+        for (BasicBlock* other : m_graph.m_rpo) {
+            for (Node* phi : other->phis) {
+                for (unsigned i = 0; i < phi->uses.size(); ++i) {
+                    if (phi->uses[i].node == value && block->dominates(other->predecessors[i]))
+                        phi->uses[i].node = narrowed();
+                }
+            }
+            if (other == block || !block->dominates(other))
+                continue;
+            for (Node* node : other->nodes)
+                narrowUsesOf(node);
+        }
+        for (unsigned i = index + 1; i < block->nodes.size(); ++i)
+            narrowUsesOf(block->nodes[i]);
+        if (!narrow)
+            return false;
+        narrow->block = block;
+        block->nodes.insert(index + 1, narrow);
+        return true;
+    }
+
     bool narrowTestedValues()
     {
         bool hasDominators = false;
         bool addedBlock = false;
         bool changed = false;
         Vector<BasicBlock*> blocks = m_graph.m_rpo;
+        for (BasicBlock* block : blocks) {
+            if (block->isGeneric || block->isReentry || block->isPreHeader)
+                continue;
+            for (unsigned index = 0; index < block->nodes.size(); ++index) {
+                Node* check = block->nodes[index];
+                if (!check->isBytecode(op_check_tdz) || check->guard || check->guarded || check->isElided)
+                    continue;
+                Node* value = check->uses[0].node;
+                if (value->isElided || !isWorthNarrowing(value->type, value->type & ~TEmpty))
+                    continue;
+                if (!std::exchange(hasDominators, true))
+                    m_graph.computeDominators();
+                if (narrowAfterCheck(block, index, value)) {
+                    m_graph.remark("narrowed-after-tdz-check"_s);
+                    changed = true;
+                }
+            }
+        }
         for (BasicBlock* block : blocks) {
             if (block->isGeneric || block->endsWithGuard || block->isReentry || block->isPreHeader || block->successors.size() != 2 || block->successors[0] == block->successors[1])
                 continue;
@@ -398,7 +480,7 @@ public:
                 if (!std::exchange(hasDominators, true))
                     m_graph.computeDominators();
                 if (narrowOnEdge(block, i, tested.value, narrowedTo, addedBlock)) {
-                    m_graph.remark("narrowed-tested-value"_s);
+                    m_graph.remark(narrowedTo == TMayBeFalsy ? "narrowed-falsy-value"_s : "narrowed-tested-value"_s);
                     changed = true;
                 }
             }
@@ -487,6 +569,41 @@ private:
 
     void recordIndirectCall(Type callee) { markEscaping(callee, FunctionSummary::CalledIndirectly); }
 
+    static bool inheritsFromFunctionPrototypeOnly(const KnownFunction& function)
+    {
+        if (function.executable->isClass())
+            return false;
+        switch (function.executable->parseMode()) {
+        case SourceParseMode::NormalFunctionMode:
+        case SourceParseMode::ArrowFunctionMode:
+        case SourceParseMode::MethodMode:
+        case SourceParseMode::GetterMode:
+        case SourceParseMode::SetterMode:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool readRunsNoProgramCode(Type base, const Identifier& property)
+    {
+        const KnownFunction* function = programFunctions()->function(functionNumberOf(base));
+        if (!function || !function->executable)
+            return true;
+        const CommonIdentifiers& names = *m_graph.vm().propertyNames;
+        if (property.isPrivateName() || property == names.name || property == names.length)
+            return true;
+        return inheritsFromFunctionPrototypeOnly(*function) && isDataPropertyOfFunctionPrototype(*property.impl());
+    }
+
+    bool hasInstanceRunsNoProgramCode(Type constructor)
+    {
+        const KnownFunction* function = programFunctions()->function(functionNumberOf(constructor));
+        if (!function || !function->executable)
+            return true;
+        return function->executable->parseMode() == SourceParseMode::NormalFunctionMode && !function->executable->isClass();
+    }
+
     void noteEscapesThrough(Node* user)
     {
         switch (user->kind) {
@@ -529,11 +646,7 @@ private:
         case op_jnundefined_or_null:
         case op_get_parent_scope:
         case op_check_tdz:
-        case op_get_by_id:
-        case op_get_by_id_direct:
         case op_get_length:
-        case op_in_by_id:
-        case op_del_by_id:
         case op_get_prototype_of:
         case op_typeof:
         case op_typeof_is_undefined:
@@ -554,7 +667,26 @@ private:
         case op_jeq_ptr:
         case op_jneq_ptr:
         case op_set_function_name:
-        case op_instanceof:
+            return;
+        case op_get_by_id:
+            if (!readRunsNoProgramCode(user->use(user->as<OpGetById>().m_base)->type, user->graph->codeBlock()->identifier(user->as<OpGetById>().m_property)))
+                markOperandsEscaping(user);
+            return;
+        case op_get_by_id_direct:
+            if (!readRunsNoProgramCode(user->use(user->as<OpGetByIdDirect>().m_base)->type, user->graph->codeBlock()->identifier(user->as<OpGetByIdDirect>().m_property)))
+                markOperandsEscaping(user);
+            return;
+        case op_instanceof: {
+            auto bytecode = user->as<OpInstanceof>();
+            if (bytecode.m_constructor != bytecode.m_value && hasInstanceRunsNoProgramCode(user->use(bytecode.m_constructor)->type))
+                return markOperandsEscapingExcept(bytecode.m_constructor);
+            markOperandsEscaping(user);
+            return;
+        }
+        case op_put_by_id:
+            if (user->as<OpPutById>().m_flags.isDirect() || user->graph->codeBlock()->identifier(user->as<OpPutById>().m_property).isPrivateName())
+                return markOperandsEscapingExcept(user->as<OpPutById>().m_base);
+            markOperandsEscaping(user);
             return;
         case op_get_from_scope: {
             bool isExact = false;
@@ -562,18 +694,6 @@ private:
                 markEscaping(closureTypeFor(known->executable), FunctionSummary::ReadInexactly);
             return;
         }
-        case op_get_by_val:
-            return markOperandsEscapingExcept(user->as<OpGetByVal>().m_base);
-        case op_in_by_val:
-            return markOperandsEscapingExcept(user->as<OpInByVal>().m_base);
-        case op_del_by_val:
-            return markOperandsEscapingExcept(user->as<OpDelByVal>().m_base);
-        case op_put_by_id:
-            return markOperandsEscapingExcept(user->as<OpPutById>().m_base);
-        case op_put_by_val:
-            return markOperandsEscapingExcept(user->as<OpPutByVal>().m_base);
-        case op_put_by_val_direct:
-            return markOperandsEscapingExcept(user->as<OpPutByValDirect>().m_base);
         case op_define_data_property:
             if (auto* classes = programClasses(); classes && classes->isNonEscapingMethod(functionNumberOf(user->use(user->as<OpDefineDataProperty>().m_value)->type)))
                 return markOperandsEscapingExcept(user->as<OpDefineDataProperty>().m_value);
@@ -861,22 +981,34 @@ private:
                 return TNone;
             return isSubtype(argument, TInt32) ? TInt32 : TNumber;
         }
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         unsigned number = 0;
+        bool isMethodOfObject = false;
+        bool receiverMayBeNullish = false;
         if (callee->kind == NodeKind::Intrinsic)
             number = callee->intrinsic;
         else if (callee->isBytecode(op_get_by_id)) {
             auto bytecode = callee->as<OpGetById>();
-            Type base = callee->use(bytecode.m_base)->type;
+            Node* receiver = callee->use(bytecode.m_base);
+            Type base = receiver->type & ~(TOther | TEmpty);
             if (!base)
                 return TNone;
             number = intrinsicFoundOnPrimitive(base, *callee->graph->codeBlock()->identifier(bytecode.m_property).impl());
+            if (!number && node->use(VirtualRegister(firstArgument)) == receiver) {
+                number = builtinMethodReadFromObject(callee, base);
+                isMethodOfObject = true;
+            }
+            receiverMayBeNullish = mayBe(receiver->type, TOther);
         }
         if (!number)
             return std::nullopt;
         auto signature = intrinsicSignature(number);
         if (!signature)
             return std::nullopt;
-        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        if (isMethodOfObject)
+            m_graph.remark("typed-call-of-builtin-method"_s);
+        if (receiverMayBeNullish)
+            m_graph.remark("typed-builtin-call-unless-receiver-is-nullish"_s);
         switch (signature->condition) {
         case BuiltinSignature::Condition::Always:
             break;
@@ -887,8 +1019,11 @@ private:
             Type first = argument->type;
             if (!first)
                 return TNone;
-            if (!isSubtype(first, TPrimitive) && !argument->isBytecode(op_new_reg_exp))
+            if (isSubtype(first, TPrimitive))
+                break;
+            if (!argument->isBytecode(op_new_reg_exp) || !isUsedOnceAndOnlyBy(argument, node))
                 return std::nullopt;
+            m_graph.remark("typed-call-with-untouched-regexp-literal"_s);
             break;
         }
         case BuiltinSignature::Condition::IfThisIsHolder: {
@@ -898,8 +1033,85 @@ private:
                 return std::nullopt;
             break;
         }
+        case BuiltinSignature::Condition::IsInt32IfArgumentsAre:
+        case BuiltinSignature::Condition::IsInt32IfOnlyArgumentIs: {
+            if (argc < 2 || (argc > 2 && signature->condition == BuiltinSignature::Condition::IsInt32IfOnlyArgumentIs))
+                break;
+            Type arguments = TNone;
+            for (unsigned i = 1; i < argc; ++i) {
+                Type argument = node->use(VirtualRegister(firstArgument + static_cast<int>(i)))->type;
+                if (!argument)
+                    return TNone;
+                arguments |= argument;
+            }
+            if (!isSubtype(arguments, TInt32))
+                break;
+            m_graph.remark("int32-result-of-builtin-with-int32-arguments"_s);
+            return TInt32;
+        }
         }
         return signature->result;
+    }
+
+    bool isUsedOnceAndOnlyBy(Node* value, Node* user)
+    {
+        unsigned numberOfUses = 0;
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* phi : block->phis) {
+                for (auto& use : phi->uses) {
+                    if (use.node == value)
+                        return false;
+                }
+            }
+            for (Node* node : block->nodes) {
+                if (node == user->guard)
+                    continue;
+                for (auto& use : node->uses) {
+                    if (use.node != value)
+                        continue;
+                    if (node != user)
+                        return false;
+                    ++numberOfUses;
+                }
+            }
+        }
+        return numberOfUses == 1;
+    }
+
+    static unsigned builtinMethodReadFromObject(Node* read, Type base)
+    {
+        Receiver receiver = receiverWithType(base);
+        switch (receiver) {
+        case Receiver::None:
+        case Receiver::String:
+        case Receiver::Number:
+            return 0;
+        case Receiver::Array:
+            if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || !TypeTable::shared()->isArray(Graph::typeTagOf(read)))
+                return 0;
+            if (Graph::hasOverriddenMethodInfo() && Graph::methodMayBeOverridden(nameOf(receiver), read))
+                return 0;
+            break;
+        case Receiver::Map:
+        case Receiver::Set:
+        case Receiver::WeakMap:
+        case Receiver::WeakSet:
+        case Receiver::RegExp:
+        case Receiver::Date:
+            if (Graph::methodMayBeOverridden(nameOf(receiver), read))
+                return 0;
+            break;
+        }
+        return intrinsicFoundOn(receiver, *read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl());
+    }
+
+    static bool readsSizeOfMapOrSet(Node* read)
+    {
+        auto bytecode = read->as<OpGetById>();
+        if (read->graph->codeBlock()->identifier(bytecode.m_property).impl() != read->graph->vm().propertyNames->size.impl())
+            return false;
+        Receiver receiver = receiverWithType(read->use(bytecode.m_base)->type & ~(TOther | TEmpty));
+        return (receiver == Receiver::Map || receiver == Receiver::Set) && !Graph::methodMayBeOverridden(nameOf(receiver), read);
     }
 
     const NodeUsers& users()
@@ -1000,17 +1212,25 @@ private:
         return true;
     }
 
-    static Type arithResult(Type left, Type right)
+    Type arithResult(Type left, Type right)
     {
+        left &= ~TEmpty;
+        right &= ~TEmpty;
         if (!left || !right)
             return TNone;
         if (isSubtype(left | right, TNumberLike | TString))
             return TNumber;
+        if (isSubtype(left, TNumberLike | TString) || isSubtype(right, TNumberLike | TString)) {
+            m_graph.remark("number-result-because-one-operand-is-no-bigint"_s);
+            return TNumber;
+        }
         return TNumber | TBigInt;
     }
 
     static Type bitResult(Type left, Type right)
     {
+        left &= ~TEmpty;
+        right &= ~TEmpty;
         if (!left || !right)
             return TNone;
         if (isSubtype(left, TNumberLike | TString) || isSubtype(right, TNumberLike | TString))
@@ -1020,6 +1240,7 @@ private:
 
     static Type unaryArithResult(Type operand)
     {
+        operand &= ~TEmpty;
         if (!operand)
             return TNone;
         if (isSubtype(operand, TNumberLike | TString))
@@ -1147,7 +1368,7 @@ private:
                 result |= TBigInt;
             if (mayBe(left, TNumberLike | TAnyObject) && mayBe(right, TNumberLike | TAnyObject))
                 result |= TNumber;
-            return result ? result : TAll;
+            return result;
         }
         case op_sub: {
             auto bytecode = node->as<OpSub>();
@@ -1323,6 +1544,10 @@ private:
                     }
                 }
             }
+            if (readsSizeOfMapOrSet(node)) {
+                m_graph.remark("typed-size-of-map-or-set"_s);
+                return TNumber;
+            }
             return typeOf(node->as<OpGetById>().m_base) ? TAll : TNone;
         case op_new_reg_exp:
         case op_new_reg_exp_shared:
@@ -1333,7 +1558,8 @@ private:
         case op_create_this:
             if (uint16_t layoutID = node->graph->thisLayoutID())
                 return objectTypeForLayout(layoutID);
-            return TObject;
+            m_graph.remark("create-this-is-final-object"_s);
+            return TFinalObject;
         case op_create_direct_arguments:
         case op_create_scoped_arguments:
         case op_create_cloned_arguments:
@@ -1444,7 +1670,7 @@ private:
         case op_tail_call:
             return callResult(node);
         case op_get_length: {
-            Type base = typeOf(node->as<OpGetLength>().m_base);
+            Type base = typeOf(node->as<OpGetLength>().m_base) & ~(TOther | TEmpty);
             if (!base)
                 return TNone;
             if (isSubtype(base, TString) || node->guard)

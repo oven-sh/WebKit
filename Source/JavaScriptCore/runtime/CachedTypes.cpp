@@ -6326,6 +6326,16 @@ struct BytecodeLinkEncoder::Impl {
         AOT::VariableSummaries allVariableSummaries;
         AOT::VariableSummaries* variableSummaries = &allVariableSummaries;
         if (variableSummaries) {
+            for (auto& function : functionsToCompile) {
+                if (!function.forCall || !function.forConstruct)
+                    continue;
+                for (UnlinkedFunctionCodeBlock* codeBlock : { function.forCall, function.forConstruct }) {
+                    for (auto& constant : codeBlock->constantRegisters()) {
+                        if (JSValue value = constant.get(); value && value.isCell() && value.asCell()->inherits<SymbolTable>())
+                            variableSummaries->giveUpOnScope(value.asCell());
+                    }
+                }
+            }
             for (unsigned index = 0; index < modules.size(); ++index) {
                 auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
                 if (!codeBlock)
@@ -6784,6 +6794,9 @@ struct BytecodeLinkEncoder::Impl {
             const Vector<UnlinkedFunctionExecutable*>* builtins { nullptr };
         };
         AOT::closePropertyEffects(functionSummaries.span());
+        unsigned functionsWithoutStackCheck = AOT::findFunctionsWithoutStackCheck(programFunctions);
+        if (Options::verboseAOTCompilation()) [[unlikely]]
+            dataLogLn("AOT: ", functionsWithoutStackCheck, " functions rely on the stack check of a caller");
         LinkedProgramCode programCode;
         programCode.builtins = &engineBuiltins;
         uint32_t numberOfTypeCoverageCounters = 0;

@@ -95,6 +95,7 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
     };
 
     if (node->isInteger() && left->isInteger() && right->isInteger()) {
+        m_graph.remark("integer-arithmetic"_s);
         bool narrow = node->rep() == Rep::Int32 && left->rep() == Rep::Int32 && right->rep() == Rep::Int32;
         LValue a = narrow ? lowInt32(left) : lowInt64(left);
         LValue b = narrow ? lowInt32(right) : lowInt64(right);
@@ -138,6 +139,13 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
     }
     if (isSubtype(left->type | right->type, TNumber)) {
         setDouble(node, doubleOp(lowDouble(left), lowDouble(right)));
+        return;
+    }
+    if (opcode == op_add && left->type && right->type && ((isSubtype(left->type, TString) && isSubtype(right->type, TNumber)) || (isSubtype(left->type, TNumber) && isSubtype(right->type, TString)))) {
+        m_graph.remark("concatenates-string-and-number"_s);
+        LValue first = isSubtype(left->type, TString) ? lowJSValue(left) : numberToString(node, left);
+        LValue second = isSubtype(right->type, TString) ? lowJSValue(right) : numberToString(node, right);
+        setJSValue(node, withHelper(Stub::HelperMakeRope2, { first, second }, [&] { return vmCall(node, pointerType(), Entry::operationMakeRope2, m_globalObject, first, second); }));
         return;
     }
 
@@ -307,6 +315,16 @@ void Lowering::lowerBitOp(Node* node, VirtualRegister lhs, VirtualRegister rhs)
     setJSValue(node, m_out.phi(Int64, fastResult, slowResult));
 }
 
+LValue Lowering::numberToString(Node* origin, Node* number)
+{
+    if (number->rep() != Rep::Int32)
+        return vmCall(origin, pointerType(), Entry::operationDoubleToStringWithValidRadix, m_globalObject, lowDouble(number), m_out.constInt32(10));
+    LValue value = lowInt32(number);
+    return withHelper(Stub::HelperInt32ToString, { value }, [&] {
+        return vmCall(origin, pointerType(), Entry::operationInt32ToStringWithValidRadix, m_globalObject, value, m_out.constInt32(10));
+    });
+}
+
 void Lowering::lowerUnaryArith(Node* node, VirtualRegister operandRegister)
 {
     Node* operand = node->use(operandRegister);
@@ -354,6 +372,11 @@ void Lowering::lowerUnaryArith(Node* node, VirtualRegister operandRegister)
     }
     if (opcode == op_to_string && isSubtype(operand->type, TString)) {
         setJSValue(node, lowJSValue(operand));
+        return;
+    }
+    if (opcode == op_to_string && operand->type && isSubtype(operand->type, TNumber)) {
+        m_graph.remark("number-to-string-by-type"_s);
+        setJSValue(node, numberToString(node, operand));
         return;
     }
 
@@ -458,11 +481,35 @@ LValue Lowering::lowerCompare(Node* node, OpcodeID opcode, VirtualRegister lhs, 
         return intCompare(lowInt64(left), lowInt64(right));
     if (isSubtype(left->type | right->type, TNumber))
         return doubleCompare(lowDouble(left), lowDouble(right));
+    if (isSubtype((left->type | right->type) & ~TEmpty, TNumber | TUndefined)) {
+        m_graph.remark("inline-comparison-of-numbers-or-undefined"_s);
+        auto asDouble = [&](Node* operand) {
+            return isSubtype(operand->type, TNumber) ? lowDouble(operand) : numberToDouble(lowJSValue(operand));
+        };
+        LValue leftDouble = asDouble(left);
+        return doubleCompare(leftDouble, asDouble(right));
+    }
 
     LValue a = lowJSValue(left);
     LValue b = lowJSValue(right);
-    if (isCompact())
-        return callBinaryStub(node, *stubFor(opcode), Int32, a, b);
+    if (isCompact()) {
+        bool leftIsInt32 = isSubtype(left->type, TInt32);
+        if (!leftIsInt32 && !isSubtype(right->type, TInt32))
+            return callBinaryStub(node, *stubFor(opcode), Int32, a, b);
+        m_graph.remark("inline-relational-comparison-with-int32"_s);
+        LBasicBlock intCase = m_out.newBlock();
+        LBasicBlock slowCase = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isInt32(leftIsInt32 ? b : a), usually(intCase), rarely(slowCase));
+        m_out.appendTo(intCase);
+        ValueFromBlock fastResult = m_out.anchor(intCompare(unboxInt32(a), unboxInt32(b)));
+        m_out.jump(continuation);
+        m_out.appendTo(slowCase);
+        ValueFromBlock slowResult = m_out.anchor(callBinaryStub(node, *stubFor(opcode), Int32, a, b));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return m_out.phi(Int32, fastResult, slowResult);
+    }
     LBasicBlock intCase = m_out.newBlock();
     LBasicBlock notBothInt = m_out.newBlock();
     LBasicBlock doubleCase = m_out.newBlock();
@@ -778,11 +825,12 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
         return m_out.booleanFalse;
 
     Type byContent = TNumber | TString | TBigInt;
+    auto bothMayBe = [&](Type kind) { return mayBe(left->type, kind) && mayBe(right->type, kind); };
     bool areAtomStrings = (strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt)
         && ((isAtomIfString(left) && isAtomIfString(right))
             || (constantStringOf(right) && isAtomIfString(right) && isAtomIfShortString(left))
             || (constantStringOf(left) && isAtomIfString(left) && isAtomIfShortString(right)));
-    bool bitsDecide = strict ? !mayBe(left->type, byContent) || !mayBe(right->type, byContent) : isSubtype(both, TAnyObject | TSymbol) || isSubtype(both, TBoolean);
+    bool bitsDecide = strict ? !bothMayBe(TNumber) && !bothMayBe(TString) && !bothMayBe(TBigInt) : isSubtype(both, TAnyObject) || isSubtype(both, TSymbol) || isSubtype(both, TBoolean);
     if (!bitsDecide && !areAtomStrings && !isCompact() && (strict || isSubtype(both, TString))) {
         if (auto said = constantStringOf(right))
             return isStringEqualTo(node, left, lowJSValue(left), *said, right);
@@ -826,11 +874,11 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     LValue a = lowJSValue(left);
     LValue b = lowJSValue(right);
 
-    if (strict) {
-        if (!mayBe(left->type, byContent) || !mayBe(right->type, byContent))
-            return m_out.equal(a, b);
-    } else if (isSubtype(both, TAnyObject | TSymbol) || isSubtype(both, TBoolean))
+    if (bitsDecide) {
+        if (strict && bothMayBe(byContent))
+            m_graph.remark("strict-equality-of-different-kinds-by-bits"_s);
         return m_out.equal(a, b);
+    }
 
     if ((strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt)) {
         if (areAtomStrings)

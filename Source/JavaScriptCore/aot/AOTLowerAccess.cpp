@@ -571,6 +571,8 @@ void Lowering::lowerGetById(Node* node)
         lowerBuiltinRead(node, baseNode);
         return;
     }
+    if (lowerSizeOfMapOrSet(node, baseNode))
+        return;
     if (const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared(); intrinsics && !node->isElided && Options::useUnboxedFastArrayIteration() && mayBe(baseNode->type, TArray)
         && code().codeBlock()->identifier(bytecode.m_property) == m_graph.vm().propertyNames->iteratorSymbol) {
         unsigned array = intrinsics->find(ImmutableIntrinsics::globalObject, *String("Array"_s).impl());
@@ -896,8 +898,33 @@ void Lowering::findPropertyRuns(BasicBlock* block)
         SetForScope code(m_code, node->graph);
         return resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type).kind == StaticVariable::Closure;
     };
+    auto readsVariableThatNeverChanges = [&](Node* node) {
+        auto bytecode = node->as<OpGetFromScope>();
+        if (node->promotedEnvironment)
+            return true;
+        if (VariableSummaries* summaries = m_graph.variableSummaries()) {
+            if (Variable variable = m_graph.variableAccessedBy(node); variable && !node->accessesLocalEnvironment && summaries->isDissolved(variable.scope))
+                return true;
+        }
+        bool isExact = false;
+        if (const KnownFunction* known = m_graph.knownFunctionReadBy(node, &isExact); known && isExact && known->isDeclaration)
+            return true;
+        ResolveType type = bytecode.m_getPutInfo.resolveType();
+        if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
+            Node* scope = node->use(bytecode.m_scope);
+            if (!scope->isBytecode(op_create_lexical_environment))
+                return false;
+            SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(scope->graph->codeBlock()->getConstant(scope->as<OpCreateLexicalEnvironment>().m_symbolTable).asCell());
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            auto entry = symbolTable->find(locker, node->graph->codeBlock()->identifier(bytecode.m_var).impl());
+            return entry != symbolTable->end(locker) && entry->value.isReadOnly() && entry->value.scopeOffset().offset() == bytecode.m_offset;
+        }
+        SetForScope code(m_code, node->graph);
+        StaticVariable variable = resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
+        return variable.kind == StaticVariable::Closure && variable.isReadOnly;
+    };
     auto baseOf = [&](Node* target) -> Base {
-        if (!target->isBytecode(op_get_from_scope) || !isPureScopeRead(target))
+        if (!target->isBytecode(op_get_from_scope) || !isPureScopeRead(target) || !readsVariableThatNeverChanges(target))
             return { target };
         auto bytecode = target->as<OpGetFromScope>();
         Node* scope = target->use(bytecode.m_scope);
@@ -954,6 +981,11 @@ void Lowering::findPropertyRuns(BasicBlock* block)
         case op_get_from_scope:
             if (!isPureScopeRead(node))
                 end();
+            else if (!readsVariableThatNeverChanges(node)) {
+                if (!stores.isEmpty())
+                    m_graph.remark("variable-read-ends-property-run"_s);
+                endRun();
+            }
             continue;
         case op_check_tdz:
             if (!base || baseOf(node->use(node->as<OpCheckTdz>().m_targetVirtualRegister)) != base)
@@ -1026,7 +1058,7 @@ void Lowering::lowerPutById(Node* node)
             bool mayBeRejected = branchUnlessAccepted(valueNode, value, field->fieldType, otherwise);
             TypedPointer fieldSlot = fieldAddress(baseStorage, *field);
             LValue storedValue = toFieldRepresentation(valueNode, value, field->fieldType);
-            if (!mayBePlaceholder && !mayBeRejected) {
+            if (!mayBePlaceholder && !mayBeRejected && bytecode.m_flags.ecmaMode().isStrict()) {
                 m_nodePreservesFields = true;
                 if (valueNode->type && isSubtype(valueNode->type, TNumber))
                     recordAvailableField(baseNode, *field, lowDouble(valueNode), Rep::Double, storedValue, true);
@@ -1051,6 +1083,7 @@ void Lowering::lowerPutById(Node* node)
                 }
                 m_out.appendTo(isThere);
             }
+            orElse(m_out.testIsZero32(m_out.load32(structureOf(baseStorage), m_heaps.Structure_bitField), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)), otherwise);
             m_out.store64(storedValue, fieldSlot);
             if (mayBe(valueNode->type, TCell))
                 storeBarrier(base);
@@ -1130,6 +1163,8 @@ void Lowering::lowerPutById(Node* node)
 
     m_out.appendTo(transition, stored);
     m_out.store32(newStructureID, base, m_heaps.JSCell_structureID);
+    if (!mayBe(valueNode->type, TCell))
+        storeBarrier(base);
     m_out.jump(stored);
 
     m_out.appendTo(stored, slowCase);
@@ -1169,6 +1204,23 @@ LValue Lowering::lowIndex(Node* propertyNode, LBasicBlock indexReady, LBasicBloc
     return index;
 }
 
+auto Lowering::constantKeyOf(Node* property) -> std::optional<ConstantKey>
+{
+    auto* numbers = programIdentifierIndices();
+    if (!numbers || !usesDataStubs())
+        return std::nullopt;
+    auto key = constantStringOf(property);
+    if (!key || !key->impl()->isAtom())
+        return std::nullopt;
+    auto* name = static_cast<UniquedStringImpl*>(key->impl());
+    if (parseIndex(*name) || isCanonicalNumericIndexString(name))
+        return std::nullopt;
+    unsigned identifier = numbers->get(name);
+    if (!identifier)
+        return std::nullopt;
+    return ConstantKey { identifier, name };
+}
+
 void Lowering::lowerGetByVal(Node* node)
 {
     auto bytecode = node->as<OpGetByVal>();
@@ -1176,6 +1228,14 @@ void Lowering::lowerGetByVal(Node* node)
     Node* propertyNode = node->use(bytecode.m_property);
     LValue base = lowJSValue(baseNode);
     bool allowsEmpty = node->graph->readsElementsOrEmpty;
+
+    if (auto key = allowsEmpty ? std::nullopt : constantKeyOf(propertyNode); key && Site::fits(key->identifier, 0)) {
+        m_graph.remark("get-by-val-with-constant-key"_s);
+        unsigned slot = sharedSite(node, key->identifier);
+        m_graph.noteSiteSelector(slot, key->name);
+        setJSValue(node, callStub(Stub::GetById, Int64, { { base, firstStubOperandGPR }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { }));
+        return;
+    }
 
     if (auto* view = viewOf(node, baseNode)) {
         LBasicBlock inBounds = m_out.newBlock();
@@ -1196,7 +1256,9 @@ void Lowering::lowerGetByVal(Node* node)
         } else
             m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
         m_out.appendTo(slowCase);
-        ValueFromBlock slow = m_out.anchor(coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode), ColdCall::ChangesNothing));
+        LValue slowResult = coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode));
+        reloadArrayViews();
+        ValueFromBlock slow = m_out.anchor(slowResult);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, absent ? m_out.phi(Int64, fast, slow, *absent) : m_out.phi(Int64, fast, slow));
@@ -1209,6 +1271,7 @@ void Lowering::lowerGetByVal(Node* node)
             setJSValue(node, callBinaryStub(node, Stub::GetByValAtIndex, Int64, base, lowRaw(propertyNode)));
         else
             setJSValue(node, callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode)));
+        reloadArrayViews();
         return;
     }
 
@@ -1261,14 +1324,17 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
+    LValue slowResult;
     if (allowsEmpty && !baseIsArray)
-        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetElementOrEmpty, m_instance, base, lowJSValue(propertyNode))));
+        slowResult = vmCall(node, Int64, Entry::operationAOTGetElementOrEmpty, m_instance, base, lowJSValue(propertyNode));
     else if (baseIsArray)
-        results.append(m_out.anchor(coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode))));
+        slowResult = coldCallForValue(node, allowsEmpty ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode));
     else if (usesDataStubs())
-        results.append(m_out.anchor(callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode))));
+        slowResult = callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode));
     else
-        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetByVal, m_instance, base, lowJSValue(propertyNode))));
+        slowResult = vmCall(node, Int64, Entry::operationAOTGetByVal, m_instance, base, lowJSValue(propertyNode));
+    reloadArrayViews();
+    results.append(m_out.anchor(slowResult));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -1286,10 +1352,18 @@ void Lowering::lowerPutByVal(Node* node)
 
     auto throughStub = [&] {
         bool isInteger = propertyNode->rep() == Rep::Int64;
-        callStub(isInteger ? Stub::PutByValAtIndex : Stub::PutByVal, Void, { { base, firstStubOperandGPR }, { isInteger ? lowRaw(propertyNode) : lowJSValue(propertyNode), GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
+        callStub(isInteger ? Stub::PutByValAtIndex : Stub::PutByVal, Void, { { base, firstStubOperandGPR }, { isInteger ? lowRaw(propertyNode) : lowJSValuePreferringInt32(propertyNode), GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
             { { GPRInfo::argumentGPR3, bytecode.m_ecmaMode.isStrict() } });
     };
     if (isCompact()) {
+        uint32_t flags = bytecode.m_ecmaMode.isStrict() ? 2 : 0;
+        if (auto key = constantKeyOf(propertyNode); key && Site::fits(key->identifier, flags)) {
+            m_graph.remark("put-by-val-with-constant-key"_s);
+            unsigned slot = sharedSite(node, key->identifier, flags);
+            m_graph.noteSiteSelector(slot, key->name);
+            callStub(Stub::PutById, Void, { { base, firstStubOperandGPR }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
+            return;
+        }
         throughStub();
         return;
     }
@@ -1660,6 +1734,86 @@ void Lowering::lowerGetFromScope(Node* node)
     setJSValue(node, m_out.phi(Int64, results));
 }
 
+std::optional<unsigned> Lowering::offsetOfVariableStoredInline(Node* node)
+{
+    auto bytecode = node->as<OpPutToScope>();
+    ResolveType type = bytecode.m_getPutInfo.resolveType();
+    if (type == ResolvedClosureVar)
+        return bytecode.m_offset;
+    SetForScope code(m_code, node->graph);
+    StaticVariable variable = resolveStatically(bytecode.m_var, bytecode.m_symbolTableOrScopeDepth.scopeDepth(), type);
+    if (variable.kind == StaticVariable::Closure && (!variable.isReadOnly || isInitialization(bytecode.m_getPutInfo.initializationMode())))
+        return variable.offset.offset();
+    return std::nullopt;
+}
+
+bool Lowering::mayCollectOrThrow(Node* node)
+{
+    for (auto& use : node->uses) {
+        if (use.node->kind == NodeKind::ConstantCell)
+            return true;
+    }
+    switch (node->kind) {
+    case NodeKind::Constant:
+    case NodeKind::Intrinsic:
+    case NodeKind::LinkTimeConstant:
+    case NodeKind::Argument:
+    case NodeKind::Phi:
+    case NodeKind::Proj:
+    case NodeKind::GetStack:
+    case NodeKind::SetStack:
+        return false;
+    case NodeKind::Narrow:
+        return node->fieldOrigin || node->checksNarrowedType;
+    case NodeKind::ConstantCell:
+    case NodeKind::Guard:
+        return true;
+    case NodeKind::Bytecode:
+        break;
+    }
+    if (node->guard)
+        return true;
+    switch (node->opcode) {
+    case op_get_scope:
+    case op_get_parent_scope:
+    case op_argument_count:
+    case op_get_argument:
+        return false;
+    case op_check_tdz:
+        return mayBe(node->use(node->as<OpCheckTdz>().m_targetVirtualRegister)->type, TEmpty);
+    case op_resolve_scope:
+        return !isStaticClosureVarResolveType(node->as<OpResolveScope>().m_resolveType);
+    case op_get_from_scope:
+        return !node->promotedEnvironment && node->as<OpGetFromScope>().m_getPutInfo.resolveType() != ResolvedClosureVar;
+    case op_put_to_scope:
+        return !node->promotedEnvironment && !offsetOfVariableStoredInline(node);
+    default:
+        return true;
+    }
+}
+
+bool Lowering::isFollowedByStoreBarrier(Node* node)
+{
+    Node* scope = node->use(node->as<OpPutToScope>().m_scope);
+    auto distance = m_graph.accessedEnvironmentDepth(node);
+    if (m_nodeIndex >= m_block->nodes.size() || m_block->nodes[m_nodeIndex] != node)
+        return false;
+    for (unsigned index = m_nodeIndex + 1; index < m_block->nodes.size(); ++index) {
+        Node* later = m_block->nodes[index];
+        if (later->isElided)
+            continue;
+        if (mayCollectOrThrow(later))
+            return false;
+        if (!later->isBytecode(op_put_to_scope) || later->promotedEnvironment)
+            continue;
+        auto bytecode = later->as<OpPutToScope>();
+        Type stored = later->use(bytecode.m_value)->type;
+        if (later->use(bytecode.m_scope) == scope && stored && isSubtype(stored, TCell) && m_graph.accessedEnvironmentDepth(later) == distance)
+            return true;
+    }
+    return false;
+}
+
 void Lowering::lowerPutToScope(Node* node)
 {
     auto bytecode = node->as<OpPutToScope>();
@@ -1671,25 +1825,25 @@ void Lowering::lowerPutToScope(Node* node)
     LValue scope = distance ? environmentAt(*distance) : lowCell(node->use(bytecode.m_scope));
     Node* valueNode = node->use(bytecode.m_value);
     LValue value = lowJSValue(valueNode);
-    ResolveType type = bytecode.m_getPutInfo.resolveType();
 
-    std::optional<unsigned> closureOffset;
-    if (type == ResolvedClosureVar)
-        closureOffset = bytecode.m_offset;
-    else {
-        StaticVariable variable = resolveStatically(bytecode.m_var, bytecode.m_symbolTableOrScopeDepth.scopeDepth(), type);
-        if (variable.kind == StaticVariable::Closure && (!variable.isReadOnly || isInitialization(bytecode.m_getPutInfo.initializationMode())))
-            closureOffset = variable.offset.offset();
-    }
-
-    if (closureOffset) {
+    if (auto closureOffset = offsetOfVariableStoredInline(node)) {
         m_out.store64(value, scope, m_heaps.JSLexicalEnvironment_variables[*closureOffset]);
         if (mayBe(valueNode->type, TCell)) {
-            if (m_scopeWithBarrier == node->use(bytecode.m_scope))
+            if (!distance && m_newCells.contains(node->use(bytecode.m_scope)))
+                m_graph.remark("no-write-barrier-for-new-environment"_s);
+            else if (isFollowedByStoreBarrier(node))
                 m_graph.remark("shares-write-barrier"_s);
-            else {
+            else if (isSubtype(valueNode->type, TCell))
                 storeBarrier(scope);
-                m_scopeWithBarrier = node->use(bytecode.m_scope);
+            else {
+                m_graph.remark("write-barrier-only-for-cell"_s);
+                LBasicBlock cellCase = m_out.newBlock();
+                LBasicBlock continuation = m_out.newBlock();
+                m_out.branch(isCell(value), unsure(cellCase), unsure(continuation));
+                m_out.appendTo(cellCase);
+                storeBarrier(scope);
+                m_out.jump(continuation);
+                m_out.appendTo(continuation);
             }
         }
         return;

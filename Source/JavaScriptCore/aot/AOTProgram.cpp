@@ -428,6 +428,94 @@ static const ProgramFunctions* s_programFunctions;
 void setProgramFunctions(const ProgramFunctions* functions) { s_programFunctions = functions; }
 const ProgramFunctions* programFunctions() { return s_programFunctions; }
 
+unsigned findFunctionsWithoutStackCheck(const ProgramFunctions& functions)
+{
+    constexpr unsigned maxFramesWithoutStackCheck = 16;
+    uint32_t end = functions.size() + 1;
+    BitVector isCandidate(end);
+    for (uint32_t number = 1; number < end; ++number) {
+        const KnownFunction& function = *functions.function(number);
+        function.summary->needsStackCheck = true;
+        if (!function.forCall || !function.summary->isNonEscaping)
+            continue;
+        SourceParseMode mode = function.forCall->parseMode();
+        if (mode == SourceParseMode::NormalFunctionMode || mode == SourceParseMode::ArrowFunctionMode || mode == SourceParseMode::MethodMode)
+            isCandidate.set(number);
+    }
+    Vector<Vector<uint32_t, 4>> callees(end);
+    for (uint32_t number : isCandidate) {
+        for (const FunctionSummary* callee : functions.function(number)->summary->knownCallees) {
+            if (isCandidate.get(callee->number))
+                callees[number].append(callee->number);
+        }
+        std::ranges::sort(callees[number]);
+    }
+
+    enum State : uint8_t { IsNotVisited, IsBeingVisited, IsVisited };
+    Vector<State> states;
+    states.fill(IsNotVisited, end);
+    BitVector isCalledFromItself(end);
+    struct Visit {
+        uint32_t number;
+        unsigned next;
+    };
+    Vector<Visit> visits;
+    for (uint32_t first : isCandidate) {
+        if (states[first] != IsNotVisited)
+            continue;
+        states[first] = IsBeingVisited;
+        visits.append({ first, 0 });
+        while (!visits.isEmpty()) {
+            uint32_t number = visits.last().number;
+            if (visits.last().next == callees[number].size()) {
+                states[number] = IsVisited;
+                visits.removeLast();
+                continue;
+            }
+            uint32_t callee = callees[number][visits.last().next++];
+            if (states[callee] == IsBeingVisited)
+                isCalledFromItself.set(callee);
+            else if (states[callee] == IsNotVisited) {
+                states[callee] = IsBeingVisited;
+                visits.append({ callee, 0 });
+            }
+        }
+    }
+
+    Vector<unsigned> callersLeft;
+    callersLeft.fill(0, end);
+    for (uint32_t number : isCandidate) {
+        if (isCalledFromItself.get(number))
+            continue;
+        for (uint32_t callee : callees[number])
+            callersLeft[callee]++;
+    }
+    Vector<uint32_t> inOrder;
+    for (uint32_t number : isCandidate) {
+        if (!isCalledFromItself.get(number) && !callersLeft[number])
+            inOrder.append(number);
+    }
+    Vector<unsigned> framesAbove;
+    framesAbove.fill(0, end);
+    unsigned found = 0;
+    for (size_t index = 0; index < inOrder.size(); ++index) {
+        uint32_t number = inOrder[index];
+        unsigned frames = framesAbove[number] + 1;
+        if (frames > maxFramesWithoutStackCheck)
+            frames = 0;
+        else {
+            functions.function(number)->summary->needsStackCheck = false;
+            ++found;
+        }
+        for (uint32_t callee : callees[number]) {
+            framesAbove[callee] = std::max(framesAbove[callee], frames);
+            if (!--callersLeft[callee] && !isCalledFromItself.get(callee))
+                inOrder.append(callee);
+        }
+    }
+    return found;
+}
+
 Type VariableSummaries::join(Variable variable, Type type)
 {
     Shard& shard = shardFor(variable);

@@ -1634,6 +1634,115 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
                 changed = true;
             }
         }
+        for (BasicBlock* block : graph.m_rpo) {
+            Vector<Node*, 2> replacedPhis;
+            for (unsigned phiIndex = 0, numberOfPhis = block->phis.size(); phiIndex < numberOfPhis; ++phiIndex) {
+                Node* phi = block->phis[phiIndex];
+                if (phi->isElided || phi->replacement || phi->uses.size() < 2 || phi->uses.size() != block->predecessors.size() || replacedPhis.contains(phi))
+                    continue;
+                if (!users)
+                    users.emplace(graph);
+                Vector<Node*, 2> equalPhis;
+                for (unsigned otherIndex = phiIndex; otherIndex < numberOfPhis; ++otherIndex) {
+                    Node* other = block->phis[otherIndex];
+                    if (other->isElided || other->replacement || other->uses.size() != phi->uses.size())
+                        continue;
+                    bool isEqual = true;
+                    for (unsigned i = 0; i < phi->uses.size(); ++i)
+                        isEqual &= other->uses[i].node == phi->uses[i].node;
+                    if (isEqual)
+                        equalPhis.append(other);
+                }
+                std::optional<MultiValueReturnTable::Names> names;
+                std::optional<uint16_t> layoutID;
+                bool mergesLiterals = true;
+                for (auto& use : phi->uses) {
+                    Node* literal = use.node;
+                    if (!literal->isBytecode(op_new_object) || !literal->numberOfLiteralProperties || literal->isElided || literal->replacement || users->of(literal).size() != equalPhis.size()) {
+                        mergesLiterals = false;
+                        break;
+                    }
+                    for (Node* user : users->of(literal))
+                        mergesLiterals &= equalPhis.contains(user);
+                    auto literalPropertyNames = literalNames(literal);
+                    if (!mergesLiterals || !literalPropertyNames || (names && !(*names == *literalPropertyNames))) {
+                        mergesLiterals = false;
+                        break;
+                    }
+                    names = WTF::move(literalPropertyNames);
+                    uint16_t literalLayoutID = Graph::newObjectLayoutID(literal);
+                    layoutID = !layoutID || *layoutID == literalLayoutID ? literalLayoutID : 0;
+                    if (!literalLayoutID || !TypeTable::hasTypedFields())
+                        continue;
+                    UnlinkedCodeBlock* code = literal->graph->codeBlock();
+                    auto* handlerOfLiteral = code->handlerForBytecodeIndex(literal->bytecodeIndex);
+                    bool hasOneHandler = !Options::auditAOTTypedFields();
+                    for (unsigned store : literal->graph->literalStores(literal->bytecodeIndex.offset()))
+                        hasOneHandler &= code->handlerForBytecodeIndex(BytecodeIndex(store)) == handlerOfLiteral;
+                    if (!hasOneHandler) {
+                        mergesLiterals = false;
+                        break;
+                    }
+                }
+                if (!mergesLiterals)
+                    continue;
+                Vector<NodeUsers::OnlyRead, 2> usesOfEqualPhis;
+                for (Node* equalPhi : equalPhis) {
+                    auto onlyRead = users->isOnlyRead(equalPhi, names->span(), *layoutID, NodeUsers::AbsentReads::Allow);
+                    if (!onlyRead)
+                        break;
+                    usesOfEqualPhis.append(WTF::move(*onlyRead));
+                }
+                if (usesOfEqualPhis.size() != equalPhis.size())
+                    continue;
+                Vector<Node*, 8> mergedValues;
+                mergedValues.fill(nullptr, names->size());
+                graph.remark("scalar-replaced-objects-merged-by-phi"_s);
+                for (auto& onlyRead : usesOfEqualPhis) {
+                    for (auto [read, index] : onlyRead.reads) {
+                        if (!mergedValues[index]) {
+                            Node* merged = graph.addNode(NodeKind::Phi);
+                            merged->graph = phi->graph;
+                            merged->block = block;
+                            merged->range = IntegerRange::unknown();
+                            for (auto& use : phi->uses) {
+                                Node* literal = use.node;
+                                Node* value = literal->use(NewObjectPlan::registerOf(index));
+                                if (auto fieldType = Graph::fieldTypeInLayout(Graph::newObjectLayoutID(literal), names->at(index))) {
+                                    auto& stores = literal->graph->literalStores(literal->bytecodeIndex.offset());
+                                    value = addValueInField(graph, literal, literal->graph->codeBlock()->instructions().at(stores[index])->as<OpPutById>().m_property, *fieldType, value);
+                                    valuesInFields.append(value);
+                                }
+                                merged->uses.append({ VirtualRegister(), value });
+                            }
+                            block->phis.append(merged);
+                            mergedValues[index] = merged;
+                        }
+                        read->replacement = mergedValues[index];
+                        read->isElided = true;
+                    }
+                    for (Node* read : onlyRead.absentReads) {
+                        graph.remark("absent-property-is-undefined"_s, read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).string());
+                        read->replacement = graph.constant(jsUndefined());
+                        read->isElided = true;
+                    }
+                    for (Node* test : onlyRead.tests) {
+                        for (auto& use : test->uses) {
+                            if (onlyRead.aliasingUsers.contains(use.node))
+                                use.node = graph.constant(jsBoolean(true));
+                        }
+                    }
+                    for (Node* alias : onlyRead.aliasingUsers)
+                        alias->isElided = true;
+                }
+                for (auto& use : phi->uses)
+                    use.node->isElided = true;
+                replacedPhis.appendVector(equalPhis);
+                changed = true;
+            }
+            for (Node* phi : replacedPhis)
+                block->phis.removeFirst(phi);
+        }
         if (!changed)
             break;
         insertBeforeOrigins(valuesInFields);

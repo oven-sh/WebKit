@@ -14,9 +14,12 @@
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
 #include "CCallHelpers.h"
+#include "JSAsyncFunctionGenerator.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "JSGenerator.h"
 #include "JSLexicalEnvironment.h"
+#include "JSPromise.h"
 #include "StructureRareData.h"
 #include "TypeInfoBlob.h"
 
@@ -224,6 +227,56 @@ LValue Emitter::newActivation(LValue scope, LValue symbolTable, LValue initialVa
     forEachUpTo(count, [&](LValue index) {
         m_out.store64(initialValue, m_out.baseIndex(m_heaps.JSLexicalEnvironment_variables, result, index));
     });
+    mutatorFence();
+    return result;
+}
+
+LValue Emitter::allocateObject(Instance::InlineAllocation kind, LBasicBlock giveUp)
+{
+    LValue result = allocateHeapCell(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfAllocatorFor(kind))), giveUp);
+    m_out.store64(m_out.load64(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfHeaderFor(kind))), result, m_heaps.JSCell_header);
+    m_out.storePtr(m_out.intPtrZero, result, m_heaps.JSObject_butterfly);
+    return result;
+}
+
+LValue Emitter::newPromise(LBasicBlock giveUp)
+{
+    LValue result = allocateObject(Instance::InlineAllocation::Promise, giveUp);
+    m_out.store64(m_out.int64Zero, result, m_heaps.JSPromise_packed);
+    m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), result, m_heaps.JSPromise_slot);
+    mutatorFence();
+    return result;
+}
+
+LValue Emitter::newResolvedPromise(LValue value, LBasicBlock giveUp)
+{
+    LBasicBlock isCellCase = m_out.newBlock();
+    LBasicBlock isNotObject = m_out.newBlock();
+    m_out.branch(isCell(value), unsure(isCellCase), unsure(isNotObject));
+    m_out.appendTo(isCellCase);
+    m_out.branch(isObjectCell(value), unsure(giveUp), unsure(isNotObject));
+    m_out.appendTo(isNotObject);
+    LValue result = allocateObject(Instance::InlineAllocation::Promise, giveUp);
+    static_assert(CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer == 48);
+    m_out.store64(m_out.constInt64((static_cast<uint64_t>(JSPromise::Status::Fulfilled) | JSPromise::isFirstResolvingFunctionCalledFlag) << 48), result, m_heaps.JSPromise_packed);
+    m_out.store64(value, result, m_heaps.JSPromise_slot);
+    mutatorFence();
+    return result;
+}
+
+LValue Emitter::newInternalFieldObject(Instance::InlineAllocation kind, std::span<const JSValue> initialValues, LBasicBlock giveUp)
+{
+    LValue result = allocateObject(kind, giveUp);
+    for (unsigned i = 0; i < initialValues.size(); ++i)
+        m_out.store64(m_out.constInt64(JSValue::encode(initialValues[i])), result, m_heaps.JSInternalFieldObjectImpl_internalFields[i]);
+    mutatorFence();
+    return result;
+}
+
+LValue Emitter::newMapOrSet(Instance::InlineAllocation kind, LBasicBlock giveUp)
+{
+    LValue result = allocateObject(kind, giveUp);
+    m_out.storePtr(m_out.intPtrZero, result, kind == Instance::InlineAllocation::Map ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
     mutatorFence();
     return result;
 }
@@ -554,6 +607,35 @@ LValue Emitter::addStrings(LValue first, LValue second, LBasicBlock giveUp)
     return makeRope(first, second, nullptr, giveUp);
 }
 
+LValue Emitter::int32ToString(LValue value, LBasicBlock giveUp)
+{
+    LBasicBlock smallIntCase = m_out.newBlock();
+    LBasicBlock intCacheCase = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(m_out.below(value, m_out.constInt32(NumericStrings::cacheSize)), unsure(smallIntCase), unsure(intCacheCase));
+
+    m_out.appendTo(smallIntCase);
+    LValue smallIntString = m_out.loadPtr(m_out.baseIndex(m_heaps.SmallIntCache, fixedPointer(Instance::offsetOfSmallIntStrings()), m_out.zeroExtPtr(value), JSValue(), NumericStrings::StringWithJSString::offsetOfJSString()));
+    ValueFromBlock smallIntResult = m_out.anchor(smallIntString);
+    m_out.branch(m_out.isNull(smallIntString), unsure(giveUp), unsure(continuation));
+
+    m_out.appendTo(intCacheCase);
+    LValue wide = m_out.zeroExt(value, Int64);
+    LValue first = m_out.bitXor(wide, m_out.constInt64(0x2d358dccaa6c78a5ULL));
+    LValue second = m_out.bitXor(wide, m_out.constInt64(0x8bb84b93962eacc9ULL));
+    LValue hash = m_out.castToInt32(m_out.bitXor(m_out.mul(first, second), m_out.uMulHigh(first, second)));
+    LValue index = m_out.zeroExtPtr(m_out.bitAnd(hash, m_out.constInt32(NumericStrings::cacheSize - 1)));
+    LValue cache = fixedPointer(Instance::offsetOfIntStrings());
+    LValue key = m_out.load32(m_out.baseIndex(m_heaps.IntCache, cache, index, JSValue(), NumericStrings::CacheEntryWithJSString<int>::offsetOfKey()));
+    LValue cachedString = m_out.loadPtr(m_out.baseIndex(m_heaps.IntCache, cache, index, JSValue(), NumericStrings::CacheEntryWithJSString<int>::offsetOfJSString()));
+    orElse(m_out.equal(key, value), giveUp);
+    ValueFromBlock intCacheResult = m_out.anchor(cachedString);
+    m_out.branch(m_out.isNull(cachedString), unsure(giveUp), unsure(continuation));
+
+    m_out.appendTo(continuation);
+    return m_out.phi(pointerType(), smallIntResult, intCacheResult);
+}
+
 LValue Emitter::stringIfAlreadyLowerCase(LValue string, LBasicBlock giveUp)
 {
     orElse(m_out.logicalNot(isRopeString(string)), giveUp);
@@ -646,6 +728,24 @@ public:
         case Stub::HelperNewActivation:
             result = newActivation(arguments[0], arguments[1], arguments[2], int32At(3), giveUp);
             break;
+        case Stub::HelperNewPromise:
+            result = newPromise(giveUp);
+            break;
+        case Stub::HelperNewResolvedPromise:
+            result = newResolvedPromise(arguments[0], giveUp);
+            break;
+        case Stub::HelperNewGenerator:
+            result = newInternalFieldObject(Instance::InlineAllocation::Generator, JSGenerator::initialValues(), giveUp);
+            break;
+        case Stub::HelperNewAsyncFunctionGenerator:
+            result = newInternalFieldObject(Instance::InlineAllocation::AsyncFunctionGenerator, JSAsyncFunctionGenerator::initialValues(), giveUp);
+            break;
+        case Stub::HelperNewMap:
+            result = newMapOrSet(Instance::InlineAllocation::Map, giveUp);
+            break;
+        case Stub::HelperNewSet:
+            result = newMapOrSet(Instance::InlineAllocation::Set, giveUp);
+            break;
         case Stub::HelperNewArrayWithSpread:
             result = newArrayWithSpread(arguments[0], int32At(1), int32At(2), giveUp);
             break;
@@ -663,6 +763,9 @@ public:
             break;
         case Stub::HelperMakeRope3:
             result = makeRope(arguments[0], arguments[1], arguments[2], giveUp);
+            break;
+        case Stub::HelperInt32ToString:
+            result = int32ToString(int32At(0), giveUp);
             break;
         case Stub::HelperToLowerCase:
             result = stringIfAlreadyLowerCase(arguments[0], giveUp);
