@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "ExceptionHelpers.h"
+#include "JSScope.h"
 
 #include "ErrorHandlingScope.h"
 #include "Exception.h"
@@ -67,6 +68,19 @@ JSObject* createUndefinedVariableError(JSGlobalObject* globalObject, const Ident
     }
     return createReferenceError(globalObject, message);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+JSObject* createUndefinedVariableError(JSGlobalObject* globalObject, const Identifier& ident, JSScope* start, unsigned resolveType, CodeBlock* codeBlock)
+{
+    String diagnosis = JSScope::diagnoseImpossibleUndefinedVariable(globalObject, start, ident, resolveType, codeBlock);
+    if (diagnosis.isNull())
+        return createUndefinedVariableError(globalObject, ident);
+    String message = tryMakeString(ident.string(), " is not defined"_s, diagnosis);
+    if (message.isNull()) [[unlikely]]
+        return createUndefinedVariableError(globalObject, ident);
+    return createReferenceError(globalObject, message);
+}
+#endif
 
 String errorDescriptionForValue(JSGlobalObject* globalObject, JSValue v)
 {
