@@ -96,8 +96,6 @@ inline NamedAccess classifyNamedAccess(VM& vm, JSValue base, JSValue key, Unique
                     return depth == 1 ? "property-is-inherited-value-at-depth-1" : depth == 2 ? "property-is-inherited-value-at-depth-2" : "property-is-inherited-value-deeper";
                 }
                 bool isPlain = asObject(base)->getPrototypeDirect() == structure->realm()->objectPrototype();
-                if (structure->recordsEveryKnownPropertyName())
-                    return isPlain ? "property-is-absent-under-object-prototype-and-every-name-is-recorded" : "property-is-absent-under-another-chain-and-every-name-is-recorded";
                 return isPlain ? "property-is-absent-under-object-prototype" : "property-is-absent-under-another-chain";
             };
             place = offset == invalidOffset ? notOwn() : attributes ? "property-has-attributes" : !isInlineOffset(offset) ? "property-is-out-of-line"

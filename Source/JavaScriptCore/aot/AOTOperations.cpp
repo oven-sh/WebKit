@@ -733,66 +733,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(field, value)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedPlace, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, uint32_t identifierIndex))
+JSC_DEFINE_JIT_OPERATION(operationAOTVerifyGuardedRead, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t slot, uint32_t identifierIndex))
 {
     AOT_OPERATION_BEGIN(instance);
-    unsigned slot = which >> 16 & 0xff;
-    uint16_t nameID = static_cast<uint16_t>(which);
     JSValue base = JSValue::decode(encodedBase);
-    if (which >> 31 && base.isCell()) {
-        Structure* structure = base.asCell()->structure();
-        unsigned attributes = 0;
-        PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
-        if (which >> 29 & 1) {
-            RELEASE_ASSERT(base.isObject() && static_cast<unsigned>(offset) == slot && !attributes);
-            OPERATION_RETURN(scope);
-        }
-        for (unsigned other = 0; other < Structure::numberOfSlotsWithPropertyNameIDs; ++other)
-            RELEASE_ASSERT(structure->fieldIDInSlot(other) != nameID || (base.isObject() && static_cast<unsigned>(offset) == other && !attributes));
-    }
-    auto outcome = [&]() -> const char* {
-        if (!base.isCell())
-            return "not-a-cell";
-        Structure* structure = base.asCell()->structure();
-        uint16_t there = structure->fieldIDInSlot(slot);
-        if (there == nameID)
-            return "hit";
-        if (!base.isObject())
-            return "not-an-object";
-        if (!structure->recordsPropertyNames())
-            return "typed-layout";
-        if (structure->isDictionary())
-            return "dictionary";
-        unsigned attributes = 0;
-        PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
-        if (structure->recordsEveryKnownPropertyName())
-            RELEASE_ASSERT(!isValidOffset(offset) || (static_cast<unsigned>(offset) < Structure::numberOfSlotsWithPropertyNameIDs && !attributes && structure->fieldIDInSlot(offset) == nameID));
-        if (!isValidOffset(offset))
-            return structure->recordsEveryKnownPropertyName() ? "absent-and-every-name-is-recorded" : "not-an-own-property";
-        if (attributes)
-            return "has-attributes";
-        if (!isInlineOffset(offset))
-            return "out-of-line";
-        if (static_cast<unsigned>(offset) != slot)
-            return "another-slot";
-        if (structure->cannotConvertToTypedLayout())
-            return "records-no-names";
-        return there ? "slot-is-marked-nameless" : "no-id-recorded";
-    };
-    if ((which >> 30 & 1) && (!base.isCell() || base.asCell()->structure()->fieldIDInSlot(slot) != nameID)) {
-        countOperationNamed(instance, __func__, "exit-into-generic-copy");
-        countOperationNamed(instance, "exit-into-generic-copy", outcome());
-        countOperationAtSite(instance, callFrame, "exit-into-generic-copy");
-    }
-    const char* result = outcome();
-    countOperationNamed(instance, __func__, result);
-    if (!base.isCell() || base.asCell()->structure()->fieldIDInSlot(slot) != nameID)
-        countOperationAtSite(instance, callFrame, result);
-    if (Options::useAOTOperationCounters() && !strcmp(result, "no-id-recorded")) [[unlikely]] {
-        Structure* structure = base.asCell()->structure();
-        runtimeTable(vm).noteShape("GuessedPlace", makeString("no-id-recorded name "_s, StringView(identifierAt(instance, callFrame, identifierIndex).impl()), " slot "_s, slot, " typed layout "_s, structure->typedLayoutID(), " known shape "_s, structure->knownShape(), " transition kind "_s, static_cast<unsigned>(structure->transitionKind()),
-            structure->mayBePrototype() ? " may-be-prototype"_s : ""_s, structure->didPreventExtensions() ? " not-extensible"_s : ""_s, structure->hasBeenFlattenedBefore() ? " flattened"_s : ""_s, structure->hasBeenDictionary() ? " has-been-dictionary"_s : ""_s, " of"_s), vm, structure);
-    }
+    RELEASE_ASSERT(base.isObject());
+    unsigned attributes = 0;
+    PropertyOffset offset = base.asCell()->structure()->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
+    RELEASE_ASSERT(static_cast<unsigned>(offset) == slot && !attributes);
     OPERATION_RETURN(scope);
 }
 
@@ -829,58 +777,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCountFamilyGuard, void, (Instance* instance
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedStore, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, uint32_t identifierIndex))
+JSC_DEFINE_JIT_OPERATION(operationAOTVerifyGuardedStore, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t slot, uint32_t identifierIndex))
 {
     AOT_OPERATION_BEGIN(instance);
-    unsigned slot = which >> 16 & 0xff;
-    uint16_t nameID = static_cast<uint16_t>(which);
-    bool validates = which >> 31;
     JSValue base = JSValue::decode(encodedBase);
-    auto outcome = [&]() -> const char* {
-        if (!base.isCell())
-            return "not-a-cell";
-        Structure* structure = base.asCell()->structure();
-        uint16_t there = structure->fieldIDInSlot(slot);
-        unsigned attributes = 0;
-        PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
-        if (there == nameID || (which >> 29 & 1)) {
-            if (validates) {
-                RELEASE_ASSERT(base.isObject() && static_cast<unsigned>(offset) == slot && !attributes);
-                RELEASE_ASSERT(!structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->mayBePrototype());
-                RELEASE_ASSERT(!structure->typedLayoutID() || !TypedLayoutTable::hasTypedFields());
-                WatchpointSet* replacements = structure->propertyReplacementWatchpointSet(offset);
-                RELEASE_ASSERT(!replacements || !replacements->isStillValid());
-            }
-            return "hit";
-        }
-        if (!base.isObject())
-            return "not-an-object";
-        if (structure->typedLayoutID() && TypedLayoutTable::hasTypedFields())
-            return "typed-layout";
-        if (structure->isDictionary())
-            return "dictionary";
-        if (!isValidOffset(offset))
-            return "not-an-own-property";
-        if (attributes)
-            return "has-attributes";
-        if (!isInlineOffset(offset))
-            return "out-of-line";
-        if (static_cast<unsigned>(offset) != slot)
-            return "another-slot";
-        if (structure->mayBePrototype())
-            return "may-be-prototype";
-        if (structure->cannotConvertToTypedLayout())
-            return "records-no-names";
-        return there ? "slot-is-marked-nameless" : "no-id-recorded";
-    };
-    if ((which >> 30 & 1) && (!base.isCell() || base.asCell()->structure()->fieldIDInSlot(slot) != nameID)) {
-        countOperationNamed(instance, __func__, "exit-into-generic-copy");
-        countOperationNamed(instance, "exit-into-generic-copy", outcome());
-        countOperationAtSite(instance, callFrame, "exit-into-generic-copy");
-    }
-    countOperationNamed(instance, __func__, outcome());
-    if (!base.isCell() || base.asCell()->structure()->fieldIDInSlot(slot) != nameID)
-        countOperationAtSite(instance, callFrame, outcome());
+    RELEASE_ASSERT(base.isObject());
+    Structure* structure = base.asCell()->structure();
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
+    RELEASE_ASSERT(static_cast<unsigned>(offset) == slot && !attributes);
+    RELEASE_ASSERT(!structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->mayBePrototype());
+    RELEASE_ASSERT(!structure->typedLayoutID() || !TypedLayoutTable::hasTypedFields());
+    WatchpointSet* replacements = structure->propertyReplacementWatchpointSet(offset);
+    RELEASE_ASSERT(!replacements || !replacements->isStillValid());
     OPERATION_RETURN(scope);
 }
 

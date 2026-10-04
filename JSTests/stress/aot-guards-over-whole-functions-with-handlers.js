@@ -1,11 +1,11 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--minimumAOTGuardsOverWholeFunction=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useMiniVMModeWithoutJIT=0", "--slowPathAllocsBetweenGCs=31")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--minimumAOTGuardsOverWholeFunction=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTInlining=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useMiniVMModeWithoutJIT=0", "--slowPathAllocsBetweenGCs=31")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault
 
@@ -16,21 +16,27 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const hasTwins = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTGuessedPlaces;
+const hasTwins = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTFamilies;
 const isOn = hasTwins && !!options.useAOTGuardsOverWholeFunctionsWithHandlers;
 const isCounting = isOn && !!options.useAOTOperationCounters;
-const exits = () => isCounting ? (aotOperationCount("operationAOTCountGuessedPlace:exit-into-generic-copy") || 0) + (aotOperationCount("operationAOTCountGuessedStore:exit-into-generic-copy") || 0) : 0;
+const count = name => isCounting && aotOperationCount(name) || 0;
+const exitsBecause = why => count("exit-into-generic-copy:exits-" + why);
+const exits = () => exitsBecause("with-another-number") + exitsBecause("without-number") + exitsBecause("not-a-cell") + exitsBecause("departed");
 
 const kept = [];
 let numberKept = 0;
 function keep(o) { kept[numberKept++ % 256] = o; return o; }
-function Item(which) {
-    this.tag = "tag" + which;
-    this.key = "key" + which;
-    this.child = "child" + which;
-    this.sibling = "sibling" + which;
-    this.flags = "flags" + which;
+function Item(tag, key, child, sibling, flags) {
+    this.tag = tag;
+    this.key = key;
+    this.child = child;
+    this.sibling = sibling;
+    this.flags = flags;
 }
+function Other(other) { this.other = other; }
+function otherOf(o) { return o.other; }
+noInline(otherOf);
+const makeItem = which => new Item("tag" + which, "key" + which, "child" + which, "sibling" + which, "flags" + which);
 const names = ["tag", "key", "child", "sibling", "flags"];
 const name = index => names[index % names.length];
 
@@ -185,10 +191,10 @@ function hasFinallyByKey(a, b, c, when) {
 function isNested(a, b, c, when) {
     let outer = "no outer", inner = "no inner", path = "";
     try {
-        outer = a.tag; path += "1";
+        outer = a.tag; path += "1" + outer;
         try {
             throwIf(when, 1);
-            inner = b.key; path += "2";
+            inner = b.key; path += "2" + inner;
             throwIf(when, 2);
         } catch (error) {
             path += "(" + describe(error) + ")";
@@ -207,10 +213,10 @@ function isNested(a, b, c, when) {
 function isNestedByKey(a, b, c, when) {
     let outer = "no outer", inner = "no inner", path = "";
     try {
-        outer = a[name(0)]; path += "1";
+        outer = a[name(0)]; path += "1" + outer;
         try {
             throwIf(when, 1);
-            inner = b[name(1)]; path += "2";
+            inner = b[name(1)]; path += "2" + inner;
             throwIf(when, 2);
         } catch (error) {
             path += "(" + describe(error) + ")";
@@ -332,15 +338,16 @@ for (const [guarded, byKey] of [...pairs, [catchesInLoop, catchesInLoopByKey]]) 
 }
 
 const receivers = {
-    item: which => keep(new Item(which)),
+    item: which => keep(makeItem(which)),
     moved: which => {
-        const o = { other: 0 };
+        const o = new Other(which);
         for (let i = names.length; i--;)
             o[names[i]] = "moved " + names[i] + which;
+        check(otherOf(o), which, "the name that the other family gives");
         return keep(o);
     },
     empty: which => keep({ }),
-    heir: which => keep(Object.create(new Item("inherited" + which))),
+    heir: which => keep(Object.create(makeItem("inherited" + which))),
     throwing: which => {
         const o = { };
         for (const property of names)
@@ -353,11 +360,13 @@ const receivers = {
             Object.defineProperty(o, property, { get() { return note("got " + property + which); }, set(v) { note("set " + property + " to " + v); }, configurable: true });
         return keep(o);
     },
-    frozen: which => keep(Object.freeze(new Item("frozen" + which))),
+    frozen: which => keep(Object.freeze(makeItem("frozen" + which))),
     nothing: which => null,
     number: which => 7,
 };
 const kinds = Object.keys(receivers);
+const leavesFamily = kind => kind === "heir" || kind === "frozen";
+const kindsThatStay = kinds.filter(kind => !leavesFamily(kind));
 const stateOf = o => o === null || typeof o !== "object" ? String(o) : names.map(property => { const descriptor = Object.getOwnPropertyDescriptor(o, property); return descriptor && "value" in descriptor ? descriptor.value : "-"; }).join("/");
 
 function run(f, make, when) {
@@ -372,77 +381,107 @@ function run(f, make, when) {
     return outcome + " | " + log.join(";") + " | " + operands.flat().map(stateOf).join(" ");
 }
 
-for (let round = 0; round < 3; ++round) {
+const ownKind = () => [receivers.item(1), receivers.item(2), receivers.item(3)];
+function compareWithOwnKind(what) {
     for (const [guarded, byKey] of pairs) {
         for (let when = 0; when <= 5; ++when)
-            check(run(guarded, () => [receivers.item(1), receivers.item(2), receivers.item(3)], when), run(byKey, () => [receivers.item(1), receivers.item(2), receivers.item(3)], when), guarded.name + " with its own kind, " + when);
+            check(run(guarded, ownKind, when), run(byKey, ownKind, when), [guarded.name, "with its own kind", what, when].join(" "));
     }
 }
-{
-    const before = exits();
+function compareWithKinds(kinds, isWanted) {
     for (const [guarded, byKey] of pairs) {
-        for (let when = 0; when <= 5; ++when)
-            run(guarded, () => [receivers.item(1), receivers.item(2), receivers.item(3)], when);
-    }
-    check(exits() - before, 0, "exits with receivers of the guessed kind");
-}
-for (const [guarded, byKey] of pairs) {
-    for (const first of kinds) {
-        for (const second of kinds) {
-            for (const third of first === "item" || second === "item" ? kinds : ["item", "moved", "throwing"]) {
-                for (let when = 0; when <= 5; ++when) {
-                    const make = () => [receivers[first](1), receivers[second](2), receivers[third](3)];
-                    check(run(guarded, make, when), run(byKey, make, when), [guarded.name, first, second, third, when].join(" "));
+        for (const first of kinds) {
+            for (const second of kinds) {
+                for (const third of first === "item" || second === "item" ? kinds : ["item", "moved", "throwing"]) {
+                    if (!isWanted(first, second, third))
+                        continue;
+                    for (let when = 0; when <= 5; ++when) {
+                        const make = () => [receivers[first](1), receivers[second](2), receivers[third](3)];
+                        check(run(guarded, make, when), run(byKey, make, when), [guarded.name, first, second, third, when].join(" "));
+                    }
                 }
             }
         }
     }
 }
-if (isCounting) {
-    for (const [guarded, byKey] of pairs) {
-        const before = exits();
-        run(guarded, () => [receivers.item(1), receivers.moved(2), receivers.item(3)], 0);
-        if (remarksOf(guarded).includes("guards-over-whole-function") && exits() === before)
-            throw new Error(guarded.name + " did not leave its fast copy for a receiver of another kind");
-    }
-}
-
-for (const length of [0, 1, 2, 5, 9]) {
-    for (const odd of kinds) {
-        for (let position = 0; position <= length; ++position) {
-            for (const when of [-1, 0, 1, position, position + 1, 100, 100 + position, 101 + position]) {
-                const make = () => {
-                    const items = [];
-                    for (let i = 0; i < length; ++i)
-                        items.push(i === position ? receivers[odd](i) : receivers.item(i));
-                    return [items];
-                };
-                check(run(catchesInLoop, make, when), run(catchesInLoopByKey, make, when), ["catchesInLoop", length, odd, position, when].join(" "));
+function compareInLoop(kinds) {
+    for (const length of [0, 1, 2, 5, 9]) {
+        for (const odd of kinds) {
+            for (let position = 0; position <= length; ++position) {
+                for (const when of [-1, 0, 1, position, position + 1, 100, 100 + position, 101 + position]) {
+                    const make = () => {
+                        const items = [];
+                        for (let i = 0; i < length; ++i)
+                            items.push(i === position ? receivers[odd](i) : receivers.item(i));
+                        return [items];
+                    };
+                    check(run(catchesInLoop, make, when), run(catchesInLoopByKey, make, when), ["catchesInLoop", length, odd, position, when].join(" "));
+                }
             }
         }
+    }
+}
+const hasGuards = f => remarksOf(f).includes("guards-over-whole-function");
+
+for (let round = 0; round < 3; ++round)
+    compareWithOwnKind("at first");
+if (isCounting) {
+    const exitsBefore = exits(), passesBefore = count("Family::guard:passes");
+    for (const [guarded, byKey] of pairs) {
+        for (let when = 0; when <= 5; ++when)
+            run(guarded, ownKind, when);
+    }
+    check(exits() - exitsBefore, 0, "exits with receivers of the guessed kind");
+    check(count("Family::guard:passes") > passesBefore, true, "guards pass with receivers of the guessed kind");
+}
+compareWithKinds(kindsThatStay, () => true);
+compareInLoop(kindsThatStay);
+if (isCounting) {
+    check(exitsBecause("departed"), 0, "exits because a member has left its family, before any has");
+    for (const why of ["with-another-number", "without-number", "not-a-cell"])
+        check(exitsBecause(why) > 0, true, "there are exits " + why);
+    for (const [guarded, byKey] of pairs) {
+        const before = exits();
+        run(guarded, () => [receivers.moved(1), receivers.moved(2), receivers.moved(3)], 0);
+        if (hasGuards(guarded))
+            check(exits() > before, true, guarded.name + " leaves its fast copy for receivers of another kind");
+    }
+    const before = exits();
+    compareWithOwnKind("after other kinds");
+    check(exits() - before, 0, "exits with receivers of the guessed kind after other kinds");
+}
+compareWithKinds(kinds, (...three) => three.some(leavesFamily));
+compareInLoop(kinds.filter(leavesFamily));
+compareWithOwnKind("after members have left the family");
+compareWithKinds(kindsThatStay, (first, second, third) => third === "item");
+compareInLoop(["item", "moved", "throwing"]);
+if (isCounting) {
+    for (const [guarded, byKey] of pairs) {
+        const before = exitsBecause("departed");
+        run(guarded, ownKind, 0);
+        check(exitsBecause("departed") > before, hasGuards(guarded) && remarksOf(guarded).some(remark => remark.startsWith("guard-checks-byte:")), guarded.name + " leaves its fast copy because a member has left the family");
     }
 }
 
 if (isCompiled) {
     const about = f => remarksOf(f).filter(remark => remark.includes("guards-over-whole-function")).join(" ");
     for (const [guarded, byKey] of [...pairs, [catchesInLoop, catchesInLoopByKey]]) {
-        const hasGuards = remarksOf(guarded).includes("guards-over-whole-function");
-        if (remarksOf(byKey).includes("guards-over-whole-function"))
+        if (hasGuards(byKey))
             throw new Error("guards over the whole of " + byKey.name);
         if (!hasTwins) {
-            if (hasGuards)
+            if (hasGuards(guarded))
                 throw new Error("guards over the whole of " + guarded.name + " though the option is off");
             continue;
         }
         if (!isOn) {
-            if (hasGuards || !remarksOf(guarded).includes("no-guards-over-whole-function:has-handler"))
+            if (hasGuards(guarded) || !remarksOf(guarded).includes("no-guards-over-whole-function:has-handler"))
                 throw new Error(guarded.name + " has a handler and must be refused for it: " + about(guarded));
             continue;
         }
         if (remarksOf(guarded).includes("no-guards-over-whole-function:has-handler"))
             throw new Error(guarded.name + " is refused for its handler: " + about(guarded));
         const mayBeRefusedFor = guarded === capturesWhatItCatches ? ["makes-environment-behind-guard", "too-few-places"] : guarded === catchesInLoop ? ["has-loop-without-calls"] : [];
-        if (!hasGuards && !mayBeRefusedFor.some(reason => remarksOf(guarded).includes("no-guards-over-whole-function:" + reason)))
+        if (!hasGuards(guarded) && !mayBeRefusedFor.some(reason => remarksOf(guarded).includes("no-guards-over-whole-function:" + reason)))
             throw new Error("no guards over the whole of " + guarded.name + ": " + about(guarded));
     }
 }

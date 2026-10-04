@@ -27,7 +27,7 @@ function doesNotApply(f, ...patterns) {
 function readsProperty(o) { return o.property; }
 noInline(readsProperty);
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const byBits = "strict-equality-of-different-kinds-by-bits", callsStub = "calls:StrictEqual";
 
 function stringVersusNumber(i, j, text, n) { let a = i === 0 ? "" + text : undefined; let b = j === 0 ? +n : undefined; return a === b; }

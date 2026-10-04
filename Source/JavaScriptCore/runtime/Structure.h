@@ -465,7 +465,6 @@ public:
     uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
     static constexpr uint16_t noPropertyNameID = 0xfffe;
     static constexpr uint16_t firstReservedPropertyNameID = 0xfffd;
-    bool hasPropertyNameIDInSlot(PropertyOffset offset) const { return recordsPropertyNames() && static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs && m_fieldIDInSlot[offset] && m_fieldIDInSlot[offset] < firstReservedPropertyNameID; }
     void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
     {
         ASSERT(recordsPropertyNames() && ((!isDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID));
@@ -1021,7 +1020,6 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
     DEFINE_BITFIELD(bool, didConvertFirstObjectToDictionary, DidConvertFirstObjectToDictionary, 1, 10);
-    DEFINE_BITFIELD(bool, recordsEveryKnownPropertyName, RecordsEveryKnownPropertyName, 1, 11);
 #endif
 
     enum class StructureVariant : uint8_t {
@@ -1223,7 +1221,11 @@ private:
 
 #if USE(BUN_JSC_ADDITIONS)
     uint16_t m_fieldIDInSlot[numberOfSlotsWithPropertyNameIDs] { };
-    JS_EXPORT_PRIVATE void notePropertyNameAdded(VM&, UniquedStringImpl*, PropertyOffset, unsigned attributes);
+    void forgetPropertyNameIDInSlot(PropertyOffset offset)
+    {
+        if (static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs && m_fieldIDInSlot[offset] != ambiguousFieldID)
+            m_fieldIDInSlot[offset] = 0;
+    }
     void copyPropertyNameIDsFrom(const Structure&);
     JS_EXPORT_PRIVATE void noteFieldAdded(UniquedStringImpl*, PropertyOffset, unsigned attributes);
     JS_EXPORT_PRIVATE void forgetFieldsInSlots();

@@ -34,7 +34,7 @@ function thrownBy(f, ...args) {
 }
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const lowered = "lowered-builtin";
 const stubs = ["calls:WeakMapGet", "calls:WeakMapHas", "calls:WeakSetHas"];
 const operations = ["calls:operationAOTWeakMapGet", "calls:operationAOTWeakMapHas", "calls:operationAOTWeakSetHas"];

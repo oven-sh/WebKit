@@ -34,7 +34,7 @@ function resultOf(f, ...parameters) {
 function readsProperty(o) { return o.property; }
 noInline(readsProperty);
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const isNumber = "number-result-because-one-operand-is-no-bigint", callsToBoolean = "calls:ToBoolean";
 
 function minusOne(x) { return x - 1; }

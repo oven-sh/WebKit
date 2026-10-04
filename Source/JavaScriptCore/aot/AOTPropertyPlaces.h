@@ -29,10 +29,8 @@ namespace AOT {
 class CalleeHints;
 
 struct GuessedPlace {
-    uint16_t nameID;
-    uint8_t slot;
-    uint8_t numberOfShapes;
     uint16_t family;
+    uint8_t slot;
 };
 
 class PropertyPlaces {
@@ -40,7 +38,6 @@ class PropertyPlaces {
     WTF_MAKE_NONCOPYABLE(PropertyPlaces);
 public:
     using Names = Vector<UniquedStringImpl*, 8>;
-    using NumberOfSitesByName = UncheckedKeyHashMap<UniquedStringImpl*, unsigned>;
     using VariableKey = std::pair<const void*, unsigned>;
     struct NamesAccessed {
         Vector<UniquedStringImpl*, 4> names;
@@ -48,20 +45,16 @@ public:
         unsigned numberOfSites { 0 };
         VariableKey variableReadFrom { nullptr, 0 };
     };
-    enum class Decision : uint8_t { Guessed, NoShape, Disagree, SlotTooHigh, NoNameID, SameNamesBornInAnotherModule };
+    enum class Decision : uint8_t { Guessed, NoShape, Disagree, SlotTooHigh, NoFamily, SameNamesBornInAnotherModule };
     static constexpr unsigned numberOfDecisions = 6;
 
     PropertyPlaces() = default;
 
     JS_EXPORT_PRIVATE void noteLiteral(const CalleeHints* module, UnlinkedCodeBlock*, unsigned bytecodeOffset, Names&& namesInSlotOrder, unsigned numberOfNamesGivenAtOnce);
-    JS_EXPORT_PRIVATE void noteSites(const NumberOfSitesByName&);
     JS_EXPORT_PRIVATE void noteNamesAccessed(const CalleeHints* module, Vector<NamesAccessed>&&);
     JS_EXPORT_PRIVATE void noteConstruction(const CalleeHints* module, UnlinkedCodeBlock* constructor, UnlinkedCodeBlock* parentConstructor, Names&& ownNamesInSlotOrder, bool ownNamesAreAll, unsigned numberOfNamesGivenAtOnce);
     JS_EXPORT_PRIVATE void finalize();
-    void setFirstNameID(uint32_t firstNameID) { m_firstNameID = firstNameID; }
 
-    const Vector<UniquedStringImpl*>& namesInIDOrder() const { return m_namesInIDOrder; }
-    JS_EXPORT_PRIVATE uint16_t nameID(UniquedStringImpl*) const;
     bool isHeld(UniquedStringImpl* name) const { return m_holders.contains(name); }
     Decision decide(const CalleeHints* module, UniquedStringImpl* name, const NamesAccessed&, GuessedPlace&, bool& usesNamesOnVariable) const;
     unsigned numberOfFamilies() const { return static_cast<unsigned>(m_shapeOfFamily.size()); }
@@ -82,10 +75,6 @@ public:
 private:
     struct Holders {
         Vector<uint32_t> shapes;
-    };
-    struct ListedName {
-        unsigned numberOfSites { 0 };
-        unsigned indexInIDOrder { 0 };
     };
     struct Construction {
         const CalleeHints* module { nullptr };
@@ -134,9 +123,6 @@ private:
     size_t m_numberOfBirths { 0 };
     UncheckedKeyHashMap<UnlinkedCodeBlock*, Construction> m_constructions;
     UncheckedKeyHashMap<UniquedStringImpl*, Holders> m_holders;
-    UncheckedKeyHashMap<UniquedStringImpl*, ListedName> m_listedNames;
-    Vector<UniquedStringImpl*> m_namesInIDOrder;
-    uint32_t m_firstNameID { 0 };
     mutable std::atomic<unsigned> m_decisions[numberOfDecisions] { };
     mutable std::atomic<unsigned> m_namesOnlyCalled { 0 };
     mutable std::atomic<unsigned> m_functionsWithGuards { 0 };
@@ -144,8 +130,6 @@ private:
     mutable std::atomic<unsigned> m_guardsOverWholeFunctions { 0 };
     mutable std::atomic<unsigned> m_bytecodeSizeWithGuards { 0 };
     mutable std::atomic<unsigned> m_codeSizeWithGuards { 0 };
-    mutable std::atomic<unsigned> m_guessesFromOneShape { 0 };
-    mutable std::atomic<unsigned> m_guessesWithFamily { 0 };
     mutable std::atomic<unsigned> m_guessesByNamesOnVariable { 0 };
 };
 

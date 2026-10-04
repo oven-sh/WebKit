@@ -19,7 +19,7 @@ function applies(f, ...patterns) {
 }
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const one = { one: 1 };
 
 function mapOrSet(o, start) { const other = new Set(); let k = 1; const a = [k, k, k, k, k, k]; Reflect.set(a, 2, other); let x = new Map(); let hits = 0; for (let i = start | 0; i < 6; i++) { if (x === other) hits += o.one; x = a[i]; } return hits; }

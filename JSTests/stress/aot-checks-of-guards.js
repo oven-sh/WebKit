@@ -1,13 +1,9 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
-//@ runDefault("--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
+//@ runDefault("--useDollarVM=1")
 
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
@@ -24,12 +20,11 @@ function thrownBy(f) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTGuessedPlaces;
-const usesFamilies = isOn && !!options.useAOTFamilies;
+const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTFamilies;
 
 const guardRemarksOf = f => remarksOf(f).filter(remark => remark.includes("guard")).join(" ");
 const namesIn = (f, prefix) => [...new Set(remarksOf(f).filter(remark => remark.startsWith(prefix + ":")).map(remark => remark.slice(prefix.length + 1)))].sort().join(",");
-function checks(f, mustHaveGuards, withNames, withFamilies) {
+function checks(f, mustHaveGuards, expected) {
     if (!isOn)
         return;
     if (!remarksOf(f).includes("guards-over-whole-function")) {
@@ -37,11 +32,7 @@ function checks(f, mustHaveGuards, withNames, withFamilies) {
             throw new Error("no guards over the whole of " + f.name + ": " + remarksOf(f).join(" "));
         return;
     }
-    const hasFamilies = remarksOf(f).some(remark => remark.startsWith("guard-checks-family"));
-    if (hasFamilies !== usesFamilies)
-        throw new Error(f.name + (hasFamilies ? " has" : " lacks") + " guards that check a family: " + guardRemarksOf(f));
-    const expected = hasFamilies ? withFamilies : withNames;
-    for (const kind of ["nothing", "byte", "name-of-known-cell"]) {
+    for (const kind of ["family", "family-of-known-cell", "byte", "nothing"]) {
         if (!(kind in expected))
             continue;
         const actual = namesIn(f, "guard-checks-" + kind);
@@ -97,7 +88,8 @@ function readsAcrossStoreToAnother(a, b) {
     b.tag = "stored";
     const after = a.tag;
     const key = a.key;
-    return before + "|" + after + "|" + key;
+    const keyOfOther = b.key;
+    return before + "|" + after + "|" + key + "|" + keyOfOther;
 }
 function readsOnBothPaths(a, condition) {
     let result;
@@ -222,11 +214,13 @@ function readsInLoop(a, n) {
 }
 function readsMergedValue(a, b, condition) {
     const first = a.tag;
+    const keyOfFirst = a.key;
     const second = b.tag;
+    const keyOfSecond = b.key;
     const chosen = condition ? a : b;
     const third = chosen.tag;
     const fourth = chosen.key;
-    return first + second + "|" + third + "|" + fourth;
+    return first + second + "|" + third + "|" + fourth + "|" + keyOfFirst + keyOfSecond;
 }
 
 for (let i = 0; i < 200; ++i) {
@@ -235,7 +229,7 @@ for (let i = 0; i < 200; ++i) {
     check(readsTwice(a), "tag" + i + "|key" + i + "|tag" + i, "readsTwice");
     check(storesThenReads(makeItem(i), "new"), "new|key" + i + "|child" + i, "storesThenReads");
     check(readsThenStoresTwice(makeItem(i), "new", "newer"), "tag" + i + "|newer|key" + i, "readsThenStoresTwice");
-    check(readsAcrossStoreToAnother(a, b), "tag" + i + "|tag" + i + "|key" + i, "readsAcrossStoreToAnother");
+    check(readsAcrossStoreToAnother(a, b), "tag" + i + "|tag" + i + "|key" + i + "|key" + i + "b", "readsAcrossStoreToAnother");
     check(b.tag, "stored", "what readsAcrossStoreToAnother stored");
     check(readsOnBothPaths(a, i & 1), "tag" + i + (i & 1 ? "1" : "2") + "|tag" + i + "|key" + i, "readsOnBothPaths");
     check(readsAcrossVariables(a), "tag" + i + "|outer|tag" + i + "|key" + i, "readsAcrossVariables");
@@ -249,7 +243,7 @@ for (let i = 0; i < 200; ++i) {
     check(readsOnOnePath(a, i & 1), (i & 1 ? "tag" + i : "") + "|tag" + i + "|key" + i + "|child" + i, "readsOnOnePath");
     check(readsTwoValues(a, makeItem("x")), "tag" + i + "|tagx|key" + i + "|keyx", "readsTwoValues");
     check(readsAcrossKeyedRead(a, "flags"), "tag" + i + "|flags" + i + "|tag" + i + "|key" + i, "readsAcrossKeyedRead");
-    if (i == 100 && usesFamilies) {
+    if (i == 100 && isOn) {
         check(aotFamilyOf(a) > 0, true, "an item has a family");
         check(aotHasDepartedFamily(aotFamilyOf(a)), false, "a member has left the family before any could");
         if (options.useAOTOperationCounters) {
@@ -261,13 +255,13 @@ for (let i = 0; i < 200; ++i) {
         check(readsAcrossDelete(makeItem(i)), "tag" + i + "|undefined|key" + i + "|child" + i, "readsAcrossDelete");
     check(readsAcrossConversion(a, i), "tag" + i + "|" + i + "|tag" + i + "|key" + i, "readsAcrossConversion");
     check(readsInLoop(a, 2), "tag" + i + "tag" + i + "tag" + i + "|key" + i + "|child" + i, "readsInLoop");
-    check(readsMergedValue(a, makeItem("y"), i & 1), "tag" + i + "tagy|" + (i & 1 ? "tag" + i + "|key" + i : "tagy|keyy"), "readsMergedValue");
+    check(readsMergedValue(a, makeItem("y"), i & 1), "tag" + i + "tagy|" + (i & 1 ? "tag" + i + "|key" + i : "tagy|keyy") + "|key" + i + "keyy", "readsMergedValue");
     kept.length = 0;
 }
 
 {
     const same = makeItem("s");
-    check(readsAcrossStoreToAnother(same, same), "tags|stored|keys", "the other object is the same object: the slot is read again");
+    check(readsAcrossStoreToAnother(same, same), "tags|stored|keys|keys", "the other object is the same object: the slot is read again");
 }
 
 const changes = {
@@ -321,35 +315,35 @@ check(readsTwice(7), "undefined|undefined|undefined", "a number");
 check(thrownBy(() => readsTwice(null)), "TypeError", "null");
 check(thrownBy(() => readsTwice(undefined)), "TypeError", "undefined");
 check(thrownBy(() => storesThenReads(null, 1)), "TypeError", "a store to null");
-check(readsMergedValue(makeItem("m"), variants.otherOrder(), false), "tagmT|T|K", "the merged value is of another shape");
+check(readsMergedValue(makeItem("m"), variants.otherOrder(), false), "tagmT|T|K|keymK", "the merged value is of another shape");
 
-if (usesFamilies) {
+if (isOn) {
     check(aotHasDepartedFamily(aotFamilyOf(makeItem("last"))), true, "a member has left the family");
     if (options.useAOTOperationCounters)
         check(aotOperationCount("Family::guard:exits-departed") > 100, true, "guards leave because a member has left");
 }
 
-const repeated = [{ nothing: ["tag"], byte: [], "name-of-known-cell": ["key"] }, { nothing: ["key", "tag"], byte: [] }];
-checks(readsTwice, true, ...repeated);
-checks(storesThenReads, true, { nothing: ["tag"], byte: [], "name-of-known-cell": ["child", "key"] }, { nothing: ["child", "key", "tag"], byte: [] });
-checks(readsThenStoresTwice, true, ...repeated);
-checks(readsAcrossStoreToAnother, true, ...repeated);
-checks(readsOnBothPaths, true, ...repeated);
-checks(readsAcrossVariables, true, ...repeated);
-checks(readsAcrossClosure, true, ...repeated);
-checks(readsAcrossArray, true, ...repeated);
-checks(readsAcrossLiteral, true, ...repeated);
-checks(readsAcrossComparison, true, ...repeated);
+const repeated = { family: ["tag"], "family-of-known-cell": [], byte: [], nothing: ["key", "tag"] };
+checks(readsTwice, true, repeated);
+checks(storesThenReads, true, { family: ["tag"], "family-of-known-cell": [], byte: [], nothing: ["child", "key", "tag"] });
+checks(readsThenStoresTwice, true, repeated);
+checks(readsAcrossStoreToAnother, true, repeated);
+checks(readsOnBothPaths, true, repeated);
+checks(readsAcrossVariables, true, repeated);
+checks(readsAcrossClosure, true, repeated);
+checks(readsAcrossArray, true, repeated);
+checks(readsAcrossLiteral, true, repeated);
+checks(readsAcrossComparison, true, repeated);
 
-const interrupted = [{ nothing: [], byte: [], "name-of-known-cell": ["child", "key", "tag"] }, { nothing: ["child", "key"], byte: ["tag"] }];
-const interruptedWithoutChild = [{ nothing: [], byte: [], "name-of-known-cell": ["key", "tag"] }, { nothing: ["key"], byte: ["tag"] }];
-checks(readsAcrossCall, true, ...interrupted);
-checks(readsAcrossAddedProperty, true, ...interrupted);
-checks(readsAcrossDelete, true, ...interrupted);
-checks(readsAcrossKeyedRead, true, ...interruptedWithoutChild);
-checks(readsAcrossConversion, true, ...interruptedWithoutChild);
-checks(readsAcrossConstruct, false, { nothing: [] }, { byte: ["tag"] });
-checks(readsOnOnePath, true, { nothing: [], byte: [], "name-of-known-cell": ["child", "key"] }, { nothing: ["child", "key"], byte: [] });
-checks(readsTwoValues, true, { nothing: [], byte: [], "name-of-known-cell": ["key"] }, { nothing: ["key"], byte: [] });
-checks(readsMergedValue, true, { nothing: [], byte: [], "name-of-known-cell": ["key"] }, { nothing: ["key"], byte: [] });
-checks(readsInLoop, false, { nothing: [], byte: [] }, { nothing: ["child"], byte: ["key", "tag"] });
+const interrupted = { family: ["tag"], "family-of-known-cell": [], byte: ["tag"], nothing: ["child", "key"] };
+const interruptedWithoutChild = { family: ["tag"], "family-of-known-cell": [], byte: ["tag"], nothing: ["key"] };
+checks(readsAcrossCall, true, interrupted);
+checks(readsAcrossAddedProperty, true, interrupted);
+checks(readsAcrossDelete, true, interrupted);
+checks(readsAcrossKeyedRead, true, interruptedWithoutChild);
+checks(readsAcrossConversion, true, interruptedWithoutChild);
+checks(readsAcrossConstruct, false, { byte: ["tag"] });
+checks(readsOnOnePath, true, { byte: [], nothing: ["child", "key"] });
+checks(readsTwoValues, true, { family: ["tag"], "family-of-known-cell": [], byte: [], nothing: ["key"] });
+checks(readsMergedValue, true, { family: ["tag"], "family-of-known-cell": [], byte: [], nothing: ["key"] });
+checks(readsInLoop, false, { byte: ["key", "tag"], nothing: ["child"] });

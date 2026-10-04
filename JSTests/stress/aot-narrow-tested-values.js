@@ -106,7 +106,7 @@ if (aotRemarks("coalesces")) {
         if (callsStub(name, "Add") || callsStub(name, "Mul"))
             throw new Error("the arithmetic of " + name + " is not inline: " + aotRemarks(name).join(" "));
     }
-    if (!callsStub("notStrictlyUndefinedOf", "Add") && (aotRemarks("readsProperty") || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark)))
+    if (!callsStub("notStrictlyUndefinedOf", "Add") && (aotRemarks("readsProperty") || []).includes("calls:GetById"))
         throw new Error("the arithmetic of notStrictlyUndefinedOf is inline");
 }
 function readsProperty(o) { return o.p; }

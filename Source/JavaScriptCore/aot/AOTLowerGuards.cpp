@@ -386,8 +386,8 @@ void Lowering::lowerGuarded(Node* node)
             setJSValue(node, guard->lowered);
         return;
     case op_get_by_id:
-        if (guard->checksName())
-            recordAvailableRead(node->use(node->as<OpGetById>().m_base), code().codeBlock()->identifier(node->as<OpGetById>().m_property).impl(), guard->lowered, loadEffectEpoch(), true);
+        if (guard->checksFamily())
+            recordAvailableRead(node->use(node->as<OpGetById>().m_base), code().codeBlock()->identifier(node->as<OpGetById>().m_property).impl(), guard->lowered, loadEffectEpoch());
         [[fallthrough]];
     case op_get_length:
     case op_resolve_scope:
@@ -451,11 +451,9 @@ static LValue directLocation(FTL::Output& out, LValue base, LValue word)
     return out.add(base, out.shl(location, out.constInt32(3)));
 }
 
-void Lowering::exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, Entry counter, unsigned identifier)
+void Lowering::exitUnlessInFamily(Node* guard, Node* baseNode, LValue base, Entry verifier, unsigned identifier)
 {
     GuessedPlace place = guard->checkedPlace;
-    if (place.nameID && (Options::useAOTOperationCounters() || Options::validateAOTInferredTypes())) [[unlikely]]
-        vmCall(guard->guarded ? guard->guarded : guard, Void, counter, m_instance, base, m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(place.slot) << 16 | place.nameID | (guard->check == GuardCheck::Name ? 1u << 30 : 0) | (Options::validateAOTInferredTypes() ? 1u << 31 : 0))), m_out.constInt32(identifier));
     if (Options::useAOTOperationCounters() && (guard->check == GuardCheck::Family || guard->check == GuardCheck::Byte)) [[unlikely]]
         vmCall(guard->guarded ? guard->guarded : guard, Void, Entry::operationAOTCountFamilyGuard, m_instance, base, m_out.constInt32(place.family | (guard->check == GuardCheck::Byte ? 1 << 16 : 0)));
     auto require = [&](LValue condition, bool mustHold) {
@@ -471,24 +469,11 @@ void Lowering::exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, 
         m_out.appendTo(holds);
     };
     bool mayBeNoCell = !isSubtype(baseNode->type, TCell);
-    auto requireName = [&](bool mustHold) {
-        LValue nameIDThere = fieldIDInSlot(m_out.load32(base, m_heaps.JSCell_structureID), place.slot);
-        LValue isThere = m_out.equal(nameIDThere, m_out.constInt32(place.nameID));
-        if (mustHold && place.family)
-            isThere = m_out.bitOr(isThere, m_out.equal(nameIDThere, m_out.constInt32(Structure::ambiguousFieldID)));
-        require(isThere, mustHold);
-    };
     auto requireFamily = [&](bool mustHold) {
         require(m_out.equal(familyOfStructureWithID(m_out.load32(base, m_heaps.JSCell_structureID)), m_out.constInt32(place.family)), mustHold);
     };
     switch (guard->check) {
-    case GuardCheck::Name:
-        if (mayBeNoCell && (!guard->checkedValueIsCell || Options::validateAOTInferredTypes()))
-            require(isCell(base), guard->checkedValueIsCell);
-        requireName(false);
-        return;
     case GuardCheck::Family:
-        RELEASE_ASSERT(place.family);
         if (mayBeNoCell && (!guard->checkedValueIsCell || Options::validateAOTInferredTypes()))
             require(isCell(base), guard->checkedValueIsCell);
         requireFamily(false);
@@ -505,38 +490,19 @@ void Lowering::exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, 
         return;
     if (mayBeNoCell)
         require(isCell(base), true);
-    if (place.family)
-        requireFamily(true);
-    if (place.nameID)
-        requireName(true);
-    else
-        vmCall(guard->guarded ? guard->guarded : guard, Void, counter, m_instance, base, m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(place.slot) << 16 | 1u << 29 | 1u << 31)), m_out.constInt32(identifier));
+    requireFamily(true);
+    vmCall(guard->guarded ? guard->guarded : guard, Void, verifier, m_instance, base, m_out.constInt32(place.slot), m_out.constInt32(identifier));
 }
 
 void Lowering::guardGetById(Node* guard)
 {
     auto bytecode = guard->as<OpGetById>();
     Node* baseNode = guard->use(bytecode.m_base);
-    if (guard->checksName()) {
-        m_graph.remark("name-check-guards-read"_s, code().codeBlock()->identifier(bytecode.m_property).string());
+    if (guard->checksFamily()) {
+        m_graph.remark("family-guards-read"_s, code().codeBlock()->identifier(bytecode.m_property).string());
         LValue base = lowJSValue(baseNode);
-        auto checkAndLoad = [&] {
-            exitUnlessNameIsInSlot(guard, baseNode, base, Entry::operationAOTCountGuessedPlace, numberOf(bytecode.m_property));
-            return m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + guard->checkedPlace.slot * sizeof(EncodedJSValue)));
-        };
-        if (auto read = guard->check == GuardCheck::Name ? availableRead(baseNode, code().codeBlock()->identifier(bytecode.m_property).impl()) : std::nullopt; read && read->isBehindNameCheck) {
-            m_graph.remark("reuses-property-read"_s, code().codeBlock()->identifier(bytecode.m_property).string());
-            LBasicBlock mayHaveChanged = newColdBlock();
-            LBasicBlock continuation = m_out.newBlock();
-            ValueFromBlock reused = m_out.anchor(read->value);
-            m_out.branch(m_out.equal(loadEffectEpoch(), read->effectEpoch), usually(continuation), rarely(mayHaveChanged));
-            m_out.appendTo(mayHaveChanged);
-            ValueFromBlock readAgain = m_out.anchor(checkAndLoad());
-            m_out.jump(continuation);
-            m_out.appendTo(continuation);
-            guard->lowered = m_out.phi(Int64, reused, readAgain);
-        } else
-            guard->lowered = checkAndLoad();
+        exitUnlessInFamily(guard, baseNode, base, Entry::operationAOTVerifyGuardedRead, numberOf(bytecode.m_property));
+        guard->lowered = m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + guard->checkedPlace.slot * sizeof(EncodedJSValue)));
         if (Options::validateAOTInferredTypes() && Site::fits(numberOf(bytecode.m_property), 0)) [[unlikely]] {
             LBasicBlock differs = newColdBlock();
             LBasicBlock agrees = m_out.newBlock();
@@ -620,11 +586,11 @@ void Lowering::guardPutById(Node* guard)
     auto bytecode = guard->as<OpPutById>();
     Node* baseNode = guard->use(bytecode.m_base);
     Node* valueNode = guard->use(bytecode.m_value);
-    if (guard->checksName()) {
-        m_graph.remark("name-check-guards-store"_s, code().codeBlock()->identifier(bytecode.m_property).string());
+    if (guard->checksFamily()) {
+        m_graph.remark("family-guards-store"_s, code().codeBlock()->identifier(bytecode.m_property).string());
         LValue base = lowJSValue(baseNode);
         LValue value = lowJSValue(valueNode);
-        exitUnlessNameIsInSlot(guard, baseNode, base, Entry::operationAOTCountGuessedStore, numberOf(bytecode.m_property));
+        exitUnlessInFamily(guard, baseNode, base, Entry::operationAOTVerifyGuardedStore, numberOf(bytecode.m_property));
         m_out.store64(value, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + guard->checkedPlace.slot * sizeof(EncodedJSValue)));
         if (mayBe(valueNode->type, TCell))
             storeBarrier(base);

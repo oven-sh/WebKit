@@ -29,7 +29,7 @@ function doesNotApply(f, ...patterns) {
 
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 
 let kept = null;
 function object1(a) { kept = { p: a }; return kept; }

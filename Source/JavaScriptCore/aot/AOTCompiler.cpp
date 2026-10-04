@@ -423,6 +423,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         if (splitsLoops || !places.isEmpty())
             return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false, places.isEmpty() ? nullptr : &places, !splitsLoops || (!places.isEmpty() && Options::useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting()), mustAgreeWithAnalysis ? reasonForNoGuards : graph.reasonForNoGuards, mustAgreeWithAnalysis);
     }
+    graph.remarkOnGuessedPlaces();
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideUnpassedCalleeReads();

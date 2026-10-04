@@ -92,7 +92,6 @@ enum class GuardKind : uint8_t {
 };
 
 enum class GuardCheck : uint8_t {
-    Name,
     Family,
     Byte,
     None,
@@ -242,7 +241,7 @@ struct Node {
     bool structureIsChecked { false };
     bool slotIsDirect { false };
     GuessedPlace checkedPlace { };
-    GuardCheck check { GuardCheck::Name };
+    GuardCheck check { GuardCheck::Family };
     bool checkedValueIsCell { false };
     bool calleeIsChecked { false };
     bool wasInferredUnreachable { false };
@@ -278,7 +277,7 @@ struct Node {
     bool isHandled { false };
 
     bool isBytecode(OpcodeID id) const { return kind == NodeKind::Bytecode && opcode == id; }
-    bool checksName() const { return kind == NodeKind::Guard && (checkedPlace.nameID || checkedPlace.family); }
+    bool checksFamily() const { return kind == NodeKind::Guard && checkedPlace.family; }
     bool isConstant() const { return kind == NodeKind::Constant; }
     bool isInt32Constant() const { return isConstant() && constant.isInt32(); }
     bool isNumberConstant() const { return isConstant() && constant.isNumber(); }
@@ -430,6 +429,7 @@ public:
     using PlacesToGuard = UncheckedKeyHashMap<unsigned, GuessedPlace>;
     const PlacesToGuard* placesToGuard { nullptr };
     PlacesToGuard findPlacesToGuard();
+    void remarkOnGuessedPlaces() const;
     ASCIILiteral reasonForNoGuards;
     ASCIILiteral contradictionOfAnalysis;
     bool mustAgreeWithAnalysis { false };

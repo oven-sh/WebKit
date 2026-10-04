@@ -86,9 +86,9 @@ namespace AOT {
     v(operationAOTLatin1StringEqualTo) \
     v(operationAOTGetFieldSlow) \
     v(operationAOTReadField) \
-    v(operationAOTCountGuessedPlace) \
+    v(operationAOTVerifyGuardedRead) \
     v(operationAOTToFieldValue) \
-    v(operationAOTCountGuessedStore) \
+    v(operationAOTVerifyGuardedStore) \
     v(operationAOTCountFamilyGuard) \
     v(operationAOTCountBirthInFamily) \
     v(operationAOTCountReadByName) \
@@ -709,7 +709,7 @@ struct Instance {
     uintptr_t structureIDBase;
     uintptr_t familyBase;
     uintptr_t fieldIDAtDirectLocationBase;
-    uintptr_t fieldIDInSlotBases[Structure::numberOfSlotsWithPropertyNameIDs];
+    uintptr_t fieldIDInSlotBases[Structure::numberOfSlotsWithFieldIDs];
     const uint32_t* dispatch;
     const uint32_t* selectorRows;
     JSObject* objectPrototype;

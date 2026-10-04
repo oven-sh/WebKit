@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTGraph.h"
-#include "AOTImage.h"
 #include "BuiltinNames.h"
 #include "BytecodeStructs.h"
 #include "JSCInlines.h"
@@ -70,13 +69,6 @@ void PropertyPlaces::noteNamesAccessed(const CalleeHints* module, Vector<NamesAc
     }
 }
 
-void PropertyPlaces::noteSites(const NumberOfSitesByName& numberOfSitesByName)
-{
-    Locker locker { m_lock };
-    for (auto& [name, numberOfSites] : numberOfSitesByName)
-        m_listedNames.add(name, ListedName { }).iterator->value.numberOfSites += numberOfSites;
-}
-
 void PropertyPlaces::noteConstruction(const CalleeHints* module, UnlinkedCodeBlock* constructor, UnlinkedCodeBlock* parentConstructor, Names&& ownNamesInSlotOrder, bool ownNamesAreAll, unsigned numberOfNamesGivenAtOnce)
 {
     Locker locker { m_lock };
@@ -135,18 +127,8 @@ void PropertyPlaces::finalize()
             if (!name)
                 continue;
             m_holders.add(name, Holders { }).iterator->value.shapes.append(shape);
-            m_listedNames.add(name, ListedName { });
         }
     }
-    if (m_firstNameID)
-        m_namesInIDOrder = copyToVector(m_listedNames.keys());
-    std::ranges::sort(m_namesInIDOrder, [&](UniquedStringImpl* a, UniquedStringImpl* b) {
-        unsigned sitesOfA = m_listedNames.find(a)->value.numberOfSites;
-        unsigned sitesOfB = m_listedNames.find(b)->value.numberOfSites;
-        return sitesOfA != sitesOfB ? sitesOfA > sitesOfB : nameComesBefore(a, b);
-    });
-    for (unsigned index = 0; index < m_namesInIDOrder.size(); ++index)
-        m_listedNames.find(m_namesInIDOrder[index])->value.indexInIDOrder = index;
     for (auto& [module, accessed] : m_namesAccessed) {
         bool usesNamesOnVariable = false;
         if (auto shapes = candidateShapes(module, accessed, usesNamesOnVariable); shapes.size() == 1)
@@ -154,7 +136,7 @@ void PropertyPlaces::finalize()
     }
     m_namesAccessed.clear();
     for (uint32_t shape = 0; shape < m_shapes.size(); ++shape) {
-        if (Options::useAOTFamilies() && m_shapes[shape].numberOfSites && m_shapes[shape].numberOfNamesGivenAtOnce && !m_shapes[shape].isOfDerivedClass)
+        if (m_shapes[shape].numberOfSites && m_shapes[shape].numberOfNamesGivenAtOnce && !m_shapes[shape].isOfDerivedClass)
             m_shapeOfFamily.append(shape);
     }
     std::ranges::sort(m_shapeOfFamily, [&](uint32_t a, uint32_t b) {
@@ -191,16 +173,6 @@ std::span<UniquedStringImpl* const> PropertyPlaces::namesOfFamily(uint16_t famil
     RELEASE_ASSERT(family && family <= m_shapeOfFamily.size());
     const Shape& shape = m_shapes[m_shapeOfFamily[family - 1]];
     return shape.names.span().first(shape.numberOfNamesGivenAtOnce);
-}
-
-uint16_t PropertyPlaces::nameID(UniquedStringImpl* name) const
-{
-    auto it = m_listedNames.find(name);
-    if (it == m_listedNames.end() || !m_firstNameID)
-        return 0;
-    static_assert(maxPropertyNameIDInImage < Structure::firstReservedPropertyNameID);
-    uint64_t id = static_cast<uint64_t>(m_firstNameID) + it->value.indexInIDOrder;
-    return id <= maxPropertyNameIDInImage ? static_cast<uint16_t>(id) : 0;
 }
 
 Vector<uint32_t, 8> PropertyPlaces::shapesWithAllOf(const CalleeHints* module, const NamesAccessed& accessed, const NamesOnVariable* onVariable, Vector<uint32_t, 8>* bornInOtherModules) const
@@ -297,22 +269,16 @@ auto PropertyPlaces::decide(const CalleeHints* module, UniquedStringImpl* name, 
         }
         if (slot >= Structure::numberOfSlotsWithPropertyNameIDs)
             return Decision::SlotTooHigh;
-        place = { nameID(name), static_cast<uint8_t>(slot), static_cast<uint8_t>(std::min<size_t>(shapes.size(), 255)), 0 };
-        if (!place.nameID && Options::useAOTPropertyNameIDs())
-            return Decision::NoNameID;
+        if (shapes.size() != 1 || accessed.names.isEmpty() || sameNamesAreBornInAnotherModule)
+            return Decision::NoFamily;
+        const Shape& shape = m_shapes[shapes[0]];
+        if (!shape.family || slot >= shape.numberOfNamesGivenAtOnce)
+            return Decision::NoFamily;
+        place = { shape.family, static_cast<uint8_t>(slot) };
         if (usesNamesOnVariable)
             m_guessesByNamesOnVariable.fetch_add(1, std::memory_order_relaxed);
-        if (shapes.size() != 1)
-            return Decision::Guessed;
-        m_guessesFromOneShape.fetch_add(1, std::memory_order_relaxed);
-        if (const Shape& shape = m_shapes[shapes[0]]; !accessed.names.isEmpty() && slot < shape.numberOfNamesGivenAtOnce && !sameNamesAreBornInAnotherModule)
-            place.family = shape.family;
-        if (place.family)
-            m_guessesWithFamily.fetch_add(1, std::memory_order_relaxed);
         return Decision::Guessed;
     }();
-    if (decision == Decision::Guessed && !place.family && !Options::useAOTPropertyNameIDs())
-        decision = Decision::NoNameID;
     m_decisions[static_cast<unsigned>(decision)].fetch_add(1, std::memory_order_relaxed);
     return decision;
 }
@@ -320,10 +286,9 @@ auto PropertyPlaces::decide(const CalleeHints* module, UniquedStringImpl* name, 
 void PropertyPlaces::dump(PrintStream& out) const
 {
     auto count = [&](Decision decision) { return m_decisions[static_cast<unsigned>(decision)].load(std::memory_order_relaxed); };
-    out.print(m_numberOfBirths, " births, ", m_shapes.size(), " shapes with ", m_holders.size(), " names, ", m_namesInIDOrder.size(), " names listed; places guessed: ", count(Decision::Guessed), ", ", m_guessesFromOneShape.load(std::memory_order_relaxed), " of them from one shape");
-    out.print("; not guessed: no shape ", count(Decision::NoShape), ", shapes disagree ", count(Decision::Disagree), ", slot too high ", count(Decision::SlotTooHigh), ", no name ID ", count(Decision::NoNameID), ", same names born in another module ", count(Decision::SameNamesBornInAnotherModule));
+    out.print(m_numberOfBirths, " births, ", m_shapes.size(), " shapes with ", m_holders.size(), " names, ", m_shapeOfFamily.size(), " families; places guessed: ", count(Decision::Guessed));
+    out.print("; not guessed: no shape ", count(Decision::NoShape), ", shapes disagree ", count(Decision::Disagree), ", slot too high ", count(Decision::SlotTooHigh), ", no family ", count(Decision::NoFamily), ", same names born in another module ", count(Decision::SameNamesBornInAnotherModule));
     out.print("; names only called that no shape holds: ", m_namesOnlyCalled.load(std::memory_order_relaxed));
-    out.print("; families: ", m_shapeOfFamily.size(), ", places guessed with a family: ", m_guessesWithFamily.load(std::memory_order_relaxed));
     out.print("; variables with names: ", m_namesOnVariables.size(), ", places guessed with the names on a variable: ", m_guessesByNamesOnVariable.load(std::memory_order_relaxed));
     if (Options::useAOTGuardsOverWholeFunctions())
         out.print("; functions with guards over the whole function: ", m_functionsWithGuards.load(std::memory_order_relaxed), " with ", m_guardsOverWholeFunctions.load(std::memory_order_relaxed), " guards, ", m_bytecodeSizeWithGuards.load(std::memory_order_relaxed), " bytes of bytecode, ", m_codeSizeWithGuards.load(std::memory_order_relaxed), " bytes of code; functions without them because their graph would contradict the analysis: ", m_functionsWhoseGuardsContradictAnalysis.load(std::memory_order_relaxed));
@@ -525,26 +490,6 @@ void Graph::noteBirths()
         addNameAccessed(namesAccessed[index], name, isOnlyCalled);
     });
     places->noteNamesAccessed(m_hints, WTF::move(namesAccessed));
-    PropertyPlaces::NumberOfSitesByName numberOfSitesByName;
-    for (const auto& instruction : m_codeBlock->instructions()) {
-        unsigned identifier = 0;
-        switch (instruction->opcodeID()) {
-        case op_get_by_id:
-            identifier = instruction->as<OpGetById>().m_property;
-            break;
-        case op_put_by_id:
-            identifier = instruction->as<OpPutById>().m_property;
-            break;
-        case op_in_by_id:
-            identifier = instruction->as<OpInById>().m_property;
-            break;
-        default:
-            continue;
-        }
-        if (UniquedStringImpl* name = m_codeBlock->identifier(identifier).impl(); canHavePlace(m_vm, name))
-            numberOfSitesByName.add(name, 0).iterator->value++;
-    }
-    places->noteSites(numberOfSitesByName);
     struct Literal {
         PropertyPlaces::Names names;
         unsigned bytecodeOffset { 0 };
@@ -674,7 +619,7 @@ std::optional<GuessedPlace> Graph::guessedPlaceOf(const Node* access) const
     if (!isOutermost())
         return m_outermost->guessedPlaceOf(access);
     const PropertyPlaces* places = m_propertyPlaces;
-    if (!Options::useAOTGuessedPlaces() || !places)
+    if (!places)
         return std::nullopt;
     if (!std::exchange(m_hasFoundNamesAccessed, true))
         findNamesAccessed();
@@ -686,25 +631,40 @@ std::optional<GuessedPlace> Graph::guessedPlaceOf(const Node* access) const
     PropertyPlaces::NamesAccessed noNames;
     bool usesNamesOnVariable = false;
     auto decision = places->decide(access->graph->calleeHints(), name, it == m_namesAccessedOn.end() ? noNames : it->value, place, usesNamesOnVariable);
-    static constexpr ASCIILiteral reasons[PropertyPlaces::numberOfDecisions] = { ""_s, "no-shape"_s, "disagree"_s, "slot-too-high"_s, "no-name-id"_s, "same-names-born-in-another-module"_s };
+    static constexpr ASCIILiteral reasons[PropertyPlaces::numberOfDecisions] = { ""_s, "no-shape"_s, "disagree"_s, "slot-too-high"_s, "no-family"_s, "same-names-born-in-another-module"_s };
     if (decision != PropertyPlaces::Decision::Guessed) {
         m_outermost->remark("no-guess"_s, reasons[static_cast<unsigned>(decision)]);
         return std::nullopt;
     }
     m_outermost->remark("guessed-place"_s, StringView { name });
-    if (place.numberOfShapes == 1)
-        m_outermost->remark("guessed-place-of-one-shape"_s, StringView { name });
     if (usesNamesOnVariable)
         m_outermost->remark("guessed-place-by-names-on-variable"_s, StringView { name });
-    if (place.family)
-        m_outermost->remark("guessed-family"_s, makeString(static_cast<unsigned>(place.family), ':', StringView { name }));
+    m_outermost->remark("guessed-family"_s, makeString(static_cast<unsigned>(place.family), ':', StringView { name }));
     return place;
+}
+
+void Graph::remarkOnGuessedPlaces() const
+{
+    if (!m_propertyPlaces || (!Options::aotRemarksPath() && !Options::aotTypeCoveragePath()))
+        return;
+    for (BasicBlock* block : m_rpo) {
+        if (block->isGeneric)
+            continue;
+        for (Node* node : block->nodes) {
+            bool isRead = node->isBytecode(op_get_by_id);
+            if ((!isRead && !node->isBytecode(op_put_by_id)) || node->isElided || node->replacement || typedFieldAccessedBy(node) || (!isRead && node->as<OpPutById>().m_flags.isDirect()))
+                continue;
+            const Node* born = valueAccessedThrough(node->use(isRead ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base));
+            if (!born->isBytecode(op_new_object) && !born->isBytecode(op_create_this))
+                guessedPlaceOf(node);
+        }
+    }
 }
 
 uint16_t Graph::familyBornAt(const Node* birth) const
 {
     const PropertyPlaces* places = m_outermost->m_propertyPlaces;
-    if (!Options::useAOTGuessedPlaces() || !places)
+    if (!places)
         return 0;
     if (birth->isBytecode(op_new_object))
         return places->familyOfLiteral(birth->graph->codeBlock(), birth->bytecodeIndex.offset());
@@ -728,7 +688,7 @@ uint16_t Graph::familyGivenAt(const Node* birth, std::span<UniquedStringImpl* co
 Graph::PlacesToGuard Graph::findPlacesToGuard()
 {
     PlacesToGuard places;
-    if (!Options::useAOTGuardsOverWholeFunctions() || !Options::useAOTGuessedPlaces() || !m_propertyPlaces || !usesDataStubs())
+    if (!Options::useAOTGuardsOverWholeFunctions() || !m_propertyPlaces || !usesDataStubs())
         return places;
     auto refuse = [&](ASCIILiteral reason) {
         remark("no-guards-over-whole-function"_s, reason);

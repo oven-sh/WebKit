@@ -102,59 +102,21 @@ static auto& propertyNameIDs(VM& vm)
     if (!table.next) [[unlikely]] {
         RELEASE_ASSERT(table.ids.isEmpty());
         Image* image = Image::withCode();
-        table.next = (image ? image->header().largestPropertyNameID : 0) + 1;
+        table.next = (image ? image->header().largestFieldID : 0) + 1;
     }
     return table;
 }
 
-static uint16_t knownPropertyNameID(VM& vm, Image* imageWithPropertyNames, UniquedStringImpl* uid)
-{
-    if (imageWithPropertyNames) {
-        if (uint16_t id = imageWithPropertyNames->propertyNameID(vm, uid))
-            return id;
-    }
-    return propertyNameIDs(vm).ids.get(uid);
-}
-
-bool hasListOfPropertyNames()
-{
-    return Image::withPropertyNames();
-}
-
-uint16_t propertyNameIDIfKnown(VM& vm, UniquedStringImpl* uid)
-{
-    Image* image = Image::withPropertyNames();
-    if (!image)
-        return 0;
-    uint16_t id = knownPropertyNameID(vm, image, uid);
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        runtimeTable(vm).countOperation(__func__, id ? "known" : "unknown");
-    return id;
-}
-
 static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
 {
-    if (uint16_t id = knownPropertyNameID(vm, Image::withPropertyNames(), uid))
-        return id;
     auto& table = propertyNameIDs(vm);
+    if (uint16_t id = table.ids.get(uid))
+        return id;
     if (table.next >= Structure::firstReservedPropertyNameID)
         return 0;
     uint16_t id = static_cast<uint16_t>(table.next++);
     table.ids.add(uid, id);
     return id;
-}
-
-void validatePropertyNameIDs(VM& vm)
-{
-    Image* image = Image::withPropertyNames();
-    if (!image)
-        return;
-    for (auto& name : image->propertyNameTable()) {
-        if (!name.id)
-            continue;
-        RELEASE_ASSERT(name.id > image->header().largestFieldID && name.id < propertyNameIDs(vm).next);
-        RELEASE_ASSERT(propertyNameID(vm, VMProgram::of(vm)->identifier(static_cast<uint32_t>(name.identifier))) == name.id);
-    }
 }
 
 static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* structure, const Identifier& ident, const PropertySlot& slot)
@@ -174,8 +136,6 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     if (!id)
         return 0;
     RELEASE_ASSERT(!structure->fieldIDInSlot(offset) || structure->fieldIDInSlot(offset) == Structure::noPropertyNameID || structure->fieldIDInSlot(offset) == id);
-    if (structure->isWatchingReplacement())
-        structure->firePropertyReplacementWatchpointSet(vm, offset, "Code stores to it without asking");
     structure->setPropertyNameIDInInlineSlot(offset, id);
     return id;
 }
@@ -206,8 +166,6 @@ static bool fillPropertyNameTable(VM& vm, Structure* structure)
     for (unsigned slot = 0; slot < Structure::numberOfSlotsWithPropertyNameIDs; ++slot) {
         if (structure->fieldIDInSlot(slot))
             continue;
-        if (ids[slot] != Structure::noPropertyNameID && structure->isWatchingReplacement())
-            structure->firePropertyReplacementWatchpointSet(vm, static_cast<PropertyOffset>(slot), "Code stores to it without asking");
         structure->setPropertyNameIDInInlineSlot(slot, ids[slot]);
     }
     return true;

@@ -1,6 +1,6 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault
 
@@ -10,7 +10,7 @@ function check(actual, expected, what) {
 }
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isOn = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTGuessedPlaces && !!options.useAOTDataStubs && !!options.useAOTLoopSplitting;
+const isOn = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs && !!options.useAOTLoopSplitting;
 const keepsLoopsWhole = isOn && !!options.useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting;
 function expectRemark(f, remark) {
     if (isOn)
@@ -31,13 +31,13 @@ function build(...pairs) {
         o[name] = value;
     return keep(o);
 }
-function Item(which) {
-    this.tag = which;
-    this.key = which + 1;
-    this.child = which + 2;
-    this.flags = which + 3;
+function Item(tag, key, child, flags) {
+    this.tag = tag;
+    this.key = key;
+    this.child = child;
+    this.flags = flags;
 }
-const makeItem = which => keep(new Item(which));
+const makeItem = which => keep(new Item(which, which + 1, which + 2, which + 3));
 
 function sumsArrayOnly(x, y, z, array) {
     let total = x.tag + y.key + z.child;

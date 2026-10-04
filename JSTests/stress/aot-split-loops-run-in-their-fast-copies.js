@@ -1,10 +1,9 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTInlineGuessedPlacesEverywhere=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTGuessedPlaces=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTLoopSplitting=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTGuardsOverWholeFunctions=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTFamilies=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault
@@ -24,10 +23,9 @@ function thrown(f) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const guesses = isCompiled && !!options.useAOTGuessedPlaces && !!options.useAOTDataStubs;
+const splitsLoops = isCompiled && !!options.useAOTLoopSplitting && !!options.useAOTDataStubs;
 const isCounting = isCompiled && !!options.useAOTOperationCounters && !!options.useAOTDataStubs;
-const counters = ["operationAOTCountGuessedPlace", "operationAOTCountReadByName", "operationAOTCountGuessedStore", "operationAOTCountStoreByName"];
-const accessesOutsideFastCopies = () => isCounting ? counters.reduce((sum, counter) => sum + (aotOperationCount(counter) || 0), 0) : 0;
+const accessesOutsideFastCopies = () => isCounting ? (aotOperationCount("operationAOTCountReadByName") || 0) + (aotOperationCount("operationAOTCountStoreByName") || 0) : 0;
 
 function Fiber(tag) {
     this.tag = tag;
@@ -189,29 +187,10 @@ if (isCounting && !hasTwin(walksAndCalls) && !hasTwin(readsWithoutLoop)) {
 }
 
 if (isCompiled) {
-    const about = f => remarksOf(f).filter(remark => remark.includes("guess") || remark.includes("loop") || remark.includes("guards-over")).join(" ");
-    const takesGuess = f => remarksOf(f).some(remark => remark.startsWith("guessed-place-read") || remark.startsWith("guessed-place-store") || remark.startsWith("name-check-guards"));
     for (const f of [walks, sumsSiblings]) {
-        if (!isSplit(f)) {
-            if (remarksOf(f).some(remark => remark.includes("fills-cache-of-split-loop")))
-                throw new Error(f.name + " is not split: " + about(f));
-            if (guesses && !takesGuess(f))
-                throw new Error(f.name + " is not split and must keep its guessed places: " + about(f));
-            continue;
-        }
-        if (!remarksOf(f).includes("read-fills-cache-of-split-loop:sibling"))
-            throw new Error("the generic copy of the loop of " + f.name + " does not fill the caches that the fast copy compares with: " + about(f));
-        if (f === walks && !remarksOf(f).includes("store-fills-cache-of-split-loop:return"))
-            throw new Error("the generic copy of the loop of " + f.name + " does not fill the caches of its stores: " + about(f));
-        if (remarksOf(f).some(remark => remark === "guessed-place-read-through-stub:sibling" || remark === "guessed-place-read:sibling"))
-            throw new Error(f.name + " takes a guessed place in the generic copy of its loop: " + about(f));
+        if (!hasTwin(f) || !options.useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting)
+            check(isSplit(f), splitsLoops, "the loop of " + f.name + " is split");
     }
-    for (const f of [walksAndCalls, readsWithoutLoop]) {
-        if (isSplit(f) || remarksOf(f).some(remark => remark.includes("fills-cache-of-split-loop")))
-            throw new Error(f.name + " has no loop to split: " + about(f));
-        if (guesses && !takesGuess(f))
-            throw new Error(f.name + " must keep its guessed places: " + about(f));
-    }
-    if (guesses && hasTwin(readsWithoutLoop) && !remarksOf(readsWithoutLoop).some(remark => remark.startsWith("guessed-place-read-through-stub") || remark.startsWith("guessed-place-read:")))
-        throw new Error("the generic copy of a whole function must keep its guessed places: " + about(readsWithoutLoop));
+    for (const f of [walksAndCalls, readsWithoutLoop])
+        check(isSplit(f), false, f.name + " has a loop to split");
 }

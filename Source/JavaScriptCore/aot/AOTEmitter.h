@@ -101,7 +101,6 @@ protected:
     template<typename Functor> void forEachUpTo(LValue count, const Functor&);
 
     LValue fixedPointer(ptrdiff_t offset);
-    LValue fixedStructureAddress(ptrdiff_t offset);
     LValue fixed32(ptrdiff_t offset);
     LValue changing32(ptrdiff_t offset);
 

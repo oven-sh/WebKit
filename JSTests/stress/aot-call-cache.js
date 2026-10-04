@@ -47,7 +47,7 @@ function constructs(F, x) { return new F(x); }
 for (const f of [known, callsParameter, callsParameterWithThis, callsKnown, callsWithManyArguments, constructs])
     noInline(f);
 
-let usesDataStubs = (remarksOf(callsParameterWithThis) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+let usesDataStubs = (remarksOf(callsParameterWithThis) || []).includes("calls:GetById");
 if (usesDataStubs) {
     applies(callsParameter, "cached-call");
     applies(callsParameterWithThis, "cached-call");

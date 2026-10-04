@@ -734,7 +734,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->structureIDBase = JSC::structureIDBase();
     instance->familyBase = instance->structureIDBase + Structure::offsetOfFamily();
     instance->fieldIDAtDirectLocationBase = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() - JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) * sizeof(uint16_t);
-    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithPropertyNameIDs; ++slot)
+    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithFieldIDs; ++slot)
         instance->fieldIDInSlotBases[slot] = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t);
     {
         auto idOf = [](Structure* structure) { return structure->id().bits(); };

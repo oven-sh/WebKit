@@ -1,12 +1,11 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlineGuessedPlacesEverywhere=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
 //@ runDefault("--useDollarVM=1")
 
@@ -20,7 +19,7 @@ const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
 if (isCompiled)
     check("useAOTGuardsOverWholeFunctions" in options, true, "the option exists");
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTGuessedPlaces;
+const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTFamilies;
 const isCounting = isOn && !!options.useAOTOperationCounters;
 const keepsLoopsWhole = isOn && !!options.useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting;
 const minimum = options.minimumAOTGuardsOverWholeFunction;
@@ -53,7 +52,7 @@ function lacksGuards(f, ...remarks) {
             throw new Error(nameOf(f) + " has " + remark);
     }
 }
-const exits = () => isCounting ? (aotOperationCount("operationAOTCountGuessedPlace:exit-into-generic-copy") || 0) + (aotOperationCount("operationAOTCountGuessedStore:exit-into-generic-copy") || 0) : 0;
+const exits = () => isCounting ? ["exits-not-a-cell", "exits-without-number", "exits-with-another-number", "exits-departed"].reduce((sum, outcome) => sum + (aotOperationCount("exit-into-generic-copy:" + outcome) || 0), 0) : 0;
 
 const kept = [];
 function keep(o) { kept.push(o); return o; }
@@ -63,14 +62,14 @@ function build(...pairs) {
         o[name] = value;
     return keep(o);
 }
-function Item(which) {
-    this.tag = "tag" + which;
-    this.key = "key" + which;
-    this.child = "child" + which;
-    this.sibling = "sibling" + which;
-    this.flags = "flags" + which;
+function Item(tag, key, child, sibling, flags) {
+    this.tag = tag;
+    this.key = key;
+    this.child = child;
+    this.sibling = sibling;
+    this.flags = flags;
 }
-function makeItem(which) { return keep(new Item(which)); }
+function makeItem(which) { return keep(new Item("tag" + which, "key" + which, "child" + which, "sibling" + which, "flags" + which)); }
 
 let log = [];
 let position = 0;
@@ -118,14 +117,13 @@ const many = name => { let pairs = []; for (let i = 0; i < 30; ++i) pairs.push([
 const own = (o, name) => { let descriptor = Object.getOwnPropertyDescriptor(o, name); return descriptor ? descriptor.value : "nothing of its own"; };
 const slotInItem = { tag: 0, key: 1, child: 2, sibling: 3, flags: 4 };
 const fillers = count => { let pairs = []; for (let i = 0; i < count; ++i) pairs.push(["before" + i, i]); return pairs; };
-const passing = model => { model.passes = true; return model; };
 const plain = (receiver, value) => ({ receiver, read: { value, log: [] }, store: () => ({ log: [], after: (name, stored) => check(own(receiver, name), stored, "the value stored") }) });
 const refusing = (receiver, value, before) => ({ receiver, read: { value, log: [] }, store: isStrict => ({ log: [], throws: isStrict, after: name => check(typeof receiver === "object" ? own(receiver, name) : before, before, "nothing is stored") }) });
 const kinds = [
     ["the names in another order", name => plain(build(...fillers(5), [name, "moved"]), "moved")],
     ["the name one slot further", name => plain(build(...fillers(slotInItem[name] + 1), [name, "further"]), "further")],
-    ["another shape with the name in the same slot", name => passing(plain(build(...fillers(slotInItem[name]), [name, "same slot"], ["behind", 0]), "same slot"))],
-    ["the name alone", name => { let model = plain(build([name, "alone"]), "alone"); return slotInItem[name] ? model : passing(model); }],
+    ["another shape with the name in the same slot", name => plain(build(...fillers(slotInItem[name]), [name, "same slot"], ["behind", 0]), "same slot")],
+    ["the name alone", name => plain(build([name, "alone"]), "alone")],
     ["the name inherited", name => plain(keep(Object.create(build([name, "inherited"]))), "inherited")],
     ["the name nowhere", name => plain(build(["other", 0]), undefined)],
     ["the name out of line", name => plain(build(...many(name)), "far")],
@@ -208,7 +206,7 @@ function runSix(subject, isStrict, failingAt, kind) {
     for (let verify of checks)
         verify();
     if (isCounting)
-        check(exits() - before, kind && !odd.passes ? 1 : 0, what + ": exits into the generic copy");
+        check(exits() - before, kind ? 1 : 0, what + ": exits into the generic copy");
 }
 
 for (let [subject, isStrict] of [[sixAccesses, false], [sixAccessesStrictly, true]]) {
@@ -222,7 +220,7 @@ for (let [subject, isStrict] of [[sixAccesses, false], [sixAccessesStrictly, tru
     }
 }
 applies(sixAccesses, sixAccessesStrictly);
-guards(sixAccesses, "name-check-guards-read:tag", "name-check-guards-store:key", "name-check-guards-read:child", "name-check-guards-store:flags", "name-check-guards-read:sibling", "name-check-guards-store:tag");
+guards(sixAccesses, "family-guards-read:tag", "family-guards-store:key", "family-guards-read:child", "family-guards-store:flags", "family-guards-read:sibling", "family-guards-store:tag");
 
 let hook = null;
 function callHook(x) { note("hook"); if (hook) hook(x); }
@@ -462,10 +460,10 @@ for (let oddAt = 0; oddAt < 5; ++oddAt) {
     check(environmentInEachIteration(all.slice(0, 2), all[2], all[3], all[4]), expected, "a variable captured in each iteration, an odd receiver at " + oddAt);
 }
 applies(makesEnvironment, environmentInEachIteration);
-guards(makesEnvironment, "name-check-guards-read:tag", "name-check-guards-read:key", "name-check-guards-read:child");
-lacksGuards(makesEnvironment, "name-check-guards-read:flags");
-guards(environmentInEachIteration, "name-check-guards-read:key", "name-check-guards-read:child", "name-check-guards-read:flags");
-lacksGuards(environmentInEachIteration, "name-check-guards-read:tag", "name-check-guards-read:sibling");
+guards(makesEnvironment, "family-guards-read:tag", "family-guards-read:key", "family-guards-read:child");
+lacksGuards(makesEnvironment, "family-guards-read:flags");
+guards(environmentInEachIteration, "family-guards-read:key", "family-guards-read:child", "family-guards-read:flags");
+lacksGuards(environmentInEachIteration, "family-guards-read:tag", "family-guards-read:sibling");
 if (minimum > 2)
     doesNotApply(makesEnvironmentLate, "makes-environment-behind-guard");
 else
@@ -594,7 +592,7 @@ for (let kind of elementsThatFail) {
 }
 if (keepsLoopsWhole) {
     applies(untilUnflagged);
-    guards(untilUnflagged, "name-check-guards-read:tag", "name-check-guards-read:key", "name-check-guards-read:flags");
+    guards(untilUnflagged, "family-guards-read:tag", "family-guards-read:key", "family-guards-read:flags");
 } else
     doesNotApply(untilUnflagged, "has-loop-without-calls");
 (function () {
@@ -647,12 +645,12 @@ if (keepsLoopsWhole) {
 })();
 if (keepsLoopsWhole) {
     applies("countsUntilUnflagged");
-    guards("countsUntilUnflagged", "name-check-guards-read:tag", "name-check-guards-read:key", "name-check-guards-read:flags", "array-view");
+    guards("countsUntilUnflagged", "family-guards-read:tag", "family-guards-read:key", "family-guards-read:flags", "array-view");
 } else
     doesNotApply("countsUntilUnflagged", "has-loop-without-calls");
 if (keepsLoopsWhole) {
     applies(overList, overListAndArray);
-    guards(overList, "name-check-guards-read:flags", "name-check-guards-read:tag", "name-check-guards-read:sibling");
+    guards(overList, "family-guards-read:flags", "family-guards-read:tag", "family-guards-read:sibling");
 } else {
     doesNotApply(overList, "has-loop-without-calls");
     doesNotApply(overListAndArray, "has-loop-without-calls");

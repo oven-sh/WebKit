@@ -211,7 +211,7 @@ for (let round = 0; round < 3; round++) {
 
 if (aotRemarks("readsName")) {
     const reads = "get-by-val-with-constant-key", writes = "put-by-val-with-constant-key";
-    const usesDataStubs = aotRemarks("readsProperty").some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+    const usesDataStubs = aotRemarks("readsProperty").includes("calls:GetById");
     for (let name of usesDataStubs ? ["readsName", "readsLength", "readsProto", "readsToFixed", "updatesName", "readsAndWritesName", "readsLeadingZero", "increments", "preincrements", "multiplies", "assignsIfMissing", "assignsIfFalsy", "assignsIfTruthy"] : []) {
         if (!aotRemarks(name).includes(reads))
             throw new Error(reads + " does not apply to " + name + ": " + aotRemarks(name).join(" "));

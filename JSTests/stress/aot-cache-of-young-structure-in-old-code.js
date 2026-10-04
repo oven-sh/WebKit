@@ -56,6 +56,6 @@ for (let round = 0; round < 40; round++) {
         break;
     }
 }
-let usesDataStubs = (aotRemarks("read") || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+let usesDataStubs = (aotRemarks("read") || []).includes("calls:GetById");
 if ((!reused[0] || !reused[1]) && usesDataStubs)
     throw new Error("this did not test anything");

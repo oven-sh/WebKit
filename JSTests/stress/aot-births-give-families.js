@@ -5,7 +5,7 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTDataStubs=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuessedPlaces=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
@@ -13,7 +13,7 @@ function check(actual, expected, what) {
 }
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isOn = (name, otherwise) => options[name] === undefined ? otherwise : !!options[name];
-const givesFamilies = isOn("useAOTGuessedPlaces", true);
+const givesFamilies = isOn("useAOTFamilies", false);
 const counts = isOn("useAOTOperationCounters", false);
 const structureOf = object => /Structure (0x[0-9a-f]+)/.exec(describe(object))[1];
 const remark = "born-in-family:";

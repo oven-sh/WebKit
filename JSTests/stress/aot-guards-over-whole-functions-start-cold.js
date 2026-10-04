@@ -1,8 +1,8 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--validateGraphAtEachPhase=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault
 
@@ -13,7 +13,7 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTGuessedPlaces && !!options.useAOTDataStubs;
+const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs;
 function takesDataAfresh(f, hasGuards, expected) {
     if (!isCompiled)
         return;
@@ -30,13 +30,13 @@ function build(...pairs) {
         o[name] = value;
     return keep(o);
 }
-function Item(which) {
-    this.tag = "tag" + which;
-    this.key = "key" + which;
-    this.child = "child" + which;
-    this.flags = "flags" + which;
+function Item(tag, key, child, flags) {
+    this.tag = tag;
+    this.key = key;
+    this.child = child;
+    this.flags = flags;
 }
-const makeItem = which => keep(new Item(which));
+const makeItem = which => keep(new Item("tag" + which, "key" + which, "child" + which, "flags" + which));
 
 function readsThree(x, y, z) {
     return x.tag + "|" + y.key + "|" + z.child;
@@ -63,7 +63,7 @@ for (let f of [readsThree, readsThreeAndMore, readsThreeInLoop, readsOne])
 const odd = [
     ["another order", which => build(["child", "child" + which], ["key", "key" + which], ["filler", 0], ["tag", "tag" + which])],
     ["inherited", which => keep(Object.create(makeItem(which)))],
-    ["an accessor", which => keep(Object.defineProperties({}, { tag: { get() { return "tag" + which; } }, key: { get() { return "key" + which; } }, child: { get() { return "child" + which; } } }))],
+    ["an accessor", which => keep(Object.defineProperties({}, build(["tag", { get() { return "tag" + which; } }], ["key", { get() { return "key" + which; } }], ["child", { get() { return "child" + which; } }])))],
     ["a Proxy", which => new Proxy(makeItem(which), { })],
 ];
 for (let round = 0; round < 60; ++round) {

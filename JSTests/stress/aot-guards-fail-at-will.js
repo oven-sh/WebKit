@@ -4,8 +4,7 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=3")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--failEveryNthAOTGuardForTesting=7")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1", "--failEveryNthAOTGuardForTesting=3")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useAOTOperationCounters=1", "--failEveryNthAOTGuardForTesting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--failEveryNthAOTGuardForTesting=5")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=5")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=2")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=11")
@@ -18,7 +17,7 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const count = name => typeof aotOperationCount === "function" && aotOperationCount(name) || 0;
-const hasTwins = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTGuessedPlaces && !!options.useAOTDataStubs;
+const hasTwins = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs;
 if (remarksOf(check))
     check("failEveryNthAOTGuardForTesting" in options, true, "the option exists");
 const period = options.failEveryNthAOTGuardForTesting || 0;
@@ -136,12 +135,12 @@ if (hasTwins && options.useAOTOperationCounters && period < 2) {
     for (let i = 0; i < 100; ++i)
         items.push(new Steady(i, i + 1, i + 2));
     check(remarksOf(readsThreeOfSteady).includes("guards-over-whole-function"), true, "readsThreeOfSteady has guards over the whole function");
-    const before = count("operationAOTCountGuessedPlace:hit");
+    const before = count("operationAOTCountReadByName");
     let total = 0;
     for (let i = 0; i < 100; ++i)
         total += readsThreeOfSteady(items[i]);
     check(total, 15150, "a hundred calls");
-    check(count("operationAOTCountGuessedPlace:hit") - before, period ? 400 : 300, period ? "each call leaves at its first guard and reads all three in the generic copy" : "each call passes its three guards");
+    check(count("operationAOTCountReadByName") - before, period ? 300 : 0, period ? "each call leaves at its first guard and reads all three in the generic copy" : "each call passes its three guards and reads nothing in the generic copy");
 }
 
 (function () {

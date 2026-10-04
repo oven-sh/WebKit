@@ -1,7 +1,7 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=20")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=20", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=1000")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=20")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=20", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=1000")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault
 
@@ -11,7 +11,7 @@ function check(actual, expected, what) {
 }
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isOn = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTGuessedPlaces && !!options.useAOTDataStubs;
+const isOn = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs;
 if (isOn)
     check("minimumAOTGuardsPerThousandBytesOverWholeFunction" in options, true, "the option exists");
 const density = options.minimumAOTGuardsPerThousandBytesOverWholeFunction;
@@ -25,12 +25,12 @@ function hasGuards(f, expected) {
 const kept = [];
 function keep(o) { kept.push(o); return o; }
 noInline(keep);
-function Item(which) {
-    this.tag = which;
-    this.key = which + 1;
-    this.child = which + 2;
+function Item(tag, key, child) {
+    this.tag = tag;
+    this.key = key;
+    this.child = child;
 }
-const makeItem = which => keep(new Item(which));
+const makeItem = which => keep(new Item(which, which + 1, which + 2));
 
 function dense(x, y, z) {
     return x.tag + y.key + z.child;

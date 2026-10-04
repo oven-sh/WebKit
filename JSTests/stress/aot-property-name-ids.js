@@ -1,4 +1,7 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=1", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
 
 function check(actual, expected, what) {
     if (actual !== expected)
@@ -105,31 +108,52 @@ check(readAlpha(Object.create(makeAlpha(1))), 1, "inherited");
 check(readAlpha(1), undefined, "number");
 check(readAlpha("alpha"), undefined, "string");
 
-const counts = typeof aotOperationCount === "function" && aotOperationCount("propertyNameIDIfKnown:known") !== null;
-function known() { return aotOperationCount("propertyNameIDIfKnown:known"); }
-function unknown() { return aotOperationCount("propertyNameIDIfKnown:unknown"); }
-if (counts && known() + unknown()) {
-    let knownBefore = known();
-    let unknownBefore = unknown();
-    const parsed = JSON.parse('{"delta":1,"beta":2,"alpha":3,"gamma":4}');
-    if (known() - knownBefore < 3)
-        throw new Error("names of the program that come from elsewhere are known: " + (known() - knownBefore));
-    check(unknown() - unknownBefore, 0, "names of the program that are not known");
-    check(readGamma(parsed) + readAlpha(parsed) + readDelta(parsed) + readBeta(parsed), 10, "parsed in another order");
+function makeWithLeft(v) { return { shared: v, left: 1 }; }
+function makeWithRight(v) { return { shared: v, right: 2 }; }
+function makeShifted(v) { return { before: 0, shared: v }; }
+function readAtOneSite(o) { return o.shared; }
+function readElsewhere(o) { return o.shared; }
 
-    const fresh = [];
-    for (let i = 0; i < 100; ++i)
-        fresh.push(join("fresh", i));
-    knownBefore = known();
-    unknownBefore = unknown();
-    const withFresh = [];
-    for (let i = 0; i < 100; ++i)
-        withFresh.push({ [fresh[i]]: i });
-    if (unknown() - unknownBefore < 100)
-        throw new Error("names made at run time are not known: " + (unknown() - unknownBefore));
-    check(known() - knownBefore, 0, "names made at run time that are known");
-    for (let i = 0; i < 100; ++i) {
-        check(withFresh[i][fresh[i]], i, fresh[i]);
-        check(readAlpha(withFresh[i]), undefined, "alpha of an object with " + fresh[i]);
-    }
+const isCounting = typeof aotOperationCount === "function" && !!jscOptions().useAOTOperationCounters && !!jscOptions().useAOTDataStubs && isAOTCompiled(readAtOneSite);
+function count(what) { return isCounting ? aotOperationCount(what) || 0 : 0; }
+function hitsByNameAtPlainSites() { return count("operationAOTCountReadByName:site-hits-by-name"); }
+function hitsByNameAtPolymorphicSites() {
+    let hits = 0;
+    for (let used = 0; used <= 4; ++used)
+        hits += count("operationAOTCountReadByName:polymorphic-site-of-" + used + "-hits-by-name");
+    return hits;
+}
+function arrivals() { return count("operationAOTGetById"); }
+
+if (isCounting && hitsByNameAtPolymorphicSites() < 10000)
+    throw new Error("the reads above, of one name in many Structures, are served by the name's number: " + hitsByNameAtPolymorphicSites());
+
+for (let i = 0; i < 10; ++i) {
+    check(readAtOneSite(makeWithLeft(i)), i, "the first Structure at the site");
+    check(readElsewhere(makeWithRight(i)), i, "another Structure at another site");
+}
+let hitsBefore = hitsByNameAtPlainSites();
+let arrivalsBefore = arrivals();
+for (let i = 0; i < 100; ++i)
+    check(readAtOneSite(makeWithRight(i)), i, "another Structure with the name in the same slot");
+if (isCounting) {
+    if (hitsByNameAtPlainSites() - hitsBefore < 99)
+        throw new Error("another Structure with the name in the same slot is served by the name's number: " + (hitsByNameAtPlainSites() - hitsBefore));
+    if (arrivals() - arrivalsBefore > 1)
+        throw new Error("another Structure with the name in the same slot reaches the runtime: " + (arrivals() - arrivalsBefore));
+}
+hitsBefore = hitsByNameAtPlainSites();
+for (let i = 0; i < 100; ++i)
+    check(readAtOneSite(makeShifted(i)), i, "the name in another slot");
+check(hitsByNameAtPlainSites() - hitsBefore, 0, "reads of the name in another slot that are served by the number in the first");
+for (let i = 0; i < 100; ++i) {
+    const grown = makeWithLeft(i);
+    delete grown.shared;
+    check(readAtOneSite(grown), undefined, "the name deleted");
+    grown.other = -1;
+    check(readAtOneSite(grown), undefined, "another name in the slot of the deleted one");
+    grown.shared = i;
+    check(readAtOneSite(grown), i, "the name added again");
+    check(readAtOneSite(Object.defineProperty(makeWithRight(i), "shared", { get() { return -i; } })), -i, "the name made a getter");
+    check(readAtOneSite(Object.defineProperty(makeWithRight(i), "shared", { value: i + 1, writable: false })), i + 1, "the name made read-only");
 }

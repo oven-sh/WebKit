@@ -206,14 +206,6 @@ static void structureWithID(CCallHelpers& jit, GPRReg idAndResult)
     jit.add64(Address(instanceGPR, Instance::offsetOfStructureIDBase()), idAndResult);
 }
 
-static void loadFieldIDInSlot(CCallHelpers& jit, GPRReg cell, unsigned slot, GPRReg structureID, GPRReg result)
-{
-    ASSERT(noOverlap(cell, structureID, result));
-    jit.load32(Address(cell, JSCell::structureIDOffset()), structureID);
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfFieldIDInSlotBase(slot)), result);
-    jit.load16(CCallHelpers::BaseIndex(result, structureID, CCallHelpers::TimesOne), result);
-}
-
 static void loadSites(CCallHelpers& jit, GPRReg info, GPRReg result)
 {
     jit.load32(Address(info, FunctionInfo::offsetOfSites()), result);
@@ -2252,62 +2244,6 @@ AOT_READ_SLOT(14)
 AOT_READ_SLOT(15)
 #undef AOT_READ_SLOT
 
-static constexpr unsigned numberOfStubsThatReadNameInSlot = 24;
-static std::optional<unsigned> slotWhoseNameIsReadBy(Stub stub)
-{
-    unsigned number = static_cast<unsigned>(stub);
-    if (number >= static_cast<unsigned>(Stub::ReadNameInSlot0) && number < static_cast<unsigned>(Stub::ReadNameInSlot0) + numberOfStubsThatReadNameInSlot)
-        return number - static_cast<unsigned>(Stub::ReadNameInSlot0);
-    return std::nullopt;
-}
-
-static void generateReadNameInSlot(CCallHelpers& jit, unsigned slot, GPRReg base = R0)
-{
-    ASSERT(base != A1 && base != A2 && base != T11 && base != T13);
-    if (slot >= Structure::numberOfSlotsWithPropertyNameIDs) {
-        jit.breakpoint();
-        return;
-    }
-    CCallHelpers::JumpList miss;
-    miss.append(jit.branchIfNotCell(base));
-    loadFieldIDInSlot(jit, base, slot, T13, T11);
-    miss.append(jit.branch32(CCallHelpers::NotEqual, T11, A2));
-    jit.load64(Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)), R0);
-    jit.ret();
-
-    miss.link(&jit);
-    jit.move(base, R0);
-    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::GetById });
-}
-#define AOT_READ_NAME_IN_SLOT(n) \
-static void generateReadNameInSlot##n(CCallHelpers& jit) { generateReadNameInSlot(jit, n); }
-AOT_READ_NAME_IN_SLOT(0)
-AOT_READ_NAME_IN_SLOT(1)
-AOT_READ_NAME_IN_SLOT(2)
-AOT_READ_NAME_IN_SLOT(3)
-AOT_READ_NAME_IN_SLOT(4)
-AOT_READ_NAME_IN_SLOT(5)
-AOT_READ_NAME_IN_SLOT(6)
-AOT_READ_NAME_IN_SLOT(7)
-AOT_READ_NAME_IN_SLOT(8)
-AOT_READ_NAME_IN_SLOT(9)
-AOT_READ_NAME_IN_SLOT(10)
-AOT_READ_NAME_IN_SLOT(11)
-AOT_READ_NAME_IN_SLOT(12)
-AOT_READ_NAME_IN_SLOT(13)
-AOT_READ_NAME_IN_SLOT(14)
-AOT_READ_NAME_IN_SLOT(15)
-AOT_READ_NAME_IN_SLOT(16)
-AOT_READ_NAME_IN_SLOT(17)
-AOT_READ_NAME_IN_SLOT(18)
-AOT_READ_NAME_IN_SLOT(19)
-AOT_READ_NAME_IN_SLOT(20)
-AOT_READ_NAME_IN_SLOT(21)
-AOT_READ_NAME_IN_SLOT(22)
-AOT_READ_NAME_IN_SLOT(23)
-#undef AOT_READ_NAME_IN_SLOT
-static_assert(static_cast<unsigned>(Stub::ReadNameInSlot23) - static_cast<unsigned>(Stub::ReadNameInSlot0) + 1 == numberOfStubsThatReadNameInSlot);
-
 static void generateGetById(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetById); }
 static void generateGetByIdWellKnown(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetByIdWellKnown); }
 
@@ -2527,71 +2463,6 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         missAtSite(jit, Entry::RawGetById, 1, Returns::Value);
     }
 }
-
-static constexpr unsigned numberOfStubsThatWriteNameInSlot = 24;
-static std::optional<unsigned> slotWhoseNameIsWrittenBy(Stub stub)
-{
-    unsigned number = static_cast<unsigned>(stub);
-    if (number >= static_cast<unsigned>(Stub::WriteNameInSlot0) && number < static_cast<unsigned>(Stub::WriteNameInSlot0) + numberOfStubsThatWriteNameInSlot)
-        return number - static_cast<unsigned>(Stub::WriteNameInSlot0);
-    return std::nullopt;
-}
-
-static void generateWriteNameInSlot(CCallHelpers& jit, unsigned slot, GPRReg base = R0)
-{
-    ASSERT(base != A2 && base != A3 && base != T11 && base != T13);
-    if (slot >= Structure::numberOfSlotsWithPropertyNameIDs) {
-        jit.breakpoint();
-        return;
-    }
-    CCallHelpers::JumpList miss;
-    miss.append(jit.branchIfNotCell(base));
-    loadFieldIDInSlot(jit, base, slot, T13, T11);
-    miss.append(jit.branch32(CCallHelpers::NotEqual, T11, A3));
-    jit.store64(A1, Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)));
-    Jump valueIsNotCell = jit.branchIfNotCell(A1);
-    jit.load8(Address(base, JSCell::cellStateOffset()), T11);
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), T13);
-    Jump needsBarrier = jit.branch32(CCallHelpers::BelowOrEqual, T11, Address(T13, VM::offsetOfHeapBarrierThreshold()));
-    valueIsNotCell.link(&jit);
-    jit.ret();
-
-    needsBarrier.link(&jit);
-    jit.move(base, R0);
-    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::WriteBarrier });
-
-    miss.link(&jit);
-    jit.move(base, R0);
-    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::PutById });
-}
-#define AOT_WRITE_NAME_IN_SLOT(n) \
-static void generateWriteNameInSlot##n(CCallHelpers& jit) { generateWriteNameInSlot(jit, n); }
-AOT_WRITE_NAME_IN_SLOT(0)
-AOT_WRITE_NAME_IN_SLOT(1)
-AOT_WRITE_NAME_IN_SLOT(2)
-AOT_WRITE_NAME_IN_SLOT(3)
-AOT_WRITE_NAME_IN_SLOT(4)
-AOT_WRITE_NAME_IN_SLOT(5)
-AOT_WRITE_NAME_IN_SLOT(6)
-AOT_WRITE_NAME_IN_SLOT(7)
-AOT_WRITE_NAME_IN_SLOT(8)
-AOT_WRITE_NAME_IN_SLOT(9)
-AOT_WRITE_NAME_IN_SLOT(10)
-AOT_WRITE_NAME_IN_SLOT(11)
-AOT_WRITE_NAME_IN_SLOT(12)
-AOT_WRITE_NAME_IN_SLOT(13)
-AOT_WRITE_NAME_IN_SLOT(14)
-AOT_WRITE_NAME_IN_SLOT(15)
-AOT_WRITE_NAME_IN_SLOT(16)
-AOT_WRITE_NAME_IN_SLOT(17)
-AOT_WRITE_NAME_IN_SLOT(18)
-AOT_WRITE_NAME_IN_SLOT(19)
-AOT_WRITE_NAME_IN_SLOT(20)
-AOT_WRITE_NAME_IN_SLOT(21)
-AOT_WRITE_NAME_IN_SLOT(22)
-AOT_WRITE_NAME_IN_SLOT(23)
-#undef AOT_WRITE_NAME_IN_SLOT
-static_assert(static_cast<unsigned>(Stub::WriteNameInSlot23) - static_cast<unsigned>(Stub::WriteNameInSlot0) + 1 == numberOfStubsThatWriteNameInSlot);
 
 static void generatePutById(CCallHelpers& jit)
 {
@@ -5951,16 +5822,10 @@ static constexpr unsigned firstIntrinsicThunk = firstPrologueThunk + maxFrameSiz
 static constexpr Stub stubsWithAnyRegisterOperand[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
     Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
     Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringEqualTo, Stub::GetLength, Stub::HelperAddField,
-    Stub::WriteNameInSlot0, Stub::WriteNameInSlot1, Stub::WriteNameInSlot2, Stub::WriteNameInSlot3, Stub::WriteNameInSlot4, Stub::WriteNameInSlot5, Stub::WriteNameInSlot6, Stub::WriteNameInSlot7,
-    Stub::WriteNameInSlot8, Stub::WriteNameInSlot9, Stub::WriteNameInSlot10, Stub::WriteNameInSlot11, Stub::WriteNameInSlot12, Stub::WriteNameInSlot13, Stub::WriteNameInSlot14, Stub::WriteNameInSlot15,
-    Stub::WriteNameInSlot16, Stub::WriteNameInSlot17, Stub::WriteNameInSlot18, Stub::WriteNameInSlot19, Stub::WriteNameInSlot20, Stub::WriteNameInSlot21, Stub::WriteNameInSlot22, Stub::WriteNameInSlot23,
     Stub::ReadSlot0, Stub::ReadSlot1, Stub::ReadSlot2, Stub::ReadSlot3, Stub::ReadSlot4, Stub::ReadSlot5, Stub::ReadSlot6, Stub::ReadSlot7,
     Stub::ReadSlot8, Stub::ReadSlot9, Stub::ReadSlot10, Stub::ReadSlot11, Stub::ReadSlot12, Stub::ReadSlot13, Stub::ReadSlot14, Stub::ReadSlot15,
     Stub::ReadSlotOrUndefined0, Stub::ReadSlotOrUndefined1, Stub::ReadSlotOrUndefined2, Stub::ReadSlotOrUndefined3, Stub::ReadSlotOrUndefined4, Stub::ReadSlotOrUndefined5, Stub::ReadSlotOrUndefined6, Stub::ReadSlotOrUndefined7,
-    Stub::ReadSlotOrUndefined8, Stub::ReadSlotOrUndefined9, Stub::ReadSlotOrUndefined10, Stub::ReadSlotOrUndefined11, Stub::ReadSlotOrUndefined12, Stub::ReadSlotOrUndefined13, Stub::ReadSlotOrUndefined14, Stub::ReadSlotOrUndefined15,
-    Stub::ReadNameInSlot0, Stub::ReadNameInSlot1, Stub::ReadNameInSlot2, Stub::ReadNameInSlot3, Stub::ReadNameInSlot4, Stub::ReadNameInSlot5, Stub::ReadNameInSlot6, Stub::ReadNameInSlot7,
-    Stub::ReadNameInSlot8, Stub::ReadNameInSlot9, Stub::ReadNameInSlot10, Stub::ReadNameInSlot11, Stub::ReadNameInSlot12, Stub::ReadNameInSlot13, Stub::ReadNameInSlot14, Stub::ReadNameInSlot15,
-    Stub::ReadNameInSlot16, Stub::ReadNameInSlot17, Stub::ReadNameInSlot18, Stub::ReadNameInSlot19, Stub::ReadNameInSlot20, Stub::ReadNameInSlot21, Stub::ReadNameInSlot22, Stub::ReadNameInSlot23 };
+    Stub::ReadSlotOrUndefined8, Stub::ReadSlotOrUndefined9, Stub::ReadSlotOrUndefined10, Stub::ReadSlotOrUndefined11, Stub::ReadSlotOrUndefined12, Stub::ReadSlotOrUndefined13, Stub::ReadSlotOrUndefined14, Stub::ReadSlotOrUndefined15 };
 struct OperationWithAnyRegisterOperand {
     Stub stub;
     Entry operation;
@@ -6126,12 +5991,8 @@ bool operandAllowedInRegister(Stub stub, GPRReg reg)
     case Stub::GetByIdWellKnown:
         return (number < 9 && reg != GPRInfo::argumentGPR1) || number > 15;
     default:
-        if (auto slot = slotWhoseNameIsWrittenBy(stub))
-            return *slot < Structure::numberOfSlotsWithPropertyNameIDs && ((number < 9 && reg != GPRInfo::argumentGPR2 && reg != GPRInfo::argumentGPR3) || number > 15);
         if (slotReadBy(stub))
             return (number < 9 && reg != GPRInfo::argumentGPR1) || number > 15;
-        if (auto slot = slotWhoseNameIsReadBy(stub))
-            return *slot < Structure::numberOfSlotsWithPropertyNameIDs && ((number < 9 && reg != GPRInfo::argumentGPR1 && reg != GPRInfo::argumentGPR2) || number > 15);
         return true;
     }
 #else
@@ -6332,16 +6193,8 @@ const StubBlob& stubBlob()
                         generateGetByIdFrom(jit, Entry::operationAOTGetByIdWellKnown, reg);
                         break;
                     default:
-                        if (auto slot = slotWhoseNameIsWrittenBy(stub)) {
-                            generateWriteNameInSlot(jit, *slot, reg);
-                            break;
-                        }
                         if (auto read = slotReadBy(stub)) {
                             generateReadSlot(jit, read->first, read->second, reg);
-                            break;
-                        }
-                        if (auto slot = slotWhoseNameIsReadBy(stub)) {
-                            generateReadNameInSlot(jit, *slot, reg);
                             break;
                         }
                         jit.move(reg, defaultOperandRegister(stub));

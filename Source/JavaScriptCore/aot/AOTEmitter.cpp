@@ -59,21 +59,14 @@ LValue Emitter::changing32(ptrdiff_t offset)
     return m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset));
 }
 
-LValue Emitter::fixedStructureAddress(ptrdiff_t offset)
-{
-    if (Options::useAOTStructureAddressesReloadedAfterCalls())
-        return m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset));
-    return fixedPointer(offset);
-}
-
 LValue Emitter::structureWithID(LValue structureID)
 {
-    return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedStructureAddress(Instance::offsetOfStructureIDBase()));
+    return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedPointer(Instance::offsetOfStructureIDBase()));
 }
 
 LValue Emitter::familyOfStructureWithID(LValue structureID)
 {
-    return m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(fixedStructureAddress(Instance::offsetOfFamilyBase()), m_out.zeroExtPtr(structureID))));
+    return m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfFamilyBase()), m_out.zeroExtPtr(structureID))));
 }
 
 LValue Emitter::departedFamily(unsigned family)
@@ -84,7 +77,8 @@ LValue Emitter::departedFamily(unsigned family)
 
 LValue Emitter::fieldIDInSlot(LValue structureID, unsigned slot)
 {
-    return m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(fixedStructureAddress(Instance::offsetOfFieldIDInSlotBase(slot)), m_out.zeroExtPtr(structureID))));
+    RELEASE_ASSERT(slot < Structure::numberOfSlotsWithFieldIDs);
+    return m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfFieldIDInSlotBase(slot)), m_out.zeroExtPtr(structureID))));
 }
 
 template<typename Functor>

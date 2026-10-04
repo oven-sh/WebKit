@@ -1794,14 +1794,14 @@ PropertyEffect Graph::propertyEffectOf(const Node* node)
     case NodeKind::Narrow:
         return PropertyEffect::None;
     case NodeKind::Guard:
-        if (node->checksName())
+        if (node->checksFamily())
             return node->opcode == op_put_by_id ? PropertyEffect::StoresNamedProperty : PropertyEffect::None;
         return PropertyEffect::Arbitrary;
     case NodeKind::Bytecode:
         break;
     }
     if (node->guard)
-        return node->guard->checksName() ? PropertyEffect::None : PropertyEffect::Arbitrary;
+        return node->guard->checksFamily() ? PropertyEffect::None : PropertyEffect::Arbitrary;
     auto isVariable = [](ResolveType type) {
         return type == ClosureVar || type == ResolvedClosureVar || type == LazyClosureVar || type == ResolvedLazyClosureVar || type == ModuleVar || type == GlobalLexicalVar;
     };
@@ -3355,7 +3355,7 @@ public:
                 return false;
             computeReversePostOrder();
             for (BasicBlock* block : m_graph.m_rpo)
-                block->isInProfitableLoop = !block->isGeneric && block != m_graph.root && (m_inProfitableLoop.get(block->bytecodeBegin) || (m_graph.placesToGuard && Options::useAOTInlineFastPathsInFunctionsWithGuards()));
+                block->isInProfitableLoop = !block->isGeneric && block != m_graph.root && m_inProfitableLoop.get(block->bytecodeBegin);
         }
         computeLiveness();
         chooseFrameRegisters();

@@ -1,7 +1,8 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -141,10 +142,6 @@ function readsBehindUnknownParent(o) { return o.behindUnknownParent; }
 function readsAheadOfLoop(o) { return o.aheadOfLoop; }
 function readsBehindUnknownSlots(o) { return o.behindLoop + o.behindUnknownSlots; }
 
-function readsNameBornNowhere(o) { return o.bornNowhereButRead; }
-function writesNameBornNowhere(o) { o.bornNowhereButWritten = 2; }
-function asksForNameBornNowhere(o) { return "bornNowhereButAskedFor" in o; }
-
 function inAnotherOrder(x, y) {
     let o = {};
     o["point" + "Z"] = x + y;
@@ -203,55 +200,31 @@ for (let i = 0; i < 200; i++) {
     check(readsAheadOfLoop(new classes.OfStoresInLoop(i)) + readsBehindUnknownSlots(new classes.OfStoresInLoop(i)), 3 * i, "a parent that stores in a loop");
 }
 {
-    let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("operationAOTCountGuessedPlace:" + detail) || 0;
-    let before = [countOf("hit"), countOf("another-slot")];
+    let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("Family::guard:" + detail) || 0;
+    let exits = () => countOf("exits-with-another-number") + countOf("exits-without-number") + countOf("exits-not-a-cell");
+    let before = [countOf("passes"), exits()];
     for (let i = 0; i < 100; i++) {
+        check(readsThirdOfPoint(makesPoint(i, 1)), i + 1, "the third property of an object as it was born");
+        check(readsTwoOfPoint(makesPoint(i, 2)), i * 100 + 2, "two properties of an object as it was born");
+        check(writesSecondOfPoint(makesPoint(i, 2), i), i, "a store to an object as it was born");
+        check(readsSharedWithShort(makesShort(i)) + readsSharedWithLong(makesLong(i)), 2 * i + 3, "one name in two slots, told apart by another name");
+        check(readsChosenC(makesWithConditionalValue(i)), 3, "behind a conditional value, as it was born");
+        check(readsLastSlotWithName(manyNames()), 23, "the last slot that may be guessed");
+        check(readsThirdInPlain(makesPlainThree(i)), i, "a name that another literal has behind a spread");
         check(readsBehindComputed(makesComputedFirst(i)), i, "behind a computed key");
         check(readsAroundComputed(makesComputedInTheMiddle(i)), i + 1, "around a computed key");
         check(readsBehindIndexKeys(makesWithIndexKeys(i)), 2 * i, "behind index keys");
-        check(readsThirdInPlain(makesPlainThree(i)), i, "a name that another literal has behind a spread");
     }
-    if (countOf("hit") > before[0]) {
-        check(countOf("hit") - before[0] >= 500, true, "guessed reads of objects as they were born hit");
-        check(countOf("another-slot") - before[1], 0, "guessed reads of objects as they were born that find the name in another slot");
+    if (countOf("passes") > before[0]) {
+        check(countOf("passes") - before[0] >= 800, true, "the guards pass objects as they were born");
+        check(exits() - before[1], 0, "no guard fails on an object as it was born");
+        before = exits();
+        for (let i = 0; i < 100; i++) {
+            check(readsThirdOfPoint(inAnotherOrder(i, 3)), i + 3, "the same names in other slots, counted");
+            check(readsThirdOfPoint(i), undefined, "a number, counted");
+        }
+        check(exits() - before, 200, "a guard fails on everything else");
     }
-    let { Leaf, Silent, SilentWithField, RepeatsName, OfOld, OfReturnsAnother } = classes;
-    before = [countOf("hit"), countOf("another-slot")];
-    for (let i = 0; i < 100; i++) {
-        readsAllOfLeaf(new Leaf(i));
-        readsMiddleStore(new Silent(i));
-        readsSilentField(new SilentWithField(i));
-        readsBehindRepeated(new RepeatsName(i));
-        readsBehindOld(new OfOld(i));
-    }
-    if (countOf("hit") > before[0]) {
-        check(countOf("hit") - before[0] >= 1000, true, "guessed reads of instances of derived classes hit");
-        check(countOf("another-slot") - before[1], 0, "guessed reads of instances of derived classes that find the name in another slot");
-        before = countOf("hit");
-        for (let i = 0; i < 100; i++)
-            readsLandsElsewhere(new OfReturnsAnother(i));
-        check(countOf("hit") - before, 0, "guessed reads of what a parent returned instead hit");
-    }
-}
-{
-    let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("propertyNameIDIfKnown:" + detail) || 0;
-    let before = [countOf("known"), countOf("unknown")];
-    let parsed = JSON.parse('{"bornNowhereButRead":1,"bornNowhereButWritten":0,"bornNowhereButAskedFor":3}');
-    let namesAreLookedUp = countOf("known") + countOf("unknown") > before[0] + before[1];
-    if (namesAreLookedUp) {
-        check(countOf("known") - before[0], 3, "names that the program only reads, writes or asks for and that have an ID");
-        check(countOf("unknown") - before[1], 0, "names that the program only reads, writes or asks for and that have no ID");
-    }
-    writesNameBornNowhere(parsed);
-    check(readsNameBornNowhere(parsed) + parsed.bornNowhereButWritten, 3, "names that come from elsewhere");
-    check(asksForNameBornNowhere(parsed), true, "a name that comes from elsewhere and is asked for");
-    before = [countOf("known"), countOf("unknown")];
-    let unnamed = JSON.parse('{"inNoCodeAtAll":1,"7":2}');
-    if (namesAreLookedUp) {
-        check(countOf("known") - before[0], 0, "names that stand in no code and that have an ID");
-        check(countOf("unknown") - before[1] > 0, true, "a name that stands in no code has no ID");
-    }
-    check(unnamed["inNoCode" + "AtAll"] + unnamed[7], 3, "names that stand in no code");
 }
 let deleted = makesPoint(1, 2);
 delete deleted.pointX;
@@ -259,7 +232,10 @@ check(readsThirdOfPoint(deleted), 3, "after a deletion");
 let frozen = Object.freeze(makesPoint(1, 2));
 check(writesSecondOfPoint(frozen, 9), 2, "a store to a frozen object");
 
-if (aotRemarks("readsThirdOfPoint") && aotRemarks("readsThirdOfPoint").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess"))) {
+let saysSomethingOfGuesses = name => aotRemarks(name).some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess"));
+if (aotRemarks("readsThirdOfPoint") && !jscOptions().useAOTFamilies)
+    check(saysSomethingOfGuesses("readsThirdOfPoint") || saysSomethingOfGuesses("readsSwapped"), false, "something is guessed without families");
+if (aotRemarks("readsThirdOfPoint") && jscOptions().useAOTFamilies && jscOptions().useAOTDataStubs) {
     let has = (name, remark) => aotRemarks(name).includes(remark);
     let applies = (name, remark) => {
         if (!has(name, remark))
@@ -269,67 +245,58 @@ if (aotRemarks("readsThirdOfPoint") && aotRemarks("readsThirdOfPoint").some(rema
         if (has(name, remark))
             throw new Error(remark + " applies to " + name + ": " + aotRemarks(name).join(" | "));
     };
-    applies("readsThirdOfPoint", "guessed-place:pointZ");
-    applies("readsTwoOfPoint", "guessed-place:pointX");
-    applies("readsTwoOfPoint", "guessed-place:pointY");
-    applies("readsSharedWithShort", "guessed-place:sharedName");
-    applies("readsSharedWithLong", "guessed-place:sharedName");
-    applies("readsFourthOfCounter", "guessed-place:label");
-    applies("readsAndCallsCounter", "guessed-place:limit");
-    applies("readsFieldsOfHolder", "guessed-place:first");
-    applies("readsFieldsOfHolder", "guessed-place:fourth");
-    applies("readsFieldsOfHolder", "guessed-place:fifth");
-    applies("readsBuiltSecond", "guessed-place:builtSecond");
-    applies("readsChosenC", "guessed-place:chosenC");
-    applies("readsLastSlotWithName", "guessed-place:n23");
-    applies("readsBehindComputed", "guessed-place:behindComputed");
-    applies("readsAroundComputed", "guessed-place:aheadOfComputed");
-    applies("readsAroundComputed", "guessed-place:farBehindComputed");
-    applies("readsBehindIndexKeys", "guessed-place:behindIndex");
-    applies("readsBehindIndexKeys", "guessed-place:farBehindIndex");
-    applies("readsAheadOfSpread", "guessed-place:aheadOfSpread");
-    applies("readsAheadOfAccessor", "guessed-place:aheadOfAccessor");
-    applies("readsThirdInPlain", "guessed-place:thirdInPlain");
-    applies("readsBehindSpread", "no-guess:no-shape");
-    applies("readsBehindAccessor", "no-guess:no-shape");
-    applies("readsBehindCall", "no-guess:no-shape");
-    doesNotApply("readsBehindSpread", "guessed-place:behindSpread");
-    doesNotApply("readsBehindAccessor", "guessed-place:behindAccessor");
-    doesNotApply("readsBehindCall", "guessed-place:behindCall");
-    doesNotApply("readsThirdInPlain", "no-guess:disagree");
-    for (let name of ["rootFirst", "rootSecond", "middleField", "middleStore", "leafStore"])
-        applies("readsAllOfLeaf", "guessed-place:" + name);
-    applies("readsSilentField", "guessed-place:silentField");
-    applies("readsBehindRepeated", "guessed-place:behindRepeated");
-    applies("readsBehindOld", "guessed-place:behindOld");
-    applies("readsLandsElsewhere", "guessed-place:landsElsewhere");
-    applies("readsMiddleStore", "guessed-place:middleStore");
-    applies("readsBehindError", "no-guess:no-shape");
-    applies("readsBehindArray", "no-guess:no-shape");
-    applies("readsStoredOnOfNull", "no-guess:no-shape");
-    applies("readsBehindUnknownParent", "no-guess:no-shape");
-    applies("readsAheadOfLoop", "guessed-place:aheadOfLoop");
-    applies("readsBehindUnknownSlots", "no-guess:no-shape");
-    doesNotApply("readsBehindUnknownSlots", "guessed-place:behindLoop");
-    doesNotApply("readsBehindUnknownSlots", "guessed-place:behindUnknownSlots");
-    doesNotApply("readsBehindError", "guessed-place:behindError");
-    doesNotApply("readsBehindArray", "guessed-place:behindArray");
-    doesNotApply("readsStoredOnOfNull", "guessed-place:storedOnOfNull");
-    doesNotApply("readsBehindUnknownParent", "guessed-place:behindUnknownParent");
-    applies("readsThirdOfPoint", "guessed-place-of-one-shape:pointZ");
-    applies("readsAllOfLeaf", "guessed-place-of-one-shape:leafStore");
-    applies("readsSharedWithShort", "guessed-place-of-one-shape:sharedName");
-    doesNotApply("readsMiddleStore", "guessed-place-of-one-shape:middleStore");
-    doesNotApply("readsSwapped", "guessed-place-of-one-shape:swappedA");
-    applies("readsNameBornNowhere", "no-guess:no-shape");
-    applies("readsSwapped", "no-guess:disagree");
-    applies("readsSharedAlone", "no-guess:disagree");
-    applies("readsNameNobodyIsBornWith", "no-guess:no-shape");
-    applies("readsFirstSlotWithoutName", "no-guess:slot-too-high");
-    doesNotApply("readsSwapped", "guessed-place:swappedA");
-    doesNotApply("readsSwapped", "guessed-place:swappedB");
-    doesNotApply("readsSharedAlone", "guessed-place:sharedName");
-    doesNotApply("readsNameNobodyIsBornWith", "guessed-place:pointX");
-    doesNotApply("readsFirstSlotWithoutName", "guessed-place:n24");
-    doesNotApply("readsAndCallsCounter", "guessed-place:advance");
+    let isGuessed = (name, ...properties) => {
+        for (let property of properties)
+            applies(name, "guessed-place:" + property);
+        for (let reason of ["no-shape", "disagree", "slot-too-high", "no-family", "same-names-born-in-another-module"])
+            doesNotApply(name, "no-guess:" + reason);
+    };
+    let isNotGuessed = (name, reason, ...properties) => {
+        applies(name, "no-guess:" + reason);
+        for (let property of properties)
+            doesNotApply(name, "guessed-place:" + property);
+    };
+    let hasShapeWithoutFamily = (name, ...properties) => {
+        isNotGuessed(name, "no-family", ...properties);
+        doesNotApply(name, "no-guess:disagree");
+    };
+    isGuessed("readsThirdOfPoint", "pointZ");
+    isGuessed("readsTwoOfPoint", "pointX", "pointY");
+    isGuessed("writesSecondOfPoint", "pointY");
+    isGuessed("readsSharedWithShort", "sharedName", "onlyInShort");
+    isGuessed("readsSharedWithLong", "sharedName", "onlyInLong");
+    isGuessed("readsChosenC", "chosenC");
+    isGuessed("readsLastSlotWithName", "n23");
+    isGuessed("readsThirdInPlain", "thirdInPlain");
+    isNotGuessed("readsSwapped", "disagree", "swappedA", "swappedB");
+    isNotGuessed("readsSharedAlone", "disagree", "sharedName");
+    isNotGuessed("readsNameNobodyIsBornWith", "no-shape", "pointX");
+    isNotGuessed("readsFirstSlotWithoutName", "slot-too-high", "n24");
+    for (let [name, ...properties] of [
+        ["readsFourthOfCounter", "label"], ["readsFieldsOfHolder", "first", "fourth", "fifth"], ["readsBuiltSecond", "builtSecond"],
+        ["readsBehindComputed", "behindComputed"], ["readsAroundComputed", "aheadOfComputed", "farBehindComputed"], ["readsBehindIndexKeys", "behindIndex", "farBehindIndex"],
+        ["readsAheadOfSpread", "aheadOfSpread"], ["readsAheadOfAccessor", "aheadOfAccessor"],
+        ["readsMiddleStore", "middleStore"], ["readsSilentField", "silentField"], ["readsBehindRepeated", "rootSecond", "behindRepeated"], ["readsBehindOld", "behindOld"],
+        ["readsLandsElsewhere", "landsElsewhere"], ["readsAheadOfLoop", "aheadOfLoop"],
+    ]) {
+        hasShapeWithoutFamily(name, ...properties);
+        doesNotApply(name, "no-guess:no-shape");
+    }
+    hasShapeWithoutFamily("readsAndCallsCounter", "limit", "advance");
+    hasShapeWithoutFamily("readsAllOfLeaf", "rootFirst", "rootSecond", "middleField", "middleStore", "leafStore");
+    for (let [name, ...properties] of [
+        ["readsBehindSpread", "behindSpread"], ["readsBehindAccessor", "behindAccessor"], ["readsBehindCall", "behindCall"],
+        ["readsBehindError", "behindError"], ["readsBehindArray", "behindArray"], ["readsStoredOnOfNull", "storedOnOfNull"],
+        ["readsBehindUnknownParent", "behindUnknownParent"], ["readsBehindUnknownSlots", "behindLoop", "behindUnknownSlots"],
+    ]) {
+        isNotGuessed(name, "no-shape", ...properties);
+        doesNotApply(name, "no-guess:no-family");
+    }
+    if (jscOptions().useAOTGuardsOverWholeFunctions) {
+        applies("readsThirdOfPoint", "family-guards-read:pointZ");
+        applies("writesSecondOfPoint", "family-guards-store:pointY");
+        applies("readsLastSlotWithName", "family-guards-read:n23");
+        for (let name of ["readsSwapped", "readsSharedAlone", "readsFirstSlotWithoutName", "readsFourthOfCounter", "readsBehindComputed", "readsMiddleStore", "readsBehindSpread"])
+            doesNotApply(name, "guards-over-whole-function");
+    }
 }

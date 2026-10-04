@@ -1,6 +1,4 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTLoopSplitting=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
@@ -8,6 +6,9 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=2")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -22,30 +23,6 @@ function throwsTypeError(f, what) {
         return;
     }
     throw new Error(what + ": nothing was thrown");
-}
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isOn = (name, otherwise) => options[name] === undefined ? otherwise : !!options[name];
-const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
-const inlineRemark = "guessed-place-store:";
-const stubRemark = "guessed-place-store-through-stub:";
-const has = (f, prefix) => remarksOf(f).some(remark => remark.startsWith(prefix));
-const guesses = isOn("useAOTGuessedPlaces", true) && isOn("useAOTDataStubs", true);
-const alwaysInline = isOn("useAOTInlineGuessedPlacesEverywhere", false) || isOn("validateAOTInferredTypes", false);
-const wrongRemarks = [];
-function applies(prefix, ...functions) {
-    for (let f of functions) {
-        if (!remarksOf(f) || !guesses)
-            continue;
-        let expected = alwaysInline ? [inlineRemark] : prefix ? [prefix] : [inlineRemark, stubRemark];
-        if (!expected.some(prefix => has(f, prefix)))
-            wrongRemarks.push(f.name + " lacks " + expected.join(" or ") + " among " + remarksOf(f).join(" "));
-    }
-}
-function doesNotApply(...functions) {
-    for (let f of functions) {
-        if (remarksOf(f) && (has(f, inlineRemark) || has(f, stubRemark)))
-            wrongRemarks.push(f.name + " has a guessed store: " + remarksOf(f).join(" "));
-    }
 }
 
 const kept = [];
@@ -103,18 +80,6 @@ function setBornSecond(born, value) { born.bornSecond = value; }
 for (let f of [Item, makeItem, setFlags, setFlagsStrictly, setChild, setTagAndSibling, setSelf, setFlagsOfAll, setChildOfAll, bump, setNeverBorn, bornHere, defines, Named, setToString, Born, setBornSecond])
     globalThis[f.name + "Kept"] = f;
 
-applies(stubRemark, setFlags, setFlagsStrictly, setChild, setTagAndSibling, setSelf, bump, setBornSecond);
-applies(null, setChildOfAll);
-if (remarksOf(setFlagsOfAll) && guesses) {
-    check(has(setFlagsOfAll, "split-loop"), isOn("useAOTLoopSplitting", true), "the loop of setFlagsOfAll is split");
-    if (has(setFlagsOfAll, "split-loop")) {
-        doesNotApply(setFlagsOfAll);
-        if (!has(setFlagsOfAll, "store-fills-cache-of-split-loop:flags"))
-            wrongRemarks.push("setFlagsOfAll lacks store-fills-cache-of-split-loop:flags among " + remarksOf(setFlagsOfAll).join(" "));
-    } else
-        applies(null, setFlagsOfAll);
-}
-doesNotApply(Born, setNeverBorn, bornHere, defines, setToString);
 
 for (let round = 0; round < 40; ++round) {
     let item = makeItem(1, "k");
@@ -302,24 +267,3 @@ for (let round = 0; round < 40; ++round) {
             check(old[i].child.number + old[i].child.text + old[i].child.round, i + "young " + i + round, "a young object stored into an old one survives");
     }
 }
-
-if (typeof aotOperationCount === "function" && remarksOf(setFlags) && isOn("useAOTOperationCounters", false) && guesses && has(setFlags, stubRemark)) {
-    const count = detail => aotOperationCount("operationAOTCountGuessedStore" + (detail ? ":" + detail : "")) || 0;
-    const details = ["hit", "not-a-cell", "not-an-object", "typed-layout", "dictionary", "not-an-own-property", "has-attributes", "out-of-line", "another-slot", "may-be-prototype", "records-no-names", "slot-is-marked-nameless", "no-id-recorded"];
-    check(details.reduce((sum, detail) => sum + count(detail), 0), count(), "every guessed store has one outcome");
-    for (let detail of ["hit", "not-a-cell", "not-an-object", "dictionary", "not-an-own-property", "has-attributes", "another-slot", "may-be-prototype"])
-        check(count(detail) > 0, true, "some guessed store ends as " + detail);
-    const arrivals = () => aotOperationCount("operationAOTPutById") || 0;
-    const usual = makeItem(1, "k");
-    const before = [count(), count("hit"), arrivals()];
-    for (let i = 0; i < 100; ++i) {
-        setFlags(usual, i);
-        setTagAndSibling(usual, i, i);
-    }
-    check(count() - before[0], 300, "guessed stores to an object as it was born");
-    check(count("hit") - before[1], 300, "all of them hit");
-    check(arrivals() - before[2], 0, "and none goes to the operation");
-}
-
-if (wrongRemarks.length)
-    throw new Error(wrongRemarks.join("\n"));

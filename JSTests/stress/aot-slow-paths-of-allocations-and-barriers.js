@@ -9,7 +9,7 @@ function shouldBe(actual, expected, what)
 
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = typeof aotRemarks === "function" && isAOTCompiled(readsProperty) && (aotRemarks("readsProperty") || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = typeof aotRemarks === "function" && isAOTCompiled(readsProperty) && (aotRemarks("readsProperty") || []).includes("calls:GetById");
 const counts = usesDataStubs && typeof aotOperationCount === "function" && aotOperationCount("operationAOTNewFunction") !== null;
 
 function atMost(actual, limit, what)

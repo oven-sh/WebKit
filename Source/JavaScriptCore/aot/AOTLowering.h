@@ -212,18 +212,6 @@ private:
     Vector<AvailableField> m_availableFields;
     UncheckedKeyHashMap<BasicBlock*, Vector<AvailableField>> m_availableFieldsAtEndOf;
     bool m_nodePreservesFields { false };
-    struct KnownStructure {
-        Node* base;
-        LValue baseValue;
-        Type baseType;
-        LValue structureID;
-    };
-    static constexpr unsigned maxKnownStructures = 4;
-    Vector<KnownStructure, maxKnownStructures> m_knownStructures;
-    UncheckedKeyHashMap<BasicBlock*, Vector<KnownStructure>> m_knownStructuresAtEndOf;
-    bool m_nodeKeepsKnownStructures { false };
-    LBasicBlock m_blockWhereNodeStarts { nullptr };
-    bool keepsStructures(Node*);
     const AvailableField* availableField(Node* base, const TypeTable::Field&) const;
     void recordAvailableField(Node* base, const TypeTable::Field&, LValue, Rep, LValue asJSValue, bool isWritten);
     static bool preservesFields(Node*);
@@ -232,7 +220,6 @@ private:
         UniquedStringImpl* name;
         LValue value;
         LValue effectEpoch;
-        bool isBehindNameCheck { false };
         friend bool operator==(const AvailableRead&, const AvailableRead&) = default;
     };
     static constexpr unsigned maxAvailableReads = 16;
@@ -251,8 +238,7 @@ private:
     void publishAvailableReads(BasicBlock*);
     void forgetReadsChangedInLoop(BasicBlock* header);
     LValue loadEffectEpoch();
-    void recordAvailableRead(Node* base, UniquedStringImpl* name, LValue value, LValue effectEpoch, bool isBehindNameCheck = false);
-    std::optional<AvailableRead> availableRead(Node* base, UniquedStringImpl* name);
+    void recordAvailableRead(Node* base, UniquedStringImpl* name, LValue value, LValue effectEpoch);
     void forgetReadsChangedBy(Node*);
     static std::optional<String> constantStringOf(Node*);
     static bool isAtomIfString(Node*, unsigned depth = 0);
@@ -344,7 +330,6 @@ private:
             return true;
         return !m_block->isInProfitableLoop || m_block->isInBuiltinLoopOnly;
     }
-    bool isInGenericCopyOfSplitLoop() const { return m_block->isGeneric && !m_block->graph->placesToGuard; }
     bool prefersCalls() const { return isCompact() || (m_graph.codeBlock()->codeType() != FunctionCode && !m_block->isInLoop); }
     LValue compareWithLiteral(LValue characters, std::span<const Latin1Character> written);
     struct Latin1Characters {
@@ -432,7 +417,7 @@ private:
     LBasicBlock newColdBlock();
     LValue trapBits();
     void exitUnless(LValue condition);
-    void exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, Entry counter, unsigned identifier);
+    void exitUnlessInFamily(Node* guard, Node* baseNode, LValue base, Entry verifier, unsigned identifier);
     void exitUnlessType(LValue jsValue, Type from, Type wanted);
     void guardReentry(BasicBlock*);
     void guardGetById(Node*);

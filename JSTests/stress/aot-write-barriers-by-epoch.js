@@ -216,7 +216,7 @@ for (let i = 0; i < 20; i++) {
 }
 
 if (aotRemarks("capturesParameters")) {
-    const usesDataStubs = aotRemarks("readsProperty").some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+    const usesDataStubs = aotRemarks("readsProperty").includes("calls:GetById");
     const isNew = "no-write-barrier-for-new-environment", shares = "shares-write-barrier", onlyForCell = "write-barrier-only-for-cell", calls = usesDataStubs ? "calls:WriteBarrier" : "calls:operationAOTWriteBarrier";
     let applies = (name, ...remarks) => {
         for (let remark of remarks) {

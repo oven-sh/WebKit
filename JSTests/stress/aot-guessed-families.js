@@ -1,5 +1,5 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuessedPlaces=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 function check(actual, expected, what) {
@@ -68,16 +68,26 @@ for (let i = 0; i < 100; i++) {
     check(readsDerived(new Base(i)), NaN, "its parent");
     check(readsReturn(makesWithReturn(i)), 2 * i, "a field named return");
 }
-if (aotRemarks("readsNode") && aotRemarks("readsNode").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess"))) {
+if (aotRemarks("readsNode") && !jscOptions().useAOTFamilies)
+    check(aotRemarks("readsNode").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess")), false, "something is guessed without families");
+if (aotRemarks("readsNode") && jscOptions().useAOTFamilies && jscOptions().useAOTDataStubs) {
     let has = (name, remark) => aotRemarks(name).includes(remark);
     let applies = (name, remark) => {
         if (!has(name, remark))
             throw new Error(remark + " does not apply to " + name + ": " + aotRemarks(name).join(" | "));
     };
+    let hasNoFamily = (name, ...properties) => {
+        applies(name, "no-guess:no-family");
+        for (let remark of ["no-guess:no-shape", "no-guess:disagree", ...properties.map(property => "guessed-place:" + property)]) {
+            if (has(name, remark))
+                throw new Error(remark + " applies to " + name + ": " + aotRemarks(name).join(" | "));
+        }
+    };
     let familyOf = (name, property) => {
         let remark = aotRemarks(name).find(remark => remark.startsWith("guessed-family:") && remark.endsWith(":" + property));
         return remark ? Number(remark.split(":")[1]) : 0;
     };
+    applies("readsNode", "guessed-place:nodeKind");
     applies("readsNode", "guessed-family:1:nodeKind");
     applies("readsNode", "guessed-family:1:nodeValue");
     applies("writesNode", "guessed-family:1:nodeNext");
@@ -88,14 +98,14 @@ if (aotRemarks("readsNode") && aotRemarks("readsNode").some(remark => remark.sta
     check(familyOf("callsAndReads", "besideIt") > 1, true, "a value with a name that is read has a family");
     check(familyOf("readsReturn", "return") > 1, true, "a field named return");
     check(familyOf("readsGrown", "grownFirst") > 1, true, "a name given at the birth");
-    applies("readsGrown", "guessed-place:grownLater");
+    hasNoFamily("readsGrown", "grownLater");
     check(familyOf("readsGrown", "grownLater"), 0, "a name added behind the birth is not what the family promises");
-    applies("readsSingle", "guessed-place:singleName");
+    hasNoFamily("readsSingle", "singleName");
     check(familyOf("readsSingle", "singleName"), 0, "a literal with one name has no Structure of its own to carry a number");
-    applies("callsOnly", "guessed-place:runIt");
+    hasNoFamily("callsOnly", "runIt");
     check(familyOf("callsOnly", "runIt"), 0, "a value whose names are only called has no family");
-    applies("readsAgreed", "guessed-place:agreedFirst");
+    hasNoFamily("readsAgreed", "agreedFirst");
     check(familyOf("readsAgreed", "agreedFirst"), 0, "two shapes are no family");
-    applies("readsDerived", "guessed-place:derivedFirst");
+    hasNoFamily("readsDerived", "baseFirst", "derivedFirst");
     check(familyOf("readsDerived", "derivedFirst") + familyOf("readsDerived", "baseFirst"), 0, "the instances of a derived class are born in the constructor of its parent");
 }

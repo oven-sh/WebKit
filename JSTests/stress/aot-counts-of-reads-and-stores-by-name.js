@@ -18,8 +18,8 @@ const count = name => aotOperationCount(name) || 0;
 const withTable = name => [name + "-and-table-hits", name + "-and-table-misses"];
 
 const inSlot = ["property-has-id-in-slot", "property-is-in-slot-not-known-yet", "property-is-in-slot-marked-nameless", "property-is-in-slot-of-structure-that-records-nothing"];
-const absent = ["property-is-absent-under-object-prototype", "property-is-absent-under-object-prototype-and-every-name-is-recorded", "property-may-be-on-prototype-that-cannot-be-asked"];
-const places = ["property-is-unknown", "property-has-attributes", "property-is-out-of-line", "property-is-beyond-named-slots", ...inSlot, ...absent, "property-is-absent-under-another-chain", "property-is-absent-under-another-chain-and-every-name-is-recorded",
+const absent = ["property-is-absent-under-object-prototype", "property-may-be-on-prototype-that-cannot-be-asked"];
+const places = ["property-is-unknown", "property-has-attributes", "property-is-out-of-line", "property-is-beyond-named-slots", ...inSlot, ...absent, "property-is-absent-under-another-chain",
     ...["value", "accessor"].flatMap(kind => ["at-depth-1", "at-depth-2", "deeper"].map(depth => "property-is-inherited-" + kind + "-" + depth))];
 const polymorphic = [0, 1, 2, 3, 4].flatMap(n => ["polymorphic-site-of-" + n + "-hits-by-name", "polymorphic-site-of-" + n + "-hits", ...withTable("polymorphic-site-of-" + n + "-misses")]);
 const readServices = ["site-hits", "site-hits-indirectly", "site-hits-by-name", ...polymorphic, ...["site-has-nobodys-slot", "site-holds-another-structure", "site-is-abandoned", "site-is-empty"].flatMap(withTable)];
@@ -80,11 +80,6 @@ function setOnce(o, v) { o.stored = v; }
 for (const f of [getPresent, getAbsent, getInherited, getSeveral, getOnce, setReplacing, setAdding, setOnce])
     noInline(f);
 
-if (isCounting) {
-    for (const f of [getPresent, setReplacing])
-        check(aotRemarks(f.name).some(remark => remark.startsWith("guessed-place")), false, f.name + " is no guessed place");
-}
-
 {
     const o = withName(wanted, 1);
     for (let i = 0; i < 300; ++i)
@@ -113,7 +108,7 @@ if (isCounting) {
 }
 reads("a read out of line", getOnce, withName(wanted, 2, 30), 2, ["property-is-out-of-line"]);
 reads("a read of an accessor", getOnce, Object.defineProperty({ }, wanted, { get() { return 3; } }), 3, ["property-has-attributes"]);
-reads("a read without a prototype", getOnce, Object.create(null), undefined, ["property-is-absent-under-another-chain", "property-is-absent-under-another-chain-and-every-name-is-recorded"]);
+reads("a read without a prototype", getOnce, Object.create(null), undefined, ["property-is-absent-under-another-chain"]);
 reads("a read from an array", getOnce, [], undefined, ["property-is-unknown"], undefined, ["receiver-is-not-final"]);
 reads("a read from a number", getOnce, 5, undefined, ["property-is-unknown"], undefined, ["receiver-is-not-object"]);
 

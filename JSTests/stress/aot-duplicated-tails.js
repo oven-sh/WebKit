@@ -22,7 +22,7 @@ function doesNotApply(f, pattern) {
 }
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const duplicates = "duplicated-tails";
 
 function comparesWithInt32(x) { return x < 10 ? "less" : "not less"; }

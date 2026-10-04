@@ -146,7 +146,7 @@ for (let round = 0; round < 3; ++round) {
     check(hasInCondition("other"), "no", "has in a condition");
     check(wrongCounts(), "[object Map],undefined,true,undefined,[object Map],undefined,3,true,false,3,2", "calls with too few or too many arguments");
 }
-const usesDataStubs = (remarksOf(sizeOfAnything) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(sizeOfAnything) || []).includes("calls:GetById");
 for (let f of [exercises, fills])
     applies(f, inlineSize);
 if (usesDataStubs) {

@@ -19,7 +19,7 @@ function applies(name, ...patterns) {
 }
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 
 var firstGlobal = 3, secondGlobal = 50;
 let firstLexical = 4, secondLexical = 60;

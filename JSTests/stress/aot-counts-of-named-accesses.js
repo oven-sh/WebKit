@@ -22,8 +22,8 @@ const isCounting = typeof aotOperationCount === "function" && !!aotRemarks("chec
 const keys = ["key-is-constant", "key-is-symbol", "key-is-atom", "key-is-string-but-no-atom", "key-is-rope", "key-is-number", "key-is-index-string", "key-is-other"];
 const receivers = ["receiver-is-not-object", "receiver-is-not-final", "receiver-is-dictionary", "receiver-has-field-ids", "receiver-has-out-of-line-properties", "receiver-has-properties-beyond-named-slots", "receiver-is-all-in-named-slots"];
 const inSlot = ["property-has-id-in-slot", "property-is-in-slot-not-known-yet", "property-is-in-slot-marked-nameless", "property-is-in-slot-of-structure-that-records-nothing"];
-const absentUnderObjectPrototype = ["property-is-absent-under-object-prototype", "property-is-absent-under-object-prototype-and-every-name-is-recorded", "property-may-be-on-prototype-that-cannot-be-asked"];
-const absentUnderAnotherChain = ["property-is-absent-under-another-chain", "property-is-absent-under-another-chain-and-every-name-is-recorded"];
+const absentUnderObjectPrototype = ["property-is-absent-under-object-prototype", "property-may-be-on-prototype-that-cannot-be-asked"];
+const absentUnderAnotherChain = ["property-is-absent-under-another-chain"];
 const inherited = ["value", "accessor"].flatMap(kind => ["at-depth-1", "at-depth-2", "deeper"].map(depth => "property-is-inherited-" + kind + "-" + depth));
 const places = ["property-is-unknown", "property-has-attributes", "property-is-out-of-line", "property-is-beyond-named-slots", ...inSlot, ...absentUnderObjectPrototype, ...absentUnderAnotherChain, ...inherited];
 

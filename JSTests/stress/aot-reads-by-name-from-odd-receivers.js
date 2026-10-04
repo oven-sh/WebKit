@@ -1,14 +1,14 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1", "--useAOTStructureAddressesReloadedAfterCalls=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1", "--validateGraphAtEachPhase=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=2")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -23,21 +23,6 @@ function throwsTypeError(f, what) {
         return;
     }
     throw new Error(what + ": nothing was thrown");
-}
-const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
-const isGuessed = f => remarksOf(f).some(remark => remark.startsWith("guessed-place-read:") || remark.startsWith("guessed-place-read-through-stub:"));
-const guesses = typeof jscOptions !== "function" || jscOptions().useAOTGuessedPlaces === undefined || !!jscOptions().useAOTGuessedPlaces;
-function applies(...functions) {
-    for (let f of functions) {
-        if (remarksOf(f) && guesses && jscOptions().useAOTDataStubs && !isGuessed(f))
-            throw new Error("no place is guessed in " + f.name + ": " + remarksOf(f).join(" "));
-    }
-}
-function doesNotApply(...functions) {
-    for (let f of functions) {
-        if (remarksOf(f) && isGuessed(f))
-            throw new Error("a place is guessed in " + f.name + ": " + remarksOf(f).join(" "));
-    }
 }
 
 const kept = [];
@@ -97,12 +82,6 @@ function edgesOfWide(x) { return [x.w0, x.w15, x.w16, x.w23, x.w24, x.w29].join(
 for (let f of [makeItem, makePair, build, makeReversed, makeTagSecond, tagAndChild, keyAndFlags, firstAndSecond, tagAlone, four, allFour, readsTagTwice, readsTagTwiceInLoop, interleaved, acrossBranches, neverBorn, makeWide, edgesOfWide, keep])
     noInline(f);
 
-applies(tagAndChild, keyAndFlags, firstAndSecond, allFour, interleaved, acrossBranches, edgesOfWide);
-for (let f of [allFour, interleaved, acrossBranches]) {
-    if (remarksOf(f) && remarksOf(f).some(remark => remark.startsWith("guessed-place-read:")) && !remarksOf(f).includes("reuses-structure-of-base"))
-        throw new Error("the reads of one value in " + f.name + " do not share its Structure: " + remarksOf(f).join(" "));
-}
-doesNotApply(tagAlone, neverBorn);
 
 const cases = {
     "as it was born"(o) { return ["1:null", "k:0"]; },
@@ -334,17 +313,3 @@ check(tagAndChild(5), "of numbers:undefined", "a number, inherited");
 check(tagAndChild("string"), "undefined:of strings", "a string, inherited");
 delete Number.prototype.tag;
 delete String.prototype.child;
-
-if (typeof aotOperationCount === "function" && remarksOf(tagAndChild) && jscOptions().useAOTOperationCounters && isGuessed(tagAndChild)) {
-    const count = detail => aotOperationCount("operationAOTCountGuessedPlace" + (detail ? ":" + detail : "")) || 0;
-    const details = ["hit", "not-a-cell", "not-an-object", "typed-layout", "dictionary", "not-an-own-property", "absent-and-every-name-is-recorded", "has-attributes", "out-of-line", "another-slot", "records-no-names", "slot-is-marked-nameless", "no-id-recorded"];
-    check(details.reduce((sum, detail) => sum + count(detail), 0), count(), "every guessed read has one outcome");
-    for (let detail of ["hit", "not-a-cell", "not-an-object", "dictionary", "not-an-own-property", "absent-and-every-name-is-recorded", "has-attributes", "another-slot"])
-        check(count(detail) > 0, true, "some guessed read ends as " + detail);
-    const before = [count(), count("hit")];
-    const usual = makeItem(1, "k");
-    for (let i = 0; i < 100; ++i)
-        tagAndChild(usual);
-    check(count() - before[0], 200, "guessed reads of an object as it was born");
-    check(count("hit") - before[1], 200, "all of them hit");
-}

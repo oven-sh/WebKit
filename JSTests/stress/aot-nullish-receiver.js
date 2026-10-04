@@ -35,7 +35,7 @@ function thrownBy(f, ...parameters) {
 function readsProperty(o) { return o.property; }
 noInline(readsProperty);
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const typedUnlessNullish = "typed-builtin-call-unless-receiver-is-nullish", lengthUnlessNullish = "inline-length-unless-nullish";
 const comparesWithInt32 = "inline-relational-comparison-with-int32";
 

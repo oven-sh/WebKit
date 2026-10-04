@@ -13,7 +13,7 @@ function remarksOf(f)
 
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const counts = usesDataStubs && typeof aotOperationCount === "function" && aotOperationCount("operationAOTCreateThisWithProperties") !== null;
 
 function applies(name, remark)

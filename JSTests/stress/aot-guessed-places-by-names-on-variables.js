@@ -1,9 +1,9 @@
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -34,8 +34,8 @@ function makesReaders() {
 }
 let [setsHook, setsNode, setsEither, readsStateOfHook, readsQueueOfHook, readsNextOfHook, writesStateOfHook, readsStateOfNode, readsKeyOfNode, readsThreeOfHook, readsQueueOfEither, readsKeyOfEither, readsStateOfEither] = makesReaders();
 
-let countOf = (operation, detail) => typeof aotOperationCount === "function" && aotOperationCount(operation + ":" + detail) || 0;
-let exits = () => countOf("operationAOTCountGuessedPlace", "exit-into-generic-copy");
+let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("Family::guard:" + detail) || 0;
+let exits = () => countOf("exits-with-another-number") + countOf("exits-without-number") + countOf("exits-not-a-cell") + countOf("exits-departed");
 
 for (let i = 0; i < 100; i++) {
     setsHook(makesHook(i));
@@ -55,7 +55,7 @@ for (let i = 0; i < 100; i++) {
     check(readsKeyOfEither(), i & 1 ? undefined : i + 2, "a name of the second shape on that variable");
 }
 {
-    let before = [countOf("operationAOTCountGuessedPlace", "hit"), countOf("operationAOTCountGuessedPlace", "another-slot"), exits()];
+    let before = [countOf("passes"), exits()];
     for (let i = 0; i < 100; i++) {
         setsHook(makesHook(i));
         setsNode(makesNode(i));
@@ -65,10 +65,9 @@ for (let i = 0; i < 100; i++) {
         readsKeyOfNode();
         readsThreeOfHook();
     }
-    if (countOf("operationAOTCountGuessedPlace", "hit") > before[0]) {
-        check(countOf("operationAOTCountGuessedPlace", "hit") - before[0] >= 700, true, "guessed reads of what the variables usually hold hit");
-        check(countOf("operationAOTCountGuessedPlace", "another-slot") - before[1], 0, "guessed reads of what the variables usually hold that find the name in another slot");
-        check(exits() - before[2], 0, "no guard fails on what the variables usually hold");
+    if (countOf("passes") > before[0]) {
+        check(countOf("passes") - before[0] >= (jscOptions().minimumAOTGuardsOverWholeFunction == 1 ? 600 : 200), true, "the guards pass what the variables usually hold");
+        check(exits() - before[1], 0, "no guard fails on what the variables usually hold");
     }
 }
 for (let i = 0; i < 100; i++) {
@@ -87,7 +86,9 @@ for (let i = 0; i < 100; i++) {
     check(readsStateOfHook(), i + 1, "a getter read alone");
 }
 
-if (aotRemarks("readsQueueOfHook") && aotRemarks("readsQueueOfHook").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess"))) {
+if (aotRemarks("readsQueueOfHook") && !jscOptions().useAOTFamilies)
+    check(aotRemarks("readsQueueOfHook").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess")), false, "something is guessed without families");
+if (aotRemarks("readsQueueOfHook") && jscOptions().useAOTFamilies && jscOptions().useAOTDataStubs) {
     let has = (name, remark) => aotRemarks(name).includes(remark);
     let applies = (name, remark) => {
         if (!has(name, remark))
@@ -99,9 +100,9 @@ if (aotRemarks("readsQueueOfHook") && aotRemarks("readsQueueOfHook").some(remark
     };
     for (let name of ["readsStateOfHook", "writesStateOfHook", "readsStateOfNode", "readsThreeOfHook"]) {
         applies(name, "guessed-place:sharedState");
-        applies(name, "guessed-place-of-one-shape:sharedState");
         applies(name, "guessed-place-by-names-on-variable:sharedState");
         doesNotApply(name, "no-guess:disagree");
+        doesNotApply(name, "no-guess:no-family");
     }
     applies("readsQueueOfHook", "guessed-place:hookQueue");
     applies("readsNextOfHook", "guessed-place:hookNext");
@@ -115,9 +116,11 @@ if (aotRemarks("readsQueueOfHook") && aotRemarks("readsQueueOfHook").some(remark
     doesNotApply("readsQueueOfEither", "no-guess:no-shape");
     applies("readsStateOfEither", "no-guess:disagree");
     doesNotApply("readsStateOfEither", "guessed-place:sharedState");
-    if (typeof jscOptions === "function" && jscOptions().useAOTGuardsOverWholeFunctions) {
+    if (jscOptions().useAOTGuardsOverWholeFunctions) {
         applies("readsThreeOfHook", "guards-over-whole-function");
-        applies("readsThreeOfHook", "name-check-guards-read:sharedState");
+        applies("readsThreeOfHook", "family-guards-read:sharedState");
+        doesNotApply("readsStateOfEither", "guards-over-whole-function");
+        doesNotApply("readsStateOfParameter", "guards-over-whole-function");
         doesNotApply("readsThreeOfHook", "no-guards-over-whole-function:too-few-places");
         if (jscOptions().useAOTOperationCounters)
             check(exits() >= 300, true, "a guard fails whenever the variable holds something else");

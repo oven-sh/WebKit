@@ -62,9 +62,6 @@ struct ImageHeader {
     uint32_t fieldsOffset;
     uint32_t layoutIDsByFieldIDOffset;
     uint32_t largestFieldID;
-    uint32_t largestPropertyNameID;
-    uint32_t propertyNameTableOffset;
-    uint32_t propertyNameTableSize;
     uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes;
     uint32_t numberOfTypeCoverageCounters;
@@ -98,15 +95,6 @@ struct ImageHeader {
     uint32_t returnsIntoAdapters[numberOfAdapters];
     uint32_t stubOffsets[numberOfStubs];
 };
-
-static constexpr uint32_t maxPropertyNameIDInImage = 0xefff;
-
-struct ImagePropertyName {
-    uint64_t hash : 24;
-    uint64_t id : 16;
-    uint64_t identifier : 24;
-};
-static_assert(sizeof(ImagePropertyName) == sizeof(uint64_t));
 
 struct ImageRegExp {
     static uint32_t hashOf(const String& pattern, OptionSet<Yarr::Flags> flags) { return pattern.hash() * 31 + significantFlags(flags).toRaw(); }
@@ -183,7 +171,6 @@ public:
         m_numberOfProgramIdentifiers = number;
     }
     void setNumberOfProgramConstants(uint32_t number) { m_numberOfProgramConstants = number; }
-    void setPropertyPlaces(const PropertyPlaces* places) { m_propertyPlaces = places; }
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
     Vector<FunctionReportableSites> takeReportableSites() { return std::exchange(m_reportableSites, { }); }
@@ -209,7 +196,6 @@ private:
     };
     uint32_t m_numberOfProgramIdentifiers { 0 };
     const IdentifierIndices* m_programIdentifierIndices { nullptr };
-    const PropertyPlaces* m_propertyPlaces { nullptr };
     uint32_t m_numberOfProgramConstants { 0 };
     Vector<RegExpCode> m_regExps;
     unsigned m_numberOfRegExpsNotCompiled { 0 };
@@ -241,15 +227,12 @@ public:
     JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>);
 
     static Image* withShapes();
-    static Image* withPropertyNames();
     static Image& of(const ImageFunction&);
     std::optional<std::pair<String, bool>> quoteAt(const ImageFunction&, unsigned bytecodeOffset) const;
     String quoteText(uint64_t start, size_t length) const;
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
     uint32_t selectorNamed(VM&, const StringImpl&) const;
-    std::span<const ImagePropertyName> propertyNameTable() const { return { at<ImagePropertyName>(header().propertyNameTableOffset), header().propertyNameTableSize }; }
-    uint16_t propertyNameID(VM&, UniquedStringImpl*) const;
 
     const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + at<uint32_t>(header().functionStartsOffset)[function.index]; }
     size_t sizeOfCodeOf(const ImageFunction& function) const

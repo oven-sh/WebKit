@@ -232,55 +232,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(ReadSlotOrUndefined13) \
     v(ReadSlotOrUndefined14) \
     v(ReadSlotOrUndefined15) \
-    v(ReadNameInSlot0) \
-    v(ReadNameInSlot1) \
-    v(ReadNameInSlot2) \
-    v(ReadNameInSlot3) \
-    v(ReadNameInSlot4) \
-    v(ReadNameInSlot5) \
-    v(ReadNameInSlot6) \
-    v(ReadNameInSlot7) \
-    v(ReadNameInSlot8) \
-    v(ReadNameInSlot9) \
-    v(ReadNameInSlot10) \
-    v(ReadNameInSlot11) \
-    v(ReadNameInSlot12) \
-    v(ReadNameInSlot13) \
-    v(ReadNameInSlot14) \
-    v(ReadNameInSlot15) \
-    v(ReadNameInSlot16) \
-    v(ReadNameInSlot17) \
-    v(ReadNameInSlot18) \
-    v(ReadNameInSlot19) \
-    v(ReadNameInSlot20) \
-    v(ReadNameInSlot21) \
-    v(ReadNameInSlot22) \
-    v(ReadNameInSlot23) \
     v(PutById) \
-    v(WriteNameInSlot0) \
-    v(WriteNameInSlot1) \
-    v(WriteNameInSlot2) \
-    v(WriteNameInSlot3) \
-    v(WriteNameInSlot4) \
-    v(WriteNameInSlot5) \
-    v(WriteNameInSlot6) \
-    v(WriteNameInSlot7) \
-    v(WriteNameInSlot8) \
-    v(WriteNameInSlot9) \
-    v(WriteNameInSlot10) \
-    v(WriteNameInSlot11) \
-    v(WriteNameInSlot12) \
-    v(WriteNameInSlot13) \
-    v(WriteNameInSlot14) \
-    v(WriteNameInSlot15) \
-    v(WriteNameInSlot16) \
-    v(WriteNameInSlot17) \
-    v(WriteNameInSlot18) \
-    v(WriteNameInSlot19) \
-    v(WriteNameInSlot20) \
-    v(WriteNameInSlot21) \
-    v(WriteNameInSlot22) \
-    v(WriteNameInSlot23) \
     v(GetPrivateName) \
     v(CheckPrivateBrand) \
     v(PutPrivateName) \

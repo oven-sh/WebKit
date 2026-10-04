@@ -27,7 +27,7 @@ function doesNotApply(f, ...patterns) {
 function readsProperty(o) { return o.property; }
 noInline(readsProperty);
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const takesIntegralDouble = "int32-argument-from-integral-double", boxesAsInt32 = "boxes-integral-double-as-int32";
 const awkward = [0, -0, 1, 2, 3.5, -1, -1.5, 7, 100, NaN, Infinity, -Infinity, 2147483647, 2147483648, -2147483648, -2147483649, 4294967297, 1e300, "2", undefined, null, true];
 

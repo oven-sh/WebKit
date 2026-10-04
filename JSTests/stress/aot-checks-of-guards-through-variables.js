@@ -2,9 +2,6 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
 //@ runDefault("--useDollarVM=1")
 
@@ -15,12 +12,11 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTGuessedPlaces;
-const usesFamilies = isOn && !!options.useAOTFamilies;
+const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTFamilies;
 
 const guardRemarksOf = f => remarksOf(f).filter(remark => remark.includes("guard")).join(" ");
 const namesIn = (f, prefix) => [...new Set(remarksOf(f).filter(remark => remark.startsWith(prefix + ":")).map(remark => remark.slice(prefix.length + 1)))].sort().join(",");
-function checks(f, mustHaveGuards, withFamilies, withNames) {
+function checks(f, mustHaveGuards, expected) {
     if (!isOn)
         return;
     if (!remarksOf(f).includes("guards-over-whole-function")) {
@@ -28,11 +24,7 @@ function checks(f, mustHaveGuards, withFamilies, withNames) {
             throw new Error("no guards over the whole of " + f.name + ": " + remarksOf(f).join(" "));
         return;
     }
-    const hasFamilies = remarksOf(f).some(remark => remark.startsWith("guard-checks-family"));
-    if (hasFamilies !== usesFamilies)
-        throw new Error(f.name + (hasFamilies ? " has" : " lacks") + " guards that check a family: " + guardRemarksOf(f));
-    const expected = hasFamilies ? withFamilies : withNames;
-    for (const kind of expected.kinds || ["family", "family-of-known-cell", "byte", "name", "name-of-known-cell", "nothing"]) {
+    for (const kind of expected.kinds || ["family", "family-of-known-cell", "byte", "nothing"]) {
         const actual = namesIn(f, "guard-checks-" + kind);
         const wanted = (expected[kind] || []).slice().sort().join(",");
         if (actual !== wanted)
@@ -154,7 +146,8 @@ const tested = (function () {
             first = current.tag;
         const second = current.key;
         const third = current.child;
-        return first + "|" + second + "|" + third;
+        const fourth = current.sibling;
+        return first + "|" + second + "|" + third + "|" + fourth;
     }
     function walksList() {
         let result = "";
@@ -191,7 +184,7 @@ for (let i = 0; i < 200; ++i) {
     check(tested.readsAcrossAddition(), "tag" + i + "key" + i + "|child" + i + "|sibling" + i, "readsAcrossAddition");
     check(tested.readsAcrossUnguardedRead(plainHolder), "tag" + i + "|harmless|key" + i + "|child" + i, "readsAcrossUnguardedRead");
     check(tested.readsTwoVariables(), "tag" + i + "|key" + i + "b|child" + i + "|stored", "readsTwoVariables");
-    check(tested.readsOnBothPaths(i & 1), "tag" + i + "|key" + i + "|child" + i, "readsOnBothPaths");
+    check(tested.readsOnBothPaths(i & 1), "tag" + i + "|key" + i + "|child" + i + "|sibling" + i, "readsOnBothPaths");
     tested.setOther(a);
     check(tested.readsTwoVariables(), "tag" + i + "|key" + i + "|child" + i + "|sibling" + i, "readsTwoVariables, both hold one object");
     tested.storesThree("one", "two", "three");
@@ -228,20 +221,18 @@ for (let round = 0; round < 3; ++round) {
 }
 
 const first = { family: ["tag"], nothing: ["child", "key"] };
-const firstByName = { name: ["tag"], "name-of-known-cell": ["child", "key"] };
-checks(tested.readsThree, true, first, firstByName);
-checks(tested.readsFourAndOneAgain, true, { family: ["tag"], nothing: ["child", "key", "sibling", "tag"] }, { name: ["tag"], "name-of-known-cell": ["child", "key", "sibling"], nothing: ["tag"] });
-checks(tested.storesThree, true, first, firstByName);
-checks(tested.readsAcrossStoreToAnotherObject, true, { family: ["sibling", "tag"], nothing: ["child", "key"] }, { name: ["sibling", "tag"], "name-of-known-cell": ["child", "key"] });
-checks(tested.readsThroughLocalAcrossCall, true, { family: ["tag"], byte: ["key"], nothing: ["child"] }, { name: ["tag"], "name-of-known-cell": ["child", "key"] });
+checks(tested.readsThree, true, first);
+checks(tested.readsFourAndOneAgain, true, { family: ["tag"], nothing: ["child", "key", "sibling", "tag"] });
+checks(tested.storesThree, true, first);
+checks(tested.readsAcrossStoreToAnotherObject, true, { family: ["sibling", "tag"], nothing: ["child", "key"] });
+checks(tested.readsThroughLocalAcrossCall, true, { family: ["tag"], byte: ["key"], nothing: ["child"] });
 
 const again = { family: ["key", "tag"], nothing: ["child"] };
-const againByName = { name: ["key", "tag"], "name-of-known-cell": ["child"] };
-checks(tested.readsAcrossCall, true, again, againByName);
-checks(tested.readsAcrossStoreToVariable, true, again, againByName);
-checks(tested.readsAcrossStoreToAnotherVariable, true, again, againByName);
-checks(tested.readsAcrossUnguardedRead, true, again, againByName);
-checks(tested.readsOnBothPaths, true, { kinds: ["nothing", "byte"], nothing: ["child"] }, { kinds: ["nothing", "name-of-known-cell"], "name-of-known-cell": ["child"] });
-checks(tested.readsAcrossAddition, true, { family: ["child", "tag"], nothing: ["key", "sibling"] }, { name: ["child", "tag"], "name-of-known-cell": ["key", "sibling"] });
-checks(tested.readsTwoVariables, true, { family: ["key", "tag"], nothing: ["child", "sibling"] }, { name: ["key", "tag"], "name-of-known-cell": ["child", "sibling"] });
-checks(tested.walksList, false, { family: ["tag"], nothing: ["child", "key"] }, { name: ["tag"], "name-of-known-cell": ["child", "key"] });
+checks(tested.readsAcrossCall, true, again);
+checks(tested.readsAcrossStoreToVariable, true, again);
+checks(tested.readsAcrossStoreToAnotherVariable, true, again);
+checks(tested.readsAcrossUnguardedRead, true, again);
+checks(tested.readsOnBothPaths, true, { kinds: ["byte", "nothing"], nothing: ["child", "sibling"] });
+checks(tested.readsAcrossAddition, true, { family: ["child", "tag"], nothing: ["key", "sibling"] });
+checks(tested.readsTwoVariables, true, { family: ["key", "tag"], nothing: ["child", "sibling"] });
+checks(tested.walksList, false, { family: ["tag"], nothing: ["child", "key"] });

@@ -1,7 +1,7 @@
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -41,24 +41,19 @@ for (let i = 0; i < 100; i++) {
     check(closed, 1, "the iterator is closed once");
 }
 {
-    let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("operationAOTCountGuessedPlace:" + detail) || 0;
-    let before = [countOf("hit"), countOf("another-slot")];
+    let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("Family::guard:" + detail) || 0;
+    let exits = () => countOf("exits-with-another-number") + countOf("exits-without-number") + countOf("exits-not-a-cell") + countOf("exits-departed");
+    let before = [countOf("passes"), exits()];
     for (let i = 0; i < 100; i++)
-        readsBehindEleven(makesWithNamesOfObjectPrototype(i));
-    if (countOf("hit") > before[0]) {
-        check(countOf("hit") - before[0] >= 100, true, "guessed reads of a property behind names that get no place hit");
-        check(countOf("another-slot") - before[1], 0, "guessed reads of a property behind names that get no place that find it in another slot");
+        check(readsBehindEleven(makesWithNamesOfObjectPrototype(i)), i, "a property behind names that get no place, counted");
+    if (countOf("passes") > before[0]) {
+        check(countOf("passes") - before[0] >= 100, true, "the guard passes objects with names that get no place");
+        check(exits() - before[1], 0, "the guard fails on an object with names that get no place");
     }
-}
-{
-    let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("propertyNameIDIfKnown:" + detail) || 0;
-    let before = [countOf("known"), countOf("unknown")];
     let parsed = JSON.parse('{"valueOf":1,"toString":2}');
-    if (countOf("known") + countOf("unknown") > before[0] + before[1])
-        check(countOf("known") - before[0], 0, "names of Object.prototype that have an ID");
     check(parsed.valueOf + parsed.toString, 3, "parsed properties with the names of Object.prototype");
 }
-if (aotRemarks("readsReturn") && aotRemarks("readsReturn").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess"))) {
+if (aotRemarks("readsReturn") && jscOptions().useAOTFamilies && jscOptions().useAOTDataStubs) {
     let has = (name, remark) => aotRemarks(name).includes(remark);
     let applies = (name, remark) => {
         if (!has(name, remark))
@@ -69,11 +64,12 @@ if (aotRemarks("readsReturn") && aotRemarks("readsReturn").some(remark => remark
             throw new Error(remark + " applies to " + name + ": " + aotRemarks(name).join(" | "));
     };
     applies("readsReturn", "guessed-place:return");
-    applies("readsReturnAlone", "guessed-place:return");
+    applies("readsReturnAlone", "no-guess:no-family");
     doesNotApply("readsReturnAlone", "no-guess:disagree");
     doesNotApply("readsReturnAlone", "no-guess:same-names-born-in-another-module");
     doesNotApply("closesIterator", "guessed-place:return");
     doesNotApply("closesIterator", "no-guess:disagree");
+    doesNotApply("closesIterator", "no-guess:no-family");
     for (let name of ["constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "toString", "valueOf", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"])
         doesNotApply("readsNamesOfObjectPrototype", "guessed-place:" + name);
     applies("readsNamesOfObjectPrototype", "no-guess:no-shape");

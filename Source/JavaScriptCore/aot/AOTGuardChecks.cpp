@@ -16,14 +16,6 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-struct CheckedName {
-    bool operator==(const CheckedName&) const = default;
-
-    const Node* value;
-    uint16_t nameID;
-    uint8_t slot;
-};
-
 struct CheckedFamily {
     bool operator==(const CheckedFamily&) const = default;
 
@@ -54,9 +46,6 @@ struct CheckedValues {
 
     void intersectWith(const CheckedValues& other)
     {
-        names.removeAllMatching([&](const CheckedName& name) {
-            return !other.names.contains(name);
-        });
         families.removeAllMatching([&](CheckedFamily& checked) {
             const CheckedFamily* theirs = other.find(checked.value, checked.family);
             if (!theirs)
@@ -71,12 +60,8 @@ struct CheckedValues {
 
     bool holdsTheSameAs(const CheckedValues& other) const
     {
-        if (names.size() != other.names.size() || families.size() != other.families.size() || cells.size() != other.cells.size() || variables != other.variables)
+        if (families.size() != other.families.size() || cells.size() != other.cells.size() || variables != other.variables)
             return false;
-        for (auto& name : names) {
-            if (!other.names.contains(name))
-                return false;
-        }
         for (auto& checked : families) {
             if (!other.families.contains(checked))
                 return false;
@@ -90,7 +75,6 @@ struct CheckedValues {
 
     void noteEffect()
     {
-        names.shrink(0);
         families.removeAllMatching([](CheckedFamily& checked) {
             checked.isStale = true;
             return !Instance::hasByteForFamily(checked.family);
@@ -105,7 +89,6 @@ struct CheckedValues {
         }
     }
 
-    Vector<CheckedName> names;
     Vector<CheckedFamily> families;
     Vector<const Node*> cells;
     Vector<VariableRead> variables;
@@ -136,12 +119,12 @@ bool Lowering::preservesLayouts(Node* node)
     case NodeKind::Narrow:
         return !node->fieldOrigin;
     case NodeKind::Guard:
-        return node->guardKind != GuardKind::Whole || node->checksName();
+        return node->guardKind != GuardKind::Whole || node->checksFamily();
     case NodeKind::Bytecode:
         break;
     }
     if (node->guard)
-        return node->guard->checksName();
+        return node->guard->checksFamily();
     switch (node->opcode) {
     case op_check_tdz:
     case op_to_this:
@@ -356,7 +339,7 @@ void Lowering::chooseChecksOfGuards()
         for (Node* node : block->nodes) {
             if (node->isElided)
                 continue;
-            if (!node->checksName() || node->guardKind != GuardKind::Whole) {
+            if (!node->checksFamily() || node->guardKind != GuardKind::Whole) {
                 if (!preservesLayouts(node))
                     checked.noteEffect();
                 if (!preservesVariables(node))
@@ -381,22 +364,17 @@ void Lowering::chooseChecksOfGuards()
                 checked.cells.append(value);
             GuardCheck check = GuardCheck::None;
             ASCIILiteral remark = "guard-checks-nothing"_s;
-            if (uint16_t family = node->checkedPlace.family) {
-                if (const CheckedFamily* known = checked.find(value, family)) {
-                    if (known->isStale) {
-                        check = GuardCheck::Byte;
-                        remark = "guard-checks-byte"_s;
-                        checked.noteCleanFamily(family);
-                    }
-                } else {
-                    check = GuardCheck::Family;
-                    remark = isKnownCell ? "guard-checks-family-of-known-cell"_s : "guard-checks-family"_s;
-                    checked.families.append(CheckedFamily { value, family, false });
+            uint16_t family = node->checkedPlace.family;
+            if (const CheckedFamily* known = checked.find(value, family)) {
+                if (known->isStale) {
+                    check = GuardCheck::Byte;
+                    remark = "guard-checks-byte"_s;
+                    checked.noteCleanFamily(family);
                 }
-            } else if (CheckedName name { value, node->checkedPlace.nameID, node->checkedPlace.slot }; !checked.names.contains(name)) {
-                check = GuardCheck::Name;
-                remark = isKnownCell ? "guard-checks-name-of-known-cell"_s : "guard-checks-name"_s;
-                checked.names.append(name);
+            } else {
+                check = GuardCheck::Family;
+                remark = isKnownCell ? "guard-checks-family-of-known-cell"_s : "guard-checks-family"_s;
+                checked.families.append(CheckedFamily { value, family, false });
             }
             if (!chooses)
                 continue;

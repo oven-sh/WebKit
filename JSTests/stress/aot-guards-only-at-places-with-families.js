@@ -1,10 +1,10 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTPropertyNameIDs=0", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTPropertyNameIDs=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTPropertyNameIDs=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTPropertyNameIDs=0", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTPropertyNameIDs=0", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTPropertyNameIDs=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -14,12 +14,9 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const count = name => typeof aotOperationCount === "function" && aotOperationCount(name) || 0;
-const guesses = !!remarksOf(check) && !!options.useAOTGuessedPlaces && !!options.useAOTDataStubs;
-if (remarksOf(check))
-    check("useAOTPropertyNameIDs" in options, true, "the option exists");
-const usesNameIDs = !("useAOTPropertyNameIDs" in options) || !!options.useAOTPropertyNameIDs;
-const hasTwins = guesses && !!options.useAOTGuardsOverWholeFunctions;
-const hasFamilies = hasTwins && !!options.useAOTFamilies;
+const isCompiled = !!remarksOf(check) && !!options.useAOTDataStubs;
+const guesses = isCompiled && !!options.useAOTFamilies;
+const hasGuards = guesses && !!options.useAOTGuardsOverWholeFunctions;
 
 const kept = [];
 function keep(o) { kept.push(o); if (kept.length > 64) kept.length = 0; return o; }
@@ -57,7 +54,6 @@ for (let i = 0; i < 300; ++i) {
     runAll(makeItem, i);
     check(readsOfTwoShapes(makesShort(i), makesLong(i + 1), i & 1 ? makesShort(i + 2) : makesLong(i + 2)), 3 * i + 3, "a name that two shapes hold in one slot");
 }
-const guessedBefore = count("operationAOTCountGuessedPlace") + count("operationAOTCountGuessedStore");
 for (let i = 0; i < 100; ++i) {
     runAll(which => build("child", which + 2, "key", which + 1, "tag", which), i);
     runAll(which => Object.defineProperty(makeItem(which), "key", { get() { return this.tag + 1; }, set(value) { }, configurable: true }), 0);
@@ -80,26 +76,20 @@ function has(f, remark, expected) {
     check(remarksOf(f).includes(remark), expected, f.name + (expected ? " lacks " : " has ") + remark + ": " + remarksOf(f).join(" | ") + "; it is there");
 }
 const startsWith = (f, prefix) => remarksOf(f).some(remark => remark.startsWith(prefix));
-if (guesses) {
+if (isCompiled) {
     for (const f of [readsThreeOfFamily, storesThreeOfFamily]) {
-        has(f, "guards-over-whole-function", hasTwins && (usesNameIDs || hasFamilies));
-        check(startsWith(f, "guard-checks-family"), hasFamilies, f.name + " has guards that compare the family");
-        check(startsWith(f, "guard-checks-name"), hasTwins && !hasFamilies && usesNameIDs, f.name + " has guards that compare a name");
+        has(f, "guards-over-whole-function", hasGuards);
+        check(startsWith(f, "guard-checks-family"), hasGuards, f.name + " has guards that compare the family");
+        check(startsWith(f, "guessed-family:"), guesses, f.name + " has places with a family");
     }
-    has(readsOfTwoShapes, "guards-over-whole-function", hasTwins && usesNameIDs);
-    has(readsOfTwoShapes, "guessed-place:shared", usesNameIDs);
+    has(readsThreeOfFamily, "family-guards-read:tag", hasGuards);
+    has(storesThreeOfFamily, "family-guards-store:tag", hasGuards);
+    has(readsOfTwoShapes, "guards-over-whole-function", false);
+    has(readsOfTwoShapes, "guessed-place:shared", false);
+    has(readsOfTwoShapes, "no-guess:no-family", guesses);
     has(readsOneOfFamily, "guards-over-whole-function", false);
-    for (const f of [readsThreeOfFamily, storesThreeOfFamily, readsOneOfFamily, readsOfTwoShapes]) {
-        if (usesNameIDs)
-            continue;
-        check(startsWith(f, "guessed-place-read") || startsWith(f, "guessed-place-store"), false, f.name + " takes a guessed place outside a guard");
-        check(startsWith(f, "guard-checks-name"), false, f.name + " has guards that compare a name");
-    }
-    check(startsWith(readsOneOfFamily, "guessed-place-read"), usesNameIDs, "readsOneOfFamily takes a guessed place outside a guard");
+    has(readsOneOfFamily, "guessed-place:key", guesses);
+    has(readsOneOfFamily, "calls:GetById", true);
 }
-if (guesses && options.useAOTOperationCounters && !options.validateAOTInferredTypes) {
-    check(guessedBefore > 0, usesNameIDs, "comparisons of names are counted");
-    if (!usesNameIDs)
-        check(count("operationAOTCountGuessedPlace") + count("operationAOTCountGuessedStore"), 0, "comparisons of names");
-    check(count("operationAOTCountFamilyGuard") > 0, hasFamilies, "comparisons of families are counted");
-}
+if (isCompiled && options.useAOTOperationCounters)
+    check(count("operationAOTCountFamilyGuard") > 0, hasGuards, "comparisons of families are counted");

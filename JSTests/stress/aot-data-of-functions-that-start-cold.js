@@ -19,7 +19,7 @@ function readsAfterRecursion(o, depth) {
     return o.value;
 }
 
-const countsOperations = typeof aotOperationCount === "function" && aotOperationCount("operationAOTGetById") !== null && isAOTCompiled(reads) && (aotRemarks("reads") || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const countsOperations = typeof aotOperationCount === "function" && aotOperationCount("operationAOTGetById") !== null && isAOTCompiled(reads) && (aotRemarks("reads") || []).includes("calls:GetById");
 function read() {
     if (!countsOperations)
         return [0, 0];

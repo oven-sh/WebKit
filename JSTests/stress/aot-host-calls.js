@@ -180,7 +180,7 @@ doesNotApply(constructsHostFunction, directCall, directConstruct);
 doesNotApply(constructsDateOfNine, directConstruct);
 for (let f of [shadowed, shadowedConstructor, ofUnknownReceiver, callsWithNone, callsWithOne, callsWithTwo, callsWithFour, callsMethod, callsInTailPosition, callsAndCatches])
     doesNotApply(f, directCall, directConstruct);
-const usesDataStubs = (remarksOf(callsMethod) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
+const usesDataStubs = (remarksOf(callsMethod) || []).includes("calls:GetById");
 for (let f of usesDataStubs ? [callsWithNone, callsWithOne, callsWithTwo, callsWithFour, callsMethod, callsInTailPosition, callsAndCatches] : [])
     applies(f, cachedCall);
 
