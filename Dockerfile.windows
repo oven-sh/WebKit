@@ -17,8 +17,7 @@
 # Differences from the native Windows build:
 #   - ICU is cross-compiled from source with clang's GNU driver + llvm-ar
 #     instead of MSBuild + the ICU Visual Studio solution. Same version
-#     (icu/source.json), same /MT static CRT, same U_STATIC_IMPLEMENTATION, same
-#     statically-embedded 32 MB data table.
+#     (icu/source.json), same /MT static CRT, same U_STATIC_IMPLEMENTATION.
 #   - The "patch the cmake .bat files" workaround is not needed: cmake on a
 #     Linux host generates POSIX shell commands for custom commands.
 
@@ -194,52 +193,25 @@ RUN for pair in "x86_64 x64" "aarch64 arm64"; do \
       file /tmp/t.exe | grep -q "PE32+" && rm -f /tmp/t.c /tmp/t.exe; \
     done
 
-# What the ICU stage needs that does not depend on the lane, so that no lane downloads or rebuilds it: the tools
-# for icu/compress-data.ts, ICU's sources, and ICU's tools for this container (stage 1 of the two-stage build
-# described below).
-#
-# The tools: the zstd CLI (built from source: noble's apt has 1.5.5, 1.5.7 matches Bun's vendored decoder), node
-# (>= 23.6 for type stripping), and patch for the udata.cpp hook. zstd's lib/ sources stay, at /zstd/lib: jsc.exe builds
-# the decoder from them to read the repacked data (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
-ARG ZSTD_VERSION=1.5.7
+# Node, for ICU's data (bun/data/icu-data.ts there; >= 22.6 for type stripping).
 ARG NODE_VERSION=24.16.0
-RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp && \
-    make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=clang-${LLVM_VERSION} && \
-    cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
-    mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h && \
-    rm -rf /tmp/zstd-${ZSTD_VERSION} && \
-    zstd --version && \
-    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
-      | tar -xJ -C /usr/local --strip-components=1 && \
-    node --version
+ARG NODE_SHA256=d804845d34eddc21dc1092b519d643ef40b1f58ec5dec5c22b1f4bd8fabde6c9
+ADD --checksum=sha256:${NODE_SHA256} https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz /tmp/node.tar.xz
+RUN tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && rm /tmp/node.tar.xz && node --version
 
+# ICU: its sources (/icu.tgz, which the lanes build the libraries from), and what icu/host.sh makes of them, which is
+# the same for every lane: its data (/icudt.dat) and what a cross build asks for (/icu-host).
 # Which ICU: icu/source.json, by way of lanes.mjs.
-ARG ICU_VERSION
+ARG ICU_COMMIT
 ARG ICU_SHA256
-ADD --checksum=sha256:${ICU_SHA256} \
-    https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu-src.tgz
-RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz
-
-# Stage 1: host build — only the tools matter.
-RUN mkdir -p /icu-host && cd /icu-host && \
-    CC=clang CXX=clang++ /icu-src/source/runConfigureICU Linux \
-      --enable-static --disable-shared --disable-samples --disable-tests --disable-extras && \
-    make -j$(nproc) && test -x bin/pkgdata && test -x bin/icupkg
+ARG ICU_DATA_SHA256
+ADD --checksum=sha256:${ICU_SHA256} https://github.com/oven-sh/icu/archive/${ICU_COMMIT}.tar.gz /icu.tgz
+COPY icu/host.sh /icu-bun/host.sh
+RUN CC=clang CXX=clang++ ICU_DATA_SHA256=${ICU_DATA_SHA256} /icu-bun/host.sh
 
 # ───────────────────────────────────────────────────────────────────────────
-# ICU — two-stage cross build. Host tools first (icupkg/pkgdata/genccode run
-# on the build machine), then the target build with clang's GNU driver
-# producing COFF objects archived by llvm-ar. The data table follows the same
-# two transformations the Linux artifacts get:
-#   1. build-icu.ps1's STAGE 1b filter (drop converters/translit/stringprep/
-#      confusables/unames, which bun never uses): ~32 MB → ~25 MB, matching the
-#      native windows sicudt.lib.
-#   2. icu/compress-data.ts per-item zstd repack (same script as Dockerfile /
-#      Dockerfile.musl, in COFF mode): ~24 MB → ~11 MB. udata.cpp is patched
-#      with the weak bun_icu_maybe_decompress hook so bun decompresses items
-#      lazily on first use, and so does jsc.exe (jsc.cpp defines the hook too);
-#      ICU's own tools leave the hook null and only read the kept-raw items.
+# ICU — cross-compiled, with clang's GNU driver producing COFF objects archived by llvm-ar. ICU's configure then wants
+# a build for this container to take its tools from, though none of them is run to build these two libraries.
 # ───────────────────────────────────────────────────────────────────────────
 FROM base AS build_icu
 
@@ -248,42 +220,18 @@ ARG WIN_TRIPLE_ARCH
 ARG WEBKIT_RELEASE_TYPE
 ARG ICU_MARCH_FLAG
 ARG ICU_VERSION
+ARG ICU_CPPFLAGS
 ARG LLVM_VERSION
 
 COPY icu/ /icu-bun/
 
-# The udata.cpp patch adds the weak per-item decompression hook (see the
-# stage comment above); it lands in the cross-built sicuuc.lib. The host tools in `base` were built without it, which
-# is the same thing: the hook is null in them either way.
-RUN patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch
-
-# Filter the prebuilt data package the same way the native build does
-# (build-icu.ps1 STAGE 1b): drop charset converters, transliteration rules,
-# stringprep profiles, confusables, and character names. Bun has zero
-# ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU is removed in bun's
-# TextEncodingRegistry.cpp), and this is what keeps the native sicudt.lib at
-# ~24 MB instead of ~32 MB. Most of rbnf/ goes too, but root/ja/zh/zh_Hant stay: ICU
-# reaches those on its own through the algorithmic numbering systems in
-# numberingSystems.res (see the note and the staleness guard in ./Dockerfile).
-# pkgdata packages data/in/icudt*l.dat verbatim in a cross build, so filtering it
-# here is equivalent to the native flow.
-RUN set -eu && \
-    DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
-    FILTERED="${DAT%.dat}-filtered.dat" && \
-    /icu-host/bin/icupkg -l "$DAT" | \
-      grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | \
-      grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > /tmp/icu-rm.lst && \
-    test -s /tmp/icu-rm.lst && \
-    /icu-host/bin/icupkg --auto_toc_prefix -r /tmp/icu-rm.lst "$DAT" "$FILTERED" && \
-    mv "$FILTERED" "$DAT" && \
-    ls -la "$DAT" && \
-    test "$(stat -c%s "$DAT")" -lt 27000000
+RUN mkdir -p /icu-src && tar -xf /icu.tgz -C /icu-src --strip-components=1 && rm /icu.tgz
 
 # ICU's configure for non-GNU compilers insists that `link` on PATH is MS
 # link.exe; coreutils' link(1) trips the check. Shadow it with lld-link.
 RUN printf '#!/bin/sh\nexec /usr/local/bin/lld-link "$@"\n' > /usr/local/bin/link && chmod +x /usr/local/bin/link
 
-# Stage 2: cross build. clang's GNU driver targeting *-pc-windows-msvc gives
+# clang's GNU driver targeting *-pc-windows-msvc gives
 # autoconf a Unix-style command line while emitting MSVC-ABI COFF objects.
 #   - ac_cv_c_compiler_gnu=yes    -> picks the mh-mingw makefile fragment
 #                                    (GNU-style flags) instead of mh-msys-msvc
@@ -298,40 +246,28 @@ RUN mkdir -p /icu-build && cd /icu-build && \
     IMSVC="-isystem /winsdk/crt/include -isystem /winsdk/sdk/include/ucrt -isystem /winsdk/sdk/include/um -isystem /winsdk/sdk/include/shared" && \
     DBG=""; if [ "${WEBKIT_RELEASE_TYPE}" = "Debug" ]; then DBG="-D_DEBUG"; fi && \
     export CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib && \
+    export CPPFLAGS="${ICU_CPPFLAGS}" && \
     export CFLAGS="--target=${WIN_TRIPLE_ARCH}-pc-windows-msvc ${IMSVC} -O2 -DU_STATIC_IMPLEMENTATION -D_MT ${DBG} ${ICU_MARCH_FLAG}" && \
     export CXXFLAGS="$CFLAGS" && \
     export LDFLAGS="--target=${WIN_TRIPLE_ARCH}-pc-windows-msvc -fuse-ld=lld" && \
-    /icu-src/source/configure --host=${WIN_TRIPLE_ARCH}-w64-mingw32 \
+    /icu-src/icu4c/source/configure --host=${WIN_TRIPLE_ARCH}-w64-mingw32 \
       --with-cross-build=/icu-host \
       --enable-static --disable-shared --disable-samples --disable-tests \
-      --disable-extras --disable-tools --with-data-packaging=static \
-      --prefix=/icu-out \
+      --disable-extras --disable-tools --disable-icuio --disable-layoutex \
       ac_cv_c_compiler_gnu=yes ac_cv_cxx_compiler_gnu=yes && \
     sed -i 's/-std=c++11/-std=c++17/' icudefs.mk && \
-    make -j$(nproc) THREADSCPPFLAGS= THREADSCFLAGS= THREADSCXXFLAGS= && \
-    test -f lib/libsicuuc.a && test -f lib/libsicuin.a && test -f lib/libsicudt.a
+    mkdir -p lib && \
+    make -j$(nproc) -C common THREADSCPPFLAGS= THREADSCFLAGS= THREADSCXXFLAGS= && \
+    make -j$(nproc) -C i18n THREADSCPPFLAGS= THREADSCFLAGS= THREADSCXXFLAGS= && \
+    test -f lib/libsicuuc.a && test -f lib/libsicuin.a
 
-# Stage the libs under the names CMake's FindICU and Bun's build expect.
-# sicudt.lib is produced by icu/compress-data.ts in COFF mode from the
-# filtered data/in package: per-item zstd frames + the trained dictionary
-# (icudt<major>_dat, bun_icu_zstd_dict, bun_icu_zstd_dict_size — already
-# unprefixed, so no llvm-objcopy rename is needed). The libsicudt.a pkgdata
-# produced during the cross make is ignored. Sanity-check the result is in
-# the expected ballpark (the filtered-but-uncompressed table would be ~24 MB,
-# an empty/stub one ~12 KB; the repacked one lands around 11 MB).
+# Stage the libs under the names CMake's FindICU and Bun's build expect, with the data, which `base` made, as the third.
 RUN mkdir -p /icu-out/lib /icu-out/include && \
-    cp -r /icu-src/source/common/unicode /icu-out/include/ && \
-    cp /icu-src/source/i18n/unicode/*.h /icu-out/include/unicode/ && \
+    (cd /icu-src/icu4c/source && /icu-bun/headers.sh /icu-out/include/unicode ${ICU_CPPFLAGS}) && \
     cp /icu-build/lib/libsicuuc.a /icu-out/lib/sicuuc.lib && \
     cp /icu-build/lib/libsicuin.a /icu-out/lib/sicuin.lib && \
-    DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
-    node --experimental-strip-types /icu-bun/compress-data.ts "$DAT" /icu-out/lib/sicudt.lib \
-      --skip /icu-bun/keep-raw.txt --icupkg /icu-host/bin/icupkg \
-      --cc "clang --target=${WIN_TRIPLE_ARCH}-pc-windows-msvc" --ar llvm-ar --obj-format coff && \
-    SIZE=$(stat -c%s /icu-out/lib/sicudt.lib) && echo "sicudt.lib: ${SIZE} bytes" && \
-    test "$SIZE" -gt 8000000 && test "$SIZE" -lt 16000000 && \
-    llvm-nm-${LLVM_VERSION} /icu-out/lib/sicudt.lib | grep -q " R icudt${ICU_VERSION%%.*}_dat" && \
-    llvm-nm-${LLVM_VERSION} /icu-out/lib/sicudt.lib | grep -q " R bun_icu_zstd_dict"
+    /icu-bun/embed-data.sh coff ${ICU_VERSION%%.*} /icu-out/lib/sicudt.lib clang --target=${WIN_TRIPLE_ARCH}-pc-windows-msvc && \
+    llvm-nm-${LLVM_VERSION} /icu-out/lib/sicudt.lib | grep -q " R icudt${ICU_VERSION%%.*}_dat"
 
 # ───────────────────────────────────────────────────────────────────────────
 # WebKit (JSCOnly)
@@ -427,7 +363,6 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DICU_DATA_LIBRARY_RELEASE=/icu-out/lib/sicudt.lib \
     -DICU_I18N_LIBRARY_RELEASE=/icu-out/lib/sicuin.lib \
     -DICU_UC_LIBRARY_RELEASE=/icu-out/lib/sicuuc.lib \
-    -DBUN_ICU_ZSTD_SOURCE_DIR=/zstd/lib \
     "-DCMAKE_EXE_LINKER_FLAGS=${EXE_LD_FLAGS}" \
     "-DCMAKE_C_FLAGS=--target=${WIN_TRIPLE_ARCH}-pc-windows-msvc /Zi /DU_STATIC_IMPLEMENTATION ${MARCH_FLAG} ${SAN_FLAGS}" \
     "-DCMAKE_CXX_FLAGS=--target=${WIN_TRIPLE_ARCH}-pc-windows-msvc /Zi /DU_STATIC_IMPLEMENTATION ${MARCH_FLAG} ${SAN_FLAGS} /clang:-fno-c++-static-destructors" \
