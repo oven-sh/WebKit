@@ -97,6 +97,10 @@ static ALWAYS_INLINE void threadSelfRestrict()
 #elif CPU(ARM64)
 #include <pthread.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+void bunThreadSelfRestrictRwxToRw();
+#endif
+
 template <MemoryRestriction restriction>
 static ALWAYS_INLINE bool threadSelfRestrictSupported()
 {
@@ -111,9 +115,13 @@ template <MemoryRestriction restriction>
 static ALWAYS_INLINE void threadSelfRestrict()
 {
     ASSERT(g_jscConfig.useFastJITPermissions);
-    if constexpr (restriction == MemoryRestriction::kRwxToRw)
+    if constexpr (restriction == MemoryRestriction::kRwxToRw) {
+#if USE(BUN_JSC_ADDITIONS)
+        bunThreadSelfRestrictRwxToRw();
+#else
         pthread_jit_write_protect_np(false);
-    else if constexpr (restriction == MemoryRestriction::kRwxToRx)
+#endif
+    } else if constexpr (restriction == MemoryRestriction::kRwxToRx)
         pthread_jit_write_protect_np(true);
     else
         RELEASE_ASSERT_NOT_REACHED();

@@ -72,9 +72,78 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <wtf/spi/cocoa/MachVMSPI.h>
 #endif
 
+#if OS(DARWIN) && CPU(ARM64) && USE(BUN_JSC_ADDITIONS)
+#include <setjmp.h>
+#include <signal.h>
+#include <unistd.h>
+#endif
+
 #if USE(INLINE_JIT_PERMISSIONS_API)
 #include <wtf/darwin/WeakLinking.h>
 WTF_WEAK_LINK_FORCE_IMPORT(be_memory_inline_jit_restrict_with_witness_supported);
+#endif
+
+#if OS(DARWIN) && CPU(ARM64) && USE(BUN_JSC_ADDITIONS)
+namespace {
+
+sigjmp_buf jitWriteProtectJumpBuffer;
+
+void handleJITWriteProtectTrap(int)
+{
+    siglongjmp(jitWriteProtectJumpBuffer, 1);
+}
+
+void performInitialJITWriteProtectTransition()
+{
+    struct sigaction retryAction { };
+    struct sigaction previousAction { };
+    retryAction.sa_handler = handleJITWriteProtectTrap;
+    sigemptyset(&retryAction.sa_mask);
+    if (sigaction(SIGTRAP, nullptr, &previousAction)) {
+        pthread_jit_write_protect_np(false);
+        return;
+    }
+
+    volatile sig_atomic_t retryCount = 0;
+retry:
+    if (sigsetjmp(jitWriteProtectJumpBuffer, 1)) {
+        sigaction(SIGTRAP, &previousAction, nullptr);
+        retryCount = retryCount + 1;
+        if (retryCount > 10) {
+            pthread_jit_write_protect_np(false);
+            return;
+        }
+        usleep(10);
+        goto retry;
+    }
+
+    if (sigaction(SIGTRAP, &retryAction, nullptr)) {
+        pthread_jit_write_protect_np(false);
+        return;
+    }
+    pthread_jit_write_protect_np(false);
+    sigaction(SIGTRAP, &previousAction, nullptr);
+}
+
+} // anonymous namespace
+
+void bunThreadSelfRestrictRwxToRw()
+{
+    if (__builtin_available(macOS 27.0, *)) {
+        static std::once_flag firstTransition;
+        bool performedInitialTransition = false;
+        std::call_once(firstTransition, [&] {
+            performedInitialTransition = true;
+            // macOS 27 can intermittently raise SIGTRAP instead of completing
+            // the first JIT write transition during single-threaded JSC startup.
+            // FIXME(oven-sh/bun#42687): Remove the bounded retry after macOS fixes it.
+            performInitialJITWriteProtectTransition();
+        });
+        if (performedInitialTransition)
+            return;
+    }
+    pthread_jit_write_protect_np(false);
+}
 #endif
 
 namespace JSC {
