@@ -35,5 +35,5 @@
 // the first part.
 extern "C" void mi_on_thread_idle(void) noexcept
 {
-    mi_theap_collect(mi_theap_get_default(), /* force */ true);
+    mi_theap_collect(mi_theap_get_default(), /* force */ false);
 }

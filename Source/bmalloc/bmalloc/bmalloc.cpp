@@ -137,7 +137,8 @@ void scavengeThisThreadOnIdle()
 #if BUSE(EXTERNAL_MIMALLOC)
     mi_on_thread_idle();
 #else
-    scavengeThisThread(/* force */ true);
+    // Not forced: that would also purge what every other thread just freed.
+    scavengeThisThread(/* force */ false);
 #endif
 }
 
