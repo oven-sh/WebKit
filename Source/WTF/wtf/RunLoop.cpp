@@ -104,16 +104,26 @@ RunLoop* RunLoop::webIfExists()
 
 Ref<RunLoop> RunLoop::create(ASCIILiteral threadName, ThreadType threadType, ThreadQOS qos)
 {
+    RefPtr<RunLoop> runLoop = tryCreate(threadName, threadType, qos);
+    RELEASE_ASSERT(runLoop);
+    return runLoop.releaseNonNull();
+}
+
+RefPtr<RunLoop> RunLoop::tryCreate(ASCIILiteral threadName, ThreadType threadType, ThreadQOS qos)
+{
     RefPtr<RunLoop> runLoop;
     BinarySemaphore semaphore;
-    Thread::create(threadName, [&] SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE {
+    RefPtr<Thread> thread = Thread::tryCreate(threadName, [&] SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE {
         auto& current = RunLoop::currentSingleton();
         runLoop = &current;
         semaphore.signal();
         current.run();
-    }, threadType, qos)->detach();
+    }, threadType, qos);
+    if (!thread)
+        return nullptr;
+    thread->detach();
     semaphore.wait();
-    return runLoop.releaseNonNull();
+    return runLoop;
 }
 
 bool RunLoop::isCurrent() const
