@@ -208,6 +208,59 @@ size_t JITWorklist::totalOngoingCompilations(const AbstractLocker&) const
     return total;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// A collector that stops the world parks the compiler threads that read its heap: the ones that
+// compile a plan of its VM. Upstream parks every thread, under one process-wide lock, so in a
+// process with many VMs each heap's stop waits for every other heap's stop and for every other
+// VM's compile to reach a safepoint. The per-VM sets are disjoint, so no lock orders them:
+// - a thread that compiles a plan of this VM is parked by taking its m_rightToRun, which it gives
+//   up at a safepoint or at the end of the plan, and it stays marked so that poll() does not hand
+//   it another plan while the collector holds the lock;
+// - an idle thread is not parked, and poll() does not hand it a plan of this VM (m_suspendedVMs);
+// - a thread that compiles a plan of another VM never touches this heap.
+void JITWorklist::suspendThreadsForVM(VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+{
+    Vector<Ref<JITWorklistThread>, 4> threads;
+    {
+        Locker locker { *m_lock };
+        auto result = m_suspendedVMs.add(&vm);
+        RELEASE_ASSERT(result.isNewEntry);
+        for (auto& thread : m_threads) {
+            if (!thread->m_plan || thread->m_plan->vm() != &vm)
+                continue;
+            RELEASE_ASSERT(!thread->m_suspendedByVM);
+            thread->m_suspendedByVM = &vm;
+            threads.append(thread.copyRef());
+        }
+    }
+    // Not under m_lock: a thread takes m_lock at the end of its plan, before it releases m_rightToRun.
+    for (auto& thread : threads)
+        thread->m_rightToRun.lock();
+}
+
+void JITWorklist::resumeThreadsForVM(VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+{
+    Vector<Ref<JITWorklistThread>, 4> threads;
+    {
+        Locker locker { *m_lock };
+        bool wasSuspended = m_suspendedVMs.remove(&vm);
+        RELEASE_ASSERT(wasSuspended);
+        for (auto& thread : m_threads) {
+            if (thread->m_suspendedByVM != &vm)
+                continue;
+            thread->m_suspendedByVM = nullptr;
+            threads.append(thread.copyRef());
+        }
+        // The plans poll() passed over while this VM was suspended, and the threads it kept idle, can go again.
+        for (unsigned tier = 0; tier < static_cast<unsigned>(JITPlan::Tier::Count); ++tier) {
+            if (!m_queues[tier].isEmpty())
+                wakeThreads(locker, tier);
+        }
+    }
+    for (auto& thread : threads)
+        thread->m_rightToRun.unlock();
+}
+#else
 void JITWorklist::suspendAllThreads() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     m_suspensionLock.lock();
@@ -226,6 +279,7 @@ void JITWorklist::resumeAllThreads() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
         thread->m_rightToRun.unlock();
     m_suspensionLock.unlock();
 }
+#endif
 
 auto JITWorklist::compilationState(VM& vm, JITCompilationKey key) -> State
 {
@@ -342,8 +396,17 @@ void JITWorklist::removeDeadPlans(VM& vm)
         return false;
     });
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Only a thread that suspendThreadsForVM parked can be at a safepoint of this VM. The mark is
+    // read under m_lock, see visitWeakReferences().
+    Locker locker { *m_lock };
+    for (auto& thread : m_threads) {
+        if (thread->m_suspendedByVM != &vm)
+            continue;
+#else
     // No locking needed for this part, see comment in visitWeakReferences().
     for (auto& thread : m_threads) {
+#endif
         thread->m_rightToRun.assertIsOwner();
         Safepoint* safepoint = thread->m_safepoint;
         if (!safepoint)
@@ -383,7 +446,21 @@ void JITWorklist::visitWeakReferences(Visitor& visitor)
                 continue;
             entry.value->checkLivenessAndVisitChildren(visitor);
         }
+#if USE(BUN_JSC_ADDITIONS)
+        // Only a thread that suspendThreadsForVM parked can be at a safepoint of this VM. Its
+        // m_safepoint is protected by its m_rightToRun, which we hold. The mark itself is written
+        // by other VMs' collectors for their threads, so it is read under m_lock.
+        for (auto& thread : m_threads) {
+            if (thread->m_suspendedByVM != vm)
+                continue;
+            thread->m_rightToRun.assertIsOwner();
+            Safepoint* safepoint = thread->m_safepoint;
+            if (safepoint && safepoint->vm() == vm)
+                safepoint->checkLivenessAndVisitChildren(visitor);
+        }
+#endif
     }
+#if !USE(BUN_JSC_ADDITIONS)
     // This loop doesn't need locking because:
     // (1) no new threads can be added to m_threads. Hence, it is immutable and needs no locks.
     // (2) JITWorklistThread::m_safepoint is protected by that thread's m_rightToRun which we must be
@@ -394,6 +471,7 @@ void JITWorklist::visitWeakReferences(Visitor& visitor)
         if (safepoint && safepoint->vm() == vm)
             safepoint->checkLivenessAndVisitChildren(visitor);
     }
+#endif
 }
 template void JITWorklist::visitWeakReferences(AbstractSlotVisitor&);
 template void JITWorklist::visitWeakReferences(SlotVisitor&);
