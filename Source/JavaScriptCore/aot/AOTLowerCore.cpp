@@ -1115,6 +1115,8 @@ void Lowering::verifyInferredType(Node* node, LValue value)
 {
     if (!node->wasInferredUnreachable && (!node->type || isSubtype(TAll, node->type)))
         return;
+    if (node->kind == NodeKind::Argument && node->reg == virtualRegisterForArgumentIncludingThis(0) && !m_graph.convention().usesThis)
+        return;
     Type expected = node->wasInferredUnreachable ? TNone : node->type;
     if (const KnownFunction* known = programFunctions() ? programFunctions()->function(functionNumberOf(expected)) : nullptr; known && known->summary && known->summary->takesScopeAsCallee)
         expected = (expected & ~TFunction) | TOtherObject;
@@ -1145,6 +1147,15 @@ void Lowering::verifyInferredType(Node* node, LValue value)
     Node* place = node;
     for (unsigned i = m_nodeIndex; place->kind != NodeKind::Bytecode && i < m_block->nodes.size(); ++i)
         place = m_block->nodes[i];
+    if (node->kind == NodeKind::Argument && node->reg.isArgument()) {
+        BasicBlock* block = m_block;
+        for (unsigned hops = 0; place->kind != NodeKind::Bytecode && block->successors.size() == 1 && hops < 8; ++hops) {
+            block = block->successors[0];
+            for (unsigned i = 0; place->kind != NodeKind::Bytecode && i < block->nodes.size(); ++i)
+                place = block->nodes[i];
+        }
+        m_graph.remark(place->kind == NodeKind::Bytecode ? "verifies-argument"_s : "cannot-verify-argument"_s, String::number(node->reg.toArgument()));
+    }
     m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
     m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected >> 64));
     m_graph.wideIntegerConstants.add(static_cast<int64_t>(std::bit_cast<uintptr_t>(variable.scope)));
@@ -1616,7 +1627,7 @@ void Lowering::lowerNode(Node* node)
             bool isAlwaysPassed = !mayBe(node->type, TUndefined);
             if (isAlwaysPassed)
                 m_graph.remark("argument-is-always-passed"_s, String::number(index + 1));
-            setJSValue(node, isAlwaysPassed ? argumentPassed(index) : argumentPassedOrUndefined(index));
+            setJSValue(node, isAlwaysPassed && !Options::validateAOTInferredTypes() ? argumentPassed(index) : argumentPassedOrUndefined(index));
         } else {
             unsigned index = node->reg.toArgument() - 1;
             switch (m_valueRepresentations.parameters[index]) {
