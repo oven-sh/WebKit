@@ -68,6 +68,8 @@ struct CharacterRange {
         , end(end)
     {
     }
+
+    friend bool operator==(const CharacterRange&, const CharacterRange&) = default;
 };
 
 enum struct CharacterClassWidths : unsigned char {

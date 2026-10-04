@@ -36,6 +36,8 @@
 #include <limits>
 #include <wtf/BitSet.h>
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
+#include <wtf/Hasher.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StackCheck.h>
@@ -1189,6 +1191,30 @@ private:
     Vector<CharacterRange> m_ranges32;
 };
 
+struct CharacterClassContentsHash {
+    static unsigned hash(const CharacterClass* characterClass)
+    {
+        Hasher hasher;
+        for (char32_t ch : characterClass->m_matches8)
+            add(hasher, ch);
+        for (auto& range : characterClass->m_ranges8)
+            add(hasher, range.begin, range.end);
+        for (char32_t ch : characterClass->m_matches32)
+            add(hasher, ch);
+        for (auto& range : characterClass->m_ranges32)
+            add(hasher, range.begin, range.end);
+        return hasher.hash();
+    }
+
+    static bool equal(const CharacterClass* a, const CharacterClass* b)
+    {
+        return a->m_matches8 == b->m_matches8 && a->m_ranges8 == b->m_ranges8 && a->m_matches32 == b->m_matches32 && a->m_ranges32 == b->m_ranges32
+            && a->m_characterWidths == b->m_characterWidths && a->m_anyCharacter == b->m_anyCharacter;
+    }
+
+    static constexpr bool safeToCompareToEmptyOrDeleted = false;
+};
+
 class YarrPatternConstructor {
     class UnresolvedForwardReference {
     public:
@@ -1259,6 +1285,7 @@ public:
         m_parenthesisContext.reset();
         m_parenthesisContext.setFlags(m_flags);
         m_forwardReferencesInLookbehind.clear();
+        m_sharedCharacterClasses.clear();
 
         auto body = makeUnique<PatternDisjunction>();
         m_pattern.m_body = body.get();
@@ -1411,9 +1438,8 @@ public:
         }
 
         m_currentCharacterClassConstructor->putUnicodeIgnoreCase(ch, info);
-        auto newCharacterClass = m_currentCharacterClassConstructor->charClass();
-        m_alternative->m_terms.append(PatternTerm(newCharacterClass.get(), false, m_flags, parenthesisMatchDirection()));
-        m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+        auto* characterClass = addUserCharacterClass(m_currentCharacterClassConstructor->charClass());
+        m_alternative->m_terms.append(PatternTerm(characterClass, false, m_flags, parenthesisMatchDirection()));
     }
 
     // Case-insensitive Unicode property escapes.
@@ -1687,7 +1713,7 @@ public:
                 return;
             }
 
-            m_alternative->m_terms.append(PatternTerm(newCharacterClass.get(), m_invertCharacterClass, m_flags));
+            m_alternative->m_terms.append(PatternTerm(addUserCharacterClass(WTF::move(newCharacterClass)), m_invertCharacterClass, m_flags));
         };
 
         if (!hasStrings)
@@ -1700,10 +1726,7 @@ public:
 
             m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             expandClassWithStrings(m_pattern.m_userCharacterClasses.last().get());
-            return;
         }
-
-        m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     }
 
     // A class that contains strings matches, at each position, its longest member that matches there
@@ -3871,11 +3894,33 @@ private:
 
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
 
+    CharacterClass* addUserCharacterClass(std::unique_ptr<CharacterClass>&& characterClass)
+    {
+        ASSERT(!characterClass->hasStrings());
+        auto& userCharacterClasses = m_pattern.m_userCharacterClasses;
+        if (userCharacterClasses.size() >= minimumUserCharacterClassesToShare) {
+            if (m_sharedCharacterClasses.isEmpty()) {
+                for (auto& existing : userCharacterClasses) {
+                    if (!existing->hasStrings())
+                        m_sharedCharacterClasses.add(existing.get());
+                }
+            }
+            auto result = m_sharedCharacterClasses.add(characterClass.get());
+            if (!result.isNewEntry)
+                return *result.iterator;
+        }
+        userCharacterClasses.append(WTF::move(characterClass));
+        return userCharacterClasses.last().get();
+    }
+
+    static constexpr unsigned minimumUserCharacterClassesToShare = 16;
+
     YarrPattern& m_pattern;
     PatternAlternative* m_alternative;
     CharacterClassConstructor m_baseCharacterClassConstructor;
     CharacterClassConstructor* m_currentCharacterClassConstructor;
     Vector<CharacterClassConstructor> m_characterClassStack;
+    HashSet<CharacterClass*, CharacterClassContentsHash> m_sharedCharacterClasses;
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
     ErrorCode m_error { ErrorCode::NoError };
